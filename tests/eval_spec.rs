@@ -570,6 +570,35 @@ fn concat_concatenates_lists() {
 }
 
 #[test]
+fn take_returns_prefix() {
+    assert_eq!(
+        eval("List.take([1, 2, 3, 4], 2)"),
+        list_from_vec(vec![Value::Int(1), Value::Int(2)])
+    );
+}
+
+#[test]
+fn take_with_negative_count_returns_empty_list() {
+    assert_eq!(eval("List.take([1, 2, 3], -1)"), list_from_vec(vec![]));
+}
+
+#[test]
+fn drop_skips_prefix() {
+    assert_eq!(
+        eval("List.drop([1, 2, 3, 4], 2)"),
+        list_from_vec(vec![Value::Int(3), Value::Int(4)])
+    );
+}
+
+#[test]
+fn drop_with_negative_count_returns_original_list() {
+    assert_eq!(
+        eval("List.drop([1, 2, 3], -1)"),
+        list_from_vec(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
+    );
+}
+
+#[test]
 fn reverse_returns_reversed_copy() {
     assert_eq!(
         eval("List.reverse([1, 2, 3])"),

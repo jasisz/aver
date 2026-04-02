@@ -855,6 +855,10 @@ fn classify_finding(msg: &str) -> (&'static str, Option<String>) {
         ("cse-match", split_repair(msg))
     } else if msg.contains("computed") && msg.contains("times in this function") {
         ("cse-duplicate", split_repair(msg))
+    } else if msg.contains("Independent product branches")
+        && msg.contains("potentially conflicting effects")
+    {
+        ("independence-hazard", split_repair(msg))
     } else if msg.contains("unused effect") {
         (
             "unused-effect",
@@ -1211,5 +1215,19 @@ pub(super) fn replay_effect_error_diagnostic(
         repair_alternatives: Vec::new(),
         repair_example: None,
         regions: AnnotatedRegion::single(vec![], None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify_finding;
+
+    #[test]
+    fn classifies_independence_hazard_warning() {
+        let (slug, repair) = classify_finding(
+            "Independent product branches 1 and 2 use potentially conflicting effects [Console.print, Console.error] — independent products may reorder or overlap these effects; keep them sequential or suppress with [[check.suppress]] reason if this independence is intentional",
+        );
+        assert_eq!(slug, "independence-hazard");
+        assert!(repair.is_some());
     }
 }

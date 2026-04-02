@@ -45,8 +45,8 @@ pub struct EffectReplayState {
     /// Branch path stack for nested independent products.
     /// E.g. [0, 1] means "branch 0 of outer product, branch 1 of inner product".
     branch_stack: Vec<u32>,
-    /// Per-branch effect emission counter (reset when branch changes).
-    effect_emission_count: u32,
+    /// Per-product stack of per-branch effect emission counters.
+    effect_count_stack: Vec<u32>,
     /// Next group id to assign.
     next_group_id: u32,
     /// Indices within replay_effects consumed from current group (for unordered match).
@@ -64,6 +64,8 @@ impl EffectReplayState {
         self.replay_effects.clear();
         self.replay_pos = 0;
         self.validate_replay_args = false;
+        self.args_diff_count = 0;
+        self.reset_group_state();
     }
 
     pub fn start_recording(&mut self) {
@@ -72,6 +74,8 @@ impl EffectReplayState {
         self.replay_effects.clear();
         self.replay_pos = 0;
         self.validate_replay_args = false;
+        self.args_diff_count = 0;
+        self.reset_group_state();
     }
 
     pub fn start_replay(&mut self, effects: Vec<EffectRecord>, validate_args: bool) {
@@ -80,6 +84,8 @@ impl EffectReplayState {
         self.replay_pos = 0;
         self.validate_replay_args = validate_args;
         self.recorded_effects.clear();
+        self.args_diff_count = 0;
+        self.reset_group_state();
     }
 
     pub fn take_recorded_effects(&mut self) -> Vec<EffectRecord> {
@@ -113,6 +119,7 @@ impl EffectReplayState {
         let id = self.next_group_id;
         self.group_stack.push(id);
         self.branch_stack.push(0); // start at branch 0
+        self.effect_count_stack.push(0);
         id
     }
 
@@ -120,6 +127,7 @@ impl EffectReplayState {
     pub fn exit_group(&mut self) {
         self.group_stack.pop();
         self.branch_stack.pop();
+        self.effect_count_stack.pop();
     }
 
     /// Set the current branch index within the current (innermost) product.
@@ -127,7 +135,9 @@ impl EffectReplayState {
         if let Some(last) = self.branch_stack.last_mut() {
             *last = index;
         }
-        self.effect_emission_count = 0;
+        if let Some(last) = self.effect_count_stack.last_mut() {
+            *last = 0;
+        }
     }
 
     pub fn record_effect(
@@ -150,23 +160,15 @@ impl EffectReplayState {
             branch_path: if self.branch_stack.is_empty() {
                 None
             } else {
-                Some(
-                    self.branch_stack
-                        .iter()
-                        .map(|i| i.to_string())
-                        .collect::<Vec<_>>()
-                        .join("."),
-                )
+                Some(self.current_branch_path())
             },
             effect_occurrence: if self.branch_stack.is_empty() {
                 None
             } else {
-                Some(self.effect_emission_count)
+                self.current_effect_occurrence()
             },
         });
-        if !self.branch_stack.is_empty() {
-            self.effect_emission_count += 1;
-        }
+        self.bump_effect_occurrence();
     }
 
     pub fn replay_effect(
@@ -237,13 +239,7 @@ impl EffectReplayState {
         let current_bp = if self.branch_stack.is_empty() {
             None
         } else {
-            Some(
-                self.branch_stack
-                    .iter()
-                    .map(|i| i.to_string())
-                    .collect::<Vec<_>>()
-                    .join("."),
-            )
+            Some(self.current_branch_path())
         };
 
         let mut fallback_idx: Option<usize> = None;
@@ -282,10 +278,9 @@ impl EffectReplayState {
             };
             if bp_match {
                 // Branch path matches — also check occurrence if available
-                let current_occ = Some(self.effect_emission_count);
+                let current_occ = self.current_effect_occurrence();
                 match (current_occ, record.effect_occurrence) {
                     (Some(got), Some(rec)) if got == rec => {
-                        self.effect_emission_count += 1;
                         return self.consume_group_match(idx, group_start, group_end);
                     }
                     (Some(_), Some(_)) => continue, // same branch, different occurrence
@@ -321,6 +316,7 @@ impl EffectReplayState {
         group_end: usize,
     ) -> Result<RecordedOutcome, ReplayFailure> {
         let outcome = self.replay_effects[idx].outcome.clone();
+        self.bump_effect_occurrence();
         self.group_consumed.push(idx);
         let group_size = group_end - group_start;
         if self.group_consumed.len() >= group_size {
@@ -328,5 +324,159 @@ impl EffectReplayState {
             self.group_consumed.clear();
         }
         Ok(outcome)
+    }
+
+    fn reset_group_state(&mut self) {
+        self.group_stack.clear();
+        self.branch_stack.clear();
+        self.effect_count_stack.clear();
+        self.next_group_id = 0;
+        self.group_consumed.clear();
+    }
+
+    fn current_branch_path(&self) -> String {
+        self.branch_stack
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(".")
+    }
+
+    fn current_effect_occurrence(&self) -> Option<u32> {
+        self.effect_count_stack.last().copied()
+    }
+
+    fn bump_effect_occurrence(&mut self) {
+        if let Some(last) = self.effect_count_stack.last_mut() {
+            *last += 1;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn recorded_value(text: &str) -> RecordedOutcome {
+        RecordedOutcome::Value(JsonValue::String(text.to_string()))
+    }
+
+    #[test]
+    fn nested_groups_preserve_outer_effect_occurrence() {
+        let mut state = EffectReplayState::default();
+
+        state.start_recording();
+        state.enter_group();
+        state.set_branch(0);
+        state.record_effect(
+            "Console.print",
+            vec![],
+            RecordedOutcome::Value(JsonValue::Null),
+            "",
+            0,
+        );
+
+        state.enter_group();
+        state.set_branch(1);
+        state.record_effect(
+            "Console.print",
+            vec![],
+            RecordedOutcome::Value(JsonValue::Null),
+            "",
+            0,
+        );
+        state.exit_group();
+
+        state.record_effect(
+            "Console.print",
+            vec![],
+            RecordedOutcome::Value(JsonValue::Null),
+            "",
+            0,
+        );
+
+        let effects = state.take_recorded_effects();
+        assert_eq!(effects.len(), 3);
+        assert_eq!(effects[0].branch_path.as_deref(), Some("0"));
+        assert_eq!(effects[0].effect_occurrence, Some(0));
+        assert_eq!(effects[1].branch_path.as_deref(), Some("0.1"));
+        assert_eq!(effects[1].effect_occurrence, Some(0));
+        assert_eq!(effects[2].branch_path.as_deref(), Some("0"));
+        assert_eq!(effects[2].effect_occurrence, Some(1));
+    }
+
+    #[test]
+    fn start_replay_clears_group_state() {
+        let mut state = EffectReplayState::default();
+        state.start_recording();
+        state.enter_group();
+        state.set_branch(3);
+        state.record_effect(
+            "Console.print",
+            vec![],
+            RecordedOutcome::Value(JsonValue::Null),
+            "",
+            0,
+        );
+
+        state.start_replay(Vec::new(), true);
+
+        assert!(state.group_stack.is_empty());
+        assert!(state.branch_stack.is_empty());
+        assert!(state.effect_count_stack.is_empty());
+        assert!(state.group_consumed.is_empty());
+        assert_eq!(state.next_group_id, 0);
+        assert_eq!(state.args_diff_count, 0);
+    }
+
+    #[test]
+    fn replay_group_matching_uses_effect_occurrence() {
+        let mut state = EffectReplayState::default();
+        state.start_replay(
+            vec![
+                EffectRecord {
+                    seq: 1,
+                    effect_type: "Console.print".to_string(),
+                    args: vec![JsonValue::String("same".to_string())],
+                    outcome: recorded_value("first"),
+                    caller_fn: String::new(),
+                    source_line: 0,
+                    group_id: Some(1),
+                    branch_path: Some("0".to_string()),
+                    effect_occurrence: Some(0),
+                },
+                EffectRecord {
+                    seq: 2,
+                    effect_type: "Console.print".to_string(),
+                    args: vec![JsonValue::String("same".to_string())],
+                    outcome: recorded_value("second"),
+                    caller_fn: String::new(),
+                    source_line: 0,
+                    group_id: Some(1),
+                    branch_path: Some("0".to_string()),
+                    effect_occurrence: Some(1),
+                },
+            ],
+            true,
+        );
+
+        state.enter_group();
+        state.set_branch(0);
+
+        let first = state
+            .replay_effect(
+                "Console.print",
+                Some(vec![JsonValue::String("same".to_string())]),
+            )
+            .expect("first replay should match");
+        let second = state
+            .replay_effect(
+                "Console.print",
+                Some(vec![JsonValue::String("same".to_string())]),
+            )
+            .expect("second replay should match");
+
+        assert_eq!(first, recorded_value("first"));
+        assert_eq!(second, recorded_value("second"));
     }
 }

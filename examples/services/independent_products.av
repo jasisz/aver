@@ -12,7 +12,7 @@ decision IndependenceNotParallelism
         "declares that computations have no data dependency between them."
     chosen = "Independent products via ?! and !"
     rejected = ["async/await", "par keyword", "streams", "channels"]
-    impacts = [loadDashboard, fetchAll, fetchStep, loadWithFallback]
+    impacts = [loadDashboard, fetchAll, fetchStep, fetchAllWindowed, fetchAllWindowedAcc, loadWithFallback]
 
 // ── Flat: multiple independent effects ──────────────────────────────────────
 
@@ -60,6 +60,26 @@ fn fetchAll(urls: List<String>) -> Result<List<String>, String>
         [] -> Result.Ok([])
         [url, ..rest] -> fetchStep(url, rest)
 
+// ── Bounded concurrency via List.take / List.drop ──────────────────────────
+
+fn fetchWindowedContinue(urls: List<String>, windowSize: Int, acc: List<String>) -> Result<List<String>, String>
+    ? "Fetches one bounded window, then continues with the remaining URLs."
+    ! [Http.get]
+    current = fetchAll(List.take(urls, windowSize))?
+    fetchAllWindowedAcc(List.drop(urls, windowSize), windowSize, List.concat(acc, current))
+
+fn fetchAllWindowedAcc(urls: List<String>, windowSize: Int, acc: List<String>) -> Result<List<String>, String>
+    ? "Fetches one window at a time, accumulating completed results."
+    ! [Http.get]
+    match urls
+        [] -> Result.Ok(acc)
+        _ -> fetchWindowedContinue(urls, windowSize, acc)
+
+fn fetchAllWindowed(urls: List<String>, windowSize: Int) -> Result<List<String>, String>
+    ? "Fetches URLs in bounded windows using List.take/drop around ?!."
+    ! [Http.get]
+    fetchAllWindowedAcc(urls, windowSize, [])
+
 // ── Bare !: partial success handling ────────────────────────────────────────
 
 fn loadWithFallback(userId: String) -> String
@@ -86,3 +106,9 @@ fn main() -> Unit
     // Bare !
     result = loadWithFallback("bob")
     Console.print("Fallback: {result}")
+
+    // Bounded ?! fan-out
+    urls = ["https://httpbin.org/get?item=1", "https://httpbin.org/get?item=2", "https://httpbin.org/get?item=3"]
+    match fetchAllWindowed(urls, 2)
+        Result.Ok(bodies) -> Console.print("Windowed fetch count: {List.len(bodies)}")
+        Result.Err(e) -> Console.error("Windowed fetch failed: {e}")

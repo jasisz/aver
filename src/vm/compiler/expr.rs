@@ -1,4 +1,4 @@
-use super::{CallTarget, CompileError, FnCompiler};
+use super::{CompileError, FnCompiler};
 use crate::ast::{BinOp, Expr, Literal, Spanned, Stmt, StrPart};
 use crate::nan_value::NanValue;
 use crate::vm::builtin::VmBuiltin;
@@ -292,9 +292,10 @@ impl<'a> FnCompiler<'a> {
         items: &[Spanned<Expr>],
         unwrap: bool,
     ) -> Result<(), CompileError> {
-        // Extract (fn_id, args) for each element — must be a FnCall.
-        // Push all args onto stack first, then emit CALL_PAR with call descriptors.
-        let mut call_descs: Vec<(u32, u8)> = Vec::with_capacity(items.len());
+        // Push a callable value plus its args for each branch, then emit CALL_PAR
+        // with per-branch arities. Runtime dispatch resolves the callable the same
+        // way as CALL_VALUE, so aliases like `f = foo; (f(1), f(2))!` work in VM.
+        let mut arg_counts: Vec<u8> = Vec::with_capacity(items.len());
 
         for item in items {
             // Unwrap ErrorProp wrapper if present (from ?! surface syntax)
@@ -304,21 +305,11 @@ impl<'a> FnCompiler<'a> {
             };
             match call_expr {
                 Expr::FnCall(fn_expr, args) => {
-                    // Compile args onto stack
+                    self.compile_expr(fn_expr)?;
                     for arg in args {
                         self.compile_expr(arg)?;
                     }
-                    // Resolve function to fn_id (always CALL_KNOWN in independent products)
-                    let fn_id = match self.resolve_call_target(&fn_expr.node) {
-                        Some(CallTarget::KnownFn(id)) => id,
-                        _ => {
-                            return Err(CompileError {
-                                msg: "Independent product element must be a known function call"
-                                    .to_string(),
-                            });
-                        }
-                    };
-                    call_descs.push((fn_id, args.len() as u8));
+                    arg_counts.push(args.len() as u8);
                 }
                 _ => {
                     // Fallback: compile normally (sequential) and use TUPLE_NEW
@@ -333,12 +324,11 @@ impl<'a> FnCompiler<'a> {
             }
         }
 
-        // Emit CALL_PAR: count unwrap [(fn_id:u32 argc:u8) × count]
+        // Emit CALL_PAR: count unwrap [argc:u8 × count]
         self.emit_op(CALL_PAR);
         self.emit_u8(items.len() as u8);
         self.emit_u8(if unwrap { 1 } else { 0 });
-        for (fn_id, argc) in call_descs {
-            self.emit_u32(fn_id);
+        for argc in arg_counts {
             self.emit_u8(argc);
         }
         Ok(())

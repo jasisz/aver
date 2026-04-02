@@ -10,16 +10,28 @@ pub fn generate_replay_runtime(
     has_tcp_types: bool,
     has_http_types: bool,
     has_http_server_types: bool,
+    embedded_independence_cancel: bool,
 ) -> String {
     let policy_check = if has_runtime_policy {
         RUNTIME_POLICY_CHECK_SNIPPET
     } else if has_embedded_policy {
         EMBEDDED_POLICY_CHECK_SNIPPET
     } else {
-        "    #[derive(Clone, Debug, Default)]\n    struct RuntimePolicy;\n\n    fn load_runtime_policy_from_env() -> Result<Option<RuntimePolicy>, String> {\n        Ok(None)\n    }\n\n    fn check_policy(_effect_type: &str, _args: &[ReplayJson]) {}"
+        "    #[derive(Clone, Debug, Default)]\n    struct RuntimePolicy {\n        independence_mode_cancel: bool,\n    }\n\n    fn load_runtime_policy_from_env() -> Result<Option<RuntimePolicy>, String> {\n        Ok(None)\n    }\n\n    fn check_policy(_effect_type: &str, _args: &[ReplayJson]) {}"
     };
 
-    let mut sections = vec![REPLAY_RUNTIME_TEMPLATE.replace("__POLICY_CHECK__", policy_check)];
+    let mut sections = vec![
+        REPLAY_RUNTIME_TEMPLATE
+            .replace("__POLICY_CHECK__", policy_check)
+            .replace(
+                "__EMBEDDED_INDEPENDENCE_MODE_CANCEL__",
+                if embedded_independence_cancel {
+                    "true"
+                } else {
+                    "false"
+                },
+            ),
+    ];
 
     if has_http_types {
         sections.push(http_type_impls());
@@ -391,7 +403,9 @@ fn tcp_type_impls() -> String {
 }
 
 const EMBEDDED_POLICY_CHECK_SNIPPET: &str = r#"    #[derive(Clone, Debug, Default)]
-    struct RuntimePolicy;
+    struct RuntimePolicy {
+        independence_mode_cancel: bool,
+    }
 
     fn load_runtime_policy_from_env() -> Result<Option<RuntimePolicy>, String> {
         Ok(None)
@@ -425,6 +439,7 @@ const RUNTIME_POLICY_CHECK_SNIPPET: &str = r#"    #[derive(Clone, Debug, Default
     #[derive(Clone, Debug, Default)]
     struct RuntimePolicy {
         effect_policies: BTreeMap<String, RuntimeEffectPolicy>,
+        independence_mode_cancel: bool,
     }
 
     impl RuntimePolicy {
@@ -460,7 +475,31 @@ const RUNTIME_POLICY_CHECK_SNIPPET: &str = r#"    #[derive(Clone, Debug, Default
                 }
             }
 
-            Ok(Self { effect_policies })
+            let independence_mode_cancel = table
+                .get("independence")
+                .and_then(|value| value.as_table())
+                .and_then(|section| section.get("mode"))
+                .map(|value| {
+                    value.as_str().ok_or_else(|| {
+                        "aver.toml: [independence].mode must be a string".to_string()
+                    })
+                })
+                .transpose()?
+                .map(|mode| match mode {
+                    "complete" => Ok(false),
+                    "cancel" => Ok(true),
+                    other => Err(format!(
+                        "aver.toml: [independence].mode must be 'complete' or 'cancel', got '{}'",
+                        other
+                    )),
+                })
+                .transpose()?
+                .unwrap_or(false);
+
+            Ok(Self {
+                effect_policies,
+                independence_mode_cancel,
+            })
         }
 
         fn check_http(&self, method_name: &str, url_str: &str) -> Result<(), String> {
@@ -974,9 +1013,10 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
         mode: ScopeMode,
         guest_args: Option<aver_rt::AverList<crate::AverStr>>,
         runtime_policy: Option<RuntimePolicy>,
+        independence_mode_cancel: bool,
         group_stack: Vec<u32>,
         branch_stack: Vec<u32>,
-        effect_emission_count: u32,
+        effect_count_stack: Vec<u32>,
         next_group_id: u32,
     }
 
@@ -989,6 +1029,9 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
     thread_local! {
         static SCOPE_STATE: RefCell<ScopeState> = const { RefCell::new(ScopeState::Inactive) };
     }
+
+    #[derive(Clone)]
+    pub struct ParallelScopeContext(Option<ActiveScope>);
 
     pub fn entry_input(args: Vec<ReplayJson>) -> ReplayJson {
         match args.len() {
@@ -1128,6 +1171,17 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
         matches!(current_scope_mode(), Some(ScopeMode::Record { .. }))
     }
 
+    fn embedded_independence_mode_is_cancel() -> bool {
+        __EMBEDDED_INDEPENDENCE_MODE_CANCEL__
+    }
+
+    pub fn independence_mode_is_cancel() -> bool {
+        SCOPE_STATE.with(|cell| match &*cell.borrow() {
+            ScopeState::Inactive => embedded_independence_mode_is_cancel(),
+            ScopeState::Active(scope) => scope.independence_mode_cancel,
+        })
+    }
+
     /// True when effects are being recorded or replayed — callers should
     /// execute ?!/! elements sequentially so effect tracking works correctly.
     pub fn is_effect_tracking_active() -> bool {
@@ -1137,12 +1191,43 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
         )
     }
 
+    pub fn capture_parallel_scope_context() -> ParallelScopeContext {
+        SCOPE_STATE.with(|cell| match &*cell.borrow() {
+            ScopeState::Inactive => ParallelScopeContext(None),
+            ScopeState::Active(scope) => ParallelScopeContext(Some(scope.clone())),
+        })
+    }
+
+    pub fn with_parallel_scope_context<T, F>(context: ParallelScopeContext, run: F) -> T
+    where
+        F: FnOnce() -> T,
+    {
+        let previous = SCOPE_STATE.with(|cell| {
+            std::mem::replace(
+                &mut *cell.borrow_mut(),
+                match context.0 {
+                    Some(scope) => ScopeState::Active(scope),
+                    None => ScopeState::Inactive,
+                },
+            )
+        });
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
+        SCOPE_STATE.with(|cell| {
+            *cell.borrow_mut() = previous;
+        });
+        match result {
+            Ok(value) => value,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
     pub fn enter_effect_group() {
         SCOPE_STATE.with(|cell| {
             if let ScopeState::Active(scope) = &mut *cell.borrow_mut() {
                 scope.next_group_id += 1;
                 scope.group_stack.push(scope.next_group_id);
                 scope.branch_stack.push(0);
+                scope.effect_count_stack.push(0);
             }
         });
     }
@@ -1152,6 +1237,7 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
             if let ScopeState::Active(scope) = &mut *cell.borrow_mut() {
                 scope.group_stack.pop();
                 scope.branch_stack.pop();
+                scope.effect_count_stack.pop();
             }
         });
     }
@@ -1162,9 +1248,29 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
                 if let Some(last) = scope.branch_stack.last_mut() {
                     *last = index;
                 }
-                scope.effect_emission_count = 0;
+                if let Some(last) = scope.effect_count_stack.last_mut() {
+                    *last = 0;
+                }
             }
         });
+    }
+
+    fn current_branch_path(branch_stack: &[u32]) -> Option<String> {
+        if branch_stack.is_empty() {
+            None
+        } else {
+            Some(branch_stack.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("."))
+        }
+    }
+
+    fn current_effect_occurrence(effect_count_stack: &[u32]) -> Option<u32> {
+        effect_count_stack.last().copied()
+    }
+
+    fn bump_effect_occurrence(effect_count_stack: &mut Vec<u32>) {
+        if let Some(last) = effect_count_stack.last_mut() {
+            *last += 1;
+        }
     }
 
     pub fn invoke_effect<T, F>(effect_type: &str, args: Vec<ReplayJson>, call: F) -> T
@@ -1196,19 +1302,12 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
                                 args,
                                 outcome,
                                 group_id,
-                                branch_path: if scope.branch_stack.is_empty() {
-                                    None
-                                } else {
-                                    Some(scope.branch_stack.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("."))
-                                },
-                                effect_occurrence: if scope.branch_stack.is_empty() {
-                                    None
-                                } else {
-                                    let occ = scope.effect_emission_count;
-                                    scope.effect_emission_count += 1;
-                                    Some(occ)
-                                },
+                                branch_path: current_branch_path(&scope.branch_stack),
+                                effect_occurrence: current_effect_occurrence(
+                                    &scope.effect_count_stack,
+                                ),
                             });
+                            bump_effect_occurrence(&mut scope.effect_count_stack);
                         }
                     }
                 });
@@ -1278,14 +1377,20 @@ __POLICY_CHECK__
             ScopeMode::Normal | ScopeMode::Record { .. } => load_runtime_policy_from_env()
                 .unwrap_or_else(|err| panic!("{}", err)),
         };
+        let independence_mode_cancel = runtime_policy
+            .as_ref()
+            .map_or(embedded_independence_mode_is_cancel(), |policy| {
+                policy.independence_mode_cancel
+            });
         SCOPE_STATE.with(|cell| {
             *cell.borrow_mut() = ScopeState::Active(ActiveScope {
                 mode,
                 guest_args,
                 runtime_policy,
+                independence_mode_cancel,
                 group_stack: Vec::new(),
                 branch_stack: Vec::new(),
-                effect_emission_count: 0,
+                effect_count_stack: Vec::new(),
                 next_group_id: 0,
             });
         });
@@ -1512,26 +1617,37 @@ __POLICY_CHECK__
                     .position(|e| e.group_id != Some(gid))
                     .map(|offset| group_start + offset)
                     .unwrap_or(session.effects.len());
-                // Prefer exact branch match; fall back to type-only
-                let current_bp: Option<String> = if scope.branch_stack.is_empty() {
-                    None
-                } else {
-                    Some(scope.branch_stack.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("."))
-                };
+                // Prefer exact branch+occurrence match; fall back for older recordings.
+                let current_bp = current_branch_path(&scope.branch_stack);
+                let current_occ = current_effect_occurrence(&scope.effect_count_stack);
                 let mut fallback_idx: Option<usize> = None;
                 for idx in group_start..group_end {
                     let candidate = &session.effects[idx];
                     if candidate.effect_type != effect_type {
                         continue;
                     }
+                    if *check_args && candidate.args != args {
+                        continue;
+                    }
                     match (&current_bp, &candidate.branch_path) {
                         (Some(got), Some(rec)) if got == rec => {
-                            let matched = candidate.clone();
-                            if idx != *position {
-                                session.effects.swap(*position, idx);
+                            match (current_occ, candidate.effect_occurrence) {
+                                (Some(got_occ), Some(rec_occ)) if got_occ == rec_occ => {
+                                    let matched = candidate.clone();
+                                    bump_effect_occurrence(&mut scope.effect_count_stack);
+                                    if idx != *position {
+                                        session.effects.swap(*position, idx);
+                                    }
+                                    *position += 1;
+                                    return matched;
+                                }
+                                (Some(_), Some(_)) => continue,
+                                _ => {
+                                    if fallback_idx.is_none() {
+                                        fallback_idx = Some(idx);
+                                    }
+                                }
                             }
-                            *position += 1;
-                            return matched;
                         }
                         (Some(_), Some(_)) => continue,
                         _ => {
@@ -1543,6 +1659,7 @@ __POLICY_CHECK__
                 }
                 if let Some(idx) = fallback_idx {
                     let matched = session.effects[idx].clone();
+                    bump_effect_occurrence(&mut scope.effect_count_stack);
                     if idx != *position {
                         session.effects.swap(*position, idx);
                     }

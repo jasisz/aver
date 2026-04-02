@@ -180,6 +180,18 @@ fn valid_list_prepend_preserves_inner_type() {
 }
 
 #[test]
+fn valid_list_take_preserves_inner_type() {
+    let src = "fn firstTwo(xs: List<Int>) -> List<Int>\n    List.take(xs, 2)\n";
+    assert_no_errors(src);
+}
+
+#[test]
+fn valid_list_drop_preserves_inner_type() {
+    let src = "fn rest(xs: List<Int>) -> List<Int>\n    List.drop(xs, 1)\n";
+    assert_no_errors(src);
+}
+
+#[test]
 fn valid_list_concat_requires_compatible_lists() {
     let src = "fn extend(xs: List<Int>, ys: List<Int>) -> List<Int>\n    List.concat(xs, ys)\n";
     assert_no_errors(src);
@@ -189,6 +201,12 @@ fn valid_list_concat_requires_compatible_lists() {
 fn valid_list_reverse_preserves_inner_type() {
     let src = "fn rev(xs: List<Int>) -> List<Int>\n    List.reverse(xs)\n";
     assert_no_errors(src);
+}
+
+#[test]
+fn invalid_list_take_requires_int_count() {
+    let src = "fn bad(xs: List<Int>) -> List<Int>\n    List.take(xs, \"x\")\n";
+    assert_error_containing(src, "Argument 2 of 'List.take': expected Int, got String");
 }
 
 #[test]

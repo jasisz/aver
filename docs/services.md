@@ -18,19 +18,17 @@ Source: `src/types/bool.rs`
 
 Source: `src/types/list.rs`
 
-List is a recursive structure — use it for sequential processing with `prepend`, `head`, `tail`, `match [h, ..t]`. For indexed access, use `Vector`.
+List is a recursive structure — use it for sequential processing with `prepend`, `take`, `drop`, and `match [h, ..t]`. For indexed access, use `Vector`.
 
 | Function | Signature | Notes |
 |---|---|---|
 | `List.len` | `List<T> -> Int` | |
 | `List.prepend` | `(T, List<T>) -> List<T>` | O(1) prepend |
-| `List.head` | `List<T> -> Option<T>` | First element |
-| `List.tail` | `List<T> -> Option<List<T>>` | All but first |
+| `List.take` | `(List<T>, Int) -> List<T>` | First `n` elements; negative `n` yields `[]` |
+| `List.drop` | `(List<T>, Int) -> List<T>` | All but first `n` elements; negative `n` keeps the original list |
 | `List.concat` | `(List<T>, List<T>) -> List<T>` | Concatenates two lists |
 | `List.reverse` | `List<T> -> List<T>` | Returns a reversed copy |
 | `List.contains` | `(List<T>, T) -> Bool` | Membership check via `==` |
-| `List.find` | `(List<T>, T) -> Option<T>` | Find first matching element |
-| `List.any` | `(List<T>, T) -> Bool` | True if any element matches |
 | `List.zip` | `(List<A>, List<B>) -> List<(A, B)>` | Pairs elements, truncates to shorter list |
 
 ### `Vector` namespace

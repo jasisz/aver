@@ -170,6 +170,18 @@ function ListTail<T>(xs: seq<T>): seq<T> {
   else xs[1..]
 }
 
+function ListTake<T>(xs: seq<T>, n: int): seq<T> {
+  if n <= 0 then []
+  else if n >= |xs| then xs
+  else xs[..n]
+}
+
+function ListDrop<T>(xs: seq<T>, n: int): seq<T> {
+  if n <= 0 then xs
+  else if n >= |xs| then []
+  else xs[n..]
+}
+
 function MapGet<K, V>(m: map<K, V>, k: K): Option<V> {
   if k in m then Some(m[k])
   else None

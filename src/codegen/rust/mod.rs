@@ -31,6 +31,10 @@ struct ModuleTreeNode {
 pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
     let has_embedded_policy = ctx.policy.is_some();
     let has_runtime_policy = ctx.runtime_policy_from_env;
+    let embedded_independence_cancel = ctx
+        .policy
+        .as_ref()
+        .is_some_and(|config| config.independence_mode == crate::config::IndependenceMode::Cancel);
     let used_services = detect_used_services(ctx);
     let needs_http_types = needs_named_type(ctx, "Header")
         || needs_named_type(ctx, "HttpResponse")
@@ -102,6 +106,7 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
                 has_http_types,
                 has_http_server_types,
                 ctx.emit_replay_runtime,
+                embedded_independence_cancel,
             ),
         ),
     ];
@@ -130,6 +135,7 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
                 has_tcp_types,
                 has_http_types,
                 has_http_server_types,
+                embedded_independence_cancel,
             ),
         ));
     }
@@ -278,8 +284,13 @@ fn render_runtime_support(
     has_http_types: bool,
     has_http_server_types: bool,
     has_replay: bool,
+    embedded_independence_cancel: bool,
 ) -> String {
-    let mut sections = vec![runtime::generate_runtime(has_replay, has_http_server_types)];
+    let mut sections = vec![runtime::generate_runtime(
+        has_replay,
+        has_http_server_types,
+        embedded_independence_cancel,
+    )];
     if has_tcp_types {
         sections.push(runtime::generate_tcp_types());
     }
@@ -1203,5 +1214,140 @@ fn runGuestProgram(prog: Int, moduleFns: Int) -> Result<String, String>
         assert!(!runtime_support.contains("with_fn_store"));
         assert!(self_host_support.contains("pub fn with_program_fn_store"));
         assert!(entry.contains("crate::self_host_support::with_program_fn_store("));
+    }
+
+    #[test]
+    fn independent_product_codegen_avoids_string_specific_error_type() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn left() -> Result<Int, Int>
+    Result.Ok(1)
+
+fn right() -> Result<Int, Int>
+    Result.Ok(2)
+
+fn main() -> Result<(Int, Int), Int>
+    data = (left(), right())?!
+    Result.Ok(data)
+"#,
+            "demo",
+        );
+        ctx.emit_replay_runtime = true;
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(!entry.contains("Ok::<_, aver_rt::AverStr>"));
+        assert!(entry.contains("crate::aver_replay::exit_effect_group();"));
+        assert!(entry.contains("match (_r0, _r1)"));
+        assert!(!entry.contains("let _r0 = left()?;"));
+    }
+
+    #[test]
+    fn independent_product_codegen_emits_cancel_runtime_and_scope_propagation() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn left() -> Result<Int, String>
+    Result.Ok(1)
+
+fn right() -> Result<Int, String>
+    Result.Ok(2)
+
+fn main() -> Result<(Int, Int), String>
+    data = (left(), right())?!
+    Result.Ok(data)
+"#,
+            "demo",
+        );
+        ctx.emit_replay_runtime = true;
+        ctx.policy = Some(crate::config::ProjectConfig {
+            effect_policies: std::collections::HashMap::new(),
+            check_suppressions: Vec::new(),
+            independence_mode: crate::config::IndependenceMode::Cancel,
+        });
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+        let runtime_support = generated_file(&out, "src/runtime_support.rs");
+        let replay_support = generated_file(&out, "src/replay_support.rs");
+
+        assert!(entry.contains("crate::run_cancelable_branch"));
+        assert!(entry.contains("capture_parallel_scope_context"));
+        assert!(runtime_support.contains("pub fn run_cancelable_branch"));
+        assert!(runtime_support.contains("panic_any(AverCancelled)"));
+        assert!(replay_support.contains("pub fn capture_parallel_scope_context"));
+        assert!(replay_support.contains("pub fn independence_mode_is_cancel()"));
+    }
+
+    #[test]
+    fn runtime_policy_codegen_parses_independence_mode() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn main() -> Result<String, String>
+    ! [Disk.readText]
+    Disk.readText("demo.av")
+"#,
+            "demo",
+        );
+        ctx.emit_replay_runtime = true;
+        ctx.runtime_policy_from_env = true;
+
+        let out = transpile(&ctx);
+        let replay_support = generated_file(&out, "src/replay_support.rs");
+
+        assert!(replay_support.contains("independence_mode_cancel"));
+        assert!(replay_support.contains("[independence].mode must be 'complete' or 'cancel'"));
+    }
+
+    #[test]
+    fn effectful_codegen_inserts_cancel_checkpoint_before_builtin_calls() {
+        let ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn main() -> Result<String, String>
+    ! [Disk.readText]
+    Disk.readText("demo.av")
+"#,
+            "demo",
+        );
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("crate::cancel_checkpoint(); (aver_rt::read_text"));
+    }
+
+    #[test]
+    fn replay_support_matches_group_effects_by_occurrence_and_args() {
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+fn left() -> Result<Int, String>
+    Result.Ok(1)
+
+fn right() -> Result<Int, String>
+    Result.Ok(2)
+
+fn main() -> Result<(Int, Int), String>
+    data = (left(), right())?!
+    Result.Ok(data)
+"#,
+            "demo",
+        );
+        ctx.emit_replay_runtime = true;
+
+        let out = transpile(&ctx);
+        let replay_support = generated_file(&out, "src/replay_support.rs");
+
+        assert!(replay_support.contains("candidate.effect_occurrence"));
+        assert!(replay_support.contains("candidate.args != args"));
     }
 }

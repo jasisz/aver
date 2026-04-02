@@ -13,9 +13,9 @@ use aver::ast::{
 };
 use aver::checker::{
     CheckFinding, VerifyResult, check_module_intent_with_sigs_in, collect_cse_warnings_in,
-    collect_perf_warnings_in, collect_verify_coverage_warnings_in,
-    collect_verify_law_dependency_warnings_in, expr_to_str, index_decisions, merge_verify_blocks,
-    run_verify,
+    collect_independence_warnings_in, collect_perf_warnings_in,
+    collect_verify_coverage_warnings_in, collect_verify_law_dependency_warnings_in, expr_to_str,
+    index_decisions, merge_verify_blocks, run_verify,
 };
 use aver::codegen;
 use aver::codegen::ModuleInfo;
@@ -1585,6 +1585,8 @@ fn run_check_for_file(
             collect_verify_law_dependency_warnings_in(items, &tc_result.fn_sigs, Some(path));
         let cse_warnings = collect_cse_warnings_in(&transformed, Some(path));
         let perf_warnings = collect_perf_warnings_in(&transformed, Some(path));
+        let independence_warnings =
+            collect_independence_warnings_in(&transformed, &tc_result.fn_sigs, Some(path));
         let unused_exposes_warnings = unused_exposes_by_file
             .get(&canonical_path_key(path))
             .cloned()
@@ -1622,6 +1624,7 @@ fn run_check_for_file(
             .chain(law_dependency_warnings.iter())
             .chain(cse_warnings.iter())
             .chain(perf_warnings.iter())
+            .chain(independence_warnings.iter())
             .chain(unused_exposes_warnings.iter())
         {
             diagnostics.push(diagnostic::from_check_finding(

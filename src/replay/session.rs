@@ -22,7 +22,8 @@ pub struct EffectRecord {
     /// Source line of the call expression that triggered this effect (0 = unknown).
     pub source_line: usize,
     /// Independent product group: effects sharing a `group_id` are order-independent.
-    /// During replay, effects within a group are matched by (branch_path, type, args).
+    /// During replay, effects within a group are matched by
+    /// (branch_path, effect_occurrence, type, args).
     pub group_id: Option<u32>,
     /// Branch path within nested independent products (e.g. "0.1" = branch 0 of outer,
     /// branch 1 of inner). Disambiguates effects from different branches.

@@ -115,6 +115,83 @@ pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     emit_expr_with_options(expr, ctx, ectx, true)
 }
 
+fn emit_tuple_from_vars(prefix: &str, count: usize) -> String {
+    match count {
+        0 => "()".to_string(),
+        1 => format!("({prefix}0,)"),
+        _ => format!(
+            "({})",
+            (0..count)
+                .map(|i| format!("{prefix}{i}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+fn emit_result_tuple_unwrap(result_prefix: &str, value_prefix: &str, count: usize) -> String {
+    let matched_results = emit_tuple_from_vars(result_prefix, count);
+    let ok_pattern = match count {
+        0 => "()".to_string(),
+        1 => format!("(Ok({value_prefix}0),)"),
+        _ => format!(
+            "({})",
+            (0..count)
+                .map(|i| format!("Ok({value_prefix}{i})"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
+    let ok_tuple = emit_tuple_from_vars(value_prefix, count);
+
+    let mut out = format!(
+        "match {} {{ {} => Ok({}), {} => {{ ",
+        matched_results, ok_pattern, ok_tuple, matched_results
+    );
+    for i in 0..count {
+        out.push_str(&format!(
+            "if let Err(__err) = {result_prefix}{i} {{ Err(__err) }} else "
+        ));
+    }
+    out.push_str("{ unreachable!(\"independent product unwrap requires Result branches\") } } }");
+    out
+}
+
+fn emit_parallel_result_tuple_unwrap(
+    branch_prefix: &str,
+    result_prefix: &str,
+    value_prefix: &str,
+    count: usize,
+) -> String {
+    let matched_branches = emit_tuple_from_vars(branch_prefix, count);
+    let completed_pattern = match count {
+        0 => "()".to_string(),
+        1 => format!("(crate::ParallelBranch::Completed({result_prefix}0),)"),
+        _ => format!(
+            "({})",
+            (0..count)
+                .map(|i| format!("crate::ParallelBranch::Completed({result_prefix}{i})"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
+
+    let mut out = format!(
+        "match {} {{ {} => {}, {} => {{ ",
+        matched_branches,
+        completed_pattern,
+        emit_result_tuple_unwrap(result_prefix, value_prefix, count),
+        matched_branches
+    );
+    for i in 0..count {
+        out.push_str(&format!(
+            "if let crate::ParallelBranch::Completed(Err(__err)) = {branch_prefix}{i} {{ Err(__err) }} else "
+        ));
+    }
+    out.push_str("{ panic!(\"independent product branch cancelled by sibling branch\") } } }");
+    out
+}
+
 fn emit_expr_with_options(
     expr: &Expr,
     ctx: &CodegenContext,
@@ -294,64 +371,87 @@ fn emit_expr_with_options(
                 // with replay groups (thread_local state stays on one thread).
                 code.push_str("if crate::aver_replay::is_effect_tracking_active() { ");
                 code.push_str("crate::aver_replay::enter_effect_group(); ");
+                for (i, part) in parts.iter().enumerate() {
+                    code.push_str(&format!(
+                        "crate::aver_replay::set_effect_branch({i}); let _r{i} = {part}; "
+                    ));
+                }
+                code.push_str("crate::aver_replay::exit_effect_group(); ");
                 if *unwrap {
-                    for (i, part) in parts.iter().enumerate() {
-                        code.push_str(&format!(
-                            "crate::aver_replay::set_effect_branch({i}); let _r{i} = {part}?; "
-                        ));
-                    }
-                    code.push_str("crate::aver_replay::exit_effect_group(); (");
-                    for i in 0..n {
-                        if i > 0 {
-                            code.push_str(", ");
-                        }
-                        code.push_str(&format!("_r{i}"));
-                    }
-                    code.push(')');
+                    code.push_str(&emit_result_tuple_unwrap("_r", "__v", n));
+                    code.push('?');
                 } else {
-                    for (i, part) in parts.iter().enumerate() {
-                        code.push_str(&format!(
-                            "crate::aver_replay::set_effect_branch({i}); let _r{i} = {part}; "
-                        ));
-                    }
-                    code.push_str("crate::aver_replay::exit_effect_group(); (");
-                    for i in 0..n {
-                        if i > 0 {
-                            code.push_str(", ");
-                        }
-                        code.push_str(&format!("_r{i}"));
-                    }
-                    code.push(')');
+                    code.push_str(&emit_tuple_from_vars("_r", n));
                 }
                 code.push_str(" } else { ");
             }
 
-            // Parallel path (always emitted; sole path when no replay).
-            // Note: cancel mode has no effect in codegen — generated code lacks
-            // cooperative cancellation points. All branches run to completion.
-            // Error selection is still left-to-right (deterministic).
-            code.push_str("std::thread::scope(|_s| { ");
-            for (i, part) in parts.iter().enumerate() {
-                code.push_str(&format!("let _h{i} = _s.spawn(|| {part}); "));
-            }
             if *unwrap {
-                code.push_str("Ok::<_, aver_rt::AverStr>((");
-                for i in 0..n {
-                    if i > 0 {
-                        code.push_str(", ");
-                    }
-                    code.push_str(&format!("_h{i}.join().unwrap()?"));
+                if has_replay {
+                    code.push_str(
+                        "let __parallel_scope = crate::aver_replay::capture_parallel_scope_context(); ",
+                    );
                 }
-                code.push_str(")) })? ");
+                code.push_str(
+                    "let __cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); ",
+                );
+                code.push_str("std::thread::scope(|_s| { ");
+                for (i, part) in parts.iter().enumerate() {
+                    if has_replay {
+                        code.push_str(&format!(
+                            "let __parallel_scope{i} = __parallel_scope.clone(); "
+                        ));
+                    }
+                    code.push_str(&format!("let __cancel_flag{i} = __cancel_flag.clone(); "));
+                    code.push_str(&format!("let _h{i} = _s.spawn(|| "));
+                    if has_replay {
+                        code.push_str(&format!(
+                            "crate::aver_replay::with_parallel_scope_context(__parallel_scope{i}.clone(), || "
+                        ));
+                    }
+                    code.push_str("{ crate::run_cancelable_branch(__cancel_flag");
+                    code.push_str(&i.to_string());
+                    code.push_str(".clone(), || { let __result = ");
+                    code.push_str(part);
+                    code.push_str("; if let Err(_) = &__result { __cancel_flag");
+                    code.push_str(&i.to_string());
+                    code.push_str(
+                        ".store(true, std::sync::atomic::Ordering::Relaxed); } __result }) }",
+                    );
+                    if has_replay {
+                        code.push(')');
+                    }
+                    code.push_str("); ");
+                }
+                for i in 0..n {
+                    code.push_str(&format!("let _b{i} = _h{i}.join().unwrap(); "));
+                }
+                code.push_str(&emit_parallel_result_tuple_unwrap("_b", "_r", "__v", n));
+                code.push_str(" })? ");
             } else {
-                code.push('(');
-                for i in 0..n {
-                    if i > 0 {
-                        code.push_str(", ");
-                    }
-                    code.push_str(&format!("_h{i}.join().unwrap()"));
+                if has_replay {
+                    code.push_str(
+                        "let __parallel_scope = crate::aver_replay::capture_parallel_scope_context(); ",
+                    );
                 }
-                code.push_str(") }) ");
+                code.push_str("std::thread::scope(|_s| { ");
+                for (i, part) in parts.iter().enumerate() {
+                    if has_replay {
+                        code.push_str(&format!(
+                            "let __parallel_scope{i} = __parallel_scope.clone(); "
+                        ));
+                        code.push_str(&format!(
+                            "let _h{i} = _s.spawn(|| crate::aver_replay::with_parallel_scope_context(__parallel_scope{i}.clone(), || {part})); "
+                        ));
+                    } else {
+                        code.push_str(&format!("let _h{i} = _s.spawn(|| {part}); "));
+                    }
+                }
+                for i in 0..n {
+                    code.push_str(&format!("let _r{i} = _h{i}.join().unwrap(); "));
+                }
+                code.push_str(&emit_tuple_from_vars("_r", n));
+                code.push_str(" }) ");
             }
 
             if has_replay {

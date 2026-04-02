@@ -84,12 +84,24 @@ impl VmRuntime {
         self.cli_args = args;
     }
 
+    pub(super) fn cli_args(&self) -> &[String] {
+        &self.cli_args
+    }
+
     pub(super) fn set_silent_console(&mut self, silent: bool) {
         self.silent_console = silent;
     }
 
+    pub(super) fn silent_console(&self) -> bool {
+        self.silent_console
+    }
+
     pub(super) fn set_runtime_policy(&mut self, config: crate::config::ProjectConfig) {
         self.runtime_policy = Some(config);
+    }
+
+    pub(super) fn runtime_policy(&self) -> Option<&crate::config::ProjectConfig> {
+        self.runtime_policy.as_ref()
     }
 
     pub(super) fn independence_mode(&self) -> crate::config::IndependenceMode {

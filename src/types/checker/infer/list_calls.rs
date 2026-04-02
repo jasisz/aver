@@ -62,6 +62,20 @@ impl TypeChecker {
                 }
                 Some(Type::List(Box::new(elem_ty)))
             }
+            "List.take" | "List.drop" => {
+                if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Unknown))) {
+                    return Some(fallback);
+                }
+                let elem_ty = list_inner(self, &arg_types[0], 1);
+                if !matches!(arg_types[1], Type::Int | Type::Unknown) {
+                    self.error(format!(
+                        "Argument 2 of '{}': expected Int, got {}",
+                        name,
+                        arg_types[1].display()
+                    ));
+                }
+                Some(Type::List(Box::new(elem_ty)))
+            }
             "List.concat" => {
                 if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Unknown))) {
                     return Some(fallback);

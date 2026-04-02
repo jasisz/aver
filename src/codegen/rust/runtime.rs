@@ -2,19 +2,40 @@
 ///
 /// This module is embedded in the generated `main.rs` and re-exports pieces
 /// from the shared `aver-rt` crate.
-pub fn generate_runtime(has_replay: bool, has_http_server_runtime: bool) -> String {
-    let mut sections = vec![BASE_RUNTIME.to_string()];
+pub fn generate_runtime(
+    has_replay: bool,
+    has_http_server_runtime: bool,
+    embedded_independence_cancel: bool,
+) -> String {
+    let mut sections = vec![base_runtime(has_replay, embedded_independence_cancel)];
     if has_http_server_runtime {
         sections.push(http_server_helpers(has_replay));
     }
     sections.join("\n\n")
 }
 
-const BASE_RUNTIME: &str = r##"pub mod aver_rt {
+fn base_runtime(has_replay: bool, embedded_independence_cancel: bool) -> String {
+    let independence_mode = if has_replay {
+        "crate::aver_replay::independence_mode_is_cancel()".to_string()
+    } else if embedded_independence_cancel {
+        "true".to_string()
+    } else {
+        "false".to_string()
+    };
+
+    BASE_RUNTIME_TEMPLATE.replace("__INDEPENDENCE_MODE_CANCEL__", &independence_mode)
+}
+
+const BASE_RUNTIME_TEMPLATE: &str = r##"pub mod aver_rt {
     pub use ::aver_rt::*;
 }
 
 use ::aver_rt::AverStr;
+use std::cell::RefCell;
+use std::sync::{
+    Arc,
+    atomic::AtomicBool,
+};
 
 /// Convert String results from aver_rt to AverStr for generated code.
 pub trait IntoAverStr {
@@ -72,7 +93,86 @@ impl IntoAverStr for Result<f64, String> {
     fn into_aver(self) -> Result<f64, AverStr> {
         self.map_err(AverStr::from)
     }
-}"##;
+}
+
+fn independence_mode_is_cancel() -> bool {
+    __INDEPENDENCE_MODE_CANCEL__
+}
+
+#[derive(Debug)]
+struct AverCancelled;
+
+pub enum ParallelBranch<T> {
+    Completed(T),
+    Cancelled,
+}
+
+thread_local! {
+    static ACTIVE_CANCEL_FLAGS: RefCell<Vec<Arc<AtomicBool>>> = const { RefCell::new(Vec::new()) };
+}
+
+struct CancelFlagGuard;
+
+impl Drop for CancelFlagGuard {
+    fn drop(&mut self) {
+        ACTIVE_CANCEL_FLAGS.with(|cell| {
+            cell.borrow_mut().pop();
+        });
+    }
+}
+
+fn with_cancel_flag<T, F>(flag: Arc<AtomicBool>, run: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    ACTIVE_CANCEL_FLAGS.with(|cell| {
+        cell.borrow_mut().push(flag);
+    });
+    let _guard = CancelFlagGuard;
+    run()
+}
+
+fn is_cancel_panic(payload: &(dyn std::any::Any + Send)) -> bool {
+    payload.is::<AverCancelled>()
+}
+
+pub fn cancel_checkpoint() {
+    if !independence_mode_is_cancel() {
+        return;
+    }
+
+    let cancelled = ACTIVE_CANCEL_FLAGS.with(|cell| {
+        cell.borrow()
+            .iter()
+            .any(|flag| flag.load(std::sync::atomic::Ordering::Relaxed))
+    });
+    if cancelled {
+        std::panic::panic_any(AverCancelled);
+    }
+}
+
+pub fn run_cancelable_branch<T, F>(flag: Arc<AtomicBool>, run: F) -> ParallelBranch<T>
+where
+    F: FnOnce() -> T,
+{
+    with_cancel_flag(flag, || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            cancel_checkpoint();
+            run()
+        }));
+        match result {
+            Ok(value) => ParallelBranch::Completed(value),
+            Err(payload) => {
+                if is_cancel_panic(payload.as_ref()) {
+                    ParallelBranch::Cancelled
+                } else {
+                    std::panic::resume_unwind(payload);
+                }
+            }
+        }
+    })
+}
+"##;
 
 fn http_server_helpers(has_replay: bool) -> String {
     let replay_guard = if has_replay {

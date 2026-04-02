@@ -77,7 +77,7 @@ If multiple branches produce `Err`, the propagated error is the first `Err` in l
 
 **Cancellation and error priority:** a cancellation error is an execution artifact, not a primary failure. When `?!` unwraps results, a real `Result.Err` from a branch always takes priority over a cancellation error from a sibling. A cancellation error propagates only if no branch produced a real `Err`.
 
-**Backend coverage:** cancel mode with cooperative interruption is implemented in the VM backend (periodic check every 256 opcodes). The compiled Rust backend (`aver compile`) does not support cooperative interruption — generated `thread::scope` code runs all branches to completion regardless of `mode`. Error selection is deterministic (left-to-right) in both backends. On backends without cooperative interruption, cancel degrades operationally to complete, while preserving the same error selection policy. Replay `branch_path` and `effect_occurrence` are recorded in all backends that support replay.
+**Backend coverage:** the VM backend and the compiled Rust backend (`aver compile`) both implement cooperative cancellation. The VM checks periodically while executing bytecode. The compiled Rust backend checks at generated function boundaries and before effectful builtins. The tree-walking interpreter remains sequential. Error selection is deterministic (left-to-right) across backends. Replay `branch_path` and `effect_occurrence` are recorded in all backends that support replay.
 
 ## Structural properties
 

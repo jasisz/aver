@@ -216,6 +216,7 @@ fn emit_replay_effect_call(
         let emitted = clone_arg(arg, ctx, &arg_ctxs[idx]);
         lines.push(format!("    let {} = {};", temp_names[idx], emitted));
     }
+    lines.push("    crate::cancel_checkpoint();".to_string());
     let json_args = emit_replay_effect_arg_json(effect_name, &temp_names).join(", ");
     lines.push(format!(
         "    aver_replay::invoke_effect({:?}, vec![{}], || {})",
@@ -287,27 +288,31 @@ pub fn emit_builtin_call(
         if name.starts_with("Http.") && !args.is_empty() {
             let url_arg = emit_expr(&args[0], ctx, &arg_ctxs[0]);
             return Some(format!(
-                "{{ aver_policy::check_http(\"{}\", &{}).expect(\"aver.toml policy violation\"); {} }}",
+                "{{ crate::cancel_checkpoint(); aver_policy::check_http(\"{}\", &{}).expect(\"aver.toml policy violation\"); {} }}",
                 name, url_arg, result
             ));
         }
         if name.starts_with("Disk.") && !args.is_empty() {
             let path_arg = emit_expr(&args[0], ctx, &arg_ctxs[0]);
             return Some(format!(
-                "{{ aver_policy::check_disk(\"{}\", &{}).expect(\"aver.toml policy violation\"); {} }}",
+                "{{ crate::cancel_checkpoint(); aver_policy::check_disk(\"{}\", &{}).expect(\"aver.toml policy violation\"); {} }}",
                 name, path_arg, result
             ));
         }
         if name.starts_with("Env.") && !args.is_empty() {
             let key_arg = emit_expr(&args[0], ctx, &arg_ctxs[0]);
             return Some(format!(
-                "{{ aver_policy::check_env(\"{}\", &{}).expect(\"aver.toml policy violation\"); {} }}",
+                "{{ crate::cancel_checkpoint(); aver_policy::check_env(\"{}\", &{}).expect(\"aver.toml policy violation\"); {} }}",
                 name, key_arg, result
             ));
         }
     }
 
-    Some(result)
+    if builtin_is_effectful(name) {
+        Some(format!("{{ crate::cancel_checkpoint(); {} }}", result))
+    } else {
+        Some(result)
+    }
 }
 
 fn emit_builtin_call_inner(
@@ -592,6 +597,20 @@ fn emit_builtin_call_inner(
             let item = clone_arg(&args[0], ctx, &arg_ctxs[0]);
             let list = clone_arg(&args[1], ctx, &arg_ctxs[1]);
             Some(format!("aver_rt::AverList::prepend({}, &{})", item, list))
+        }
+        "List.take" => {
+            let list = emit_arg(0);
+            let count = emit_arg(1);
+            Some(format!(
+                "{{ let __n = if ({count}) <= 0 {{ 0usize }} else {{ usize::try_from({count}).unwrap_or(usize::MAX) }}; aver_rt::AverList::from_vec(({list}).iter().take(__n).cloned().collect::<Vec<_>>()) }}"
+            ))
+        }
+        "List.drop" => {
+            let list = emit_arg(0);
+            let count = emit_arg(1);
+            Some(format!(
+                "{{ let __n = if ({count}) <= 0 {{ 0usize }} else {{ usize::try_from({count}).unwrap_or(usize::MAX) }}; aver_rt::AverList::from_vec(({list}).iter().skip(__n).cloned().collect::<Vec<_>>()) }}"
+            ))
         }
         "List.concat" => {
             let left = clone_arg(&args[0], ctx, &arg_ctxs[0]);

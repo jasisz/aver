@@ -1,11 +1,140 @@
 use super::VM;
-use crate::nan_value::NanValue;
+use crate::nan_value::{Arena, NanValue};
 use crate::value::Value;
 use crate::vm::builtin::VmBuiltin;
 use crate::vm::runtime::VmExecutionMode;
-use crate::vm::types::VmError;
+use crate::vm::types::{CodeStore, VmError};
 
 impl VM {
+    pub(super) fn invoke_callable_value(
+        &mut self,
+        callable: NanValue,
+        args: &[NanValue],
+        caller_fn_id: u32,
+        caller_ip: usize,
+    ) -> Result<NanValue, VmError> {
+        if let Some(symbol_id) = self.decode_vm_symbol_id(callable) {
+            if let Some(fn_id) = self.code.symbols.resolve_function(symbol_id) {
+                return self.call_function(fn_id, args);
+            }
+
+            if let Some(builtin) = self.code.symbols.resolve_builtin(symbol_id) {
+                if let Some(profile) = self.profile.as_mut() {
+                    profile.record_builtin_call(builtin.name());
+                }
+                if builtin.is_http_server() {
+                    self.runtime
+                        .ensure_builtin_effects_allowed(&self.code.symbols, builtin)?;
+                    return self.dispatch_http_server(builtin, args);
+                }
+                return self.runtime.invoke_builtin(
+                    &self.code.symbols,
+                    builtin,
+                    args,
+                    &mut self.arena,
+                );
+            }
+
+            if let Some(wrap_kind) = self.code.symbols.resolve_wrapper(symbol_id) {
+                let name = self
+                    .code
+                    .symbols
+                    .get(symbol_id)
+                    .map(|info| info.name.as_str())
+                    .unwrap_or("<wrapper>");
+                if args.len() != 1 {
+                    return Err(VmError::runtime(format!(
+                        "{} expects 1 argument, got {}",
+                        name,
+                        args.len()
+                    )));
+                }
+                return match wrap_kind {
+                    0 => Ok(NanValue::new_ok_value(args[0], &mut self.arena)),
+                    1 => Ok(NanValue::new_err_value(args[0], &mut self.arena)),
+                    2 => Ok(NanValue::new_some_value(args[0], &mut self.arena)),
+                    _ => Err(VmError::runtime("invalid wrap kind")),
+                };
+            }
+
+            if let Some(ctor) = self.code.symbols.resolve_variant_ctor(symbol_id) {
+                let name = self
+                    .code
+                    .symbols
+                    .get(symbol_id)
+                    .map(|info| info.name.as_str())
+                    .unwrap_or("<ctor>");
+                if args.len() != ctor.field_count as usize {
+                    return Err(VmError::runtime(format!(
+                        "{} expects {} argument(s), got {}",
+                        name,
+                        ctor.field_count,
+                        args.len()
+                    )));
+                }
+                if ctor.field_count == 0 {
+                    return Ok(NanValue::new_nullary_variant(
+                        self.arena.push_nullary_variant_symbol(ctor.ctor_id),
+                    ));
+                }
+                let idx = self
+                    .arena
+                    .push_variant(ctor.type_id, ctor.variant_id, args.to_vec());
+                return Ok(NanValue::new_variant(idx));
+            }
+
+            if let Some(value) = self.code.symbols.resolve_constant(symbol_id) {
+                let name = self
+                    .code
+                    .symbols
+                    .get(symbol_id)
+                    .map(|info| info.name.as_str())
+                    .unwrap_or("<constant>");
+                return Err(VmError::runtime(format!(
+                    "cannot call constant {} = {}",
+                    name,
+                    self.value_repr(value)
+                )));
+            }
+        }
+
+        let target_fn_id = self.decode_vm_fn_ref(callable, caller_fn_id, caller_ip)?;
+        self.call_function(target_fn_id, args)
+    }
+
+    pub(super) fn build_parallel_base_context(&self) -> (CodeStore, Vec<NanValue>, Arena) {
+        let mut base_arena = self.arena.clone_static();
+        let mut code = self.code.clone();
+        let constant_lens: Vec<usize> = code
+            .functions
+            .iter()
+            .map(|chunk| chunk.constants.len())
+            .collect();
+
+        let mut roots = Vec::new();
+        for chunk in &mut code.functions {
+            for constant in &mut chunk.constants {
+                *constant = base_arena.deep_import(*constant, &self.arena);
+                roots.push(*constant);
+            }
+        }
+        let globals_start = roots.len();
+        for global in &self.globals {
+            roots.push(base_arena.deep_import(*global, &self.arena));
+        }
+        base_arena.promote_roots_to_stable(&mut roots);
+
+        let mut offset = 0;
+        for (chunk, len) in code.functions.iter_mut().zip(constant_lens) {
+            chunk
+                .constants
+                .copy_from_slice(&roots[offset..offset + len]);
+            offset += len;
+        }
+        let globals = roots[globals_start..].to_vec();
+        (code, globals, base_arena)
+    }
+
     pub(super) fn collect_live_vm_roots(&mut self) {
         let stack_count = self.stack.len();
         let global_count = self.globals.len();

@@ -133,6 +133,8 @@ vm_builtins! {
 
     ListLen => "List.len",
     ListPrepend => "List.prepend",
+    ListTake => "List.take",
+    ListDrop => "List.drop",
     ListConcat => "List.concat",
     ListReverse => "List.reverse",
     ListContains => "List.contains",
@@ -391,6 +393,8 @@ impl VmBuiltin {
 
             Self::ListLen
             | Self::ListPrepend
+            | Self::ListTake
+            | Self::ListDrop
             | Self::ListConcat
             | Self::ListReverse
             | Self::ListContains

@@ -1,5 +1,6 @@
 mod coverage;
 mod cse;
+mod independence;
 mod intent;
 mod law;
 mod perf;
@@ -222,6 +223,7 @@ use verify::verify_case_calls_target;
 // Public re-exports so external callers don't break
 pub use coverage::{collect_verify_coverage_warnings, collect_verify_coverage_warnings_in};
 pub use cse::{collect_cse_warnings, collect_cse_warnings_in};
+pub use independence::{collect_independence_warnings, collect_independence_warnings_in};
 pub use intent::{
     check_module_intent, check_module_intent_with_sigs, check_module_intent_with_sigs_in,
     index_decisions,

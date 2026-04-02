@@ -3,6 +3,8 @@
 /// Methods:
 ///   List.len(list)           → Int                    — number of elements
 ///   List.prepend(val, list)  → List<T>                — prepend element
+///   List.take(list, n)       → List<T>                — first `n` elements
+///   List.drop(list, n)       → List<T>                — all but first `n` elements
 ///   List.concat(a, b)        → List<T>                — concatenate two lists
 ///   List.reverse(list)       → List<T>                — reverse elements
 ///   List.contains(list, val) → Bool                   — membership by `==`
@@ -19,7 +21,9 @@ use crate::value::{
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
-    for method in &["len", "prepend", "concat", "reverse", "contains", "zip"] {
+    for method in &[
+        "len", "prepend", "take", "drop", "concat", "reverse", "contains", "zip",
+    ] {
         members.insert(
             method.to_string(),
             Value::Builtin(format!("List.{}", method)),
@@ -43,6 +47,8 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
         "List.len" => Some(len(args)),
         "List.prepend" => Some(prepend(args)),
+        "List.take" => Some(take(args)),
+        "List.drop" => Some(drop(args)),
         "List.concat" => Some(concat(args)),
         "List.reverse" => Some(reverse(args)),
         "List.contains" => Some(contains(args)),
@@ -75,6 +81,54 @@ fn prepend(args: &[Value]) -> Result<Value, RuntimeError> {
     list_prepend(args[0].clone(), &args[1]).ok_or_else(|| {
         RuntimeError::Error("List.prepend() second argument must be a List".to_string())
     })
+}
+
+fn take(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!(
+            "List.take() takes 2 arguments (list, n), got {}",
+            args.len()
+        )));
+    }
+    let list = list_view(&args[0]).ok_or_else(|| {
+        RuntimeError::Error("List.take() first argument must be a List".to_string())
+    })?;
+    let count = match args[1] {
+        Value::Int(n) if n <= 0 => 0usize,
+        Value::Int(n) => usize::try_from(n).unwrap_or(usize::MAX),
+        _ => {
+            return Err(RuntimeError::Error(
+                "List.take() second argument must be an Int".to_string(),
+            ));
+        }
+    };
+    Ok(crate::value::list_from_vec(
+        list.iter().take(count).cloned().collect(),
+    ))
+}
+
+fn drop(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!(
+            "List.drop() takes 2 arguments (list, n), got {}",
+            args.len()
+        )));
+    }
+    let list = list_view(&args[0]).ok_or_else(|| {
+        RuntimeError::Error("List.drop() first argument must be a List".to_string())
+    })?;
+    let count = match args[1] {
+        Value::Int(n) if n <= 0 => 0usize,
+        Value::Int(n) => usize::try_from(n).unwrap_or(usize::MAX),
+        _ => {
+            return Err(RuntimeError::Error(
+                "List.drop() second argument must be an Int".to_string(),
+            ));
+        }
+    };
+    Ok(crate::value::list_from_vec(
+        list.iter().skip(count).cloned().collect(),
+    ))
 }
 
 fn concat(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -142,7 +196,9 @@ fn zip(args: &[Value]) -> Result<Value, RuntimeError> {
 // ─── NanValue-native API ─────────────────────────────────────────────────────
 
 pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
-    let methods = &["len", "prepend", "concat", "reverse", "contains", "zip"];
+    let methods = &[
+        "len", "prepend", "take", "drop", "concat", "reverse", "contains", "zip",
+    ];
     let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
     for method in methods {
         let idx = arena.push_builtin(&format!("List.{}", method));
@@ -163,6 +219,8 @@ pub fn call_nv(
     match name {
         "List.len" => Some(len_nv(args, arena)),
         "List.prepend" => Some(prepend_nv(args, arena)),
+        "List.take" => Some(take_nv(args, arena)),
+        "List.drop" => Some(drop_nv(args, arena)),
         "List.concat" => Some(concat_nv(args, arena)),
         "List.reverse" => Some(reverse_nv(args, arena)),
         "List.contains" => Some(contains_nv(args, arena)),
@@ -202,6 +260,78 @@ fn prepend_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
         ));
     }
     let list_idx = arena.push_list_prepend(args[0], args[1]);
+    Ok(NanValue::new_list(list_idx))
+}
+
+fn take_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!(
+            "List.take() takes 2 arguments (list, n), got {}",
+            args.len()
+        )));
+    }
+    if !args[0].is_list() {
+        return Err(RuntimeError::Error(
+            "List.take() first argument must be a List".to_string(),
+        ));
+    }
+    let count = if args[1].is_int() {
+        let n = args[1].as_int(arena);
+        if n <= 0 {
+            0usize
+        } else {
+            usize::try_from(n).unwrap_or(usize::MAX)
+        }
+    } else {
+        return Err(RuntimeError::Error(
+            "List.take() second argument must be an Int".to_string(),
+        ));
+    };
+    let items: Vec<NanValue> = arena
+        .list_to_vec_value(args[0])
+        .into_iter()
+        .take(count)
+        .collect();
+    if items.is_empty() {
+        return Ok(NanValue::EMPTY_LIST);
+    }
+    let list_idx = arena.push_list(items);
+    Ok(NanValue::new_list(list_idx))
+}
+
+fn drop_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::Error(format!(
+            "List.drop() takes 2 arguments (list, n), got {}",
+            args.len()
+        )));
+    }
+    if !args[0].is_list() {
+        return Err(RuntimeError::Error(
+            "List.drop() first argument must be a List".to_string(),
+        ));
+    }
+    let count = if args[1].is_int() {
+        let n = args[1].as_int(arena);
+        if n <= 0 {
+            0usize
+        } else {
+            usize::try_from(n).unwrap_or(usize::MAX)
+        }
+    } else {
+        return Err(RuntimeError::Error(
+            "List.drop() second argument must be an Int".to_string(),
+        ));
+    };
+    let items: Vec<NanValue> = arena
+        .list_to_vec_value(args[0])
+        .into_iter()
+        .skip(count)
+        .collect();
+    if items.is_empty() {
+        return Ok(NanValue::EMPTY_LIST);
+    }
+    let list_idx = arena.push_list(items);
     Ok(NanValue::new_list(list_idx))
 }
 

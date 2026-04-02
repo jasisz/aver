@@ -1040,6 +1040,67 @@ fn vm_wrapper_constructor_value() {
 }
 
 #[test]
+fn vm_independent_product_allows_builtin_branches() {
+    let mut machine = vm_machine(
+        r#"
+fn main() -> (List<String>, Int)
+    ! [Args.get]
+    (Args.get(), String.len("abcd"))!
+"#,
+    );
+    machine.set_cli_args(vec!["left".to_string(), "right".to_string()]);
+    let result = machine.run().expect("vm run failed");
+    assert_eq!(
+        result.to_value(&machine.arena),
+        aver::value::Value::Tuple(vec![
+            aver::value::list_from_vec(vec![
+                aver::value::Value::Str("left".to_string()),
+                aver::value::Value::Str("right".to_string()),
+            ]),
+            aver::value::Value::Int(4),
+        ])
+    );
+}
+
+#[test]
+fn vm_independent_product_allows_wrapper_branches() {
+    let (result, arena) = vm_run_with_arena(
+        r#"
+fn main() -> (Result<Int, String>, Result<Int, String>)
+    (Result.Ok(1), Result.Err("x"))!
+"#,
+    );
+    assert_eq!(
+        result.to_value(&arena),
+        aver::value::Value::Tuple(vec![
+            aver::value::Value::Ok(Box::new(aver::value::Value::Int(1))),
+            aver::value::Value::Err(Box::new(aver::value::Value::Str("x".to_string()))),
+        ])
+    );
+}
+
+#[test]
+fn vm_independent_product_allows_dynamic_callable_and_global_branches() {
+    let src = r#"
+shared = ["aa", "bbb"]
+
+fn fromGlobal() -> Int
+    match shared
+        [first, .._] -> String.len(first)
+        _ -> 0
+
+fn main() -> (Int, Int)
+    f = String.len
+    (f("abcd"), fromGlobal())!
+"#;
+    let (result, arena) = vm_run_with_arena(src);
+    assert_eq!(
+        result.to_value(&arena),
+        aver::value::Value::Tuple(vec![aver::value::Value::Int(4), aver::value::Value::Int(2),])
+    );
+}
+
+#[test]
 fn vm_option_none_namespace_member_value() {
     let src = "fn fallback(value: Option<Int>) -> Int\n    match value\n        Option.Some(v) -> v\n        Option.None -> 0\n\nfn main() -> Int\n    missing = Option.None\n    fallback(missing)\n";
     let result = vm_run(src);
@@ -1205,6 +1266,50 @@ fn vm_list_len() {
     assert!(result.is_int());
     let arena = Arena::new();
     assert_eq!(result.as_int(&arena), 3);
+}
+
+#[test]
+fn vm_list_take() {
+    let (result, arena) =
+        vm_run_with_arena("fn main() -> List<Int>\n    List.take([1, 2, 3, 4], 2)\n");
+    assert!(result.is_list());
+    assert_eq!(arena.list_len(result.arena_index()), 2);
+    assert_eq!(
+        arena
+            .list_get(result.arena_index(), 0)
+            .unwrap()
+            .as_int(&arena),
+        1
+    );
+    assert_eq!(
+        arena
+            .list_get(result.arena_index(), 1)
+            .unwrap()
+            .as_int(&arena),
+        2
+    );
+}
+
+#[test]
+fn vm_list_drop() {
+    let (result, arena) =
+        vm_run_with_arena("fn main() -> List<Int>\n    List.drop([1, 2, 3, 4], 2)\n");
+    assert!(result.is_list());
+    assert_eq!(arena.list_len(result.arena_index()), 2);
+    assert_eq!(
+        arena
+            .list_get(result.arena_index(), 0)
+            .unwrap()
+            .as_int(&arena),
+        3
+    );
+    assert_eq!(
+        arena
+            .list_get(result.arena_index(), 1)
+            .unwrap()
+            .as_int(&arena),
+        4
+    );
 }
 
 #[test]

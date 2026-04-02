@@ -40,6 +40,12 @@ pub fn compile_program_with_modules(
     }
 
     for item in items {
+        if let TopLevel::Stmt(Stmt::Binding(name, _, _)) = item {
+            compiler.ensure_global(name);
+        }
+    }
+
+    for item in items {
         match item {
             TopLevel::FnDef(fndef) => {
                 compiler.ensure_global(&fndef.name);

@@ -589,7 +589,10 @@ fn emit_fn_params_with_rc(
 
 fn emit_fn_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     if let Some(plan) = classify_body_plan_for_rust(body, ctx, ectx) {
-        return format!("    {}", emit_body_plan_for_rust(&plan, ctx, ectx));
+        return format!(
+            "    crate::cancel_checkpoint();\n    {}",
+            emit_body_plan_for_rust(&plan, ctx, ectx)
+        );
     }
 
     let stmts = body.stmts();
@@ -602,6 +605,7 @@ fn emit_fn_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
         &ectx.borrowed_params,
     );
     let mut lines = Vec::new();
+    lines.push("    crate::cancel_checkpoint();".to_string());
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last = i == stmts.len() - 1;
         let sctx = &stmt_ctxs[i];
@@ -1731,6 +1735,7 @@ fn emit_tco_body(
         &ectx.rc_wrapped,
     );
     let mut lines = Vec::new();
+    lines.push("        crate::cancel_checkpoint();".to_string());
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last = i == stmts.len() - 1;
         let sctx = &stmt_ctxs[i];
@@ -2304,6 +2309,7 @@ fn emit_trampoline_arm_body(
         &ectx.rc_wrapped,
     );
     let mut lines = Vec::new();
+    lines.push("                crate::cancel_checkpoint();".to_string());
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last = i == stmts.len() - 1;
         let sctx = &stmt_ctxs[i];
@@ -2645,6 +2651,7 @@ fn emit_memo_inner_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> 
         &ectx.borrowed_params,
     );
     let mut parts = Vec::new();
+    parts.push("crate::cancel_checkpoint();".to_string());
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last = i == stmts.len() - 1;
         let sctx = &stmt_ctxs[i];

@@ -703,33 +703,38 @@ impl VM {
                     let count = read_u8!(code, ip) as usize;
                     let unwrap = read_u8!(code, ip) != 0;
 
-                    // Read call descriptors: (fn_id:u32, argc:u8) × count
+                    // Read call descriptors: argc:u8 × count
                     let mut descs = Vec::with_capacity(count);
                     for _ in 0..count {
-                        let call_fn_id = read_u32!(code, ip);
                         let argc = read_u8!(code, ip) as usize;
-                        descs.push((call_fn_id, argc));
+                        descs.push(argc);
                     }
 
-                    // Pop args from stack
-                    let total_args: usize = descs.iter().map(|(_, argc)| argc).sum();
-                    let args_start = self.stack.len() - total_args;
-                    let all_args: Vec<NanValue> = self.stack[args_start..].to_vec();
-                    self.stack.truncate(args_start);
+                    // Pop callable values plus args from stack.
+                    let total_items: usize = descs.iter().map(|argc| argc + 1).sum();
+                    let items_start = self.stack.len() - total_items;
+                    let flat_items: Vec<NanValue> = self.stack[items_start..].to_vec();
+                    self.stack.truncate(items_start);
 
                     // Save caller IP — drop code borrow before call_function
                     self.frames.last_mut().unwrap().ip = ip as u32;
                     let _saved_fn_id = fn_id;
+                    let caller_fn_id = fn_id;
+                    let caller_ip = ip;
 
                     // Enter replay group
                     self.runtime.replay_enter_group();
 
-                    // Build per-element arg slices
-                    let mut element_args: Vec<Vec<NanValue>> = Vec::with_capacity(count);
-                    let mut arg_offset = 0;
-                    for (_, argc) in &descs {
-                        element_args.push(all_args[arg_offset..arg_offset + *argc].to_vec());
-                        arg_offset += argc;
+                    // Build per-element callable + arg bundles in source order.
+                    let mut element_calls: Vec<(NanValue, Vec<NanValue>)> =
+                        Vec::with_capacity(count);
+                    let mut item_offset = 0;
+                    for argc in &descs {
+                        let callable = flat_items[item_offset];
+                        item_offset += 1;
+                        let args = flat_items[item_offset..item_offset + *argc].to_vec();
+                        item_offset += *argc;
+                        element_calls.push((callable, args));
                     }
 
                     // Check if recording/replaying — if so, run sequentially
@@ -739,19 +744,40 @@ impl VM {
                     let mut had_vm_error: Option<VmError> = None;
                     let results = if is_tracking || count <= 1 {
                         let mut results = Vec::with_capacity(count);
-                        for (i, (call_fn_id, _)) in descs.iter().enumerate() {
+                        for (i, (callable, args)) in element_calls.iter().enumerate() {
                             self.runtime.replay_set_branch(i as u32);
-                            let result = self.call_function(*call_fn_id, &element_args[i])?;
+                            let result = self.invoke_callable_value(
+                                *callable,
+                                args,
+                                caller_fn_id,
+                                caller_ip,
+                            )?;
                             results.push(result);
                         }
                         results
                     } else {
                         // Parallel: spawn a child VM per element
-                        let code = self.code.clone();
-                        let globals = self.globals.clone();
+                        let (parallel_base_code, parallel_base_globals, parallel_base_arena) =
+                            self.build_parallel_base_context();
                         let allowed_effects = self.runtime.allowed_effects().to_vec();
+                        let cli_args = self.runtime.cli_args().to_vec();
+                        let silent_console = self.runtime.silent_console();
+                        let runtime_policy = self.runtime.runtime_policy().cloned();
                         let cancel_mode = self.runtime.independence_mode()
                             == crate::config::IndependenceMode::Cancel;
+                        let prepared_calls: Vec<(NanValue, Vec<NanValue>, Arena)> = element_calls
+                            .iter()
+                            .map(|(callable, args)| {
+                                let mut child_arena = parallel_base_arena.clone_static();
+                                let child_callable =
+                                    child_arena.deep_import(*callable, &self.arena);
+                                let child_args = args
+                                    .iter()
+                                    .map(|arg| child_arena.deep_import(*arg, &self.arena))
+                                    .collect();
+                                (child_callable, child_args, child_arena)
+                            })
+                            .collect();
 
                         if cancel_mode && unwrap {
                             // Cancel mode with ?!: cooperative cancellation via shared flag.
@@ -773,18 +799,28 @@ impl VM {
                                 >,
                             > = descs
                                 .iter()
-                                .zip(element_args)
-                                .map(|((call_fn_id, _), args)| {
-                                    let code = code.clone();
-                                    let globals = globals.clone();
-                                    let arena = self.arena.clone();
-                                    let call_fn_id = *call_fn_id;
+                                .zip(prepared_calls)
+                                .map(|(_, (callable, args, arena))| {
+                                    let code = parallel_base_code.clone();
+                                    let globals = parallel_base_globals.clone();
                                     let effects = allowed_effects.clone();
+                                    let cli_args = cli_args.clone();
+                                    let runtime_policy = runtime_policy.clone();
                                     Box::new(move |flag: Arc<AtomicBool>| {
                                         let mut child_vm = VM::new(code, globals, arena);
                                         child_vm.set_allowed_effects(effects);
+                                        child_vm.set_cli_args(cli_args);
+                                        child_vm.set_silent_console(silent_console);
+                                        if let Some(config) = runtime_policy {
+                                            child_vm.set_runtime_policy(config);
+                                        }
                                         child_vm.set_cancelled(flag.clone());
-                                        let result = child_vm.call_function(call_fn_id, &args)?;
+                                        let result = child_vm.invoke_callable_value(
+                                            callable,
+                                            &args,
+                                            caller_fn_id,
+                                            caller_ip,
+                                        )?;
                                         if result.is_err() {
                                             flag.store(true, Ordering::Relaxed);
                                         }
@@ -832,17 +868,27 @@ impl VM {
                                 Box<dyn FnOnce() -> Result<(NanValue, Arena), VmError> + Send>,
                             > = descs
                                 .iter()
-                                .zip(element_args)
-                                .map(|((call_fn_id, _), args)| {
-                                    let code = code.clone();
-                                    let globals = globals.clone();
-                                    let arena = self.arena.clone();
-                                    let call_fn_id = *call_fn_id;
+                                .zip(prepared_calls)
+                                .map(|(_, (callable, args, arena))| {
+                                    let code = parallel_base_code.clone();
+                                    let globals = parallel_base_globals.clone();
                                     let effects = allowed_effects.clone();
+                                    let cli_args = cli_args.clone();
+                                    let runtime_policy = runtime_policy.clone();
                                     Box::new(move || {
                                         let mut child_vm = VM::new(code, globals, arena);
                                         child_vm.set_allowed_effects(effects);
-                                        let result = child_vm.call_function(call_fn_id, &args)?;
+                                        child_vm.set_cli_args(cli_args);
+                                        child_vm.set_silent_console(silent_console);
+                                        if let Some(config) = runtime_policy {
+                                            child_vm.set_runtime_policy(config);
+                                        }
+                                        let result = child_vm.invoke_callable_value(
+                                            callable,
+                                            &args,
+                                            caller_fn_id,
+                                            caller_ip,
+                                        )?;
                                         Ok((result, child_vm.arena))
                                     })
                                         as Box<

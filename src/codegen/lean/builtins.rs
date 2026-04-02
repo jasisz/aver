@@ -102,6 +102,8 @@ pub fn emit_builtin_call(
         ListHead => format!("{}.head?", p(&a[0])),
         ListTail => format!("{}.tail?", p(&a[0])),
         ListPrepend => format!("{} :: {}", a[0], p(&a[1])),
+        ListTake => format!("{}.take ({}.toNat)", p(&a[0]), p(&a[1])),
+        ListDrop => format!("{}.drop ({}.toNat)", p(&a[0]), p(&a[1])),
         ListConcat => format!("{} ++ {}", p(&a[0]), p(&a[1])),
         ListReverse => format!("{}.reverse", p(&a[0])),
         ListContains => format!("{}.contains {}", p(&a[0]), p(&a[1])),

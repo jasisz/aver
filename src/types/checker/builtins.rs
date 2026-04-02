@@ -460,6 +460,18 @@ impl TypeChecker {
                 &[],
             ),
             (
+                "List.take",
+                &[Type::Unknown, Type::Int],
+                Type::List(Box::new(any())),
+                &[],
+            ),
+            (
+                "List.drop",
+                &[Type::Unknown, Type::Int],
+                Type::List(Box::new(any())),
+                &[],
+            ),
+            (
                 "List.concat",
                 &[Type::Unknown, Type::Unknown],
                 Type::List(Box::new(any())),

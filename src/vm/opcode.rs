@@ -135,10 +135,11 @@ pub const WRAP: u8 = 0x66; // kind:u8
 pub const TUPLE_NEW: u8 = 0x68; // count:u8
 
 /// Parallel function calls for independent products (?! / !).
-/// Pops all args from stack, dispatches N function calls via aver_rt::par_execute,
-/// builds result tuple. Enters/exits replay group around parallel dispatch.
+/// Pops N callable values plus their args from the stack, dispatches them via
+/// the same callable resolution rules as CALL_VALUE, then builds the result tuple.
+/// Enters/exits replay group around parallel dispatch.
 ///
-/// Encoding: CALL_PAR count:u8 unwrap:u8 [(fn_id:u32 argc:u8) × count]
+/// Encoding: CALL_PAR count:u8 unwrap:u8 [argc:u8 × count]
 /// unwrap=1 (?!): unwrap each Result, propagate first Err.
 /// unwrap=0 (!): return raw tuple.
 pub const CALL_PAR: u8 = 0x86;
@@ -392,11 +393,11 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
                 0
             }
         }
-        // CALL_PAR count:u8 unwrap:u8 [(fn_id:u32 argc:u8) × count]
+        // CALL_PAR count:u8 unwrap:u8 [argc:u8 × count]
         CALL_PAR => {
             if ip < code.len() {
                 let count = code[ip] as usize;
-                2 + count * 5
+                2 + count
             } else {
                 0
             }
