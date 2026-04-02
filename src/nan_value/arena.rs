@@ -24,7 +24,7 @@ impl Arena {
 
     /// Create a fresh Arena with only the static context (symbols, type metadata,
     /// stable constants) from this Arena. Dynamic runtime entries are empty.
-    /// Used for effect tuple threads: each gets a clean Arena with just the
+    /// Used for independent product threads: each gets a clean Arena with just the
     /// compile-time context needed to execute functions and builtins.
     pub fn clone_static(&self) -> Self {
         Arena {
@@ -136,9 +136,9 @@ impl Arena {
             ArenaEntry::Boxed(inner) => {
                 let imported = self.deep_import(inner, source);
                 let idx = self.push(ArenaEntry::Boxed(imported));
-                NanValue::encode(value.tag(), idx as u64)
+                NanValue::encode(value.tag(), ARENA_REF_BIT | (idx as u64))
             }
-            // Fn/Builtin/Namespace — should not appear in effect tuple results
+            // Fn/Builtin/Namespace — should not appear in independent product results
             ArenaEntry::Fn(_) | ArenaEntry::Builtin(_) | ArenaEntry::Namespace { .. } => value,
         }
     }
