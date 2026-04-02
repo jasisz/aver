@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here.
 
-## 0.8.0 (unreleased)
+## 0.8.0 (2026-04-02)
 
 ### Added
 - **Independent products (`?!` / `!`)** — a tuple followed by `!` is a product of independent computations. `?!` adds Result unwrapping — all must succeed or the first error propagates. Independence is structural: tuple elements cannot reference each other. Composes recursively, giving fan-out parallelism and pipeline overlap with no new language concepts. No async, no futures, no channels — just products and independence. See [docs/independence.md](docs/independence.md).
