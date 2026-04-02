@@ -385,7 +385,14 @@ impl Interpreter {
                 let cap = items.len();
                 let items = Rc::clone(items);
                 let unwrap = *unwrap;
-                self.resume_independent_product(lowered, items, 0, Vec::with_capacity(cap), unwrap, conts)
+                self.resume_independent_product(
+                    lowered,
+                    items,
+                    0,
+                    Vec::with_capacity(cap),
+                    unwrap,
+                    conts,
+                )
             }
             LoweredExpr::MapLiteral(entries) => {
                 let entries = Rc::clone(entries);
@@ -1328,7 +1335,8 @@ impl Interpreter {
                         return EvalState::Apply(Err(RuntimeError::ErrProp(inner)));
                     } else {
                         return EvalState::Apply(Err(RuntimeError::Error(
-                            "Independent product with '?' can only contain Result values".to_string(),
+                            "Independent product with '?' can only contain Result values"
+                                .to_string(),
                         )));
                     }
                 }

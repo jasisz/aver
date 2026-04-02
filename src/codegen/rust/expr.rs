@@ -296,21 +296,29 @@ fn emit_expr_with_options(
                 code.push_str("crate::aver_replay::enter_effect_group(); ");
                 if *unwrap {
                     for (i, part) in parts.iter().enumerate() {
-                        code.push_str(&format!("crate::aver_replay::set_effect_branch({i}); let _r{i} = {part}?; "));
+                        code.push_str(&format!(
+                            "crate::aver_replay::set_effect_branch({i}); let _r{i} = {part}?; "
+                        ));
                     }
                     code.push_str("crate::aver_replay::exit_effect_group(); (");
                     for i in 0..n {
-                        if i > 0 { code.push_str(", "); }
+                        if i > 0 {
+                            code.push_str(", ");
+                        }
                         code.push_str(&format!("_r{i}"));
                     }
                     code.push(')');
                 } else {
                     for (i, part) in parts.iter().enumerate() {
-                        code.push_str(&format!("crate::aver_replay::set_effect_branch({i}); let _r{i} = {part}; "));
+                        code.push_str(&format!(
+                            "crate::aver_replay::set_effect_branch({i}); let _r{i} = {part}; "
+                        ));
                     }
                     code.push_str("crate::aver_replay::exit_effect_group(); (");
                     for i in 0..n {
-                        if i > 0 { code.push_str(", "); }
+                        if i > 0 {
+                            code.push_str(", ");
+                        }
                         code.push_str(&format!("_r{i}"));
                     }
                     code.push(')');
@@ -329,14 +337,18 @@ fn emit_expr_with_options(
             if *unwrap {
                 code.push_str("Ok::<_, aver_rt::AverStr>((");
                 for i in 0..n {
-                    if i > 0 { code.push_str(", "); }
+                    if i > 0 {
+                        code.push_str(", ");
+                    }
                     code.push_str(&format!("_h{i}.join().unwrap()?"));
                 }
                 code.push_str(")) })? ");
             } else {
                 code.push('(');
                 for i in 0..n {
-                    if i > 0 { code.push_str(", "); }
+                    if i > 0 {
+                        code.push_str(", ");
+                    }
                     code.push_str(&format!("_h{i}.join().unwrap()"));
                 }
                 code.push_str(") }) ");

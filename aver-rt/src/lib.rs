@@ -133,8 +133,12 @@ pub fn par_execute<T: Send>(tasks: Vec<Box<dyn FnOnce() -> T + Send>>) -> Vec<T>
 /// Each task receives a shared `cancelled` flag. When one branch fails, the
 /// flag is set so siblings can check it and bail early. Tasks must call
 /// `cancelled.load(Ordering::Relaxed)` at effect boundaries to cooperate.
+/// Cancellable task: receives a shared cancellation flag, returns Result.
+pub type CancelTask<T, E> =
+    Box<dyn FnOnce(std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<T, E> + Send>;
+
 pub fn par_execute_with_cancel<T: Send, E: Send>(
-    tasks: Vec<Box<dyn FnOnce(std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<T, E> + Send>>,
+    tasks: Vec<CancelTask<T, E>>,
 ) -> Vec<Result<T, E>> {
     use std::sync::{Arc, atomic::AtomicBool};
     let cancelled = Arc::new(AtomicBool::new(false));

@@ -757,11 +757,20 @@ impl VM {
                             // Cancel mode with ?!: cooperative cancellation via shared flag.
                             // When a branch returns Result.Err, set the flag so siblings
                             // can bail early via the VM's periodic cancellation check.
-                            use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+                            use std::sync::{
+                                Arc,
+                                atomic::{AtomicBool, Ordering},
+                            };
 
                             #[allow(clippy::type_complexity)]
                             let tasks: Vec<
-                                Box<dyn FnOnce(Arc<AtomicBool>) -> Result<(NanValue, Arena), VmError> + Send>,
+                                Box<
+                                    dyn FnOnce(
+                                            Arc<AtomicBool>,
+                                        )
+                                            -> Result<(NanValue, Arena), VmError>
+                                        + Send,
+                                >,
                             > = descs
                                 .iter()
                                 .zip(element_args)
@@ -782,7 +791,11 @@ impl VM {
                                         Ok((result, child_vm.arena))
                                     })
                                         as Box<
-                                            dyn FnOnce(Arc<AtomicBool>) -> Result<(NanValue, Arena), VmError> + Send,
+                                            dyn FnOnce(
+                                                    Arc<AtomicBool>,
+                                                )
+                                                    -> Result<(NanValue, Arena), VmError>
+                                                + Send,
                                         >
                                 })
                                 .collect();
@@ -833,7 +846,8 @@ impl VM {
                                         Ok((result, child_vm.arena))
                                     })
                                         as Box<
-                                            dyn FnOnce() -> Result<(NanValue, Arena), VmError> + Send,
+                                            dyn FnOnce() -> Result<(NanValue, Arena), VmError>
+                                                + Send,
                                         >
                                 })
                                 .collect();

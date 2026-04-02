@@ -82,7 +82,9 @@ impl<'a> FnCompiler<'a> {
             } => self.compile_record_update(type_name, base, updates),
             Expr::Attr(obj, field) => self.compile_attr(obj, field),
             Expr::Tuple(items) => self.compile_tuple(items),
-            Expr::IndependentProduct(items, unwrap) => self.compile_independent_product(items, *unwrap),
+            Expr::IndependentProduct(items, unwrap) => {
+                self.compile_independent_product(items, *unwrap)
+            }
             Expr::MapLiteral(entries) => self.compile_map(entries),
         }
     }
