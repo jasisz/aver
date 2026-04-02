@@ -18,7 +18,7 @@ The runtime may therefore evaluate elements sequentially (left-to-right) or conc
 
 **`(a, b)?!`** — product of independent Result computations.
 
-`(a, b)?!` is the independent product of `Result` computations. If all branches produce `Ok`, the result is the tuple of unwrapped values. If one or more branches produce `Err`, the product evaluates to `Err`. In sequential execution, the first `Err` (left-to-right) propagates. In parallel execution, the propagated error is nondeterministic among the produced errors. With replay enabled, the choice is recorded and reproduced.
+`(a, b)?!` is the independent product of `Result` computations. If all branches produce `Ok`, the result is the tuple of unwrapped values. If one or more branches produce `Err`, the product evaluates to `Err`. The propagated error is selected deterministically in left-to-right order.
 
 **`(a, b)`** — product of values. Standard tuple semantics. No independence claim.
 
@@ -61,7 +61,7 @@ Let τ range over observable effect traces. For an independent product, each bra
 ⟨(a, b)?!, τ₀⟩ ⇓ ⟨Err(e), τ₀ · τ⟩
 ```
 
-If multiple branches produce `Err`, the propagated error is the first `Err` in left-to-right order in sequential execution, and nondeterministic among the produced errors in parallel execution. With replay enabled, the choice is recorded and reproduced. The single-failure rules generalize to multiple failures by replacing `Err(e)` with any selected produced error according to this policy.
+If multiple branches produce `Err`, the propagated error is the first `Err` in left-to-right order. The single-failure rules generalize to multiple failures by replacing `Err(e)` with the leftmost produced error.
 
 **Bare `!`:**
 
@@ -73,7 +73,7 @@ If multiple branches produce `Err`, the propagated error is the first `Err` in l
 ⟨(a, b)!, τ₀⟩ ⇓ ⟨(v₁, v₂), τ₀ · τ⟩
 ```
 
-**Replay invariant:** replay records tuples of `(group_id, branch_path, branch_occurrence, effect_type, effect_args, result)`. Within a group, matching is by `(group_id, branch_path, branch_occurrence, effect_type, effect_args)`, not by position in the execution schedule. `branch_path` is a dotted path encoding the branch position within nested products (e.g. `"0.1"` = branch 0 of outer product, branch 1 of inner). `branch_occurrence` is the per-branch ordinal of effect emission (0-based), disambiguating multiple emissions of the same effect within a single branch. Together these ensure replay is fully deterministic across all compositions — nested, recursive, and with duplicate effects. Reordering within an independent product does not invalidate replay.
+**Replay invariant:** replay records tuples of `(group_id, branch_path, branch_occurrence, effect_type, effect_args, result)`. Within a group, matching is by `(group_id, branch_path, branch_occurrence, effect_type, effect_args)`, not by position in the execution schedule. `branch_path` is a dotted path encoding the branch position within nested products (e.g. `"0.1"` = branch 0 of outer product, branch 1 of inner). `branch_occurrence` is the per-branch ordinal of effect emission (0-based), disambiguating multiple emissions of the same effect within a single branch. Together these make replay deterministic with respect to branch identity and repeated effects within nested and recursive compositions. Reordering within an independent product does not invalidate replay.
 
 **Cancellation and error priority:** a cancellation error is an execution artifact, not a primary failure. When `?!` unwraps results, a real `Result.Err` from a branch always takes priority over a cancellation error from a sibling. A cancellation error propagates only if no branch produced a real `Err`.
 
