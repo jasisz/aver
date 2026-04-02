@@ -48,6 +48,7 @@ fn evalExpr(expr: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Val, Stri
         Expr.ExprCallBuiltinId(id, argExprs) -> evalCallBuiltinById(id, argExprs, env, fns)
         Expr.ExprMatch(scrutinee, arms) -> evalMatchExpr(scrutinee, arms, env, fns)
         Expr.ExprPropagate(inner) -> evalPropagate(inner, env, fns)
+        Expr.ExprIndependentProduct(exprs, unwrap) -> evalIndependentProduct(exprs, unwrap, env, fns)
 
 fn evalVar(name: String, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Look up variable, Option.None, a named function reference, or a nullary variant constructor."
@@ -98,6 +99,25 @@ fn evalPropagate(inner: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Val
             Val.ValStr(msg) -> Result.Err(Domain.Eval.Common.wrapPropagatedError(msg))
             _ -> Result.Err(Domain.Eval.Common.wrapPropagatedError("propagated error"))
         _ -> Result.Err("? operator requires Result value")
+
+fn evalIndependentProduct(exprs: List<Expr>, unwrap: Bool, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
+    ? "Evaluate independent product: sequential evaluation, then unwrap Results if ?!."
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    items = evalListItems(exprs, env, fns)?
+    match unwrap
+        true -> unwrapProductResults(items, [])
+        false -> Result.Ok(Val.ValTuple(items))
+
+fn unwrapProductResults(items: List<Val>, acc: List<Val>) -> Result<Val, String>
+    ? "Unwrap all Result values in an independent product (?!)."
+    match items
+        [] -> Result.Ok(Val.ValTuple(List.reverse(acc)))
+        [v, ..rest] -> match v
+            Val.ValOk(x) -> unwrapProductResults(rest, List.prepend(x, acc))
+            Val.ValErr(e) -> match e
+                Val.ValStr(msg) -> Result.Err(Domain.Eval.Common.wrapPropagatedError(msg))
+                _ -> Result.Err(Domain.Eval.Common.wrapPropagatedError("propagated error"))
+            _ -> Result.Err("?! operator requires all elements to be Result values")
 
 fn evalMatchExpr(scrutinee: Expr, arms: List<MatchArm>, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate a match expression."
@@ -666,6 +686,7 @@ fn evalExprSlot(expr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: Fn
         Expr.ExprCallBuiltinId(id, argExprs) -> evalCallBuiltinByIdSlot(id, argExprs, env, slotMap, fns)
         Expr.ExprMatch(scrutinee, arms) -> evalMatchExprSlot(scrutinee, arms, env, slotMap, fns)
         Expr.ExprPropagate(inner) -> evalPropagateSlot(inner, env, slotMap, fns)
+        Expr.ExprIndependentProduct(exprs, unwrap) -> evalIndependentProductSlot(exprs, unwrap, env, slotMap, fns)
 
 fn evalVarSlot(name: String, fns: FnStore) -> Result<Val, String>
     ? "Resolve unresolved var in slot path: builtins, named function refs, and constructors."
@@ -1088,6 +1109,14 @@ fn evalPropagateSlot(inner: Expr, env: Vector<Val>, slotMap: Map<String, Int>, f
             Val.ValStr(msg) -> Result.Err(Domain.Eval.Common.wrapPropagatedError(msg))
             _ -> Result.Err(Domain.Eval.Common.wrapPropagatedError("propagated error"))
         _ -> Result.Err("? operator requires Result value")
+
+fn evalIndependentProductSlot(exprs: List<Expr>, unwrap: Bool, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
+    ? "Evaluate independent product in slot path: sequential evaluation, then unwrap Results if ?!."
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    items = evalListItemsSlot(exprs, env, slotMap, fns)?
+    match unwrap
+        true -> unwrapProductResults(items, [])
+        false -> Result.Ok(Val.ValTuple(items))
 
 fn evalStmtBindSlotNext(slot: Int, e: Expr, rest: List<Stmt>, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate a slot binding and continue statement execution without packing a tuple."

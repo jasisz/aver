@@ -348,22 +348,42 @@ verify parseTupleRest
     parseTupleRest([Token.TkInt(2), Token.TkRParen, Token.TkEof], 0, [Expr.ExprInt(1)]) => Result.Ok((Expr.ExprTuple([Expr.ExprInt(1), Expr.ExprInt(2)]), 2))
     parseTupleRest([Token.TkEof], 0, []) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
+fn finishTupleOrProduct(tokens: List<Token>, pos: Int, items: List<Expr>) -> Result<(Expr, Int), String>
+    ? "After tuple closing ')': check for ?! or ! postfix to form independent product."
+    match Domain.ParserMatch.tokenAt(tokens, pos)
+        Token.TkQuestion -> match Domain.ParserMatch.tokenAt(tokens, pos + 1)
+            Token.TkBang -> Result.Ok((Expr.ExprIndependentProduct(items, true), pos + 2))
+            _ -> Result.Ok((Expr.ExprTuple(items), pos))
+        Token.TkBang -> match Domain.ParserMatch.tokenAt(tokens, pos + 1)
+            Token.TkLBracket -> Result.Ok((Expr.ExprTuple(items), pos))
+            _ -> Result.Ok((Expr.ExprIndependentProduct(items, false), pos + 1))
+        _ -> Result.Ok((Expr.ExprTuple(items), pos))
+
+verify finishTupleOrProduct
+    finishTupleOrProduct([Token.TkEof], 0, [Expr.ExprInt(1), Expr.ExprInt(2)]) => Result.Ok((Expr.ExprTuple([Expr.ExprInt(1), Expr.ExprInt(2)]), 0))
+    finishTupleOrProduct([Token.TkBang, Token.TkEof], 0, [Expr.ExprInt(1), Expr.ExprInt(2)]) => Result.Ok((Expr.ExprIndependentProduct([Expr.ExprInt(1), Expr.ExprInt(2)], false), 1))
+    finishTupleOrProduct([Token.TkBang, Token.TkLBracket, Token.TkEof], 0, [Expr.ExprInt(1), Expr.ExprInt(2)]) => Result.Ok((Expr.ExprTuple([Expr.ExprInt(1), Expr.ExprInt(2)]), 0))
+    finishTupleOrProduct([Token.TkQuestion, Token.TkBang, Token.TkEof], 0, [Expr.ExprInt(1), Expr.ExprInt(2)]) => Result.Ok((Expr.ExprIndependentProduct([Expr.ExprInt(1), Expr.ExprInt(2)], true), 2))
+    finishTupleOrProduct([Token.TkQuestion, Token.TkEof], 0, [Expr.ExprInt(1), Expr.ExprInt(2)]) => Result.Ok((Expr.ExprTuple([Expr.ExprInt(1), Expr.ExprInt(2)]), 0))
+
 fn parseTupleRestTail(tokens: List<Token>, pos0: Int, items: List<Expr>) -> Result<(Expr, Int), String>
     ? "After tuple element: ',' for more or ')' to end."
     pos = skipNl(tokens, pos0)
     match Domain.ParserMatch.tokenAt(tokens, pos)
         Token.TkComma -> parseTupleAfterComma(tokens, skipNl(tokens, pos + 1), items)
-        Token.TkRParen -> Result.Ok((Expr.ExprTuple(items), pos + 1))
+        Token.TkRParen -> finishTupleOrProduct(tokens, pos + 1, items)
         _ -> Result.Err("Expected ')' or ',' in tuple")
 
 verify parseTupleRestTail
     parseTupleRestTail([Token.TkRParen, Token.TkEof], 0, [Expr.ExprInt(1), Expr.ExprInt(2)]) => Result.Ok((Expr.ExprTuple([Expr.ExprInt(1), Expr.ExprInt(2)]), 1))
+    parseTupleRestTail([Token.TkRParen, Token.TkQuestion, Token.TkBang, Token.TkEof], 0, [Expr.ExprInt(1), Expr.ExprInt(2)]) => Result.Ok((Expr.ExprIndependentProduct([Expr.ExprInt(1), Expr.ExprInt(2)], true), 3))
+    parseTupleRestTail([Token.TkRParen, Token.TkBang, Token.TkEof], 0, [Expr.ExprInt(1), Expr.ExprInt(2)]) => Result.Ok((Expr.ExprIndependentProduct([Expr.ExprInt(1), Expr.ExprInt(2)], false), 2))
     parseTupleRestTail([Token.TkEof], 0, []) => Result.Err("Expected ')' or ',' in tuple")
 
 fn parseTupleAfterComma(tokens: List<Token>, pos: Int, items: List<Expr>) -> Result<(Expr, Int), String>
     ? "Allow a trailing comma before ')' in tuples."
     match Domain.ParserMatch.tokenAt(tokens, pos)
-        Token.TkRParen -> Result.Ok((Expr.ExprTuple(items), pos + 1))
+        Token.TkRParen -> finishTupleOrProduct(tokens, pos + 1, items)
         _ -> parseTupleRest(tokens, pos, items)
 
 verify parseTupleAfterComma

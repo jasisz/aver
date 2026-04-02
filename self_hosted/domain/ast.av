@@ -39,6 +39,7 @@ type Expr
     ExprCallBuiltinId(Int, List<Expr>)
     ExprMatch(Expr, List<MatchArm>)
     ExprPropagate(Expr)
+    ExprIndependentProduct(List<Expr>, Bool)
 
 record MatchArm
     pattern: Pattern

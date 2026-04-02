@@ -81,6 +81,7 @@ fn resolveCallsInExpr(expr: Expr, fnMap: Map<String, Int>) -> Expr
         Expr.ExprPropagate(inner) -> Expr.ExprPropagate(resolveCallsInExpr(inner, fnMap))
         Expr.ExprConcat(parts) -> Expr.ExprConcat(resolveCallsInExprs(parts, fnMap, []))
         Expr.ExprTuple(exprs) -> Expr.ExprTuple(resolveCallsInExprs(exprs, fnMap, []))
+        Expr.ExprIndependentProduct(exprs, unwrap) -> Expr.ExprIndependentProduct(resolveCallsInExprs(exprs, fnMap, []), unwrap)
         Expr.ExprList(exprs) -> Expr.ExprList(resolveCallsInExprs(exprs, fnMap, []))
         Expr.ExprRecord(name, fields) -> Expr.ExprRecord(name, resolveCallsInFields(fields, fnMap, []))
         Expr.ExprFieldAccess(obj, field) -> Expr.ExprFieldAccess(resolveCallsInExpr(obj, fnMap), field)

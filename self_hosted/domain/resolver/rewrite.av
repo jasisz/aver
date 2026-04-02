@@ -68,6 +68,7 @@ fn rewriteInternalExpr(expr: Expr) -> Expr
         Expr.ExprPropagate(inner) -> Expr.ExprPropagate(rewriteInternalExpr(inner))
         Expr.ExprConcat(parts) -> Expr.ExprConcat(rewriteInternalExprs(parts, []))
         Expr.ExprTuple(exprs) -> Expr.ExprTuple(rewriteInternalExprs(exprs, []))
+        Expr.ExprIndependentProduct(exprs, unwrap) -> Expr.ExprIndependentProduct(rewriteInternalExprs(exprs, []), unwrap)
         Expr.ExprList(exprs) -> Expr.ExprList(rewriteInternalExprs(exprs, []))
         Expr.ExprRecord(name, fields) -> Expr.ExprRecord(name, rewriteInternalFields(fields, []))
         Expr.ExprFieldAccess(obj, field) -> Expr.ExprFieldAccess(rewriteInternalExpr(obj), field)

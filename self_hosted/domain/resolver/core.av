@@ -102,6 +102,7 @@ fn maxSlotInExpr(expr: Expr, acc: Int) -> Int
         Expr.ExprPropagate(inner) -> maxSlotInExpr(inner, acc)
         Expr.ExprConcat(parts) -> maxSlotInExprs(parts, acc)
         Expr.ExprTuple(exprs) -> maxSlotInExprs(exprs, acc)
+        Expr.ExprIndependentProduct(exprs, _) -> maxSlotInExprs(exprs, acc)
         Expr.ExprList(exprs) -> maxSlotInExprs(exprs, acc)
         Expr.ExprRecord(_, fields) -> maxSlotInFields(fields, acc)
         Expr.ExprFieldAccess(obj, _) -> maxSlotInExpr(obj, acc)
@@ -266,6 +267,7 @@ fn resolveExpr(expr: Expr, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
         Expr.ExprPropagate(inner) -> resolvePropExpr(inner, slots)
         Expr.ExprConcat(parts) -> resolveConcatExpr(parts, slots)
         Expr.ExprTuple(exprs) -> resolveTupleExpr(exprs, slots)
+        Expr.ExprIndependentProduct(exprs, unwrap) -> resolveIndependentProductExpr(exprs, unwrap, slots)
         Expr.ExprList(exprs) -> resolveListExpr(exprs, slots)
         Expr.ExprRecord(name, fields) -> resolveRecordExpr(name, fields, slots)
         Expr.ExprFieldAccess(obj, field) -> resolveFieldExpr(obj, field, slots)
@@ -375,6 +377,10 @@ fn resolveTupleExpr(exprs: List<Expr>, slots: Map<String, Int>) -> (Expr, Map<St
 
 verify resolveTupleExpr
     resolveTupleExpr([], Map.empty()) => (Expr.ExprTuple([]), Map.empty())
+
+fn resolveIndependentProductExpr(exprs: List<Expr>, unwrap: Bool, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
+    ? "Resolve independent product expressions."
+    (Expr.ExprIndependentProduct(resolveExprs(exprs, slots, []), unwrap), slots)
 
 fn resolveListExpr(exprs: List<Expr>, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
     ? "Resolve list expressions."
