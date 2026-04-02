@@ -2783,7 +2783,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         );
         process::exit(1);
     }
-    let output = rust_codegen::transpile(&ctx);
+    let output = with_local_runtime_override(|| rust_codegen::transpile(&ctx));
     let build_hint = format!("cd {} && cargo build && cargo run", output_dir);
     write_codegen_output(file, output_dir, "Rust", &build_hint, &output);
 }

@@ -403,15 +403,15 @@ fn emit_expr_with_options(
                         ));
                     }
                     code.push_str(&format!("let __cancel_flag{i} = __cancel_flag.clone(); "));
-                    code.push_str(&format!("let _h{i} = _s.spawn(|| "));
+                    code.push_str(&format!("let _h{i} = _s.spawn(move || "));
                     if has_replay {
                         code.push_str(&format!(
-                            "crate::aver_replay::with_parallel_scope_context(__parallel_scope{i}.clone(), || "
+                            "crate::aver_replay::with_parallel_scope_context(__parallel_scope{i}.clone(), move || "
                         ));
                     }
                     code.push_str("{ crate::run_cancelable_branch(__cancel_flag");
                     code.push_str(&i.to_string());
-                    code.push_str(".clone(), || { let __result = ");
+                    code.push_str(".clone(), move || { let __result = ");
                     code.push_str(part);
                     code.push_str("; if let Err(_) = &__result { __cancel_flag");
                     code.push_str(&i.to_string());
@@ -441,10 +441,10 @@ fn emit_expr_with_options(
                             "let __parallel_scope{i} = __parallel_scope.clone(); "
                         ));
                         code.push_str(&format!(
-                            "let _h{i} = _s.spawn(|| crate::aver_replay::with_parallel_scope_context(__parallel_scope{i}.clone(), || {part})); "
+                            "let _h{i} = _s.spawn(move || crate::aver_replay::with_parallel_scope_context(__parallel_scope{i}.clone(), move || {part})); "
                         ));
                     } else {
-                        code.push_str(&format!("let _h{i} = _s.spawn(|| {part}); "));
+                        code.push_str(&format!("let _h{i} = _s.spawn(move || {part}); "));
                     }
                 }
                 for i in 0..n {
