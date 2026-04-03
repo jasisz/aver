@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here.
 
-## 0.8.1 (unreleased)
+## 0.8.1 (2026-04-03)
 
 ### Added
 - **`examples/apps/status_board.av`** — an offline terminal dashboard that makes independent-product pipeline overlap visible in the VM and compiled Rust backends.
