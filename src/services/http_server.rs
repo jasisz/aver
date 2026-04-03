@@ -42,6 +42,8 @@ pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
         "HttpServer.listen" => &["HttpServer.listen"],
         "HttpServer.listenWith" => &["HttpServer.listenWith"],
+        "SelfHostRuntime.httpServerListen" => &["HttpServer.listen"],
+        "SelfHostRuntime.httpServerListenWith" => &["HttpServer.listenWith"],
         _ => &[],
     }
 }
@@ -62,6 +64,12 @@ where
     match name {
         "HttpServer.listen" => Some(listen(args, false, &mut invoke_handler, skip_server)),
         "HttpServer.listenWith" => Some(listen(args, true, &mut invoke_handler, skip_server)),
+        "SelfHostRuntime.httpServerListen" => {
+            Some(listen(args, false, &mut invoke_handler, skip_server))
+        }
+        "SelfHostRuntime.httpServerListenWith" => {
+            Some(listen(args, true, &mut invoke_handler, skip_server))
+        }
         _ => None,
     }
 }

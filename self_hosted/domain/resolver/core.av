@@ -82,18 +82,28 @@ fn maxSlotInExpr(expr: Expr, acc: Int) -> Int
         Expr.ExprBinopSlots(_, lhs, rhs) -> maxInt(rhs, maxInt(lhs, acc))
         Expr.ExprCmpSlotInt(_, slot, _) -> maxInt(slot, acc)
         Expr.ExprCmpSlots(_, lhs, rhs) -> maxInt(rhs, maxInt(lhs, acc))
+        _ -> maxSlotInExprComposite(expr, acc)
+
+fn maxSlotInExprComposite(expr: Expr, acc: Int) -> Int
+    ? "Continue max-slot traversal for composite expression forms."
+    match expr
         Expr.ExprVectorGetOrInt(vecExpr, idxExpr, _) -> maxSlotInExpr(idxExpr, maxSlotInExpr(vecExpr, acc))
         Expr.ExprIntModOrInt(a, b, _) -> maxSlotInExpr(b, maxSlotInExpr(a, acc))
-        Expr.ExprAdd(a, b) -> maxSlotInExpr(b, maxSlotInExpr(a, acc))
-        Expr.ExprSub(a, b) -> maxSlotInExpr(b, maxSlotInExpr(a, acc))
-        Expr.ExprMul(a, b) -> maxSlotInExpr(b, maxSlotInExpr(a, acc))
-        Expr.ExprDiv(a, b) -> maxSlotInExpr(b, maxSlotInExpr(a, acc))
-        Expr.ExprEq(a, b) -> maxSlotInExpr(b, maxSlotInExpr(a, acc))
-        Expr.ExprNeq(a, b) -> maxSlotInExpr(b, maxSlotInExpr(a, acc))
-        Expr.ExprLt(a, b) -> maxSlotInExpr(b, maxSlotInExpr(a, acc))
-        Expr.ExprGt(a, b) -> maxSlotInExpr(b, maxSlotInExpr(a, acc))
-        Expr.ExprLte(a, b) -> maxSlotInExpr(b, maxSlotInExpr(a, acc))
-        Expr.ExprGte(a, b) -> maxSlotInExpr(b, maxSlotInExpr(a, acc))
+        Expr.ExprAdd(a, b) -> maxSlotInExprPair(a, b, acc)
+        Expr.ExprSub(a, b) -> maxSlotInExprPair(a, b, acc)
+        Expr.ExprMul(a, b) -> maxSlotInExprPair(a, b, acc)
+        Expr.ExprDiv(a, b) -> maxSlotInExprPair(a, b, acc)
+        Expr.ExprEq(a, b) -> maxSlotInExprPair(a, b, acc)
+        Expr.ExprNeq(a, b) -> maxSlotInExprPair(a, b, acc)
+        Expr.ExprLt(a, b) -> maxSlotInExprPair(a, b, acc)
+        Expr.ExprGt(a, b) -> maxSlotInExprPair(a, b, acc)
+        _ -> maxSlotInExprAggregate(expr, acc)
+
+fn maxSlotInExprAggregate(expr: Expr, acc: Int) -> Int
+    ? "Finish max-slot traversal for aggregate and call expression forms."
+    match expr
+        Expr.ExprLte(a, b) -> maxSlotInExprPair(a, b, acc)
+        Expr.ExprGte(a, b) -> maxSlotInExprPair(a, b, acc)
         Expr.ExprCall(_, args) -> maxSlotInExprs(args, acc)
         Expr.ExprCallDirect(_, args) -> maxSlotInExprs(args, acc)
         Expr.ExprCallBuiltin(_, args) -> maxSlotInExprs(args, acc)
@@ -107,6 +117,10 @@ fn maxSlotInExpr(expr: Expr, acc: Int) -> Int
         Expr.ExprRecord(_, fields) -> maxSlotInFields(fields, acc)
         Expr.ExprFieldAccess(obj, _) -> maxSlotInExpr(obj, acc)
         _ -> acc
+
+fn maxSlotInExprPair(a: Expr, b: Expr, acc: Int) -> Int
+    ? "Visit both sides of a binary expression."
+    maxSlotInExpr(b, maxSlotInExpr(a, acc))
 
 verify maxSlotInExpr
     maxSlotInExpr(Expr.ExprInt(42), 0 - 1) => 0 - 1
@@ -243,6 +257,11 @@ fn resolveExpr(expr: Expr, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
         Expr.ExprStr(_) -> (expr, slots)
         Expr.ExprBool(_) -> (expr, slots)
         Expr.ExprSlot(_) -> (expr, slots)
+        _ -> resolveExprAfterLeaf(expr, slots)
+
+fn resolveExprAfterLeaf(expr: Expr, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
+    ? "Continue expression resolution after simple leaf forms."
+    match expr
         Expr.ExprBinopSlotInt(_, _, _) -> (expr, slots)
         Expr.ExprBinopSlots(_, _, _) -> (expr, slots)
         Expr.ExprCmpSlotInt(_, _, _) -> (expr, slots)
@@ -255,6 +274,11 @@ fn resolveExpr(expr: Expr, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
         Expr.ExprDiv(a, b) -> resolveBinExpr(a, b, slots, "div")
         Expr.ExprEq(a, b) -> resolveBinExpr(a, b, slots, "eq")
         Expr.ExprNeq(a, b) -> resolveBinExpr(a, b, slots, "neq")
+        _ -> resolveExprAfterArith(expr, slots)
+
+fn resolveExprAfterArith(expr: Expr, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
+    ? "Continue expression resolution after arithmetic forms."
+    match expr
         Expr.ExprLt(a, b) -> resolveBinExpr(a, b, slots, "lt")
         Expr.ExprGt(a, b) -> resolveBinExpr(a, b, slots, "gt")
         Expr.ExprLte(a, b) -> resolveBinExpr(a, b, slots, "lte")
@@ -267,10 +291,16 @@ fn resolveExpr(expr: Expr, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
         Expr.ExprPropagate(inner) -> resolvePropExpr(inner, slots)
         Expr.ExprConcat(parts) -> resolveConcatExpr(parts, slots)
         Expr.ExprTuple(exprs) -> resolveTupleExpr(exprs, slots)
+        _ -> resolveExprAfterAggregate(expr, slots)
+
+fn resolveExprAfterAggregate(expr: Expr, slots: Map<String, Int>) -> (Expr, Map<String, Int>)
+    ? "Finish expression resolution for aggregate forms."
+    match expr
         Expr.ExprIndependentProduct(exprs, unwrap) -> resolveIndependentProductExpr(exprs, unwrap, slots)
         Expr.ExprList(exprs) -> resolveListExpr(exprs, slots)
         Expr.ExprRecord(name, fields) -> resolveRecordExpr(name, fields, slots)
         Expr.ExprFieldAccess(obj, field) -> resolveFieldExpr(obj, field, slots)
+        _ -> (expr, slots)
 
 verify resolveExpr
     resolveExpr(Expr.ExprInt(42), Map.empty()) => (Expr.ExprInt(42), Map.empty())

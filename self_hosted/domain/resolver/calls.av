@@ -61,6 +61,11 @@ fn resolveCallsInExpr(expr: Expr, fnMap: Map<String, Int>) -> Expr
             Option.Some(id) -> Expr.ExprCallBuiltinId(id, resolveCallsInExprs(args, fnMap, []))
             Option.None -> Expr.ExprCallBuiltin(name, resolveCallsInExprs(args, fnMap, []))
         Expr.ExprCallBuiltinId(id, args) -> Expr.ExprCallBuiltinId(id, resolveCallsInExprs(args, fnMap, []))
+        _ -> resolveCallsInExprInternal(expr, fnMap)
+
+fn resolveCallsInExprInternal(expr: Expr, fnMap: Map<String, Int>) -> Expr
+    ? "Continue direct-call linking for specialized internal and arithmetic forms."
+    match expr
         Expr.ExprBinopSlotInt(_, _, _) -> expr
         Expr.ExprBinopSlots(_, _, _) -> expr
         Expr.ExprCmpSlotInt(_, _, _) -> expr
@@ -71,6 +76,11 @@ fn resolveCallsInExpr(expr: Expr, fnMap: Map<String, Int>) -> Expr
         Expr.ExprSub(a, b) -> Expr.ExprSub(resolveCallsInExpr(a, fnMap), resolveCallsInExpr(b, fnMap))
         Expr.ExprMul(a, b) -> Expr.ExprMul(resolveCallsInExpr(a, fnMap), resolveCallsInExpr(b, fnMap))
         Expr.ExprDiv(a, b) -> Expr.ExprDiv(resolveCallsInExpr(a, fnMap), resolveCallsInExpr(b, fnMap))
+        _ -> resolveCallsInExprTail(expr, fnMap)
+
+fn resolveCallsInExprTail(expr: Expr, fnMap: Map<String, Int>) -> Expr
+    ? "Finish direct-call linking for comparisons, aggregates, and product forms."
+    match expr
         Expr.ExprEq(a, b) -> Expr.ExprEq(resolveCallsInExpr(a, fnMap), resolveCallsInExpr(b, fnMap))
         Expr.ExprNeq(a, b) -> Expr.ExprNeq(resolveCallsInExpr(a, fnMap), resolveCallsInExpr(b, fnMap))
         Expr.ExprLt(a, b) -> Expr.ExprLt(resolveCallsInExpr(a, fnMap), resolveCallsInExpr(b, fnMap))
@@ -195,10 +205,12 @@ fn isBuiltinCallName(name: String) -> Bool
         "Int.toString",
         "List.concat",
         "List.contains",
+        "List.drop",
         "List.head",
         "List.len",
         "List.prepend",
         "List.reverse",
+        "List.take",
         "List.tail",
         "List.zip",
         "Map.empty",

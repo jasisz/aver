@@ -30,20 +30,25 @@ impl CallLowerCtx for InterpreterLowerCtx<'_> {
     }
 
     fn resolve_module_call<'a>(&self, dotted: &'a str) -> Option<(&'a str, &'a str)> {
-        for (idx, ch) in dotted.char_indices().rev() {
+        let mut best = None;
+
+        for (idx, ch) in dotted.char_indices() {
             if ch != '.' {
                 continue;
             }
             let prefix = &dotted[..idx];
             let suffix = &dotted[idx + 1..];
-            if suffix.is_empty() || !suffix.contains('.') {
+            if suffix.is_empty() {
                 continue;
             }
-            if self.interpreter.namespace_path_exists(prefix) {
-                return Some((prefix, suffix));
+            if self.interpreter.module_path_exists(prefix)
+                && best.is_none_or(|(current, _): (&str, &str)| prefix.len() > current.len())
+            {
+                best = Some((prefix, suffix));
             }
         }
-        None
+
+        best
     }
 }
 
@@ -69,10 +74,8 @@ impl Interpreter {
                 .is_some_and(|leaf| leaf == runtime_type_name)
     }
 
-    pub(super) fn namespace_path_exists(&self, path: &str) -> bool {
-        self.lookup_path_nv(path)
-            .map(|value| value.is_namespace())
-            .unwrap_or(false)
+    pub(super) fn module_path_exists(&self, path: &str) -> bool {
+        self.mounted_module_paths.contains(path)
     }
 
     pub(super) fn apply_runtime_constructor_args_nv(

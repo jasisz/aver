@@ -13,16 +13,34 @@ type SlotTailStep
 fn evalExpr(expr: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate an expression in the given environment."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    match evalImmediateNamedExpr(expr)
+        Option.Some(v) -> Result.Ok(v)
+        Option.None -> evalExprBasic(expr, env, fns)
+
+fn evalImmediateNamedExpr(expr: Expr) -> Option<Val>
+    ? "Recognize immediate literal expressions in named-env mode."
     match expr
-        Expr.ExprInt(n) -> Result.Ok(Val.ValInt(n))
-        Expr.ExprFloat(f) -> Result.Ok(Val.ValFloat(f))
-        Expr.ExprStr(s) -> Result.Ok(Val.ValStr(s))
-        Expr.ExprBool(b) -> Result.Ok(Val.ValBool(b))
+        Expr.ExprInt(n) -> Option.Some(Val.ValInt(n))
+        Expr.ExprFloat(f) -> Option.Some(Val.ValFloat(f))
+        Expr.ExprStr(s) -> Option.Some(Val.ValStr(s))
+        Expr.ExprBool(b) -> Option.Some(Val.ValBool(b))
+        _ -> Option.None
+
+fn evalExprBasic(expr: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
+    ? "Continue named-env evaluation for branch, vars, and slot-only internal nodes."
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    match expr
         Expr.ExprBoolBranch(cond, thenExpr, elseExpr) -> evalBoolBranch(cond, thenExpr, elseExpr, env, fns)
         Expr.ExprVar(name) -> evalVar(name, env, fns)
         Expr.ExprSlot(_) -> Result.Err("ExprSlot in map-based eval path")
         Expr.ExprBinopSlotInt(_, _, _) -> Result.Err("ExprBinopSlotInt in map-based eval path")
         Expr.ExprBinopSlots(_, _, _) -> Result.Err("ExprBinopSlots in map-based eval path")
+        _ -> evalExprInternal(expr, env, fns)
+
+fn evalExprInternal(expr: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
+    ? "Continue named-env expression evaluation for comparisons and arithmetic."
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    match expr
         Expr.ExprCmpSlotInt(_, _, _) -> Result.Err("ExprCmpSlotInt in map-based eval path")
         Expr.ExprCmpSlots(_, _, _) -> Result.Err("ExprCmpSlots in map-based eval path")
         Expr.ExprVectorGetOrInt(vecExpr, idxExpr, defaultValue) -> evalVectorGetOrIntExpr(vecExpr, idxExpr, defaultValue, env, fns)
@@ -33,6 +51,12 @@ fn evalExpr(expr: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Val, Stri
         Expr.ExprDiv(a, b) -> evalBinop(a, b, env, fns, BinOp.OpDiv)
         Expr.ExprEq(a, b) -> evalCmp(a, b, env, fns, CmpOp.CmpEq)
         Expr.ExprNeq(a, b) -> evalCmp(a, b, env, fns, CmpOp.CmpNeq)
+        _ -> evalExprAggregate(expr, env, fns)
+
+fn evalExprAggregate(expr: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
+    ? "Continue named-env evaluation for aggregate expression forms."
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    match expr
         Expr.ExprLt(a, b) -> evalCmp(a, b, env, fns, CmpOp.CmpLt)
         Expr.ExprGt(a, b) -> evalCmp(a, b, env, fns, CmpOp.CmpGt)
         Expr.ExprLte(a, b) -> evalCmp(a, b, env, fns, CmpOp.CmpLte)
@@ -43,12 +67,19 @@ fn evalExpr(expr: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Val, Stri
         Expr.ExprRecord(name, fieldExprs) -> evalRecordExpr(name, fieldExprs, env, fns)
         Expr.ExprFieldAccess(obj, field) -> evalFieldAccess(obj, field, env, fns)
         Expr.ExprCall(name, argExprs) -> evalCall(name, argExprs, env, fns)
+        _ -> evalExprCalls(expr, env, fns)
+
+fn evalExprCalls(expr: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
+    ? "Finish named-env evaluation for calls, matches, propagation, and products."
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    match expr
         Expr.ExprCallDirect(fnId, argExprs) -> evalCallDirect(fnId, argExprs, env, fns)
         Expr.ExprCallBuiltin(name, argExprs) -> evalCallBuiltinMaybeSpecial(name, argExprs, env, fns)
         Expr.ExprCallBuiltinId(id, argExprs) -> evalCallBuiltinById(id, argExprs, env, fns)
         Expr.ExprMatch(scrutinee, arms) -> evalMatchExpr(scrutinee, arms, env, fns)
         Expr.ExprPropagate(inner) -> evalPropagate(inner, env, fns)
         Expr.ExprIndependentProduct(exprs, unwrap) -> evalIndependentProduct(exprs, unwrap, env, fns)
+        _ -> Result.Err("unsupported named-env expression: {expr}")
 
 fn evalVar(name: String, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Look up variable, Option.None, a named function reference, or a nullary variant constructor."
@@ -73,7 +104,7 @@ fn evalBoolBranch(cond: Expr, thenExpr: Expr, elseExpr: Expr, env: Map<String, V
         Val.ValBool(flag) -> match flag
             true -> evalExpr(thenExpr, env, fns)
             false -> evalExpr(elseExpr, env, fns)
-        _ -> Result.Err("bool branch condition must evaluate to Bool")
+        _ -> Result.Err("bool branch condition must evaluate to Bool, got: " + Domain.Value.valRepr(condV))
 
 fn evalVectorGetOrIntExpr(vecExpr: Expr, idxExpr: Expr, defaultValue: Int, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate a fused Vector.get + Option.withDefault in map path."
@@ -101,12 +132,65 @@ fn evalPropagate(inner: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Val
         _ -> Result.Err("? operator requires Result value")
 
 fn evalIndependentProduct(exprs: List<Expr>, unwrap: Bool, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
-    ? "Evaluate independent product: sequential evaluation, then unwrap Results if ?!."
+    ? "Evaluate independent product using the self-host's own divide-and-conquer ?!, then unwrap guest Results if needed."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
-    items = evalListItems(exprs, env, fns)?
+    items = evalIndependentItems(exprs, env, fns)?
     match unwrap
         true -> unwrapProductResults(items, [])
         false -> Result.Ok(Val.ValTuple(items))
+
+fn evalIndependentItems(exprs: List<Expr>, env: Map<String, Val>, fns: FnStore) -> Result<List<Val>, String>
+    ? "Evaluate guest independent-product branches through a balanced tree of the self-host's own ?!."
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    match exprs
+        [] -> Result.Ok([])
+        [a, ..rest] -> match rest
+            [] -> match evalExpr(a, env, fns)
+                Result.Ok(va) -> Result.Ok([va])
+                Result.Err(e) -> Result.Err(e)
+            [b, ..rest2] -> match rest2
+                [] -> match (evalExpr(a, env, fns), evalExpr(b, env, fns))?!
+                    (va, vb) -> Result.Ok([va, vb])
+                _ -> match splitIndependentExprs(exprs, [], [], true)
+                    (leftExprs, rightExprs) -> match (evalIndependentItems(leftExprs, env, fns), evalIndependentItems(rightExprs, env, fns))?!
+                        (leftVals, rightVals) -> Result.Ok(interleaveIndependentVals(leftVals, rightVals, true, []))
+
+fn splitIndependentExprs(exprs: List<Expr>, leftAcc: List<Expr>, rightAcc: List<Expr>, sendLeft: Bool) -> (List<Expr>, List<Expr>)
+    ? "Split a product into alternating branches so recursive ?! can cover all items."
+    match exprs
+        [] -> (List.reverse(leftAcc), List.reverse(rightAcc))
+        [expr, ..rest] -> match sendLeft
+            true -> splitIndependentExprs(rest, List.prepend(expr, leftAcc), rightAcc, false)
+            false -> splitIndependentExprs(rest, leftAcc, List.prepend(expr, rightAcc), true)
+
+verify splitIndependentExprs
+    splitIndependentExprs([], [], [], true) => ([], [])
+    splitIndependentExprs([Expr.ExprInt(1), Expr.ExprInt(2), Expr.ExprInt(3), Expr.ExprInt(4), Expr.ExprInt(5)], [], [], true) => ([Expr.ExprInt(1), Expr.ExprInt(3), Expr.ExprInt(5)], [Expr.ExprInt(2), Expr.ExprInt(4)])
+
+fn interleaveIndependentVals(left: List<Val>, right: List<Val>, takeLeft: Bool, acc: List<Val>) -> List<Val>
+    ? "Restore original product order after alternating recursive split."
+    match takeLeft
+        true -> match left
+            [] -> finishIndependentVals(right, acc)
+            [v, ..rest] -> interleaveIndependentVals(rest, right, false, List.prepend(v, acc))
+        false -> match right
+            [] -> finishIndependentVals(left, acc)
+            [v, ..rest] -> interleaveIndependentVals(left, rest, true, List.prepend(v, acc))
+
+verify interleaveIndependentVals
+    interleaveIndependentVals([Val.ValInt(1), Val.ValInt(3), Val.ValInt(5)], [Val.ValInt(2), Val.ValInt(4)], true, []) => [Val.ValInt(1), Val.ValInt(2), Val.ValInt(3), Val.ValInt(4), Val.ValInt(5)]
+    interleaveIndependentVals([], [Val.ValInt(2)], true, []) => [Val.ValInt(2)]
+    interleaveIndependentVals([Val.ValInt(1)], [Val.ValInt(2), Val.ValInt(3)], false, []) => [Val.ValInt(2), Val.ValInt(1), Val.ValInt(3)]
+
+fn finishIndependentVals(items: List<Val>, acc: List<Val>) -> List<Val>
+    ? "Append remaining values after interleaving and return in forward order."
+    match items
+        [] -> List.reverse(acc)
+        [v, ..rest] -> finishIndependentVals(rest, List.prepend(v, acc))
+
+verify finishIndependentVals
+    finishIndependentVals([], [Val.ValInt(2), Val.ValInt(1)]) => [Val.ValInt(1), Val.ValInt(2)]
+    finishIndependentVals([Val.ValInt(3)], [Val.ValInt(2), Val.ValInt(1)]) => [Val.ValInt(1), Val.ValInt(2), Val.ValInt(3)]
 
 fn unwrapProductResults(items: List<Val>, acc: List<Val>) -> Result<Val, String>
     ? "Unwrap all Result values in an independent product (?!)."
@@ -118,6 +202,12 @@ fn unwrapProductResults(items: List<Val>, acc: List<Val>) -> Result<Val, String>
                 Val.ValStr(msg) -> Result.Err(Domain.Eval.Common.wrapPropagatedError(msg))
                 _ -> Result.Err(Domain.Eval.Common.wrapPropagatedError("propagated error"))
             _ -> Result.Err("?! operator requires all elements to be Result values")
+
+verify unwrapProductResults
+    unwrapProductResults([], []) => Result.Ok(Val.ValTuple([]))
+    unwrapProductResults([Val.ValOk(Val.ValInt(1)), Val.ValOk(Val.ValInt(2))], []) => Result.Ok(Val.ValTuple([Val.ValInt(1), Val.ValInt(2)]))
+    unwrapProductResults([Val.ValErr(Val.ValStr("boom"))], []) => Result.Err(Domain.Eval.Common.wrapPropagatedError("boom"))
+    unwrapProductResults([Val.ValInt(1)], []) => Result.Err("?! operator requires all elements to be Result values")
 
 fn evalMatchExpr(scrutinee: Expr, arms: List<MatchArm>, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate a match expression."
@@ -390,7 +480,7 @@ fn evalTailBoolBranchSlot(selfId: Int, cond: Expr, thenExpr: Expr, elseExpr: Exp
         Val.ValBool(flag) -> match flag
             true -> evalTailExprSlot(selfId, thenExpr, slotCount, env, slotMap, fns)
             false -> evalTailExprSlot(selfId, elseExpr, slotCount, env, slotMap, fns)
-        _ -> Result.Err("bool branch condition must evaluate to Bool")
+        _ -> Result.Err("bool branch condition must evaluate to Bool, got: " + Domain.Value.valRepr(condV))
 
 fn evalTailMatchExprSlot(selfId: Int, scrutinee: Expr, arms: List<MatchArm>, slotCount: Int, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<SlotTailStep, String>
     ? "Evaluate a tail-position match expression in slot mode."
@@ -651,17 +741,35 @@ fn maybeCallMain(fns: FnStore, fallback: Val) -> Result<Val, String>
 fn evalExprSlot(expr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate an expression using slot-based environment."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    match evalImmediateSlotExpr(expr, env)
+        Option.Some(result) -> result
+        Option.None -> evalExprSlotBasic(expr, env, slotMap, fns)
+
+fn evalImmediateSlotExpr(expr: Expr, env: Vector<Val>) -> Option<Result<Val, String>>
+    ? "Recognize immediate slot and literal expressions in slot mode."
     match expr
-        Expr.ExprSlot(slot) -> Domain.Eval.Slots.lookupSlot(env, slot)
-        Expr.ExprInt(n) -> Result.Ok(Val.ValInt(n))
-        Expr.ExprFloat(f) -> Result.Ok(Val.ValFloat(f))
-        Expr.ExprStr(s) -> Result.Ok(Val.ValStr(s))
-        Expr.ExprBool(b) -> Result.Ok(Val.ValBool(b))
+        Expr.ExprSlot(slot) -> Option.Some(Domain.Eval.Slots.lookupSlot(env, slot))
+        Expr.ExprInt(n) -> Option.Some(Result.Ok(Val.ValInt(n)))
+        Expr.ExprFloat(f) -> Option.Some(Result.Ok(Val.ValFloat(f)))
+        Expr.ExprStr(s) -> Option.Some(Result.Ok(Val.ValStr(s)))
+        Expr.ExprBool(b) -> Option.Some(Result.Ok(Val.ValBool(b)))
+        _ -> Option.None
+
+fn evalExprSlotBasic(expr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
+    ? "Continue slot-based evaluation for branches, vars, and slot-only nodes."
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    match expr
         Expr.ExprBoolBranch(cond, thenExpr, elseExpr) -> evalBoolBranchSlot(cond, thenExpr, elseExpr, env, slotMap, fns)
         Expr.ExprVar(name) -> evalVarSlot(name, fns)
         Expr.ExprBinopSlotInt(op, slot, rhs) -> evalBinopSlotInt(op, slot, rhs, env)
         Expr.ExprBinopSlots(op, lhs, rhs) -> evalBinopSlots(op, lhs, rhs, env)
         Expr.ExprCmpSlotInt(op, slot, rhs) -> evalCmpSlotInt(op, slot, rhs, env)
+        _ -> evalExprSlotInternal(expr, env, slotMap, fns)
+
+fn evalExprSlotInternal(expr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
+    ? "Continue slot-based expression evaluation for comparisons and arithmetic."
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    match expr
         Expr.ExprCmpSlots(op, lhs, rhs) -> evalCmpSlots(op, lhs, rhs, env)
         Expr.ExprVectorGetOrInt(vecExpr, idxExpr, defaultValue) -> evalVectorGetOrIntExprSlot(vecExpr, idxExpr, defaultValue, env, slotMap, fns)
         Expr.ExprIntModOrInt(a, b, defaultValue) -> evalIntModOrIntExprSlot(a, b, defaultValue, env, slotMap, fns)
@@ -671,6 +779,12 @@ fn evalExprSlot(expr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: Fn
         Expr.ExprDiv(a, b) -> evalBinopSlot(a, b, env, slotMap, fns, BinOp.OpDiv)
         Expr.ExprEq(a, b) -> evalCmpSlot(a, b, env, slotMap, fns, CmpOp.CmpEq)
         Expr.ExprNeq(a, b) -> evalCmpSlot(a, b, env, slotMap, fns, CmpOp.CmpNeq)
+        _ -> evalExprSlotAggregate(expr, env, slotMap, fns)
+
+fn evalExprSlotAggregate(expr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
+    ? "Continue slot-based evaluation for aggregate and call expression forms."
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    match expr
         Expr.ExprLt(a, b) -> evalCmpSlot(a, b, env, slotMap, fns, CmpOp.CmpLt)
         Expr.ExprGt(a, b) -> evalCmpSlot(a, b, env, slotMap, fns, CmpOp.CmpGt)
         Expr.ExprLte(a, b) -> evalCmpSlot(a, b, env, slotMap, fns, CmpOp.CmpLte)
@@ -681,12 +795,19 @@ fn evalExprSlot(expr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: Fn
         Expr.ExprRecord(name, fieldExprs) -> evalRecordSlot(name, fieldExprs, env, slotMap, fns)
         Expr.ExprFieldAccess(obj, field) -> evalFieldAccessSlot(obj, field, env, slotMap, fns)
         Expr.ExprCall(name, argExprs) -> evalCallSlot(name, argExprs, env, slotMap, fns)
+        _ -> evalExprSlotCalls(expr, env, slotMap, fns)
+
+fn evalExprSlotCalls(expr: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
+    ? "Finish slot-based evaluation for calls, matches, propagation, and products."
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    match expr
         Expr.ExprCallDirect(fnId, argExprs) -> evalCallDirectSlot(fnId, argExprs, env, slotMap, fns)
         Expr.ExprCallBuiltin(name, argExprs) -> evalCallBuiltinSlotMaybeSpecial(name, argExprs, env, slotMap, fns)
         Expr.ExprCallBuiltinId(id, argExprs) -> evalCallBuiltinByIdSlot(id, argExprs, env, slotMap, fns)
         Expr.ExprMatch(scrutinee, arms) -> evalMatchExprSlot(scrutinee, arms, env, slotMap, fns)
         Expr.ExprPropagate(inner) -> evalPropagateSlot(inner, env, slotMap, fns)
         Expr.ExprIndependentProduct(exprs, unwrap) -> evalIndependentProductSlot(exprs, unwrap, env, slotMap, fns)
+        _ -> Result.Err("unsupported slot expression: {expr}")
 
 fn evalVarSlot(name: String, fns: FnStore) -> Result<Val, String>
     ? "Resolve unresolved var in slot path: builtins, named function refs, and constructors."
@@ -708,7 +829,7 @@ fn evalBoolBranchSlot(cond: Expr, thenExpr: Expr, elseExpr: Expr, env: Vector<Va
         Val.ValBool(flag) -> match flag
             true -> evalExprSlot(thenExpr, env, slotMap, fns)
             false -> evalExprSlot(elseExpr, env, slotMap, fns)
-        _ -> Result.Err("bool branch condition must evaluate to Bool")
+        _ -> Result.Err("bool branch condition must evaluate to Bool, got: " + Domain.Value.valRepr(condV))
 
 fn evalBinopSlotInt(op: BinOp, slot: Int, rhs: Int, env: Vector<Val>) -> Result<Val, String>
     ? "Evaluate a specialized slot-vs-int arithmetic expression."
@@ -1111,12 +1232,28 @@ fn evalPropagateSlot(inner: Expr, env: Vector<Val>, slotMap: Map<String, Int>, f
         _ -> Result.Err("? operator requires Result value")
 
 fn evalIndependentProductSlot(exprs: List<Expr>, unwrap: Bool, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
-    ? "Evaluate independent product in slot path: sequential evaluation, then unwrap Results if ?!."
+    ? "Evaluate independent product in slot path using the self-host's own divide-and-conquer ?!, then unwrap guest Results if needed."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
-    items = evalListItemsSlot(exprs, env, slotMap, fns)?
+    items = evalIndependentItemsSlot(exprs, env, slotMap, fns)?
     match unwrap
         true -> unwrapProductResults(items, [])
         false -> Result.Ok(Val.ValTuple(items))
+
+fn evalIndependentItemsSlot(exprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<List<Val>, String>
+    ? "Evaluate guest independent-product branches in slot path through a balanced tree of the self-host's own ?!."
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    match exprs
+        [] -> Result.Ok([])
+        [a, ..rest] -> match rest
+            [] -> match evalExprSlot(a, env, slotMap, fns)
+                Result.Ok(va) -> Result.Ok([va])
+                Result.Err(e) -> Result.Err(e)
+            [b, ..rest2] -> match rest2
+                [] -> match (evalExprSlot(a, env, slotMap, fns), evalExprSlot(b, env, slotMap, fns))?!
+                    (va, vb) -> Result.Ok([va, vb])
+                _ -> match splitIndependentExprs(exprs, [], [], true)
+                    (leftExprs, rightExprs) -> match (evalIndependentItemsSlot(leftExprs, env, slotMap, fns), evalIndependentItemsSlot(rightExprs, env, slotMap, fns))?!
+                        (leftVals, rightVals) -> Result.Ok(interleaveIndependentVals(leftVals, rightVals, true, []))
 
 fn evalStmtBindSlotNext(slot: Int, e: Expr, rest: List<Stmt>, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate a slot binding and continue statement execution without packing a tuple."

@@ -123,6 +123,11 @@ fn classifyFastLeafExpr(expr: Expr) -> Option<FastLeaf>
         Expr.ExprCallBuiltin(name, args) -> classifyFastBuiltinLeaf(name, args)
         Expr.ExprAdd(a, b) -> classifyFastBinopSlots(BinOp.OpAdd, a, b)
         Expr.ExprSub(a, b) -> classifyFastBinopSlots(BinOp.OpSub, a, b)
+        _ -> classifyFastLeafExprTail(expr)
+
+fn classifyFastLeafExprTail(expr: Expr) -> Option<FastLeaf>
+    ? "Finish fast-leaf classification for arithmetic and comparison forms."
+    match expr
         Expr.ExprMul(a, b) -> classifyFastBinopSlots(BinOp.OpMul, a, b)
         Expr.ExprDiv(a, b) -> classifyFastBinopSlots(BinOp.OpDiv, a, b)
         Expr.ExprEq(a, b) -> classifyFastCmpSlots(CmpOp.CmpEq, a, b)

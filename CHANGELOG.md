@@ -2,6 +2,22 @@
 
 All notable changes to Aver are documented here.
 
+## 0.8.2 (unreleased)
+
+### Added
+- **Root-parallel checkers AI demo** — the checkers example now uses independent products to score root moves in parallel and surfaces that mode directly in the game UI and README.
+
+### Changed
+- **Self-hosted interpreter docs and examples** — the self-hosted README now explains the real execution paths more clearly, including the cached `--self-host` helper and the fact that running `self_hosted/main.av` directly is mainly a development path.
+
+### Fixed
+- **Manual self-host execution** — running `self_hosted/main.av` directly is much more stable again across host interpreter and host VM paths. Several bugs that only showed up while self-hosting larger programs were fixed.
+- **Imported module calls in the host interpreter** — qualified calls no longer get confused with type constructors or short type aliases, which fixes a class of wrong-call and wrong-match failures that showed up in the self-hosted parser and resolver.
+- **Inline constructor pattern matching** — imported single-field variants now match correctly again in the interpreter, closing a subtle bug that broke some self-hosted AST and token-matching paths.
+- **Resolver slot binding inside match-heavy code** — bindings created inside match-driven initializers are now resolved correctly, which fixes runtime failures in larger programs and in manual self-host VM runs.
+- **Self-host runtime aliases in the VM** — the VM now recognizes `SelfHostRuntime.httpServerListen*`, so source self-host programs no longer fail just because they are using the self-host runtime bridge rather than the plain `HttpServer` namespace.
+- **Self-hosted parser regressions** — parser verifies and imported parser probes are green again after the resolution and matching fixes above.
+
 ## 0.8.1 (2026-04-03)
 
 ### Added

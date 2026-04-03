@@ -151,12 +151,27 @@ fn evalCmpRepr(va: Val, vb: Val, op: CmpOp) -> Result<Val, String>
     match op
         CmpOp.CmpEq -> Result.Ok(Val.ValBool(Domain.Value.valRepr(va) == Domain.Value.valRepr(vb)))
         CmpOp.CmpNeq -> Result.Ok(Val.ValBool(Domain.Value.valRepr(va) != Domain.Value.valRepr(vb)))
-        _ -> Result.Err("comparison not supported for these types")
+        _ -> Result.Err("comparison {cmpOpName(op)} not supported for {Domain.Value.valRepr(va)} and {Domain.Value.valRepr(vb)}")
 
 verify evalCmpRepr
     evalCmpRepr(Val.ValNone, Val.ValNone, CmpOp.CmpEq) => Result.Ok(Val.ValBool(true))
     evalCmpRepr(Val.ValNone, Val.ValNone, CmpOp.CmpNeq) => Result.Ok(Val.ValBool(false))
-    evalCmpRepr(Val.ValNone, Val.ValNone, CmpOp.CmpLt) => Result.Err("comparison not supported for these types")
+    evalCmpRepr(Val.ValNone, Val.ValNone, CmpOp.CmpLt) => Result.Err("comparison < not supported for Option.None and Option.None")
+
+fn cmpOpName(op: CmpOp) -> String
+    ? "Human-readable comparison operator."
+    match op
+        CmpOp.CmpEq -> "=="
+        CmpOp.CmpNeq -> "!="
+        CmpOp.CmpLt -> "<"
+        CmpOp.CmpGt -> ">"
+        CmpOp.CmpLte -> "<="
+        CmpOp.CmpGte -> ">="
+
+verify cmpOpName
+    cmpOpName(CmpOp.CmpEq) => "=="
+    cmpOpName(CmpOp.CmpLt) => "<"
+    cmpOpName(CmpOp.CmpGte) => ">="
 
 fn evalVectorGetOrIntVals(vecV: Val, idxV: Val, defaultValue: Int) -> Result<Val, String>
     ? "Read a vector cell and return an integer fallback when the index misses."

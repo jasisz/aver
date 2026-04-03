@@ -278,9 +278,10 @@ impl ProgramCompiler {
         let mut fn_idx = 0;
         for item in &mod_items {
             if let TopLevel::FnDef(fndef) = item {
-                let (_, fn_id) = module_fn_ids[fn_idx];
-                let chunk = self.compile_fn_with_scope(fndef, arena, &module_scope)?;
-                self.code.functions[fn_id as usize] = chunk;
+                let (fn_name, fn_id) = &module_fn_ids[fn_idx];
+                let mut chunk = self.compile_fn_with_scope(fndef, arena, &module_scope)?;
+                chunk.name = format!("{}.{}", dep_name, fn_name);
+                self.code.functions[*fn_id as usize] = chunk;
                 fn_idx += 1;
             }
         }
@@ -927,5 +928,27 @@ fn bucket(n: Int) -> Int
             "did not expect NOT in normalized bool-match bytecode, got {:?}",
             chunk.code
         );
+    }
+
+    #[test]
+    fn self_host_runtime_http_server_aliases_compile_in_vm() {
+        let source = r#"
+module Demo
+
+fn listen(handler: Int) -> Unit
+    SelfHostRuntime.httpServerListen(8080, handler)
+
+fn listenWith(context: Int, handler: Int) -> Unit
+    SelfHostRuntime.httpServerListenWith(8081, context, handler)
+"#;
+
+        let mut items = parse_source(source).expect("source should parse");
+        crate::tco::transform_program(&mut items);
+        crate::resolver::resolve_program(&mut items);
+
+        let mut arena = Arena::new();
+        let (code, _globals) = compile_program(&items, &mut arena).expect("vm compile should pass");
+        assert!(code.find("listen").is_some(), "listen should compile");
+        assert!(code.find("listenWith").is_some(), "listenWith should compile");
     }
 }

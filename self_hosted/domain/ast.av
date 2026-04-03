@@ -216,9 +216,12 @@ fn builtinNameToId(name: String) -> Option<Int>
         "Result.Err" -> Option.Some(17)
         "Result.withDefault" -> Option.Some(18)
         "Int.toString" -> Option.Some(19)
+        "List.take" -> Option.Some(20)
+        "List.drop" -> Option.Some(21)
         _ -> Option.None
 
 verify builtinNameToId
     builtinNameToId("Map.empty") => Option.Some(0)
     builtinNameToId("Vector.len") => Option.Some(10)
+    builtinNameToId("List.take") => Option.Some(20)
     builtinNameToId("unknown") => Option.None

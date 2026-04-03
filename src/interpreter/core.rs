@@ -106,6 +106,7 @@ impl Interpreter {
             env_base: 1,
             arena,
             module_cache: HashMap::new(),
+            mounted_module_paths: HashSet::new(),
             record_schemas,
             call_stack: Vec::new(),
             active_local_slots: None,
@@ -549,9 +550,18 @@ impl Interpreter {
         }
     }
 
+    fn current_slots_frame_index(&self) -> Option<usize> {
+        let start = self.env_base.min(self.env.len());
+        (start..self.env.len())
+            .rev()
+            .find(|&idx| matches!(self.env[idx], EnvFrame::Slots(_)))
+    }
+
     /// O(1) slot-based variable lookup — returns NanValue (Copy, no clone).
     pub(super) fn lookup_slot(&self, slot: u16) -> Result<NanValue, RuntimeError> {
-        let idx = self.env.len() - 1;
+        let idx = self.current_slots_frame_index().ok_or_else(|| {
+            RuntimeError::Error("Resolved lookup on non-Slots frame".to_string())
+        })?;
         match &self.env[idx] {
             EnvFrame::Slots(v) => Ok(v[slot as usize]),
             _ => Err(RuntimeError::Error(
@@ -562,7 +572,9 @@ impl Interpreter {
 
     /// Define a value in the current Slots frame at the given slot index.
     pub(super) fn define_slot(&mut self, slot: u16, val: NanValue) {
-        let idx = self.env.len() - 1;
+        let Some(idx) = self.current_slots_frame_index() else {
+            return;
+        };
         if let EnvFrame::Slots(v) = &mut self.env[idx] {
             v[slot as usize] = val;
         }
@@ -576,6 +588,7 @@ impl Interpreter {
         }
         if parts.len() == 1 {
             self.define(parts[0].to_string(), val);
+            self.mounted_module_paths.insert(path.to_string());
             self.alias_exposed_type_namespaces(&alias_source);
             return Ok(());
         }
@@ -623,6 +636,7 @@ impl Interpreter {
         };
 
         if result.is_ok() {
+            self.mounted_module_paths.insert(path.to_string());
             self.alias_exposed_type_namespaces(&alias_source);
         }
         result
@@ -748,6 +762,12 @@ impl Interpreter {
             require_module_declaration(&items, &path.to_string_lossy())
                 .map_err(RuntimeError::Error)?;
             crate::resolver::resolve_program(&mut items);
+
+            for item in &items {
+                if let TopLevel::TypeDef(td) = item {
+                    self.import_type_def_runtime(td);
+                }
+            }
 
             if let Some(module) = Self::module_decl(&items) {
                 let expected = name.rsplit('.').next().unwrap_or(name);

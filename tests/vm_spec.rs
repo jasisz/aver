@@ -1101,6 +1101,41 @@ fn main() -> (Int, Int)
 }
 
 #[test]
+fn vm_independent_product_allows_module_local_function_branches() {
+    let root = temp_module_root("independent_product_module_local_fn");
+    std::fs::write(
+        root.join("ai.av"),
+        r#"module Ai
+    exposes [pair]
+    intent =
+        "Minimal module for CALL_PAR function-value regression."
+
+fn score(x: Int) -> Int
+    x + 1
+
+fn pair(x: Int) -> (Int, Int)
+    (score(x), score(x + 1))!
+"#,
+    )
+    .expect("write ai.av");
+
+    let src = r#"module Main
+    depends [Ai]
+    intent =
+        "Runs module-local parallel scoring through VM."
+
+fn main() -> (Int, Int)
+    Ai.pair(1)
+"#;
+
+    let (result, arena) = vm_run_with_module_root_and_arena(src, &root);
+    assert_eq!(
+        result.to_value(&arena),
+        aver::value::Value::Tuple(vec![aver::value::Value::Int(2), aver::value::Value::Int(3),])
+    );
+}
+
+#[test]
 fn vm_option_none_namespace_member_value() {
     let src = "fn fallback(value: Option<Int>) -> Int\n    match value\n        Option.Some(v) -> v\n        Option.None -> 0\n\nfn main() -> Int\n    missing = Option.None\n    fallback(missing)\n";
     let result = vm_run(src);

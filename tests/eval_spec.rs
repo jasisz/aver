@@ -6,6 +6,7 @@ use aver::ast::{Stmt, TopLevel};
 use aver::interpreter::{Interpreter, Value};
 use aver::lexer::Lexer;
 use aver::parser::Parser;
+use aver::resolver::resolve_program;
 use aver::value::{list_from_vec, list_to_vec};
 
 // ---------------------------------------------------------------------------
@@ -40,6 +41,15 @@ fn call_fn(src: &str, fn_name: &str, args: Vec<Value>) -> Value {
             interp.exec_fn_def(fd).expect("exec_fn_def failed");
         }
     }
+    let fn_val = interp.lookup(fn_name).expect("fn not found");
+    interp.call_value_pub(fn_val, args).expect("call failed")
+}
+
+fn call_fn_resolved(src: &str, fn_name: &str, args: Vec<Value>) -> Value {
+    let mut items = parse(src);
+    resolve_program(&mut items);
+    let mut interp = Interpreter::new();
+    interp.exec_items(&items).expect("exec_items failed");
     let fn_val = interp.lookup(fn_name).expect("fn not found");
     interp.call_value_pub(fn_val, args).expect("call failed")
 }
@@ -2815,6 +2825,180 @@ fn startedAt() -> String
         assert_eq!(out, Value::Str("2026-03-08T12:00:00Z".to_string()));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn imported_function_matches_on_imported_sum_type_argument() {
+        let root = temp_module_root("imported_sum_match");
+        let ast_src = r#"
+module Ast
+    exposes [Expr]
+    intent =
+        "Shared imported sum type."
+
+type Expr
+    Int(Int)
+    Text(String)
+"#;
+        std::fs::write(root.join("Ast.av"), ast_src).expect("write Ast.av failed");
+
+        let helpers_src = r#"
+module Helpers
+    depends [Ast]
+    exposes [inspectExpr]
+    intent =
+        "Imported matcher helper."
+
+fn inspectExpr(expr: Expr) -> Int
+    match expr
+        Expr.Int(n) -> n
+        _ -> -1
+"#;
+        std::fs::write(root.join("Helpers.av"), helpers_src).expect("write Helpers.av failed");
+
+        let app_src = r#"
+fn main() -> Int
+    Helpers.inspectExpr(Expr.Int(7))
+"#;
+
+        let mut interp = Interpreter::new();
+        load_module_into(&mut interp, &root, "Helpers");
+        load_module_into(&mut interp, &root, "Ast");
+        register_fns(&mut interp, app_src);
+
+        let main_fn = interp.lookup("main").expect("main not found");
+        let out = interp
+            .call_value_pub(main_fn, vec![])
+            .expect("main call failed");
+        assert_eq!(out, Value::Int(7));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn imported_function_matches_on_imported_sum_type_returned_by_another_module() {
+        let root = temp_module_root("imported_sum_return");
+        let ast_src = r#"
+module Ast
+    exposes [Expr]
+    intent =
+        "Shared imported sum type."
+
+type Expr
+    Int(Int)
+    Text(String)
+"#;
+        std::fs::write(root.join("Ast.av"), ast_src).expect("write Ast.av failed");
+
+        let builder_src = r#"
+module Builder
+    depends [Ast]
+    exposes [makeExpr]
+    intent =
+        "Construct imported values."
+
+fn makeExpr() -> Expr
+    Expr.Int(7)
+"#;
+        std::fs::write(root.join("Builder.av"), builder_src).expect("write Builder.av failed");
+
+        let helpers_src = r#"
+module Helpers
+    depends [Ast]
+    exposes [inspectExpr]
+    intent =
+        "Imported matcher helper."
+
+fn inspectExpr(expr: Expr) -> Int
+    match expr
+        Expr.Int(n) -> n
+        _ -> -1
+"#;
+        std::fs::write(root.join("Helpers.av"), helpers_src).expect("write Helpers.av failed");
+
+        let app_src = r#"
+fn main() -> Int
+    Helpers.inspectExpr(Builder.makeExpr())
+"#;
+
+        let mut interp = Interpreter::new();
+        load_module_into(&mut interp, &root, "Builder");
+        load_module_into(&mut interp, &root, "Helpers");
+        load_module_into(&mut interp, &root, "Ast");
+
+        let builder_ns = interp.lookup("Builder").expect("Builder not found");
+        let builder_make_expr = match builder_ns {
+            Value::Namespace { members, .. } => members
+                .get("makeExpr")
+                .cloned()
+                .expect("Builder.makeExpr missing"),
+            other => panic!("Builder not namespace: {:?}", other),
+        };
+        let helpers_ns = interp.lookup("Helpers").expect("Helpers not found");
+        let helper_inspect_expr = match helpers_ns {
+            Value::Namespace { members, .. } => members
+                .get("inspectExpr")
+                .cloned()
+                .expect("Helpers.inspectExpr missing"),
+            other => panic!("Helpers not namespace: {:?}", other),
+        };
+        let built = interp
+            .call_value_pub(builder_make_expr, vec![])
+            .expect("Builder.makeExpr call failed");
+        match &built {
+            Value::Variant {
+                type_name,
+                variant,
+                fields,
+            } => {
+                assert_eq!(type_name, "Expr");
+                assert_eq!(variant, "Int");
+                assert_eq!(fields.as_ref(), &[Value::Int(7)]);
+            }
+            other => panic!("Builder.makeExpr returned unexpected value: {:?}", other),
+        }
+        let direct_inspect = interp
+            .call_value_pub(helper_inspect_expr, vec![built.clone()])
+            .expect("direct Helpers.inspectExpr call failed");
+        assert_eq!(direct_inspect, Value::Int(7));
+
+        register_fns(&mut interp, app_src);
+
+        let main_fn = interp.lookup("main").expect("main not found");
+        let out = interp
+            .call_value_pub(main_fn, vec![])
+            .expect("main call failed");
+        assert_eq!(out, Value::Int(7));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolved_slot_lookup_survives_owned_match_binding_frames() {
+        let src = r#"
+type Expr
+    Int(Int)
+    Text(String)
+
+fn inspect(expr: Expr, fallback: Int) -> Int
+    match expr
+        Expr.Int(n) -> n + fallback
+        _ -> fallback
+"#;
+
+        let out = call_fn_resolved(
+            src,
+            "inspect",
+            vec![
+                Value::Variant {
+                    type_name: "Expr".to_string(),
+                    variant: "Int".to_string(),
+                    fields: vec![Value::Int(7)].into(),
+                },
+                Value::Int(5),
+            ],
+        );
+        assert_eq!(out, Value::Int(12));
     }
 }
 

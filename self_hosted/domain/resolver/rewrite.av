@@ -54,6 +54,11 @@ fn rewriteInternalExpr(expr: Expr) -> Expr
         Expr.ExprCmpSlots(_, _, _) -> expr
         Expr.ExprVectorGetOrInt(vecExpr, idxExpr, defaultValue) -> Expr.ExprVectorGetOrInt(rewriteInternalExpr(vecExpr), rewriteInternalExpr(idxExpr), defaultValue)
         Expr.ExprIntModOrInt(a, b, defaultValue) -> Expr.ExprIntModOrInt(rewriteInternalExpr(a), rewriteInternalExpr(b), defaultValue)
+        _ -> rewriteInternalExprAfterLeaf(expr)
+
+fn rewriteInternalExprAfterLeaf(expr: Expr) -> Expr
+    ? "Continue internal rewrite for arithmetic and comparison forms."
+    match expr
         Expr.ExprAdd(a, b) -> rewriteInternalBinop(BinOp.OpAdd, rewriteInternalExpr(a), rewriteInternalExpr(b))
         Expr.ExprSub(a, b) -> rewriteInternalBinop(BinOp.OpSub, rewriteInternalExpr(a), rewriteInternalExpr(b))
         Expr.ExprMul(a, b) -> rewriteInternalBinop(BinOp.OpMul, rewriteInternalExpr(a), rewriteInternalExpr(b))
@@ -64,6 +69,11 @@ fn rewriteInternalExpr(expr: Expr) -> Expr
         Expr.ExprGt(a, b) -> rewriteInternalCmp(CmpOp.CmpGt, rewriteInternalExpr(a), rewriteInternalExpr(b))
         Expr.ExprLte(a, b) -> rewriteInternalCmp(CmpOp.CmpLte, rewriteInternalExpr(a), rewriteInternalExpr(b))
         Expr.ExprGte(a, b) -> rewriteInternalCmp(CmpOp.CmpGte, rewriteInternalExpr(a), rewriteInternalExpr(b))
+        _ -> rewriteInternalExprAfterArith(expr)
+
+fn rewriteInternalExprAfterArith(expr: Expr) -> Expr
+    ? "Finish internal rewrite for aggregates, calls, and products."
+    match expr
         Expr.ExprMatch(scrutinee, arms) -> rewriteInternalMatch(rewriteInternalExpr(scrutinee), rewriteInternalArms(arms, []))
         Expr.ExprPropagate(inner) -> Expr.ExprPropagate(rewriteInternalExpr(inner))
         Expr.ExprConcat(parts) -> Expr.ExprConcat(rewriteInternalExprs(parts, []))

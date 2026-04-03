@@ -57,11 +57,12 @@ fn collect_binding_slots(
 ) {
     for stmt in stmts {
         match stmt {
-            Stmt::Binding(name, _, _) => {
+            Stmt::Binding(name, _, expr) => {
                 if !local_slots.contains_key(name) {
                     local_slots.insert(name.clone(), *next_slot);
                     *next_slot += 1;
                 }
+                collect_expr_bindings(expr, local_slots, next_slot);
             }
             Stmt::Expr(expr) => {
                 collect_expr_bindings(expr, local_slots, next_slot);
@@ -441,6 +442,71 @@ mod tests {
                 assert_eq!(arms[0].body.node, Expr::Resolved(1));
             }
             other => panic!("unexpected body: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn resolves_match_pattern_bindings_inside_binding_initializer() {
+        let mut fd = FnDef {
+            name: "f".to_string(),
+            line: 1,
+            params: vec![("x".to_string(), "Int".to_string())],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::Block(vec![
+                Stmt::Binding(
+                    "result".to_string(),
+                    None,
+                    Spanned::bare(Expr::Match {
+                        subject: Box::new(Spanned::bare(Expr::Ident("x".to_string()))),
+                        arms: vec![
+                            MatchArm {
+                                pattern: Pattern::Constructor(
+                                    "Option.Some".to_string(),
+                                    vec!["v".to_string()],
+                                ),
+                                body: Box::new(Spanned::bare(Expr::Ident("v".to_string()))),
+                            },
+                            MatchArm {
+                                pattern: Pattern::Wildcard,
+                                body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                            },
+                        ],
+                    }),
+                ),
+                Stmt::Expr(Spanned::bare(Expr::Ident("result".to_string()))),
+            ])),
+            resolution: None,
+        };
+
+        resolve_fn(&mut fd);
+        let res = fd.resolution.as_ref().unwrap();
+        assert_eq!(res.local_slots["x"], 0);
+        assert_eq!(res.local_slots["result"], 1);
+        assert_eq!(res.local_slots["v"], 2);
+
+        let stmts = fd.body.stmts();
+        match &stmts[0] {
+            Stmt::Binding(
+                _,
+                _,
+                Spanned {
+                    node: Expr::Match { arms, .. },
+                    ..
+                },
+            ) => {
+                assert_eq!(arms[0].body.node, Expr::Resolved(2));
+            }
+            other => panic!("unexpected stmt: {:?}", other),
+        }
+
+        match &stmts[1] {
+            Stmt::Expr(Spanned {
+                node: Expr::Resolved(1),
+                ..
+            }) => {}
+            other => panic!("unexpected stmt: {:?}", other),
         }
     }
 }

@@ -57,69 +57,90 @@ verify clamp
     clamp(0 - 1, 0, 7) => 0
     clamp(9, 0, 7) => 7
 
+fn firstPoint(points: List<Point>) -> Option<Point>
+    ? "First point of a move path"
+    match points
+        [point, ..rest] -> Option.Some(point)
+        [] -> Option.None
+
+verify firstPoint
+    firstPoint([]) => Option.None
+    firstPoint([Board.pt(0, 5), Board.pt(1, 4)]) => Option.Some(Board.pt(0, 5))
+
+fn lastPoint(points: List<Point>) -> Option<Point>
+    ? "Last point of a move path"
+    match points
+        [] -> Option.None
+        [point, ..rest] -> match rest
+            [] -> Option.Some(point)
+            _ -> lastPoint(rest)
+
+verify lastPoint
+    lastPoint([]) => Option.None
+    lastPoint([Board.pt(0, 5), Board.pt(1, 4)]) => Option.Some(Board.pt(1, 4))
+
 fn turnDestinations(turns: List<List<Point>>, i: Int) -> List<Point>
     ? "Extract the last point of each turn"
-    match i == List.len(turns)
-        true -> []
-        false -> match Vector.get(Vector.fromList(turns), i)
-            Option.Some(turn) -> turnDestNext(turns, turn, i)
-            Option.None -> turnDestinations(turns, i + 1)
+    List.reverse(turnDestinationsAcc(List.drop(turns, i), []))
 
 verify turnDestinations
     turnDestinations([[Board.pt(0, 5), Board.pt(1, 4)]], 0) => [Board.pt(1, 4)]
 
-fn turnDestNext(turns: List<List<Point>>, turn: List<Point>, i: Int) -> List<Point>
-    ? "Get last point of turn and continue"
-    match Vector.get(Vector.fromList(turn), List.len(turn) - 1)
-        Option.Some(last) -> List.prepend(last, turnDestinations(turns, i + 1))
-        Option.None -> turnDestinations(turns, i + 1)
+fn turnDestinationsAcc(turns: List<List<Point>>, acc: List<Point>) -> List<Point>
+    ? "Tail-recursive destination extraction"
+    match turns
+        [] -> acc
+        [turn, ..rest] -> match lastPoint(turn)
+            Option.Some(last) -> turnDestinationsAcc(rest, List.prepend(last, acc))
+            Option.None -> turnDestinationsAcc(rest, acc)
 
-verify turnDestNext
-    turnDestNext([[Board.pt(0, 5), Board.pt(1, 4)]], [Board.pt(0, 5), Board.pt(1, 4)], 0) => [Board.pt(1, 4)]
+verify turnDestinationsAcc
+    turnDestinationsAcc([], []) => []
+    turnDestinationsAcc([[Board.pt(0, 5), Board.pt(1, 4)]], []) => [Board.pt(1, 4)]
 
 fn movesFromPiece(moves: List<List<Point>>, from: Point, i: Int) -> List<List<Point>>
     ? "Filter moves starting from a given point"
-    match i == List.len(moves)
-        true -> []
-        false -> match Vector.get(Vector.fromList(moves), i)
-            Option.Some(turn) -> filterFromPiece(moves, turn, from, i)
-            Option.None -> movesFromPiece(moves, from, i + 1)
+    List.reverse(movesFromPieceAcc(List.drop(moves, i), from, []))
 
 verify movesFromPiece
     List.len(movesFromPiece([[Board.pt(0, 5), Board.pt(1, 4)], [Board.pt(2, 5), Board.pt(3, 4)]], Board.pt(0, 5), 0)) => 1
 
-fn filterFromPiece(moves: List<List<Point>>, turn: List<Point>, from: Point, i: Int) -> List<List<Point>>
-    ? "Check if turn starts from point and continue"
-    match Vector.get(Vector.fromList(turn), 0)
-        Option.Some(start) -> match Bool.and(start.x == from.x, start.y == from.y)
-            true -> List.prepend(turn, movesFromPiece(moves, from, i + 1))
-            false -> movesFromPiece(moves, from, i + 1)
-        Option.None -> movesFromPiece(moves, from, i + 1)
+fn movesFromPieceAcc(moves: List<List<Point>>, from: Point, acc: List<List<Point>>) -> List<List<Point>>
+    ? "Tail-recursive move filtering by origin"
+    match moves
+        [] -> acc
+        [turn, ..rest] -> match firstPoint(turn)
+            Option.Some(start) -> match Bool.and(start.x == from.x, start.y == from.y)
+                true -> movesFromPieceAcc(rest, from, List.prepend(turn, acc))
+                false -> movesFromPieceAcc(rest, from, acc)
+            Option.None -> movesFromPieceAcc(rest, from, acc)
 
-verify filterFromPiece
-    List.len(filterFromPiece([[Board.pt(0, 5), Board.pt(1, 4)]], [Board.pt(0, 5), Board.pt(1, 4)], Board.pt(0, 5), 0)) => 1
+verify movesFromPieceAcc
+    movesFromPieceAcc([], Board.pt(0, 5), []) => []
+    movesFromPieceAcc([[Board.pt(0, 5), Board.pt(1, 4)]], Board.pt(0, 5), []) => [[Board.pt(0, 5), Board.pt(1, 4)]]
 
 fn findTurnByDest(turns: List<List<Point>>, dest: Point, i: Int) -> Option<List<Point>>
     ? "Find the turn whose last point matches dest"
-    match i == List.len(turns)
-        true -> Option.None
-        false -> match Vector.get(Vector.fromList(turns), i)
-            Option.Some(turn) -> findTurnByDestMatch(turns, turn, dest, i)
-            Option.None -> findTurnByDest(turns, dest, i + 1)
+    findTurnByDestFrom(List.drop(turns, i), dest)
 
 verify findTurnByDest
     findTurnByDest([[Board.pt(0, 5), Board.pt(1, 4)]], Board.pt(1, 4), 0) => Option.Some([Board.pt(0, 5), Board.pt(1, 4)])
+    findTurnByDest([[Board.pt(0, 5), Board.pt(1, 4)]], Board.pt(7, 7), 0) => Option.None
 
-fn findTurnByDestMatch(turns: List<List<Point>>, turn: List<Point>, dest: Point, i: Int) -> Option<List<Point>>
-    ? "Check last point match"
-    match Vector.get(Vector.fromList(turn), List.len(turn) - 1)
-        Option.Some(last) -> match Bool.and(last.x == dest.x, last.y == dest.y)
-            true -> Option.Some(turn)
-            false -> findTurnByDest(turns, dest, i + 1)
-        Option.None -> findTurnByDest(turns, dest, i + 1)
+fn findTurnByDestFrom(turns: List<List<Point>>, dest: Point) -> Option<List<Point>>
+    ? "Tail-recursive turn lookup by destination"
+    match turns
+        [] -> Option.None
+        [turn, ..rest] -> match lastPoint(turn)
+            Option.Some(last) -> match Bool.and(last.x == dest.x, last.y == dest.y)
+                true -> Option.Some(turn)
+                false -> findTurnByDestFrom(rest, dest)
+            Option.None -> findTurnByDestFrom(rest, dest)
 
-verify findTurnByDestMatch
-    findTurnByDestMatch([[Board.pt(0, 5), Board.pt(1, 4)]], [Board.pt(0, 5), Board.pt(1, 4)], Board.pt(1, 4), 0) => Option.Some([Board.pt(0, 5), Board.pt(1, 4)])
+verify findTurnByDestFrom
+    findTurnByDestFrom([], Board.pt(1, 4)) => Option.None
+    findTurnByDestFrom([[Board.pt(0, 5), Board.pt(1, 4)]], Board.pt(1, 4)) => Option.Some([Board.pt(0, 5), Board.pt(1, 4)])
+    findTurnByDestFrom([[Board.pt(0, 5), Board.pt(1, 4)]], Board.pt(7, 7)) => Option.None
 
 fn highlights(state: GameState) -> List<Point>
     ? "Legal destinations to highlight (only when piece selected)"
@@ -190,12 +211,16 @@ fn renderAiPanel(result: AiResult) -> Unit
     Terminal.setColor("cyan")
     Terminal.print("AI depth={Int.toString(result.depth)} {Int.toString(result.thinkMs)}ms")
     Terminal.resetColor()
+    Terminal.moveTo(22, 2)
+    Terminal.setColor("yellow")
+    Terminal.print("root-parallel x{Int.toString(Ai.rootParallelWidth())} | {Int.toString(List.len(result.candidates))} moves")
+    Terminal.resetColor()
     renderCandidates(result.candidates, result.move, 0)
 
 fn renderCandidates(candidates: List<ScoredMove>, chosen: List<Point>, i: Int) -> Unit
     ? "Render candidate moves list"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    match i == Int.min(List.len(candidates), 7)
+    match i == Int.min(List.len(candidates), 6)
         true -> Terminal.moveTo(0, 0)
         false -> match Vector.get(Vector.fromList(candidates), i)
             Option.Some(sm) -> renderOneCandidate(candidates, chosen, sm, i)
@@ -204,7 +229,7 @@ fn renderCandidates(candidates: List<ScoredMove>, chosen: List<Point>, i: Int) -
 fn renderOneCandidate(candidates: List<ScoredMove>, chosen: List<Point>, sm: ScoredMove, i: Int) -> Unit
     ? "Render one candidate move"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.moveTo(22, i + 2)
+    Terminal.moveTo(22, i + 4)
     match isChosenMove(sm.move, chosen)
         true -> renderChosenCandidate(sm, i)
         false -> renderOtherCandidate(sm, i)
@@ -212,7 +237,7 @@ fn renderOneCandidate(candidates: List<ScoredMove>, chosen: List<Point>, sm: Sco
 
 fn renderChosenCandidate(sm: ScoredMove, i: Int) -> Unit
     ? "Render the chosen move in green"
-    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    ! [Terminal.print, Terminal.resetColor, Terminal.setColor]
     Terminal.setColor("green")
     Terminal.print("★ ")
     Terminal.print(moveLabel(sm.move))
@@ -221,7 +246,7 @@ fn renderChosenCandidate(sm: ScoredMove, i: Int) -> Unit
 
 fn renderOtherCandidate(sm: ScoredMove, i: Int) -> Unit
     ? "Render non-chosen candidate in white"
-    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    ! [Terminal.print]
     Terminal.print("  ")
     Terminal.print(moveLabel(sm.move))
     Terminal.print("  {Int.toString(sm.score)}")
@@ -267,8 +292,8 @@ verify colChar
 
 fn moveLabel(move: List<Point>) -> String
     ? "Human-readable label for a move path"
-    match Vector.get(Vector.fromList(move), 0)
-        Option.Some(from) -> match Vector.get(Vector.fromList(move), List.len(move) - 1)
+    match firstPoint(move)
+        Option.Some(from) -> match lastPoint(move)
             Option.Some(to) -> "{colChar(from.x)}{Int.toString(8 - from.y)}→{colChar(to.x)}{Int.toString(8 - to.y)}"
             Option.None -> "?"
         Option.None -> "?"
@@ -313,9 +338,9 @@ fn handleSelection(state: GameState) -> GameState
     ? "Try to select the piece under cursor"
     moves = Rules.legalMoves(state.board, state.currentPlayer)
     pMoves = movesFromPiece(moves, Board.pt(state.cursorX, state.cursorY), 0)
-    match List.len(pMoves) == 0
-        true -> state
-        false -> GameState.update(state, selected = Option.Some(Board.pt(state.cursorX, state.cursorY)), pieceMoves = pMoves)
+    match pMoves
+        [] -> state
+        _ -> GameState.update(state, selected = Option.Some(Board.pt(state.cursorX, state.cursorY)), pieceMoves = pMoves)
 
 verify handleSelection
     handleSelection(initState(6)).selected => Option.None
@@ -374,7 +399,7 @@ fn aiPhase(state: GameState) -> Result<String, String>
     ]
     renderFrame(state)
     Terminal.moveTo(0, 14)
-    Terminal.print("AI thinking (depth {Int.toString(state.searchDepth)})...")
+    Terminal.print("AI thinking (depth {Int.toString(state.searchDepth)}, root-parallel x{Int.toString(Ai.rootParallelWidth())})...")
     Terminal.flush()
     t0 = Time.unixMs()
     aiState = handleAiTurn(state)
@@ -395,7 +420,7 @@ fn gameOverResult(state: GameState) -> Result<String, String>
     ? "Show game over and return"
     ! [
         Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
-        Time.sleep, Time.unixMs,
+        Time.sleep,
     ]
     renderFrame(state)
     Terminal.moveTo(0, 14)

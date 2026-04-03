@@ -240,9 +240,23 @@ impl Interpreter {
                         if !value.is_variant() {
                             return None;
                         }
-                        let (type_id, variant_id, fields) = value.variant_parts(&self.arena)?;
-                        let type_name = self.arena.get_type_name(type_id);
-                        let runtime_variant_name = self.arena.get_variant_name(type_id, variant_id);
+                        let (type_name, runtime_variant_name, fields) =
+                            if let Some((type_id, variant_id, inner)) =
+                                value.inline_variant_info(&self.arena)
+                            {
+                                (
+                                    self.arena.get_type_name(type_id),
+                                    self.arena.get_variant_name(type_id, variant_id),
+                                    vec![inner],
+                                )
+                            } else {
+                                let (type_id, variant_id, fields) = value.variant_parts(&self.arena)?;
+                                (
+                                    self.arena.get_type_name(type_id),
+                                    self.arena.get_variant_name(type_id, variant_id),
+                                    fields.to_vec(),
+                                )
+                            };
 
                         if !Self::ctor_type_matches_runtime(&qualified_type_name, type_name)
                             || variant_name != runtime_variant_name
@@ -252,9 +266,8 @@ impl Interpreter {
                         if !bindings.is_empty() && bindings.len() != fields.len() {
                             return None;
                         }
-                        let fields_copy: Vec<NanValue> = fields.to_vec();
                         let mut result = Vec::with_capacity(bindings.len());
-                        for (name, val) in bindings.iter().zip(fields_copy.iter()) {
+                        for (name, val) in bindings.iter().zip(fields.iter()) {
                             if name != "_" {
                                 result.push((name.clone(), *val));
                             }

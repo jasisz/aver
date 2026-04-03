@@ -44,6 +44,8 @@ vm_builtins! {
 
     HttpServerListen => "HttpServer.listen",
     HttpServerListenWith => "HttpServer.listenWith",
+    SelfHostRuntimeHttpServerListen => "SelfHostRuntime.httpServerListen",
+    SelfHostRuntimeHttpServerListenWith => "SelfHostRuntime.httpServerListenWith",
 
     DiskReadText => "Disk.readText",
     DiskWriteText => "Disk.writeText",
@@ -177,7 +179,13 @@ pub(crate) enum VmBuiltinParentThinClass {
 
 impl VmBuiltin {
     pub(crate) const fn is_http_server(self) -> bool {
-        matches!(self, Self::HttpServerListen | Self::HttpServerListenWith)
+        matches!(
+            self,
+            Self::HttpServerListen
+                | Self::HttpServerListenWith
+                | Self::SelfHostRuntimeHttpServerListen
+                | Self::SelfHostRuntimeHttpServerListenWith
+        )
     }
 
     pub(crate) const fn parent_thin_class(self) -> VmBuiltinParentThinClass {
@@ -236,7 +244,10 @@ impl VmBuiltin {
             | Self::HttpPut
             | Self::HttpPatch => http::effects(self.name()),
 
-            Self::HttpServerListen | Self::HttpServerListenWith => {
+            Self::HttpServerListen
+            | Self::HttpServerListenWith
+            | Self::SelfHostRuntimeHttpServerListen
+            | Self::SelfHostRuntimeHttpServerListenWith => {
                 crate::services::http_server::effects(self.name())
             }
 
@@ -425,7 +436,10 @@ impl VmBuiltin {
             Self::CharToCode | Self::CharFromCode => char::call_nv(self.name(), args, arena),
             Self::ByteToHex | Self::ByteFromHex => byte::call_nv(self.name(), args, arena),
 
-            Self::HttpServerListen | Self::HttpServerListenWith => None,
+            Self::HttpServerListen
+            | Self::HttpServerListenWith
+            | Self::SelfHostRuntimeHttpServerListen
+            | Self::SelfHostRuntimeHttpServerListenWith => None,
         };
 
         result.expect("VmBuiltin list and call_nv dispatch are out of sync")

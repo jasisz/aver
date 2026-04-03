@@ -123,6 +123,17 @@ impl<'a> FnCompiler<'a> {
         } else if let Some(&idx) = self.global_names.get(name) {
             self.emit_op(LOAD_GLOBAL);
             self.emit_u16(idx);
+        } else if let Some(&fn_id) = self.module_scope.get(name) {
+            let qualified_name = self.code_store.get(fn_id).name.clone();
+            let symbol_id = self
+                .symbols
+                .find(&qualified_name)
+                .ok_or_else(|| CompileError {
+                    msg: format!("missing VM symbol for module function: {}", qualified_name),
+                })?;
+            let idx = self.add_constant(VmSymbolTable::symbol_ref(symbol_id));
+            self.emit_op(LOAD_CONST);
+            self.emit_u16(idx);
         } else if let Some(symbol_id) = self.symbols.find(name)
             && self
                 .symbols

@@ -33,7 +33,7 @@ fn prepareProgramWithModules(source: String, moduleRoot: String) -> Result<(Prog
 fn runGuestProgram(prog: Program, moduleFns: List<FnDef>, guestArgs: List<String>) -> Result<Val, String>
     ? "Execute an already-loaded guest program. guestArgs marks the guest input boundary for scoped replay and policy in generated Rust."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
-    Domain.Eval.evalProgramWithFns(prog, moduleFns)
+    Domain.Eval.evalProgramWithFns(shiftFnIdsInProgram(prog, List.len(moduleFns)), moduleFns)
 
 fn runGuestCliProgram(prog: Program, moduleFns: List<FnDef>, localFns: List<FnDef>, guestArgs: List<String>) -> Result<Unit, String>
     ? "Execute a loaded guest program with CLI-compatible main semantics inside the guest boundary."
@@ -58,12 +58,11 @@ fn loadOneModule(dep: String, rest: List<String>, moduleRoot: String, acc: List<
     source = Disk.readText(path)?
     tokens = Domain.Lexer.lex(source)
     prog = Domain.Parser.parse(tokens)?
-    resolved = Domain.Resolver.resolveProgram(prog)
-    qualifiedFns = qualifyFns(resolved.fns, dep, [])
+    moduleFns = resolveQualifiedModuleFns(prog, dep)
     loaded2 = Map.set(loaded, dep, true)
-    innerResult = loadModules(resolved.deps, moduleRoot, [], loaded2)?
+    innerResult = loadModules(prog.deps, moduleRoot, acc, loaded2)?
     match innerResult
-        (innerFns, loaded3) -> loadModules(rest, moduleRoot, List.concat(acc, List.concat(innerFns, qualifiedFns)), loaded3)
+        (accWithInner, loaded3) -> loadModules(rest, moduleRoot, List.concat(accWithInner, shiftFnIdsInFns(moduleFns, List.len(accWithInner), [])), loaded3)
 
 fn findModulePath(dep: String, root: String, depth: Int) -> String
     ? "Find module file, trying root then parent dirs."
@@ -115,6 +114,144 @@ fn qualifyFnsOne(f: FnDef, rest: List<FnDef>, prefix: String, acc: List<FnDef>) 
 
 verify qualifyFnsOne
     qualifyFnsOne(FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), [], "M", []) => [FnDef(name = "M.f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)]
+
+fn resolveQualifiedModuleFns(prog: Program, dep: String) -> List<FnDef>
+    ? "Duplicate module function names first, then resolve locally so direct-call ids are consistent within that module."
+    qualifiedProg = Program(deps = prog.deps, fns = qualifyFns(prog.fns, dep, []), stmts = prog.stmts)
+    Domain.Resolver.resolveProgram(qualifiedProg).fns
+
+verify resolveQualifiedModuleFns
+    resolveQualifiedModuleFns(Program(deps = [], fns = [], stmts = []), "M") => []
+
+fn shiftFnIdsInFns(fns: List<FnDef>, offset: Int, acc: List<FnDef>) -> List<FnDef>
+    ? "Shift module-local direct-call ids so they point into the final combined function store."
+    match fns
+        [] -> List.reverse(acc)
+        [fd, ..rest] -> shiftFnIdsInFns(rest, offset, List.prepend(shiftFnIdsInFn(fd, offset), acc))
+
+verify shiftFnIdsInFns
+    shiftFnIdsInFns([], 5, []) => []
+    List.len(shiftFnIdsInFns([FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)], 5, [])) => 1
+
+fn shiftFnIdsInProgram(prog: Program, offset: Int) -> Program
+    ? "Shift entry-program direct-call ids before prepending loaded module functions."
+    Program(deps = prog.deps, fns = shiftFnIdsInFns(prog.fns, offset, []), stmts = shiftFnIdsInStmts(prog.stmts, offset, []))
+
+verify shiftFnIdsInProgram
+    shiftFnIdsInProgram(Program(deps = [], fns = [FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprCallDirect(1, []))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastForwardCall(2, []), tailLoop = false)], stmts = [Stmt.StmtExpr(Expr.ExprCallDirect(3, []))]), 4) => Program(deps = [], fns = [FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprCallDirect(5, []))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastForwardCall(6, []), tailLoop = false)], stmts = [Stmt.StmtExpr(Expr.ExprCallDirect(7, []))])
+
+fn shiftFnIdsInFn(fd: FnDef, offset: Int) -> FnDef
+    ? "Shift all embedded direct-call ids in one function definition."
+    FnDef(name = fd.name, params = fd.params, body = shiftFnIdsInStmts(fd.body, offset, []), slotCount = fd.slotCount, slotMap = fd.slotMap, fastPath = shiftFnIdsInFastPath(fd.fastPath, offset), tailLoop = fd.tailLoop)
+
+verify shiftFnIdsInFn
+    shiftFnIdsInFn(FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprCallDirect(2, []))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastForwardCall(1, [0]), tailLoop = false), 5) => FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprCallDirect(7, []))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastForwardCall(6, [0]), tailLoop = false)
+
+fn shiftFnIdsInFastPath(path: FnFastPath, offset: Int) -> FnFastPath
+    ? "Shift fast-path target ids that were resolved against a module-local function list."
+    match path
+        FnFastPath.FastForwardCall(targetId, slotArgs) -> FnFastPath.FastForwardCall(targetId + offset, slotArgs)
+        _ -> path
+
+verify shiftFnIdsInFastPath
+    shiftFnIdsInFastPath(FnFastPath.FastForwardCall(3, [0, 1]), 4) => FnFastPath.FastForwardCall(7, [0, 1])
+    shiftFnIdsInFastPath(FnFastPath.FastNone, 4) => FnFastPath.FastNone
+
+fn shiftFnIdsInStmts(stmts: List<Stmt>, offset: Int, acc: List<Stmt>) -> List<Stmt>
+    ? "Shift direct-call ids through a statement list."
+    match stmts
+        [] -> List.reverse(acc)
+        [stmt, ..rest] -> shiftFnIdsInStmts(rest, offset, List.prepend(shiftFnIdsInStmt(stmt, offset), acc))
+
+verify shiftFnIdsInStmts
+    shiftFnIdsInStmts([], 3, []) => []
+    shiftFnIdsInStmts([Stmt.StmtExpr(Expr.ExprCallDirect(1, []))], 4, []) => [Stmt.StmtExpr(Expr.ExprCallDirect(5, []))]
+
+fn shiftFnIdsInStmt(stmt: Stmt, offset: Int) -> Stmt
+    ? "Shift direct-call ids in one statement."
+    match stmt
+        Stmt.StmtBind(name, expr) -> Stmt.StmtBind(name, shiftFnIdsInExpr(expr, offset))
+        Stmt.StmtBindSlot(slot, expr) -> Stmt.StmtBindSlot(slot, shiftFnIdsInExpr(expr, offset))
+        Stmt.StmtExpr(expr) -> Stmt.StmtExpr(shiftFnIdsInExpr(expr, offset))
+
+verify shiftFnIdsInStmt
+    shiftFnIdsInStmt(Stmt.StmtBind("x", Expr.ExprCallDirect(2, [])), 5) => Stmt.StmtBind("x", Expr.ExprCallDirect(7, []))
+    shiftFnIdsInStmt(Stmt.StmtExpr(Expr.ExprInt(1)), 5) => Stmt.StmtExpr(Expr.ExprInt(1))
+
+fn shiftFnIdsInExpr(expr: Expr, offset: Int) -> Expr
+    ? "Shift direct-call ids in one expression tree."
+    match expr
+        Expr.ExprBoolBranch(cond, thenExpr, elseExpr) -> Expr.ExprBoolBranch(shiftFnIdsInExpr(cond, offset), shiftFnIdsInExpr(thenExpr, offset), shiftFnIdsInExpr(elseExpr, offset))
+        Expr.ExprVectorGetOrInt(vecExpr, idxExpr, defaultValue) -> Expr.ExprVectorGetOrInt(shiftFnIdsInExpr(vecExpr, offset), shiftFnIdsInExpr(idxExpr, offset), defaultValue)
+        Expr.ExprIntModOrInt(a, b, defaultValue) -> Expr.ExprIntModOrInt(shiftFnIdsInExpr(a, offset), shiftFnIdsInExpr(b, offset), defaultValue)
+        Expr.ExprAdd(a, b) -> Expr.ExprAdd(shiftFnIdsInExpr(a, offset), shiftFnIdsInExpr(b, offset))
+        Expr.ExprSub(a, b) -> Expr.ExprSub(shiftFnIdsInExpr(a, offset), shiftFnIdsInExpr(b, offset))
+        Expr.ExprMul(a, b) -> Expr.ExprMul(shiftFnIdsInExpr(a, offset), shiftFnIdsInExpr(b, offset))
+        Expr.ExprDiv(a, b) -> Expr.ExprDiv(shiftFnIdsInExpr(a, offset), shiftFnIdsInExpr(b, offset))
+        Expr.ExprEq(a, b) -> Expr.ExprEq(shiftFnIdsInExpr(a, offset), shiftFnIdsInExpr(b, offset))
+        Expr.ExprNeq(a, b) -> Expr.ExprNeq(shiftFnIdsInExpr(a, offset), shiftFnIdsInExpr(b, offset))
+        _ -> shiftFnIdsInExprTail(expr, offset)
+
+fn shiftFnIdsInExprTail(expr: Expr, offset: Int) -> Expr
+    ? "Finish shifting direct-call ids through the remaining aggregate forms."
+    match expr
+        Expr.ExprLt(a, b) -> Expr.ExprLt(shiftFnIdsInExpr(a, offset), shiftFnIdsInExpr(b, offset))
+        Expr.ExprGt(a, b) -> Expr.ExprGt(shiftFnIdsInExpr(a, offset), shiftFnIdsInExpr(b, offset))
+        Expr.ExprLte(a, b) -> Expr.ExprLte(shiftFnIdsInExpr(a, offset), shiftFnIdsInExpr(b, offset))
+        Expr.ExprGte(a, b) -> Expr.ExprGte(shiftFnIdsInExpr(a, offset), shiftFnIdsInExpr(b, offset))
+        Expr.ExprConcat(parts) -> Expr.ExprConcat(shiftFnIdsInExprs(parts, offset, []))
+        Expr.ExprTuple(exprs) -> Expr.ExprTuple(shiftFnIdsInExprs(exprs, offset, []))
+        Expr.ExprList(exprs) -> Expr.ExprList(shiftFnIdsInExprs(exprs, offset, []))
+        Expr.ExprRecord(name, fields) -> Expr.ExprRecord(name, shiftFnIdsInFields(fields, offset, []))
+        _ -> shiftFnIdsInExprCalls(expr, offset)
+
+fn shiftFnIdsInExprCalls(expr: Expr, offset: Int) -> Expr
+    ? "Finish shifting direct-call ids through access, call, and match forms."
+    match expr
+        Expr.ExprFieldAccess(obj, field) -> Expr.ExprFieldAccess(shiftFnIdsInExpr(obj, offset), field)
+        Expr.ExprCall(name, args) -> Expr.ExprCall(name, shiftFnIdsInExprs(args, offset, []))
+        Expr.ExprCallDirect(fnId, args) -> Expr.ExprCallDirect(fnId + offset, shiftFnIdsInExprs(args, offset, []))
+        Expr.ExprCallBuiltin(name, args) -> Expr.ExprCallBuiltin(name, shiftFnIdsInExprs(args, offset, []))
+        Expr.ExprCallBuiltinId(id, args) -> Expr.ExprCallBuiltinId(id, shiftFnIdsInExprs(args, offset, []))
+        Expr.ExprMatch(scrutinee, arms) -> Expr.ExprMatch(shiftFnIdsInExpr(scrutinee, offset), shiftFnIdsInArms(arms, offset, []))
+        Expr.ExprPropagate(inner) -> Expr.ExprPropagate(shiftFnIdsInExpr(inner, offset))
+        Expr.ExprIndependentProduct(exprs, unwrap) -> Expr.ExprIndependentProduct(shiftFnIdsInExprs(exprs, offset, []), unwrap)
+        _ -> expr
+
+verify shiftFnIdsInExpr
+    shiftFnIdsInExpr(Expr.ExprCallDirect(2, [Expr.ExprCallDirect(1, [])]), 5) => Expr.ExprCallDirect(7, [Expr.ExprCallDirect(6, [])])
+    shiftFnIdsInExpr(Expr.ExprCall("f", [Expr.ExprCallDirect(0, [])]), 3) => Expr.ExprCall("f", [Expr.ExprCallDirect(3, [])])
+
+fn shiftFnIdsInExprs(exprs: List<Expr>, offset: Int, acc: List<Expr>) -> List<Expr>
+    ? "Shift direct-call ids in a list of expressions."
+    match exprs
+        [] -> List.reverse(acc)
+        [expr, ..rest] -> shiftFnIdsInExprs(rest, offset, List.prepend(shiftFnIdsInExpr(expr, offset), acc))
+
+verify shiftFnIdsInExprs
+    shiftFnIdsInExprs([], 2, []) => []
+    shiftFnIdsInExprs([Expr.ExprCallDirect(1, []), Expr.ExprInt(9)], 3, []) => [Expr.ExprCallDirect(4, []), Expr.ExprInt(9)]
+
+fn shiftFnIdsInFields(fields: List<(String, Expr)>, offset: Int, acc: List<(String, Expr)>) -> List<(String, Expr)>
+    ? "Shift direct-call ids in record field expressions."
+    match fields
+        [] -> List.reverse(acc)
+        [pair, ..rest] -> match pair
+            (name, expr) -> shiftFnIdsInFields(rest, offset, List.prepend((name, shiftFnIdsInExpr(expr, offset)), acc))
+
+verify shiftFnIdsInFields
+    shiftFnIdsInFields([], 1, []) => []
+    shiftFnIdsInFields([("x", Expr.ExprCallDirect(2, []))], 4, []) => [("x", Expr.ExprCallDirect(6, []))]
+
+fn shiftFnIdsInArms(arms: List<MatchArm>, offset: Int, acc: List<MatchArm>) -> List<MatchArm>
+    ? "Shift direct-call ids in match arm bodies."
+    match arms
+        [] -> List.reverse(acc)
+        [arm, ..rest] -> shiftFnIdsInArms(rest, offset, List.prepend(MatchArm(pattern = arm.pattern, body = shiftFnIdsInExpr(arm.body, offset), bindingSlots = arm.bindingSlots), acc))
+
+verify shiftFnIdsInArms
+    shiftFnIdsInArms([], 1, []) => []
+    shiftFnIdsInArms([MatchArm(pattern = Pattern.PatWild, body = Expr.ExprCallDirect(3, []), bindingSlots = Map.empty())], 2, []) => [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprCallDirect(5, []), bindingSlots = Map.empty())]
 
 fn runRepr(source: String) -> String
     ? "Run source and return result representation or error."

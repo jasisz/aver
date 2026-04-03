@@ -8,6 +8,8 @@ fn call(name: String, args: List<Val>) -> Result<Val, String>
     match name
         "List.prepend" -> builtinListPrepend(args)
         "List.len" -> builtinListLen(args)
+        "List.take" -> builtinListTake(args)
+        "List.drop" -> builtinListDrop(args)
         "List.reverse" -> builtinListReverse(args)
         "List.concat" -> builtinListConcat(args)
         "List.contains" -> builtinListContains(args)
@@ -18,6 +20,7 @@ fn call(name: String, args: List<Val>) -> Result<Val, String>
 
 verify call
     call("List.len", [Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValInt(2))
+    call("List.take", [Val.ValList([Val.ValInt(1), Val.ValInt(2)]), Val.ValInt(1)]) => Result.Ok(Val.ValList([Val.ValInt(1)]))
     call("List.head", [Val.ValList([Val.ValInt(1)])]) => Result.Ok(Val.ValSome(Val.ValInt(1)))
     call("List.bogus", [Val.ValInt(1)]) => Result.Err("unknown list builtin: List.bogus")
 
@@ -50,6 +53,74 @@ verify builtinListLen
     builtinListLen([Val.ValList([Val.ValInt(1), Val.ValInt(2)])]) => Result.Ok(Val.ValInt(2))
     builtinListLen([Val.ValList([])]) => Result.Ok(Val.ValInt(0))
     builtinListLen([Val.ValInt(1)]) => Result.Err("expected list argument")
+
+fn builtinListTake(args: List<Val>) -> Result<Val, String>
+    ? "List.take(list, n) -> first n elements."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (lstV, nV) -> builtinListTakeInner(lstV, nV)
+
+verify builtinListTake
+    builtinListTake([Val.ValList([Val.ValInt(1), Val.ValInt(2)]), Val.ValInt(1)]) => Result.Ok(Val.ValList([Val.ValInt(1)]))
+    builtinListTake([Val.ValList([Val.ValInt(1)]), Val.ValInt(0)]) => Result.Ok(Val.ValList([]))
+    builtinListTake([Val.ValList([Val.ValInt(1)]), Val.ValStr("x")]) => Result.Err("expected int argument")
+
+fn builtinListTakeInner(lstV: Val, nV: Val) -> Result<Val, String>
+    ? "Inner impl of List.take."
+    items = Domain.Builtins.Helpers.expectList(lstV)?
+    count = Domain.Builtins.Helpers.expectInt(nV)?
+    Result.Ok(Val.ValList(listTake(items, count)))
+
+verify builtinListTakeInner
+    builtinListTakeInner(Val.ValList([Val.ValInt(1), Val.ValInt(2)]), Val.ValInt(5)) => Result.Ok(Val.ValList([Val.ValInt(1), Val.ValInt(2)]))
+    builtinListTakeInner(Val.ValInt(1), Val.ValInt(1)) => Result.Err("expected list argument")
+
+fn listTake(items: List<Val>, count: Int) -> List<Val>
+    ? "Keep the first count elements; negative counts produce empty lists."
+    match count <= 0
+        true -> []
+        false -> match items
+            [] -> []
+            [item, ..rest] -> List.prepend(item, listTake(rest, count - 1))
+
+verify listTake
+    listTake([Val.ValInt(1), Val.ValInt(2), Val.ValInt(3)], 2) => [Val.ValInt(1), Val.ValInt(2)]
+    listTake([Val.ValInt(1)], 0) => []
+    listTake([Val.ValInt(1)], 0 - 1) => []
+
+fn builtinListDrop(args: List<Val>) -> Result<Val, String>
+    ? "List.drop(list, n) -> all but the first n elements."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (lstV, nV) -> builtinListDropInner(lstV, nV)
+
+verify builtinListDrop
+    builtinListDrop([Val.ValList([Val.ValInt(1), Val.ValInt(2)]), Val.ValInt(1)]) => Result.Ok(Val.ValList([Val.ValInt(2)]))
+    builtinListDrop([Val.ValList([Val.ValInt(1)]), Val.ValInt(0)]) => Result.Ok(Val.ValList([Val.ValInt(1)]))
+    builtinListDrop([Val.ValList([Val.ValInt(1)]), Val.ValStr("x")]) => Result.Err("expected int argument")
+
+fn builtinListDropInner(lstV: Val, nV: Val) -> Result<Val, String>
+    ? "Inner impl of List.drop."
+    items = Domain.Builtins.Helpers.expectList(lstV)?
+    count = Domain.Builtins.Helpers.expectInt(nV)?
+    Result.Ok(Val.ValList(listDrop(items, count)))
+
+verify builtinListDropInner
+    builtinListDropInner(Val.ValList([Val.ValInt(1), Val.ValInt(2)]), Val.ValInt(5)) => Result.Ok(Val.ValList([]))
+    builtinListDropInner(Val.ValInt(1), Val.ValInt(1)) => Result.Err("expected list argument")
+
+fn listDrop(items: List<Val>, count: Int) -> List<Val>
+    ? "Skip the first count elements; negative counts leave the list unchanged."
+    match count <= 0
+        true -> items
+        false -> match items
+            [] -> []
+            [_item, ..rest] -> listDrop(rest, count - 1)
+
+verify listDrop
+    listDrop([Val.ValInt(1), Val.ValInt(2), Val.ValInt(3)], 2) => [Val.ValInt(3)]
+    listDrop([Val.ValInt(1)], 0) => [Val.ValInt(1)]
+    listDrop([Val.ValInt(1)], 0 - 1) => [Val.ValInt(1)]
 
 fn builtinListReverse(args: List<Val>) -> Result<Val, String>
     ? "List.reverse(list) -> reversed list."

@@ -1,6 +1,37 @@
 use super::*;
 
 impl Interpreter {
+    pub(super) fn import_type_def_runtime(&mut self, td: &TypeDef) {
+        match td {
+            TypeDef::Sum {
+                name: type_name,
+                variants,
+                ..
+            } => {
+                let type_id = match self.arena.find_type_id(type_name) {
+                    Some(id) => id,
+                    None => self.arena.register_sum_type(type_name, vec![]),
+                };
+                for variant in variants {
+                    if self.arena.find_variant_id(type_id, &variant.name).is_none() {
+                        self.arena.register_variant_name(type_id, variant.name.clone());
+                    }
+                }
+            }
+            TypeDef::Product { name, fields, .. } => {
+                if self.arena.find_type_id(name).is_none() {
+                    self.arena.register_record_type(
+                        name,
+                        fields.iter().map(|(field, _)| field.clone()).collect(),
+                    );
+                }
+                self.record_schemas.entry(name.clone()).or_insert_with(|| {
+                    fields.iter().map(|(field, _)| field.clone()).collect()
+                });
+            }
+        }
+    }
+
     pub fn exec_items(&mut self, items: &[TopLevel]) -> Result<Value, RuntimeError> {
         for item in items {
             match item {

@@ -50,3 +50,12 @@ files = ["**/main.av", "**/verify.av"]
 reason = """
 Entry point and verify harness contain recursive helpers for module loading \
 and test orchestration. Recursion depth is bounded by module graph size."""
+
+[[check.suppress]]
+slug = "independence-hazard"
+files = ["**/eval/**", "**/eval.av"]
+reason = """
+The self-hosted evaluator uses its own independent products only when the guest \
+program already declared an ExprIndependentProduct. This is an implementation \
+detail that lets compiled and VM self-host runs overlap guest branches, while \
+plain interpreted self-host runs remain sequential but semantically correct."""

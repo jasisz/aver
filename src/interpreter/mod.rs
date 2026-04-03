@@ -250,6 +250,7 @@ pub struct Interpreter {
     /// Arena for NaN-boxed value storage.
     pub arena: Arena,
     module_cache: HashMap<String, Value>,
+    mounted_module_paths: HashSet<String>,
     /// Record field order schemas by type name (used to validate and
     /// canonicalize `RecordCreate` runtime values).
     record_schemas: HashMap<String, Vec<String>>,
@@ -319,6 +320,8 @@ mod memo_cache_tests {
 mod ir_bridge_tests {
     use aver_rt::AverVector;
 
+    use crate::ir::CallLowerCtx;
+
     use super::ir_bridge::InterpreterLowerCtx;
     use super::lowered::{
         self, ExprId, LoweredDirectCallTarget, LoweredExpr, LoweredForwardArg, LoweredLeafOp,
@@ -370,6 +373,51 @@ mod ir_bridge_tests {
             .expect("module path should be mountable");
     }
 
+    fn register_expr_type(interpreter: &mut Interpreter) {
+        interpreter.register_type_def(&TypeDef::Sum {
+            name: "Expr".to_string(),
+            variants: vec![TypeVariant {
+                name: "ExprInt".to_string(),
+                fields: vec!["Int".to_string()],
+            }],
+            line: 1,
+        });
+    }
+
+    fn register_token_type(interpreter: &mut Interpreter) {
+        interpreter.register_type_def(&TypeDef::Sum {
+            name: "Token".to_string(),
+            variants: vec![
+                TypeVariant {
+                    name: "TkInt".to_string(),
+                    fields: vec!["Int".to_string()],
+                },
+                TypeVariant {
+                    name: "TkQuestion".to_string(),
+                    fields: vec![],
+                },
+            ],
+            line: 1,
+        });
+
+        let mut members = HashMap::new();
+        members.insert(
+            "Token".to_string(),
+            interpreter
+                .lookup("Token")
+                .expect("Token type namespace should be defined"),
+        );
+        interpreter
+            .define_module_path(
+                "Domain.Token",
+                Value::Namespace {
+                    name: "Domain.Token".to_string(),
+                    members,
+                },
+            )
+            .expect("module path should be mountable");
+    }
+
     #[test]
     fn eval_constructor_uses_shared_semantics_for_wrappers_and_qualified_variants() {
         let mut interpreter = Interpreter::new();
@@ -409,6 +457,164 @@ mod ir_bridge_tests {
     }
 
     #[test]
+    fn qualified_module_function_call_prefers_deepest_module_prefix_over_type_namespace() {
+        let mut interpreter = Interpreter::new();
+        register_expr_type(&mut interpreter);
+
+        let parse_expr = FnDef {
+            name: "parseExpr".to_string(),
+            line: 1,
+            params: vec![
+                ("tokens".to_string(), "List<Int>".to_string()),
+                ("pos".to_string(), "Int".to_string()),
+            ],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(sb(Expr::Literal(Literal::Int(7))))),
+            resolution: None,
+        };
+        interpreter
+            .exec_fn_def(&parse_expr)
+            .expect("parseExpr function should register");
+
+        let mut members = HashMap::new();
+        members.insert(
+            "parseExpr".to_string(),
+            interpreter
+                .lookup("parseExpr")
+                .expect("parseExpr function should be available"),
+        );
+        interpreter
+            .define_module_path(
+                "Domain.Parser.Expr",
+                Value::Namespace {
+                    name: "Domain.Parser.Expr".to_string(),
+                    members,
+                },
+            )
+            .expect("module path should be mountable");
+
+        let ctx = InterpreterLowerCtx::new(&interpreter);
+        assert_eq!(
+            ctx.resolve_module_call("Domain.Parser.Expr.parseExpr"),
+            Some(("Domain.Parser.Expr", "parseExpr"))
+        );
+
+        let call = sb(Expr::FnCall(
+            sbb(Expr::Attr(
+                sbb(Expr::Attr(
+                    sbb(Expr::Attr(
+                        sbb(Expr::Ident("Domain".to_string())),
+                        "Parser".to_string(),
+                    )),
+                    "Expr".to_string(),
+                )),
+                "parseExpr".to_string(),
+            )),
+            vec![
+                sb(Expr::List(vec![sb(Expr::Literal(Literal::Int(1)))])),
+                sb(Expr::Literal(Literal::Int(0))),
+            ],
+        ));
+
+        assert_eq!(
+            interpreter
+                .eval_expr(&call)
+                .expect("qualified module function call should run"),
+            Value::Int(7)
+        );
+    }
+
+    #[test]
+    fn qualified_constructor_call_keeps_outer_module_prefix_when_type_namespace_exists() {
+        let mut interpreter = Interpreter::new();
+        register_expr_type(&mut interpreter);
+
+        let mut members = HashMap::new();
+        members.insert(
+            "Expr".to_string(),
+            interpreter
+                .lookup("Expr")
+                .expect("Expr type namespace should be available"),
+        );
+        interpreter
+            .define_module_path(
+                "Domain.Ast",
+                Value::Namespace {
+                    name: "Domain.Ast".to_string(),
+                    members,
+                },
+            )
+            .expect("module path should be mountable");
+
+        let ctx = InterpreterLowerCtx::new(&interpreter);
+        assert_eq!(
+            ctx.resolve_module_call("Domain.Ast.Expr.ExprInt"),
+            Some(("Domain.Ast", "Expr.ExprInt"))
+        );
+
+        let ctor_call = sb(Expr::FnCall(
+            sbb(Expr::Attr(
+                sbb(Expr::Attr(
+                    sbb(Expr::Attr(
+                        sbb(Expr::Ident("Domain".to_string())),
+                        "Ast".to_string(),
+                    )),
+                    "Expr".to_string(),
+                )),
+                "ExprInt".to_string(),
+            )),
+            vec![sb(Expr::Literal(Literal::Int(7)))],
+        ));
+
+        match interpreter
+            .eval_expr(&ctor_call)
+            .expect("qualified constructor call should run")
+        {
+            Value::Variant {
+                type_name,
+                variant,
+                fields,
+            } => {
+                assert_eq!(type_name, "Expr");
+                assert_eq!(variant, "ExprInt");
+                assert_eq!(fields.as_ref(), &[Value::Int(7)]);
+            }
+            other => panic!("expected variant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn short_type_aliases_are_not_misclassified_as_module_prefixes() {
+        let mut interpreter = Interpreter::new();
+        register_token_type(&mut interpreter);
+
+        let ctx = InterpreterLowerCtx::new(&interpreter);
+        assert_eq!(ctx.resolve_module_call("Token.TkQuestion"), None);
+
+        let pattern = Pattern::Constructor("Token.TkInt".to_string(), vec!["n".to_string()]);
+        let value = Value::Variant {
+            type_name: "Token".to_string(),
+            variant: "TkInt".to_string(),
+            fields: vec![Value::Int(1)].into(),
+        };
+
+        assert_eq!(
+            interpreter.match_pattern(&pattern, &value),
+            Some(vec![("n".to_string(), Value::Int(1))])
+        );
+
+        let nv = NanValue::from_value(&value, &mut interpreter.arena);
+        let bindings = interpreter
+            .match_pattern_nv(&pattern, nv)
+            .expect("short type alias constructor pattern should match");
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].0, "n");
+        assert_eq!(bindings[0].1.to_value(&interpreter.arena), Value::Int(1));
+    }
+
+    #[test]
     fn qualified_constructor_patterns_use_shared_semantics_in_both_match_paths() {
         let mut interpreter = Interpreter::new();
         register_task_event_type(&mut interpreter);
@@ -438,6 +644,40 @@ mod ir_bridge_tests {
             bindings[0].1.to_value(&interpreter.arena),
             Value::Str("now".to_string())
         );
+    }
+
+    #[test]
+    fn constructor_patterns_match_inline_single_field_variants_in_nan_path() {
+        let mut interpreter = Interpreter::new();
+        interpreter.register_type_def(&TypeDef::Sum {
+            name: "Expr".to_string(),
+            variants: vec![
+                TypeVariant {
+                    name: "Int".to_string(),
+                    fields: vec!["Int".to_string()],
+                },
+                TypeVariant {
+                    name: "Text".to_string(),
+                    fields: vec!["String".to_string()],
+                },
+            ],
+            line: 1,
+        });
+
+        let pattern = Pattern::Constructor("Expr.Int".to_string(), vec!["n".to_string()]);
+        let value = Value::Variant {
+            type_name: "Expr".to_string(),
+            variant: "Int".to_string(),
+            fields: vec![Value::Int(7)].into(),
+        };
+
+        let nv = NanValue::from_value(&value, &mut interpreter.arena);
+        let bindings = interpreter
+            .match_pattern_nv(&pattern, nv)
+            .expect("inline one-field variant should match in nan path");
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].0, "n");
+        assert_eq!(bindings[0].1.to_value(&interpreter.arena), Value::Int(7));
     }
 
     #[test]

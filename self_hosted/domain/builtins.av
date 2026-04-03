@@ -67,11 +67,14 @@ fn callBuiltinByIdValues(id: Int, args: List<Val>) -> Result<Val, String>
         17 -> Domain.Builtins.Wrappers.call("Result.Err", args)
         18 -> Domain.Builtins.Wrappers.call("Result.withDefault", args)
         19 -> Domain.Builtins.Primitives.callInt("Int.toString", args)
+        20 -> Domain.Builtins.List.call("List.take", args)
+        21 -> Domain.Builtins.List.call("List.drop", args)
         _ -> Result.Err("Unknown builtin ID: {Int.toString(id)}")
 
 verify callBuiltinByIdValues
     callBuiltinByIdValues(0, []) => Result.Ok(Val.ValMap(Map.empty()))
     callBuiltinByIdValues(13, []) => Result.Ok(Val.ValNone)
+    callBuiltinByIdValues(20, [Val.ValList([Val.ValInt(1), Val.ValInt(2)]), Val.ValInt(1)]) => Result.Ok(Val.ValList([Val.ValInt(1)]))
     callBuiltinByIdValues(999, []) => Result.Err("Unknown builtin ID: 999")
 
 fn callBuiltinAfterList(name: String, args: List<Val>) -> Result<Val, String>

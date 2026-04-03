@@ -1,6 +1,6 @@
 # Checkers
 
-Checkers on 8×8 board with backward captures, maximum capture rule, and alpha-beta AI opponent.
+Checkers on 8×8 board with backward captures, maximum capture rule, and an alpha-beta AI opponent whose root candidates are scored in parallel batches.
 
 ## Run
 
@@ -36,7 +36,7 @@ cd /tmp/checkers-rs && cargo build --release
 
 ## AI
 
-Alpha-beta pruning with progressive alpha tightening. Evaluation: piece count (kings 3×) + center control bonus. Decision trace shown on the right side of the board with all candidate moves ranked by score.
+Alpha-beta pruning with root-parallel scoring on the first search layer. Candidate moves are evaluated in batches of 4 via independent products, then ranked on the right side of the board. Evaluation: piece count (kings 3×) + center control bonus.
 
 ## Modules
 
