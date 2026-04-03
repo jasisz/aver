@@ -14,7 +14,8 @@ impl Interpreter {
                 };
                 for variant in variants {
                     if self.arena.find_variant_id(type_id, &variant.name).is_none() {
-                        self.arena.register_variant_name(type_id, variant.name.clone());
+                        self.arena
+                            .register_variant_name(type_id, variant.name.clone());
                     }
                 }
             }
@@ -25,9 +26,9 @@ impl Interpreter {
                         fields.iter().map(|(field, _)| field.clone()).collect(),
                     );
                 }
-                self.record_schemas.entry(name.clone()).or_insert_with(|| {
-                    fields.iter().map(|(field, _)| field.clone()).collect()
-                });
+                self.record_schemas
+                    .entry(name.clone())
+                    .or_insert_with(|| fields.iter().map(|(field, _)| field.clone()).collect());
             }
         }
     }

@@ -949,6 +949,9 @@ fn listenWith(context: Int, handler: Int) -> Unit
         let mut arena = Arena::new();
         let (code, _globals) = compile_program(&items, &mut arena).expect("vm compile should pass");
         assert!(code.find("listen").is_some(), "listen should compile");
-        assert!(code.find("listenWith").is_some(), "listenWith should compile");
+        assert!(
+            code.find("listenWith").is_some(),
+            "listenWith should compile"
+        );
     }
 }

@@ -250,7 +250,8 @@ impl Interpreter {
                                     vec![inner],
                                 )
                             } else {
-                                let (type_id, variant_id, fields) = value.variant_parts(&self.arena)?;
+                                let (type_id, variant_id, fields) =
+                                    value.variant_parts(&self.arena)?;
                                 (
                                     self.arena.get_type_name(type_id),
                                     self.arena.get_variant_name(type_id, variant_id),

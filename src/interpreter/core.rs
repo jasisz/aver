@@ -559,9 +559,9 @@ impl Interpreter {
 
     /// O(1) slot-based variable lookup — returns NanValue (Copy, no clone).
     pub(super) fn lookup_slot(&self, slot: u16) -> Result<NanValue, RuntimeError> {
-        let idx = self.current_slots_frame_index().ok_or_else(|| {
-            RuntimeError::Error("Resolved lookup on non-Slots frame".to_string())
-        })?;
+        let idx = self
+            .current_slots_frame_index()
+            .ok_or_else(|| RuntimeError::Error("Resolved lookup on non-Slots frame".to_string()))?;
         match &self.env[idx] {
             EnvFrame::Slots(v) => Ok(v[slot as usize]),
             _ => Err(RuntimeError::Error(
