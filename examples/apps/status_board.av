@@ -1,0 +1,365 @@
+module StatusBoard
+    intent =
+        "Visual terminal demo for structured concurrency."
+        "Simulates service probes in bounded windows."
+        "Shows batch N on the left while batch N+1 is alive on the right."
+        "Best viewed with --vm or compiled Rust, where sibling branches overlap for real."
+    exposes [main]
+
+decision PipelineStatusWall
+    date = "2026-04-03"
+    reason =
+        "A status wall is more convincing than a plain log."
+        "Rendering batch N is independent from probing batch N+1."
+        "A terminal dashboard makes the overlap visible without async/await."
+    chosen = "Pipeline dashboard"
+    rejected = ["BlankThenDump", "Channels", "async/await"]
+    impacts = [streamBoard, runBoard, main]
+
+record Service
+    name: String
+    team: String
+    latencyMs: Int
+    status: Int
+    headline: String
+
+record Snapshot
+    name: String
+    team: String
+    latencyMs: Int
+    status: Int
+    headline: String
+
+fn demoServices() -> List<Service>
+    ? "Synthetic services with fixed latencies so the demo stays offline and repeatable."
+    [
+        Service(name = "Search API", team = "search", latencyMs = 1200, status = 200, headline = "query path healthy"),
+        Service(name = "Billing API", team = "payments", latencyMs = 700, status = 503, headline = "failover still active"),
+        Service(name = "Checkout API", team = "payments", latencyMs = 950, status = 200, headline = "charge path healthy"),
+        Service(name = "Profile API", team = "identity", latencyMs = 450, status = 404, headline = "route misconfigured"),
+        Service(name = "Alerts API", team = "ops", latencyMs = 1100, status = 200, headline = "pager drain complete")
+    ]
+
+verify demoServices
+    List.len(demoServices()) => 5
+
+fn statusLabel(status: Int) -> String
+    ? "Maps an HTTP status code to a short board label."
+    match status < 300
+        true -> "OK"
+        false -> match status < 500
+            true -> "WARN"
+            false -> "DOWN"
+
+verify statusLabel
+    statusLabel(200) => "OK"
+    statusLabel(404) => "WARN"
+    statusLabel(503) => "DOWN"
+
+fn elapsedPrefix(startMs: Int, nowMs: Int) -> String
+    ? "Formats a relative millisecond timestamp for the dashboard header."
+    "[+{String.fromInt(nowMs - startMs)}ms]"
+
+verify elapsedPrefix
+    elapsedPrefix(1000, 1450) => "[+450ms]"
+
+fn minInt(a: Int, b: Int) -> Int
+    ? "Returns the smaller of two integers."
+    match a < b
+        true -> a
+        false -> b
+
+verify minInt
+    minInt(2, 5) => 2
+    minInt(9, 1) => 1
+
+fn spinner(frame: Int) -> String
+    ? "Cycles through four ASCII spinner frames."
+    slot = Result.withDefault(Int.mod(frame, 4), 0)
+    match slot
+        0 -> "-"
+        1 -> "\\"
+        2 -> "|"
+        _ -> "/"
+
+verify spinner
+    spinner(0) => "-"
+    spinner(1) => "\\"
+    spinner(2) => "|"
+    spinner(3) => "/"
+
+fn statusColor(status: Int) -> String
+    ? "Maps HTTP status classes to terminal colors."
+    match status < 300
+        true -> "green"
+        false -> match status < 500
+            true -> "yellow"
+            false -> "red"
+
+verify statusColor
+    statusColor(200) => "green"
+    statusColor(404) => "yellow"
+    statusColor(503) => "red"
+
+fn maxLatency(services: List<Service>) -> Int
+    ? "Returns the slowest latency in a batch."
+    match services
+        [] -> 0
+        [service, ..rest] -> maxLatencyLoop(rest, service.latencyMs)
+
+verify maxLatency
+    maxLatency([]) => 0
+    maxLatency([
+        Service(name = "A", team = "x", latencyMs = 400, status = 200, headline = "ok"),
+        Service(name = "B", team = "x", latencyMs = 900, status = 200, headline = "ok"),
+        Service(name = "C", team = "x", latencyMs = 700, status = 200, headline = "ok")
+    ]) => 900
+
+fn maxLatencyLoop(remaining: List<Service>, best: Int) -> Int
+    ? "Accumulates the slowest latency while walking the rest of the batch."
+    match remaining
+        [] -> best
+        [service, ..rest] -> match service.latencyMs > best
+            true -> maxLatencyLoop(rest, service.latencyMs)
+            false -> maxLatencyLoop(rest, best)
+
+verify maxLatencyLoop
+    maxLatencyLoop([], 250) => 250
+    maxLatencyLoop([
+        Service(name = "B", team = "x", latencyMs = 900, status = 200, headline = "ok"),
+        Service(name = "C", team = "x", latencyMs = 700, status = 200, headline = "ok")
+    ], 400) => 900
+
+fn probeFrames(services: List<Service>) -> Int
+    ? "Turns batch latency into a rough number of animation frames."
+    slowest = maxLatency(services)
+    match slowest == 0
+        true -> 6
+        false -> slowest / 120 + 4
+
+verify probeFrames
+    probeFrames([Service(name = "A", team = "x", latencyMs = 600, status = 200, headline = "ok")]) => 9
+
+fn drawText(x: Int, y: Int, color: String, text: String) -> Unit
+    ? "Draws one colored text fragment."
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    Terminal.moveTo(x, y)
+    Terminal.setColor(color)
+    Terminal.print(text)
+    Terminal.resetColor()
+
+fn probeService(service: Service) -> Result<Snapshot, String>
+    ? "Sleeps for the service latency and returns a synthetic snapshot."
+    ! [Time.sleep]
+    Time.sleep(service.latencyMs)
+    Result.Ok(
+        Snapshot(
+            name = service.name,
+            team = service.team,
+            latencyMs = service.latencyMs,
+            status = service.status,
+            headline = service.headline
+        )
+    )
+
+fn probeStep(service: Service, rest: List<Service>) -> Result<List<Snapshot>, String>
+    ? "Probes one service while the rest of the batch is already in flight."
+    ! [Time.sleep]
+    data = (probeService(service), probeAll(rest))?!
+    match data
+        (current, others) -> Result.Ok(List.prepend(current, others))
+
+fn probeAll(services: List<Service>) -> Result<List<Snapshot>, String>
+    ? "Probes one batch via recursive fan-out."
+    ! [Time.sleep]
+    match services
+        [] -> Result.Ok([])
+        [service, ..rest] -> probeStep(service, rest)
+
+fn drawSnapshot(snapshot: Snapshot, row: Int) -> Unit
+    ? "Draws one ready snapshot in the left column."
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    drawText(2, row, statusColor(snapshot.status), "[{statusLabel(snapshot.status)}] {snapshot.name}")
+    drawText(2, row + 1, "white", "team {snapshot.team} | http {String.fromInt(snapshot.status)} | ~{String.fromInt(snapshot.latencyMs)}ms")
+    drawText(2, row + 2, "cyan", "{snapshot.headline}")
+
+fn drawReadyRows(ready: List<Snapshot>, visible: Int, row: Int) -> Unit
+    ? "Draws the visible prefix of the ready batch."
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    match visible == 0
+        true -> Unit
+        false -> drawReadyRowsVisible(ready, visible, row)
+
+fn drawReadyRowsVisible(ready: List<Snapshot>, visible: Int, row: Int) -> Unit
+    ? "Continues drawing ready rows once at least one row should be visible."
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    match ready
+        [] -> Unit
+        [snapshot, ..rest] -> drawReadyRowsStep(snapshot, rest, visible, row)
+
+fn drawReadyRowsStep(snapshot: Snapshot, rest: List<Snapshot>, visible: Int, row: Int) -> Unit
+    ? "Draws one ready row and advances to the next slot."
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    _ = drawSnapshot(snapshot, row)
+    drawReadyRows(rest, visible - 1, row + 4)
+
+fn drawPendingRows(pending: List<Service>, row: Int, frame: Int, lane: Int) -> Unit
+    ? "Draws the right-hand column of currently probed services."
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    match pending
+        [] -> drawText(42, row, "white", "pipeline drained")
+        [service, ..rest] -> drawPendingRowsStep(service, rest, row, frame, lane)
+
+fn drawPendingRowsStep(service: Service, rest: List<Service>, row: Int, frame: Int, lane: Int) -> Unit
+    ? "Draws one pending row with an animated bar."
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    drawText(42, row, "magenta", "{spinner(frame)} {service.name}")
+    drawText(42, row + 1, "white", "latency ~{String.fromInt(service.latencyMs)}ms")
+    drawText(42, row + 2, "cyan", "{service.headline}")
+    drawPendingRows(rest, row + 4, frame + 1, lane + 1)
+
+fn drawHeader(batchIndex: Int, nextIndex: Int, hasNext: Bool, startMs: Int, nowMs: Int, frame: Int) -> Unit
+    ? "Draws dashboard chrome and pipeline state."
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    drawText(0, 0, "cyan", "===================== STATUS WALL =====================")
+    drawText(0, 1, "white", "{elapsedPrefix(startMs, nowMs)} left = batch {String.fromInt(batchIndex)} ready")
+    match hasNext
+        true -> drawText(0, 2, "white", "{spinner(frame)} right = batch {String.fromInt(nextIndex)} is probing now")
+        false -> drawText(0, 2, "white", "pipeline drained - final batch is on the screen")
+    drawText(0, 3, "white", "best viewed with --vm or compiled Rust")
+    drawText(0, 5, "green", "READY NOW")
+    drawText(40, 5, "magenta", "PROBING NEXT")
+    drawText(0, 6, "white", "------------------------------------")
+    drawText(40, 6, "white", "------------------------------------")
+
+fn drawFooter() -> Unit
+    ? "Draws the legend and the point of the demo."
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    drawText(0, 19, "white", "green=healthy yellow=warn red=down | window=2")
+    drawText(0, 20, "white", "left side is render work; right side is a sibling branch")
+
+fn renderFrame(ready: List<Snapshot>, pending: List<Service>, batchIndex: Int, startMs: Int, frame: Int, hasNext: Bool) -> Unit
+    ? "Renders one full dashboard frame."
+    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.unixMs]
+    nowMs = Time.unixMs()
+    visible = minInt(List.len(ready), frame / 2 + 1)
+    Terminal.clear()
+    drawHeader(batchIndex, batchIndex + 1, hasNext, startMs, nowMs, frame)
+    drawReadyRows(ready, visible, 8)
+    drawPendingRows(pending, 8, frame, 0)
+    drawFooter()
+    Terminal.flush()
+
+fn renderWarmFrame(firstBatch: List<Service>, startMs: Int, frame: Int) -> Unit
+    ? "Renders the initial loading state before the first batch is ready."
+    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.unixMs]
+    nowMs = Time.unixMs()
+    Terminal.clear()
+    drawText(0, 0, "cyan", "===================== STATUS WALL =====================")
+    drawText(0, 1, "white", "{elapsedPrefix(startMs, nowMs)} warming first batch")
+    drawText(0, 2, "white", "{spinner(frame)} no data on the left yet - batch 1 is still probing")
+    drawText(0, 3, "white", "best viewed with --vm or compiled Rust")
+    drawText(0, 5, "green", "READY NOW")
+    drawText(40, 5, "magenta", "PROBING NEXT")
+    drawText(0, 6, "white", "------------------------------------")
+    drawText(40, 6, "white", "------------------------------------")
+    drawText(2, 8, "white", "waiting for batch 1 to land ...")
+    drawPendingRows(firstBatch, 8, frame, 0)
+    drawText(0, 19, "white", "the pipeline starts as soon as batch 1 exists")
+    drawText(0, 20, "white", "after that, left and right columns overlap")
+    Terminal.flush()
+
+fn animateProbeLoop(ready: List<Snapshot>, pending: List<Service>, batchIndex: Int, startMs: Int, frame: Int, remainingFrames: Int) -> Result<Unit, String>
+    ? "Animates the dashboard while the sibling probe branch is in flight."
+    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    match remainingFrames == 0
+        true -> Result.Ok(Unit)
+        false -> animateProbeStep(ready, pending, batchIndex, startMs, frame, remainingFrames)
+
+fn animateProbeStep(ready: List<Snapshot>, pending: List<Service>, batchIndex: Int, startMs: Int, frame: Int, remainingFrames: Int) -> Result<Unit, String>
+    ? "Draws one animated frame and schedules the next one."
+    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    _ = renderFrame(ready, pending, batchIndex, startMs, frame, true)
+    Time.sleep(120)
+    animateProbeLoop(ready, pending, batchIndex, startMs, frame + 1, remainingFrames - 1)
+
+fn animateProbe(ready: List<Snapshot>, pending: List<Service>, batchIndex: Int, startMs: Int) -> Result<Unit, String>
+    ? "Shows one ready batch while the next batch is being probed."
+    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    animateProbeLoop(ready, pending, batchIndex, startMs, 0, probeFrames(pending))
+
+fn warmFirstBatchLoop(firstBatch: List<Service>, startMs: Int, frame: Int, remainingFrames: Int) -> Result<Unit, String>
+    ? "Animates the startup state until the first batch is ready."
+    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    match remainingFrames == 0
+        true -> Result.Ok(Unit)
+        false -> warmFirstBatchStep(firstBatch, startMs, frame, remainingFrames)
+
+fn warmFirstBatchStep(firstBatch: List<Service>, startMs: Int, frame: Int, remainingFrames: Int) -> Result<Unit, String>
+    ? "Draws one startup frame and schedules the next one."
+    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    _ = renderWarmFrame(firstBatch, startMs, frame)
+    Time.sleep(120)
+    warmFirstBatchLoop(firstBatch, startMs, frame + 1, remainingFrames - 1)
+
+fn warmFirstBatch(firstBatch: List<Service>, startMs: Int) -> Result<Unit, String>
+    ? "Animates the initial warm-up before any ready batch exists."
+    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    warmFirstBatchLoop(firstBatch, startMs, 0, probeFrames(firstBatch))
+
+fn renderFinalScreen(ready: List<Snapshot>, batchIndex: Int, startMs: Int) -> Result<Unit, String>
+    ? "Renders the last batch and leaves it on screen briefly."
+    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    _ = renderFrame(ready, [], batchIndex, startMs, 0, false)
+    Time.sleep(1200)
+    Result.Ok(Unit)
+
+fn streamBoardStep(remaining: List<Service>, windowSize: Int, ready: List<Snapshot>, batchIndex: Int, startMs: Int) -> Result<Unit, String>
+    ? "Fetches the next batch while the current one is rendered live."
+    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    nextBatch = List.take(remaining, windowSize)
+    rest = List.drop(remaining, windowSize)
+    data = (animateProbe(ready, nextBatch, batchIndex, startMs), probeAll(nextBatch))?!
+    match data
+        (_, upcoming) -> streamBoard(rest, windowSize, upcoming, batchIndex + 1, startMs)
+
+fn streamBoard(remaining: List<Service>, windowSize: Int, ready: List<Snapshot>, batchIndex: Int, startMs: Int) -> Result<Unit, String>
+    ? "Renders one ready batch while the next batch is fetched."
+    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    match remaining
+        [] -> renderFinalScreen(ready, batchIndex, startMs)
+        _ -> streamBoardStep(remaining, windowSize, ready, batchIndex, startMs)
+
+fn runBoardStep(services: List<Service>, windowSize: Int, startMs: Int) -> Result<Unit, String>
+    ? "Warms the first batch, then starts the pipeline."
+    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    firstBatch = List.take(services, windowSize)
+    remaining = List.drop(services, windowSize)
+    data = (warmFirstBatch(firstBatch, startMs), probeAll(firstBatch))?!
+    match data
+        (_, ready) -> streamBoard(remaining, windowSize, ready, 1, startMs)
+
+fn runBoard(services: List<Service>, windowSize: Int, startMs: Int) -> Result<Unit, String>
+    ? "Runs the visual bounded-concurrency demo."
+    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    match windowSize > 0
+        false -> Result.Err("Window size must be positive")
+        true -> runBoardValidated(services, windowSize, startMs)
+
+fn runBoardValidated(services: List<Service>, windowSize: Int, startMs: Int) -> Result<Unit, String>
+    ? "Handles empty versus non-empty service lists after validation."
+    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    match services
+        [] -> Result.Ok(Unit)
+        _ -> runBoardStep(services, windowSize, startMs)
+
+fn main() -> Result<Unit, String>
+    ? "Runs the visual status wall demo."
+    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    startMs = Time.unixMs()
+    _ = runBoard(demoServices(), 2, startMs)?
+    Terminal.moveTo(0, 22)
+    Terminal.resetColor()
+    Terminal.print("done.")
+    Terminal.flush()
+    Result.Ok(Unit)

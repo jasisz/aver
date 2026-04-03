@@ -2,6 +2,15 @@
 
 All notable changes to Aver are documented here.
 
+## 0.8.1 (unreleased)
+
+### Added
+- **`examples/apps/status_board.av`** — an offline terminal dashboard that makes independent-product pipeline overlap visible in the VM and compiled Rust backends.
+
+### Fixed
+- **VM parallel child contexts** — child VMs now rebase `MATCH_DISPATCH` / `MATCH_DISPATCH_CONST` inline `NanValue` payloads when building the static arena for independent products. This fixes crashes when a branch returns or matches on heap-backed constant strings.
+- **VM regressions for child arenas** — added coverage for direct child-VM calls, nested string interpolation, and full `CALL_PAR` execution so this class of arena-rebasing bugs stays closed.
+
 ## 0.8.0 (2026-04-02)
 
 ### Added

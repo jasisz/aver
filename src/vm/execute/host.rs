@@ -2,10 +2,142 @@ use super::VM;
 use crate::nan_value::{Arena, NanValue};
 use crate::value::Value;
 use crate::vm::builtin::VmBuiltin;
+use crate::vm::opcode::{MATCH_DISPATCH, MATCH_DISPATCH_CONST, opcode_operand_width};
 use crate::vm::runtime::VmExecutionMode;
 use crate::vm::types::{CodeStore, VmError};
 
 impl VM {
+    fn rebase_dispatch_table_values(
+        &self,
+        code: &mut CodeStore,
+        arena: &mut Arena,
+        source_arena: &Arena,
+    ) {
+        const DISPATCH_KIND_STRING: u8 = 2;
+
+        struct Patch {
+            fn_idx: usize,
+            bits_pos: usize,
+            value: NanValue,
+        }
+
+        let mut patches = Vec::new();
+
+        for (fn_idx, chunk) in code.functions.iter().enumerate() {
+            let bytes = &chunk.code;
+            let mut ip = 0usize;
+            while ip < bytes.len() {
+                let op = bytes[ip];
+                ip += 1;
+                match op {
+                    MATCH_DISPATCH => {
+                        if ip + 3 > bytes.len() {
+                            break;
+                        }
+                        let count = bytes[ip] as usize;
+                        ip += 1; // count
+                        ip += 2; // default offset
+                        for _ in 0..count {
+                            let kind = bytes[ip];
+                            ip += 1;
+                            let expected_pos = ip;
+                            let expected_bits = u64::from_be_bytes([
+                                bytes[ip],
+                                bytes[ip + 1],
+                                bytes[ip + 2],
+                                bytes[ip + 3],
+                                bytes[ip + 4],
+                                bytes[ip + 5],
+                                bytes[ip + 6],
+                                bytes[ip + 7],
+                            ]);
+                            ip += 8;
+                            ip += 2; // jump offset
+
+                            let expected = NanValue::from_bits(expected_bits);
+                            if kind == DISPATCH_KIND_STRING || expected.heap_index().is_some() {
+                                patches.push(Patch {
+                                    fn_idx,
+                                    bits_pos: expected_pos,
+                                    value: arena.deep_import(expected, source_arena),
+                                });
+                            }
+                        }
+                    }
+                    MATCH_DISPATCH_CONST => {
+                        if ip + 3 > bytes.len() {
+                            break;
+                        }
+                        let count = bytes[ip] as usize;
+                        ip += 1; // count
+                        ip += 2; // default offset
+                        for _ in 0..count {
+                            let kind = bytes[ip];
+                            ip += 1;
+                            let expected_pos = ip;
+                            let expected_bits = u64::from_be_bytes([
+                                bytes[ip],
+                                bytes[ip + 1],
+                                bytes[ip + 2],
+                                bytes[ip + 3],
+                                bytes[ip + 4],
+                                bytes[ip + 5],
+                                bytes[ip + 6],
+                                bytes[ip + 7],
+                            ]);
+                            ip += 8;
+                            let result_pos = ip;
+                            let result_bits = u64::from_be_bytes([
+                                bytes[ip],
+                                bytes[ip + 1],
+                                bytes[ip + 2],
+                                bytes[ip + 3],
+                                bytes[ip + 4],
+                                bytes[ip + 5],
+                                bytes[ip + 6],
+                                bytes[ip + 7],
+                            ]);
+                            ip += 8;
+
+                            let expected = NanValue::from_bits(expected_bits);
+                            if kind == DISPATCH_KIND_STRING || expected.heap_index().is_some() {
+                                patches.push(Patch {
+                                    fn_idx,
+                                    bits_pos: expected_pos,
+                                    value: arena.deep_import(expected, source_arena),
+                                });
+                            }
+
+                            let result = NanValue::from_bits(result_bits);
+                            if result.heap_index().is_some() {
+                                patches.push(Patch {
+                                    fn_idx,
+                                    bits_pos: result_pos,
+                                    value: arena.deep_import(result, source_arena),
+                                });
+                            }
+                        }
+                    }
+                    _ => {
+                        ip += opcode_operand_width(op, bytes, ip);
+                    }
+                }
+            }
+        }
+
+        if patches.is_empty() {
+            return;
+        }
+
+        let mut roots: Vec<NanValue> = patches.iter().map(|patch| patch.value).collect();
+        arena.promote_roots_to_stable(&mut roots);
+
+        for (patch, value) in patches.into_iter().zip(roots.into_iter()) {
+            code.functions[patch.fn_idx].code[patch.bits_pos..patch.bits_pos + 8]
+                .copy_from_slice(&value.bits().to_be_bytes());
+        }
+    }
+
     pub(super) fn invoke_callable_value(
         &mut self,
         callable: NanValue,
@@ -123,6 +255,47 @@ impl VM {
             roots.push(base_arena.deep_import(*global, &self.arena));
         }
         base_arena.promote_roots_to_stable(&mut roots);
+
+        // Freeze the parallel context into a fresh static-only arena so child
+        // branches never depend on any transient young suffix left behind by
+        // the import pass.
+        let mut frozen_arena = base_arena.clone_static();
+        let mut frozen_roots = Vec::with_capacity(roots.len());
+        for root in roots {
+            frozen_roots.push(frozen_arena.deep_import(root, &base_arena));
+        }
+        frozen_arena.promote_roots_to_stable(&mut frozen_roots);
+        frozen_arena.truncate_to(0);
+        frozen_arena.truncate_yard_to(0);
+        frozen_arena.truncate_handoff_to(0);
+        debug_assert!(
+            frozen_roots
+                .iter()
+                .all(|value| value.heap_index().is_none_or(Arena::is_stable_index)),
+            "parallel base context left non-stable roots behind"
+        );
+        let roots = frozen_roots;
+        base_arena = frozen_arena;
+
+        self.rebase_dispatch_table_values(&mut code, &mut base_arena, &self.arena);
+        base_arena.truncate_to(0);
+        base_arena.truncate_yard_to(0);
+        base_arena.truncate_handoff_to(0);
+        debug_assert_eq!(
+            base_arena.young_len(),
+            0,
+            "parallel base context must not retain transient young entries"
+        );
+        debug_assert_eq!(
+            base_arena.yard_len(),
+            0,
+            "parallel base context must not retain transient yard entries"
+        );
+        debug_assert_eq!(
+            base_arena.handoff_len(),
+            0,
+            "parallel base context must not retain transient handoff entries"
+        );
 
         let mut offset = 0;
         for (chunk, len) in code.functions.iter_mut().zip(constant_lens) {
