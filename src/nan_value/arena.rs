@@ -91,11 +91,11 @@ impl Arena {
                 }
             }
             ArenaEntry::Map(map) => {
-                let new_map = super::PersistentMap::new();
+                let mut new_map = super::PersistentMap::new();
                 for (hash, (k, v)) in map.iter() {
                     let ik = self.deep_import(*k, source);
                     let iv = self.deep_import(*v, source);
-                    new_map.insert(*hash, (ik, iv));
+                    new_map = new_map.insert(*hash, (ik, iv));
                 }
                 let idx = self.push(ArenaEntry::Map(new_map));
                 NanValue::new_map(idx)

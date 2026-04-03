@@ -1136,6 +1136,76 @@ fn main() -> (Int, Int)
 }
 
 #[test]
+fn vm_independent_product_preserves_string_key_maps_in_parallel_branches() {
+    let src = r#"
+fn hasKey(m: Map<String, Int>) -> Bool
+    Map.has(m, "Board.isColor")
+
+fn lenIsOne(m: Map<String, Int>) -> Bool
+    Map.len(m) == 1
+
+fn main() -> (Bool, Bool, Bool, Bool)
+    m = Map.set(Map.empty(), "Board.isColor", 7)
+    (hasKey(m), hasKey(m), lenIsOne(m), lenIsOne(m))!
+"#;
+
+    let (result, arena) = vm_run_with_arena(src);
+    assert_eq!(
+        result.to_value(&arena),
+        aver::value::Value::Tuple(vec![
+            aver::value::Value::Bool(true),
+            aver::value::Value::Bool(true),
+            aver::value::Value::Bool(true),
+            aver::value::Value::Bool(true),
+        ])
+    );
+}
+
+#[test]
+fn vm_independent_product_preserves_self_host_fnstore_maps() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("self_hosted");
+    let src = r#"module Probe
+    depends [Domain.Ast, Domain.Eval.Store]
+    intent =
+        "Regression for FnStore.nameToId disappearing in CALL_PAR child VMs."
+
+fn hasBoard(fns: FnStore) -> Bool
+    match Domain.Eval.Store.lookupFnOption(fns, "Board.isColor")
+        Option.Some(_) -> true
+        Option.None -> false
+
+fn hasBoardId(fns: FnStore) -> Bool
+    match Domain.Eval.Store.lookupFnId(fns, "Board.isColor")
+        Result.Ok(_) -> true
+        Result.Err(_) -> false
+
+fn hasFnZero(fns: FnStore) -> Bool
+    match Domain.Eval.Store.lookupFnById(fns, 0)
+        Result.Ok(fd) -> fd.name == "Board.isColor"
+        Result.Err(_) -> false
+
+fn main() -> (Bool, Bool, Bool, Bool, Bool, Bool)
+    store = Domain.Eval.Store.fnsToStore([
+        FnDef(name = "Board.isColor", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)
+    ])
+    (hasBoard(store), hasBoard(store), hasBoardId(store), hasBoardId(store), hasFnZero(store), hasFnZero(store))!
+"#;
+
+    let (result, arena) = vm_run_with_module_root_and_arena(src, &root);
+    assert_eq!(
+        result.to_value(&arena),
+        aver::value::Value::Tuple(vec![
+            aver::value::Value::Bool(true),
+            aver::value::Value::Bool(true),
+            aver::value::Value::Bool(true),
+            aver::value::Value::Bool(true),
+            aver::value::Value::Bool(true),
+            aver::value::Value::Bool(true),
+        ])
+    );
+}
+
+#[test]
 fn vm_option_none_namespace_member_value() {
     let src = "fn fallback(value: Option<Int>) -> Int\n    match value\n        Option.Some(v) -> v\n        Option.None -> 0\n\nfn main() -> Int\n    missing = Option.None\n    fallback(missing)\n";
     let result = vm_run(src);
