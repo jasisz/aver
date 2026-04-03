@@ -405,8 +405,9 @@ fn emit_fn_def_with_visibility(
     let is_guest_entry = ctx.guest_entry.as_deref() == Some(fd.name.as_str());
 
     // TCO functions need owned/mutable params, no borrow-by-default.
-    // Memo and normal functions use borrow-by-default for non-Copy, non-Str params.
-    let ectx = if has_tco {
+    // Memo functions always use borrow-by-default (memo wrapper takes &T).
+    // Normal functions use borrow-by-default for non-Copy, non-Str params.
+    let ectx = if has_tco && !use_memo {
         build_fn_ectx_no_borrow(fd, ctx)
     } else {
         build_fn_ectx(fd, ctx)

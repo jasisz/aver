@@ -5,19 +5,15 @@ All notable changes to Aver are documented here.
 ## 0.8.2 (unreleased)
 
 ### Added
-- **Root-parallel checkers AI demo** — the checkers example now uses independent products to score root moves in parallel and surfaces that mode directly in the game UI and README.
-
-### Changed
-- **Self-hosted interpreter docs and examples** — the self-hosted README now explains the real execution paths more clearly, including the cached `--self-host` helper and the fact that running `self_hosted/main.av` directly is mainly a development path.
+- **Root-parallel checkers AI** — the checkers example now uses independent products to score root moves in parallel.
 
 ### Fixed
-- **Manual self-host execution** — running `self_hosted/main.av` directly is much more stable again across host interpreter and host VM paths. Several bugs that only showed up while self-hosting larger programs were fixed.
-- **VM parallel map imports** — child VMs in independent products no longer drop non-empty maps when importing branch arguments. This fixes real regressions in manual self-host runs, including qualified guest calls that were incorrectly falling back as if functions were missing.
-- **Imported module calls in the host interpreter** — qualified calls no longer get confused with type constructors or short type aliases, which fixes a class of wrong-call and wrong-match failures that showed up in the self-hosted parser and resolver.
-- **Inline constructor pattern matching** — imported single-field variants now match correctly again in the interpreter, closing a subtle bug that broke some self-hosted AST and token-matching paths.
-- **Resolver slot binding inside match-heavy code** — bindings created inside match-driven initializers are now resolved correctly, which fixes runtime failures in larger programs and in manual self-host VM runs.
-- **Self-host runtime aliases in the VM** — the VM now recognizes `SelfHostRuntime.httpServerListen*`, so source self-host programs no longer fail just because they are using the self-host runtime bridge rather than the plain `HttpServer` namespace.
-- **Self-hosted parser regressions** — parser verifies and imported parser probes are green again after the resolution and matching fixes above.
+- **Self-host stability** — running `self_hosted/main.av` through the host interpreter and host VM is much more stable. Fixes cover qualified module calls, constructor pattern matching, resolver slot binding, and VM runtime aliases.
+- **VM parallel map imports** — child VMs in independent products no longer silently drop map contents, fixing incorrect fallback behaviour in self-host runs.
+- **Codegen: record field access** — accessing a field of a borrowed record parameter in return position now emits the required `.clone()`.
+- **Codegen: memoized recursive functions** — call sites for auto-memoized recursive functions now correctly pass arguments by reference, matching the generated function signature.
+- **Codegen: independent products with cancel mode** — `?!` expressions no longer produce invalid `let`-in-expression Rust code when cancel mode is active.
+- **VM: no-main programs** — the VM now finishes silently when a program has no `fn main`, consistent with the interpreter.
 
 ## 0.8.1 (2026-04-03)
 

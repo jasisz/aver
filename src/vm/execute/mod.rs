@@ -135,7 +135,19 @@ impl VM {
 
     pub fn run(&mut self) -> Result<NanValue, VmError> {
         self.run_top_level()?;
-        self.run_named_function("main", &[])
+        // If there is no `main` function, finish silently (consistent with the interpreter).
+        let has_main = self
+            .code
+            .symbols
+            .find("main")
+            .and_then(|sid| self.code.symbols.resolve_function(sid))
+            .or_else(|| self.code.find("main"))
+            .is_some();
+        if has_main {
+            self.run_named_function("main", &[])
+        } else {
+            Ok(NanValue::UNIT)
+        }
     }
 
     pub fn run_top_level(&mut self) -> Result<(), VmError> {

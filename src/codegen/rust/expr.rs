@@ -387,6 +387,7 @@ fn emit_expr_with_options(
             }
 
             if *unwrap {
+                code.push_str("{ ");
                 if has_replay {
                     code.push_str(
                         "let __parallel_scope = crate::aver_replay::capture_parallel_scope_context(); ",
@@ -427,7 +428,7 @@ fn emit_expr_with_options(
                     code.push_str(&format!("let _b{i} = _h{i}.join().unwrap(); "));
                 }
                 code.push_str(&emit_parallel_result_tuple_unwrap("_b", "_r", "__v", n));
-                code.push_str(" })? ");
+                code.push_str(" })? }");
             } else {
                 if has_replay {
                     code.push_str(
@@ -630,10 +631,30 @@ fn emit_body_expr_plan_with_options(
 ) -> String {
     match plan {
         BodyExprPlan::Expr(expr) => {
-            emit_expr_with_options(expr, ctx, ectx, allow_callsite_inlining)
+            let code = emit_expr_with_options(expr, ctx, ectx, allow_callsite_inlining);
+            // Field access on a borrowed param in return position needs .clone()
+            // to produce an owned value (emit_expr produces `obj.field` without clone).
+            if let Expr::Attr(obj, _) = expr {
+                if let Expr::Ident(name) = &obj.node {
+                    if ectx.is_borrowed_param(name) {
+                        return format!("{}.clone()", code);
+                    }
+                }
+            }
+            code
         }
         BodyExprPlan::Leaf(leaf) => {
-            emit_leaf_op_with_options(*leaf, ctx, ectx, allow_callsite_inlining)
+            let code = emit_leaf_op_with_options(*leaf, ctx, ectx, allow_callsite_inlining);
+            // Field access on a borrowed param in return position needs .clone()
+            // to produce an owned value.
+            if let LeafOp::FieldAccess { object, .. } = leaf {
+                if let Expr::Ident(name) = &object.node {
+                    if ectx.is_borrowed_param(name) {
+                        return format!("{}.clone()", code);
+                    }
+                }
+            }
+            code
         }
         BodyExprPlan::Call { target, args } => {
             let bare_args: Vec<Expr> = args.iter().map(|a| a.node.clone()).collect();
@@ -992,7 +1013,11 @@ fn fn_def_has_tco(fd: &FnDef) -> bool {
 fn borrow_mask_from_fn_def(fd: &FnDef, arg_count: usize, ctx: &CodegenContext) -> Vec<bool> {
     // Mutual-TCO members are emitted as wrappers with borrow-by-default,
     // even if they also have self-TailCalls. Don't skip borrow for them.
-    if !ctx.mutual_tco_members.contains(&fd.name)
+    // Memo functions always use borrow-by-default (memo wrapper takes &T),
+    // even if the body has self-tail-calls.
+    let is_memo = ctx.memo_fns.contains(&fd.name);
+    if !is_memo
+        && !ctx.mutual_tco_members.contains(&fd.name)
         && super::toplevel::body_has_self_tailcall(&fd.body, &fd.name)
     {
         return vec![false; arg_count];
