@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here.
 
-## 0.8.2 (unreleased)
+## 0.8.2 (2026-04-03)
 
 ### Added
 - **Root-parallel checkers AI** — the checkers example now uses independent products to score root moves in parallel.
