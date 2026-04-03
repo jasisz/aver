@@ -634,12 +634,11 @@ fn emit_body_expr_plan_with_options(
             let code = emit_expr_with_options(expr, ctx, ectx, allow_callsite_inlining);
             // Field access on a borrowed param in return position needs .clone()
             // to produce an owned value (emit_expr produces `obj.field` without clone).
-            if let Expr::Attr(obj, _) = expr {
-                if let Expr::Ident(name) = &obj.node {
-                    if ectx.is_borrowed_param(name) {
-                        return format!("{}.clone()", code);
-                    }
-                }
+            if let Expr::Attr(obj, _) = expr
+                && let Expr::Ident(name) = &obj.node
+                && ectx.is_borrowed_param(name)
+            {
+                return format!("{}.clone()", code);
             }
             code
         }
@@ -647,12 +646,11 @@ fn emit_body_expr_plan_with_options(
             let code = emit_leaf_op_with_options(*leaf, ctx, ectx, allow_callsite_inlining);
             // Field access on a borrowed param in return position needs .clone()
             // to produce an owned value.
-            if let LeafOp::FieldAccess { object, .. } = leaf {
-                if let Expr::Ident(name) = &object.node {
-                    if ectx.is_borrowed_param(name) {
-                        return format!("{}.clone()", code);
-                    }
-                }
+            if let LeafOp::FieldAccess { object, .. } = leaf
+                && let Expr::Ident(name) = &object.node
+                && ectx.is_borrowed_param(name)
+            {
+                return format!("{}.clone()", code);
             }
             code
         }
