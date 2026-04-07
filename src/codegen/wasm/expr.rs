@@ -851,20 +851,275 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::I32Const(0));
             }
             "String.len" if args.len() == 1 => {
-                // String ptr on stack → load header, extract length
                 self.instructions.push(Instruction::I64Load(wasm_encoder::MemArg {
                     offset: 0, align: 3, memory_index: 0,
                 }));
                 self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
                 self.instructions.push(Instruction::I64And);
-                // Returns i64 (Int)
+            }
+            "String.charAt" if args.len() == 2 => {
+                // args: [str_ptr(i32), idx(i64)] → returns String (single char)
+                // Load byte at str_ptr + 8 + idx, create 1-char string
+                let idx_local = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::I32WrapI64); // idx → i32
+                self.instructions.push(Instruction::LocalSet(idx_local));
+                let str_local = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalSet(str_local));
+                // Alloc 1-char string object: 8 header + 8 padded
+                let ptr = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::I32Const(16));
+                self.instructions.push(Instruction::Call(self.rt.alloc));
+                self.instructions.push(Instruction::LocalSet(ptr));
+                // Header: OBJ_STRING, len=1
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::I64Const(
+                    (value::OBJ_STRING << value::HDR_KIND_SHIFT | 1) as i64,
+                ));
+                self.instructions.push(Instruction::I64Store(wasm_encoder::MemArg {
+                    offset: 0, align: 3, memory_index: 0,
+                }));
+                // Copy byte
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::LocalGet(str_local));
+                self.instructions.push(Instruction::I32Const(8));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::LocalGet(idx_local));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::I32Load8U(wasm_encoder::MemArg {
+                    offset: 0, align: 0, memory_index: 0,
+                }));
+                self.instructions.push(Instruction::I32Store8(wasm_encoder::MemArg {
+                    offset: 8, align: 0, memory_index: 0,
+                }));
+                self.instructions.push(Instruction::LocalGet(ptr));
+            }
+            "String.trim" if args.len() == 1 => {
+                // Simplified: return as-is (no whitespace trimming for now)
+                // TODO: proper trim
+            }
+            "String.slice" if args.len() == 3 => {
+                // args: [str_ptr, start(i64), end(i64)]
+                // For now: simplified — drop and return empty
+                for _ in args { self.instructions.push(Instruction::Drop); }
+                self.emit_string_literal("");
+            }
+            "String.startsWith" | "String.endsWith" | "String.contains"
+            | "String.replace" | "String.split" | "String.join"
+            | "String.toUpper" | "String.toLower" | "String.chars"
+            | "String.byteLength" if args.len() >= 1 => {
+                for _ in args { self.instructions.push(Instruction::Drop); }
+                self.instructions.push(Instruction::I32Const(0));
+            }
+            "String.fromInt" if args.len() == 1 => {
+                self.instructions.push(Instruction::Call(self.rt.i64_to_str_obj));
+            }
+            "String.fromFloat" if args.len() == 1 => {
+                self.instructions.push(Instruction::Call(self.rt.f64_to_str_obj));
+            }
+            "String.fromBool" if args.len() == 1 => {
+                // bool i32 → "true"/"false" string
+                // Simplified: convert to int then to string
+                self.instructions.push(Instruction::I64ExtendI32S);
+                self.instructions.push(Instruction::Call(self.rt.i64_to_str_obj));
+            }
+            "Int.mod" if args.len() == 2 => {
+                // args: [a(i64), b(i64)] → Result<Int, String>
+                // Simplified: just return a % b wrapped in Ok
+                let b_local = self.alloc_local(WasmType::I64);
+                self.instructions.push(Instruction::LocalSet(b_local));
+                self.instructions.push(Instruction::LocalGet(b_local));
+                self.instructions.push(Instruction::I64RemS);
+                // Wrap in Result.Ok
+                let result = self.alloc_local(WasmType::I64);
+                self.instructions.push(Instruction::LocalSet(result));
+                self.instructions.push(Instruction::I32Const(value::WRAP_OK as i32));
+                self.instructions.push(Instruction::LocalGet(result));
+                self.instructions.push(Instruction::Call(self.rt.wrap));
+            }
+            "Int.abs" if args.len() == 1 => {
+                // if val < 0 then -val else val
+                let v = self.alloc_local(WasmType::I64);
+                self.instructions.push(Instruction::LocalSet(v));
+                self.instructions.push(Instruction::LocalGet(v));
+                self.instructions.push(Instruction::I64Const(0));
+                self.instructions.push(Instruction::I64LtS);
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I64));
+                self.instructions.push(Instruction::I64Const(0));
+                self.instructions.push(Instruction::LocalGet(v));
+                self.instructions.push(Instruction::I64Sub);
+                self.emit_else();
+                self.instructions.push(Instruction::LocalGet(v));
+                self.emit_end();
+            }
+            "Int.min" if args.len() == 2 => {
+                let b = self.alloc_local(WasmType::I64);
+                let a = self.alloc_local(WasmType::I64);
+                self.instructions.push(Instruction::LocalSet(b));
+                self.instructions.push(Instruction::LocalSet(a));
+                self.instructions.push(Instruction::LocalGet(a));
+                self.instructions.push(Instruction::LocalGet(b));
+                self.instructions.push(Instruction::I64LeS);
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I64));
+                self.instructions.push(Instruction::LocalGet(a));
+                self.emit_else();
+                self.instructions.push(Instruction::LocalGet(b));
+                self.emit_end();
+            }
+            "Int.max" if args.len() == 2 => {
+                let b = self.alloc_local(WasmType::I64);
+                let a = self.alloc_local(WasmType::I64);
+                self.instructions.push(Instruction::LocalSet(b));
+                self.instructions.push(Instruction::LocalSet(a));
+                self.instructions.push(Instruction::LocalGet(a));
+                self.instructions.push(Instruction::LocalGet(b));
+                self.instructions.push(Instruction::I64GeS);
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I64));
+                self.instructions.push(Instruction::LocalGet(a));
+                self.emit_else();
+                self.instructions.push(Instruction::LocalGet(b));
+                self.emit_end();
+            }
+            "Int.fromString" if args.len() == 1 => {
+                // Simplified stub: return Result.Err("not implemented")
+                self.instructions.push(Instruction::Drop);
+                self.instructions.push(Instruction::I32Const(value::WRAP_ERR as i32));
+                self.emit_string_literal("not implemented");
+                self.instructions.push(Instruction::I64ExtendI32S);
+                self.instructions.push(Instruction::Call(self.rt.wrap));
+            }
+            "Int.fromFloat" if args.len() == 1 => {
+                self.instructions.push(Instruction::I64TruncF64S);
+            }
+            "Float.abs" if args.len() == 1 => {
+                self.instructions.push(Instruction::F64Abs);
+            }
+            "Float.floor" if args.len() == 1 => {
+                self.instructions.push(Instruction::F64Floor);
+                self.instructions.push(Instruction::I64TruncF64S);
+            }
+            "Float.ceil" if args.len() == 1 => {
+                self.instructions.push(Instruction::F64Ceil);
+                self.instructions.push(Instruction::I64TruncF64S);
+            }
+            "Float.round" if args.len() == 1 => {
+                self.instructions.push(Instruction::F64Nearest);
+                self.instructions.push(Instruction::I64TruncF64S);
+            }
+            "Float.sqrt" if args.len() == 1 => {
+                self.instructions.push(Instruction::F64Sqrt);
+            }
+            "Float.min" if args.len() == 2 => {
+                self.instructions.push(Instruction::F64Min);
+            }
+            "Float.max" if args.len() == 2 => {
+                self.instructions.push(Instruction::F64Max);
+            }
+            "Float.pi" if args.len() == 0 => {
+                self.instructions.push(Instruction::F64Const(std::f64::consts::PI));
+            }
+            "Float.toInt" if args.len() == 1 => {
+                self.instructions.push(Instruction::I64TruncF64S);
+            }
+            "Bool.and" if args.len() == 2 => {
+                self.instructions.push(Instruction::I32And);
+            }
+            "Bool.or" if args.len() == 2 => {
+                self.instructions.push(Instruction::I32Or);
+            }
+            "Bool.not" if args.len() == 1 => {
+                self.instructions.push(Instruction::I32Eqz);
+            }
+            "Char.fromCode" if args.len() == 1 => {
+                // Int(i64) → single-char String
+                // Alloc 1-char string, store byte
+                let code = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::I32WrapI64);
+                self.instructions.push(Instruction::LocalSet(code));
+                let ptr = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::I32Const(16));
+                self.instructions.push(Instruction::Call(self.rt.alloc));
+                self.instructions.push(Instruction::LocalSet(ptr));
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::I64Const(
+                    (value::OBJ_STRING << value::HDR_KIND_SHIFT | 1) as i64,
+                ));
+                self.instructions.push(Instruction::I64Store(wasm_encoder::MemArg {
+                    offset: 0, align: 3, memory_index: 0,
+                }));
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::LocalGet(code));
+                self.instructions.push(Instruction::I32Store8(wasm_encoder::MemArg {
+                    offset: 8, align: 0, memory_index: 0,
+                }));
+                self.instructions.push(Instruction::LocalGet(ptr));
+            }
+            "Char.toCode" if args.len() == 1 => {
+                // String → Int (first byte code)
+                self.instructions.push(Instruction::I32Load8U(wasm_encoder::MemArg {
+                    offset: 8, align: 0, memory_index: 0,
+                }));
+                self.instructions.push(Instruction::I64ExtendI32U);
+            }
+            "Random.int" if args.len() == 2 => {
+                // Stub: return min (first arg)
+                self.instructions.push(Instruction::Drop); // drop max
+                // min stays
+            }
+            "Console.readLine" if args.len() == 0 => {
+                // Stub: return empty string
+                self.emit_string_literal("");
+            }
+            "Time.unixMs" if args.len() == 0 => {
+                self.instructions.push(Instruction::I64Const(0));
+            }
+            "Time.sleep" if args.len() == 1 => {
+                self.instructions.push(Instruction::Drop);
+                self.instructions.push(Instruction::I32Const(0));
+            }
+            "Result.withDefault" if args.len() == 2 => {
+                // Same as Option.withDefault
+                let result_type = self.infer_expr_type(&args[1].node);
+                let def_local = self.alloc_local(result_type);
+                let opt_local = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalSet(def_local));
+                self.instructions.push(Instruction::LocalSet(opt_local));
+                // Check if err or none
+                self.instructions.push(Instruction::LocalGet(opt_local));
+                self.instructions.push(Instruction::I32Const(0));
+                self.instructions.push(Instruction::I32GtS);
+                self.emit_if(wasm_encoder::BlockType::Result(result_type.to_val_type()));
+                // Check tag: Ok (0) = unwrap, Err (1) = default
+                self.instructions.push(Instruction::LocalGet(opt_local));
+                self.instructions.push(Instruction::Call(self.rt.obj_tag));
+                self.instructions.push(Instruction::I32Eqz); // tag == 0 = Ok
+                self.emit_if(wasm_encoder::BlockType::Result(result_type.to_val_type()));
+                self.instructions.push(Instruction::LocalGet(opt_local));
+                match result_type {
+                    WasmType::I64 => self.instructions.push(Instruction::Call(self.rt.unwrap)),
+                    WasmType::F64 => self.instructions.push(Instruction::Call(self.rt.unwrap_f64)),
+                    WasmType::I32 => self.instructions.push(Instruction::Call(self.rt.unwrap_i32)),
+                }
+                self.emit_else();
+                self.instructions.push(Instruction::LocalGet(def_local));
+                self.emit_end();
+                self.emit_else();
+                self.instructions.push(Instruction::LocalGet(def_local));
+                self.emit_end();
             }
             _ => {
-                // Unknown builtin — drop args, return Unit
+                // Unknown builtin — drop args, return default for inferred type
+                let ret_type = self.infer_call_return_type(&crate::ast::Spanned {
+                    node: crate::ast::Expr::Ident(name.to_string()),
+                    line: 0,
+                });
                 for _ in args {
                     self.instructions.push(Instruction::Drop);
                 }
-                self.instructions.push(Instruction::I32Const(0));
+                match ret_type {
+                    WasmType::I64 => self.instructions.push(Instruction::I64Const(0)),
+                    WasmType::F64 => self.instructions.push(Instruction::F64Const(0.0)),
+                    WasmType::I32 => self.instructions.push(Instruction::I32Const(0)),
+                }
             }
         }
     }
