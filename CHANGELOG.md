@@ -2,6 +2,13 @@
 
 All notable changes to Aver are documented here.
 
+## 0.8.3 (2026-04-07)
+
+### Added
+- **WASM backend** — `aver compile --target wasm` and `aver run --wasm`. Typed ABI: Int→i64, Float→f64, arithmetic as native WASM instructions. Supports sum types, records, recursive variants, string interpolation, List/Map/Vector builtins, TCO.
+- **`aver/*` import ABI** — WASM modules declare host imports (`aver/console_print`, `aver/random_int`, `aver/math_sin` etc.) instead of WASI. Works with built-in host, browser JS shim, or custom host. `--adapter wasi` flag for standalone wasmtime.
+- **`aver-memory` crate** — extracted NaN-boxed value representation and arena allocator into a standalone crate. Shared by interpreter and VM.
+
 ## 0.8.2 (2026-04-03)
 
 ### Added
