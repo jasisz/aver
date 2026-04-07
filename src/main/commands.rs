@@ -22,7 +22,7 @@ use aver::codegen::ModuleInfo;
 use aver::codegen::lean as lean_codegen;
 use aver::codegen::rust as rust_codegen;
 use aver::interpreter::{Interpreter, RecordingConfig, Value, aver_repr};
-use aver::nan_value::Arena;
+use aver::nan_value::{Arena, NanValueConvert};
 use aver::replay::{JsonValue, RecordedOutcome, value_to_json};
 use aver::resolver;
 use aver::source::{find_module_file, require_module_declaration};
@@ -2727,11 +2727,19 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         output_dir,
         project_name,
         module_root_override,
+        target,
         with_replay,
         policy_mode,
         guest_entry,
         with_self_host_support,
     } = opts;
+
+    // WASM target: simplified pipeline, no replay/policy/guest-entry support yet
+    if matches!(target, super::cli::CompileTarget::Wasm) {
+        cmd_compile_wasm(file, output_dir, project_name, module_root_override);
+        return;
+    }
+
     if guest_entry.is_some()
         && !with_replay
         && !matches!(policy_mode, super::cli::CompilePolicyMode::Runtime)
@@ -2788,11 +2796,83 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
     write_codegen_output(file, output_dir, "Rust", &build_hint, &output);
 }
 
+fn cmd_compile_wasm(
+    file: &str,
+    output_dir: &str,
+    project_name: Option<&str>,
+    module_root_override: Option<&str>,
+) {
+    #[cfg(not(feature = "wasm"))]
+    {
+        let _ = (file, output_dir, project_name, module_root_override);
+        eprintln!(
+            "{}",
+            "WASM target requires --features wasm (rebuild with: cargo build --features wasm)"
+                .red()
+        );
+        process::exit(1);
+    }
+
+    #[cfg(feature = "wasm")]
+    {
+        let (ctx, _module_root) = build_codegen_context(
+            file,
+            project_name,
+            module_root_override,
+            false,
+            &super::cli::CompilePolicyMode::Embed,
+            None,
+            false,
+        );
+
+        match codegen::wasm::emit_wasm(&ctx) {
+            Ok(wasm_bytes) => {
+                let out_path = Path::new(output_dir);
+                if let Err(e) = std::fs::create_dir_all(out_path) {
+                    eprintln!("{}", format!("Failed to create output directory: {}", e).red());
+                    process::exit(1);
+                }
+
+                let wasm_name = project_name
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        Path::new(file)
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("program")
+                            .to_string()
+                    });
+
+                let wasm_file = out_path.join(format!("{}.wasm", wasm_name));
+                if let Err(e) = std::fs::write(&wasm_file, &wasm_bytes) {
+                    eprintln!("{}", format!("Failed to write WASM file: {}", e).red());
+                    process::exit(1);
+                }
+
+                let file_display = file.cyan();
+                let wasm_display = wasm_file.display().to_string().cyan();
+                println!(
+                    "{} {} → {} ({} bytes)",
+                    "Compiled".green().bold(),
+                    file_display,
+                    wasm_display,
+                    wasm_bytes.len()
+                );
+            }
+            Err(e) => {
+                eprintln!("{}", format!("WASM codegen error: {}", e).red());
+                process::exit(1);
+            }
+        }
+    }
+}
+
 pub(super) struct CompileOptions<'a> {
     pub(super) file: &'a str,
     pub(super) output_dir: &'a str,
     pub(super) project_name: Option<&'a str>,
     pub(super) module_root_override: Option<&'a str>,
+    pub(super) target: super::cli::CompileTarget,
     pub(super) with_replay: bool,
     pub(super) policy_mode: &'a super::cli::CompilePolicyMode,
     pub(super) guest_entry: Option<&'a str>,

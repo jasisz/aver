@@ -3,9 +3,18 @@ use std::collections::HashMap;
 
 use crate::value::Value;
 
-impl NanValue {
+/// Extension trait providing `from_value` / `to_value` conversion between
+/// the interpreter's `Value` and `NanValue`.  These methods live here
+/// (rather than on `NanValue` directly) because `NanValue` is now defined
+/// in the `aver_memory` crate.
+pub trait NanValueConvert {
+    fn from_value(val: &Value, arena: &mut Arena) -> NanValue;
+    fn to_value(self, arena: &Arena) -> Value;
+}
+
+impl NanValueConvert for NanValue {
     /// Convert old Value to NanValue, storing heap data in arena.
-    pub fn from_value(val: &Value, arena: &mut Arena) -> Self {
+    fn from_value(val: &Value, arena: &mut Arena) -> NanValue {
         match val {
             Value::Int(i) => NanValue::new_int(*i, arena),
             Value::Float(f) => NanValue::new_float(*f),
@@ -123,7 +132,7 @@ impl NanValue {
     }
 
     /// Convert NanValue back to old Value (for interop during migration).
-    pub fn to_value(self, arena: &Arena) -> Value {
+    fn to_value(self, arena: &Arena) -> Value {
         if self.is_float() {
             return Value::Float(self.as_float());
         }

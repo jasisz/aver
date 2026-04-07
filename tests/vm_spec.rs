@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use aver::ast::TopLevel;
 use aver::config::ProjectConfig;
 use aver::lexer::Lexer;
-use aver::nan_value::{Arena, NanValue};
+use aver::nan_value::{Arena, NanValue, NanValueConvert};
 use aver::parser::Parser;
 use aver::resolver;
 use aver::tco;

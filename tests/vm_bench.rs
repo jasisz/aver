@@ -7,7 +7,7 @@ use std::time::Instant;
 use aver::ast::TopLevel;
 use aver::interpreter::{Interpreter, Value};
 use aver::lexer::Lexer;
-use aver::nan_value::{Arena, ArenaUsage, NanValue};
+use aver::nan_value::{Arena, ArenaUsage, NanValue, NanValueConvert};
 use aver::parser::Parser;
 use aver::resolver;
 use aver::runtime_bench_cases::CORE_BENCH_CASES;

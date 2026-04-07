@@ -1,0 +1,19 @@
+[package]
+name = "aver-memory"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "NaN-boxed arena memory for the Aver language"
+repository = "https://github.com/jasisz/aver"
+
+[lib]
+name = "aver_memory"
+path = "src/lib.rs"
+
+[features]
+default = ["std"]
+std = []
+interpreter = ["dep:aver-rt"]
+
+[dependencies]
+aver-rt = { path = "../aver-rt", version = "=0.4.0", optional = true }

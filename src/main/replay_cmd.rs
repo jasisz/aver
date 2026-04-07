@@ -6,7 +6,7 @@ use colored::Colorize;
 
 use aver::ast::TopLevel;
 use aver::interpreter::{Interpreter, Value, aver_repr};
-use aver::nan_value::NanValue;
+use aver::nan_value::{NanValue, NanValueConvert};
 use aver::replay::{
     JsonValue, RecordedOutcome, SessionRecording, first_diff_path, format_json, json_to_value,
     parse_session_recording, value_to_json,

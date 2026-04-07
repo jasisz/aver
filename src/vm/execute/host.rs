@@ -1,5 +1,5 @@
 use super::VM;
-use crate::nan_value::{Arena, NanValue};
+use crate::nan_value::{Arena, NanValue, NanValueConvert};
 use crate::value::Value;
 use crate::vm::builtin::VmBuiltin;
 use crate::vm::opcode::{MATCH_DISPATCH, MATCH_DISPATCH_CONST, opcode_operand_width};

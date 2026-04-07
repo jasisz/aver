@@ -1,5 +1,5 @@
 use super::VM;
-use crate::nan_value::{Arena, ArenaEntry, ArenaList, ArenaSymbol, NanValue};
+use crate::nan_value::{Arena, ArenaEntry, ArenaList, ArenaSymbol, NanValue, NanValueConvert};
 use crate::vm::opcode::{LOAD_CONST, RETURN};
 use crate::vm::types::{CallFrame, CodeStore, FnChunk};
 use crate::{lexer::Lexer, parser::Parser, resolver, tco, vm};

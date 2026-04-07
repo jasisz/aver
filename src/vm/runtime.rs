@@ -1,4 +1,4 @@
-use crate::nan_value::{Arena, NanValue};
+use crate::nan_value::{Arena, NanValue, NanValueConvert};
 use crate::replay::session::RecordedOutcome;
 use crate::replay::{
     EffectRecord, EffectReplayMode, EffectReplayState, ReplayFailure, json_to_value, value_to_json,

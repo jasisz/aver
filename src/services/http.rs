@@ -12,7 +12,7 @@ use std::sync::Arc as Rc;
 
 use aver_rt::{AverList, Header, HttpResponse};
 
-use crate::nan_value::{Arena, NanValue};
+use crate::nan_value::{Arena, NanValue, NanValueConvert};
 use crate::value::{RuntimeError, Value, list_from_vec, list_view};
 
 pub fn register(global: &mut HashMap<String, Value>) {

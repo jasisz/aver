@@ -1,3 +1,4 @@
+pub(crate) use crate::nan_value::NanValueConvert;
 use crate::nan_value::{Arena, NanValue};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
