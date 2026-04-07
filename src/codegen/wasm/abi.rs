@@ -120,10 +120,10 @@ pub fn collect_needed_imports(
     for name in user_fn_names {
         if let Some((_, _, effects)) = fn_sigs.get(*name) {
             for effect in effects {
-                if seen.insert(effect.clone()) {
-                    if let Some(abi) = lookup(effect) {
-                        imports.push(abi);
-                    }
+                if seen.insert(effect.clone())
+                    && let Some(abi) = lookup(effect)
+                {
+                    imports.push(abi);
                 }
             }
         }
@@ -131,10 +131,10 @@ pub fn collect_needed_imports(
 
     // 2. Explicit builtin calls that need host imports (e.g. Float.sin → math_sin)
     for call_name in host_call_names {
-        if seen.insert(call_name.clone()) {
-            if let Some(abi) = lookup(call_name) {
-                imports.push(abi);
-            }
+        if seen.insert(call_name.clone())
+            && let Some(abi) = lookup(call_name)
+        {
+            imports.push(abi);
         }
     }
 

@@ -1,19 +1,19 @@
-/// WASM Value layout: typed ABI.
-///
-/// Native scalar types map directly to WASM types:
-///   Int   → i64 (plain value)
-///   Float → f64 (plain value)
-///   Bool  → i32 (0 = false, 1 = true)
-///   Unit  → i32 (0)
-///
-/// Heap-allocated types are i32 pointers:
-///   String → i32 (pointer to string object)
-///   Result/Option → i32 (pointer to wrapper object)
-///   List   → i32 (pointer to cons cell, 0 = empty)
-///   Record → i32 (pointer to record object)
-///   Tuple  → i32 (pointer to tuple object)
-///
-/// Heap objects have an 8-byte i64 header followed by 8-byte fields.
+// WASM Value layout: typed ABI.
+//
+// Native scalar types map directly to WASM types:
+//   Int   → i64 (plain value)
+//   Float → f64 (plain value)
+//   Bool  → i32 (0 = false, 1 = true)
+//   Unit  → i32 (0)
+//
+// Heap-allocated types are i32 pointers:
+//   String → i32 (pointer to string object)
+//   Result/Option → i32 (pointer to wrapper object)
+//   List   → i32 (pointer to cons cell, 0 = empty)
+//   Record → i32 (pointer to record object)
+//   Tuple  → i32 (pointer to tuple object)
+//
+// Heap objects have an 8-byte i64 header followed by 8-byte fields.
 
 // ---------------------------------------------------------------------------
 // Heap object kinds

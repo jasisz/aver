@@ -10,17 +10,17 @@ use std::collections::HashMap;
 use wasm_encoder::Instruction;
 
 use crate::ast::{BinOp, Expr, FnBody, Literal, MatchArm, Pattern, Spanned, Stmt, StrPart};
-use crate::codegen::common::is_user_type;
 use crate::codegen::CodegenContext;
+use crate::codegen::common::is_user_type;
 use crate::ir::{
-    self, BoolSubjectPlan, CallLowerCtx, CallPlan, DispatchBindingPlan,
-    MatchDispatchPlan, SemanticConstructor, WrapperKind, classify_call_plan,
-    classify_constructor_name, classify_match_dispatch_plan,
+    self, BoolSubjectPlan, CallLowerCtx, CallPlan, DispatchBindingPlan, MatchDispatchPlan,
+    SemanticConstructor, WrapperKind, classify_call_plan, classify_constructor_name,
+    classify_match_dispatch_plan,
 };
 use crate::types::Type;
 
 use super::runtime::RuntimeFuncIndices;
-use super::types::{aver_type_to_wasm, WasmType};
+use super::types::{WasmType, aver_type_to_wasm};
 use super::value;
 
 /// Interned string literal: (data_offset_in_memory, byte_length).
@@ -245,9 +245,8 @@ impl<'a> ExprEmitter<'a> {
                 let ctor = classify_constructor_name(name, &self.ir_ctx());
                 match ctor {
                     SemanticConstructor::NoneValue => WasmType::I32,
-                    SemanticConstructor::Wrapper(_) | SemanticConstructor::TypeConstructor { .. } => {
-                        WasmType::I32
-                    }
+                    SemanticConstructor::Wrapper(_)
+                    | SemanticConstructor::TypeConstructor { .. } => WasmType::I32,
                     SemanticConstructor::Unknown(_) => WasmType::I32,
                 }
             }
@@ -262,10 +261,10 @@ impl<'a> ExprEmitter<'a> {
             Expr::List(_) | Expr::Tuple(_) | Expr::RecordCreate { .. } => WasmType::I32,
             Expr::InterpolatedStr(_) => WasmType::I32,
             Expr::Attr(base, field) => {
-                if let Expr::Ident(base_name) = &base.node {
-                    if base_name.chars().next().is_some_and(|c| c.is_uppercase()) {
-                        return WasmType::I32;
-                    }
+                if let Expr::Ident(base_name) = &base.node
+                    && base_name.chars().next().is_some_and(|c| c.is_uppercase())
+                {
+                    return WasmType::I32;
                 }
                 self.infer_record_field_type(base, field)
             }
@@ -332,9 +331,9 @@ impl<'a> ExprEmitter<'a> {
                     _ => None,
                 }
             }
-            Expr::Match { arms, .. } => {
-                arms.first().and_then(|a| self.infer_aver_type(&a.body.node))
-            }
+            Expr::Match { arms, .. } => arms
+                .first()
+                .and_then(|a| self.infer_aver_type(&a.body.node)),
             Expr::ErrorProp(inner) => match self.infer_aver_type(&inner.node) {
                 Some(Type::Result(ok_type, _)) => Some(*ok_type),
                 _ => None,
@@ -353,7 +352,7 @@ impl<'a> ExprEmitter<'a> {
 
     fn infer_match_result_type(&self, arms: &[MatchArm]) -> WasmType {
         // Try arms with patterns that don't introduce new bindings
-        for (_i, arm) in arms.iter().enumerate() {
+        for arm in arms.iter() {
             match &arm.pattern {
                 Pattern::Wildcard | Pattern::EmptyList | Pattern::Literal(_) => {
                     return self.infer_expr_type(&arm.body.node);
@@ -395,9 +394,10 @@ impl<'a> ExprEmitter<'a> {
     fn infer_call_aver_return_type(&self, callee: &Spanned<Expr>) -> Option<Type> {
         let plan = classify_call_plan(&callee.node, &self.ir_ctx());
         match plan {
-            CallPlan::Function(name) | CallPlan::Builtin(name) => {
-                self.fn_sigs.get(name.as_str()).map(|(_, ret, _)| ret.clone())
-            }
+            CallPlan::Function(name) | CallPlan::Builtin(name) => self
+                .fn_sigs
+                .get(name.as_str())
+                .map(|(_, ret, _)| ret.clone()),
             _ => None,
         }
     }
@@ -737,8 +737,7 @@ impl<'a> ExprEmitter<'a> {
                     .push(Instruction::Call(self.rt.list_contains));
             }
             "List.zip" if args.len() == 2 => {
-                self.instructions
-                    .push(Instruction::Call(self.rt.list_zip));
+                self.instructions.push(Instruction::Call(self.rt.list_zip));
             }
             "Float.fromInt" if args.len() == 1 => {
                 self.instructions.push(Instruction::F64ConvertI64S);
@@ -754,14 +753,13 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions
                     .push(Instruction::Call(self.rt.f64_to_str_obj));
             }
-            "Map.empty" if args.len() == 0 => {
+            "Map.empty" if args.is_empty() => {
                 // Empty map = empty association list = null ptr
                 self.instructions.push(Instruction::I32Const(0));
             }
             "Map.get" if args.len() == 2 => {
                 // args: [map(i32), key(i32)]
-                self.instructions
-                    .push(Instruction::Call(self.rt.map_get));
+                self.instructions.push(Instruction::Call(self.rt.map_get));
             }
             "Map.set" if args.len() == 3 => {
                 // args: [map(i32), key(i32), value(?)]
@@ -772,16 +770,13 @@ impl<'a> ExprEmitter<'a> {
                     WasmType::I32 => self.instructions.push(Instruction::I64ExtendI32S),
                     WasmType::F64 => self.instructions.push(Instruction::I64ReinterpretF64),
                 }
-                self.instructions
-                    .push(Instruction::Call(self.rt.map_set));
+                self.instructions.push(Instruction::Call(self.rt.map_set));
             }
             "Map.has" if args.len() == 2 => {
-                self.instructions
-                    .push(Instruction::Call(self.rt.map_has));
+                self.instructions.push(Instruction::Call(self.rt.map_has));
             }
             "Map.keys" if args.len() == 1 => {
-                self.instructions
-                    .push(Instruction::Call(self.rt.map_keys));
+                self.instructions.push(Instruction::Call(self.rt.map_keys));
             }
             "Map.entries" if args.len() == 1 => {
                 // Map IS a list of tuples — identity
@@ -809,7 +804,8 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalSet(opt_local));
                 // Check
                 self.instructions.push(Instruction::LocalGet(opt_local));
-                self.instructions.push(Instruction::I32Const(super::value::NONE_SENTINEL));
+                self.instructions
+                    .push(Instruction::I32Const(super::value::NONE_SENTINEL));
                 self.instructions.push(Instruction::I32Eq);
                 self.emit_if(wasm_encoder::BlockType::Result(result_type.to_val_type()));
                 self.instructions.push(Instruction::LocalGet(def_local));
@@ -818,8 +814,12 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalGet(opt_local));
                 match result_type {
                     WasmType::I64 => self.instructions.push(Instruction::Call(self.rt.unwrap)),
-                    WasmType::F64 => self.instructions.push(Instruction::Call(self.rt.unwrap_f64)),
-                    WasmType::I32 => self.instructions.push(Instruction::Call(self.rt.unwrap_i32)),
+                    WasmType::F64 => self
+                        .instructions
+                        .push(Instruction::Call(self.rt.unwrap_f64)),
+                    WasmType::I32 => self
+                        .instructions
+                        .push(Instruction::Call(self.rt.unwrap_i32)),
                 }
                 self.emit_end();
             }
@@ -828,20 +828,16 @@ impl<'a> ExprEmitter<'a> {
                     .push(Instruction::Call(self.rt.vec_from_list));
             }
             "Vector.get" if args.len() == 2 => {
-                self.instructions
-                    .push(Instruction::Call(self.rt.vec_get));
+                self.instructions.push(Instruction::Call(self.rt.vec_get));
             }
             "Vector.len" if args.len() == 1 => {
-                self.instructions
-                    .push(Instruction::Call(self.rt.vec_len));
+                self.instructions.push(Instruction::Call(self.rt.vec_len));
             }
             "Vector.set" if args.len() == 3 => {
-                self.instructions
-                    .push(Instruction::Call(self.rt.vec_set));
+                self.instructions.push(Instruction::Call(self.rt.vec_set));
             }
             "Vector.new" if args.len() == 2 => {
-                self.instructions
-                    .push(Instruction::Call(self.rt.vec_new));
+                self.instructions.push(Instruction::Call(self.rt.vec_new));
             }
             "Vector.toList" if args.len() == 1 => {
                 // Convert vector back to list — TODO full implementation
@@ -850,9 +846,12 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::I32Const(0));
             }
             "String.len" if args.len() == 1 => {
-                self.instructions.push(Instruction::I64Load(wasm_encoder::MemArg {
-                    offset: 0, align: 3, memory_index: 0,
-                }));
+                self.instructions
+                    .push(Instruction::I64Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
                 self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
                 self.instructions.push(Instruction::I64And);
             }
@@ -874,9 +873,12 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::I64Const(
                     (value::OBJ_STRING << value::HDR_KIND_SHIFT | 1) as i64,
                 ));
-                self.instructions.push(Instruction::I64Store(wasm_encoder::MemArg {
-                    offset: 0, align: 3, memory_index: 0,
-                }));
+                self.instructions
+                    .push(Instruction::I64Store(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
                 // Copy byte
                 self.instructions.push(Instruction::LocalGet(ptr));
                 self.instructions.push(Instruction::LocalGet(str_local));
@@ -884,12 +886,18 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::I32Add);
                 self.instructions.push(Instruction::LocalGet(idx_local));
                 self.instructions.push(Instruction::I32Add);
-                self.instructions.push(Instruction::I32Load8U(wasm_encoder::MemArg {
-                    offset: 0, align: 0, memory_index: 0,
-                }));
-                self.instructions.push(Instruction::I32Store8(wasm_encoder::MemArg {
-                    offset: 8, align: 0, memory_index: 0,
-                }));
+                self.instructions
+                    .push(Instruction::I32Load8U(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 0,
+                        memory_index: 0,
+                    }));
+                self.instructions
+                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
+                        offset: 8,
+                        align: 0,
+                        memory_index: 0,
+                    }));
                 self.instructions.push(Instruction::LocalGet(ptr));
             }
             "String.trim" if args.len() == 1 => {
@@ -898,9 +906,12 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalSet(str_local));
                 let len = self.alloc_local(WasmType::I32);
                 self.instructions.push(Instruction::LocalGet(str_local));
-                self.instructions.push(Instruction::I64Load(wasm_encoder::MemArg {
-                    offset: 0, align: 3, memory_index: 0,
-                }));
+                self.instructions
+                    .push(Instruction::I64Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
                 self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
                 self.instructions.push(Instruction::I64And);
                 self.instructions.push(Instruction::I32WrapI64);
@@ -909,8 +920,10 @@ impl<'a> ExprEmitter<'a> {
                 let start = self.alloc_local(WasmType::I32);
                 self.instructions.push(Instruction::I32Const(0));
                 self.instructions.push(Instruction::LocalSet(start));
-                self.instructions.push(Instruction::Block(wasm_encoder::BlockType::Empty));
-                self.instructions.push(Instruction::Loop(wasm_encoder::BlockType::Empty));
+                self.instructions
+                    .push(Instruction::Block(wasm_encoder::BlockType::Empty));
+                self.instructions
+                    .push(Instruction::Loop(wasm_encoder::BlockType::Empty));
                 self.instructions.push(Instruction::LocalGet(start));
                 self.instructions.push(Instruction::LocalGet(len));
                 self.instructions.push(Instruction::I32GeU);
@@ -919,9 +932,12 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalGet(str_local));
                 self.instructions.push(Instruction::LocalGet(start));
                 self.instructions.push(Instruction::I32Add);
-                self.instructions.push(Instruction::I32Load8U(wasm_encoder::MemArg {
-                    offset: 8, align: 0, memory_index: 0,
-                }));
+                self.instructions
+                    .push(Instruction::I32Load8U(wasm_encoder::MemArg {
+                        offset: 8,
+                        align: 0,
+                        memory_index: 0,
+                    }));
                 let ch = self.alloc_local(WasmType::I32);
                 self.instructions.push(Instruction::LocalSet(ch));
                 // is_ws = ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
@@ -953,8 +969,10 @@ impl<'a> ExprEmitter<'a> {
                 let end = self.alloc_local(WasmType::I32);
                 self.instructions.push(Instruction::LocalGet(len));
                 self.instructions.push(Instruction::LocalSet(end));
-                self.instructions.push(Instruction::Block(wasm_encoder::BlockType::Empty));
-                self.instructions.push(Instruction::Loop(wasm_encoder::BlockType::Empty));
+                self.instructions
+                    .push(Instruction::Block(wasm_encoder::BlockType::Empty));
+                self.instructions
+                    .push(Instruction::Loop(wasm_encoder::BlockType::Empty));
                 self.instructions.push(Instruction::LocalGet(end));
                 self.instructions.push(Instruction::LocalGet(start));
                 self.instructions.push(Instruction::I32LeU);
@@ -964,9 +982,12 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::I32Const(1));
                 self.instructions.push(Instruction::I32Sub);
                 self.instructions.push(Instruction::I32Add);
-                self.instructions.push(Instruction::I32Load8U(wasm_encoder::MemArg {
-                    offset: 8, align: 0, memory_index: 0,
-                }));
+                self.instructions
+                    .push(Instruction::I32Load8U(wasm_encoder::MemArg {
+                        offset: 8,
+                        align: 0,
+                        memory_index: 0,
+                    }));
                 self.instructions.push(Instruction::LocalSet(ch));
                 self.instructions.push(Instruction::LocalGet(ch));
                 self.instructions.push(Instruction::I32Const(b' ' as i32));
@@ -1023,9 +1044,12 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalGet(trim_len));
                 self.instructions.push(Instruction::I64ExtendI32U);
                 self.instructions.push(Instruction::I64Or);
-                self.instructions.push(Instruction::I64Store(wasm_encoder::MemArg {
-                    offset: 0, align: 3, memory_index: 0,
-                }));
+                self.instructions
+                    .push(Instruction::I64Store(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
                 self.instructions.push(Instruction::LocalGet(ptr));
                 self.instructions.push(Instruction::I32Const(8));
                 self.instructions.push(Instruction::I32Add);
@@ -1035,7 +1059,10 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalGet(start));
                 self.instructions.push(Instruction::I32Add);
                 self.instructions.push(Instruction::LocalGet(trim_len));
-                self.instructions.push(Instruction::MemoryCopy { src_mem: 0, dst_mem: 0 });
+                self.instructions.push(Instruction::MemoryCopy {
+                    src_mem: 0,
+                    dst_mem: 0,
+                });
                 self.instructions.push(Instruction::LocalGet(ptr));
                 self.emit_end();
             }
@@ -1082,9 +1109,12 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalGet(len_local));
                 self.instructions.push(Instruction::I64ExtendI32U);
                 self.instructions.push(Instruction::I64Or);
-                self.instructions.push(Instruction::I64Store(wasm_encoder::MemArg {
-                    offset: 0, align: 3, memory_index: 0,
-                }));
+                self.instructions
+                    .push(Instruction::I64Store(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
                 // Copy bytes
                 self.instructions.push(Instruction::LocalGet(ptr));
                 self.instructions.push(Instruction::I32Const(8));
@@ -1095,28 +1125,37 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalGet(start_local));
                 self.instructions.push(Instruction::I32Add);
                 self.instructions.push(Instruction::LocalGet(len_local));
-                self.instructions.push(Instruction::MemoryCopy { src_mem: 0, dst_mem: 0 });
+                self.instructions.push(Instruction::MemoryCopy {
+                    src_mem: 0,
+                    dst_mem: 0,
+                });
                 self.instructions.push(Instruction::LocalGet(ptr));
                 self.emit_end();
             }
-            "String.startsWith" | "String.endsWith" | "String.contains"
-            | "String.replace" | "String.split" | "String.join"
-            | "String.toUpper" | "String.toLower" | "String.chars"
-            | "String.byteLength" if args.len() >= 1 => {
-                for _ in args { self.instructions.push(Instruction::Drop); }
+            "String.startsWith" | "String.endsWith" | "String.contains" | "String.replace"
+            | "String.split" | "String.join" | "String.toUpper" | "String.toLower"
+            | "String.chars" | "String.byteLength"
+                if !args.is_empty() =>
+            {
+                for _ in args {
+                    self.instructions.push(Instruction::Drop);
+                }
                 self.instructions.push(Instruction::I32Const(0));
             }
             "String.fromInt" if args.len() == 1 => {
-                self.instructions.push(Instruction::Call(self.rt.i64_to_str_obj));
+                self.instructions
+                    .push(Instruction::Call(self.rt.i64_to_str_obj));
             }
             "String.fromFloat" if args.len() == 1 => {
-                self.instructions.push(Instruction::Call(self.rt.f64_to_str_obj));
+                self.instructions
+                    .push(Instruction::Call(self.rt.f64_to_str_obj));
             }
             "String.fromBool" if args.len() == 1 => {
                 // bool i32 → "true"/"false" string
                 // Simplified: convert to int then to string
                 self.instructions.push(Instruction::I64ExtendI32S);
-                self.instructions.push(Instruction::Call(self.rt.i64_to_str_obj));
+                self.instructions
+                    .push(Instruction::Call(self.rt.i64_to_str_obj));
             }
             "Int.mod" if args.len() == 2 => {
                 // args: [a(i64), b(i64)] → Result<Int, String>
@@ -1128,7 +1167,8 @@ impl<'a> ExprEmitter<'a> {
                 // Wrap in Result.Ok
                 let result = self.alloc_local(WasmType::I64);
                 self.instructions.push(Instruction::LocalSet(result));
-                self.instructions.push(Instruction::I32Const(value::WRAP_OK as i32));
+                self.instructions
+                    .push(Instruction::I32Const(value::WRAP_OK as i32));
                 self.instructions.push(Instruction::LocalGet(result));
                 self.instructions.push(Instruction::Call(self.rt.wrap));
             }
@@ -1182,9 +1222,12 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalSet(str_local));
                 let len = self.alloc_local(WasmType::I32);
                 self.instructions.push(Instruction::LocalGet(str_local));
-                self.instructions.push(Instruction::I64Load(wasm_encoder::MemArg {
-                    offset: 0, align: 3, memory_index: 0,
-                }));
+                self.instructions
+                    .push(Instruction::I64Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
                 self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
                 self.instructions.push(Instruction::I64And);
                 self.instructions.push(Instruction::I32WrapI64);
@@ -1205,9 +1248,12 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::I32GtS);
                 self.emit_if(wasm_encoder::BlockType::Empty);
                 self.instructions.push(Instruction::LocalGet(str_local));
-                self.instructions.push(Instruction::I32Load8U(wasm_encoder::MemArg {
-                    offset: 8, align: 0, memory_index: 0,
-                }));
+                self.instructions
+                    .push(Instruction::I32Load8U(wasm_encoder::MemArg {
+                        offset: 8,
+                        align: 0,
+                        memory_index: 0,
+                    }));
                 self.instructions.push(Instruction::I32Const(b'-' as i32));
                 self.instructions.push(Instruction::I32Eq);
                 self.emit_if(wasm_encoder::BlockType::Empty);
@@ -1218,8 +1264,10 @@ impl<'a> ExprEmitter<'a> {
                 self.emit_end();
                 self.emit_end();
                 // Digit loop
-                self.instructions.push(Instruction::Block(wasm_encoder::BlockType::Empty));
-                self.instructions.push(Instruction::Loop(wasm_encoder::BlockType::Empty));
+                self.instructions
+                    .push(Instruction::Block(wasm_encoder::BlockType::Empty));
+                self.instructions
+                    .push(Instruction::Loop(wasm_encoder::BlockType::Empty));
                 self.instructions.push(Instruction::LocalGet(idx));
                 self.instructions.push(Instruction::LocalGet(len));
                 self.instructions.push(Instruction::I32GeU);
@@ -1231,9 +1279,12 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalGet(str_local));
                 self.instructions.push(Instruction::LocalGet(idx));
                 self.instructions.push(Instruction::I32Add);
-                self.instructions.push(Instruction::I32Load8U(wasm_encoder::MemArg {
-                    offset: 8, align: 0, memory_index: 0,
-                }));
+                self.instructions
+                    .push(Instruction::I32Load8U(wasm_encoder::MemArg {
+                        offset: 8,
+                        align: 0,
+                        memory_index: 0,
+                    }));
                 self.instructions.push(Instruction::I32Const(b'0' as i32));
                 self.instructions.push(Instruction::I32Sub);
                 self.instructions.push(Instruction::I64ExtendI32U);
@@ -1256,7 +1307,8 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalSet(result));
                 self.emit_end();
                 // Wrap in Result.Ok
-                self.instructions.push(Instruction::I32Const(value::WRAP_OK as i32));
+                self.instructions
+                    .push(Instruction::I32Const(value::WRAP_OK as i32));
                 self.instructions.push(Instruction::LocalGet(result));
                 self.instructions.push(Instruction::Call(self.rt.wrap));
             }
@@ -1321,8 +1373,9 @@ impl<'a> ExprEmitter<'a> {
             "Float.max" if args.len() == 2 => {
                 self.instructions.push(Instruction::F64Max);
             }
-            "Float.pi" if args.len() == 0 => {
-                self.instructions.push(Instruction::F64Const(std::f64::consts::PI));
+            "Float.pi" if args.is_empty() => {
+                self.instructions
+                    .push(Instruction::F64Const(std::f64::consts::PI));
             }
             "Float.toInt" if args.len() == 1 => {
                 self.instructions.push(Instruction::I64TruncF64S);
@@ -1350,21 +1403,30 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::I64Const(
                     (value::OBJ_STRING << value::HDR_KIND_SHIFT | 1) as i64,
                 ));
-                self.instructions.push(Instruction::I64Store(wasm_encoder::MemArg {
-                    offset: 0, align: 3, memory_index: 0,
-                }));
+                self.instructions
+                    .push(Instruction::I64Store(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
                 self.instructions.push(Instruction::LocalGet(ptr));
                 self.instructions.push(Instruction::LocalGet(code));
-                self.instructions.push(Instruction::I32Store8(wasm_encoder::MemArg {
-                    offset: 8, align: 0, memory_index: 0,
-                }));
+                self.instructions
+                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
+                        offset: 8,
+                        align: 0,
+                        memory_index: 0,
+                    }));
                 self.instructions.push(Instruction::LocalGet(ptr));
             }
             "Char.toCode" if args.len() == 1 => {
                 // String → Int (first byte code)
-                self.instructions.push(Instruction::I32Load8U(wasm_encoder::MemArg {
-                    offset: 8, align: 0, memory_index: 0,
-                }));
+                self.instructions
+                    .push(Instruction::I32Load8U(wasm_encoder::MemArg {
+                        offset: 8,
+                        align: 0,
+                        memory_index: 0,
+                    }));
                 self.instructions.push(Instruction::I64ExtendI32U);
             }
             "Random.int" if args.len() == 2 => {
@@ -1372,11 +1434,11 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::Drop); // drop max
                 // min stays
             }
-            "Console.readLine" if args.len() == 0 => {
+            "Console.readLine" if args.is_empty() => {
                 // Stub: return empty string
                 self.emit_string_literal("");
             }
-            "Time.unixMs" if args.len() == 0 => {
+            "Time.unixMs" if args.is_empty() => {
                 self.instructions.push(Instruction::I64Const(0));
             }
             "Time.sleep" if args.len() == 1 => {
@@ -1403,8 +1465,12 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalGet(opt_local));
                 match result_type {
                     WasmType::I64 => self.instructions.push(Instruction::Call(self.rt.unwrap)),
-                    WasmType::F64 => self.instructions.push(Instruction::Call(self.rt.unwrap_f64)),
-                    WasmType::I32 => self.instructions.push(Instruction::Call(self.rt.unwrap_i32)),
+                    WasmType::F64 => self
+                        .instructions
+                        .push(Instruction::Call(self.rt.unwrap_f64)),
+                    WasmType::I32 => self
+                        .instructions
+                        .push(Instruction::Call(self.rt.unwrap_i32)),
                 }
                 self.emit_else();
                 self.instructions.push(Instruction::LocalGet(def_local));
@@ -1497,12 +1563,10 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalSet(tail_tmp));
                 self.instructions.push(Instruction::I64ExtendI32S);
                 self.instructions.push(Instruction::LocalGet(tail_tmp));
-                self.instructions
-                    .push(Instruction::Call(self.rt.list_cons));
+                self.instructions.push(Instruction::Call(self.rt.list_cons));
             }
             _ => {
-                self.instructions
-                    .push(Instruction::Call(self.rt.list_cons));
+                self.instructions.push(Instruction::Call(self.rt.list_cons));
             }
         }
     }
@@ -1578,7 +1642,10 @@ impl<'a> ExprEmitter<'a> {
 
         match subject_plan {
             BoolSubjectPlan::Compare {
-                lhs, rhs, op, invert,
+                lhs,
+                rhs,
+                op,
+                invert,
             } => {
                 // Emit comparison directly
                 let lhs_type = self.infer_expr_type(&lhs.node);
@@ -1706,8 +1773,7 @@ impl<'a> ExprEmitter<'a> {
                         .push(Instruction::Call(self.rt.obj_field_i32));
                 }
                 WasmType::I64 => {
-                    self.instructions
-                        .push(Instruction::Call(self.rt.obj_field));
+                    self.instructions.push(Instruction::Call(self.rt.obj_field));
                 }
             }
             self.instructions.push(Instruction::LocalSet(head_local));
@@ -1987,7 +2053,10 @@ impl<'a> ExprEmitter<'a> {
                         if !is_last {
                             self.emit_else();
                             self.emit_generic_arms(
-                                subj_local, subj_type, result_local, arms,
+                                subj_local,
+                                subj_type,
+                                result_local,
+                                arms,
                                 idx + 1,
                             );
                         }
@@ -2018,7 +2087,10 @@ impl<'a> ExprEmitter<'a> {
                         if !is_last {
                             self.emit_else();
                             self.emit_generic_arms(
-                                subj_local, subj_type, result_local, arms,
+                                subj_local,
+                                subj_type,
+                                result_local,
+                                arms,
                                 idx + 1,
                             );
                         }
@@ -2046,6 +2118,7 @@ impl<'a> ExprEmitter<'a> {
     }
 
     /// Emit pattern match for user-defined variant: Shape.Circle(r) -> ...
+    #[allow(clippy::too_many_arguments)]
     fn emit_variant_pattern(
         &mut self,
         subj_local: u32,
@@ -2064,9 +2137,7 @@ impl<'a> ExprEmitter<'a> {
             .variant_registry
             .get(&(type_name.to_string(), variant_name.to_string()));
         let expected_tag = info.map(|i| i.tag).unwrap_or(0);
-        let field_type_names: Vec<String> = info
-            .map(|i| i.field_types.clone())
-            .unwrap_or_default();
+        let field_type_names: Vec<String> = info.map(|i| i.field_types.clone()).unwrap_or_default();
 
         // Combined check: ptr > 0 && obj_tag == expected_tag
         self.instructions.push(Instruction::LocalGet(subj_local));
@@ -2105,8 +2176,7 @@ impl<'a> ExprEmitter<'a> {
             match field_wasm_type {
                 WasmType::F64 => {
                     // Load as i64 then reinterpret as f64 (stored as reinterpreted i64)
-                    self.instructions
-                        .push(Instruction::Call(self.rt.obj_field));
+                    self.instructions.push(Instruction::Call(self.rt.obj_field));
                     self.instructions.push(Instruction::F64ReinterpretI64);
                 }
                 WasmType::I32 => {
@@ -2114,8 +2184,7 @@ impl<'a> ExprEmitter<'a> {
                         .push(Instruction::Call(self.rt.obj_field_i32));
                 }
                 WasmType::I64 => {
-                    self.instructions
-                        .push(Instruction::Call(self.rt.obj_field));
+                    self.instructions.push(Instruction::Call(self.rt.obj_field));
                 }
             }
             self.instructions.push(Instruction::LocalSet(bind_local));
@@ -2267,12 +2336,10 @@ impl<'a> ExprEmitter<'a> {
                     self.instructions.push(Instruction::LocalSet(tmp));
                     self.instructions.push(Instruction::I64ExtendI32S);
                     self.instructions.push(Instruction::LocalGet(tmp));
-                    self.instructions
-                        .push(Instruction::Call(self.rt.list_cons));
+                    self.instructions.push(Instruction::Call(self.rt.list_cons));
                 }
                 _ => {
-                    self.instructions
-                        .push(Instruction::Call(self.rt.list_cons));
+                    self.instructions.push(Instruction::Call(self.rt.list_cons));
                 }
             }
         }
@@ -2291,15 +2358,14 @@ impl<'a> ExprEmitter<'a> {
         self.instructions.push(Instruction::LocalSet(ptr_local));
         self.instructions.push(Instruction::LocalGet(ptr_local));
         self.instructions
-            .push(Instruction::I64Const(value::make_header(
-                value::OBJ_TUPLE,
-                0,
-                0,
-                count as u64,
-            ) as i64));
+            .push(Instruction::I64Const(
+                value::make_header(value::OBJ_TUPLE, 0, 0, count as u64) as i64,
+            ));
         self.instructions
             .push(Instruction::I64Store(wasm_encoder::MemArg {
-                offset: 0, align: 3, memory_index: 0,
+                offset: 0,
+                align: 3,
+                memory_index: 0,
             }));
         for (i, item) in items.iter().enumerate() {
             let item_type = self.infer_expr_type(&item.node);
@@ -2312,7 +2378,9 @@ impl<'a> ExprEmitter<'a> {
             }
             self.instructions
                 .push(Instruction::I64Store(wasm_encoder::MemArg {
-                    offset: (8 + i * 8) as u64, align: 3, memory_index: 0,
+                    offset: (8 + i * 8) as u64,
+                    align: 3,
+                    memory_index: 0,
                 }));
         }
         self.instructions.push(Instruction::LocalGet(ptr_local));
@@ -2327,15 +2395,14 @@ impl<'a> ExprEmitter<'a> {
         self.instructions.push(Instruction::LocalSet(ptr_local));
         self.instructions.push(Instruction::LocalGet(ptr_local));
         self.instructions
-            .push(Instruction::I64Const(value::make_header(
-                value::OBJ_RECORD,
-                0,
-                0,
-                count as u64,
-            ) as i64));
+            .push(Instruction::I64Const(
+                value::make_header(value::OBJ_RECORD, 0, 0, count as u64) as i64,
+            ));
         self.instructions
             .push(Instruction::I64Store(wasm_encoder::MemArg {
-                offset: 0, align: 3, memory_index: 0,
+                offset: 0,
+                align: 3,
+                memory_index: 0,
             }));
         for (i, (_name, expr)) in fields.iter().enumerate() {
             let field_type = self.infer_expr_type(&expr.node);
@@ -2348,7 +2415,9 @@ impl<'a> ExprEmitter<'a> {
             }
             self.instructions
                 .push(Instruction::I64Store(wasm_encoder::MemArg {
-                    offset: (8 + i * 8) as u64, align: 3, memory_index: 0,
+                    offset: (8 + i * 8) as u64,
+                    align: 3,
+                    memory_index: 0,
                 }));
         }
         self.instructions.push(Instruction::LocalGet(ptr_local));
@@ -2368,12 +2437,15 @@ impl<'a> ExprEmitter<'a> {
             self.instructions.push(Instruction::LocalSet(tuple_ptr));
             // Header
             self.instructions.push(Instruction::LocalGet(tuple_ptr));
-            self.instructions.push(Instruction::I64Const(
-                value::make_header(value::OBJ_TUPLE, 0, 0, 2) as i64,
-            ));
+            self.instructions
+                .push(Instruction::I64Const(
+                    value::make_header(value::OBJ_TUPLE, 0, 0, 2) as i64,
+                ));
             self.instructions
                 .push(Instruction::I64Store(wasm_encoder::MemArg {
-                    offset: 0, align: 3, memory_index: 0,
+                    offset: 0,
+                    align: 3,
+                    memory_index: 0,
                 }));
             // Field 0: key
             self.instructions.push(Instruction::LocalGet(tuple_ptr));
@@ -2386,7 +2458,9 @@ impl<'a> ExprEmitter<'a> {
             }
             self.instructions
                 .push(Instruction::I64Store(wasm_encoder::MemArg {
-                    offset: 8, align: 3, memory_index: 0,
+                    offset: 8,
+                    align: 3,
+                    memory_index: 0,
                 }));
             // Field 1: value
             self.instructions.push(Instruction::LocalGet(tuple_ptr));
@@ -2399,38 +2473,39 @@ impl<'a> ExprEmitter<'a> {
             }
             self.instructions
                 .push(Instruction::I64Store(wasm_encoder::MemArg {
-                    offset: 16, align: 3, memory_index: 0,
+                    offset: 16,
+                    align: 3,
+                    memory_index: 0,
                 }));
             // Cons(tuple, map)
             self.instructions.push(Instruction::LocalGet(tuple_ptr));
             self.instructions.push(Instruction::I64ExtendI32U);
             self.instructions.push(Instruction::LocalGet(map_tmp));
-            self.instructions
-                .push(Instruction::Call(self.rt.list_cons));
+            self.instructions.push(Instruction::Call(self.rt.list_cons));
         }
     }
 
     fn emit_field_access(&mut self, base_expr: &Spanned<Expr>, field_name: &str) {
         // Check if this is an uppercase dotted path (type/namespace reference, not field access)
-        if let Expr::Ident(base_name) = &base_expr.node {
-            if base_name.chars().next().is_some_and(|c| c.is_uppercase()) {
-                let qualified = format!("{}.{}", base_name, field_name);
-                let ctor = classify_constructor_name(&qualified, &self.ir_ctx());
-                match ctor {
-                    SemanticConstructor::NoneValue => {
-                        self.instructions
-                            .push(Instruction::I32Const(value::NONE_SENTINEL));
-                        return;
-                    }
-                    SemanticConstructor::TypeConstructor {
-                        qualified_type_name,
-                        variant_name,
-                    } => {
-                        self.emit_variant_constructor(&qualified_type_name, &variant_name, &[]);
-                        return;
-                    }
-                    _ => {}
+        if let Expr::Ident(base_name) = &base_expr.node
+            && base_name.chars().next().is_some_and(|c| c.is_uppercase())
+        {
+            let qualified = format!("{}.{}", base_name, field_name);
+            let ctor = classify_constructor_name(&qualified, &self.ir_ctx());
+            match ctor {
+                SemanticConstructor::NoneValue => {
+                    self.instructions
+                        .push(Instruction::I32Const(value::NONE_SENTINEL));
+                    return;
                 }
+                SemanticConstructor::TypeConstructor {
+                    qualified_type_name,
+                    variant_name,
+                } => {
+                    self.emit_variant_constructor(&qualified_type_name, &variant_name, &[]);
+                    return;
+                }
+                _ => {}
             }
         }
 
@@ -2450,8 +2525,7 @@ impl<'a> ExprEmitter<'a> {
             .push(Instruction::I32Const(field_idx as i32));
         match field_wasm_type {
             WasmType::F64 => {
-                self.instructions
-                    .push(Instruction::Call(self.rt.obj_field));
+                self.instructions.push(Instruction::Call(self.rt.obj_field));
                 self.instructions.push(Instruction::F64ReinterpretI64);
             }
             WasmType::I32 => {
@@ -2459,18 +2533,13 @@ impl<'a> ExprEmitter<'a> {
                     .push(Instruction::Call(self.rt.obj_field_i32));
             }
             WasmType::I64 => {
-                self.instructions
-                    .push(Instruction::Call(self.rt.obj_field));
+                self.instructions.push(Instruction::Call(self.rt.obj_field));
             }
         }
     }
 
     /// Infer the WASM type of a record field from type definitions.
-    fn infer_record_field_type(
-        &self,
-        base_expr: &Spanned<Expr>,
-        field_name: &str,
-    ) -> WasmType {
+    fn infer_record_field_type(&self, base_expr: &Spanned<Expr>, field_name: &str) -> WasmType {
         // Try to find the record type from the base expression's aver type
         let base_aver_type = self.infer_aver_type(&base_expr.node);
         let type_name = match &base_aver_type {
@@ -2481,24 +2550,24 @@ impl<'a> ExprEmitter<'a> {
         if let Some(type_name) = type_name {
             // Look up field type in type_defs
             for td in &self.ctx.type_defs {
-                if let crate::ast::TypeDef::Product { name, fields, .. } = td {
-                    if name == type_name {
-                        for (fname, ftype) in fields {
-                            if fname == field_name {
-                                return self.type_str_to_wasm(ftype);
-                            }
+                if let crate::ast::TypeDef::Product { name, fields, .. } = td
+                    && name == type_name
+                {
+                    for (fname, ftype) in fields {
+                        if fname == field_name {
+                            return self.type_str_to_wasm(ftype);
                         }
                     }
                 }
             }
             for module in &self.ctx.modules {
                 for td in &module.type_defs {
-                    if let crate::ast::TypeDef::Product { name, fields, .. } = td {
-                        if name == type_name {
-                            for (fname, ftype) in fields {
-                                if fname == field_name {
-                                    return self.type_str_to_wasm(ftype);
-                                }
+                    if let crate::ast::TypeDef::Product { name, fields, .. } = td
+                        && name == type_name
+                    {
+                        for (fname, ftype) in fields {
+                            if fname == field_name {
+                                return self.type_str_to_wasm(ftype);
                             }
                         }
                     }
@@ -2527,14 +2596,8 @@ impl<'a> ExprEmitter<'a> {
             "String" | "Str" => WasmType::I32,
             "Int" => WasmType::I64,
             "Unit" => WasmType::I32,
-            _ => {
-                // Check if it's a user-defined type (heap-allocated → I32)
-                if is_user_type(type_str, self.ctx) {
-                    WasmType::I32
-                } else {
-                    WasmType::I32 // Default to heap pointer for unknown types
-                }
-            }
+            // User-defined types and unknown types are heap-allocated → I32
+            _ => WasmType::I32,
         }
     }
 
@@ -2602,8 +2665,10 @@ impl<'a> ExprEmitter<'a> {
     fn emit_tailcall(&mut self, tc: &(String, Vec<Spanned<Expr>>)) {
         let (fn_name, args) = tc;
         // Only use TCO loop for SELF-calls, not mutual calls
-        if let Some(loop_depth) = self.tco_loop_depth
-            .filter(|_| fn_name == &self.current_fn_name) {
+        if let Some(loop_depth) = self
+            .tco_loop_depth
+            .filter(|_| fn_name == &self.current_fn_name)
+        {
             for arg in args {
                 self.emit_expr(&arg.node);
             }
@@ -2650,9 +2715,10 @@ impl<'a> ExprEmitter<'a> {
             Literal::Float(f) => self
                 .instructions
                 .push(Instruction::F64Const(f64::from_bits(f.to_bits()))),
-            Literal::Bool(b) => self
-                .instructions
-                .push(Instruction::I32Const(if *b { 1 } else { 0 })),
+            Literal::Bool(b) => {
+                self.instructions
+                    .push(Instruction::I32Const(if *b { 1 } else { 0 }))
+            }
             Literal::Str(s) => self.emit_string_literal(s),
             Literal::Unit => self.instructions.push(Instruction::I32Const(0)),
         }

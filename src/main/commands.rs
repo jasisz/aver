@@ -1372,22 +1372,30 @@ fn run_wasm_with_host(wasm_bytes: &[u8]) -> Result<(), String> {
 
     // aver/console_print(ptr: i32, len: i32)
     linker
-        .func_wrap("aver", "console_print", |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
-            let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
-            let data = &mem.data(&caller)[ptr as usize..(ptr as usize + len as usize)];
-            use std::io::Write;
-            std::io::stdout().write_all(data).unwrap();
-        })
+        .func_wrap(
+            "aver",
+            "console_print",
+            |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
+                let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
+                let data = &mem.data(&caller)[ptr as usize..(ptr as usize + len as usize)];
+                use std::io::Write;
+                std::io::stdout().write_all(data).unwrap();
+            },
+        )
         .map_err(|e| format!("Link error: {}", e))?;
 
     // aver/console_error(ptr: i32, len: i32)
     linker
-        .func_wrap("aver", "console_error", |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
-            let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
-            let data = &mem.data(&caller)[ptr as usize..(ptr as usize + len as usize)];
-            use std::io::Write;
-            std::io::stderr().write_all(data).unwrap();
-        })
+        .func_wrap(
+            "aver",
+            "console_error",
+            |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
+                let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
+                let data = &mem.data(&caller)[ptr as usize..(ptr as usize + len as usize)];
+                use std::io::Write;
+                std::io::stderr().write_all(data).unwrap();
+            },
+        )
         .map_err(|e| format!("Link error: {}", e))?;
 
     // aver/random_int(min: i64, max: i64) -> i64
@@ -1436,7 +1444,9 @@ fn run_wasm_with_host(wasm_bytes: &[u8]) -> Result<(), String> {
         .func_wrap("aver", "math_atan2", |y: f64, x: f64| -> f64 { y.atan2(x) })
         .map_err(|e| format!("Link error: {}", e))?;
     linker
-        .func_wrap("aver", "math_pow", |base: f64, exp: f64| -> f64 { base.powf(exp) })
+        .func_wrap("aver", "math_pow", |base: f64, exp: f64| -> f64 {
+            base.powf(exp)
+        })
         .map_err(|e| format!("Link error: {}", e))?;
 
     // aver/console_readLine() -> (i32, i32)
@@ -2909,7 +2919,13 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
 
     // WASM target: simplified pipeline, no replay/policy/guest-entry support yet
     if matches!(target, super::cli::CompileTarget::Wasm) {
-        cmd_compile_wasm(file, output_dir, project_name, module_root_override, adapter);
+        cmd_compile_wasm(
+            file,
+            output_dir,
+            project_name,
+            module_root_override,
+            adapter,
+        );
         return;
     }
 
@@ -2978,7 +2994,13 @@ fn cmd_compile_wasm(
 ) {
     #[cfg(not(feature = "wasm"))]
     {
-        let _ = (file, output_dir, project_name, module_root_override, adapter);
+        let _ = (
+            file,
+            output_dir,
+            project_name,
+            module_root_override,
+            adapter,
+        );
         eprintln!(
             "{}",
             "WASM target requires --features wasm (rebuild with: cargo build --features wasm)"
@@ -3030,7 +3052,7 @@ fn cmd_compile_wasm(
 
                 // If program uses effects (Console.print etc.), merge with runtime
                 let needs_runtime =
-                    wasm_bytes.len() > 0 && wasm_bytes.windows(7).any(|w| w == b"aver_rt");
+                    !wasm_bytes.is_empty() && wasm_bytes.windows(7).any(|w| w == b"aver_rt");
 
                 if needs_runtime {
                     // Try to find aver-wasm-rt.wasm

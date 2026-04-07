@@ -10,47 +10,47 @@ use super::value::*;
 #[derive(Debug, Clone, Copy)]
 pub struct RuntimeFuncIndices {
     pub alloc: u32,
-    pub wrap: u32,      // (i32, i64) -> i32
-    pub wrap_f64: u32,  // (i32, f64) -> i32
-    pub wrap_i32: u32,  // (i32, i32) -> i32
-    pub unwrap: u32,     // (i32) -> i64
-    pub unwrap_f64: u32, // (i32) -> f64
-    pub unwrap_i32: u32, // (i32) -> i32
-    pub obj_kind: u32,   // (i32) -> i32
-    pub obj_tag: u32,    // (i32) -> i32
-    pub obj_field: u32,  // (i32, i32) -> i64
-    pub obj_field_f64: u32, // (i32, i32) -> f64
-    pub obj_field_i32: u32, // (i32, i32) -> i32
-    pub list_cons: u32,     // (i64, i32) -> i32
-    pub list_cons_f64: u32, // (f64, i32) -> i32
-    pub print_i64: u32,     // (i64) -> ()
-    pub print_f64: u32,     // (f64) -> ()
-    pub print_string: u32,  // (i32) -> ()
-    pub print_bool: u32,    // (i32) -> ()
-    pub print_heap: u32,    // (i32) -> ()
-    pub int_to_str: u32,    // (i64, i32) -> i32
-    pub float_to_str: u32,  // (f64, i32) -> i32
-    pub fd_write_buf: u32,  // (i32, i32) -> ()
-    pub str_eq: u32,        // (i32, i32) -> i32
-    pub str_concat: u32,    // (i32, i32) -> i32
+    pub wrap: u32,           // (i32, i64) -> i32
+    pub wrap_f64: u32,       // (i32, f64) -> i32
+    pub wrap_i32: u32,       // (i32, i32) -> i32
+    pub unwrap: u32,         // (i32) -> i64
+    pub unwrap_f64: u32,     // (i32) -> f64
+    pub unwrap_i32: u32,     // (i32) -> i32
+    pub obj_kind: u32,       // (i32) -> i32
+    pub obj_tag: u32,        // (i32) -> i32
+    pub obj_field: u32,      // (i32, i32) -> i64
+    pub obj_field_f64: u32,  // (i32, i32) -> f64
+    pub obj_field_i32: u32,  // (i32, i32) -> i32
+    pub list_cons: u32,      // (i64, i32) -> i32
+    pub list_cons_f64: u32,  // (f64, i32) -> i32
+    pub print_i64: u32,      // (i64) -> ()
+    pub print_f64: u32,      // (f64) -> ()
+    pub print_string: u32,   // (i32) -> ()
+    pub print_bool: u32,     // (i32) -> ()
+    pub print_heap: u32,     // (i32) -> ()
+    pub int_to_str: u32,     // (i64, i32) -> i32
+    pub float_to_str: u32,   // (f64, i32) -> i32
+    pub fd_write_buf: u32,   // (i32, i32) -> ()
+    pub str_eq: u32,         // (i32, i32) -> i32
+    pub str_concat: u32,     // (i32, i32) -> i32
     pub i64_to_str_obj: u32, // (i64) -> i32
     pub f64_to_str_obj: u32, // (f64) -> i32
-    pub list_take: u32,     // (i32, i64) -> i32
-    pub list_drop: u32,     // (i32, i64) -> i32
-    pub list_concat: u32,   // (i32, i32) -> i32
-    pub list_reverse: u32,  // (i32) -> i32
-    pub list_contains: u32, // (i64, i32) -> i32 (value, list) -> bool
-    pub list_zip: u32,      // (i32, i32) -> i32
-    pub map_get: u32,       // (i32, i32) -> i32  (map, key) -> Option ptr
-    pub map_set: u32,       // (i32, i32, i64) -> i32  (map, key, value) -> map
-    pub map_has: u32,       // (i32, i32) -> i32  (map, key) -> bool
-    pub map_keys: u32,      // (i32) -> i32  (map) -> list
-    pub print_value: u32,     // (i64) -> ()  generic value printer
-    pub vec_from_list: u32,   // (i32) -> i32  list → vector
-    pub vec_get: u32,         // (i32, i64) -> i32  (vec, idx) → Option
-    pub vec_len: u32,         // (i32) -> i64  vec → Int
-    pub vec_set: u32,         // (i32, i64, i64) -> i32  (vec, idx, val) → Option<Vector>
-    pub vec_new: u32,         // (i64, i64) -> i32  (size, fill) → vec
+    pub list_take: u32,      // (i32, i64) -> i32
+    pub list_drop: u32,      // (i32, i64) -> i32
+    pub list_concat: u32,    // (i32, i32) -> i32
+    pub list_reverse: u32,   // (i32) -> i32
+    pub list_contains: u32,  // (i64, i32) -> i32 (value, list) -> bool
+    pub list_zip: u32,       // (i32, i32) -> i32
+    pub map_get: u32,        // (i32, i32) -> i32  (map, key) -> Option ptr
+    pub map_set: u32,        // (i32, i32, i64) -> i32  (map, key, value) -> map
+    pub map_has: u32,        // (i32, i32) -> i32  (map, key) -> bool
+    pub map_keys: u32,       // (i32) -> i32  (map) -> list
+    pub print_value: u32,    // (i64) -> ()  generic value printer
+    pub vec_from_list: u32,  // (i32) -> i32  list → vector
+    pub vec_get: u32,        // (i32, i64) -> i32  (vec, idx) → Option
+    pub vec_len: u32,        // (i32) -> i64  vec → Int
+    pub vec_set: u32,        // (i32, i64, i64) -> i32  (vec, idx, val) → Option<Vector>
+    pub vec_new: u32,        // (i64, i64) -> i32  (size, fill) → vec
     /// Total number of runtime functions.
     pub count: u32,
     /// Import function index for writing to stdout (either WASI fd_write or aver/console_print).
@@ -170,52 +170,141 @@ pub struct RtTypeIndices {
 }
 
 /// Get the type index for a given runtime function.
-pub fn rt_type_index(rt: &RuntimeFuncIndices, rti: &RtTypeIndices, func_idx: u32, import_func_count: u32) -> u32 {
+pub fn rt_type_index(
+    rt: &RuntimeFuncIndices,
+    rti: &RtTypeIndices,
+    func_idx: u32,
+    import_func_count: u32,
+) -> u32 {
     let local_idx = func_idx - import_func_count;
     let alloc_local = rt.alloc - import_func_count;
 
-    if local_idx == alloc_local { return rti.alloc; }
-    if local_idx == rt.wrap - import_func_count { return rti.wrap_i64; }
-    if local_idx == rt.wrap_f64 - import_func_count { return rti.wrap_f64; }
-    if local_idx == rt.wrap_i32 - import_func_count { return rti.wrap_i32; }
-    if local_idx == rt.unwrap - import_func_count { return rti.unwrap_i64; }
-    if local_idx == rt.unwrap_f64 - import_func_count { return rti.unwrap_f64; }
-    if local_idx == rt.unwrap_i32 - import_func_count { return rti.unwrap_i32; }
-    if local_idx == rt.obj_kind - import_func_count { return rti.obj_kind; }
-    if local_idx == rt.obj_tag - import_func_count { return rti.obj_tag; }
-    if local_idx == rt.obj_field - import_func_count { return rti.obj_field_i64; }
-    if local_idx == rt.obj_field_f64 - import_func_count { return rti.obj_field_f64; }
-    if local_idx == rt.obj_field_i32 - import_func_count { return rti.obj_field_i32; }
-    if local_idx == rt.list_cons - import_func_count { return rti.list_cons_i64; }
-    if local_idx == rt.list_cons_f64 - import_func_count { return rti.list_cons_f64; }
-    if local_idx == rt.print_i64 - import_func_count { return rti.print_i64; }
-    if local_idx == rt.print_f64 - import_func_count { return rti.print_f64; }
-    if local_idx == rt.print_string - import_func_count { return rti.print_i32_void; }
-    if local_idx == rt.print_bool - import_func_count { return rti.print_i32_void; }
-    if local_idx == rt.print_heap - import_func_count { return rti.print_i32_void; }
-    if local_idx == rt.int_to_str - import_func_count { return rti.int_to_str; }
-    if local_idx == rt.float_to_str - import_func_count { return rti.float_to_str; }
-    if local_idx == rt.fd_write_buf - import_func_count { return rti.fd_write_buf; }
-    if local_idx == rt.str_eq - import_func_count { return rti.wrap_i32; }         // (i32,i32)->i32
-    if local_idx == rt.str_concat - import_func_count { return rti.wrap_i32; }     // (i32,i32)->i32
-    if local_idx == rt.i64_to_str_obj - import_func_count { return 18; }           // (i64)->i32
-    if local_idx == rt.f64_to_str_obj - import_func_count { return 19; }           // (f64)->i32
-    if local_idx == rt.list_take - import_func_count { return rti.wrap_i32; }      // (i32,i32)->i32
-    if local_idx == rt.list_drop - import_func_count { return rti.wrap_i32; }      // (i32,i32)->i32
-    if local_idx == rt.list_concat - import_func_count { return rti.wrap_i32; }    // (i32,i32)->i32
-    if local_idx == rt.list_reverse - import_func_count { return rti.alloc; }      // (i32)->i32
-    if local_idx == rt.list_contains - import_func_count { return 20; }            // (i32,i64)->i32
-    if local_idx == rt.list_zip - import_func_count { return rti.wrap_i32; }       // (i32,i32)->i32
-    if local_idx == rt.map_get - import_func_count { return rti.wrap_i32; }        // (i32,i32)->i32
-    if local_idx == rt.map_set - import_func_count { return 21; }                  // (i32,i32,i64)->i32
-    if local_idx == rt.map_has - import_func_count { return rti.wrap_i32; }        // (i32,i32)->i32
-    if local_idx == rt.map_keys - import_func_count { return rti.alloc; }          // (i32)->i32
-    if local_idx == rt.print_value - import_func_count { return rti.print_i64; }  // (i64)->()
-    if local_idx == rt.vec_from_list - import_func_count { return rti.alloc; }     // (i32)->i32
-    if local_idx == rt.vec_get - import_func_count { return 20; }                  // (i32,i64)->i32
-    if local_idx == rt.vec_len - import_func_count { return rti.unwrap_i64; }     // (i32)->i64
-    if local_idx == rt.vec_set - import_func_count { return 22; }                  // (i32,i64,i64)->i32
-    if local_idx == rt.vec_new - import_func_count { return 23; }                  // (i64,i64)->i32
+    if local_idx == alloc_local {
+        return rti.alloc;
+    }
+    if local_idx == rt.wrap - import_func_count {
+        return rti.wrap_i64;
+    }
+    if local_idx == rt.wrap_f64 - import_func_count {
+        return rti.wrap_f64;
+    }
+    if local_idx == rt.wrap_i32 - import_func_count {
+        return rti.wrap_i32;
+    }
+    if local_idx == rt.unwrap - import_func_count {
+        return rti.unwrap_i64;
+    }
+    if local_idx == rt.unwrap_f64 - import_func_count {
+        return rti.unwrap_f64;
+    }
+    if local_idx == rt.unwrap_i32 - import_func_count {
+        return rti.unwrap_i32;
+    }
+    if local_idx == rt.obj_kind - import_func_count {
+        return rti.obj_kind;
+    }
+    if local_idx == rt.obj_tag - import_func_count {
+        return rti.obj_tag;
+    }
+    if local_idx == rt.obj_field - import_func_count {
+        return rti.obj_field_i64;
+    }
+    if local_idx == rt.obj_field_f64 - import_func_count {
+        return rti.obj_field_f64;
+    }
+    if local_idx == rt.obj_field_i32 - import_func_count {
+        return rti.obj_field_i32;
+    }
+    if local_idx == rt.list_cons - import_func_count {
+        return rti.list_cons_i64;
+    }
+    if local_idx == rt.list_cons_f64 - import_func_count {
+        return rti.list_cons_f64;
+    }
+    if local_idx == rt.print_i64 - import_func_count {
+        return rti.print_i64;
+    }
+    if local_idx == rt.print_f64 - import_func_count {
+        return rti.print_f64;
+    }
+    if local_idx == rt.print_string - import_func_count {
+        return rti.print_i32_void;
+    }
+    if local_idx == rt.print_bool - import_func_count {
+        return rti.print_i32_void;
+    }
+    if local_idx == rt.print_heap - import_func_count {
+        return rti.print_i32_void;
+    }
+    if local_idx == rt.int_to_str - import_func_count {
+        return rti.int_to_str;
+    }
+    if local_idx == rt.float_to_str - import_func_count {
+        return rti.float_to_str;
+    }
+    if local_idx == rt.fd_write_buf - import_func_count {
+        return rti.fd_write_buf;
+    }
+    if local_idx == rt.str_eq - import_func_count {
+        return rti.wrap_i32;
+    } // (i32,i32)->i32
+    if local_idx == rt.str_concat - import_func_count {
+        return rti.wrap_i32;
+    } // (i32,i32)->i32
+    if local_idx == rt.i64_to_str_obj - import_func_count {
+        return 18;
+    } // (i64)->i32
+    if local_idx == rt.f64_to_str_obj - import_func_count {
+        return 19;
+    } // (f64)->i32
+    if local_idx == rt.list_take - import_func_count {
+        return rti.wrap_i32;
+    } // (i32,i32)->i32
+    if local_idx == rt.list_drop - import_func_count {
+        return rti.wrap_i32;
+    } // (i32,i32)->i32
+    if local_idx == rt.list_concat - import_func_count {
+        return rti.wrap_i32;
+    } // (i32,i32)->i32
+    if local_idx == rt.list_reverse - import_func_count {
+        return rti.alloc;
+    } // (i32)->i32
+    if local_idx == rt.list_contains - import_func_count {
+        return 20;
+    } // (i32,i64)->i32
+    if local_idx == rt.list_zip - import_func_count {
+        return rti.wrap_i32;
+    } // (i32,i32)->i32
+    if local_idx == rt.map_get - import_func_count {
+        return rti.wrap_i32;
+    } // (i32,i32)->i32
+    if local_idx == rt.map_set - import_func_count {
+        return 21;
+    } // (i32,i32,i64)->i32
+    if local_idx == rt.map_has - import_func_count {
+        return rti.wrap_i32;
+    } // (i32,i32)->i32
+    if local_idx == rt.map_keys - import_func_count {
+        return rti.alloc;
+    } // (i32)->i32
+    if local_idx == rt.print_value - import_func_count {
+        return rti.print_i64;
+    } // (i64)->()
+    if local_idx == rt.vec_from_list - import_func_count {
+        return rti.alloc;
+    } // (i32)->i32
+    if local_idx == rt.vec_get - import_func_count {
+        return 20;
+    } // (i32,i64)->i32
+    if local_idx == rt.vec_len - import_func_count {
+        return rti.unwrap_i64;
+    } // (i32)->i64
+    if local_idx == rt.vec_set - import_func_count {
+        return 22;
+    } // (i32,i64,i64)->i32
+    if local_idx == rt.vec_new - import_func_count {
+        return 23;
+    } // (i64,i64)->i32
 
     panic!(
         "Unknown runtime function index: {} (base={})",
@@ -224,51 +313,52 @@ pub fn rt_type_index(rt: &RuntimeFuncIndices, rti: &RtTypeIndices, func_idx: u32
 }
 
 /// Emit all runtime function bodies.
+#[allow(clippy::vec_init_then_push)]
 pub fn emit_runtime_functions(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Vec<Function> {
     let mut funcs = Vec::new();
 
-    funcs.push(emit_alloc());                  // $alloc
-    funcs.push(emit_wrap(rt, OBJ_WRAPPER, true));    // $wrap (i64 inner)
-    funcs.push(emit_wrap_f64(rt));             // $wrap_f64
-    funcs.push(emit_wrap_i32(rt));             // $wrap_i32
-    funcs.push(emit_unwrap_i64());             // $unwrap
-    funcs.push(emit_unwrap_f64());             // $unwrap_f64
-    funcs.push(emit_unwrap_i32());             // $unwrap_i32
-    funcs.push(emit_obj_kind());               // $obj_kind
-    funcs.push(emit_obj_tag());                // $obj_tag
-    funcs.push(emit_obj_field_i64());          // $obj_field
-    funcs.push(emit_obj_field_f64());          // $obj_field_f64
-    funcs.push(emit_obj_field_i32());          // $obj_field_i32
-    funcs.push(emit_list_cons_i64(rt));        // $list_cons
-    funcs.push(emit_list_cons_f64(rt));        // $list_cons_f64
-    funcs.push(emit_print_i64(rt));            // $print_i64
-    funcs.push(emit_print_f64(rt));            // $print_f64
-    funcs.push(emit_print_string(rt, strs));   // $print_string
-    funcs.push(emit_print_bool(rt, strs));     // $print_bool
-    funcs.push(emit_print_heap(rt, strs));     // $print_heap
-    funcs.push(emit_int_to_str());             // $int_to_str
-    funcs.push(emit_float_to_str());           // $float_to_str
-    funcs.push(emit_fd_write_buf(rt));         // $fd_write_buf
-    funcs.push(emit_str_eq());                 // $str_eq
-    funcs.push(emit_str_concat(rt));           // $str_concat
-    funcs.push(emit_i64_to_str_obj(rt));       // $i64_to_str_obj
-    funcs.push(emit_f64_to_str_obj(rt));       // $f64_to_str_obj
-    funcs.push(emit_list_take(rt));            // $list_take
-    funcs.push(emit_list_drop());              // $list_drop
-    funcs.push(emit_list_concat(rt));          // $list_concat
-    funcs.push(emit_list_reverse(rt));         // $list_reverse
-    funcs.push(emit_list_contains(rt));        // $list_contains
-    funcs.push(emit_list_zip(rt));             // $list_zip
-    funcs.push(emit_map_get(rt));              // $map_get
-    funcs.push(emit_map_set(rt));              // $map_set
-    funcs.push(emit_map_has(rt));              // $map_has
-    funcs.push(emit_map_keys(rt));             // $map_keys
-    funcs.push(emit_print_value(rt, strs));    // $print_value
-    funcs.push(emit_vec_from_list(rt));        // $vec_from_list
-    funcs.push(emit_vec_get(rt));              // $vec_get
-    funcs.push(emit_vec_len());                // $vec_len
-    funcs.push(emit_vec_set(rt));              // $vec_set
-    funcs.push(emit_vec_new(rt));              // $vec_new
+    funcs.push(emit_alloc()); // $alloc
+    funcs.push(emit_wrap(rt, OBJ_WRAPPER, true)); // $wrap (i64 inner)
+    funcs.push(emit_wrap_f64(rt)); // $wrap_f64
+    funcs.push(emit_wrap_i32(rt)); // $wrap_i32
+    funcs.push(emit_unwrap_i64()); // $unwrap
+    funcs.push(emit_unwrap_f64()); // $unwrap_f64
+    funcs.push(emit_unwrap_i32()); // $unwrap_i32
+    funcs.push(emit_obj_kind()); // $obj_kind
+    funcs.push(emit_obj_tag()); // $obj_tag
+    funcs.push(emit_obj_field_i64()); // $obj_field
+    funcs.push(emit_obj_field_f64()); // $obj_field_f64
+    funcs.push(emit_obj_field_i32()); // $obj_field_i32
+    funcs.push(emit_list_cons_i64(rt)); // $list_cons
+    funcs.push(emit_list_cons_f64(rt)); // $list_cons_f64
+    funcs.push(emit_print_i64(rt)); // $print_i64
+    funcs.push(emit_print_f64(rt)); // $print_f64
+    funcs.push(emit_print_string(rt, strs)); // $print_string
+    funcs.push(emit_print_bool(rt, strs)); // $print_bool
+    funcs.push(emit_print_heap(rt, strs)); // $print_heap
+    funcs.push(emit_int_to_str()); // $int_to_str
+    funcs.push(emit_float_to_str()); // $float_to_str
+    funcs.push(emit_fd_write_buf(rt)); // $fd_write_buf
+    funcs.push(emit_str_eq()); // $str_eq
+    funcs.push(emit_str_concat(rt)); // $str_concat
+    funcs.push(emit_i64_to_str_obj(rt)); // $i64_to_str_obj
+    funcs.push(emit_f64_to_str_obj(rt)); // $f64_to_str_obj
+    funcs.push(emit_list_take(rt)); // $list_take
+    funcs.push(emit_list_drop()); // $list_drop
+    funcs.push(emit_list_concat(rt)); // $list_concat
+    funcs.push(emit_list_reverse(rt)); // $list_reverse
+    funcs.push(emit_list_contains(rt)); // $list_contains
+    funcs.push(emit_list_zip(rt)); // $list_zip
+    funcs.push(emit_map_get(rt)); // $map_get
+    funcs.push(emit_map_set(rt)); // $map_set
+    funcs.push(emit_map_has(rt)); // $map_has
+    funcs.push(emit_map_keys(rt)); // $map_keys
+    funcs.push(emit_print_value(rt, strs)); // $print_value
+    funcs.push(emit_vec_from_list(rt)); // $vec_from_list
+    funcs.push(emit_vec_get(rt)); // $vec_get
+    funcs.push(emit_vec_len()); // $vec_len
+    funcs.push(emit_vec_set(rt)); // $vec_set
+    funcs.push(emit_vec_new(rt)); // $vec_new
 
     funcs
 }
@@ -318,13 +408,17 @@ fn emit_wrap(rt: &RuntimeFuncIndices, obj_kind: u64, _inner_is_i64: bool) -> Fun
     f.instruction(&Instruction::I64Const(1));
     f.instruction(&Instruction::I64Or);
     f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
-        offset: 0, align: 3, memory_index: 0,
+        offset: 0,
+        align: 3,
+        memory_index: 0,
     }));
     // field[0] = inner (i64)
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
-        offset: 8, align: 3, memory_index: 0,
+        offset: 8,
+        align: 3,
+        memory_index: 0,
     }));
     // return ptr
     f.instruction(&Instruction::LocalGet(2));
@@ -340,7 +434,9 @@ fn emit_wrap_f64(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalSet(2));
     // header with OBJ_WRAPPER_F64
     f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::I64Const((OBJ_WRAPPER_F64 << HDR_KIND_SHIFT) as i64));
+    f.instruction(&Instruction::I64Const(
+        (OBJ_WRAPPER_F64 << HDR_KIND_SHIFT) as i64,
+    ));
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64ExtendI32U);
     f.instruction(&Instruction::I64Const(HDR_TAG_SHIFT as i64));
@@ -349,13 +445,17 @@ fn emit_wrap_f64(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::I64Const(1));
     f.instruction(&Instruction::I64Or);
     f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
-        offset: 0, align: 3, memory_index: 0,
+        offset: 0,
+        align: 3,
+        memory_index: 0,
     }));
     // field[0] = inner (f64)
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::LocalGet(1)); // f64 param
     f.instruction(&Instruction::F64Store(wasm_encoder::MemArg {
-        offset: 8, align: 3, memory_index: 0,
+        offset: 8,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::End);
@@ -370,7 +470,9 @@ fn emit_wrap_i32(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalSet(2));
     // header with OBJ_WRAPPER_I32
     f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::I64Const((OBJ_WRAPPER_I32 << HDR_KIND_SHIFT) as i64));
+    f.instruction(&Instruction::I64Const(
+        (OBJ_WRAPPER_I32 << HDR_KIND_SHIFT) as i64,
+    ));
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64ExtendI32U);
     f.instruction(&Instruction::I64Const(HDR_TAG_SHIFT as i64));
@@ -379,14 +481,18 @@ fn emit_wrap_i32(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::I64Const(1));
     f.instruction(&Instruction::I64Or);
     f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
-        offset: 0, align: 3, memory_index: 0,
+        offset: 0,
+        align: 3,
+        memory_index: 0,
     }));
     // field[0] = inner (i32 extended to i64)
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::I64ExtendI32S);
     f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
-        offset: 8, align: 3, memory_index: 0,
+        offset: 8,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::End);
@@ -398,7 +504,9 @@ fn emit_unwrap_i64() -> Function {
     let mut f = Function::new(vec![]);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 8, align: 3, memory_index: 0,
+        offset: 8,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::End);
     f
@@ -409,7 +517,9 @@ fn emit_unwrap_f64() -> Function {
     let mut f = Function::new(vec![]);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::F64Load(wasm_encoder::MemArg {
-        offset: 8, align: 3, memory_index: 0,
+        offset: 8,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::End);
     f
@@ -420,7 +530,9 @@ fn emit_unwrap_i32() -> Function {
     let mut f = Function::new(vec![]);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 8, align: 3, memory_index: 0,
+        offset: 8,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::I32WrapI64);
     f.instruction(&Instruction::End);
@@ -436,7 +548,9 @@ fn emit_obj_kind() -> Function {
     let mut f = Function::new(vec![]);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 0, align: 3, memory_index: 0,
+        offset: 0,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::I64Const(HDR_KIND_SHIFT as i64));
     f.instruction(&Instruction::I64ShrU);
@@ -452,7 +566,9 @@ fn emit_obj_tag() -> Function {
     let mut f = Function::new(vec![]);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 0, align: 3, memory_index: 0,
+        offset: 0,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::I64Const(HDR_TAG_SHIFT as i64));
     f.instruction(&Instruction::I64ShrU);
@@ -474,7 +590,9 @@ fn emit_obj_field_i64() -> Function {
     f.instruction(&Instruction::I32Mul);
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 0, align: 3, memory_index: 0,
+        offset: 0,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::End);
     f
@@ -491,7 +609,9 @@ fn emit_obj_field_f64() -> Function {
     f.instruction(&Instruction::I32Mul);
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::F64Load(wasm_encoder::MemArg {
-        offset: 0, align: 3, memory_index: 0,
+        offset: 0,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::End);
     f
@@ -508,7 +628,9 @@ fn emit_obj_field_i32() -> Function {
     f.instruction(&Instruction::I32Mul);
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 0, align: 3, memory_index: 0,
+        offset: 0,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::I32WrapI64);
     f.instruction(&Instruction::End);
@@ -527,22 +649,30 @@ fn emit_list_cons_i64(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalSet(2));
     // header
     f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::I64Const(make_header(OBJ_LIST_CONS, 0, 0, 2) as i64));
+    f.instruction(&Instruction::I64Const(
+        make_header(OBJ_LIST_CONS, 0, 0, 2) as i64
+    ));
     f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
-        offset: 0, align: 3, memory_index: 0,
+        offset: 0,
+        align: 3,
+        memory_index: 0,
     }));
     // head (i64)
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
-        offset: 8, align: 3, memory_index: 0,
+        offset: 8,
+        align: 3,
+        memory_index: 0,
     }));
     // tail (i32 → store as i64)
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::I64ExtendI32S);
     f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
-        offset: 16, align: 3, memory_index: 0,
+        offset: 16,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::End);
@@ -557,22 +687,30 @@ fn emit_list_cons_f64(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalSet(2));
     // header (OBJ_LIST_CONS_F64)
     f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::I64Const(make_header(OBJ_LIST_CONS_F64, 0, 0, 2) as i64));
+    f.instruction(&Instruction::I64Const(
+        make_header(OBJ_LIST_CONS_F64, 0, 0, 2) as i64,
+    ));
     f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
-        offset: 0, align: 3, memory_index: 0,
+        offset: 0,
+        align: 3,
+        memory_index: 0,
     }));
     // head (f64)
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::F64Store(wasm_encoder::MemArg {
-        offset: 8, align: 3, memory_index: 0,
+        offset: 8,
+        align: 3,
+        memory_index: 0,
     }));
     // tail (i32 → i64)
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::I64ExtendI32S);
     f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
-        offset: 16, align: 3, memory_index: 0,
+        offset: 16,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::End);
@@ -601,12 +739,16 @@ fn emit_fd_write_buf(rt: &RuntimeFuncIndices) -> Function {
             f.instruction(&Instruction::I32Const(IO_IOVEC as i32));
             f.instruction(&Instruction::LocalGet(0));
             f.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 0, align: 2, memory_index: 0,
+                offset: 0,
+                align: 2,
+                memory_index: 0,
             }));
             f.instruction(&Instruction::I32Const(IO_IOVEC as i32));
             f.instruction(&Instruction::LocalGet(1));
             f.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
-                offset: 4, align: 2, memory_index: 0,
+                offset: 4,
+                align: 2,
+                memory_index: 0,
             }));
             f.instruction(&Instruction::I32Const(1)); // fd=stdout
             f.instruction(&Instruction::I32Const(IO_IOVEC as i32));
@@ -634,11 +776,15 @@ fn emit_int_to_str() -> Function {
     // n==0?
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I64Eqz);
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(ValType::I32)));
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+        ValType::I32,
+    )));
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::I32Const(b'0' as i32));
     f.instruction(&Instruction::I32Store8(wasm_encoder::MemArg {
-        offset: 0, align: 0, memory_index: 0,
+        offset: 0,
+        align: 0,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::Else);
@@ -677,7 +823,9 @@ fn emit_int_to_str() -> Function {
     f.instruction(&Instruction::I32Const(b'0' as i32));
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::I32Store8(wasm_encoder::MemArg {
-        offset: 0, align: 0, memory_index: 0,
+        offset: 0,
+        align: 0,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I64Const(10));
@@ -698,7 +846,9 @@ fn emit_int_to_str() -> Function {
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::I32Const(b'-' as i32));
     f.instruction(&Instruction::I32Store8(wasm_encoder::MemArg {
-        offset: 0, align: 0, memory_index: 0,
+        offset: 0,
+        align: 0,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::End);
     // return (pos<<16)|(21-pos)
@@ -728,17 +878,17 @@ fn emit_float_to_str() -> Function {
     //         start_pos=6(i32), pow=7(f64), n=8(i32), scaled=9(i64),
     //         frac_int=10(i64), frac_pos=11(i32), frac_digits=12(i32)
     let mut f = Function::new(vec![
-        (1, ValType::I32),  // 2: is_neg
-        (1, ValType::F64),  // 3: abs_val
-        (1, ValType::I64),  // 4: int_part
-        (1, ValType::I32),  // 5: pos
-        (1, ValType::I32),  // 6: start_pos
-        (1, ValType::F64),  // 7: pow
-        (1, ValType::I32),  // 8: n (frac digit count)
-        (1, ValType::I64),  // 9: scaled
-        (1, ValType::I64),  // 10: frac_int
-        (1, ValType::I32),  // 11: frac_pos
-        (1, ValType::I32),  // 12: frac_digits
+        (1, ValType::I32), // 2: is_neg
+        (1, ValType::F64), // 3: abs_val
+        (1, ValType::I64), // 4: int_part
+        (1, ValType::I32), // 5: pos
+        (1, ValType::I32), // 6: start_pos
+        (1, ValType::F64), // 7: pow
+        (1, ValType::I32), // 8: n (frac digit count)
+        (1, ValType::I64), // 9: scaled
+        (1, ValType::I64), // 10: frac_int
+        (1, ValType::I32), // 11: frac_pos
+        (1, ValType::I32), // 12: frac_digits
     ]);
 
     // is_neg = val < 0.0
@@ -775,7 +925,9 @@ fn emit_float_to_str() -> Function {
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::I32Const(b'0' as i32));
     f.instruction(&Instruction::I32Store8(wasm_encoder::MemArg {
-        offset: 0, align: 0, memory_index: 0,
+        offset: 0,
+        align: 0,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::Else);
     // digit loop
@@ -798,7 +950,9 @@ fn emit_float_to_str() -> Function {
     f.instruction(&Instruction::I32Const(b'0' as i32));
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::I32Store8(wasm_encoder::MemArg {
-        offset: 0, align: 0, memory_index: 0,
+        offset: 0,
+        align: 0,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I64Const(10));
@@ -821,7 +975,9 @@ fn emit_float_to_str() -> Function {
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::I32Const(b'-' as i32));
     f.instruction(&Instruction::I32Store8(wasm_encoder::MemArg {
-        offset: 0, align: 0, memory_index: 0,
+        offset: 0,
+        align: 0,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::End);
 
@@ -834,7 +990,9 @@ fn emit_float_to_str() -> Function {
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::F64Floor);
     f.instruction(&Instruction::F64Eq);
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(ValType::I32)));
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+        ValType::I32,
+    )));
     // Integer: return (start_pos<<16)|(21-start_pos)
     f.instruction(&Instruction::LocalGet(6));
     f.instruction(&Instruction::I32Const(16));
@@ -913,7 +1071,9 @@ fn emit_float_to_str() -> Function {
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::I32Const(b'.' as i32));
     f.instruction(&Instruction::I32Store8(wasm_encoder::MemArg {
-        offset: 21, align: 0, memory_index: 0,
+        offset: 21,
+        align: 0,
+        memory_index: 0,
     }));
 
     // Write frac_int as exactly n digits at buf[22..22+n], right-to-left
@@ -946,7 +1106,9 @@ fn emit_float_to_str() -> Function {
     f.instruction(&Instruction::I32Const(b'0' as i32));
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::I32Store8(wasm_encoder::MemArg {
-        offset: 0, align: 0, memory_index: 0,
+        offset: 0,
+        align: 0,
+        memory_index: 0,
     }));
     // frac_int /= 10
     f.instruction(&Instruction::LocalGet(10));
@@ -987,7 +1149,9 @@ fn emit_float_to_str() -> Function {
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Sub);
     f.instruction(&Instruction::I32Load8U(wasm_encoder::MemArg {
-        offset: 0, align: 0, memory_index: 0,
+        offset: 0,
+        align: 0,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::I32Const(b'0' as i32));
     f.instruction(&Instruction::I32Ne);
@@ -1071,7 +1235,9 @@ fn emit_print_string(rt: &RuntimeFuncIndices, _strs: &RtStrings) -> Function {
     // String bytes start at ptr+8
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 0, align: 3, memory_index: 0,
+        offset: 0,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::I64Const(0xFFFFFFFF));
     f.instruction(&Instruction::I64And);
@@ -1139,7 +1305,9 @@ fn emit_print_heap(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Function {
     // Read header
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 0, align: 3, memory_index: 0,
+        offset: 0,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::LocalSet(1));
 
@@ -1179,7 +1347,9 @@ fn emit_print_heap(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Function {
     // Print inner (i64)
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 8, align: 3, memory_index: 0,
+        offset: 8,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::Call(rt.print_i64));
     print_static!(f, rt, strs.close_paren);
@@ -1202,7 +1372,9 @@ fn emit_print_heap(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Function {
     // Print inner (f64)
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::F64Load(wasm_encoder::MemArg {
-        offset: 8, align: 3, memory_index: 0,
+        offset: 8,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::Call(rt.print_f64));
     print_static!(f, rt, strs.close_paren);
@@ -1225,7 +1397,9 @@ fn emit_print_heap(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Function {
     // Print inner: load as i32 (string pointer), wrap with quotes
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 8, align: 3, memory_index: 0,
+        offset: 8,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::I32WrapI64);
     f.instruction(&Instruction::LocalSet(4)); // inner_ptr
@@ -1233,7 +1407,9 @@ fn emit_print_heap(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Function {
     f.instruction(&Instruction::I32Const(NEWLINE_ADDR as i32));
     f.instruction(&Instruction::I32Const(b'"' as i32));
     f.instruction(&Instruction::I32Store8(wasm_encoder::MemArg {
-        offset: 0, align: 0, memory_index: 0,
+        offset: 0,
+        align: 0,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::I32Const(NEWLINE_ADDR as i32));
     f.instruction(&Instruction::I32Const(1));
@@ -1245,7 +1421,9 @@ fn emit_print_heap(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Function {
     f.instruction(&Instruction::I32Const(NEWLINE_ADDR as i32));
     f.instruction(&Instruction::I32Const(b'"' as i32));
     f.instruction(&Instruction::I32Store8(wasm_encoder::MemArg {
-        offset: 0, align: 0, memory_index: 0,
+        offset: 0,
+        align: 0,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::I32Const(NEWLINE_ADDR as i32));
     f.instruction(&Instruction::I32Const(1));
@@ -1263,13 +1441,17 @@ fn emit_print_heap(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Function {
     // Print first element via print_value
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 8, align: 3, memory_index: 0,
+        offset: 8,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::Call(rt.print_value));
     // Traverse tail
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 16, align: 3, memory_index: 0,
+        offset: 16,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::I32WrapI64);
     f.instruction(&Instruction::LocalSet(4)); // tail ptr
@@ -1282,13 +1464,17 @@ fn emit_print_heap(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Function {
     print_static!(f, rt, strs.comma_space);
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 8, align: 3, memory_index: 0,
+        offset: 8,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::Call(rt.print_value));
     // next tail
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 16, align: 3, memory_index: 0,
+        offset: 16,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::I32WrapI64);
     f.instruction(&Instruction::LocalSet(4));
@@ -1299,7 +1485,9 @@ fn emit_print_heap(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Function {
     f.instruction(&Instruction::I32Const(NEWLINE_ADDR as i32));
     f.instruction(&Instruction::I32Const(b']' as i32));
     f.instruction(&Instruction::I32Store8(wasm_encoder::MemArg {
-        offset: 0, align: 0, memory_index: 0,
+        offset: 0,
+        align: 0,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::I32Const(NEWLINE_ADDR as i32));
     f.instruction(&Instruction::I32Const(1));
@@ -1315,12 +1503,16 @@ fn emit_print_heap(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Function {
     print_static!(f, rt, strs.open_bracket);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::F64Load(wasm_encoder::MemArg {
-        offset: 8, align: 3, memory_index: 0,
+        offset: 8,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::Call(rt.print_f64));
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 16, align: 3, memory_index: 0,
+        offset: 16,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::I32WrapI64);
     f.instruction(&Instruction::LocalSet(4));
@@ -1332,12 +1524,16 @@ fn emit_print_heap(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Function {
     print_static!(f, rt, strs.comma_space);
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::F64Load(wasm_encoder::MemArg {
-        offset: 8, align: 3, memory_index: 0,
+        offset: 8,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::Call(rt.print_f64));
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 16, align: 3, memory_index: 0,
+        offset: 16,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::I32WrapI64);
     f.instruction(&Instruction::LocalSet(4));
@@ -1347,7 +1543,9 @@ fn emit_print_heap(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Function {
     f.instruction(&Instruction::I32Const(NEWLINE_ADDR as i32));
     f.instruction(&Instruction::I32Const(b']' as i32));
     f.instruction(&Instruction::I32Store8(wasm_encoder::MemArg {
-        offset: 0, align: 0, memory_index: 0,
+        offset: 0,
+        align: 0,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::I32Const(NEWLINE_ADDR as i32));
     f.instruction(&Instruction::I32Const(1));
@@ -1374,14 +1572,18 @@ fn emit_str_eq() -> Function {
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::I32Eq);
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(ValType::I32)));
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+        ValType::I32,
+    )));
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::Else);
 
     // len_a = header_a & 0xFFFFFFFF
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 0, align: 3, memory_index: 0,
+        offset: 0,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::I64Const(0xFFFFFFFF));
     f.instruction(&Instruction::I64And);
@@ -1391,7 +1593,9 @@ fn emit_str_eq() -> Function {
     // len_b = header_b & 0xFFFFFFFF
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 0, align: 3, memory_index: 0,
+        offset: 0,
+        align: 3,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::I64Const(0xFFFFFFFF));
     f.instruction(&Instruction::I64And);
@@ -1402,7 +1606,9 @@ fn emit_str_eq() -> Function {
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32Ne);
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(ValType::I32)));
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+        ValType::I32,
+    )));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::Else);
 
@@ -1423,13 +1629,17 @@ fn emit_str_eq() -> Function {
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::I32Load8U(wasm_encoder::MemArg {
-        offset: 8, align: 0, memory_index: 0,
+        offset: 8,
+        align: 0,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::I32Load8U(wasm_encoder::MemArg {
-        offset: 8, align: 0, memory_index: 0,
+        offset: 8,
+        align: 0,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::I32Ne);
     f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
@@ -1466,14 +1676,22 @@ fn emit_str_concat(rt: &RuntimeFuncIndices) -> Function {
     ]);
     // len_a = header_a & 0xFFFFFFFF
     f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
     f.instruction(&Instruction::I64Const(0xFFFFFFFF));
     f.instruction(&Instruction::I64And);
     f.instruction(&Instruction::I32WrapI64);
     f.instruction(&Instruction::LocalSet(2));
     // len_b
     f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
     f.instruction(&Instruction::I64Const(0xFFFFFFFF));
     f.instruction(&Instruction::I64And);
     f.instruction(&Instruction::I32WrapI64);
@@ -1495,11 +1713,17 @@ fn emit_str_concat(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalSet(4));
     // header
     f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::I64Const((OBJ_STRING << HDR_KIND_SHIFT) as i64));
+    f.instruction(&Instruction::I64Const(
+        (OBJ_STRING << HDR_KIND_SHIFT) as i64,
+    ));
     f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::I64ExtendI32U);
     f.instruction(&Instruction::I64Or);
-    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
     // memory.copy a bytes: dst=ptr+8, src=a+8, len=len_a
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32Const(8));
@@ -1508,7 +1732,10 @@ fn emit_str_concat(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::I32Const(8));
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::MemoryCopy { src_mem: 0, dst_mem: 0 });
+    f.instruction(&Instruction::MemoryCopy {
+        src_mem: 0,
+        dst_mem: 0,
+    });
     // memory.copy b bytes: dst=ptr+8+len_a, src=b+8, len=len_b
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32Const(8));
@@ -1519,7 +1746,10 @@ fn emit_str_concat(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::I32Const(8));
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::MemoryCopy { src_mem: 0, dst_mem: 0 });
+    f.instruction(&Instruction::MemoryCopy {
+        src_mem: 0,
+        dst_mem: 0,
+    });
     // return ptr
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::End);
@@ -1563,11 +1793,17 @@ fn emit_i64_to_str_obj(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalSet(4));
     // header
     f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::I64Const((OBJ_STRING << HDR_KIND_SHIFT) as i64));
+    f.instruction(&Instruction::I64Const(
+        (OBJ_STRING << HDR_KIND_SHIFT) as i64,
+    ));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I64ExtendI32U);
     f.instruction(&Instruction::I64Or);
-    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
     // copy bytes: dst=ptr+8, src=IO_INT_BUF+pos, len=len
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32Const(8));
@@ -1576,7 +1812,10 @@ fn emit_i64_to_str_obj(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::MemoryCopy { src_mem: 0, dst_mem: 0 });
+    f.instruction(&Instruction::MemoryCopy {
+        src_mem: 0,
+        dst_mem: 0,
+    });
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::End);
     f
@@ -1613,11 +1852,17 @@ fn emit_f64_to_str_obj(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::Call(rt.alloc));
     f.instruction(&Instruction::LocalSet(4));
     f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::I64Const((OBJ_STRING << HDR_KIND_SHIFT) as i64));
+    f.instruction(&Instruction::I64Const(
+        (OBJ_STRING << HDR_KIND_SHIFT) as i64,
+    ));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I64ExtendI32U);
     f.instruction(&Instruction::I64Or);
-    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32Const(8));
     f.instruction(&Instruction::I32Add);
@@ -1625,7 +1870,10 @@ fn emit_f64_to_str_obj(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::MemoryCopy { src_mem: 0, dst_mem: 0 });
+    f.instruction(&Instruction::MemoryCopy {
+        src_mem: 0,
+        dst_mem: 0,
+    });
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::End);
     f
@@ -1695,7 +1943,11 @@ fn emit_list_drop() -> Function {
     f.instruction(&Instruction::BrIf(1));
     // list = tail
     f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg { offset: 16, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 16,
+        align: 3,
+        memory_index: 0,
+    }));
     f.instruction(&Instruction::I32WrapI64);
     f.instruction(&Instruction::LocalSet(0));
     f.instruction(&Instruction::LocalGet(1));
@@ -1857,14 +2109,28 @@ fn emit_list_zip(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::Call(rt.alloc));
     f.instruction(&Instruction::LocalSet(5));
     f.instruction(&Instruction::LocalGet(5));
-    f.instruction(&Instruction::I64Const(make_header(OBJ_TUPLE, 0, 0, 2) as i64));
-    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Const(
+        make_header(OBJ_TUPLE, 0, 0, 2) as i64
+    ));
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
     f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg { offset: 8, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 8,
+        align: 3,
+        memory_index: 0,
+    }));
     f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg { offset: 16, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 16,
+        align: 3,
+        memory_index: 0,
+    }));
     // acc = cons(tuple_ptr_as_i64, acc)
     f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::I64ExtendI32U);
@@ -1936,11 +2202,17 @@ fn emit_vec_from_list(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalSet(3));
     // Header
     f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::I64Const((OBJ_VECTOR << HDR_KIND_SHIFT) as i64));
+    f.instruction(&Instruction::I64Const(
+        (OBJ_VECTOR << HDR_KIND_SHIFT) as i64,
+    ));
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::I64ExtendI32U);
     f.instruction(&Instruction::I64Or);
-    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
     // Second pass: copy elements
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::LocalSet(4)); // i = 0
@@ -1960,7 +2232,11 @@ fn emit_vec_from_list(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::Call(rt.obj_field)); // head as i64
-    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg { offset: 8, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 8,
+        align: 3,
+        memory_index: 0,
+    }));
     // i++, cur = tail
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32Const(1));
@@ -1987,7 +2263,11 @@ fn emit_vec_get(rt: &RuntimeFuncIndices) -> Function {
     ]);
     // len = header & 0xFFFFFFFF
     f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
     f.instruction(&Instruction::I64Const(0xFFFFFFFF));
     f.instruction(&Instruction::I64And);
     f.instruction(&Instruction::I32WrapI64);
@@ -2004,7 +2284,9 @@ fn emit_vec_get(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I32GeS);
     f.instruction(&Instruction::I32Or);
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(ValType::I32)));
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+        ValType::I32,
+    )));
     f.instruction(&Instruction::I32Const(NONE_SENTINEL));
     f.instruction(&Instruction::Else);
     // In bounds: return Some(vec[i])
@@ -2014,7 +2296,11 @@ fn emit_vec_get(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::I32Const(8));
     f.instruction(&Instruction::I32Mul);
     f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg { offset: 8, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 8,
+        align: 3,
+        memory_index: 0,
+    }));
     f.instruction(&Instruction::Call(rt.wrap)); // wrap(SOME, value_i64) → i32
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
@@ -2025,7 +2311,11 @@ fn emit_vec_get(rt: &RuntimeFuncIndices) -> Function {
 fn emit_vec_len() -> Function {
     let mut f = Function::new(vec![]);
     f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
     f.instruction(&Instruction::I64Const(0xFFFFFFFF));
     f.instruction(&Instruction::I64And);
     f.instruction(&Instruction::End);
@@ -2044,7 +2334,11 @@ fn emit_vec_set(rt: &RuntimeFuncIndices) -> Function {
     ]);
     // len
     f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
     f.instruction(&Instruction::I64Const(0xFFFFFFFF));
     f.instruction(&Instruction::I64And);
     f.instruction(&Instruction::I32WrapI64);
@@ -2060,7 +2354,9 @@ fn emit_vec_set(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32GeS);
     f.instruction(&Instruction::I32Or);
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(ValType::I32)));
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+        ValType::I32,
+    )));
     f.instruction(&Instruction::I32Const(NONE_SENTINEL));
     f.instruction(&Instruction::Else);
     // Copy entire vector
@@ -2077,7 +2373,10 @@ fn emit_vec_set(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalGet(6));
-    f.instruction(&Instruction::MemoryCopy { src_mem: 0, dst_mem: 0 });
+    f.instruction(&Instruction::MemoryCopy {
+        src_mem: 0,
+        dst_mem: 0,
+    });
     // Update element at idx
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::LocalGet(5));
@@ -2085,7 +2384,11 @@ fn emit_vec_set(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::I32Mul);
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg { offset: 8, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 8,
+        align: 3,
+        memory_index: 0,
+    }));
     // Return Some(new_vec)
     f.instruction(&Instruction::I32Const(WRAP_SOME as i32));
     f.instruction(&Instruction::LocalGet(4));
@@ -2117,11 +2420,17 @@ fn emit_vec_new(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalSet(3));
     // header
     f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::I64Const((OBJ_VECTOR << HDR_KIND_SHIFT) as i64));
+    f.instruction(&Instruction::I64Const(
+        (OBJ_VECTOR << HDR_KIND_SHIFT) as i64,
+    ));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I64ExtendI32U);
     f.instruction(&Instruction::I64Or);
-    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
     // Fill
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::LocalSet(4));
@@ -2137,7 +2446,11 @@ fn emit_vec_new(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::I32Mul);
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg { offset: 8, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 8,
+        align: 3,
+        memory_index: 0,
+    }));
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Add);
@@ -2203,7 +2516,11 @@ fn emit_print_value(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Function {
     emit_scratch_byte(&mut f, rt, b'(');
     // count = header & 0xFFFFFFFF
     f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
     f.instruction(&Instruction::I64Const(0xFFFFFFFF));
     f.instruction(&Instruction::I64And);
     f.instruction(&Instruction::I32WrapI64);
@@ -2229,7 +2546,11 @@ fn emit_print_value(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Function {
     f.instruction(&Instruction::I32Const(8));
     f.instruction(&Instruction::I32Mul);
     f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg { offset: 8, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 8,
+        align: 3,
+        memory_index: 0,
+    }));
     f.instruction(&Instruction::Call(rt.print_value)); // recursive!
     // i++
     f.instruction(&Instruction::LocalGet(4));
@@ -2295,7 +2616,9 @@ fn emit_scratch_byte(f: &mut Function, rt: &RuntimeFuncIndices, byte: u8) {
     f.instruction(&Instruction::I32Const(NEWLINE_ADDR as i32));
     f.instruction(&Instruction::I32Const(byte as i32));
     f.instruction(&Instruction::I32Store8(wasm_encoder::MemArg {
-        offset: 0, align: 0, memory_index: 0,
+        offset: 0,
+        align: 0,
+        memory_index: 0,
     }));
     f.instruction(&Instruction::I32Const(NEWLINE_ADDR as i32));
     f.instruction(&Instruction::I32Const(1));
@@ -2376,17 +2699,31 @@ fn emit_map_set(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalSet(3));
     // Header
     f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::I64Const(make_header(OBJ_TUPLE, 0, 0, 2) as i64));
-    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Const(
+        make_header(OBJ_TUPLE, 0, 0, 2) as i64
+    ));
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
     // Field 0: key (i32 → i64)
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::I64ExtendI32U);
-    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg { offset: 8, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 8,
+        align: 3,
+        memory_index: 0,
+    }));
     // Field 1: value (i64)
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg { offset: 16, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 16,
+        align: 3,
+        memory_index: 0,
+    }));
     // Cons(tuple, map): tuple as i64
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I64ExtendI32U);

@@ -19,11 +19,14 @@ use crate::codegen::CodegenContext;
 
 use super::expr::{ExprEmitter, StringLiteral, build_variant_registry};
 use super::runtime::{self, RtTypeIndices, RuntimeFuncIndices};
-use super::types::{aver_type_to_wasm, WasmType};
+use super::types::{WasmType, aver_type_to_wasm};
 use super::value;
 
 /// Build a complete WASM module from the Aver codegen context.
-pub fn build_wasm_module(ctx: &CodegenContext, adapter: super::WasmAdapter) -> Result<Vec<u8>, String> {
+pub fn build_wasm_module(
+    ctx: &CodegenContext,
+    adapter: super::WasmAdapter,
+) -> Result<Vec<u8>, String> {
     let mut module = Module::new();
 
     let fn_defs: Vec<&FnDef> = ctx
@@ -194,8 +197,8 @@ pub fn build_wasm_module(ctx: &CodegenContext, adapter: super::WasmAdapter) -> R
         unwrap_i64: 4,
         unwrap_f64: 5,
         unwrap_i32: 6,
-        obj_kind: 6,  // reuse (i32)->i32
-        obj_tag: 6,   // reuse (i32)->i32
+        obj_kind: 6, // reuse (i32)->i32
+        obj_tag: 6,  // reuse (i32)->i32
         obj_field_i64: 7,
         obj_field_f64: 8,
         obj_field_i32: 3, // reuse (i32,i32)->i32
@@ -224,14 +227,16 @@ pub fn build_wasm_module(ctx: &CodegenContext, adapter: super::WasmAdapter) -> R
         .function(vec![ValType::I32, ValType::I64], vec![ValType::I32]);
 
     // 21: (i32, i32, i64) -> i32 — $map_set
-    type_section
-        .ty()
-        .function(vec![ValType::I32, ValType::I32, ValType::I64], vec![ValType::I32]);
+    type_section.ty().function(
+        vec![ValType::I32, ValType::I32, ValType::I64],
+        vec![ValType::I32],
+    );
 
     // 22: (i32, i64, i64) -> i32 — $vec_set
-    type_section
-        .ty()
-        .function(vec![ValType::I32, ValType::I64, ValType::I64], vec![ValType::I32]);
+    type_section.ty().function(
+        vec![ValType::I32, ValType::I64, ValType::I64],
+        vec![ValType::I32],
+    );
     // 23: (i64, i64) -> i32 — $vec_new
     type_section
         .ty()
@@ -242,16 +247,18 @@ pub fn build_wasm_module(ctx: &CodegenContext, adapter: super::WasmAdapter) -> R
     // User function types — generate from fn_sigs
     let mut fn_type_indices: HashMap<String, u32> = HashMap::new();
     for (i, fd) in fn_defs.iter().enumerate() {
-        let (param_vals, result_vals) = if let Some((param_types, ret_type, _)) =
-            ctx.fn_sigs.get(&fd.name)
-        {
-            let params: Vec<ValType> = param_types.iter().map(|t| aver_type_to_wasm(t).to_val_type()).collect();
-            let ret = vec![aver_type_to_wasm(ret_type).to_val_type()];
-            (params, ret)
-        } else {
-            // Fallback: all i64
-            (vec![ValType::I64; fd.params.len()], vec![ValType::I64])
-        };
+        let (param_vals, result_vals) =
+            if let Some((param_types, ret_type, _)) = ctx.fn_sigs.get(&fd.name) {
+                let params: Vec<ValType> = param_types
+                    .iter()
+                    .map(|t| aver_type_to_wasm(t).to_val_type())
+                    .collect();
+                let ret = vec![aver_type_to_wasm(ret_type).to_val_type()];
+                (params, ret)
+            } else {
+                // Fallback: all i64
+                (vec![ValType::I64; fd.params.len()], vec![ValType::I64])
+            };
         type_section.ty().function(param_vals, result_vals);
         fn_type_indices.insert(fd.name.clone(), rt_base_type_count + i as u32);
     }
@@ -273,7 +280,8 @@ pub fn build_wasm_module(ctx: &CodegenContext, adapter: super::WasmAdapter) -> R
         super::WasmAdapter::Aver => {
             // Collect needed ABI imports from user-defined function effects only
             let user_fn_names: Vec<&str> = fn_defs.iter().map(|fd| fd.name.as_str()).collect();
-            let needed = super::abi::collect_needed_imports(&ctx.fn_sigs, &user_fn_names, &host_import_set);
+            let needed =
+                super::abi::collect_needed_imports(&ctx.fn_sigs, &user_fn_names, &host_import_set);
             for abi_entry in &needed {
                 let type_idx = find_or_add_import_type(&mut import_section, &rti, abi_entry);
                 let idx = import_func_count;
@@ -442,11 +450,12 @@ pub fn build_wasm_module(ctx: &CodegenContext, adapter: super::WasmAdapter) -> R
         );
 
         // Add params with types from fn_sigs
-        let param_types: Vec<crate::types::Type> = if let Some((pt, _, _)) = ctx.fn_sigs.get(&fd.name) {
-            pt.clone()
-        } else {
-            vec![crate::types::Type::Unknown; fd.params.len()]
-        };
+        let param_types: Vec<crate::types::Type> =
+            if let Some((pt, _, _)) = ctx.fn_sigs.get(&fd.name) {
+                pt.clone()
+            } else {
+                vec![crate::types::Type::Unknown; fd.params.len()]
+            };
         emitter.add_params(&fd.params, &param_types);
 
         // Get return type for TCO loop and match inference
@@ -461,11 +470,9 @@ pub fn build_wasm_module(ctx: &CodegenContext, adapter: super::WasmAdapter) -> R
 
         let needs_tco = tco_fns.contains(&fd.name);
         if needs_tco {
-            emitter
-                .instructions
-                .push(wasm_encoder::Instruction::Loop(
-                    wasm_encoder::BlockType::Result(ret_wasm_type.to_val_type()),
-                ));
+            emitter.instructions.push(wasm_encoder::Instruction::Loop(
+                wasm_encoder::BlockType::Result(ret_wasm_type.to_val_type()),
+            ));
             emitter.block_depth += 1;
             emitter.enable_tco_loop();
         }
@@ -563,10 +570,8 @@ fn collect_strings_from_expr(expr: &Expr, strings: &mut HashSet<String>) {
                 collect_strings_from_expr(&arm.body.node, strings);
             }
         }
-        Expr::Constructor(_, inner) => {
-            if let Some(e) = inner {
-                collect_strings_from_expr(&e.node, strings);
-            }
+        Expr::Constructor(_, Some(e)) => {
+            collect_strings_from_expr(&e.node, strings);
         }
         Expr::ErrorProp(e) => collect_strings_from_expr(&e.node, strings),
         Expr::List(items) | Expr::Tuple(items) => {
@@ -606,12 +611,12 @@ fn collect_host_calls_from_body(body: &FnBody, imports: &mut HashSet<String>) {
 fn collect_host_calls_from_expr(expr: &Expr, imports: &mut HashSet<String>) {
     match expr {
         Expr::FnCall(callee, args) => {
-            if let Expr::Attr(base, method) = &callee.node {
-                if let Expr::Ident(ns) = &base.node {
-                    let qualified = format!("{}.{}", ns, method);
-                    if is_host_builtin(&qualified) {
-                        imports.insert(qualified);
-                    }
+            if let Expr::Attr(base, method) = &callee.node
+                && let Expr::Ident(ns) = &base.node
+            {
+                let qualified = format!("{}.{}", ns, method);
+                if is_host_builtin(&qualified) {
+                    imports.insert(qualified);
                 }
             }
             collect_host_calls_from_expr(&callee.node, imports);
@@ -629,10 +634,8 @@ fn collect_host_calls_from_expr(expr: &Expr, imports: &mut HashSet<String>) {
                 collect_host_calls_from_expr(&arm.body.node, imports);
             }
         }
-        Expr::Constructor(_, inner) => {
-            if let Some(e) = inner {
-                collect_host_calls_from_expr(&e.node, imports);
-            }
+        Expr::Constructor(_, Some(e)) => {
+            collect_host_calls_from_expr(&e.node, imports);
         }
         Expr::ErrorProp(e) => collect_host_calls_from_expr(&e.node, imports),
         Expr::List(items) | Expr::Tuple(items) => {
@@ -700,8 +703,8 @@ fn find_or_add_import_type(
 ) -> u32 {
     // Match known signatures to existing type indices
     match (abi_entry.params, abi_entry.results) {
-        (&[ValType::I32, ValType::I32], &[]) => rti.fd_write_buf,   // (i32,i32)->()
-        (&[], &[ValType::I32, ValType::I32]) => rti.fd_write_buf,   // same shape, different semantics but WASM doesn't care about names
+        (&[ValType::I32, ValType::I32], &[]) => rti.fd_write_buf, // (i32,i32)->()
+        (&[], &[ValType::I32, ValType::I32]) => rti.fd_write_buf, // same shape, different semantics but WASM doesn't care about names
         (&[ValType::I64, ValType::I64], &[ValType::I64]) => {
             // (i64,i64)->i64 — not in our type table, reuse... hmm
             // Actually we need to handle this. For now use a known type.
@@ -715,7 +718,7 @@ fn find_or_add_import_type(
         }
         (&[], &[ValType::I64]) => 18, // (->i64) same as i64_to_str_obj? No that's (i64)->i32.
         (&[ValType::I64], &[]) => rti.print_i64, // (i64)->() — reuse print_i64 type (14)
-        _ => rti.fd_write_buf, // fallback
+        _ => rti.fd_write_buf,        // fallback
     }
 }
 
