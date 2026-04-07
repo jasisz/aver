@@ -260,9 +260,14 @@ pub fn build_wasm_module(ctx: &CodegenContext) -> Result<Vec<u8>, String> {
     // Build type field index map for record field access
     let type_fields: HashMap<(String, String), u32> = build_type_fields(ctx);
 
+    // Check which functions have TailCall expressions
+    let tco_fns: HashSet<String> = fn_defs
+        .iter()
+        .filter(|fd| body_has_tailcall(&fd.body))
+        .map(|fd| fd.name.clone())
+        .collect();
+
     // User function bodies
-    // Note: TCO via loop is disabled for now — TailCall emits as regular recursive call.
-    // TCO loop requires careful br depth management across nested if/else/match.
     for fd in &fn_defs {
         let mut emitter = ExprEmitter::new(
             &fn_indices,
@@ -272,7 +277,23 @@ pub fn build_wasm_module(ctx: &CodegenContext) -> Result<Vec<u8>, String> {
             &type_fields,
         );
         emitter.add_params(&fd.params);
+
+        let needs_tco = tco_fns.contains(&fd.name);
+        if needs_tco {
+            emitter
+                .instructions
+                .push(Instruction::Loop(wasm_encoder::BlockType::Result(
+                    AVER_WASM_TYPE,
+                )));
+            emitter.block_depth += 1;
+            emitter.enable_tco_loop();
+        }
+
         emitter.emit_body(&fd.body);
+
+        if needs_tco {
+            emitter.emit_end(); // end loop
+        }
 
         let num_params = fd.params.len() as u32;
         let num_extra_locals = emitter.next_local - num_params;

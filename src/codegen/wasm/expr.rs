@@ -483,22 +483,34 @@ impl<'a> ExprEmitter<'a> {
     // -----------------------------------------------------------------------
 
     fn emit_match(&mut self, subject: &Spanned<Expr>, arms: &[MatchArm]) {
-        // Evaluate subject into a local
         self.emit_expr(&subject.node);
         let subj_local = self.next_local;
         self.next_local += 1;
         self.instructions.push(Instruction::LocalSet(subj_local));
 
-        // Emit as nested if/else chain (block per arm)
-        // Each arm: check pattern → if match, emit body; else try next arm
-        self.emit_match_arms(subj_local, arms, 0);
+        // Use void if/else + result local pattern.
+        // This allows TailCall arms to Br without leaving a value on stack.
+        let result_local = self.next_local;
+        self.next_local += 1;
+        self.emit_const(value::CONST_UNIT);
+        self.instructions.push(Instruction::LocalSet(result_local));
+
+        self.emit_match_arms_void(subj_local, result_local, arms, 0);
+
+        self.instructions.push(Instruction::LocalGet(result_local));
     }
 
-    fn emit_match_arms(&mut self, subj_local: u32, arms: &[MatchArm], idx: usize) {
+    /// Emit match arms using void if/else + result local.
+    /// Arms store their result to `result_local`. TailCall arms can safely Br.
+    fn emit_match_arms_void(
+        &mut self,
+        subj_local: u32,
+        result_local: u32,
+        arms: &[MatchArm],
+        idx: usize,
+    ) {
         if idx >= arms.len() {
-            // No arm matched — return Unit (non-exhaustive, shouldn't happen with typechecker)
-            self.emit_const(value::CONST_UNIT);
-            return;
+            return; // result_local already has Unit
         }
 
         let arm = &arms[idx];
@@ -506,20 +518,19 @@ impl<'a> ExprEmitter<'a> {
 
         match &arm.pattern {
             Pattern::Wildcard => {
-                // Always matches — emit body directly
                 self.emit_expr(&arm.body.node);
+                self.instructions.push(Instruction::LocalSet(result_local));
             }
             Pattern::Ident(name) => {
-                // Bind subject to local, emit body
                 let bind_local = self.next_local;
                 self.next_local += 1;
                 self.locals.insert(name.clone(), bind_local);
                 self.instructions.push(Instruction::LocalGet(subj_local));
                 self.instructions.push(Instruction::LocalSet(bind_local));
                 self.emit_expr(&arm.body.node);
+                self.instructions.push(Instruction::LocalSet(result_local));
             }
             Pattern::Literal(lit) => {
-                // Compare subject with encoded literal
                 let encoded = match lit {
                     Literal::Int(n) => value::encode_int(*n),
                     Literal::Bool(b) => {
@@ -535,64 +546,57 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions
                     .push(Instruction::I64Const(encoded as i64));
                 self.instructions.push(Instruction::I64Eq);
-                self.instructions
-                    .push(Instruction::If(wasm_encoder::BlockType::Result(
-                        wasm_encoder::ValType::I64,
-                    )));
+                self.emit_if(wasm_encoder::BlockType::Empty);
                 self.emit_expr(&arm.body.node);
-                self.emit_else();
-                if is_last {
-                    self.emit_const(value::CONST_UNIT);
-                } else {
-                    self.emit_match_arms(subj_local, arms, idx + 1);
+                self.instructions.push(Instruction::LocalSet(result_local));
+                if !is_last {
+                    self.emit_else();
+                    self.emit_match_arms_void(subj_local, result_local, arms, idx + 1);
                 }
                 self.emit_end();
             }
             Pattern::Constructor(ctor_name, bindings) => {
-                self.emit_constructor_pattern(subj_local, ctor_name, bindings, arm, arms, idx);
+                self.emit_constructor_pattern_void(
+                    subj_local,
+                    result_local,
+                    ctor_name,
+                    bindings,
+                    arm,
+                    arms,
+                    idx,
+                );
             }
             Pattern::EmptyList => {
                 self.instructions.push(Instruction::LocalGet(subj_local));
                 self.instructions
                     .push(Instruction::I64Const(value::CONST_EMPTY_LIST as i64));
                 self.instructions.push(Instruction::I64Eq);
-                self.instructions
-                    .push(Instruction::If(wasm_encoder::BlockType::Result(
-                        wasm_encoder::ValType::I64,
-                    )));
+                self.emit_if(wasm_encoder::BlockType::Empty);
                 self.emit_expr(&arm.body.node);
-                self.emit_else();
-                if is_last {
-                    self.emit_const(value::CONST_UNIT);
-                } else {
-                    self.emit_match_arms(subj_local, arms, idx + 1);
+                self.instructions.push(Instruction::LocalSet(result_local));
+                if !is_last {
+                    self.emit_else();
+                    self.emit_match_arms_void(subj_local, result_local, arms, idx + 1);
                 }
                 self.emit_end();
             }
             Pattern::Cons(head_name, tail_name) => {
-                // Check: is HeapRef && obj_kind == OBJ_LIST_CONS
-                // Extract tag from subject
+                // Check: is HeapRef
                 self.instructions.push(Instruction::LocalGet(subj_local));
                 self.instructions.push(Instruction::I64Const(60));
                 self.instructions.push(Instruction::I64ShrU);
                 self.instructions
                     .push(Instruction::I64Const(value::TAG_HEAP as i64));
                 self.instructions.push(Instruction::I64Eq);
-                self.instructions
-                    .push(Instruction::If(wasm_encoder::BlockType::Result(
-                        wasm_encoder::ValType::I64,
-                    )));
-                // Check obj_kind
+                self.emit_if(wasm_encoder::BlockType::Empty);
+                // Check obj_kind == OBJ_LIST_CONS
                 self.instructions.push(Instruction::LocalGet(subj_local));
                 self.instructions.push(Instruction::Call(self.rt.obj_kind));
                 self.instructions
                     .push(Instruction::I32Const(value::OBJ_LIST_CONS as i32));
                 self.instructions.push(Instruction::I32Eq);
-                self.instructions
-                    .push(Instruction::If(wasm_encoder::BlockType::Result(
-                        wasm_encoder::ValType::I64,
-                    )));
-                // Bind head = field[0], tail = field[1]
+                self.emit_if(wasm_encoder::BlockType::Empty);
+                // Bind head and tail
                 let head_local = self.next_local;
                 self.next_local += 1;
                 self.locals.insert(head_name.clone(), head_local);
@@ -610,31 +614,28 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalSet(tail_local));
 
                 self.emit_expr(&arm.body.node);
-                self.emit_else();
-                if is_last {
-                    self.emit_const(value::CONST_UNIT);
-                } else {
-                    self.emit_match_arms(subj_local, arms, idx + 1);
+                self.instructions.push(Instruction::LocalSet(result_local));
+                if !is_last {
+                    self.emit_else();
+                    self.emit_match_arms_void(subj_local, result_local, arms, idx + 1);
                 }
-                self.emit_end();
-                self.emit_else();
-                if is_last {
-                    self.emit_const(value::CONST_UNIT);
-                } else {
-                    self.emit_match_arms(subj_local, arms, idx + 1);
+                self.emit_end(); // end inner if
+                if !is_last {
+                    self.emit_else();
+                    self.emit_match_arms_void(subj_local, result_local, arms, idx + 1);
                 }
-                self.emit_end();
+                self.emit_end(); // end outer if
             }
             Pattern::Tuple(_) => {
-                // TODO: tuple patterns
-                self.emit_const(value::CONST_UNIT);
+                // TODO
             }
         }
     }
 
-    fn emit_constructor_pattern(
+    fn emit_constructor_pattern_void(
         &mut self,
         subj_local: u32,
+        result_local: u32,
         ctor_name: &str,
         bindings: &[String],
         arm: &MatchArm,
@@ -643,32 +644,26 @@ impl<'a> ExprEmitter<'a> {
     ) {
         let is_last = idx == arms.len() - 1;
 
-        // Determine expected wrapper tag
         let wrapper_tag = match ctor_name {
             "Result.Ok" => Some(value::WRAP_OK),
             "Result.Err" => Some(value::WRAP_ERR),
             "Option.Some" => Some(value::WRAP_SOME),
             "Option.None" => {
-                // None is immediate, not a heap object
                 self.instructions.push(Instruction::LocalGet(subj_local));
                 self.instructions
                     .push(Instruction::I64Const(value::CONST_NONE as i64));
                 self.instructions.push(Instruction::I64Eq);
-                self.instructions
-                    .push(Instruction::If(wasm_encoder::BlockType::Result(
-                        wasm_encoder::ValType::I64,
-                    )));
+                self.emit_if(wasm_encoder::BlockType::Empty);
                 self.emit_expr(&arm.body.node);
-                self.emit_else();
-                if is_last {
-                    self.emit_const(value::CONST_UNIT);
-                } else {
-                    self.emit_match_arms(subj_local, arms, idx + 1);
+                self.instructions.push(Instruction::LocalSet(result_local));
+                if !is_last {
+                    self.emit_else();
+                    self.emit_match_arms_void(subj_local, result_local, arms, idx + 1);
                 }
                 self.emit_end();
                 return;
             }
-            _ => None, // User-defined variants — TODO
+            _ => None,
         };
 
         if let Some(expected_tag) = wrapper_tag {
@@ -679,30 +674,21 @@ impl<'a> ExprEmitter<'a> {
             self.instructions
                 .push(Instruction::I64Const(value::TAG_HEAP as i64));
             self.instructions.push(Instruction::I64Eq);
-            self.instructions
-                .push(Instruction::If(wasm_encoder::BlockType::Result(
-                    wasm_encoder::ValType::I64,
-                )));
+            self.emit_if(wasm_encoder::BlockType::Empty);
             // Check obj_kind == OBJ_WRAPPER
             self.instructions.push(Instruction::LocalGet(subj_local));
             self.instructions.push(Instruction::Call(self.rt.obj_kind));
             self.instructions
                 .push(Instruction::I32Const(value::OBJ_WRAPPER as i32));
             self.instructions.push(Instruction::I32Eq);
-            self.instructions
-                .push(Instruction::If(wasm_encoder::BlockType::Result(
-                    wasm_encoder::ValType::I64,
-                )));
+            self.emit_if(wasm_encoder::BlockType::Empty);
             // Check obj_tag == expected
             self.instructions.push(Instruction::LocalGet(subj_local));
             self.instructions.push(Instruction::Call(self.rt.obj_tag));
             self.instructions
                 .push(Instruction::I32Const(expected_tag as i32));
             self.instructions.push(Instruction::I32Eq);
-            self.instructions
-                .push(Instruction::If(wasm_encoder::BlockType::Result(
-                    wasm_encoder::ValType::I64,
-                )));
+            self.emit_if(wasm_encoder::BlockType::Empty);
 
             // Bind inner value
             if let Some(binding_name) = bindings.first() {
@@ -715,20 +701,18 @@ impl<'a> ExprEmitter<'a> {
             }
 
             self.emit_expr(&arm.body.node);
+            self.instructions.push(Instruction::LocalSet(result_local));
 
-            // Close all three ifs with else → fallthrough
+            // Close all three ifs
             for _ in 0..3 {
-                self.emit_else();
-                if is_last {
-                    self.emit_const(value::CONST_UNIT);
-                } else {
-                    self.emit_match_arms(subj_local, arms, idx + 1);
+                if !is_last {
+                    self.emit_else();
+                    self.emit_match_arms_void(subj_local, result_local, arms, idx + 1);
                 }
                 self.emit_end();
             }
         } else {
-            // Unknown constructor — fallthrough
-            self.emit_const(value::CONST_UNIT);
+            // Unknown constructor
         }
     }
 
