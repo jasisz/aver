@@ -1,49 +1,35 @@
-/// WASM Value layout: uniform tagged i64.
+/// WASM Value layout: typed ABI.
 ///
-/// ```text
-/// 63    60 59                              0
-/// +--------+-------------------------------+
-/// | tag    |           payload              |
-/// | 4 bits |           60 bits              |
-/// +--------+-------------------------------+
-/// ```
+/// Native scalar types map directly to WASM types:
+///   Int   → i64 (plain value)
+///   Float → f64 (plain value)
+///   Bool  → i32 (0 = false, 1 = true)
+///   Unit  → i32 (0)
 ///
-/// Tag 0: Int (60-bit signed immediate)
-/// Tag 1: Const (0=false, 1=true, 2=unit, 3=none, 4=empty_list)
-/// Tag 2: HeapRef (handle to object in linear memory)
-/// Tag 3+: reserved
+/// Heap-allocated types are i32 pointers:
+///   String → i32 (pointer to string object)
+///   Result/Option → i32 (pointer to wrapper object)
+///   List   → i32 (pointer to cons cell, 0 = empty)
+///   Record → i32 (pointer to record object)
+///   Tuple  → i32 (pointer to tuple object)
+///
+/// Heap objects have an 8-byte i64 header followed by 8-byte fields.
 
 // ---------------------------------------------------------------------------
-// Value tags
-// ---------------------------------------------------------------------------
-
-pub const TAG_INT: u64 = 0;
-pub const TAG_CONST: u64 = 1;
-pub const TAG_HEAP: u64 = 2;
-pub const TAG_SHIFT: u32 = 60;
-pub const PAYLOAD_MASK: u64 = (1u64 << 60) - 1;
-
-// ---------------------------------------------------------------------------
-// Const payloads
-// ---------------------------------------------------------------------------
-
-pub const CONST_FALSE: u64 = (TAG_CONST << TAG_SHIFT) | 0;
-pub const CONST_TRUE: u64 = (TAG_CONST << TAG_SHIFT) | 1;
-pub const CONST_UNIT: u64 = (TAG_CONST << TAG_SHIFT) | 2;
-pub const CONST_NONE: u64 = (TAG_CONST << TAG_SHIFT) | 3;
-pub const CONST_EMPTY_LIST: u64 = (TAG_CONST << TAG_SHIFT) | 4;
-
-// ---------------------------------------------------------------------------
-// Heap object kinds (shared semantics with VM — see aver-memory object model)
+// Heap object kinds
 // ---------------------------------------------------------------------------
 
 pub const OBJ_STRING: u64 = 0;
 pub const OBJ_RECORD: u64 = 1;
+#[allow(dead_code)]
 pub const OBJ_VARIANT: u64 = 2;
-pub const OBJ_WRAPPER: u64 = 3;
-pub const OBJ_LIST_CONS: u64 = 4;
+pub const OBJ_WRAPPER: u64 = 3; // inner field is i64
+pub const OBJ_LIST_CONS: u64 = 4; // head is i64, tail is i32 (stored as i64)
 pub const OBJ_TUPLE: u64 = 5;
-pub const OBJ_FLOAT: u64 = 6;
+// 6 reserved
+pub const OBJ_WRAPPER_F64: u64 = 7; // inner field is f64
+pub const OBJ_WRAPPER_I32: u64 = 8; // inner field is i32 (stored as i64)
+pub const OBJ_LIST_CONS_F64: u64 = 9; // head is f64, tail is i32 (stored as i64)
 
 // ---------------------------------------------------------------------------
 // Wrapper tags (Ok/Err/Some)
@@ -52,6 +38,16 @@ pub const OBJ_FLOAT: u64 = 6;
 pub const WRAP_OK: u64 = 0;
 pub const WRAP_ERR: u64 = 1;
 pub const WRAP_SOME: u64 = 2;
+
+// ---------------------------------------------------------------------------
+// Sentinels (i32 values for non-heap constants)
+// ---------------------------------------------------------------------------
+
+/// Empty list sentinel (i32 pointer = 0, null).
+pub const EMPTY_LIST: i32 = 0;
+
+/// Option.None sentinel (i32 = -1, distinguishable from null pointer).
+pub const NONE_SENTINEL: i32 = -1;
 
 // ---------------------------------------------------------------------------
 // Heap object header layout
@@ -63,6 +59,7 @@ pub const WRAP_SOME: u64 = 2;
 
 pub const HDR_KIND_SHIFT: u32 = 56;
 pub const HDR_TAG_SHIFT: u32 = 48;
+#[allow(dead_code)]
 pub const HDR_TYPE_SHIFT: u32 = 32;
 
 /// Build a heap object header.
@@ -71,19 +68,4 @@ pub fn make_header(kind: u64, variant_tag: u64, type_id: u64, field_count: u64) 
         | (variant_tag << HDR_TAG_SHIFT)
         | (type_id << HDR_TYPE_SHIFT)
         | field_count
-}
-
-// ---------------------------------------------------------------------------
-// Value encoding helpers (compile-time, used by codegen)
-// ---------------------------------------------------------------------------
-
-/// Encode an integer literal as a tagged Value (compile-time).
-pub fn encode_int(n: i64) -> u64 {
-    // Tag 0, payload = lower 60 bits of n (sign-extended)
-    (TAG_INT << TAG_SHIFT) | ((n as u64) & PAYLOAD_MASK)
-}
-
-/// Encode a HeapRef Value from a handle.
-pub fn encode_heap_ref(handle: u64) -> u64 {
-    (TAG_HEAP << TAG_SHIFT) | (handle & PAYLOAD_MASK)
 }
