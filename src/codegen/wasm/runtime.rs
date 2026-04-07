@@ -53,8 +53,10 @@ pub struct RuntimeFuncIndices {
     pub vec_new: u32,         // (i64, i64) -> i32  (size, fill) → vec
     /// Total number of runtime functions.
     pub count: u32,
-    /// WASI fd_write import function index (set by emitter if effects present).
+    /// Import function index for writing to stdout (either WASI fd_write or aver/console_print).
     pub fd_write_import: u32,
+    /// Which adapter mode is active.
+    pub adapter: super::WasmAdapter,
 }
 
 impl RuntimeFuncIndices {
@@ -110,6 +112,7 @@ impl RuntimeFuncIndices {
             vec_new: next(),
             count: i - base,
             fd_write_import: 0,
+            adapter: super::WasmAdapter::Aver,
         }
     }
 }
@@ -580,26 +583,40 @@ fn emit_list_cons_f64(rt: &RuntimeFuncIndices) -> Function {
 // IO functions
 // ---------------------------------------------------------------------------
 
-/// $fd_write_buf(ptr: i32, len: i32) -> ()
+/// $write_stdout(ptr: i32, len: i32) -> ()
+/// In aver/* mode: direct call to aver/console_print(ptr, len).
+/// In WASI mode: iovec setup + call fd_write(stdout, iovec, 1, nwritten).
 fn emit_fd_write_buf(rt: &RuntimeFuncIndices) -> Function {
     let mut f = Function::new(vec![]);
-    f.instruction(&Instruction::I32Const(IO_IOVEC as i32));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
-        offset: 0, align: 2, memory_index: 0,
-    }));
-    f.instruction(&Instruction::I32Const(IO_IOVEC as i32));
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
-        offset: 4, align: 2, memory_index: 0,
-    }));
-    f.instruction(&Instruction::I32Const(1)); // fd=stdout
-    f.instruction(&Instruction::I32Const(IO_IOVEC as i32));
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Const(IO_NWRITTEN as i32));
-    f.instruction(&Instruction::Call(rt.fd_write_import));
-    f.instruction(&Instruction::Drop);
-    f.instruction(&Instruction::End);
+    match rt.adapter {
+        super::WasmAdapter::Aver => {
+            // Direct capability call — no iovec, no fd numbers
+            f.instruction(&Instruction::LocalGet(0)); // ptr
+            f.instruction(&Instruction::LocalGet(1)); // len
+            f.instruction(&Instruction::Call(rt.fd_write_import));
+            f.instruction(&Instruction::End);
+        }
+        super::WasmAdapter::Wasi => {
+            // WASI: setup iovec buffer and call fd_write
+            f.instruction(&Instruction::I32Const(IO_IOVEC as i32));
+            f.instruction(&Instruction::LocalGet(0));
+            f.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 0, align: 2, memory_index: 0,
+            }));
+            f.instruction(&Instruction::I32Const(IO_IOVEC as i32));
+            f.instruction(&Instruction::LocalGet(1));
+            f.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
+                offset: 4, align: 2, memory_index: 0,
+            }));
+            f.instruction(&Instruction::I32Const(1)); // fd=stdout
+            f.instruction(&Instruction::I32Const(IO_IOVEC as i32));
+            f.instruction(&Instruction::I32Const(1));
+            f.instruction(&Instruction::I32Const(IO_NWRITTEN as i32));
+            f.instruction(&Instruction::Call(rt.fd_write_import));
+            f.instruction(&Instruction::Drop);
+            f.instruction(&Instruction::End);
+        }
+    }
     f
 }
 

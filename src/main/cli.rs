@@ -35,6 +35,15 @@ pub(super) enum ProofVerifyMode {
     TheoremSkeleton,
 }
 
+/// WASM import ABI adapter mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(super) enum WasmAdapter {
+    /// Default: aver/* capability imports. Requires a host that provides capabilities.
+    Aver,
+    /// Compatibility: WASI imports. Works with standalone wasmtime.
+    Wasi,
+}
+
 /// Compile target language.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub(super) enum CompileTarget {
@@ -251,6 +260,9 @@ pub(super) enum Commands {
         /// Emit extra self-host-only runtime glue (FnStore callbacks, HttpServer bridge)
         #[arg(long)]
         with_self_host_support: bool,
+        /// WASM import ABI adapter (default: aver/* capability imports)
+        #[arg(long, value_enum)]
+        adapter: Option<WasmAdapter>,
     },
     /// Trace justifications: decisions, verify blocks, descriptions
     Why {

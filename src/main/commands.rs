@@ -2732,11 +2732,12 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         policy_mode,
         guest_entry,
         with_self_host_support,
+        adapter,
     } = opts;
 
     // WASM target: simplified pipeline, no replay/policy/guest-entry support yet
     if matches!(target, super::cli::CompileTarget::Wasm) {
-        cmd_compile_wasm(file, output_dir, project_name, module_root_override);
+        cmd_compile_wasm(file, output_dir, project_name, module_root_override, adapter);
         return;
     }
 
@@ -2801,10 +2802,11 @@ fn cmd_compile_wasm(
     output_dir: &str,
     project_name: Option<&str>,
     module_root_override: Option<&str>,
+    adapter: Option<super::cli::WasmAdapter>,
 ) {
     #[cfg(not(feature = "wasm"))]
     {
-        let _ = (file, output_dir, project_name, module_root_override);
+        let _ = (file, output_dir, project_name, module_root_override, adapter);
         eprintln!(
             "{}",
             "WASM target requires --features wasm (rebuild with: cargo build --features wasm)"
@@ -2825,7 +2827,11 @@ fn cmd_compile_wasm(
             false,
         );
 
-        match codegen::wasm::emit_wasm(&ctx) {
+        let wasm_adapter = match adapter {
+            Some(super::cli::WasmAdapter::Wasi) => codegen::wasm::WasmAdapter::Wasi,
+            _ => codegen::wasm::WasmAdapter::Aver,
+        };
+        match codegen::wasm::emit_wasm_with_adapter(&ctx, wasm_adapter) {
             Ok(wasm_bytes) => {
                 let out_path = Path::new(output_dir);
                 if let Err(e) = std::fs::create_dir_all(out_path) {
@@ -3007,6 +3013,7 @@ pub(super) struct CompileOptions<'a> {
     pub(super) policy_mode: &'a super::cli::CompilePolicyMode,
     pub(super) guest_entry: Option<&'a str>,
     pub(super) with_self_host_support: bool,
+    pub(super) adapter: Option<super::cli::WasmAdapter>,
 }
 
 pub(super) fn cmd_proof(
