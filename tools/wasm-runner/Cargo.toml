@@ -1,0 +1,11 @@
+[workspace]
+
+[package]
+name = "aver-wasm-runner"
+version = "0.1.0"
+edition = "2024"
+description = "Host runner for Aver WASM programs — provides Console.print and other capabilities"
+
+[dependencies]
+wasmtime = "31"
+anyhow = "1"

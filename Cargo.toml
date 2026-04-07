@@ -1,6 +1,6 @@
 [workspace]
 members = [".", "aver-lsp", "aver-rt", "aver-memory"]
-exclude = []
+exclude = ["tools/wasm-runner"]
 
 [package]
 name = "aver-lang"

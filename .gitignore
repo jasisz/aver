@@ -5,3 +5,4 @@ out/
 .claude/plans/
 .junie/
 .env
+tools/wasm-runner/target/
