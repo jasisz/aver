@@ -454,8 +454,23 @@ impl<'a> ExprEmitter<'a> {
                     }
                     self.emit_const(value::CONST_NONE);
                 } else if let Some(&host_fn) = self.host_imports.get(qualified.as_str()) {
-                    // Host import (Console.print, etc.) — call and push Unit
+                    // Console.print etc. — call $print_value then write newline
                     self.instructions.push(Instruction::Call(host_fn));
+                    // Write '\n': store byte, call fd_write_buf
+                    self.instructions
+                        .push(Instruction::I32Const(super::runtime::NEWLINE_ADDR as i32));
+                    self.instructions.push(Instruction::I32Const(b'\n' as i32));
+                    self.instructions
+                        .push(Instruction::I32Store8(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 0,
+                            memory_index: 0,
+                        }));
+                    self.instructions
+                        .push(Instruction::I32Const(super::runtime::NEWLINE_ADDR as i32));
+                    self.instructions.push(Instruction::I32Const(1));
+                    self.instructions
+                        .push(Instruction::Call(self.rt.fd_write_buf));
                     self.emit_const(value::CONST_UNIT);
                 } else if qualified == "List.prepend" && args.len() == 2 {
                     // List.prepend(item, list) → list_cons(item, list)

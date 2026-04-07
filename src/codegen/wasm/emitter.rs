@@ -119,10 +119,23 @@ pub fn build_wasm_module(ctx: &CodegenContext) -> Result<Vec<u8>, String> {
     type_section
         .ty()
         .function(vec![AVER_WASM_TYPE, ValType::I32], vec![AVER_WASM_TYPE]);
-    // Type 6: (i64) -> ()  — void host imports (Console.print etc.)
+    // Type 6: (i64) -> ()  — void print functions
     type_section.ty().function(vec![AVER_WASM_TYPE], vec![]);
+    // Type 7: (i32, i32, i32, i32) -> i32  — WASI fd_write
+    type_section.ty().function(
+        vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32],
+        vec![ValType::I32],
+    );
+    // Type 8: (i64, i32) -> i32  — $int_to_str
+    type_section
+        .ty()
+        .function(vec![ValType::I64, ValType::I32], vec![ValType::I32]);
+    // Type 9: (i32, i32) -> ()  — $fd_write_buf
+    type_section
+        .ty()
+        .function(vec![ValType::I32, ValType::I32], vec![]);
 
-    let rt_type_count = 7u32;
+    let rt_type_count = 10u32;
 
     // User function types
     let mut fn_type_indices: HashMap<String, u32> = HashMap::new();
@@ -136,52 +149,38 @@ pub fn build_wasm_module(ctx: &CodegenContext) -> Result<Vec<u8>, String> {
     module.section(&type_section);
 
     // -----------------------------------------------------------------------
-    // Import section: host functions
+    // Import section: WASI fd_write (only if program uses Console effects)
     // -----------------------------------------------------------------------
-    let mut import_section = ImportSection::new();
-    let mut host_imports: HashMap<String, u32> = HashMap::new();
-    let mut import_func_count = 0u32;
-
     let has_effects = !needed_host_imports.is_empty();
-
-    for &name in &needed_host_imports {
-        let rt_name = match name {
-            "Console.print" => "aver_print_value",
-            "Console.error" => "aver_print_error",
-            "Console.warn" => "aver_print_error",
-            _ => &name.replace('.', "_").to_lowercase(),
-        };
-        import_section.import(
-            "aver_rt",
-            rt_name,
-            wasm_encoder::EntityType::Function(6), // (i64) -> ()
-        );
-        host_imports.insert(name.to_string(), import_func_count);
-        import_func_count += 1;
-    }
-
-    // If using runtime, also import memory from it (wasm-merge resolves)
-    if has_effects {
-        import_section.import(
-            "aver_rt",
-            "memory",
-            wasm_encoder::EntityType::Memory(MemoryType {
-                minimum: 1,
-                maximum: None, // unbounded — match runtime export
-                memory64: false,
-                shared: false,
-                page_size_log2: None,
-            }),
-        );
-    }
+    let mut import_func_count = 0u32;
+    let mut host_imports: HashMap<String, u32> = HashMap::new();
 
     if has_effects {
+        let mut import_section = ImportSection::new();
+        // Type 7: WASI fd_write(fd: i32, iovs: i32, iovs_len: i32, nwritten: i32) -> i32
+        // We'll add this type to the type section
+        import_section.import(
+            "wasi_snapshot_preview1",
+            "fd_write",
+            wasm_encoder::EntityType::Function(7), // type 7 = fd_write signature
+        );
+        import_func_count = 1; // fd_write is import index 0
         module.section(&import_section);
     }
 
     // Runtime function indices start after imports
-    let rt = RuntimeFuncIndices::new(import_func_count);
+    let mut rt = RuntimeFuncIndices::new(import_func_count);
+    if has_effects {
+        rt.fd_write_import = 0; // fd_write is import index 0
+    }
     let user_fn_base = import_func_count + rt.count;
+
+    // Map Console.print/error/warn → $print_value runtime function
+    if has_effects {
+        for &name in &needed_host_imports {
+            host_imports.insert(name.to_string(), rt.print_value);
+        }
+    }
 
     // -----------------------------------------------------------------------
     // Function section
@@ -209,7 +208,13 @@ pub fn build_wasm_module(ctx: &CodegenContext) -> Result<Vec<u8>, String> {
             i if i == rt.obj_tag - import_func_count => 4,
             i if i == rt.obj_field - import_func_count => 5,
             i if i == rt.list_cons - import_func_count => 1,
-            _ => panic!("Unknown runtime function index: {}", func_idx),
+            i if i == rt.print_value - import_func_count => 6, // (i64)->()
+            i if i == rt.int_to_str - import_func_count => 8,  // (i64,i32)->i32
+            i if i == rt.fd_write_buf - import_func_count => 9, // (i32,i32)->()
+            _ => panic!(
+                "Unknown runtime function index: {} (base={})",
+                func_idx, import_func_count
+            ),
         }
     };
 
@@ -227,20 +232,17 @@ pub fn build_wasm_module(ctx: &CodegenContext) -> Result<Vec<u8>, String> {
     module.section(&function_section);
 
     // -----------------------------------------------------------------------
-    // Memory section — only for pure programs (no runtime imports).
-    // Programs with effects import memory from aver_rt.
+    // Memory section — always present. One module, one memory.
     // -----------------------------------------------------------------------
-    if !has_effects {
-        let mut memory_section = MemorySection::new();
-        memory_section.memory(MemoryType {
-            minimum: 1,
-            maximum: Some(256),
-            memory64: false,
-            shared: false,
-            page_size_log2: None,
-        });
-        module.section(&memory_section);
-    }
+    let mut memory_section = MemorySection::new();
+    memory_section.memory(MemoryType {
+        minimum: 1,
+        maximum: Some(256),
+        memory64: false,
+        shared: false,
+        page_size_log2: None,
+    });
+    module.section(&memory_section);
 
     // -----------------------------------------------------------------------
     // Global section
@@ -266,9 +268,7 @@ pub fn build_wasm_module(ctx: &CodegenContext) -> Result<Vec<u8>, String> {
         export_section.export("_start", ExportKind::Func, main_idx);
     }
 
-    if !has_effects {
-        export_section.export("memory", ExportKind::Memory, 0);
-    }
+    export_section.export("memory", ExportKind::Memory, 0);
 
     module.section(&export_section);
 

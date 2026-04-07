@@ -27,8 +27,13 @@ pub struct RuntimeFuncIndices {
     pub obj_tag: u32,
     pub obj_field: u32,
     pub list_cons: u32,
+    pub print_value: u32,
+    pub int_to_str: u32,
+    pub fd_write_buf: u32,
     /// Total number of runtime functions.
     pub count: u32,
+    /// WASI fd_write import function index (set by emitter if effects present).
+    pub fd_write_import: u32,
 }
 
 impl RuntimeFuncIndices {
@@ -58,7 +63,11 @@ impl RuntimeFuncIndices {
             obj_tag: next(),
             obj_field: next(),
             list_cons: next(),
+            print_value: next(),
+            int_to_str: next(),
+            fd_write_buf: next(),
             count: i - base,
+            fd_write_import: 0, // set by emitter
         }
     }
 }
@@ -117,6 +126,15 @@ pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
 
     // $list_cons(head: i64, tail: i64) -> i64
     funcs.push(emit_list_cons(rt));
+
+    // IO: $print_value(val: i64) -> ()
+    funcs.push(emit_print_value(rt));
+
+    // IO: $int_to_str(n: i64, buf_ptr: i32) -> i32 (returns length written)
+    funcs.push(emit_int_to_str());
+
+    // IO: $fd_write_buf(ptr: i32, len: i32) -> ()
+    funcs.push(emit_fd_write_buf(rt));
 
     funcs
 }
@@ -396,6 +414,13 @@ fn emit_obj_field() -> Function {
     f
 }
 
+/// Scratch area for IO in linear memory (below data section / heap).
+const IO_IOVEC: u32 = 0;
+const IO_NWRITTEN: u32 = 8;
+const IO_INT_BUF: u32 = 16;
+/// Single byte for newline character.
+pub const NEWLINE_ADDR: u32 = 40;
+
 /// $list_cons(head: i64, tail: i64) -> i64
 /// Allocates a Cons cell: [header: OBJ_LIST_CONS, field_count=2][head][tail]
 fn emit_list_cons(rt: &RuntimeFuncIndices) -> Function {
@@ -436,5 +461,230 @@ fn emit_list_cons(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::I64ExtendI32U);
     f.instruction(&Instruction::I64Or);
     f.instruction(&Instruction::End);
+    f
+}
+
+// ---------------------------------------------------------------------------
+// IO functions (inline in module, only import = WASI fd_write)
+// ---------------------------------------------------------------------------
+
+/// $fd_write_buf(ptr: i32, len: i32) -> ()
+fn emit_fd_write_buf(rt: &RuntimeFuncIndices) -> Function {
+    let mut f = Function::new(vec![]);
+    f.instruction(&Instruction::I32Const(IO_IOVEC as i32));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
+        offset: 0,
+        align: 2,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::I32Const(IO_IOVEC as i32));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32Store(wasm_encoder::MemArg {
+        offset: 4,
+        align: 2,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::I32Const(1)); // fd=stdout
+    f.instruction(&Instruction::I32Const(IO_IOVEC as i32));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Const(IO_NWRITTEN as i32));
+    f.instruction(&Instruction::Call(rt.fd_write_import));
+    f.instruction(&Instruction::Drop);
+    f.instruction(&Instruction::End);
+    f
+}
+
+/// $int_to_str(val: i64, buf: i32) -> i32  — returns (pos<<16)|len
+fn emit_int_to_str() -> Function {
+    // params: val=0, buf=1. locals: n=2(i64), is_neg=3(i32), pos=4(i32)
+    let mut f = Function::new(vec![
+        (1, ValType::I64),
+        (1, ValType::I32),
+        (1, ValType::I32),
+    ]);
+    // n = sign-extend: (val<<4)>>4
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::I64Const(4));
+    f.instruction(&Instruction::I64Shl);
+    f.instruction(&Instruction::I64Const(4));
+    f.instruction(&Instruction::I64ShrS);
+    f.instruction(&Instruction::LocalSet(2));
+    // n==0?
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I64Eqz);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+        ValType::I32,
+    )));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32Const(b'0' as i32));
+    f.instruction(&Instruction::I32Store8(wasm_encoder::MemArg {
+        offset: 0,
+        align: 0,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::I32Const(1)); // return 1 (pos=0, len=1)
+    f.instruction(&Instruction::Else);
+    // is_neg
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I64Const(0));
+    f.instruction(&Instruction::I64LtS);
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::I64Const(0));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I64Sub);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::End);
+    // pos=20
+    f.instruction(&Instruction::I32Const(20));
+    f.instruction(&Instruction::LocalSet(4));
+    // digit extraction loop
+    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I64Eqz);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I64Const(10));
+    f.instruction(&Instruction::I64RemU);
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::I32Const(b'0' as i32));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Store8(wasm_encoder::MemArg {
+        offset: 0,
+        align: 0,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I64Const(10));
+    f.instruction(&Instruction::I64DivU);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // loop
+    f.instruction(&Instruction::End); // block
+    // neg sign
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Const(b'-' as i32));
+    f.instruction(&Instruction::I32Store8(wasm_encoder::MemArg {
+        offset: 0,
+        align: 0,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::End);
+    // return (pos<<16)|(21-pos)
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(16));
+    f.instruction(&Instruction::I32Shl);
+    f.instruction(&Instruction::I32Const(21));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::I32Or);
+    f.instruction(&Instruction::End); // else
+    f.instruction(&Instruction::End); // func
+    f
+}
+
+/// $print_value(val: i64) -> ()  — format + print to stdout
+fn emit_print_value(rt: &RuntimeFuncIndices) -> Function {
+    // param: val=0. locals: tag=1(i64), payload=2(i64), tmp=3(i32), header=4(i64)
+    let mut f = Function::new(vec![
+        (1, ValType::I64),
+        (1, ValType::I64),
+        (1, ValType::I32),
+        (1, ValType::I64),
+    ]);
+    // tag
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::I64Const(60));
+    f.instruction(&Instruction::I64ShrU);
+    f.instruction(&Instruction::I64Const(0xF));
+    f.instruction(&Instruction::I64And);
+    f.instruction(&Instruction::LocalSet(1));
+    // payload
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::I64Const(PAYLOAD_MASK as i64));
+    f.instruction(&Instruction::I64And);
+    f.instruction(&Instruction::LocalSet(2));
+
+    // TAG_INT(0)
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I64Eqz);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::I32Const(IO_INT_BUF as i32));
+    f.instruction(&Instruction::Call(rt.int_to_str));
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::I32Const(IO_INT_BUF as i32));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(16));
+    f.instruction(&Instruction::I32ShrU);
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(0xFFFF));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::Call(rt.fd_write_buf));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // TAG_CONST(1): unit prints nothing
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I64Const(TAG_CONST as i64));
+    f.instruction(&Instruction::I64Eq);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // TAG_HEAP(2): strings
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I64Const(TAG_HEAP as i64));
+    f.instruction(&Instruction::I64Eq);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::LocalSet(4));
+    // kind==0 (STRING)?
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I64Const(56));
+    f.instruction(&Instruction::I64ShrU);
+    f.instruction(&Instruction::I64Const(0xFF));
+    f.instruction(&Instruction::I64And);
+    f.instruction(&Instruction::I64Eqz);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I64Const(0xFFFFFFFF));
+    f.instruction(&Instruction::I64And);
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::Call(rt.fd_write_buf));
+    f.instruction(&Instruction::End); // end string check
+    // TODO: Wrapper, List formatting
+    f.instruction(&Instruction::End); // end heap
+
+    f.instruction(&Instruction::End); // func
     f
 }
