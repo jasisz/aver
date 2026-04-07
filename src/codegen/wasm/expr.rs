@@ -6,10 +6,13 @@ use std::collections::HashMap;
 
 use wasm_encoder::Instruction;
 
-use crate::ast::{BinOp, Expr, FnBody, Literal, MatchArm, Pattern, Spanned, Stmt};
+use crate::ast::{BinOp, Expr, FnBody, Literal, MatchArm, Pattern, Spanned, Stmt, StrPart};
 
 use super::runtime::RuntimeFuncIndices;
 use super::value;
+
+/// Interned string literal: (data_offset_in_memory, byte_length).
+pub(super) type StringLiteral = (u32, u32);
 
 /// Context for emitting expressions within a single function body.
 pub(super) struct ExprEmitter<'a> {
@@ -18,17 +21,44 @@ pub(super) struct ExprEmitter<'a> {
     pub fn_indices: &'a HashMap<String, u32>,
     pub rt: &'a RuntimeFuncIndices,
     pub instructions: Vec<Instruction<'a>>,
+    /// String literal table: string content → (data_offset, length).
+    pub string_literals: &'a HashMap<String, StringLiteral>,
+    /// Host import function indices: "Console.print" → func idx, etc.
+    pub host_imports: &'a HashMap<String, u32>,
+    /// Type field name lookup: (type_name, field_name) → field_index.
+    pub type_fields: &'a HashMap<(String, String), u32>,
+    /// Current nesting depth of structured control flow (if/else/block).
+    /// Used to compute br depth for TCO loop.
+    pub block_depth: u32,
+    /// Whether this function is wrapped in a TCO loop.
+    pub tco_loop_depth: Option<u32>,
 }
 
 impl<'a> ExprEmitter<'a> {
-    pub fn new(fn_indices: &'a HashMap<String, u32>, rt: &'a RuntimeFuncIndices) -> Self {
+    pub fn new(
+        fn_indices: &'a HashMap<String, u32>,
+        rt: &'a RuntimeFuncIndices,
+        string_literals: &'a HashMap<String, StringLiteral>,
+        host_imports: &'a HashMap<String, u32>,
+        type_fields: &'a HashMap<(String, String), u32>,
+    ) -> Self {
         ExprEmitter {
             locals: HashMap::new(),
             next_local: 0,
             fn_indices,
             rt,
             instructions: Vec::new(),
+            string_literals,
+            host_imports,
+            type_fields,
+            block_depth: 0,
+            tco_loop_depth: None,
         }
+    }
+
+    /// Set TCO loop depth (called by emitter before emitting body).
+    pub fn enable_tco_loop(&mut self) {
+        self.tco_loop_depth = Some(self.block_depth);
     }
 
     pub fn add_params(&mut self, params: &[(String, String)]) {
@@ -120,8 +150,244 @@ impl<'a> ExprEmitter<'a> {
                 self.emit_constructor(name, inner);
             }
 
-            // MVP fallback: unsupported expressions return Unit
-            _ => {
+            Expr::ErrorProp(inner) => {
+                // Evaluate inner, check if Err → return Err, else unwrap Ok
+                self.emit_expr(&inner.node);
+                let val_local = self.next_local;
+                self.next_local += 1;
+                self.instructions.push(Instruction::LocalSet(val_local));
+                // Check if HeapRef
+                self.instructions.push(Instruction::LocalGet(val_local));
+                self.instructions.push(Instruction::I64Const(60));
+                self.instructions.push(Instruction::I64ShrU);
+                self.instructions
+                    .push(Instruction::I64Const(value::TAG_HEAP as i64));
+                self.instructions.push(Instruction::I64Eq);
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I64));
+                // Check if Err (obj_kind==WRAPPER && obj_tag==WRAP_ERR)
+                self.instructions.push(Instruction::LocalGet(val_local));
+                self.instructions.push(Instruction::Call(self.rt.obj_kind));
+                self.instructions
+                    .push(Instruction::I32Const(value::OBJ_WRAPPER as i32));
+                self.instructions.push(Instruction::I32Eq);
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I64));
+                self.instructions.push(Instruction::LocalGet(val_local));
+                self.instructions.push(Instruction::Call(self.rt.obj_tag));
+                self.instructions
+                    .push(Instruction::I32Const(value::WRAP_ERR as i32));
+                self.instructions.push(Instruction::I32Eq);
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I64));
+                // Is Err → return the Err value as-is (early return)
+                self.instructions.push(Instruction::LocalGet(val_local));
+                self.instructions.push(Instruction::Return);
+                self.emit_else();
+                // Is Ok → unwrap
+                self.instructions.push(Instruction::LocalGet(val_local));
+                self.instructions.push(Instruction::Call(self.rt.unwrap));
+                self.emit_end();
+                self.emit_else();
+                // Not a wrapper → pass through
+                self.instructions.push(Instruction::LocalGet(val_local));
+                self.emit_end();
+                self.emit_else();
+                // Not a HeapRef → pass through
+                self.instructions.push(Instruction::LocalGet(val_local));
+                self.emit_end();
+            }
+
+            Expr::InterpolatedStr(parts) => {
+                // MVP: concatenate parts. For now just emit the first literal or Unit.
+                if parts.len() == 1 {
+                    match &parts[0] {
+                        StrPart::Literal(s) => self.emit_string_literal(s),
+                        StrPart::Parsed(expr) => self.emit_expr(&expr.node),
+                    }
+                } else {
+                    // Multi-part interpolation: emit Unit for now
+                    // TODO: implement string concatenation runtime
+                    self.emit_const(value::CONST_UNIT);
+                }
+            }
+
+            Expr::List(items) => {
+                // Build list from right to left using list_cons
+                if items.is_empty() {
+                    self.emit_const(value::CONST_EMPTY_LIST);
+                } else {
+                    // Start with empty list, prepend from last to first
+                    self.emit_const(value::CONST_EMPTY_LIST);
+                    for item in items.iter().rev() {
+                        // Stack: [tail]
+                        let tail_local = self.next_local;
+                        self.next_local += 1;
+                        self.instructions.push(Instruction::LocalSet(tail_local));
+                        self.emit_expr(&item.node); // head
+                        self.instructions.push(Instruction::LocalGet(tail_local)); // tail
+                        self.instructions.push(Instruction::Call(self.rt.list_cons));
+                    }
+                }
+            }
+
+            Expr::Tuple(items) => {
+                // Allocate tuple on heap: header + N fields
+                if items.is_empty() {
+                    self.emit_const(value::CONST_UNIT);
+                } else {
+                    let count = items.len();
+                    // Alloc: 8 (header) + count * 8 (fields)
+                    let size = 8 + count * 8;
+                    let ptr_local = self.next_local;
+                    self.next_local += 1;
+                    self.instructions.push(Instruction::I32Const(size as i32));
+                    self.instructions.push(Instruction::Call(self.rt.alloc));
+                    self.instructions.push(Instruction::LocalSet(ptr_local));
+                    // Store header
+                    self.instructions.push(Instruction::LocalGet(ptr_local));
+                    self.instructions
+                        .push(Instruction::I64Const(value::make_header(
+                            value::OBJ_TUPLE,
+                            0,
+                            0,
+                            count as u64,
+                        ) as i64));
+                    self.instructions
+                        .push(Instruction::I64Store(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 3,
+                            memory_index: 0,
+                        }));
+                    // Store fields
+                    for (i, item) in items.iter().enumerate() {
+                        self.instructions.push(Instruction::LocalGet(ptr_local));
+                        self.emit_expr(&item.node);
+                        self.instructions
+                            .push(Instruction::I64Store(wasm_encoder::MemArg {
+                                offset: (8 + i * 8) as u64,
+                                align: 3,
+                                memory_index: 0,
+                            }));
+                    }
+                    // Return HeapRef
+                    self.instructions.push(Instruction::I64Const(
+                        (value::TAG_HEAP << value::TAG_SHIFT) as i64,
+                    ));
+                    self.instructions.push(Instruction::LocalGet(ptr_local));
+                    self.instructions.push(Instruction::I64ExtendI32U);
+                    self.instructions.push(Instruction::I64Or);
+                }
+            }
+
+            Expr::RecordCreate { type_name, fields } => {
+                let count = fields.len();
+                let size = 8 + count * 8;
+                let ptr_local = self.next_local;
+                self.next_local += 1;
+                self.instructions.push(Instruction::I32Const(size as i32));
+                self.instructions.push(Instruction::Call(self.rt.alloc));
+                self.instructions.push(Instruction::LocalSet(ptr_local));
+                // Store header (type_id=0 for now — TODO: proper type registry)
+                self.instructions.push(Instruction::LocalGet(ptr_local));
+                self.instructions
+                    .push(Instruction::I64Const(value::make_header(
+                        value::OBJ_RECORD,
+                        0,
+                        0,
+                        count as u64,
+                    ) as i64));
+                self.instructions
+                    .push(Instruction::I64Store(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
+                // Store fields in declaration order
+                for (i, (_name, expr)) in fields.iter().enumerate() {
+                    self.instructions.push(Instruction::LocalGet(ptr_local));
+                    self.emit_expr(&expr.node);
+                    self.instructions
+                        .push(Instruction::I64Store(wasm_encoder::MemArg {
+                            offset: (8 + i * 8) as u64,
+                            align: 3,
+                            memory_index: 0,
+                        }));
+                }
+                // Return HeapRef
+                self.instructions.push(Instruction::I64Const(
+                    (value::TAG_HEAP << value::TAG_SHIFT) as i64,
+                ));
+                self.instructions.push(Instruction::LocalGet(ptr_local));
+                self.instructions.push(Instruction::I64ExtendI32U);
+                self.instructions.push(Instruction::I64Or);
+                let _ = type_name; // TODO: use type_name for type_id lookup
+            }
+
+            Expr::Attr(base_expr, field_name) => {
+                // Field access on a record: base.field → obj_field(base, idx)
+                self.emit_expr(&base_expr.node);
+                // Try to resolve field index from type_fields
+                // For now use sequential index based on field_name hash
+                // TODO: proper field index resolution from type metadata
+                let field_idx = if let Expr::Ident(_base_name) = &base_expr.node {
+                    // Look up field index — for now just use 0 as fallback
+                    self.type_fields
+                        .iter()
+                        .find(|((_, f), _)| f == field_name)
+                        .map(|(_, &idx)| idx)
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
+                self.instructions
+                    .push(Instruction::I32Const(field_idx as i32));
+                self.instructions.push(Instruction::Call(self.rt.obj_field));
+            }
+
+            Expr::TailCall(tc) => {
+                let (fn_name, args) = tc.as_ref();
+                if let Some(loop_depth) = self.tco_loop_depth {
+                    // Self-TCO: update params and branch back to loop
+                    for arg in args {
+                        self.emit_expr(&arg.node);
+                    }
+                    // Save args to temps (reverse order to avoid stomping)
+                    let arg_count = args.len();
+                    let tmp_base = self.next_local;
+                    self.next_local += arg_count as u32;
+                    for i in (0..arg_count).rev() {
+                        self.instructions
+                            .push(Instruction::LocalSet(tmp_base + i as u32));
+                    }
+                    // Copy temps back to param locals (params are locals 0..N)
+                    for i in 0..arg_count {
+                        self.instructions
+                            .push(Instruction::LocalGet(tmp_base + i as u32));
+                        self.instructions.push(Instruction::LocalSet(i as u32));
+                    }
+                    // Branch to TCO loop: br depth = current_depth - loop_depth
+                    let br_depth = self.block_depth - loop_depth;
+                    self.instructions.push(Instruction::Br(br_depth));
+                    // Mark unreachable — code after Br is never executed but
+                    // WASM validator needs to know the stack is invalid here
+                    self.instructions.push(Instruction::Unreachable);
+                } else {
+                    // No TCO loop — fall back to regular recursive call
+                    for arg in args {
+                        self.emit_expr(&arg.node);
+                    }
+                    if let Some(&fn_idx) = self.fn_indices.get(fn_name.as_str()) {
+                        self.instructions.push(Instruction::Call(fn_idx));
+                    } else {
+                        for _ in args {
+                            self.instructions.push(Instruction::Drop);
+                        }
+                        self.emit_const(value::CONST_UNIT);
+                    }
+                }
+                let _ = fn_name;
+            }
+
+            Expr::RecordUpdate { .. } | Expr::MapLiteral(_) | Expr::IndependentProduct(_, _) => {
+                // Not yet supported
                 self.emit_const(value::CONST_UNIT);
             }
         }
@@ -187,6 +453,14 @@ impl<'a> ExprEmitter<'a> {
                         self.instructions.push(Instruction::Drop);
                     }
                     self.emit_const(value::CONST_NONE);
+                } else if let Some(&host_fn) = self.host_imports.get(qualified.as_str()) {
+                    // Host import (Console.print, etc.) — call and push Unit
+                    self.instructions.push(Instruction::Call(host_fn));
+                    self.emit_const(value::CONST_UNIT);
+                } else if qualified == "List.prepend" && args.len() == 2 {
+                    // List.prepend(item, list) → list_cons(item, list)
+                    // args already on stack: [item, list]
+                    self.instructions.push(Instruction::Call(self.rt.list_cons));
                 } else {
                     // Unknown builtin — drop args, return Unit
                     for _ in args {
@@ -266,13 +540,13 @@ impl<'a> ExprEmitter<'a> {
                         wasm_encoder::ValType::I64,
                     )));
                 self.emit_expr(&arm.body.node);
-                self.instructions.push(Instruction::Else);
+                self.emit_else();
                 if is_last {
                     self.emit_const(value::CONST_UNIT);
                 } else {
                     self.emit_match_arms(subj_local, arms, idx + 1);
                 }
-                self.instructions.push(Instruction::End);
+                self.emit_end();
             }
             Pattern::Constructor(ctor_name, bindings) => {
                 self.emit_constructor_pattern(subj_local, ctor_name, bindings, arm, arms, idx);
@@ -287,13 +561,13 @@ impl<'a> ExprEmitter<'a> {
                         wasm_encoder::ValType::I64,
                     )));
                 self.emit_expr(&arm.body.node);
-                self.instructions.push(Instruction::Else);
+                self.emit_else();
                 if is_last {
                     self.emit_const(value::CONST_UNIT);
                 } else {
                     self.emit_match_arms(subj_local, arms, idx + 1);
                 }
-                self.instructions.push(Instruction::End);
+                self.emit_end();
             }
             Pattern::Cons(head_name, tail_name) => {
                 // Check: is HeapRef && obj_kind == OBJ_LIST_CONS
@@ -336,20 +610,20 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalSet(tail_local));
 
                 self.emit_expr(&arm.body.node);
-                self.instructions.push(Instruction::Else);
+                self.emit_else();
                 if is_last {
                     self.emit_const(value::CONST_UNIT);
                 } else {
                     self.emit_match_arms(subj_local, arms, idx + 1);
                 }
-                self.instructions.push(Instruction::End);
-                self.instructions.push(Instruction::Else);
+                self.emit_end();
+                self.emit_else();
                 if is_last {
                     self.emit_const(value::CONST_UNIT);
                 } else {
                     self.emit_match_arms(subj_local, arms, idx + 1);
                 }
-                self.instructions.push(Instruction::End);
+                self.emit_end();
             }
             Pattern::Tuple(_) => {
                 // TODO: tuple patterns
@@ -385,13 +659,13 @@ impl<'a> ExprEmitter<'a> {
                         wasm_encoder::ValType::I64,
                     )));
                 self.emit_expr(&arm.body.node);
-                self.instructions.push(Instruction::Else);
+                self.emit_else();
                 if is_last {
                     self.emit_const(value::CONST_UNIT);
                 } else {
                     self.emit_match_arms(subj_local, arms, idx + 1);
                 }
-                self.instructions.push(Instruction::End);
+                self.emit_end();
                 return;
             }
             _ => None, // User-defined variants — TODO
@@ -444,13 +718,13 @@ impl<'a> ExprEmitter<'a> {
 
             // Close all three ifs with else → fallthrough
             for _ in 0..3 {
-                self.instructions.push(Instruction::Else);
+                self.emit_else();
                 if is_last {
                     self.emit_const(value::CONST_UNIT);
                 } else {
                     self.emit_match_arms(subj_local, arms, idx + 1);
                 }
-                self.instructions.push(Instruction::End);
+                self.emit_end();
             }
         } else {
             // Unknown constructor — fallthrough
@@ -532,9 +806,7 @@ impl<'a> ExprEmitter<'a> {
                 });
             }
             Literal::Str(s) => {
-                // MVP: strings not yet in data section — emit as Unit
-                let _ = s;
-                self.emit_const(value::CONST_UNIT);
+                self.emit_string_literal(s);
             }
             Literal::Unit => {
                 self.emit_const(value::CONST_UNIT);
@@ -544,5 +816,40 @@ impl<'a> ExprEmitter<'a> {
 
     fn emit_const(&mut self, bits: u64) {
         self.instructions.push(Instruction::I64Const(bits as i64));
+    }
+
+    /// Push an If instruction and track block depth.
+    fn emit_if(&mut self, bt: wasm_encoder::BlockType) {
+        self.instructions.push(Instruction::If(bt));
+        self.block_depth += 1;
+    }
+
+    /// Push Else instruction (no depth change — same block).
+    fn emit_else(&mut self) {
+        self.instructions.push(Instruction::Else);
+    }
+
+    /// Push End instruction and decrement block depth.
+    pub fn emit_end(&mut self) {
+        self.instructions.push(Instruction::End);
+        if self.block_depth > 0 {
+            self.block_depth -= 1;
+        }
+    }
+
+    /// Emit a HeapRef pointing to a static string object in the data section.
+    fn emit_string_literal(&mut self, s: &str) {
+        if let Some(&(offset, _len)) = self.string_literals.get(s) {
+            // String object is already in data section at `offset`.
+            // Return HeapRef pointing to it.
+            self.instructions.push(Instruction::I64Const(
+                (value::TAG_HEAP << value::TAG_SHIFT) as i64,
+            ));
+            self.instructions.push(Instruction::I64Const(offset as i64));
+            self.instructions.push(Instruction::I64Or);
+        } else {
+            // Unknown string — should not happen if emitter collects all literals
+            self.emit_const(value::CONST_UNIT);
+        }
     }
 }
