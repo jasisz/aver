@@ -52,7 +52,8 @@ pub fn build_wasm_module(ctx: &CodegenContext) -> Result<Vec<u8>, String> {
     // Build string table: string → (data_offset, len)
     // Each string object in data section: [8-byte header][bytes padded to 8]
     let mut string_literals: HashMap<String, StringLiteral> = HashMap::new();
-    let mut data_offset = 0u32;
+    // Data section starts after IO scratch area
+    let mut data_offset = runtime::IO_SCRATCH_SIZE;
     let mut data_bytes: Vec<u8> = Vec::new();
 
     for s in &sorted_strings {
@@ -70,8 +71,33 @@ pub fn build_wasm_module(ctx: &CodegenContext) -> Result<Vec<u8>, String> {
         data_offset += 8 + padded_len as u32; // header + padded bytes
     }
 
-    let heap_base = if data_offset > 0 {
-        // Align heap base to 8 bytes after static data
+    // Add raw runtime strings (no header — for print formatting)
+    let mut rt_strings: HashMap<&str, (u32, u32)> = HashMap::new(); // name → (offset, len)
+    let runtime_strs = [
+        "true",
+        "false",
+        "None",
+        "[]",
+        "Result.Ok(",
+        "Result.Err(",
+        "Option.Some(",
+        ")",
+        "[",
+        ", ",
+    ];
+    for s in &runtime_strs {
+        let offset = data_offset;
+        let len = s.len() as u32;
+        data_bytes.extend_from_slice(s.as_bytes());
+        // Pad to 4-byte alignment
+        let padded = ((len + 3) & !3) as usize;
+        data_bytes.resize(data_bytes.len() + padded - s.len(), 0);
+        rt_strings.insert(s, (offset, len));
+        data_offset += padded as u32;
+    }
+
+    let heap_base = if data_offset > runtime::IO_SCRATCH_SIZE {
+        // Align heap base to 8 bytes after all data
         ((data_offset + 7) & !7) as i32
     } else {
         1024 // default if no strings
@@ -278,7 +304,20 @@ pub fn build_wasm_module(ctx: &CodegenContext) -> Result<Vec<u8>, String> {
     let mut code_section = CodeSection::new();
 
     // Runtime function bodies
-    let rt_funcs = runtime::emit_runtime_functions(&rt);
+    // Build RtStrings from rt_strings map
+    let rt_strs = runtime::RtStrings {
+        true_: *rt_strings.get("true").unwrap_or(&(0, 0)),
+        false_: *rt_strings.get("false").unwrap_or(&(0, 0)),
+        none: *rt_strings.get("None").unwrap_or(&(0, 0)),
+        empty_list: *rt_strings.get("[]").unwrap_or(&(0, 0)),
+        result_ok: *rt_strings.get("Result.Ok(").unwrap_or(&(0, 0)),
+        result_err: *rt_strings.get("Result.Err(").unwrap_or(&(0, 0)),
+        option_some: *rt_strings.get("Option.Some(").unwrap_or(&(0, 0)),
+        close_paren: *rt_strings.get(")").unwrap_or(&(0, 0)),
+        open_bracket: *rt_strings.get("[").unwrap_or(&(0, 0)),
+        comma_space: *rt_strings.get(", ").unwrap_or(&(0, 0)),
+    };
+    let rt_funcs = runtime::emit_runtime_functions(&rt, &rt_strs);
     for func in &rt_funcs {
         code_section.function(func);
     }
@@ -346,7 +385,11 @@ pub fn build_wasm_module(ctx: &CodegenContext) -> Result<Vec<u8>, String> {
     // -----------------------------------------------------------------------
     if !data_bytes.is_empty() {
         let mut data_section = DataSection::new();
-        data_section.active(0, &ConstExpr::i32_const(0), data_bytes);
+        data_section.active(
+            0,
+            &ConstExpr::i32_const(runtime::IO_SCRATCH_SIZE as i32),
+            data_bytes,
+        );
         module.section(&data_section);
     }
 

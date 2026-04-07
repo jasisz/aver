@@ -89,7 +89,7 @@ pub struct RuntimeTypeIndices {
 }
 
 /// Emit all runtime function bodies. Returns them in the same order as RuntimeFuncIndices.
-pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
+pub fn emit_runtime_functions(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Vec<Function> {
     let mut funcs = Vec::new();
 
     // $alloc(size: i32) -> i32
@@ -128,7 +128,7 @@ pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     funcs.push(emit_list_cons(rt));
 
     // IO: $print_value(val: i64) -> ()
-    funcs.push(emit_print_value(rt));
+    funcs.push(emit_print_value(rt, strs));
 
     // IO: $int_to_str(n: i64, buf_ptr: i32) -> i32 (returns length written)
     funcs.push(emit_int_to_str());
@@ -414,12 +414,28 @@ fn emit_obj_field() -> Function {
     f
 }
 
-/// Scratch area for IO in linear memory (below data section / heap).
+/// Scratch area for IO in linear memory. Reserved: bytes 0-63.
+/// Data section (string literals) starts at DATA_SECTION_BASE (64).
+pub const IO_SCRATCH_SIZE: u32 = 64;
 const IO_IOVEC: u32 = 0;
 const IO_NWRITTEN: u32 = 8;
 const IO_INT_BUF: u32 = 16;
-/// Single byte for newline character.
 pub const NEWLINE_ADDR: u32 = 40;
+
+/// Addresses of runtime format strings in data section.
+#[derive(Default)]
+pub struct RtStrings {
+    pub true_: (u32, u32),        // "true"
+    pub false_: (u32, u32),       // "false"
+    pub none: (u32, u32),         // "None"
+    pub empty_list: (u32, u32),   // "[]"
+    pub result_ok: (u32, u32),    // "Result.Ok("
+    pub result_err: (u32, u32),   // "Result.Err("
+    pub option_some: (u32, u32),  // "Option.Some("
+    pub close_paren: (u32, u32),  // ")"
+    pub open_bracket: (u32, u32), // "["
+    pub comma_space: (u32, u32),  // ", "
+}
 
 /// $list_cons(head: i64, tail: i64) -> i64
 /// Allocates a Cons cell: [header: OBJ_LIST_CONS, field_count=2][head][tail]
@@ -537,8 +553,8 @@ fn emit_int_to_str() -> Function {
     f.instruction(&Instruction::I64Sub);
     f.instruction(&Instruction::LocalSet(2));
     f.instruction(&Instruction::End);
-    // pos=20
-    f.instruction(&Instruction::I32Const(20));
+    // pos=21 (buf has indices 0..20, we write right-to-left)
+    f.instruction(&Instruction::I32Const(21));
     f.instruction(&Instruction::LocalSet(4));
     // digit extraction loop
     f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
@@ -602,15 +618,26 @@ fn emit_int_to_str() -> Function {
 }
 
 /// $print_value(val: i64) -> ()  — format + print to stdout
-fn emit_print_value(rt: &RuntimeFuncIndices) -> Function {
-    // param: val=0. locals: tag=1(i64), payload=2(i64), tmp=3(i32), header=4(i64)
+fn emit_print_value(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Function {
+    // param: val=0. locals: tag=1(i64), payload=2(i64), tmp=3(i32), header=4(i64), kind=5(i64)
     let mut f = Function::new(vec![
         (1, ValType::I64),
         (1, ValType::I64),
         (1, ValType::I32),
         (1, ValType::I64),
+        (1, ValType::I64),
     ]);
-    // tag
+
+    // Helper: emit fd_write_buf(ptr, len) for a static string
+    macro_rules! print_static {
+        ($f:expr, $rt:expr, $s:expr) => {
+            $f.instruction(&Instruction::I32Const($s.0 as i32));
+            $f.instruction(&Instruction::I32Const($s.1 as i32));
+            $f.instruction(&Instruction::Call($rt.fd_write_buf));
+        };
+    }
+
+    // tag = (val >> 60) & 0xF
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Const(60));
     f.instruction(&Instruction::I64ShrU);
@@ -623,7 +650,7 @@ fn emit_print_value(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::I64And);
     f.instruction(&Instruction::LocalSet(2));
 
-    // TAG_INT(0)
+    // === TAG_INT (0) ===
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::I64Eqz);
     f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
@@ -643,19 +670,48 @@ fn emit_print_value(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
 
-    // TAG_CONST(1): unit prints nothing
+    // === TAG_CONST (1) ===
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::I64Const(TAG_CONST as i64));
     f.instruction(&Instruction::I64Eq);
     f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    // payload: 0=false, 1=true, 2=unit, 3=none, 4=empty_list
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I64Eqz); // payload == 0 = false
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    print_static!(f, rt, strs.false_);
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I64Const(1));
+    f.instruction(&Instruction::I64Eq); // payload == 1 = true
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    print_static!(f, rt, strs.true_);
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    // payload 2 = unit → print nothing
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I64Const(3));
+    f.instruction(&Instruction::I64Eq); // payload == 3 = none
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    print_static!(f, rt, strs.none);
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I64Const(4));
+    f.instruction(&Instruction::I64Eq); // payload == 4 = empty_list
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    print_static!(f, rt, strs.empty_list);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End); // end TAG_CONST
 
-    // TAG_HEAP(2): strings
+    // === TAG_HEAP (2) ===
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::I64Const(TAG_HEAP as i64));
     f.instruction(&Instruction::I64Eq);
     f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    // Read header
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I32WrapI64);
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
@@ -663,13 +719,17 @@ fn emit_print_value(rt: &RuntimeFuncIndices) -> Function {
         align: 3,
         memory_index: 0,
     }));
-    f.instruction(&Instruction::LocalSet(4));
-    // kind==0 (STRING)?
+    f.instruction(&Instruction::LocalSet(4)); // header
+    // kind = (header >> 56) & 0xFF
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I64Const(56));
     f.instruction(&Instruction::I64ShrU);
     f.instruction(&Instruction::I64Const(0xFF));
     f.instruction(&Instruction::I64And);
+    f.instruction(&Instruction::LocalSet(5)); // kind
+
+    // kind == OBJ_STRING (0): print string bytes
+    f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::I64Eqz);
     f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
     f.instruction(&Instruction::LocalGet(2));
@@ -681,9 +741,51 @@ fn emit_print_value(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::I64And);
     f.instruction(&Instruction::I32WrapI64);
     f.instruction(&Instruction::Call(rt.fd_write_buf));
-    f.instruction(&Instruction::End); // end string check
-    // TODO: Wrapper, List formatting
-    f.instruction(&Instruction::End); // end heap
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // kind == OBJ_WRAPPER (3): print "Result.Ok(...)" etc.
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::I64Const(OBJ_WRAPPER as i64));
+    f.instruction(&Instruction::I64Eq);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    // variant_tag = (header >> 48) & 0xFF
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I64Const(HDR_TAG_SHIFT as i64));
+    f.instruction(&Instruction::I64ShrU);
+    f.instruction(&Instruction::I64Const(0xFF));
+    f.instruction(&Instruction::I64And);
+    f.instruction(&Instruction::LocalSet(5)); // reuse kind local for variant_tag
+    // Print prefix based on variant_tag
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::I64Eqz); // tag==0 = Ok
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    print_static!(f, rt, strs.result_ok);
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::I64Const(WRAP_ERR as i64));
+    f.instruction(&Instruction::I64Eq); // tag==1 = Err
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    print_static!(f, rt, strs.result_err);
+    f.instruction(&Instruction::Else);
+    print_static!(f, rt, strs.option_some); // tag==2 = Some
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    // Print inner value (recursive call)
+    f.instruction(&Instruction::LocalGet(2)); // payload = handle
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 8,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::Call(rt.print_value)); // recursive!
+    // Print ")"
+    print_static!(f, rt, strs.close_paren);
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End); // end wrapper
+
+    f.instruction(&Instruction::End); // end TAG_HEAP
 
     f.instruction(&Instruction::End); // func
     f
