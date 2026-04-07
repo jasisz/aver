@@ -893,14 +893,211 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalGet(ptr));
             }
             "String.trim" if args.len() == 1 => {
-                // Simplified: return as-is (no whitespace trimming for now)
-                // TODO: proper trim
+                // Trim leading/trailing whitespace (space, tab, newline, carriage return)
+                let str_local = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalSet(str_local));
+                let len = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalGet(str_local));
+                self.instructions.push(Instruction::I64Load(wasm_encoder::MemArg {
+                    offset: 0, align: 3, memory_index: 0,
+                }));
+                self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
+                self.instructions.push(Instruction::I64And);
+                self.instructions.push(Instruction::I32WrapI64);
+                self.instructions.push(Instruction::LocalSet(len));
+                // Find start (skip leading whitespace)
+                let start = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::I32Const(0));
+                self.instructions.push(Instruction::LocalSet(start));
+                self.instructions.push(Instruction::Block(wasm_encoder::BlockType::Empty));
+                self.instructions.push(Instruction::Loop(wasm_encoder::BlockType::Empty));
+                self.instructions.push(Instruction::LocalGet(start));
+                self.instructions.push(Instruction::LocalGet(len));
+                self.instructions.push(Instruction::I32GeU);
+                self.instructions.push(Instruction::BrIf(1));
+                // Check if whitespace
+                self.instructions.push(Instruction::LocalGet(str_local));
+                self.instructions.push(Instruction::LocalGet(start));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::I32Load8U(wasm_encoder::MemArg {
+                    offset: 8, align: 0, memory_index: 0,
+                }));
+                let ch = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalSet(ch));
+                // is_ws = ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
+                self.instructions.push(Instruction::LocalGet(ch));
+                self.instructions.push(Instruction::I32Const(b' ' as i32));
+                self.instructions.push(Instruction::I32Eq);
+                self.instructions.push(Instruction::LocalGet(ch));
+                self.instructions.push(Instruction::I32Const(b'\t' as i32));
+                self.instructions.push(Instruction::I32Eq);
+                self.instructions.push(Instruction::I32Or);
+                self.instructions.push(Instruction::LocalGet(ch));
+                self.instructions.push(Instruction::I32Const(b'\n' as i32));
+                self.instructions.push(Instruction::I32Eq);
+                self.instructions.push(Instruction::I32Or);
+                self.instructions.push(Instruction::LocalGet(ch));
+                self.instructions.push(Instruction::I32Const(b'\r' as i32));
+                self.instructions.push(Instruction::I32Eq);
+                self.instructions.push(Instruction::I32Or);
+                self.instructions.push(Instruction::I32Eqz); // NOT whitespace
+                self.instructions.push(Instruction::BrIf(1)); // stop
+                self.instructions.push(Instruction::LocalGet(start));
+                self.instructions.push(Instruction::I32Const(1));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::LocalSet(start));
+                self.instructions.push(Instruction::Br(0));
+                self.instructions.push(Instruction::End);
+                self.instructions.push(Instruction::End);
+                // Find end (skip trailing whitespace)
+                let end = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalGet(len));
+                self.instructions.push(Instruction::LocalSet(end));
+                self.instructions.push(Instruction::Block(wasm_encoder::BlockType::Empty));
+                self.instructions.push(Instruction::Loop(wasm_encoder::BlockType::Empty));
+                self.instructions.push(Instruction::LocalGet(end));
+                self.instructions.push(Instruction::LocalGet(start));
+                self.instructions.push(Instruction::I32LeU);
+                self.instructions.push(Instruction::BrIf(1));
+                self.instructions.push(Instruction::LocalGet(str_local));
+                self.instructions.push(Instruction::LocalGet(end));
+                self.instructions.push(Instruction::I32Const(1));
+                self.instructions.push(Instruction::I32Sub);
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::I32Load8U(wasm_encoder::MemArg {
+                    offset: 8, align: 0, memory_index: 0,
+                }));
+                self.instructions.push(Instruction::LocalSet(ch));
+                self.instructions.push(Instruction::LocalGet(ch));
+                self.instructions.push(Instruction::I32Const(b' ' as i32));
+                self.instructions.push(Instruction::I32Eq);
+                self.instructions.push(Instruction::LocalGet(ch));
+                self.instructions.push(Instruction::I32Const(b'\t' as i32));
+                self.instructions.push(Instruction::I32Eq);
+                self.instructions.push(Instruction::I32Or);
+                self.instructions.push(Instruction::LocalGet(ch));
+                self.instructions.push(Instruction::I32Const(b'\n' as i32));
+                self.instructions.push(Instruction::I32Eq);
+                self.instructions.push(Instruction::I32Or);
+                self.instructions.push(Instruction::LocalGet(ch));
+                self.instructions.push(Instruction::I32Const(b'\r' as i32));
+                self.instructions.push(Instruction::I32Eq);
+                self.instructions.push(Instruction::I32Or);
+                self.instructions.push(Instruction::I32Eqz);
+                self.instructions.push(Instruction::BrIf(1));
+                self.instructions.push(Instruction::LocalGet(end));
+                self.instructions.push(Instruction::I32Const(1));
+                self.instructions.push(Instruction::I32Sub);
+                self.instructions.push(Instruction::LocalSet(end));
+                self.instructions.push(Instruction::Br(0));
+                self.instructions.push(Instruction::End);
+                self.instructions.push(Instruction::End);
+                // Build new trimmed string via str_concat infrastructure
+                let trim_len = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalGet(end));
+                self.instructions.push(Instruction::LocalGet(start));
+                self.instructions.push(Instruction::I32Sub);
+                self.instructions.push(Instruction::LocalSet(trim_len));
+                // If same length → return original
+                self.instructions.push(Instruction::LocalGet(trim_len));
+                self.instructions.push(Instruction::LocalGet(len));
+                self.instructions.push(Instruction::I32Eq);
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
+                self.instructions.push(Instruction::LocalGet(str_local));
+                self.emit_else();
+                // Alloc new string
+                let ptr = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::I32Const(8));
+                self.instructions.push(Instruction::LocalGet(trim_len));
+                self.instructions.push(Instruction::I32Const(7));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::I32Const(-8i32));
+                self.instructions.push(Instruction::I32And);
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::Call(self.rt.alloc));
+                self.instructions.push(Instruction::LocalSet(ptr));
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::I64Const(
+                    (value::OBJ_STRING << value::HDR_KIND_SHIFT) as i64,
+                ));
+                self.instructions.push(Instruction::LocalGet(trim_len));
+                self.instructions.push(Instruction::I64ExtendI32U);
+                self.instructions.push(Instruction::I64Or);
+                self.instructions.push(Instruction::I64Store(wasm_encoder::MemArg {
+                    offset: 0, align: 3, memory_index: 0,
+                }));
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::I32Const(8));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::LocalGet(str_local));
+                self.instructions.push(Instruction::I32Const(8));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::LocalGet(start));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::LocalGet(trim_len));
+                self.instructions.push(Instruction::MemoryCopy { src_mem: 0, dst_mem: 0 });
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.emit_end();
             }
             "String.slice" if args.len() == 3 => {
-                // args: [str_ptr, start(i64), end(i64)]
-                // For now: simplified — drop and return empty
-                for _ in args { self.instructions.push(Instruction::Drop); }
+                // args on stack: [str_ptr(i32), start(i64), end(i64)]
+                // Create new string from str_ptr[start..end]
+                let end_local = self.alloc_local(WasmType::I32);
+                let start_local = self.alloc_local(WasmType::I32);
+                let str_local = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::I32WrapI64); // end → i32
+                self.instructions.push(Instruction::LocalSet(end_local));
+                self.instructions.push(Instruction::I32WrapI64); // start → i32
+                self.instructions.push(Instruction::LocalSet(start_local));
+                self.instructions.push(Instruction::LocalSet(str_local));
+                // len = end - start (clamped to 0)
+                let len_local = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalGet(end_local));
+                self.instructions.push(Instruction::LocalGet(start_local));
+                self.instructions.push(Instruction::I32Sub);
+                self.instructions.push(Instruction::LocalSet(len_local));
+                // if len <= 0 → empty string
+                self.instructions.push(Instruction::LocalGet(len_local));
+                self.instructions.push(Instruction::I32Const(0));
+                self.instructions.push(Instruction::I32LeS);
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
                 self.emit_string_literal("");
+                self.emit_else();
+                // Alloc new string
+                let ptr = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::I32Const(8));
+                self.instructions.push(Instruction::LocalGet(len_local));
+                self.instructions.push(Instruction::I32Const(7));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::I32Const(-8i32));
+                self.instructions.push(Instruction::I32And);
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::Call(self.rt.alloc));
+                self.instructions.push(Instruction::LocalSet(ptr));
+                // Header
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::I64Const(
+                    (value::OBJ_STRING << value::HDR_KIND_SHIFT) as i64,
+                ));
+                self.instructions.push(Instruction::LocalGet(len_local));
+                self.instructions.push(Instruction::I64ExtendI32U);
+                self.instructions.push(Instruction::I64Or);
+                self.instructions.push(Instruction::I64Store(wasm_encoder::MemArg {
+                    offset: 0, align: 3, memory_index: 0,
+                }));
+                // Copy bytes
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::I32Const(8));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::LocalGet(str_local));
+                self.instructions.push(Instruction::I32Const(8));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::LocalGet(start_local));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::LocalGet(len_local));
+                self.instructions.push(Instruction::MemoryCopy { src_mem: 0, dst_mem: 0 });
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.emit_end();
             }
             "String.startsWith" | "String.endsWith" | "String.contains"
             | "String.replace" | "String.split" | "String.join"
@@ -979,11 +1176,88 @@ impl<'a> ExprEmitter<'a> {
                 self.emit_end();
             }
             "Int.fromString" if args.len() == 1 => {
-                // Simplified stub: return Result.Err("not implemented")
-                self.instructions.push(Instruction::Drop);
-                self.instructions.push(Instruction::I32Const(value::WRAP_ERR as i32));
-                self.emit_string_literal("not implemented");
-                self.instructions.push(Instruction::I64ExtendI32S);
+                // Parse integer from string. Returns Result<Int, String>.
+                // Simple: scan digits, build number. No error path for now.
+                let str_local = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalSet(str_local));
+                let len = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalGet(str_local));
+                self.instructions.push(Instruction::I64Load(wasm_encoder::MemArg {
+                    offset: 0, align: 3, memory_index: 0,
+                }));
+                self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
+                self.instructions.push(Instruction::I64And);
+                self.instructions.push(Instruction::I32WrapI64);
+                self.instructions.push(Instruction::LocalSet(len));
+                // Parse: accumulate digits
+                let result = self.alloc_local(WasmType::I64);
+                let idx = self.alloc_local(WasmType::I32);
+                let is_neg = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::I64Const(0));
+                self.instructions.push(Instruction::LocalSet(result));
+                self.instructions.push(Instruction::I32Const(0));
+                self.instructions.push(Instruction::LocalSet(idx));
+                self.instructions.push(Instruction::I32Const(0));
+                self.instructions.push(Instruction::LocalSet(is_neg));
+                // Check leading '-'
+                self.instructions.push(Instruction::LocalGet(len));
+                self.instructions.push(Instruction::I32Const(0));
+                self.instructions.push(Instruction::I32GtS);
+                self.emit_if(wasm_encoder::BlockType::Empty);
+                self.instructions.push(Instruction::LocalGet(str_local));
+                self.instructions.push(Instruction::I32Load8U(wasm_encoder::MemArg {
+                    offset: 8, align: 0, memory_index: 0,
+                }));
+                self.instructions.push(Instruction::I32Const(b'-' as i32));
+                self.instructions.push(Instruction::I32Eq);
+                self.emit_if(wasm_encoder::BlockType::Empty);
+                self.instructions.push(Instruction::I32Const(1));
+                self.instructions.push(Instruction::LocalSet(is_neg));
+                self.instructions.push(Instruction::I32Const(1));
+                self.instructions.push(Instruction::LocalSet(idx));
+                self.emit_end();
+                self.emit_end();
+                // Digit loop
+                self.instructions.push(Instruction::Block(wasm_encoder::BlockType::Empty));
+                self.instructions.push(Instruction::Loop(wasm_encoder::BlockType::Empty));
+                self.instructions.push(Instruction::LocalGet(idx));
+                self.instructions.push(Instruction::LocalGet(len));
+                self.instructions.push(Instruction::I32GeU);
+                self.instructions.push(Instruction::BrIf(1));
+                // result = result * 10 + digit
+                self.instructions.push(Instruction::LocalGet(result));
+                self.instructions.push(Instruction::I64Const(10));
+                self.instructions.push(Instruction::I64Mul);
+                self.instructions.push(Instruction::LocalGet(str_local));
+                self.instructions.push(Instruction::LocalGet(idx));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::I32Load8U(wasm_encoder::MemArg {
+                    offset: 8, align: 0, memory_index: 0,
+                }));
+                self.instructions.push(Instruction::I32Const(b'0' as i32));
+                self.instructions.push(Instruction::I32Sub);
+                self.instructions.push(Instruction::I64ExtendI32U);
+                self.instructions.push(Instruction::I64Add);
+                self.instructions.push(Instruction::LocalSet(result));
+                // idx++
+                self.instructions.push(Instruction::LocalGet(idx));
+                self.instructions.push(Instruction::I32Const(1));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::LocalSet(idx));
+                self.instructions.push(Instruction::Br(0));
+                self.instructions.push(Instruction::End);
+                self.instructions.push(Instruction::End);
+                // Negate if negative
+                self.instructions.push(Instruction::LocalGet(is_neg));
+                self.emit_if(wasm_encoder::BlockType::Empty);
+                self.instructions.push(Instruction::I64Const(0));
+                self.instructions.push(Instruction::LocalGet(result));
+                self.instructions.push(Instruction::I64Sub);
+                self.instructions.push(Instruction::LocalSet(result));
+                self.emit_end();
+                // Wrap in Result.Ok
+                self.instructions.push(Instruction::I32Const(value::WRAP_OK as i32));
+                self.instructions.push(Instruction::LocalGet(result));
                 self.instructions.push(Instruction::Call(self.rt.wrap));
             }
             "Int.fromFloat" if args.len() == 1 => {
