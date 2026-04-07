@@ -200,6 +200,26 @@ aver replay recordings/ --self-host
 
 `--self-host` executes the program through the Aver interpreter written in Aver itself, compiled to Rust and cached on demand. There is no separate "aver-self" install step: `cargo install aver-lang` already ships the `self_hosted/` sources inside the crate, and the first `aver run ... --self-host` builds a cached helper binary automatically. That helper cache is shared across guest projects for the same installed Aver build, so changing `--module-root` does not force a rebuild. On the first cold run Aver prints short progress messages while it generates and builds the helper.
 
+### WASM backend
+
+```bash
+# Run via built-in WASM host (requires --features wasm)
+aver run hello.av --wasm
+
+# Compile to .wasm with aver/* import ABI (default)
+aver compile hello.av --target wasm
+
+# Compile with WASI adapter (works with standalone wasmtime)
+aver compile hello.av --target wasm --adapter wasi
+wasmtime out/hello.wasm
+```
+
+`--wasm` compiles the program to WebAssembly and executes it with a built-in host (wasmtime). The WASM module uses typed ABI: Int → i64, Float → f64, Bool → i32. Arithmetic compiles to native WASM instructions.
+
+By default, `--target wasm` emits modules with `aver/*` import ABI — the host provides effect implementations (console I/O, random, time, math). This works with the built-in host (`aver run --wasm`), a browser JS shim, or any custom host. The `--adapter wasi` flag emits WASI imports instead, for standalone execution with `wasmtime`.
+
+Supported: Float arithmetic, sum types, recursive variants, records, string interpolation, List/Map/Vector builtins, TCO. Not supported: Terminal effects (raw mode, key input), multi-module `depends`.
+
 For generated Rust projects, `aver compile` now exposes policy mode explicitly:
 
 ```bash

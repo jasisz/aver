@@ -45,6 +45,7 @@ Below: implementation details relevant to development only.
 - **`check` command**: warns when module has no `intent =`, function with effects/Result return has no `?` description, file exceeds 250 lines. `fn main()` is exempt from `?` requirement.
 - **Entry-point effect enforcement**: `main`/top-level entry calls use `call_value_with_effects_pub(...)` with synthetic call frame.
 - **Opaque types** (`exposes opaque [T]`): module-level access control for types. An opaque type is visible in signatures (can be passed, returned, stored) but cannot be constructed, have its fields accessed, or be pattern-matched from outside the defining module. Enforced at compile time in the typechecker; `load_module_sigs` registers a dummy sig (type resolves) but omits field types, constructors, and variant info. Parser recognizes `exposes opaque` after the `Exposes` token by checking for `Ident("opaque")`.
+- **WASM backend** (`src/codegen/wasm/`, feature-gated behind `--features wasm`): compiles Aver to standalone WASM modules with typed ABI (Int→i64, Float→f64, Bool→i32, heap types→i32 ptr). Uses shared `ir::` lowering infrastructure (CallPlan, MatchDispatchPlan, SemanticConstructor). Default output uses own import ABI (`aver/*`) — host provides effect implementations. `--adapter wasi` flag emits WASI imports for standalone wasmtime. `aver run --wasm` uses built-in wasmtime host. Supports: Float arithmetic, user-defined sum types, recursive variants, records with typed field access, string interpolation/equality/concat, List/Map/Vector builtins, TCO (self-call only). ABI table in `abi.rs` is single source of truth for import mappings. Runtime functions (alloc, print formatters, str_eq, list ops, map ops) emitted inline in module.
 - **Independent products** (`?!` / `!`): a tuple followed by `!` is a product of independent computations; `?!` adds Result unwrapping. `Expr::IndependentProduct(Vec<Spanned<Expr>>, bool)` in AST. Parser detects `?` + `!` or bare `!` after tuple in `parse_postfix`. Typechecker: `?!` verifies all elements are `Result<T, E>` with compatible error types and that elements are function calls; `!` infers as regular tuple. Interpreter: sequential evaluation with replay groups. Codegen: `std::thread::scope` with real parallelism. VM: `CALL_PAR` dispatches callable values plus per-branch arity, so aliases like `f = foo; (f(x), f(y))!` work. Replay: effects within a product share `group_id`, matched by `branch_path + effect_occurrence + effect_type + effect_args`, not execution order. See [docs/independence.md](docs/independence.md).
 
 ### Design omissions
@@ -165,6 +166,12 @@ aver why examples/core/calculator.av
 aver context decisions/architecture.av --decisions-only
 aver context decisions/architecture.av --decisions-only -o docs/decisions.md
 aver context examples/core/calculator.av
+
+# WASM backend (requires: cargo build --features wasm)
+aver run examples/core/calculator.av --wasm
+aver run examples/core/lambda.av --wasm
+aver compile examples/core/calculator.av --target wasm
+aver compile examples/core/calculator.av --target wasm --adapter wasi
 ```
 
 ## Spec test suite
