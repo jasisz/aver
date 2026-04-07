@@ -38,10 +38,10 @@
 
 extern crate alloc;
 
-use alloc::sync::Arc as Rc;
-use alloc::string::String;
-use alloc::vec::Vec;
 use alloc::format;
+use alloc::string::String;
+use alloc::sync::Arc as Rc;
+use alloc::vec::Vec;
 use core::cmp::Ordering;
 use core::hash::{Hash, Hasher};
 use core::ops::Deref;
@@ -74,7 +74,9 @@ pub trait MapLike: Sized {
     fn get(&self, key: &u64) -> Option<&(NanValue, NanValue)>;
     fn insert(&self, key: u64, value: (NanValue, NanValue)) -> Self;
     fn len(&self) -> usize;
-    fn is_empty(&self) -> bool { self.len() == 0 }
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     fn iter(&self) -> impl Iterator<Item = (&u64, &(NanValue, NanValue))>;
     fn values(&self) -> impl Iterator<Item = &(NanValue, NanValue)>;
 }
@@ -984,7 +986,10 @@ impl NanValue {
     }
 
     #[inline]
-    pub fn inline_variant_info<T: ArenaTypes>(self, arena: &Arena<T>) -> Option<(u32, u16, NanValue)> {
+    pub fn inline_variant_info<T: ArenaTypes>(
+        self,
+        arena: &Arena<T>,
+    ) -> Option<(u32, u16, NanValue)> {
         if !self.is_nan_boxed() || self.tag() != TAG_INLINE_VARIANT {
             return None;
         }
@@ -1102,20 +1107,34 @@ struct DefaultHasher {
 impl DefaultHasher {
     fn new() -> Self {
         #[cfg(feature = "std")]
-        { Self { inner: std::collections::hash_map::DefaultHasher::new() } }
+        {
+            Self {
+                inner: std::collections::hash_map::DefaultHasher::new(),
+            }
+        }
         #[cfg(not(feature = "std"))]
-        { Self { state: 0xcbf29ce484222325 } }
+        {
+            Self {
+                state: 0xcbf29ce484222325,
+            }
+        }
     }
 }
 
 impl Hasher for DefaultHasher {
     #[cfg(feature = "std")]
-    fn finish(&self) -> u64 { self.inner.finish() }
+    fn finish(&self) -> u64 {
+        self.inner.finish()
+    }
     #[cfg(feature = "std")]
-    fn write(&mut self, bytes: &[u8]) { self.inner.write(bytes) }
+    fn write(&mut self, bytes: &[u8]) {
+        self.inner.write(bytes)
+    }
 
     #[cfg(not(feature = "std"))]
-    fn finish(&self) -> u64 { self.state }
+    fn finish(&self) -> u64 {
+        self.state
+    }
     #[cfg(not(feature = "std"))]
     fn write(&mut self, bytes: &[u8]) {
         for &b in bytes {

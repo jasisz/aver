@@ -1,5 +1,5 @@
-use alloc::vec;
 use super::*;
+use alloc::vec;
 
 impl<T: ArenaTypes> Arena<T> {
     pub fn push_list_prepend(&mut self, head: NanValue, tail: NanValue) -> u32 {

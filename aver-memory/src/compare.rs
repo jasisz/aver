@@ -1,5 +1,5 @@
-use alloc::string::ToString;
 use super::*;
+use alloc::string::ToString;
 
 impl NanValue {
     pub fn eq_in<T: ArenaTypes>(self, other: Self, arena: &Arena<T>) -> bool {

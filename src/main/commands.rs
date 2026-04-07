@@ -2829,19 +2829,20 @@ fn cmd_compile_wasm(
             Ok(wasm_bytes) => {
                 let out_path = Path::new(output_dir);
                 if let Err(e) = std::fs::create_dir_all(out_path) {
-                    eprintln!("{}", format!("Failed to create output directory: {}", e).red());
+                    eprintln!(
+                        "{}",
+                        format!("Failed to create output directory: {}", e).red()
+                    );
                     process::exit(1);
                 }
 
-                let wasm_name = project_name
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| {
-                        Path::new(file)
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("program")
-                            .to_string()
-                    });
+                let wasm_name = project_name.map(|s| s.to_string()).unwrap_or_else(|| {
+                    Path::new(file)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("program")
+                        .to_string()
+                });
 
                 let wasm_file = out_path.join(format!("{}.wasm", wasm_name));
                 if let Err(e) = std::fs::write(&wasm_file, &wasm_bytes) {

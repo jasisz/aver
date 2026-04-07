@@ -330,7 +330,11 @@ impl<T: ArenaTypes> Arena<T> {
             || self.is_handoff_index_in_region(index, handoff_mark)
     }
 
-    pub fn with_alloc_space<R>(&mut self, space: AllocSpace, f: impl FnOnce(&mut Arena<T>) -> R) -> R {
+    pub fn with_alloc_space<R>(
+        &mut self,
+        space: AllocSpace,
+        f: impl FnOnce(&mut Arena<T>) -> R,
+    ) -> R {
         let prev = self.alloc_space;
         self.alloc_space = space;
         let out = f(self);
