@@ -7,6 +7,8 @@ pub(crate) mod common;
 pub mod dafny;
 pub mod lean;
 pub mod rust;
+#[cfg(feature = "wasm")]
+pub mod wasm;
 
 use std::collections::{HashMap, HashSet};
 

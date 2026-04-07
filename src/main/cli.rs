@@ -35,6 +35,18 @@ pub(super) enum ProofVerifyMode {
     TheoremSkeleton,
 }
 
+/// Compile target language.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub(super) enum CompileTarget {
+    /// Generate a Rust/Cargo project (default).
+    #[default]
+    #[value(name = "rust")]
+    Rust,
+    /// Generate a .wasm binary (requires --features wasm).
+    #[value(name = "wasm")]
+    Wasm,
+}
+
 /// Runtime policy handling for generated Rust projects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub(super) enum CompilePolicyMode {
@@ -212,7 +224,7 @@ pub(super) enum Commands {
         #[arg(long, default_value = "10kb", value_parser = parse_context_budget)]
         budget: usize,
     },
-    /// Compile an Aver file to a Rust/Cargo project
+    /// Compile an Aver file to a Rust/Cargo project or WASM binary
     Compile {
         file: String,
         /// Output directory for the generated project
@@ -224,6 +236,9 @@ pub(super) enum Commands {
         /// Resolve `depends [...]` from this root (default: current working directory)
         #[arg(long)]
         module_root: Option<String>,
+        /// Compile target: rust (default) or wasm
+        #[arg(long, default_value = "rust")]
+        target: CompileTarget,
         /// Emit optional record/replay runtime support into the generated project
         #[arg(long)]
         with_replay: bool,

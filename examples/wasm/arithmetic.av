@@ -1,0 +1,15 @@
+module WasmArithmetic
+    intent = "Minimal test for WASM compilation: pure arithmetic functions."
+
+fn add(a: Int, b: Int) -> Int
+    ? "Add two integers."
+    a + b
+
+fn double(x: Int) -> Int
+    ? "Double a number."
+    x * 2
+
+fn main() -> Int
+    x = add(2, 3)
+    y = double(x)
+    y
