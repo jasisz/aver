@@ -45,6 +45,7 @@ pub struct RuntimeFuncIndices {
     pub map_set: u32,       // (i32, i32, i64) -> i32  (map, key, value) -> map
     pub map_has: u32,       // (i32, i32) -> i32  (map, key) -> bool
     pub map_keys: u32,      // (i32) -> i32  (map) -> list
+    pub print_value: u32,   // (i64) -> ()  generic value printer
     /// Total number of runtime functions.
     pub count: u32,
     /// WASI fd_write import function index (set by emitter if effects present).
@@ -96,6 +97,7 @@ impl RuntimeFuncIndices {
             map_set: next(),
             map_has: next(),
             map_keys: next(),
+            print_value: next(),
             count: i - base,
             fd_write_import: 0,
         }
@@ -195,6 +197,7 @@ pub fn rt_type_index(rt: &RuntimeFuncIndices, rti: &RtTypeIndices, func_idx: u32
     if local_idx == rt.map_set - import_func_count { return 21; }                  // (i32,i32,i64)->i32
     if local_idx == rt.map_has - import_func_count { return rti.wrap_i32; }        // (i32,i32)->i32
     if local_idx == rt.map_keys - import_func_count { return rti.alloc; }          // (i32)->i32
+    if local_idx == rt.print_value - import_func_count { return rti.print_i64; }  // (i64)->()
 
     panic!(
         "Unknown runtime function index: {} (base={})",
@@ -242,6 +245,7 @@ pub fn emit_runtime_functions(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Vec<
     funcs.push(emit_map_set(rt));              // $map_set
     funcs.push(emit_map_has(rt));              // $map_has
     funcs.push(emit_map_keys(rt));             // $map_keys
+    funcs.push(emit_print_value(rt, strs));    // $print_value
 
     funcs
 }
@@ -1213,18 +1217,18 @@ fn emit_print_heap(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Function {
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
 
-    // === OBJ_LIST_CONS (4) — i64 elements ===
+    // === OBJ_LIST_CONS (4) — generic elements (i64, may be heap ptrs) ===
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I32Const(OBJ_LIST_CONS as i32));
     f.instruction(&Instruction::I32Eq);
     f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
     print_static!(f, rt, strs.open_bracket);
-    // Print first element
+    // Print first element via print_value
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
         offset: 8, align: 3, memory_index: 0,
     }));
-    f.instruction(&Instruction::Call(rt.print_i64));
+    f.instruction(&Instruction::Call(rt.print_value));
     // Traverse tail
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
@@ -1243,7 +1247,7 @@ fn emit_print_heap(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Function {
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
         offset: 8, align: 3, memory_index: 0,
     }));
-    f.instruction(&Instruction::Call(rt.print_i64));
+    f.instruction(&Instruction::Call(rt.print_value));
     // next tail
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
@@ -1847,6 +1851,158 @@ fn emit_list_zip(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::Call(rt.list_reverse));
     f.instruction(&Instruction::End);
     f
+}
+
+/// $print_value(val: i64) -> ()
+/// Generic value printer. Checks if val looks like a heap pointer and dispatches.
+fn emit_print_value(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Function {
+    // params: val=0(i64). locals: ptr=1(i32), kind=2(i32), count=3(i32), i=4(i32)
+    let mut f = Function::new(vec![
+        (1, ValType::I32), // 1: ptr
+        (1, ValType::I32), // 2: kind
+        (1, ValType::I32), // 3: count
+        (1, ValType::I32), // 4: i (loop counter)
+    ]);
+
+    // ptr = i32.wrap(val)
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::LocalSet(1));
+
+    // Check: is val in heap range? ptr >= IO_SCRATCH_SIZE and ptr > 0
+    // If val sign-extended from i32 equals val, it's a valid i32 pointer
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I64ExtendI32S);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::I64Eq);
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32Const(IO_SCRATCH_SIZE as i32));
+    f.instruction(&Instruction::I32GeS);
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+
+    // It's a heap pointer — dispatch on obj_kind
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(rt.obj_kind));
+    f.instruction(&Instruction::LocalSet(2));
+
+    // OBJ_STRING (0)
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    // Print quoted string: "..."
+    emit_scratch_byte(&mut f, rt, b'"');
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(rt.print_string));
+    emit_scratch_byte(&mut f, rt, b'"');
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // OBJ_TUPLE (5) — print (a, b, ...)
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(OBJ_TUPLE as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    emit_scratch_byte(&mut f, rt, b'(');
+    // count = header & 0xFFFFFFFF
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg { offset: 0, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::I64Const(0xFFFFFFFF));
+    f.instruction(&Instruction::I64And);
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+    // Print ", " separator (except first)
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::I32Const(strs.comma_space.0 as i32));
+    f.instruction(&Instruction::I32Const(strs.comma_space.1 as i32));
+    f.instruction(&Instruction::Call(rt.fd_write_buf));
+    f.instruction(&Instruction::End);
+    // Print element: obj_field(ptr, i)
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::I32Mul);
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg { offset: 8, align: 3, memory_index: 0 }));
+    f.instruction(&Instruction::Call(rt.print_value)); // recursive!
+    // i++
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // loop
+    f.instruction(&Instruction::End); // block
+    emit_scratch_byte(&mut f, rt, b')');
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End); // OBJ_TUPLE
+
+    // OBJ_WRAPPER / OBJ_WRAPPER_F64 / OBJ_WRAPPER_I32 — delegate to print_heap
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(OBJ_WRAPPER as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(OBJ_WRAPPER_F64 as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::I32Or);
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(OBJ_WRAPPER_I32 as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::I32Or);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(rt.print_heap));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // OBJ_LIST_CONS / OBJ_LIST_CONS_F64 — delegate to print_heap
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(OBJ_LIST_CONS as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(OBJ_LIST_CONS_F64 as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::I32Or);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(rt.print_heap));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // OBJ_VARIANT — print "Variant(...)"
+    // For now just delegate to print_heap
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(rt.print_heap));
+    f.instruction(&Instruction::Return);
+
+    f.instruction(&Instruction::End); // if (heap pointer)
+
+    // Not a heap pointer — print as integer
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::Call(rt.print_i64));
+    f.instruction(&Instruction::End);
+    f
+}
+
+/// Helper: write single byte to scratch area and fd_write_buf
+fn emit_scratch_byte(f: &mut Function, rt: &RuntimeFuncIndices, byte: u8) {
+    f.instruction(&Instruction::I32Const(NEWLINE_ADDR as i32));
+    f.instruction(&Instruction::I32Const(byte as i32));
+    f.instruction(&Instruction::I32Store8(wasm_encoder::MemArg {
+        offset: 0, align: 0, memory_index: 0,
+    }));
+    f.instruction(&Instruction::I32Const(NEWLINE_ADDR as i32));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::Call(rt.fd_write_buf));
 }
 
 // ---------------------------------------------------------------------------
