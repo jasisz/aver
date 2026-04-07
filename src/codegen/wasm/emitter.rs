@@ -69,7 +69,7 @@ pub fn build_wasm_module(ctx: &CodegenContext, adapter: super::WasmAdapter) -> R
     let runtime_strs = [
         "true",
         "false",
-        "None",
+        "Option.None",
         "[]",
         "Result.Ok(",
         "Result.Err(",
@@ -273,7 +273,7 @@ pub fn build_wasm_module(ctx: &CodegenContext, adapter: super::WasmAdapter) -> R
         super::WasmAdapter::Aver => {
             // Collect needed ABI imports from user-defined function effects only
             let user_fn_names: Vec<&str> = fn_defs.iter().map(|fd| fd.name.as_str()).collect();
-            let needed = super::abi::collect_needed_imports(&ctx.fn_sigs, &user_fn_names);
+            let needed = super::abi::collect_needed_imports(&ctx.fn_sigs, &user_fn_names, &host_import_set);
             for abi_entry in &needed {
                 let type_idx = find_or_add_import_type(&mut import_section, &rti, abi_entry);
                 let idx = import_func_count;
@@ -282,7 +282,7 @@ pub fn build_wasm_module(ctx: &CodegenContext, adapter: super::WasmAdapter) -> R
                     abi_entry.import_name,
                     wasm_encoder::EntityType::Function(type_idx),
                 );
-                host_imports.insert(abi_entry.effect.to_string(), idx);
+                host_imports.insert(abi_entry.import_name.to_string(), idx);
                 if abi_entry.import_name == "console_print" {
                     write_stdout_import = Some(idx);
                 }
@@ -402,7 +402,7 @@ pub fn build_wasm_module(ctx: &CodegenContext, adapter: super::WasmAdapter) -> R
     let rt_strs = runtime::RtStrings {
         true_: *rt_strings.get("true").unwrap_or(&(0, 0)),
         false_: *rt_strings.get("false").unwrap_or(&(0, 0)),
-        none: *rt_strings.get("None").unwrap_or(&(0, 0)),
+        none: *rt_strings.get("Option.None").unwrap_or(&(0, 0)),
         empty_list: *rt_strings.get("[]").unwrap_or(&(0, 0)),
         result_ok: *rt_strings.get("Result.Ok(").unwrap_or(&(0, 0)),
         result_err: *rt_strings.get("Result.Err(").unwrap_or(&(0, 0)),
@@ -435,7 +435,6 @@ pub fn build_wasm_module(ctx: &CodegenContext, adapter: super::WasmAdapter) -> R
             &fn_indices,
             &rt,
             &string_literals,
-            &host_imports,
             &type_fields,
             &ctx.fn_sigs,
             ctx,
@@ -458,6 +457,7 @@ pub fn build_wasm_module(ctx: &CodegenContext, adapter: super::WasmAdapter) -> R
         };
         emitter.fn_return_type = ret_wasm_type;
         emitter.current_fn_name = fd.name.clone();
+        emitter.host_import_indices = host_imports.clone();
 
         let needs_tco = tco_fns.contains(&fd.name);
         if needs_tco {
@@ -657,7 +657,17 @@ fn collect_host_calls_from_expr(expr: &Expr, imports: &mut HashSet<String>) {
 fn is_host_builtin(name: &str) -> bool {
     matches!(
         name,
-        "Console.print" | "Console.error" | "Console.warn" | "Console.readLine"
+        "Console.print"
+            | "Console.error"
+            | "Console.warn"
+            | "Console.readLine"
+            | "Float.sin"
+            | "Float.cos"
+            | "Float.atan2"
+            | "Float.pow"
+            | "Random.int"
+            | "Time.unixMs"
+            | "Time.sleep"
     )
 }
 

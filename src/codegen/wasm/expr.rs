@@ -13,7 +13,7 @@ use crate::ast::{BinOp, Expr, FnBody, Literal, MatchArm, Pattern, Spanned, Stmt,
 use crate::codegen::common::is_user_type;
 use crate::codegen::CodegenContext;
 use crate::ir::{
-    self, BoolSubjectPlan, CallLowerCtx, CallPlan, DispatchBindingPlan, LeafOp,
+    self, BoolSubjectPlan, CallLowerCtx, CallPlan, DispatchBindingPlan,
     MatchDispatchPlan, SemanticConstructor, WrapperKind, classify_call_plan,
     classify_constructor_name, classify_match_dispatch_plan,
 };
@@ -123,7 +123,6 @@ pub(super) struct ExprEmitter<'a> {
     pub rt: &'a RuntimeFuncIndices,
     pub instructions: Vec<Instruction<'a>>,
     pub string_literals: &'a HashMap<String, StringLiteral>,
-    pub host_imports: &'a HashMap<String, u32>,
     pub type_fields: &'a HashMap<(String, String), u32>,
     pub block_depth: u32,
     pub tco_loop_depth: Option<u32>,
@@ -134,6 +133,8 @@ pub(super) struct ExprEmitter<'a> {
     pub variant_registry: &'a HashMap<(String, String), VariantInfo>,
     /// Current function's return type (set by emitter before body emission).
     pub fn_return_type: WasmType,
+    /// ABI host import indices: import_name → function index.
+    pub host_import_indices: HashMap<String, u32>,
     /// Current function name (for self-TCO check).
     pub current_fn_name: String,
 }
@@ -143,7 +144,6 @@ impl<'a> ExprEmitter<'a> {
         fn_indices: &'a HashMap<String, u32>,
         rt: &'a RuntimeFuncIndices,
         string_literals: &'a HashMap<String, StringLiteral>,
-        host_imports: &'a HashMap<String, u32>,
         type_fields: &'a HashMap<(String, String), u32>,
         fn_sigs: &'a HashMap<String, (Vec<Type>, Type, Vec<String>)>,
         ctx: &'a CodegenContext,
@@ -156,7 +156,6 @@ impl<'a> ExprEmitter<'a> {
             rt,
             instructions: Vec::new(),
             string_literals,
-            host_imports,
             type_fields,
             block_depth: 0,
             tco_loop_depth: None,
@@ -167,6 +166,7 @@ impl<'a> ExprEmitter<'a> {
             variant_registry,
             fn_return_type: WasmType::I32,
             current_fn_name: String::new(),
+            host_import_indices: HashMap::new(),
         }
     }
 
@@ -353,7 +353,7 @@ impl<'a> ExprEmitter<'a> {
 
     fn infer_match_result_type(&self, arms: &[MatchArm]) -> WasmType {
         // Try arms with patterns that don't introduce new bindings
-        for (i, arm) in arms.iter().enumerate() {
+        for (_i, arm) in arms.iter().enumerate() {
             match &arm.pattern {
                 Pattern::Wildcard | Pattern::EmptyList | Pattern::Literal(_) => {
                     return self.infer_expr_type(&arm.body.node);
@@ -364,7 +364,6 @@ impl<'a> ExprEmitter<'a> {
                 _ => {}
             }
         }
-        eprintln!("[match_result] FALLBACK fn_return={:?}", self.fn_return_type);
         self.fn_return_type
     }
 
@@ -1008,6 +1007,40 @@ impl<'a> ExprEmitter<'a> {
             "Float.sqrt" if args.len() == 1 => {
                 self.instructions.push(Instruction::F64Sqrt);
             }
+            "Float.sin" if args.len() == 1 => {
+                // Host import — no native WASM instruction
+                if let Some(&idx) = self.host_import_indices.get("math_sin") {
+                    self.instructions.push(Instruction::Call(idx));
+                } else {
+                    // Fallback: return 0.0
+                    self.instructions.push(Instruction::Drop);
+                    self.instructions.push(Instruction::F64Const(0.0));
+                }
+            }
+            "Float.cos" if args.len() == 1 => {
+                if let Some(&idx) = self.host_import_indices.get("math_cos") {
+                    self.instructions.push(Instruction::Call(idx));
+                } else {
+                    self.instructions.push(Instruction::Drop);
+                    self.instructions.push(Instruction::F64Const(1.0));
+                }
+            }
+            "Float.atan2" if args.len() == 2 => {
+                if let Some(&idx) = self.host_import_indices.get("math_atan2") {
+                    self.instructions.push(Instruction::Call(idx));
+                } else {
+                    self.instructions.push(Instruction::Drop);
+                    self.instructions.push(Instruction::Drop);
+                    self.instructions.push(Instruction::F64Const(0.0));
+                }
+            }
+            "Float.pow" if args.len() == 2 => {
+                if let Some(&idx) = self.host_import_indices.get("math_pow") {
+                    self.instructions.push(Instruction::Call(idx));
+                } else {
+                    self.instructions.push(Instruction::Drop);
+                }
+            }
             "Float.min" if args.len() == 2 => {
                 self.instructions.push(Instruction::F64Min);
             }
@@ -1492,7 +1525,7 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalGet(subj_local));
                 match lit {
                     ir::DispatchLiteral::Int(n) => {
-                        self.instructions.push(Instruction::I64Const(*n as i64));
+                        self.instructions.push(Instruction::I64Const(*n));
                         self.instructions.push(Instruction::I64Eq);
                     }
                     ir::DispatchLiteral::Bool(b) => {
@@ -1628,7 +1661,7 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalGet(subj_local));
                 match lit {
                     Literal::Int(n) => {
-                        self.instructions.push(Instruction::I64Const(*n as i64));
+                        self.instructions.push(Instruction::I64Const(*n));
                         self.instructions.push(Instruction::I64Eq);
                     }
                     Literal::Bool(b) => {
@@ -2339,7 +2372,7 @@ impl<'a> ExprEmitter<'a> {
 
     fn emit_literal(&mut self, lit: &Literal) {
         match lit {
-            Literal::Int(i) => self.instructions.push(Instruction::I64Const(*i as i64)),
+            Literal::Int(i) => self.instructions.push(Instruction::I64Const(*i)),
             Literal::Float(f) => self
                 .instructions
                 .push(Instruction::F64Const(f64::from_bits(f.to_bits()))),

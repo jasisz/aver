@@ -1425,6 +1425,20 @@ fn run_wasm_with_host(wasm_bytes: &[u8]) -> Result<(), String> {
         })
         .map_err(|e| format!("Link error: {}", e))?;
 
+    // Math (no native WASM ops)
+    linker
+        .func_wrap("aver", "math_sin", |x: f64| -> f64 { x.sin() })
+        .map_err(|e| format!("Link error: {}", e))?;
+    linker
+        .func_wrap("aver", "math_cos", |x: f64| -> f64 { x.cos() })
+        .map_err(|e| format!("Link error: {}", e))?;
+    linker
+        .func_wrap("aver", "math_atan2", |y: f64, x: f64| -> f64 { y.atan2(x) })
+        .map_err(|e| format!("Link error: {}", e))?;
+    linker
+        .func_wrap("aver", "math_pow", |base: f64, exp: f64| -> f64 { base.powf(exp) })
+        .map_err(|e| format!("Link error: {}", e))?;
+
     // aver/console_readLine() -> (i32, i32)
     // Reads a line from stdin, allocates in WASM memory, returns (ptr, len)
     linker
