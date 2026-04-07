@@ -228,7 +228,16 @@ pub fn build_wasm_module(ctx: &CodegenContext) -> Result<Vec<u8>, String> {
         .ty()
         .function(vec![ValType::I32, ValType::I32, ValType::I64], vec![ValType::I32]);
 
-    let rt_base_type_count = 22u32; // 22 type entries (indices 0-21)
+    // 22: (i32, i64, i64) -> i32 — $vec_set
+    type_section
+        .ty()
+        .function(vec![ValType::I32, ValType::I64, ValType::I64], vec![ValType::I32]);
+    // 23: (i64, i64) -> i32 — $vec_new
+    type_section
+        .ty()
+        .function(vec![ValType::I64, ValType::I64], vec![ValType::I32]);
+
+    let rt_base_type_count = 24u32; // 24 type entries (indices 0-23)
 
     // User function types — generate from fn_sigs
     let mut fn_type_indices: HashMap<String, u32> = HashMap::new();

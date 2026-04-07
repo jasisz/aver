@@ -824,6 +824,32 @@ impl<'a> ExprEmitter<'a> {
                 }
                 self.emit_end();
             }
+            "Vector.fromList" if args.len() == 1 => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.vec_from_list));
+            }
+            "Vector.get" if args.len() == 2 => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.vec_get));
+            }
+            "Vector.len" if args.len() == 1 => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.vec_len));
+            }
+            "Vector.set" if args.len() == 3 => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.vec_set));
+            }
+            "Vector.new" if args.len() == 2 => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.vec_new));
+            }
+            "Vector.toList" if args.len() == 1 => {
+                // Convert vector back to list — TODO full implementation
+                // For now drop and return empty list
+                self.instructions.push(Instruction::Drop);
+                self.instructions.push(Instruction::I32Const(0));
+            }
             "String.len" if args.len() == 1 => {
                 // String ptr on stack → load header, extract length
                 self.instructions.push(Instruction::I64Load(wasm_encoder::MemArg {
