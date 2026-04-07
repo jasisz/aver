@@ -38,9 +38,12 @@ fn main() {
             vm,
             self_host,
             profile,
+            wasm,
             program_args,
         } => {
-            if *self_host {
+            if *wasm {
+                commands::cmd_run_wasm(file, module_root.as_deref());
+            } else if *self_host {
                 commands::cmd_run_self_hosted(
                     file,
                     module_root.as_deref(),

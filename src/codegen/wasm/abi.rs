@@ -78,24 +78,25 @@ pub fn lookup(effect: &str) -> Option<&'static AbiImport> {
     ABI_TABLE.iter().find(|e| e.effect == effect)
 }
 
-/// Collect all unique effects from fn_sigs that have ABI entries.
+/// Collect unique effects from user-defined functions that have ABI entries.
+/// Only collects effects from functions that are in `user_fn_names`.
 pub fn collect_needed_imports(
     fn_sigs: &std::collections::HashMap<
         String,
         (Vec<crate::types::Type>, crate::types::Type, Vec<String>),
     >,
+    user_fn_names: &[&str],
 ) -> Vec<&'static AbiImport> {
     let mut seen = std::collections::HashSet::new();
     let mut imports = Vec::new();
 
-    for (_, (_, _, effects)) in fn_sigs {
-        for effect in effects {
-            if seen.insert(effect.clone()) {
-                // Map effect names to ABI entries.
-                // Console.print effect declaration is just "Console.print",
-                // but also covers Console.error/warn which share the same output channel.
-                if let Some(abi) = lookup(effect) {
-                    imports.push(abi);
+    for name in user_fn_names {
+        if let Some((_, _, effects)) = fn_sigs.get(*name) {
+            for effect in effects {
+                if seen.insert(effect.clone()) {
+                    if let Some(abi) = lookup(effect) {
+                        imports.push(abi);
+                    }
                 }
             }
         }

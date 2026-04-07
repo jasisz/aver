@@ -134,6 +134,9 @@ pub(super) enum Commands {
         /// Print VM opcode/function profile after execution (implies --vm)
         #[arg(long)]
         profile: bool,
+        /// Compile to WASM and execute with built-in host (aver/* import ABI)
+        #[arg(long, conflicts_with_all = ["vm", "self_host", "profile"])]
+        wasm: bool,
         /// Arguments passed to the Aver program (available via Args.get()), after --
         #[arg(last = true)]
         program_args: Vec<String>,

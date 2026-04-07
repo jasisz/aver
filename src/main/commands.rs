@@ -1315,6 +1315,164 @@ pub(super) fn cmd_run_vm(
     }
 }
 
+/// Compile to WASM and execute with built-in host.
+/// Uses aver/* import ABI — host provides capabilities natively.
+pub(super) fn cmd_run_wasm(file: &str, module_root_override: Option<&str>) {
+    #[cfg(not(feature = "wasm"))]
+    {
+        let _ = (file, module_root_override);
+        eprintln!("{}", "WASM requires --features wasm".red());
+        process::exit(1);
+    }
+
+    #[cfg(feature = "wasm")]
+    {
+        use aver::codegen;
+
+        let (ctx, _module_root) = build_codegen_context(
+            file,
+            None, // project_name
+            module_root_override,
+            false,
+            &super::cli::CompilePolicyMode::Embed,
+            None,
+            false,
+        );
+
+        // Compile to WASM with aver/* ABI
+        let wasm_bytes = match codegen::wasm::emit_wasm(&ctx) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                eprintln!("{}", format!("WASM compilation error: {}", e).red());
+                process::exit(1);
+            }
+        };
+
+        // Run with wasmtime host
+        match run_wasm_with_host(&wasm_bytes) {
+            Ok(()) => {}
+            Err(e) => {
+                eprintln!("{}", format!("WASM execution error: {}", e).red());
+                process::exit(1);
+            }
+        }
+    }
+}
+
+#[cfg(feature = "wasm")]
+fn run_wasm_with_host(wasm_bytes: &[u8]) -> Result<(), String> {
+    use wasmtime::*;
+
+    let engine = Engine::default();
+    let module = Module::new(&engine, wasm_bytes).map_err(|e| format!("Module error: {}", e))?;
+    let mut store = Store::new(&engine, ());
+    let mut linker = Linker::new(&engine);
+
+    // Wire aver/* capabilities to native Rust implementations
+
+    // aver/console_print(ptr: i32, len: i32)
+    linker
+        .func_wrap("aver", "console_print", |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
+            let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
+            let data = &mem.data(&caller)[ptr as usize..(ptr as usize + len as usize)];
+            use std::io::Write;
+            std::io::stdout().write_all(data).unwrap();
+        })
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    // aver/console_error(ptr: i32, len: i32)
+    linker
+        .func_wrap("aver", "console_error", |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
+            let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
+            let data = &mem.data(&caller)[ptr as usize..(ptr as usize + len as usize)];
+            use std::io::Write;
+            std::io::stderr().write_all(data).unwrap();
+        })
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    // aver/random_int(min: i64, max: i64) -> i64
+    linker
+        .func_wrap("aver", "random_int", |min: i64, max: i64| -> i64 {
+            use std::collections::hash_map::RandomState;
+            use std::hash::{BuildHasher, Hasher};
+            // Simple random using HashMap hasher (no extra dependency)
+            let s = RandomState::new();
+            let mut h = s.build_hasher();
+            h.write_u64(min as u64 ^ max as u64);
+            let range = (max - min + 1) as u64;
+            if range == 0 {
+                return min;
+            }
+            min + (h.finish() % range) as i64
+        })
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    // aver/time_unixMs() -> i64
+    linker
+        .func_wrap("aver", "time_unixMs", || -> i64 {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64
+        })
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    // aver/time_sleep(millis: i64)
+    linker
+        .func_wrap("aver", "time_sleep", |millis: i64| {
+            std::thread::sleep(std::time::Duration::from_millis(millis as u64));
+        })
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    // aver/console_readLine() -> (i32, i32)
+    // Reads a line from stdin, allocates in WASM memory, returns (ptr, len)
+    linker
+        .func_wrap(
+            "aver",
+            "console_readLine",
+            |mut caller: Caller<'_, ()>| -> (i32, i32) {
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input).unwrap_or(0);
+                let trimmed = input.trim_end_matches('\n').trim_end_matches('\r');
+                let bytes = trimmed.as_bytes();
+                let len = bytes.len() as i32;
+
+                // Call the module's exported alloc function to get memory
+                // For now, write to a fixed scratch location
+                let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
+                let mem_size = mem.data_size(&caller);
+                // Write at end of current memory minus some buffer
+                let ptr = (mem_size - 256) as i32;
+                mem.data_mut(&mut caller)[ptr as usize..ptr as usize + bytes.len()]
+                    .copy_from_slice(bytes);
+                (ptr, len)
+            },
+        )
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    let instance = linker
+        .instantiate(&mut store, &module)
+        .map_err(|e| format!("Instantiation error: {}", e))?;
+
+    // Try _start (may return a value which we discard)
+    if let Some(start) = instance.get_func(&mut store, "_start") {
+        let mut results = vec![Val::I32(0)];
+        match start.call(&mut store, &[], &mut results) {
+            Ok(()) => {}
+            Err(_) => {
+                // Retry with no results (void _start)
+                let mut no_results = vec![];
+                start
+                    .call(&mut store, &[], &mut no_results)
+                    .map_err(|e| format!("Execution error: {}", e))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub(super) fn cmd_run(
     file: &str,
     module_root_override: Option<&str>,

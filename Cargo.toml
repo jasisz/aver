@@ -33,7 +33,7 @@ path = "src/main.rs"
 [features]
 default = ["terminal"]
 terminal = ["aver-rt/terminal"]
-wasm = ["dep:wasm-encoder"]
+wasm = ["dep:wasm-encoder", "dep:wasmtime"]
 
 [dependencies]
 aver-memory = { path = "aver-memory", version = "=0.1.0", features = ["interpreter"] }
@@ -46,6 +46,7 @@ url = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 wasm-encoder = { version = "0.225", optional = true }
+wasmtime = { version = "29", optional = true, default-features = false, features = ["cranelift", "runtime"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

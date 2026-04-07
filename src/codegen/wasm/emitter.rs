@@ -271,8 +271,9 @@ pub fn build_wasm_module(ctx: &CodegenContext, adapter: super::WasmAdapter) -> R
 
     match adapter {
         super::WasmAdapter::Aver => {
-            // Collect needed ABI imports from fn_sigs effects
-            let needed = super::abi::collect_needed_imports(&ctx.fn_sigs);
+            // Collect needed ABI imports from user-defined function effects only
+            let user_fn_names: Vec<&str> = fn_defs.iter().map(|fd| fd.name.as_str()).collect();
+            let needed = super::abi::collect_needed_imports(&ctx.fn_sigs, &user_fn_names);
             for abi_entry in &needed {
                 let type_idx = find_or_add_import_type(&mut import_section, &rti, abi_entry);
                 let idx = import_func_count;
