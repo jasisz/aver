@@ -142,19 +142,40 @@ pub fn build_wasm_module(ctx: &CodegenContext) -> Result<Vec<u8>, String> {
     let mut host_imports: HashMap<String, u32> = HashMap::new();
     let mut import_func_count = 0u32;
 
+    let has_effects = !needed_host_imports.is_empty();
+
     for &name in &needed_host_imports {
-        let wasm_name = name.replace('.', "_").to_lowercase();
-        // Host imports are void: (i64) -> ()  — type index 6
+        let rt_name = match name {
+            "Console.print" => "aver_print_value",
+            "Console.error" => "aver_print_error",
+            "Console.warn" => "aver_print_error",
+            _ => &name.replace('.', "_").to_lowercase(),
+        };
         import_section.import(
-            "aver_host",
-            &wasm_name,
-            wasm_encoder::EntityType::Function(6),
+            "aver_rt",
+            rt_name,
+            wasm_encoder::EntityType::Function(6), // (i64) -> ()
         );
         host_imports.insert(name.to_string(), import_func_count);
         import_func_count += 1;
     }
 
-    if import_func_count > 0 {
+    // If using runtime, also import memory from it (wasm-merge resolves)
+    if has_effects {
+        import_section.import(
+            "aver_rt",
+            "memory",
+            wasm_encoder::EntityType::Memory(MemoryType {
+                minimum: 1,
+                maximum: None, // unbounded — match runtime export
+                memory64: false,
+                shared: false,
+                page_size_log2: None,
+            }),
+        );
+    }
+
+    if has_effects {
         module.section(&import_section);
     }
 
@@ -206,17 +227,20 @@ pub fn build_wasm_module(ctx: &CodegenContext) -> Result<Vec<u8>, String> {
     module.section(&function_section);
 
     // -----------------------------------------------------------------------
-    // Memory section
+    // Memory section — only for pure programs (no runtime imports).
+    // Programs with effects import memory from aver_rt.
     // -----------------------------------------------------------------------
-    let mut memory_section = MemorySection::new();
-    memory_section.memory(MemoryType {
-        minimum: 1,
-        maximum: Some(256),
-        memory64: false,
-        shared: false,
-        page_size_log2: None,
-    });
-    module.section(&memory_section);
+    if !has_effects {
+        let mut memory_section = MemorySection::new();
+        memory_section.memory(MemoryType {
+            minimum: 1,
+            maximum: Some(256),
+            memory64: false,
+            shared: false,
+            page_size_log2: None,
+        });
+        module.section(&memory_section);
+    }
 
     // -----------------------------------------------------------------------
     // Global section
@@ -242,7 +266,9 @@ pub fn build_wasm_module(ctx: &CodegenContext) -> Result<Vec<u8>, String> {
         export_section.export("_start", ExportKind::Func, main_idx);
     }
 
-    export_section.export("memory", ExportKind::Memory, 0);
+    if !has_effects {
+        export_section.export("memory", ExportKind::Memory, 0);
+    }
 
     module.section(&export_section);
 

@@ -1,0 +1,19 @@
+[workspace]
+
+[package]
+name = "aver-wasm-rt"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Aver WASM runtime — IO, string ops, value formatting for WASI"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+
+[profile.release]
+lto = true
+opt-level = "z"
+codegen-units = 1
+strip = true

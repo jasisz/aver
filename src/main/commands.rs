@@ -2850,15 +2850,108 @@ fn cmd_compile_wasm(
                     process::exit(1);
                 }
 
-                let file_display = file.cyan();
-                let wasm_display = wasm_file.display().to_string().cyan();
-                println!(
-                    "{} {} → {} ({} bytes)",
-                    "Compiled".green().bold(),
-                    file_display,
-                    wasm_display,
-                    wasm_bytes.len()
-                );
+                // If program uses effects (Console.print etc.), merge with runtime
+                let needs_runtime =
+                    wasm_bytes.len() > 0 && wasm_bytes.windows(7).any(|w| w == b"aver_rt");
+
+                if needs_runtime {
+                    // Try to find aver-wasm-rt.wasm
+                    let rt_path = find_wasm_runtime();
+                    if let Some(rt_path) = rt_path {
+                        let merged_file = out_path.join(format!("{}_merged.wasm", wasm_name));
+                        let merge_result = std::process::Command::new("wasm-merge")
+                            .arg(&rt_path)
+                            .arg("aver_rt")
+                            .arg(&wasm_file)
+                            .arg("program")
+                            .arg("--rename-export-conflicts")
+                            .arg("--enable-bulk-memory")
+                            .arg("-o")
+                            .arg(&merged_file)
+                            .output();
+
+                        match merge_result {
+                            Ok(output) if output.status.success() => {
+                                // Replace original with merged
+                                let _ = std::fs::rename(&merged_file, &wasm_file);
+                                let merged_size =
+                                    std::fs::metadata(&wasm_file).map(|m| m.len()).unwrap_or(0);
+                                let file_display = file.cyan();
+                                let wasm_display = wasm_file.display().to_string().cyan();
+                                println!(
+                                    "{} {} → {} ({} bytes, with runtime)",
+                                    "Compiled".green().bold(),
+                                    file_display,
+                                    wasm_display,
+                                    merged_size
+                                );
+                            }
+                            Ok(output) => {
+                                let stderr = String::from_utf8_lossy(&output.stderr);
+                                eprintln!(
+                                    "{}",
+                                    format!(
+                                        "wasm-merge failed: {}. Run without runtime: wasmtime {}",
+                                        stderr.trim(),
+                                        wasm_file.display()
+                                    )
+                                    .yellow()
+                                );
+                                // Keep unmerged file
+                                let file_display = file.cyan();
+                                let wasm_display = wasm_file.display().to_string().cyan();
+                                println!(
+                                    "{} {} → {} ({} bytes, unmerged)",
+                                    "Compiled".green().bold(),
+                                    file_display,
+                                    wasm_display,
+                                    wasm_bytes.len()
+                                );
+                            }
+                            Err(_) => {
+                                eprintln!(
+                                    "{}",
+                                    "wasm-merge not found. Install binaryen: brew install binaryen"
+                                        .yellow()
+                                );
+                                let file_display = file.cyan();
+                                let wasm_display = wasm_file.display().to_string().cyan();
+                                println!(
+                                    "{} {} → {} ({} bytes, unmerged)",
+                                    "Compiled".green().bold(),
+                                    file_display,
+                                    wasm_display,
+                                    wasm_bytes.len()
+                                );
+                            }
+                        }
+                    } else {
+                        eprintln!(
+                            "{}",
+                            "aver-wasm-rt.wasm not found. Build: cargo build --release --manifest-path aver-wasm-rt/Cargo.toml --target wasm32-wasip1"
+                                .yellow()
+                        );
+                        let file_display = file.cyan();
+                        let wasm_display = wasm_file.display().to_string().cyan();
+                        println!(
+                            "{} {} → {} ({} bytes, unmerged)",
+                            "Compiled".green().bold(),
+                            file_display,
+                            wasm_display,
+                            wasm_bytes.len()
+                        );
+                    }
+                } else {
+                    let file_display = file.cyan();
+                    let wasm_display = wasm_file.display().to_string().cyan();
+                    println!(
+                        "{} {} → {} ({} bytes)",
+                        "Compiled".green().bold(),
+                        file_display,
+                        wasm_display,
+                        wasm_bytes.len()
+                    );
+                }
             }
             Err(e) => {
                 eprintln!("{}", format!("WASM codegen error: {}", e).red());
@@ -2866,6 +2959,42 @@ fn cmd_compile_wasm(
             }
         }
     }
+}
+
+/// Find the pre-built aver-wasm-rt.wasm runtime.
+/// Searches: next to aver binary, in aver-wasm-rt/target, AVER_WASM_RT env var.
+#[cfg(feature = "wasm")]
+fn find_wasm_runtime() -> Option<std::path::PathBuf> {
+    // 1. AVER_WASM_RT environment variable
+    if let Ok(path) = std::env::var("AVER_WASM_RT") {
+        let p = std::path::PathBuf::from(path);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    // 2. Next to the aver binary
+    if let Ok(exe) = std::env::current_exe() {
+        let dir = exe.parent().unwrap_or(Path::new("."));
+        let candidate = dir.join("aver_wasm_rt.wasm");
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+
+    // 3. In the aver-wasm-rt build directory (development)
+    let candidates = [
+        "aver-wasm-rt/target/wasm32-wasip1/release/aver_wasm_rt.wasm",
+        "aver-wasm-rt/target/wasm32-wasip1/debug/aver_wasm_rt.wasm",
+    ];
+    for c in &candidates {
+        let p = std::path::PathBuf::from(c);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    None
 }
 
 pub(super) struct CompileOptions<'a> {
