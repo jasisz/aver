@@ -5,7 +5,9 @@
 /// Pure programs need zero runtime — arithmetic is native WASM instructions.
 mod emitter;
 mod expr;
+mod runtime;
 mod types;
+pub(crate) mod value;
 
 use crate::codegen::CodegenContext;
 

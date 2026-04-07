@@ -1,0 +1,19 @@
+module SimpleMatch
+    intent = "Test safeDivide with Result + match"
+
+fn safeDivide(a: Int, b: Int) -> Result<Int, String>
+    match b
+        0 -> Result.Err("Division by zero")
+        _ -> Result.Ok(a / b)
+
+fn unwrapOr(r: Result<Int, String>, default: Int) -> Int
+    match r
+        Result.Ok(v) -> v
+        Result.Err(_) -> default
+
+fn main() -> Int
+    r1 = safeDivide(10, 2)
+    v1 = unwrapOr(r1, 0)
+    r2 = safeDivide(7, 0)
+    v2 = unwrapOr(r2, -1)
+    v1 + v2
