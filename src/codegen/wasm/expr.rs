@@ -1132,9 +1132,279 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalGet(ptr));
                 self.emit_end();
             }
+            "String.chars" if args.len() == 1 => {
+                // str_ptr on stack → List of single-char strings
+                let str_local = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalSet(str_local));
+                let len = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalGet(str_local));
+                self.instructions
+                    .push(Instruction::I64Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
+                self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
+                self.instructions.push(Instruction::I64And);
+                self.instructions.push(Instruction::I32WrapI64);
+                self.instructions.push(Instruction::LocalSet(len));
+                // Build list from right to left
+                let acc = self.alloc_local(WasmType::I32);
+                let idx = self.alloc_local(WasmType::I32);
+                let char_ptr = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::I32Const(0)); // empty list
+                self.instructions.push(Instruction::LocalSet(acc));
+                self.instructions.push(Instruction::LocalGet(len));
+                self.instructions.push(Instruction::LocalSet(idx));
+                // Loop backwards
+                self.instructions
+                    .push(Instruction::Block(wasm_encoder::BlockType::Empty));
+                self.instructions
+                    .push(Instruction::Loop(wasm_encoder::BlockType::Empty));
+                self.instructions.push(Instruction::LocalGet(idx));
+                self.instructions.push(Instruction::I32Eqz);
+                self.instructions.push(Instruction::BrIf(1));
+                self.instructions.push(Instruction::LocalGet(idx));
+                self.instructions.push(Instruction::I32Const(1));
+                self.instructions.push(Instruction::I32Sub);
+                self.instructions.push(Instruction::LocalSet(idx));
+                // Alloc 1-char string
+                self.instructions.push(Instruction::I32Const(16));
+                self.instructions.push(Instruction::Call(self.rt.alloc));
+                self.instructions.push(Instruction::LocalSet(char_ptr));
+                self.instructions.push(Instruction::LocalGet(char_ptr));
+                self.instructions.push(Instruction::I64Const(
+                    (value::OBJ_STRING << value::HDR_KIND_SHIFT | 1) as i64,
+                ));
+                self.instructions
+                    .push(Instruction::I64Store(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
+                // Copy byte
+                self.instructions.push(Instruction::LocalGet(char_ptr));
+                self.instructions.push(Instruction::LocalGet(str_local));
+                self.instructions.push(Instruction::I32Const(8));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::LocalGet(idx));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions
+                    .push(Instruction::I32Load8U(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 0,
+                        memory_index: 0,
+                    }));
+                self.instructions
+                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
+                        offset: 8,
+                        align: 0,
+                        memory_index: 0,
+                    }));
+                // cons(char_ptr, acc)
+                self.instructions.push(Instruction::LocalGet(char_ptr));
+                self.instructions.push(Instruction::I64ExtendI32U);
+                self.instructions.push(Instruction::LocalGet(acc));
+                self.instructions.push(Instruction::Call(self.rt.list_cons));
+                self.instructions.push(Instruction::LocalSet(acc));
+                self.instructions.push(Instruction::Br(0));
+                self.instructions.push(Instruction::End);
+                self.instructions.push(Instruction::End);
+                self.instructions.push(Instruction::LocalGet(acc));
+            }
+            "String.join" if args.len() == 2 => {
+                // args on stack: [list_of_strings(i32), separator(i32)]
+                // Two-pass: compute total length, then alloc and copy
+                let sep = self.alloc_local(WasmType::I32);
+                let list = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalSet(sep));
+                self.instructions.push(Instruction::LocalSet(list));
+                // Pass 1: total length
+                let total = self.alloc_local(WasmType::I32);
+                let ptr = self.alloc_local(WasmType::I32);
+                let is_first = self.alloc_local(WasmType::I32);
+                let sep_len = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::I32Const(0));
+                self.instructions.push(Instruction::LocalSet(total));
+                self.instructions.push(Instruction::LocalGet(list));
+                self.instructions.push(Instruction::LocalSet(ptr));
+                self.instructions.push(Instruction::I32Const(1));
+                self.instructions.push(Instruction::LocalSet(is_first));
+                // sep_len
+                self.instructions.push(Instruction::LocalGet(sep));
+                self.instructions
+                    .push(Instruction::I64Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
+                self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
+                self.instructions.push(Instruction::I64And);
+                self.instructions.push(Instruction::I32WrapI64);
+                self.instructions.push(Instruction::LocalSet(sep_len));
+                // Loop
+                self.instructions
+                    .push(Instruction::Block(wasm_encoder::BlockType::Empty));
+                self.instructions
+                    .push(Instruction::Loop(wasm_encoder::BlockType::Empty));
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::I32Eqz);
+                self.instructions.push(Instruction::BrIf(1));
+                // if not first, add sep_len
+                self.instructions.push(Instruction::LocalGet(is_first));
+                self.instructions.push(Instruction::I32Eqz);
+                self.emit_if(wasm_encoder::BlockType::Empty);
+                self.instructions.push(Instruction::LocalGet(total));
+                self.instructions.push(Instruction::LocalGet(sep_len));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::LocalSet(total));
+                self.emit_end();
+                self.instructions.push(Instruction::I32Const(0));
+                self.instructions.push(Instruction::LocalSet(is_first));
+                // elem_ptr = head (i64→i32)
+                let elem = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::I32Const(0));
+                self.instructions.push(Instruction::Call(self.rt.obj_field));
+                self.instructions.push(Instruction::I32WrapI64);
+                self.instructions.push(Instruction::LocalSet(elem));
+                // total += elem.len
+                self.instructions.push(Instruction::LocalGet(total));
+                self.instructions.push(Instruction::LocalGet(elem));
+                self.instructions
+                    .push(Instruction::I64Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
+                self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
+                self.instructions.push(Instruction::I64And);
+                self.instructions.push(Instruction::I32WrapI64);
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::LocalSet(total));
+                // next
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::I32Const(1));
+                self.instructions
+                    .push(Instruction::Call(self.rt.obj_field_i32));
+                self.instructions.push(Instruction::LocalSet(ptr));
+                self.instructions.push(Instruction::Br(0));
+                self.instructions.push(Instruction::End);
+                self.instructions.push(Instruction::End);
+                // Alloc result string
+                let result_ptr = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::I32Const(8));
+                self.instructions.push(Instruction::LocalGet(total));
+                self.instructions.push(Instruction::I32Const(7));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::I32Const(-8i32));
+                self.instructions.push(Instruction::I32And);
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::Call(self.rt.alloc));
+                self.instructions.push(Instruction::LocalSet(result_ptr));
+                // Header
+                self.instructions.push(Instruction::LocalGet(result_ptr));
+                self.instructions.push(Instruction::I64Const(
+                    (value::OBJ_STRING << value::HDR_KIND_SHIFT) as i64,
+                ));
+                self.instructions.push(Instruction::LocalGet(total));
+                self.instructions.push(Instruction::I64ExtendI32U);
+                self.instructions.push(Instruction::I64Or);
+                self.instructions
+                    .push(Instruction::I64Store(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
+                // Pass 2: copy bytes
+                let write_pos = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::I32Const(0));
+                self.instructions.push(Instruction::LocalSet(write_pos));
+                self.instructions.push(Instruction::LocalGet(list));
+                self.instructions.push(Instruction::LocalSet(ptr));
+                self.instructions.push(Instruction::I32Const(1));
+                self.instructions.push(Instruction::LocalSet(is_first));
+                self.instructions
+                    .push(Instruction::Block(wasm_encoder::BlockType::Empty));
+                self.instructions
+                    .push(Instruction::Loop(wasm_encoder::BlockType::Empty));
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::I32Eqz);
+                self.instructions.push(Instruction::BrIf(1));
+                // separator
+                self.instructions.push(Instruction::LocalGet(is_first));
+                self.instructions.push(Instruction::I32Eqz);
+                self.emit_if(wasm_encoder::BlockType::Empty);
+                // copy sep
+                self.instructions.push(Instruction::LocalGet(result_ptr));
+                self.instructions.push(Instruction::I32Const(8));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::LocalGet(write_pos));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::LocalGet(sep));
+                self.instructions.push(Instruction::I32Const(8));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::LocalGet(sep_len));
+                self.instructions.push(Instruction::MemoryCopy {
+                    src_mem: 0,
+                    dst_mem: 0,
+                });
+                self.instructions.push(Instruction::LocalGet(write_pos));
+                self.instructions.push(Instruction::LocalGet(sep_len));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::LocalSet(write_pos));
+                self.emit_end();
+                self.instructions.push(Instruction::I32Const(0));
+                self.instructions.push(Instruction::LocalSet(is_first));
+                // elem
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::I32Const(0));
+                self.instructions.push(Instruction::Call(self.rt.obj_field));
+                self.instructions.push(Instruction::I32WrapI64);
+                self.instructions.push(Instruction::LocalSet(elem));
+                let elem_len = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalGet(elem));
+                self.instructions
+                    .push(Instruction::I64Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
+                self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
+                self.instructions.push(Instruction::I64And);
+                self.instructions.push(Instruction::I32WrapI64);
+                self.instructions.push(Instruction::LocalSet(elem_len));
+                // copy elem bytes
+                self.instructions.push(Instruction::LocalGet(result_ptr));
+                self.instructions.push(Instruction::I32Const(8));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::LocalGet(write_pos));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::LocalGet(elem));
+                self.instructions.push(Instruction::I32Const(8));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::LocalGet(elem_len));
+                self.instructions.push(Instruction::MemoryCopy {
+                    src_mem: 0,
+                    dst_mem: 0,
+                });
+                self.instructions.push(Instruction::LocalGet(write_pos));
+                self.instructions.push(Instruction::LocalGet(elem_len));
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::LocalSet(write_pos));
+                // next
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::I32Const(1));
+                self.instructions
+                    .push(Instruction::Call(self.rt.obj_field_i32));
+                self.instructions.push(Instruction::LocalSet(ptr));
+                self.instructions.push(Instruction::Br(0));
+                self.instructions.push(Instruction::End);
+                self.instructions.push(Instruction::End);
+                self.instructions.push(Instruction::LocalGet(result_ptr));
+            }
             "String.startsWith" | "String.endsWith" | "String.contains" | "String.replace"
-            | "String.split" | "String.join" | "String.toUpper" | "String.toLower"
-            | "String.chars" | "String.byteLength"
+            | "String.split" | "String.toUpper" | "String.toLower" | "String.byteLength"
                 if !args.is_empty() =>
             {
                 for _ in args {
