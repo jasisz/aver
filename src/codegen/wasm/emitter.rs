@@ -29,7 +29,8 @@ pub fn build_wasm_module(
 ) -> Result<Vec<u8>, String> {
     let mut module = Module::new();
 
-    let fn_defs: Vec<&FnDef> = ctx
+    // Collect all function definitions: entry module + dependent modules
+    let mut fn_defs: Vec<&FnDef> = ctx
         .items
         .iter()
         .filter_map(|item| {
@@ -40,6 +41,19 @@ pub fn build_wasm_module(
             }
         })
         .collect();
+
+    // Module function name mapping: bare name → qualified name, for fn_indices
+    let mut module_fn_qualified: HashMap<String, String> = HashMap::new();
+    for module_info in &ctx.modules {
+        for fd in &module_info.fn_defs {
+            if fd.name == "main" {
+                continue; // skip dependent module main functions
+            }
+            let qualified = format!("{}.{}", module_info.prefix, fd.name);
+            module_fn_qualified.insert(fd.name.clone(), qualified);
+            fn_defs.push(fd);
+        }
+    }
 
     // -----------------------------------------------------------------------
     // Collect string literals from AST
@@ -247,8 +261,15 @@ pub fn build_wasm_module(
     // User function types — generate from fn_sigs
     let mut fn_type_indices: HashMap<String, u32> = HashMap::new();
     for (i, fd) in fn_defs.iter().enumerate() {
+        // Try bare name first, then qualified name for module functions
+        let qualified = module_fn_qualified.get(&fd.name);
+        let sig_key = qualified.map(|q| q.as_str()).unwrap_or(&fd.name);
         let (param_vals, result_vals) =
-            if let Some((param_types, ret_type, _)) = ctx.fn_sigs.get(&fd.name) {
+            if let Some((param_types, ret_type, _)) = ctx
+                .fn_sigs
+                .get(sig_key)
+                .or_else(|| ctx.fn_sigs.get(&fd.name))
+            {
                 let params: Vec<ValType> = param_types
                     .iter()
                     .map(|t| aver_type_to_wasm(t).to_val_type())
@@ -355,7 +376,12 @@ pub fn build_wasm_module(
     for (i, fd) in fn_defs.iter().enumerate() {
         let type_idx = fn_type_indices[&fd.name];
         function_section.function(type_idx);
-        fn_indices.insert(fd.name.clone(), user_fn_base + i as u32);
+        let idx = user_fn_base + i as u32;
+        fn_indices.insert(fd.name.clone(), idx);
+        // Also register qualified name for module functions
+        if let Some(qualified) = module_fn_qualified.get(&fd.name) {
+            fn_indices.insert(qualified.clone(), idx);
+        }
     }
 
     module.section(&function_section);
@@ -449,17 +475,28 @@ pub fn build_wasm_module(
             &variant_registry,
         );
 
-        // Add params with types from fn_sigs
-        let param_types: Vec<crate::types::Type> =
-            if let Some((pt, _, _)) = ctx.fn_sigs.get(&fd.name) {
-                pt.clone()
-            } else {
-                vec![crate::types::Type::Unknown; fd.params.len()]
-            };
+        // Add params with types from fn_sigs (try qualified name for module fns)
+        let fn_sig_key = module_fn_qualified
+            .get(&fd.name)
+            .map(|q| q.as_str())
+            .unwrap_or(&fd.name);
+        let param_types: Vec<crate::types::Type> = if let Some((pt, _, _)) = ctx
+            .fn_sigs
+            .get(fn_sig_key)
+            .or_else(|| ctx.fn_sigs.get(&fd.name))
+        {
+            pt.clone()
+        } else {
+            vec![crate::types::Type::Unknown; fd.params.len()]
+        };
         emitter.add_params(&fd.params, &param_types);
 
         // Get return type for TCO loop and match inference
-        let ret_wasm_type = if let Some((_, ret, _)) = ctx.fn_sigs.get(&fd.name) {
+        let ret_wasm_type = if let Some((_, ret, _)) = ctx
+            .fn_sigs
+            .get(fn_sig_key)
+            .or_else(|| ctx.fn_sigs.get(&fd.name))
+        {
             aver_type_to_wasm(ret)
         } else {
             WasmType::I64
