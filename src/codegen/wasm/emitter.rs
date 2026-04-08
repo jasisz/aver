@@ -270,7 +270,12 @@ pub fn build_wasm_module(
         .ty()
         .function(vec![], vec![ValType::I32, ValType::I32]);
 
-    let rt_base_type_count = 26u32; // 26 type entries (indices 0-25)
+    // 26: (i64) -> (i32, i32) — format_value
+    type_section
+        .ty()
+        .function(vec![ValType::I64], vec![ValType::I32, ValType::I32]);
+
+    let rt_base_type_count = 27u32; // 27 type entries (indices 0-26)
 
     // User function types — generate from fn_sigs
     let mut fn_type_indices: HashMap<String, u32> = HashMap::new();
@@ -342,6 +347,18 @@ pub fn build_wasm_module(
                     wasm_encoder::EntityType::Function(type_idx),
                 );
                 write_stdout_import = Some(idx);
+                import_func_count += 1;
+            }
+            // Always import format_value for string interpolation of complex types
+            if let Some(abi_entry) = super::abi::lookup("Format.value") {
+                let type_idx = find_or_add_import_type(&mut import_section, &rti, abi_entry);
+                let idx = import_func_count;
+                import_section.import(
+                    super::abi::ABI_MODULE,
+                    abi_entry.import_name,
+                    wasm_encoder::EntityType::Function(type_idx),
+                );
+                host_imports.insert(abi_entry.import_name.to_string(), idx);
                 import_func_count += 1;
             }
         }
@@ -756,6 +773,7 @@ fn find_or_add_import_type(
     match (abi_entry.params, abi_entry.results) {
         (&[ValType::I32, ValType::I32], &[]) => rti.fd_write_buf, // (i32,i32)->()
         (&[], &[ValType::I32, ValType::I32]) => 25,               // () -> (i32, i32)
+        (&[ValType::I64], &[ValType::I32, ValType::I32]) => 26,   // (i64) -> (i32, i32)
         (&[ValType::I64, ValType::I64], &[ValType::I64]) => {
             // (i64,i64)->i64 — not in our type table, reuse... hmm
             // Actually we need to handle this. For now use a known type.

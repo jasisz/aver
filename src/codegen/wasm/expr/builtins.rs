@@ -700,11 +700,54 @@ impl<'a> ExprEmitter<'a> {
                 self.emit_end();
             }
             Some(Type::List(_) | Type::Result(_, _) | Type::Option(_) | Type::Named(_)) => {
-                // TODO: proper to_string for complex heap types
-                // For now: convert pointer to number string (shows address)
-                self.instructions.push(Instruction::I64ExtendI32S);
-                self.instructions
-                    .push(Instruction::Call(self.rt.i64_to_str_obj));
+                // Complex heap type → call host format_value import
+                if let Some(&idx) = self.host_import_indices.get("format_value") {
+                    self.instructions.push(Instruction::I64ExtendI32S);
+                    self.instructions.push(Instruction::Call(idx));
+                    // Returns (ptr, len) — build string object
+                    let len = self.alloc_local(WasmType::I32);
+                    let ptr = self.alloc_local(WasmType::I32);
+                    self.instructions.push(Instruction::LocalSet(len));
+                    self.instructions.push(Instruction::LocalSet(ptr));
+                    let str_ptr = self.alloc_local(WasmType::I32);
+                    self.instructions.push(Instruction::I32Const(8));
+                    self.instructions.push(Instruction::LocalGet(len));
+                    self.instructions.push(Instruction::I32Const(7));
+                    self.instructions.push(Instruction::I32Add);
+                    self.instructions.push(Instruction::I32Const(-8i32));
+                    self.instructions.push(Instruction::I32And);
+                    self.instructions.push(Instruction::I32Add);
+                    self.instructions.push(Instruction::Call(self.rt.alloc));
+                    self.instructions.push(Instruction::LocalSet(str_ptr));
+                    self.instructions.push(Instruction::LocalGet(str_ptr));
+                    self.instructions.push(Instruction::I64Const(
+                        (value::OBJ_STRING << value::HDR_KIND_SHIFT) as i64,
+                    ));
+                    self.instructions.push(Instruction::LocalGet(len));
+                    self.instructions.push(Instruction::I64ExtendI32U);
+                    self.instructions.push(Instruction::I64Or);
+                    self.instructions
+                        .push(Instruction::I64Store(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 3,
+                            memory_index: 0,
+                        }));
+                    self.instructions.push(Instruction::LocalGet(str_ptr));
+                    self.instructions.push(Instruction::I32Const(8));
+                    self.instructions.push(Instruction::I32Add);
+                    self.instructions.push(Instruction::LocalGet(ptr));
+                    self.instructions.push(Instruction::LocalGet(len));
+                    self.instructions.push(Instruction::MemoryCopy {
+                        src_mem: 0,
+                        dst_mem: 0,
+                    });
+                    self.instructions.push(Instruction::LocalGet(str_ptr));
+                } else {
+                    // Fallback: show address
+                    self.instructions.push(Instruction::I64ExtendI32S);
+                    self.instructions
+                        .push(Instruction::Call(self.rt.i64_to_str_obj));
+                }
             }
             _ => match wt {
                 WasmType::I64 => {

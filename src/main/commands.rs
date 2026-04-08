@@ -1360,6 +1360,109 @@ pub(super) fn cmd_run_wasm(file: &str, module_root_override: Option<&str>) {
 }
 
 #[cfg(feature = "wasm")]
+/// Format a WASM value (i64) by reading heap structures from memory.
+fn format_wasm_value(val: i64, mem: &[u8]) -> String {
+    let ptr = val as u32 as usize;
+    let io_scratch = 128; // IO_SCRATCH_SIZE
+
+    // Check if it looks like a heap pointer
+    if ptr >= io_scratch && ptr + 8 <= mem.len() {
+        let header = u64::from_le_bytes(mem[ptr..ptr + 8].try_into().unwrap_or([0; 8]));
+        let kind = (header >> 56) & 0xFF;
+        let field_count = header & 0xFFFFFFFF;
+
+        match kind {
+            0 => {
+                // OBJ_STRING
+                let len = field_count as usize;
+                if ptr + 8 + len <= mem.len() {
+                    let bytes = &mem[ptr + 8..ptr + 8 + len];
+                    return String::from_utf8_lossy(bytes).to_string();
+                }
+            }
+            4 | 9 => {
+                // OBJ_LIST_CONS / OBJ_LIST_CONS_F64
+                let is_f64 = kind == 9;
+                let mut items = Vec::new();
+                let mut cur = ptr;
+                while cur != 0 && cur + 24 <= mem.len() {
+                    let h = u64::from_le_bytes(mem[cur..cur + 8].try_into().unwrap_or([0; 8]));
+                    if (h >> 56) & 0xFF != kind {
+                        break;
+                    }
+                    let head =
+                        u64::from_le_bytes(mem[cur + 8..cur + 16].try_into().unwrap_or([0; 8]));
+                    if is_f64 {
+                        items.push(format!("{}", f64::from_bits(head)));
+                    } else {
+                        items.push(format_wasm_value(head as i64, mem));
+                    }
+                    let tail =
+                        u64::from_le_bytes(mem[cur + 16..cur + 24].try_into().unwrap_or([0; 8]));
+                    cur = tail as u32 as usize;
+                }
+                return format!("[{}]", items.join(", "));
+            }
+            5 => {
+                // OBJ_TUPLE
+                let count = field_count as usize;
+                let mut items = Vec::new();
+                for i in 0..count {
+                    if ptr + 8 + (i + 1) * 8 <= mem.len() {
+                        let field = u64::from_le_bytes(
+                            mem[ptr + 8 + i * 8..ptr + 8 + (i + 1) * 8]
+                                .try_into()
+                                .unwrap_or([0; 8]),
+                        );
+                        items.push(format_wasm_value(field as i64, mem));
+                    }
+                }
+                return format!("({})", items.join(", "));
+            }
+            3 | 7 | 8 => {
+                // OBJ_WRAPPER / OBJ_WRAPPER_F64 / OBJ_WRAPPER_I32
+                let tag = (header >> 48) & 0xFF;
+                let prefix = match tag {
+                    0 => "Result.Ok",
+                    1 => "Result.Err",
+                    2 => "Option.Some",
+                    _ => "Wrapper",
+                };
+                if ptr + 16 <= mem.len() {
+                    let inner =
+                        u64::from_le_bytes(mem[ptr + 8..ptr + 16].try_into().unwrap_or([0; 8]));
+                    let inner_str = if kind == 7 {
+                        format!("{}", f64::from_bits(inner))
+                    } else if kind == 8 {
+                        let inner_ptr = inner as u32 as usize;
+                        if inner_ptr >= io_scratch {
+                            format!("\"{}\"", format_wasm_value(inner as i64, mem))
+                        } else {
+                            format!("{}", inner)
+                        }
+                    } else {
+                        format_wasm_value(inner as i64, mem)
+                    };
+                    return format!("{}({})", prefix, inner_str);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Check None sentinel
+    if val == -1 {
+        return "Option.None".to_string();
+    }
+    // Check empty list
+    if val == 0 {
+        return "[]".to_string();
+    }
+
+    // Default: print as integer
+    format!("{}", val)
+}
+
 fn run_wasm_with_host(wasm_bytes: &[u8]) -> Result<(), String> {
     use wasmtime::*;
 
@@ -1507,6 +1610,24 @@ fn run_wasm_with_host(wasm_bytes: &[u8]) -> Result<(), String> {
         .func_wrap("aver", "time_sleep", |millis: i64| {
             std::thread::sleep(std::time::Duration::from_millis(millis as u64));
         })
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    // aver/format_value(val: i64) -> (i32, i32) — format any value to string
+    linker
+        .func_wrap(
+            "aver",
+            "format_value",
+            |mut caller: Caller<'_, ()>, val: i64| -> (i32, i32) {
+                let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
+                let formatted = format_wasm_value(val, mem.data(&caller));
+                let bytes = formatted.as_bytes();
+                let len = bytes.len() as i32;
+                let ptr = (mem.data_size(&caller) - 1024) as i32;
+                mem.data_mut(&mut caller)[ptr as usize..ptr as usize + bytes.len()]
+                    .copy_from_slice(bytes);
+                (ptr, len)
+            },
+        )
         .map_err(|e| format!("Link error: {}", e))?;
 
     // Math (no native WASM ops)

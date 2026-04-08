@@ -79,6 +79,15 @@ pub const ABI_TABLE: &[AbiImport] = &[
         params: &[],
         results: &[ValType::I32, ValType::I32], // ptr, len
     },
+    // --- Formatting ---
+    // Formats any value (i64 — may be heap ptr, int, etc.) to a string.
+    // Host walks the heap to produce formatted output.
+    AbiImport {
+        effect: "Format.value",
+        import_name: "format_value",
+        params: &[ValType::I64],
+        results: &[ValType::I32, ValType::I32], // ptr, len
+    },
     // --- Math (no native WASM instructions) ---
     AbiImport {
         effect: "Float.sin",
