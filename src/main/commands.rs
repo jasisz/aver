@@ -1369,6 +1369,7 @@ pub(super) fn cmd_run_wasm(
     }
 }
 
+#[cfg(feature = "wasm")]
 /// Format a WASM value (i64) by reading heap structures from memory.
 fn format_wasm_value(val: i64, mem: &[u8]) -> String {
     let ptr = val as u32 as usize;

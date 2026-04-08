@@ -73,16 +73,15 @@ impl ThinBodyCtx for WasmCallCtx<'_> {
                 .and_then(|module| module.fn_defs.iter().find(|fd| fd.name == bare));
         }
 
-        if let Some(prefix) = self.current_module_prefix {
-            if let Some(fd) = self
+        if let Some(prefix) = self.current_module_prefix
+            && let Some(fd) = self
                 .ctx
                 .modules
                 .iter()
                 .find(|module| module.prefix == prefix)
                 .and_then(|module| module.fn_defs.iter().find(|fd| fd.name == name))
-            {
-                return Some(fd);
-            }
+        {
+            return Some(fd);
         }
 
         self.ctx
