@@ -101,6 +101,18 @@ impl<'a> ExprEmitter<'a> {
             lhs_type
         };
 
+        // String concatenation: + on strings → str_concat
+        if matches!(op, BinOp::Add) && operand_type == WasmType::I32 {
+            let lhs_aver = self.infer_aver_type(&lhs.node);
+            if matches!(lhs_aver, Some(Type::Str)) {
+                self.emit_expr(&lhs.node);
+                self.emit_expr(&rhs.node);
+                self.instructions
+                    .push(Instruction::Call(self.rt.str_concat));
+                return;
+            }
+        }
+
         // String equality: use str_eq runtime function for content comparison
         if matches!(op, BinOp::Eq | BinOp::Neq) && operand_type == WasmType::I32 {
             let lhs_aver = self.infer_aver_type(&lhs.node);

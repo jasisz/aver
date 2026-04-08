@@ -1555,19 +1555,14 @@ fn run_wasm_with_host(wasm_bytes: &[u8]) -> Result<(), String> {
         .instantiate(&mut store, &module)
         .map_err(|e| format!("Instantiation error: {}", e))?;
 
-    // Try _start (may return a value which we discard)
+    // Try _start — check its actual return type and provide matching results buffer
     if let Some(start) = instance.get_func(&mut store, "_start") {
-        let mut results = vec![Val::I32(0)];
-        match start.call(&mut store, &[], &mut results) {
-            Ok(()) => {}
-            Err(_) => {
-                // Retry with no results (void _start)
-                let mut no_results = vec![];
-                start
-                    .call(&mut store, &[], &mut no_results)
-                    .map_err(|e| format!("Execution error: {}", e))?;
-            }
-        }
+        let ty = start.ty(&store);
+        let num_results = ty.results().len();
+        let mut results: Vec<Val> = (0..num_results).map(|_| Val::I32(0)).collect();
+        start
+            .call(&mut store, &[], &mut results)
+            .map_err(|e| format!("Execution error: {}", e))?;
     }
 
     Ok(())
