@@ -185,6 +185,196 @@ pub(super) fn emit_str_byte_len() -> Function {
     f
 }
 
+/// $str_find(haystack: i32, needle: i32, start: i32) -> i32
+/// Returns the first byte index of `needle` in `haystack`, or -1 if absent.
+pub(super) fn emit_str_find(_rt: &RuntimeFuncIndices) -> Function {
+    // params: hay=0, needle=1, start=2.
+    // locals: hay_len=3, needle_len=4, search_start=5, limit=6, pos=7, i=8, found=9
+    let mut f = Function::new(vec![(7, ValType::I32)]);
+
+    emit_load_string_byte_len(&mut f, 0, 3);
+    emit_load_string_byte_len(&mut f, 1, 4);
+
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32LtS);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+        ValType::I32,
+    )));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalSet(5));
+
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32LeU);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+        ValType::I32,
+    )));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32LtU);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(6));
+
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::I32GtU);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalSet(7));
+
+    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::I32GtU);
+    f.instruction(&Instruction::BrIf(1));
+
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalSet(9));
+
+    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Load8U(wasm_encoder::MemArg {
+        offset: 8,
+        align: 0,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Load8U(wasm_encoder::MemArg {
+        offset: 8,
+        align: 0,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(9));
+    f.instruction(&Instruction::Br(2));
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(7));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::End);
+    f
+}
+
+/// $str_starts_with(str: i32, prefix: i32) -> i32
+pub(super) fn emit_str_starts_with(rt: &RuntimeFuncIndices) -> Function {
+    let mut f = Function::new(vec![]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Call(rt.str_find));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::End);
+    f
+}
+
+/// $str_ends_with(str: i32, suffix: i32) -> i32
+pub(super) fn emit_str_ends_with(rt: &RuntimeFuncIndices) -> Function {
+    // params: str=0, suffix=1. locals: str_len=2, suffix_len=3, start=4
+    let mut f = Function::new(vec![(3, ValType::I32)]);
+
+    emit_load_string_byte_len(&mut f, 0, 2);
+    emit_load_string_byte_len(&mut f, 1, 3);
+
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32GtU);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(4));
+
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::Call(rt.str_find));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::End);
+    f
+}
+
+/// $str_contains(str: i32, needle: i32) -> i32
+pub(super) fn emit_str_contains(rt: &RuntimeFuncIndices) -> Function {
+    let mut f = Function::new(vec![]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Call(rt.str_find));
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::End);
+    f
+}
+
 /// $str_concat(a: i32, b: i32) -> i32
 /// Concatenates two string objects, returns new string object pointer.
 pub(super) fn emit_str_concat(rt: &RuntimeFuncIndices) -> Function {
@@ -1235,6 +1425,133 @@ pub fn emit_str_chars(rt: &RuntimeFuncIndices) -> Function {
     f
 }
 
+/// $str_split(str: i32, delim: i32) -> i32
+pub fn emit_str_split(rt: &RuntimeFuncIndices) -> Function {
+    // params: str=0, delim=1.
+    // locals: str_len=2, delim_len=3, search_pos=4, part_start=5, match_pos=6,
+    //         part_len=7, rev_list=8, ptr=9, byte_pos=10, lead=11, width=12
+    let mut f = Function::new(vec![(11, ValType::I32)]);
+
+    emit_load_string_byte_len(&mut f, 0, 2);
+    emit_load_string_byte_len(&mut f, 1, 3);
+
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(7));
+    emit_copy_string_range(&mut f, rt, 0, 5, 7, 9);
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::Call(rt.list_cons));
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(10));
+    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Load8U(wasm_encoder::MemArg {
+        offset: 8,
+        align: 0,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::LocalSet(11));
+    emit_set_utf8_char_width(&mut f, 11, 12);
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::LocalGet(12));
+    f.instruction(&Instruction::LocalSet(7));
+    emit_copy_string_range(&mut f, rt, 0, 5, 7, 9);
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::Call(rt.list_cons));
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::LocalGet(12));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(10));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(7));
+    emit_copy_string_range(&mut f, rt, 0, 5, 7, 9);
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::Call(rt.list_cons));
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::Call(rt.list_reverse));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(5));
+
+    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::Call(rt.str_find));
+    f.instruction(&Instruction::LocalSet(6));
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::BrIf(1));
+
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(7));
+    emit_copy_string_range(&mut f, rt, 0, 5, 7, 9);
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::Call(rt.list_cons));
+    f.instruction(&Instruction::LocalSet(8));
+
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(7));
+    emit_copy_string_range(&mut f, rt, 0, 5, 7, 9);
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::Call(rt.list_cons));
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::Call(rt.list_reverse));
+    f.instruction(&Instruction::End);
+    f
+}
+
 /// $str_join(list: i32, sep: i32) -> i32
 pub fn emit_str_join(rt: &RuntimeFuncIndices) -> Function {
     let mut f = Function::new(vec![
@@ -1382,6 +1699,34 @@ pub fn emit_str_join(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalGet(8));
     f.instruction(&Instruction::End);
     f
+}
+
+/// $str_replace(str: i32, old: i32, new: i32) -> i32
+pub fn emit_str_replace(rt: &RuntimeFuncIndices) -> Function {
+    let mut f = Function::new(vec![(1, ValType::I32)]);
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(rt.str_split));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::Call(rt.str_join));
+    f.instruction(&Instruction::End);
+    f
+}
+
+/// $str_to_lower(str: i32) -> i32
+///
+/// Non-ASCII bytes are preserved unchanged.
+pub fn emit_str_to_lower(rt: &RuntimeFuncIndices) -> Function {
+    emit_str_ascii_case(rt, false)
+}
+
+/// $str_to_upper(str: i32) -> i32
+///
+/// Non-ASCII bytes are preserved unchanged.
+pub fn emit_str_to_upper(rt: &RuntimeFuncIndices) -> Function {
+    emit_str_ascii_case(rt, true)
 }
 
 /// $int_from_str(str: i32) -> i32  (Result<Int, String> wrapper ptr)
@@ -1939,6 +2284,30 @@ fn emit_is_whitespace(f: &mut Function, ch_local: u32) {
     f.instruction(&Instruction::I32Or);
 }
 
+fn emit_copy_string_range(
+    f: &mut Function,
+    rt: &RuntimeFuncIndices,
+    src_local: u32,
+    start_local: u32,
+    len_local: u32,
+    ptr_local: u32,
+) {
+    emit_alloc_string(f, rt, len_local, ptr_local);
+    f.instruction(&Instruction::LocalGet(ptr_local));
+    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(src_local));
+    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(start_local));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(len_local));
+    f.instruction(&Instruction::MemoryCopy {
+        src_mem: 0,
+        dst_mem: 0,
+    });
+}
+
 fn emit_alloc_string(f: &mut Function, rt: &RuntimeFuncIndices, len_local: u32, ptr_local: u32) {
     f.instruction(&Instruction::I32Const(8));
     f.instruction(&Instruction::LocalGet(len_local));
@@ -1961,4 +2330,83 @@ fn emit_alloc_string(f: &mut Function, rt: &RuntimeFuncIndices, len_local: u32, 
         align: 3,
         memory_index: 0,
     }));
+}
+
+fn emit_str_ascii_case(rt: &RuntimeFuncIndices, upper: bool) -> Function {
+    // params: str=0. locals: len=1, i=2, ptr=3, ch=4
+    let mut f = Function::new(vec![(4, ValType::I32)]);
+
+    emit_load_string_byte_len(&mut f, 0, 1);
+    emit_alloc_string(&mut f, rt, 1, 3);
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(2));
+
+    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Load8U(wasm_encoder::MemArg {
+        offset: 8,
+        align: 0,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::LocalSet(4));
+
+    if upper {
+        f.instruction(&Instruction::LocalGet(4));
+        f.instruction(&Instruction::I32Const(b'a' as i32));
+        f.instruction(&Instruction::I32GeU);
+        f.instruction(&Instruction::LocalGet(4));
+        f.instruction(&Instruction::I32Const(b'z' as i32));
+        f.instruction(&Instruction::I32LeU);
+        f.instruction(&Instruction::I32And);
+        f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+        f.instruction(&Instruction::LocalGet(4));
+        f.instruction(&Instruction::I32Const(32));
+        f.instruction(&Instruction::I32Sub);
+        f.instruction(&Instruction::LocalSet(4));
+        f.instruction(&Instruction::End);
+    } else {
+        f.instruction(&Instruction::LocalGet(4));
+        f.instruction(&Instruction::I32Const(b'A' as i32));
+        f.instruction(&Instruction::I32GeU);
+        f.instruction(&Instruction::LocalGet(4));
+        f.instruction(&Instruction::I32Const(b'Z' as i32));
+        f.instruction(&Instruction::I32LeU);
+        f.instruction(&Instruction::I32And);
+        f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+        f.instruction(&Instruction::LocalGet(4));
+        f.instruction(&Instruction::I32Const(32));
+        f.instruction(&Instruction::I32Add);
+        f.instruction(&Instruction::LocalSet(4));
+        f.instruction(&Instruction::End);
+    }
+
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Store8(wasm_encoder::MemArg {
+        offset: 8,
+        align: 0,
+        memory_index: 0,
+    }));
+
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::End);
+    f
 }

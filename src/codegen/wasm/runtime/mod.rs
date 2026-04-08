@@ -81,6 +81,10 @@ pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     funcs.push(vectors::emit_vec_to_list(rt)); // $vec_to_list
     funcs.push(strings::emit_str_len()); // $str_len
     funcs.push(strings::emit_str_byte_len()); // $str_byte_len
+    funcs.push(strings::emit_str_find(rt)); // $str_find
+    funcs.push(strings::emit_str_starts_with(rt)); // $str_starts_with
+    funcs.push(strings::emit_str_ends_with(rt)); // $str_ends_with
+    funcs.push(strings::emit_str_contains(rt)); // $str_contains
     funcs.push(strings::emit_str_char_at(rt)); // $str_char_at
     funcs.push(strings::emit_char_from_code(rt)); // $char_from_code
     funcs.push(strings::emit_char_to_code()); // $char_to_code
@@ -89,7 +93,11 @@ pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     funcs.push(strings::emit_str_trim(rt)); // $str_trim
     funcs.push(strings::emit_str_slice(rt)); // $str_slice
     funcs.push(strings::emit_str_chars(rt)); // $str_chars
+    funcs.push(strings::emit_str_split(rt)); // $str_split
     funcs.push(strings::emit_str_join(rt)); // $str_join
+    funcs.push(strings::emit_str_replace(rt)); // $str_replace
+    funcs.push(strings::emit_str_to_lower(rt)); // $str_to_lower
+    funcs.push(strings::emit_str_to_upper(rt)); // $str_to_upper
     funcs.push(strings::emit_int_from_str(rt)); // $int_from_str
     funcs.push(strings::emit_float_from_str(rt)); // $float_from_str
 

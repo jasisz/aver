@@ -507,7 +507,7 @@ fn collect_strings_from_expr(expr: &Expr, strings: &mut HashSet<String>) {
             collect_strings_from_expr(&e.node, strings);
         }
         Expr::ErrorProp(e) => collect_strings_from_expr(&e.node, strings),
-        Expr::List(items) | Expr::Tuple(items) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items {
                 collect_strings_from_expr(&item.node, strings);
             }
@@ -517,6 +517,13 @@ fn collect_strings_from_expr(expr: &Expr, strings: &mut HashSet<String>) {
                 collect_strings_from_expr(&expr.node, strings);
             }
         }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_strings_from_expr(&base.node, strings);
+            for (_, expr) in updates {
+                collect_strings_from_expr(&expr.node, strings);
+            }
+        }
+        Expr::Attr(base, _) => collect_strings_from_expr(&base.node, strings),
         Expr::TailCall(tc) => {
             for arg in &tc.1 {
                 collect_strings_from_expr(&arg.node, strings);
@@ -585,7 +592,7 @@ fn collect_host_calls_from_expr(expr: &Expr, imports: &mut HashSet<String>) {
             collect_host_calls_from_expr(&e.node, imports);
         }
         Expr::ErrorProp(e) => collect_host_calls_from_expr(&e.node, imports),
-        Expr::List(items) | Expr::Tuple(items) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items {
                 collect_host_calls_from_expr(&item.node, imports);
             }
@@ -595,6 +602,13 @@ fn collect_host_calls_from_expr(expr: &Expr, imports: &mut HashSet<String>) {
                 collect_host_calls_from_expr(&expr.node, imports);
             }
         }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_host_calls_from_expr(&base.node, imports);
+            for (_, expr) in updates {
+                collect_host_calls_from_expr(&expr.node, imports);
+            }
+        }
+        Expr::Attr(base, _) => collect_host_calls_from_expr(&base.node, imports),
         Expr::TailCall(tc) => {
             for arg in &tc.1 {
                 collect_host_calls_from_expr(&arg.node, imports);

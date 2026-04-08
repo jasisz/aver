@@ -156,6 +156,18 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions
                     .push(Instruction::Call(self.rt.str_byte_len));
             }
+            "String.startsWith" if args.len() == 2 => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.str_starts_with));
+            }
+            "String.endsWith" if args.len() == 2 => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.str_ends_with));
+            }
+            "String.contains" if args.len() == 2 => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.str_contains));
+            }
             "String.charAt" if args.len() == 2 => {
                 self.instructions
                     .push(Instruction::Call(self.rt.str_char_at));
@@ -181,28 +193,23 @@ impl<'a> ExprEmitter<'a> {
             "String.chars" if args.len() == 1 => {
                 self.instructions.push(Instruction::Call(self.rt.str_chars));
             }
+            "String.split" if args.len() == 2 => {
+                self.instructions.push(Instruction::Call(self.rt.str_split));
+            }
             "String.join" if args.len() == 2 => {
                 self.instructions.push(Instruction::Call(self.rt.str_join));
             }
-            "String.startsWith" | "String.endsWith" | "String.contains" | "String.replace"
-            | "String.split" | "String.toUpper" | "String.toLower"
-                if !args.is_empty() =>
-            {
-                let ret_type = self.infer_call_return_type(
-                    &crate::ast::Spanned {
-                        node: crate::ast::Expr::Ident(name.to_string()),
-                        line: 0,
-                    },
-                    args,
-                );
-                self.codegen_error(format!(
-                    "builtin `{}` is not implemented in the WASM backend",
-                    name
-                ));
-                for _ in args {
-                    self.instructions.push(Instruction::Drop);
-                }
-                self.emit_default_value(ret_type);
+            "String.replace" if args.len() == 3 => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.str_replace));
+            }
+            "String.toLower" if args.len() == 1 => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.str_to_lower));
+            }
+            "String.toUpper" if args.len() == 1 => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.str_to_upper));
             }
             "String.fromInt" if args.len() == 1 => {
                 self.instructions

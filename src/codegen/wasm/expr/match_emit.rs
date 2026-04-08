@@ -295,15 +295,26 @@ impl<'a> ExprEmitter<'a> {
                         self.emit_string_literal(s);
                         self.instructions.push(Instruction::Call(self.rt.str_eq));
                     }
+                    ir::DispatchLiteral::Float(f) => {
+                        if let Ok(n) = f.parse::<f64>() {
+                            self.instructions.push(Instruction::F64Const(n));
+                            self.instructions.push(Instruction::F64Eq);
+                        } else {
+                            self.codegen_error(
+                                "unsupported dispatch float literal in WASM match lowering",
+                            );
+                            self.instructions.push(Instruction::Drop);
+                            self.instructions.push(Instruction::I32Const(0));
+                        }
+                    }
                     ir::DispatchLiteral::Bool(b) => {
                         self.instructions
                             .push(Instruction::I32Const(if *b { 1 } else { 0 }));
                         self.instructions.push(Instruction::I32Eq);
                     }
-                    _ => {
-                        self.codegen_error("unsupported dispatch literal in WASM match lowering");
-                        self.instructions.push(Instruction::Drop);
+                    ir::DispatchLiteral::Unit => {
                         self.instructions.push(Instruction::I32Const(0));
+                        self.instructions.push(Instruction::I32Eq);
                     }
                 }
             }
@@ -486,15 +497,103 @@ impl<'a> ExprEmitter<'a> {
                         idx,
                     );
                 } else {
-                    self.codegen_error(
-                        "generic cons-pattern fallback is not implemented in the WASM backend",
+                    let Pattern::Cons(head_name, tail_name) = &arm.pattern else {
+                        unreachable!();
+                    };
+                    self.emit_cons_pattern_void(
+                        subj_local,
+                        result_local,
+                        head_name,
+                        tail_name,
+                        arm,
+                        arms,
+                        idx,
                     );
-                    if !is_last {
-                        self.emit_generic_arms(subj_local, subj_type, result_local, arms, idx + 1);
-                    }
                 }
             }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn emit_cons_pattern_void(
+        &mut self,
+        subj_local: u32,
+        result_local: u32,
+        head_name: &str,
+        tail_name: &str,
+        arm: &MatchArm,
+        arms: &[MatchArm],
+        idx: usize,
+    ) {
+        let is_last = idx == arms.len() - 1;
+        let elem_aver_type = self
+            .local_aver_types
+            .get(&subj_local)
+            .and_then(|t| {
+                if let Type::List(inner) = t {
+                    Some(inner.as_ref().clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(Type::Unknown);
+        let elem_wasm_type = aver_type_to_wasm(&elem_aver_type);
+        let expected_kind = match elem_wasm_type {
+            WasmType::F64 => value::OBJ_LIST_CONS_F64,
+            WasmType::I32 | WasmType::I64 => value::OBJ_LIST_CONS,
+        };
+
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        self.instructions.push(Instruction::I32Const(0));
+        self.instructions.push(Instruction::I32GtS);
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        self.instructions.push(Instruction::Call(self.rt.obj_kind));
+        self.instructions
+            .push(Instruction::I32Const(expected_kind as i32));
+        self.instructions.push(Instruction::I32Eq);
+        self.instructions.push(Instruction::I32And);
+        self.emit_if(wasm_encoder::BlockType::Empty);
+
+        let head_local = self.alloc_local(elem_wasm_type);
+        self.locals.insert(head_name.to_string(), head_local);
+        self.local_aver_types
+            .insert(head_local, elem_aver_type.clone());
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        self.instructions.push(Instruction::I32Const(0));
+        match elem_wasm_type {
+            WasmType::F64 => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.obj_field_f64));
+            }
+            WasmType::I32 => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.obj_field_i32));
+            }
+            WasmType::I64 => {
+                self.instructions.push(Instruction::Call(self.rt.obj_field));
+            }
+        }
+        self.instructions.push(Instruction::LocalSet(head_local));
+
+        let tail_local = self.alloc_local(WasmType::I32);
+        self.locals.insert(tail_name.to_string(), tail_local);
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        self.instructions.push(Instruction::I32Const(1));
+        self.instructions
+            .push(Instruction::Call(self.rt.obj_field_i32));
+        self.instructions.push(Instruction::LocalSet(tail_local));
+        if let Some(at) = self.local_aver_types.get(&subj_local).cloned() {
+            self.local_aver_types.insert(tail_local, at);
+        }
+
+        self.emit_expr(&arm.body.node);
+        self.instructions.push(Instruction::LocalSet(result_local));
+
+        if !is_last {
+            self.emit_else();
+            self.emit_generic_arms(subj_local, WasmType::I32, result_local, arms, idx + 1);
+        }
+        self.emit_end();
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -597,6 +696,10 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::I64Const(*n));
                 self.instructions.push(Instruction::I64Eq);
             }
+            Literal::Float(n) => {
+                self.instructions.push(Instruction::F64Const(*n));
+                self.instructions.push(Instruction::F64Eq);
+            }
             Literal::Str(s) => {
                 self.emit_string_literal(s);
                 self.instructions.push(Instruction::Call(self.rt.str_eq));
@@ -606,10 +709,9 @@ impl<'a> ExprEmitter<'a> {
                     .push(Instruction::I32Const(if *b { 1 } else { 0 }));
                 self.instructions.push(Instruction::I32Eq);
             }
-            _ => {
-                self.codegen_error("unsupported literal pattern in WASM generic match fallback");
-                self.instructions.push(Instruction::Drop);
+            Literal::Unit => {
                 self.instructions.push(Instruction::I32Const(0));
+                self.instructions.push(Instruction::I32Eq);
             }
         }
         self.emit_if(wasm_encoder::BlockType::Empty);

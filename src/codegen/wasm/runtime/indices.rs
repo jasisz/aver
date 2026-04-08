@@ -11,56 +11,64 @@ use wasm_encoder::{TypeSection, ValType};
 #[derive(Debug, Clone, Copy)]
 pub struct RuntimeFuncIndices {
     pub alloc: u32,
-    pub wrap: u32,           // (i32, i64) -> i32
-    pub wrap_f64: u32,       // (i32, f64) -> i32
-    pub wrap_i32: u32,       // (i32, i32) -> i32
-    pub unwrap: u32,         // (i32) -> i64
-    pub unwrap_f64: u32,     // (i32) -> f64
-    pub unwrap_i32: u32,     // (i32) -> i32
-    pub obj_kind: u32,       // (i32) -> i32
-    pub obj_tag: u32,        // (i32) -> i32
-    pub obj_field: u32,      // (i32, i32) -> i64
-    pub obj_field_f64: u32,  // (i32, i32) -> f64
-    pub obj_field_i32: u32,  // (i32, i32) -> i32
-    pub list_cons: u32,      // (i64, i32) -> i32
-    pub list_cons_f64: u32,  // (f64, i32) -> i32
-    pub int_to_str: u32,     // (i64, i32) -> i32
-    pub float_to_str: u32,   // (f64, i32) -> i32
-    pub fd_write_buf: u32,   // (i32, i32) -> ()
-    pub str_eq: u32,         // (i32, i32) -> i32
-    pub str_concat: u32,     // (i32, i32) -> i32
-    pub i64_to_str_obj: u32, // (i64) -> i32
-    pub f64_to_str_obj: u32, // (f64) -> i32
-    pub list_take: u32,      // (i32, i32) -> i32
-    pub list_drop: u32,      // (i32, i32) -> i32
-    pub list_concat: u32,    // (i32, i32) -> i32
-    pub list_reverse: u32,   // (i32) -> i32
-    pub list_contains: u32,  // (i32, i64) -> i32
-    pub list_zip: u32,       // (i32, i32) -> i32
-    pub map_get: u32,        // (i32, i32) -> i32
-    pub map_set: u32,        // (i32, i32, i64) -> i32
-    pub map_has: u32,        // (i32, i32) -> i32
-    pub map_keys: u32,       // (i32) -> i32
-    pub map_entries: u32,    // (i32) -> i32
-    pub vec_from_list: u32,  // (i32) -> i32
-    pub vec_get: u32,        // (i32, i64) -> i32
-    pub vec_len: u32,        // (i32) -> i64
-    pub vec_set: u32,        // (i32, i64, i64) -> i32
-    pub vec_new: u32,        // (i64, i64) -> i32
-    pub vec_to_list: u32,    // (i32) -> i32
-    pub str_len: u32,        // (i32) -> i64
-    pub str_byte_len: u32,   // (i32) -> i64
-    pub str_char_at: u32,    // (i32, i64) -> i32
-    pub char_from_code: u32, // (i64) -> i32
-    pub char_to_code: u32,   // (i32) -> i64
-    pub byte_to_hex: u32,    // (i64) -> i32
-    pub byte_from_hex: u32,  // (i32) -> i32
-    pub str_trim: u32,       // (i32) -> i32
-    pub str_slice: u32,      // (i32, i32, i32) -> i32
-    pub str_chars: u32,      // (i32) -> i32
-    pub str_join: u32,       // (i32, i32) -> i32
-    pub int_from_str: u32,   // (i32) -> i32
-    pub float_from_str: u32, // (i32) -> i32
+    pub wrap: u32,            // (i32, i64) -> i32
+    pub wrap_f64: u32,        // (i32, f64) -> i32
+    pub wrap_i32: u32,        // (i32, i32) -> i32
+    pub unwrap: u32,          // (i32) -> i64
+    pub unwrap_f64: u32,      // (i32) -> f64
+    pub unwrap_i32: u32,      // (i32) -> i32
+    pub obj_kind: u32,        // (i32) -> i32
+    pub obj_tag: u32,         // (i32) -> i32
+    pub obj_field: u32,       // (i32, i32) -> i64
+    pub obj_field_f64: u32,   // (i32, i32) -> f64
+    pub obj_field_i32: u32,   // (i32, i32) -> i32
+    pub list_cons: u32,       // (i64, i32) -> i32
+    pub list_cons_f64: u32,   // (f64, i32) -> i32
+    pub int_to_str: u32,      // (i64, i32) -> i32
+    pub float_to_str: u32,    // (f64, i32) -> i32
+    pub fd_write_buf: u32,    // (i32, i32) -> ()
+    pub str_eq: u32,          // (i32, i32) -> i32
+    pub str_concat: u32,      // (i32, i32) -> i32
+    pub i64_to_str_obj: u32,  // (i64) -> i32
+    pub f64_to_str_obj: u32,  // (f64) -> i32
+    pub list_take: u32,       // (i32, i32) -> i32
+    pub list_drop: u32,       // (i32, i32) -> i32
+    pub list_concat: u32,     // (i32, i32) -> i32
+    pub list_reverse: u32,    // (i32) -> i32
+    pub list_contains: u32,   // (i32, i64) -> i32
+    pub list_zip: u32,        // (i32, i32) -> i32
+    pub map_get: u32,         // (i32, i32) -> i32
+    pub map_set: u32,         // (i32, i32, i64) -> i32
+    pub map_has: u32,         // (i32, i32) -> i32
+    pub map_keys: u32,        // (i32) -> i32
+    pub map_entries: u32,     // (i32) -> i32
+    pub vec_from_list: u32,   // (i32) -> i32
+    pub vec_get: u32,         // (i32, i64) -> i32
+    pub vec_len: u32,         // (i32) -> i64
+    pub vec_set: u32,         // (i32, i64, i64) -> i32
+    pub vec_new: u32,         // (i64, i64) -> i32
+    pub vec_to_list: u32,     // (i32) -> i32
+    pub str_len: u32,         // (i32) -> i64
+    pub str_byte_len: u32,    // (i32) -> i64
+    pub str_find: u32,        // (i32, i32, i32) -> i32
+    pub str_starts_with: u32, // (i32, i32) -> i32
+    pub str_ends_with: u32,   // (i32, i32) -> i32
+    pub str_contains: u32,    // (i32, i32) -> i32
+    pub str_char_at: u32,     // (i32, i64) -> i32
+    pub char_from_code: u32,  // (i64) -> i32
+    pub char_to_code: u32,    // (i32) -> i64
+    pub byte_to_hex: u32,     // (i64) -> i32
+    pub byte_from_hex: u32,   // (i32) -> i32
+    pub str_trim: u32,        // (i32) -> i32
+    pub str_slice: u32,       // (i32, i32, i32) -> i32
+    pub str_chars: u32,       // (i32) -> i32
+    pub str_split: u32,       // (i32, i32) -> i32
+    pub str_join: u32,        // (i32, i32) -> i32
+    pub str_replace: u32,     // (i32, i32, i32) -> i32
+    pub str_to_lower: u32,    // (i32) -> i32
+    pub str_to_upper: u32,    // (i32) -> i32
+    pub int_from_str: u32,    // (i32) -> i32
+    pub float_from_str: u32,  // (i32) -> i32
     /// Total number of runtime functions.
     pub count: u32,
     /// Import function index for writing to stdout (either WASI fd_write or aver/console_print).
@@ -118,6 +126,10 @@ impl RuntimeFuncIndices {
             vec_to_list: next(),
             str_len: next(),
             str_byte_len: next(),
+            str_find: next(),
+            str_starts_with: next(),
+            str_ends_with: next(),
+            str_contains: next(),
             str_char_at: next(),
             char_from_code: next(),
             char_to_code: next(),
@@ -126,7 +138,11 @@ impl RuntimeFuncIndices {
             str_trim: next(),
             str_slice: next(),
             str_chars: next(),
+            str_split: next(),
             str_join: next(),
+            str_replace: next(),
+            str_to_lower: next(),
+            str_to_upper: next(),
             int_from_str: next(),
             float_from_str: next(),
             count: i - base,
@@ -530,6 +546,18 @@ pub fn rt_type_index(
     if local_idx == rt.str_byte_len - import_func_count {
         return rti.unwrap_i64;
     }
+    if local_idx == rt.str_find - import_func_count {
+        return rti.i32_i32_i32_to_i32;
+    }
+    if local_idx == rt.str_starts_with - import_func_count {
+        return rti.wrap_i32;
+    }
+    if local_idx == rt.str_ends_with - import_func_count {
+        return rti.wrap_i32;
+    }
+    if local_idx == rt.str_contains - import_func_count {
+        return rti.wrap_i32;
+    }
     if local_idx == rt.str_char_at - import_func_count {
         return rti.i32_i64_to_i32;
     }
@@ -554,8 +582,20 @@ pub fn rt_type_index(
     if local_idx == rt.str_chars - import_func_count {
         return rti.alloc;
     }
+    if local_idx == rt.str_split - import_func_count {
+        return rti.wrap_i32;
+    }
     if local_idx == rt.str_join - import_func_count {
         return rti.wrap_i32;
+    }
+    if local_idx == rt.str_replace - import_func_count {
+        return rti.i32_i32_i32_to_i32;
+    }
+    if local_idx == rt.str_to_lower - import_func_count {
+        return rti.alloc;
+    }
+    if local_idx == rt.str_to_upper - import_func_count {
+        return rti.alloc;
     }
     if local_idx == rt.int_from_str - import_func_count {
         return rti.alloc;
