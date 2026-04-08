@@ -625,12 +625,32 @@ impl<'a> ExprEmitter<'a> {
 
         // Runtime field access on a record object
         self.emit_expr(&base_expr.node);
-        let field_idx = self
-            .type_fields
-            .iter()
-            .find(|((_, f), _)| f == field_name)
-            .map(|(_, &idx)| idx)
-            .unwrap_or(0);
+
+        // Resolve field index using base expression's type for disambiguation
+        let base_type_name = self.infer_aver_type(&base_expr.node).and_then(|t| match t {
+            Type::Named(name) => Some(name),
+            _ => None,
+        });
+        let field_idx = if let Some(ref type_name) = base_type_name {
+            // Exact match: (type_name, field_name) → index
+            self.type_fields
+                .get(&(type_name.clone(), field_name.to_string()))
+                .copied()
+                .unwrap_or_else(|| {
+                    // Fallback: first field with this name
+                    self.type_fields
+                        .iter()
+                        .find(|((_, f), _)| f == field_name)
+                        .map(|(_, &idx)| idx)
+                        .unwrap_or(0)
+                })
+        } else {
+            self.type_fields
+                .iter()
+                .find(|((_, f), _)| f == field_name)
+                .map(|(_, &idx)| idx)
+                .unwrap_or(0)
+        };
 
         // Determine field type from type_defs
         let field_wasm_type = self.infer_record_field_type(base_expr, field_name);
