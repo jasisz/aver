@@ -256,7 +256,13 @@ pub fn build_wasm_module(
         .ty()
         .function(vec![ValType::I64, ValType::I64], vec![ValType::I32]);
 
-    let rt_base_type_count = 24u32; // 24 type entries (indices 0-23)
+    // 24: (i32, i32, i32) -> i32 — $str_slice
+    type_section.ty().function(
+        vec![ValType::I32, ValType::I32, ValType::I32],
+        vec![ValType::I32],
+    );
+
+    let rt_base_type_count = 25u32; // 25 type entries (indices 0-24)
 
     // User function types — generate from fn_sigs
     let mut fn_type_indices: HashMap<String, u32> = HashMap::new();

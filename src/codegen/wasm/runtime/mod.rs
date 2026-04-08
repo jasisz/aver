@@ -84,6 +84,11 @@ pub fn emit_runtime_functions(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Vec<
     funcs.push(vectors::emit_vec_len()); // $vec_len
     funcs.push(vectors::emit_vec_set(rt)); // $vec_set
     funcs.push(vectors::emit_vec_new(rt)); // $vec_new
+    funcs.push(strings::emit_str_trim(rt)); // $str_trim
+    funcs.push(strings::emit_str_slice(rt)); // $str_slice
+    funcs.push(strings::emit_str_chars(rt)); // $str_chars
+    funcs.push(strings::emit_str_join(rt)); // $str_join
+    funcs.push(strings::emit_int_from_str(rt)); // $int_from_str
 
     funcs
 }

@@ -49,6 +49,11 @@ pub struct RuntimeFuncIndices {
     pub vec_len: u32,        // (i32) -> i64  vec → Int
     pub vec_set: u32,        // (i32, i64, i64) -> i32  (vec, idx, val) → Option<Vector>
     pub vec_new: u32,        // (i64, i64) -> i32  (size, fill) → vec
+    pub str_trim: u32,       // (i32) -> i32  trim whitespace
+    pub str_slice: u32,      // (i32, i32, i32) -> i32  substring
+    pub str_chars: u32,      // (i32) -> i32  string → list of chars
+    pub str_join: u32,       // (i32, i32) -> i32  join list with separator
+    pub int_from_str: u32,   // (i32) -> i32  parse int → Result wrapper
     /// Total number of runtime functions.
     pub count: u32,
     /// Import function index for writing to stdout (either WASI fd_write or aver/console_print).
@@ -108,6 +113,11 @@ impl RuntimeFuncIndices {
             vec_len: next(),
             vec_set: next(),
             vec_new: next(),
+            str_trim: next(),
+            str_slice: next(),
+            str_chars: next(),
+            str_join: next(),
+            int_from_str: next(),
             count: i - base,
             fd_write_import: 0,
             adapter: super::super::WasmAdapter::Aver,
@@ -278,6 +288,21 @@ pub fn rt_type_index(
     if local_idx == rt.vec_new - import_func_count {
         return 23;
     } // (i64,i64)->i32
+    if local_idx == rt.str_trim - import_func_count {
+        return rti.alloc;
+    } // (i32)->i32
+    if local_idx == rt.str_slice - import_func_count {
+        return 24;
+    } // (i32,i32,i32)->i32 — new type
+    if local_idx == rt.str_chars - import_func_count {
+        return rti.alloc;
+    } // (i32)->i32
+    if local_idx == rt.str_join - import_func_count {
+        return rti.wrap_i32;
+    } // (i32,i32)->i32
+    if local_idx == rt.int_from_str - import_func_count {
+        return rti.alloc;
+    } // (i32)->i32
 
     panic!(
         "Unknown runtime function index: {} (base={})",
