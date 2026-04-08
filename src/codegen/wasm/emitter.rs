@@ -264,22 +264,21 @@ pub fn build_wasm_module(
         // Try bare name first, then qualified name for module functions
         let qualified = module_fn_qualified.get(&fd.name);
         let sig_key = qualified.map(|q| q.as_str()).unwrap_or(&fd.name);
-        let (param_vals, result_vals) =
-            if let Some((param_types, ret_type, _)) = ctx
-                .fn_sigs
-                .get(sig_key)
-                .or_else(|| ctx.fn_sigs.get(&fd.name))
-            {
-                let params: Vec<ValType> = param_types
-                    .iter()
-                    .map(|t| aver_type_to_wasm(t).to_val_type())
-                    .collect();
-                let ret = vec![aver_type_to_wasm(ret_type).to_val_type()];
-                (params, ret)
-            } else {
-                // Fallback: all i64
-                (vec![ValType::I64; fd.params.len()], vec![ValType::I64])
-            };
+        let (param_vals, result_vals) = if let Some((param_types, ret_type, _)) = ctx
+            .fn_sigs
+            .get(sig_key)
+            .or_else(|| ctx.fn_sigs.get(&fd.name))
+        {
+            let params: Vec<ValType> = param_types
+                .iter()
+                .map(|t| aver_type_to_wasm(t).to_val_type())
+                .collect();
+            let ret = vec![aver_type_to_wasm(ret_type).to_val_type()];
+            (params, ret)
+        } else {
+            // Fallback: all i64
+            (vec![ValType::I64; fd.params.len()], vec![ValType::I64])
+        };
         type_section.ty().function(param_vals, result_vals);
         fn_type_indices.insert(fd.name.clone(), rt_base_type_count + i as u32);
     }
