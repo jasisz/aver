@@ -94,7 +94,8 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::Call(self.rt.map_keys));
             }
             "Map.entries" if args.len() == 1 => {
-                // Map IS a list of tuples -- identity
+                self.instructions
+                    .push(Instruction::Call(self.rt.map_entries));
             }
             "Map.fromList" if args.len() == 1 => {
                 // Identity -- list of tuples IS a map
@@ -171,19 +172,43 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::I64And);
             }
             "String.charAt" if args.len() == 2 => {
-                // args: [str_ptr(i32), idx(i64)] -> returns String (single char)
-                // Load byte at str_ptr + 8 + idx, create 1-char string
-                let idx_local = self.alloc_local(WasmType::I32);
-                self.instructions.push(Instruction::I32WrapI64); // idx -> i32
+                // args: [str_ptr(i32), idx(i64)] -> returns Option<String>
+                let idx_local = self.alloc_local(WasmType::I64);
                 self.instructions.push(Instruction::LocalSet(idx_local));
                 let str_local = self.alloc_local(WasmType::I32);
                 self.instructions.push(Instruction::LocalSet(str_local));
-                // Alloc 1-char string object: 8 header + 8 padded
+                let len_local = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalGet(str_local));
+                self.instructions
+                    .push(Instruction::I64Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
+                self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
+                self.instructions.push(Instruction::I64And);
+                self.instructions.push(Instruction::I32WrapI64);
+                self.instructions.push(Instruction::LocalSet(len_local));
+                self.instructions.push(Instruction::LocalGet(idx_local));
+                self.instructions.push(Instruction::I64Const(0));
+                self.instructions.push(Instruction::I64LtS);
+                self.instructions.push(Instruction::LocalGet(idx_local));
+                self.instructions.push(Instruction::LocalGet(len_local));
+                self.instructions.push(Instruction::I64ExtendI32U);
+                self.instructions.push(Instruction::I64GeU);
+                self.instructions.push(Instruction::I32Or);
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
+                self.instructions
+                    .push(Instruction::I32Const(value::NONE_SENTINEL));
+                self.emit_else();
+                let idx_i32_local = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalGet(idx_local));
+                self.instructions.push(Instruction::I32WrapI64);
+                self.instructions.push(Instruction::LocalSet(idx_i32_local));
                 let ptr = self.alloc_local(WasmType::I32);
                 self.instructions.push(Instruction::I32Const(16));
                 self.instructions.push(Instruction::Call(self.rt.alloc));
                 self.instructions.push(Instruction::LocalSet(ptr));
-                // Header: OBJ_STRING, len=1
                 self.instructions.push(Instruction::LocalGet(ptr));
                 self.instructions.push(Instruction::I64Const(
                     (value::OBJ_STRING << value::HDR_KIND_SHIFT | 1) as i64,
@@ -199,7 +224,7 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalGet(str_local));
                 self.instructions.push(Instruction::I32Const(8));
                 self.instructions.push(Instruction::I32Add);
-                self.instructions.push(Instruction::LocalGet(idx_local));
+                self.instructions.push(Instruction::LocalGet(idx_i32_local));
                 self.instructions.push(Instruction::I32Add);
                 self.instructions
                     .push(Instruction::I32Load8U(wasm_encoder::MemArg {
@@ -213,7 +238,11 @@ impl<'a> ExprEmitter<'a> {
                         align: 0,
                         memory_index: 0,
                     }));
+                self.instructions
+                    .push(Instruction::I32Const(value::WRAP_SOME as i32));
                 self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::Call(self.rt.wrap_i32));
+                self.emit_end();
             }
             "String.trim" if args.len() == 1 => {
                 self.instructions.push(Instruction::Call(self.rt.str_trim));
@@ -393,6 +422,10 @@ impl<'a> ExprEmitter<'a> {
             "Float.toInt" if args.len() == 1 => {
                 self.instructions.push(Instruction::I64TruncF64S);
             }
+            "Float.fromString" if args.len() == 1 => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.float_from_str));
+            }
             "Bool.and" if args.len() == 2 => {
                 self.instructions.push(Instruction::I32And);
             }
@@ -403,25 +436,77 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::I32Eqz);
             }
             "Char.fromCode" if args.len() == 1 => {
-                // Int(i64) -> single-char String
-                // Alloc 1-char string, store byte
+                // Int(i64) -> Option<String> with UTF-8 encoding.
+                let code64 = self.alloc_local(WasmType::I64);
+                self.instructions.push(Instruction::LocalSet(code64));
+                self.instructions.push(Instruction::LocalGet(code64));
+                self.instructions.push(Instruction::I64Const(0));
+                self.instructions.push(Instruction::I64LtS);
+                self.instructions.push(Instruction::LocalGet(code64));
+                self.instructions.push(Instruction::I64Const(0x10FFFF));
+                self.instructions.push(Instruction::I64GtS);
+                self.instructions.push(Instruction::I32Or);
+                self.instructions.push(Instruction::LocalGet(code64));
+                self.instructions.push(Instruction::I64Const(0xD800));
+                self.instructions.push(Instruction::I64GeS);
+                self.instructions.push(Instruction::LocalGet(code64));
+                self.instructions.push(Instruction::I64Const(0xDFFF));
+                self.instructions.push(Instruction::I64LeS);
+                self.instructions.push(Instruction::I32And);
+                self.instructions.push(Instruction::I32Or);
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
+                self.instructions
+                    .push(Instruction::I32Const(value::NONE_SENTINEL));
+                self.emit_else();
                 let code = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalGet(code64));
                 self.instructions.push(Instruction::I32WrapI64);
                 self.instructions.push(Instruction::LocalSet(code));
+                let len = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalGet(code));
+                self.instructions.push(Instruction::I32Const(0x80));
+                self.instructions.push(Instruction::I32LtU);
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
+                self.instructions.push(Instruction::I32Const(1));
+                self.emit_else();
+                self.instructions.push(Instruction::LocalGet(code));
+                self.instructions.push(Instruction::I32Const(0x800));
+                self.instructions.push(Instruction::I32LtU);
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
+                self.instructions.push(Instruction::I32Const(2));
+                self.emit_else();
+                self.instructions.push(Instruction::LocalGet(code));
+                self.instructions.push(Instruction::I32Const(0x10000));
+                self.instructions.push(Instruction::I32LtU);
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
+                self.instructions.push(Instruction::I32Const(3));
+                self.emit_else();
+                self.instructions.push(Instruction::I32Const(4));
+                self.emit_end();
+                self.emit_end();
+                self.emit_end();
+                self.instructions.push(Instruction::LocalSet(len));
                 let ptr = self.alloc_local(WasmType::I32);
                 self.instructions.push(Instruction::I32Const(16));
                 self.instructions.push(Instruction::Call(self.rt.alloc));
                 self.instructions.push(Instruction::LocalSet(ptr));
                 self.instructions.push(Instruction::LocalGet(ptr));
                 self.instructions.push(Instruction::I64Const(
-                    (value::OBJ_STRING << value::HDR_KIND_SHIFT | 1) as i64,
+                    (value::OBJ_STRING << value::HDR_KIND_SHIFT) as i64,
                 ));
+                self.instructions.push(Instruction::LocalGet(len));
+                self.instructions.push(Instruction::I64ExtendI32U);
+                self.instructions.push(Instruction::I64Or);
                 self.instructions
                     .push(Instruction::I64Store(wasm_encoder::MemArg {
                         offset: 0,
                         align: 3,
                         memory_index: 0,
                     }));
+                self.instructions.push(Instruction::LocalGet(len));
+                self.instructions.push(Instruction::I32Const(1));
+                self.instructions.push(Instruction::I32Eq);
+                self.emit_if(wasm_encoder::BlockType::Empty);
                 self.instructions.push(Instruction::LocalGet(ptr));
                 self.instructions.push(Instruction::LocalGet(code));
                 self.instructions
@@ -430,7 +515,139 @@ impl<'a> ExprEmitter<'a> {
                         align: 0,
                         memory_index: 0,
                     }));
+                self.emit_else();
+                self.instructions.push(Instruction::LocalGet(len));
+                self.instructions.push(Instruction::I32Const(2));
+                self.instructions.push(Instruction::I32Eq);
+                self.emit_if(wasm_encoder::BlockType::Empty);
                 self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::LocalGet(code));
+                self.instructions.push(Instruction::I32Const(6));
+                self.instructions.push(Instruction::I32ShrU);
+                self.instructions.push(Instruction::I32Const(0xC0));
+                self.instructions.push(Instruction::I32Or);
+                self.instructions
+                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
+                        offset: 8,
+                        align: 0,
+                        memory_index: 0,
+                    }));
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::LocalGet(code));
+                self.instructions.push(Instruction::I32Const(0x3F));
+                self.instructions.push(Instruction::I32And);
+                self.instructions.push(Instruction::I32Const(0x80));
+                self.instructions.push(Instruction::I32Or);
+                self.instructions
+                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
+                        offset: 9,
+                        align: 0,
+                        memory_index: 0,
+                    }));
+                self.emit_else();
+                self.instructions.push(Instruction::LocalGet(len));
+                self.instructions.push(Instruction::I32Const(3));
+                self.instructions.push(Instruction::I32Eq);
+                self.emit_if(wasm_encoder::BlockType::Empty);
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::LocalGet(code));
+                self.instructions.push(Instruction::I32Const(12));
+                self.instructions.push(Instruction::I32ShrU);
+                self.instructions.push(Instruction::I32Const(0xE0));
+                self.instructions.push(Instruction::I32Or);
+                self.instructions
+                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
+                        offset: 8,
+                        align: 0,
+                        memory_index: 0,
+                    }));
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::LocalGet(code));
+                self.instructions.push(Instruction::I32Const(6));
+                self.instructions.push(Instruction::I32ShrU);
+                self.instructions.push(Instruction::I32Const(0x3F));
+                self.instructions.push(Instruction::I32And);
+                self.instructions.push(Instruction::I32Const(0x80));
+                self.instructions.push(Instruction::I32Or);
+                self.instructions
+                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
+                        offset: 9,
+                        align: 0,
+                        memory_index: 0,
+                    }));
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::LocalGet(code));
+                self.instructions.push(Instruction::I32Const(0x3F));
+                self.instructions.push(Instruction::I32And);
+                self.instructions.push(Instruction::I32Const(0x80));
+                self.instructions.push(Instruction::I32Or);
+                self.instructions
+                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
+                        offset: 10,
+                        align: 0,
+                        memory_index: 0,
+                    }));
+                self.emit_else();
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::LocalGet(code));
+                self.instructions.push(Instruction::I32Const(18));
+                self.instructions.push(Instruction::I32ShrU);
+                self.instructions.push(Instruction::I32Const(0xF0));
+                self.instructions.push(Instruction::I32Or);
+                self.instructions
+                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
+                        offset: 8,
+                        align: 0,
+                        memory_index: 0,
+                    }));
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::LocalGet(code));
+                self.instructions.push(Instruction::I32Const(12));
+                self.instructions.push(Instruction::I32ShrU);
+                self.instructions.push(Instruction::I32Const(0x3F));
+                self.instructions.push(Instruction::I32And);
+                self.instructions.push(Instruction::I32Const(0x80));
+                self.instructions.push(Instruction::I32Or);
+                self.instructions
+                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
+                        offset: 9,
+                        align: 0,
+                        memory_index: 0,
+                    }));
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::LocalGet(code));
+                self.instructions.push(Instruction::I32Const(6));
+                self.instructions.push(Instruction::I32ShrU);
+                self.instructions.push(Instruction::I32Const(0x3F));
+                self.instructions.push(Instruction::I32And);
+                self.instructions.push(Instruction::I32Const(0x80));
+                self.instructions.push(Instruction::I32Or);
+                self.instructions
+                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
+                        offset: 10,
+                        align: 0,
+                        memory_index: 0,
+                    }));
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::LocalGet(code));
+                self.instructions.push(Instruction::I32Const(0x3F));
+                self.instructions.push(Instruction::I32And);
+                self.instructions.push(Instruction::I32Const(0x80));
+                self.instructions.push(Instruction::I32Or);
+                self.instructions
+                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
+                        offset: 11,
+                        align: 0,
+                        memory_index: 0,
+                    }));
+                self.emit_end();
+                self.emit_end();
+                self.emit_end();
+                self.instructions
+                    .push(Instruction::I32Const(value::WRAP_SOME as i32));
+                self.instructions.push(Instruction::LocalGet(ptr));
+                self.instructions.push(Instruction::Call(self.rt.wrap_i32));
+                self.emit_end();
             }
             "Char.toCode" if args.len() == 1 => {
                 // String -> Int (first byte code)

@@ -72,6 +72,7 @@ pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     funcs.push(maps::emit_map_set(rt)); // $map_set
     funcs.push(maps::emit_map_has(rt)); // $map_has
     funcs.push(maps::emit_map_keys(rt)); // $map_keys
+    funcs.push(maps::emit_map_entries(rt)); // $map_entries
     funcs.push(vectors::emit_vec_from_list(rt)); // $vec_from_list
     funcs.push(vectors::emit_vec_get(rt)); // $vec_get
     funcs.push(vectors::emit_vec_len()); // $vec_len
@@ -82,6 +83,7 @@ pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     funcs.push(strings::emit_str_chars(rt)); // $str_chars
     funcs.push(strings::emit_str_join(rt)); // $str_join
     funcs.push(strings::emit_int_from_str(rt)); // $int_from_str
+    funcs.push(strings::emit_float_from_str(rt)); // $float_from_str
 
     funcs
 }

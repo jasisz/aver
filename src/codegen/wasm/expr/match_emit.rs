@@ -59,33 +59,43 @@ impl<'a> ExprEmitter<'a> {
                 // Emit comparison directly
                 let lhs_type = self.infer_expr_type(&lhs.node);
                 let rhs_type = self.infer_expr_type(&rhs.node);
+                let lhs_aver_type = self.infer_aver_type(&lhs.node);
                 let cmp_type = if lhs_type == WasmType::F64 || rhs_type == WasmType::F64 {
                     WasmType::F64
                 } else {
                     lhs_type
                 };
 
-                self.emit_expr(&lhs.node);
-                if cmp_type == WasmType::F64 && lhs_type == WasmType::I64 {
-                    self.instructions.push(Instruction::F64ConvertI64S);
-                }
-                self.emit_expr(&rhs.node);
-                if cmp_type == WasmType::F64 && rhs_type == WasmType::I64 {
-                    self.instructions.push(Instruction::F64ConvertI64S);
-                }
+                if matches!(op, ir::BoolCompareOp::Eq)
+                    && cmp_type == WasmType::I32
+                    && matches!(lhs_aver_type, Some(Type::Str))
+                {
+                    self.emit_expr(&lhs.node);
+                    self.emit_expr(&rhs.node);
+                    self.instructions.push(Instruction::Call(self.rt.str_eq));
+                } else {
+                    self.emit_expr(&lhs.node);
+                    if cmp_type == WasmType::F64 && lhs_type == WasmType::I64 {
+                        self.instructions.push(Instruction::F64ConvertI64S);
+                    }
+                    self.emit_expr(&rhs.node);
+                    if cmp_type == WasmType::F64 && rhs_type == WasmType::I64 {
+                        self.instructions.push(Instruction::F64ConvertI64S);
+                    }
 
-                let cmp_instr = match (op, cmp_type) {
-                    (ir::BoolCompareOp::Eq, WasmType::I64) => Instruction::I64Eq,
-                    (ir::BoolCompareOp::Eq, WasmType::F64) => Instruction::F64Eq,
-                    (ir::BoolCompareOp::Eq, WasmType::I32) => Instruction::I32Eq,
-                    (ir::BoolCompareOp::Lt, WasmType::I64) => Instruction::I64LtS,
-                    (ir::BoolCompareOp::Lt, WasmType::F64) => Instruction::F64Lt,
-                    (ir::BoolCompareOp::Lt, WasmType::I32) => Instruction::I32LtS,
-                    (ir::BoolCompareOp::Gt, WasmType::I64) => Instruction::I64GtS,
-                    (ir::BoolCompareOp::Gt, WasmType::F64) => Instruction::F64Gt,
-                    (ir::BoolCompareOp::Gt, WasmType::I32) => Instruction::I32GtS,
-                };
-                self.instructions.push(cmp_instr);
+                    let cmp_instr = match (op, cmp_type) {
+                        (ir::BoolCompareOp::Eq, WasmType::I64) => Instruction::I64Eq,
+                        (ir::BoolCompareOp::Eq, WasmType::F64) => Instruction::F64Eq,
+                        (ir::BoolCompareOp::Eq, WasmType::I32) => Instruction::I32Eq,
+                        (ir::BoolCompareOp::Lt, WasmType::I64) => Instruction::I64LtS,
+                        (ir::BoolCompareOp::Lt, WasmType::F64) => Instruction::F64Lt,
+                        (ir::BoolCompareOp::Lt, WasmType::I32) => Instruction::I32LtS,
+                        (ir::BoolCompareOp::Gt, WasmType::I64) => Instruction::I64GtS,
+                        (ir::BoolCompareOp::Gt, WasmType::F64) => Instruction::F64Gt,
+                        (ir::BoolCompareOp::Gt, WasmType::I32) => Instruction::I32GtS,
+                    };
+                    self.instructions.push(cmp_instr);
+                }
 
                 // Invert for Neq/Gte/Lte
                 let true_arm = if invert {
@@ -281,6 +291,10 @@ impl<'a> ExprEmitter<'a> {
                         self.instructions.push(Instruction::I64Const(*n));
                         self.instructions.push(Instruction::I64Eq);
                     }
+                    ir::DispatchLiteral::Str(s) => {
+                        self.emit_string_literal(s);
+                        self.instructions.push(Instruction::Call(self.rt.str_eq));
+                    }
                     ir::DispatchLiteral::Bool(b) => {
                         self.instructions
                             .push(Instruction::I32Const(if *b { 1 } else { 0 }));
@@ -308,16 +322,34 @@ impl<'a> ExprEmitter<'a> {
                     WrapperKind::ResultErr => value::WRAP_ERR,
                     WrapperKind::OptionSome => value::WRAP_SOME,
                 };
-                // Short-circuit: check ptr > 0 first, only then call obj_tag
+                // Wrapper match must agree on both kind and tag.
                 self.instructions.push(Instruction::LocalGet(subj_local));
                 self.instructions.push(Instruction::I32Const(0));
                 self.instructions.push(Instruction::I32GtS);
                 self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
                 self.instructions.push(Instruction::LocalGet(subj_local));
+                self.instructions.push(Instruction::Call(self.rt.obj_kind));
+                self.instructions
+                    .push(Instruction::I32Const(value::OBJ_WRAPPER as i32));
+                self.instructions.push(Instruction::I32Eq);
+                self.instructions.push(Instruction::LocalGet(subj_local));
+                self.instructions.push(Instruction::Call(self.rt.obj_kind));
+                self.instructions
+                    .push(Instruction::I32Const(value::OBJ_WRAPPER_F64 as i32));
+                self.instructions.push(Instruction::I32Eq);
+                self.instructions.push(Instruction::I32Or);
+                self.instructions.push(Instruction::LocalGet(subj_local));
+                self.instructions.push(Instruction::Call(self.rt.obj_kind));
+                self.instructions
+                    .push(Instruction::I32Const(value::OBJ_WRAPPER_I32 as i32));
+                self.instructions.push(Instruction::I32Eq);
+                self.instructions.push(Instruction::I32Or);
+                self.instructions.push(Instruction::LocalGet(subj_local));
                 self.instructions.push(Instruction::Call(self.rt.obj_tag));
                 self.instructions
                     .push(Instruction::I32Const(expected_tag as i32));
                 self.instructions.push(Instruction::I32Eq);
+                self.instructions.push(Instruction::I32And);
                 self.emit_else();
                 self.instructions.push(Instruction::I32Const(0)); // false
                 self.emit_end();
@@ -466,6 +498,10 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::I64Const(*n));
                 self.instructions.push(Instruction::I64Eq);
             }
+            Literal::Str(s) => {
+                self.emit_string_literal(s);
+                self.instructions.push(Instruction::Call(self.rt.str_eq));
+            }
             Literal::Bool(b) => {
                 self.instructions
                     .push(Instruction::I32Const(if *b { 1 } else { 0 }));
@@ -537,15 +573,33 @@ impl<'a> ExprEmitter<'a> {
                     WrapperKind::ResultErr => value::WRAP_ERR,
                     WrapperKind::OptionSome => value::WRAP_SOME,
                 };
-                // Combined check: ptr > 0 && obj_tag == expected
+                // Wrapper match must agree on both kind and tag.
                 self.instructions.push(Instruction::LocalGet(subj_local));
                 self.instructions.push(Instruction::I32Const(0));
                 self.instructions.push(Instruction::I32GtS);
+                self.instructions.push(Instruction::LocalGet(subj_local));
+                self.instructions.push(Instruction::Call(self.rt.obj_kind));
+                self.instructions
+                    .push(Instruction::I32Const(value::OBJ_WRAPPER as i32));
+                self.instructions.push(Instruction::I32Eq);
+                self.instructions.push(Instruction::LocalGet(subj_local));
+                self.instructions.push(Instruction::Call(self.rt.obj_kind));
+                self.instructions
+                    .push(Instruction::I32Const(value::OBJ_WRAPPER_F64 as i32));
+                self.instructions.push(Instruction::I32Eq);
+                self.instructions.push(Instruction::I32Or);
+                self.instructions.push(Instruction::LocalGet(subj_local));
+                self.instructions.push(Instruction::Call(self.rt.obj_kind));
+                self.instructions
+                    .push(Instruction::I32Const(value::OBJ_WRAPPER_I32 as i32));
+                self.instructions.push(Instruction::I32Eq);
+                self.instructions.push(Instruction::I32Or);
                 self.instructions.push(Instruction::LocalGet(subj_local));
                 self.instructions.push(Instruction::Call(self.rt.obj_tag));
                 self.instructions
                     .push(Instruction::I32Const(expected_tag as i32));
                 self.instructions.push(Instruction::I32Eq);
+                self.instructions.push(Instruction::I32And);
                 self.instructions.push(Instruction::I32And);
                 self.emit_if(wasm_encoder::BlockType::Empty);
                 if let Some(binding_name) = bindings.first() {
@@ -585,10 +639,16 @@ impl<'a> ExprEmitter<'a> {
         let expected_tag = info.map(|i| i.tag).unwrap_or(0);
         let field_type_names: Vec<String> = info.map(|i| i.field_types.clone()).unwrap_or_default();
 
-        // Combined check: ptr > 0 && obj_tag == expected_tag
+        // Variant match must agree on both kind and tag.
         self.instructions.push(Instruction::LocalGet(subj_local));
         self.instructions.push(Instruction::I32Const(0));
         self.instructions.push(Instruction::I32GtS);
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        self.instructions.push(Instruction::Call(self.rt.obj_kind));
+        self.instructions
+            .push(Instruction::I32Const(value::OBJ_VARIANT as i32));
+        self.instructions.push(Instruction::I32Eq);
+        self.instructions.push(Instruction::I32And);
         self.instructions.push(Instruction::LocalGet(subj_local));
         self.instructions.push(Instruction::Call(self.rt.obj_tag));
         self.instructions

@@ -64,13 +64,18 @@ pub(super) fn emit_map_get(rt: &RuntimeFuncIndices) -> Function {
 }
 
 /// $map_set(map: i32, key: i32, value: i64) -> i32
-/// Prepends new (key, value) entry to the association list.
-/// (Does NOT remove old entries with same key — get returns first match.)
+/// Prepends new (key, value) entry and removes older entries with the same key.
 pub(super) fn emit_map_set(rt: &RuntimeFuncIndices) -> Function {
-    // params: map=0, key=1, value=2(i64). locals: tuple_ptr=3, map_cell=4
+    // params: map=0, key=1, value=2(i64)
+    // locals: tuple_ptr=3, cur=4, entry_tuple=5, entry_key=6, kept_rev=7, filtered_tail=8, map_cell=9
     let mut f = Function::new(vec![
         (1, ValType::I32), // 3: tuple_ptr
-        (1, ValType::I32), // 4: map_cell
+        (1, ValType::I32), // 4: cur
+        (1, ValType::I32), // 5: entry_tuple
+        (1, ValType::I32), // 6: entry_key
+        (1, ValType::I32), // 7: kept_rev
+        (1, ValType::I32), // 8: filtered_tail
+        (1, ValType::I32), // 9: map_cell
     ]);
     // Alloc tuple: header + 2 fields
     f.instruction(&Instruction::I32Const(24));
@@ -103,27 +108,107 @@ pub(super) fn emit_map_set(rt: &RuntimeFuncIndices) -> Function {
         align: 3,
         memory_index: 0,
     }));
-    // Cons(tuple, map) with OBJ_MAP_ENTRY kind
-    // Alloc 24 bytes: header + head(i64) + tail(i64)
-    let map_cell = 4u32; // local index
+    // kept_rev = [] ; cur = map
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(7));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalSet(4));
+    // Scan old map and keep only entries with different keys.
+    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Call(rt.obj_field));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Call(rt.obj_field));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::LocalSet(6));
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(rt.str_eq));
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::Call(rt.list_cons));
+    f.instruction(&Instruction::LocalSet(7));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::Call(rt.obj_field_i32));
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    // Rebuild filtered tail in original order.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::BrIf(1));
     f.instruction(&Instruction::I32Const(24));
     f.instruction(&Instruction::Call(rt.alloc));
-    f.instruction(&Instruction::LocalSet(map_cell));
-    // Header: OBJ_MAP_ENTRY, field_count=2
-    f.instruction(&Instruction::LocalGet(map_cell));
-    f.instruction(&Instruction::I64Const(super::super::value::make_header(
-        super::super::value::OBJ_MAP_ENTRY,
-        0,
-        0,
-        2,
-    ) as i64));
+    f.instruction(&Instruction::LocalSet(9));
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::I64Const(
+        make_header(OBJ_MAP_ENTRY, 0, 0, 2) as i64
+    ));
     f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
         offset: 0,
         align: 3,
         memory_index: 0,
     }));
-    // Head = tuple ptr as i64
-    f.instruction(&Instruction::LocalGet(map_cell));
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Call(rt.obj_field));
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 8,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I64ExtendI32S);
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 16,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::Call(rt.obj_field_i32));
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    // Prepend the new entry to the filtered tail.
+    f.instruction(&Instruction::I32Const(24));
+    f.instruction(&Instruction::Call(rt.alloc));
+    f.instruction(&Instruction::LocalSet(9));
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::I64Const(
+        make_header(OBJ_MAP_ENTRY, 0, 0, 2) as i64
+    ));
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::LocalGet(9));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I64ExtendI32U);
     f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
@@ -131,16 +216,15 @@ pub(super) fn emit_map_set(rt: &RuntimeFuncIndices) -> Function {
         align: 3,
         memory_index: 0,
     }));
-    // Tail = map ptr as i64
-    f.instruction(&Instruction::LocalGet(map_cell));
-    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::LocalGet(8));
     f.instruction(&Instruction::I64ExtendI32S);
     f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
         offset: 16,
         align: 3,
         memory_index: 0,
     }));
-    f.instruction(&Instruction::LocalGet(map_cell));
+    f.instruction(&Instruction::LocalGet(9));
     f.instruction(&Instruction::End);
     f
 }
@@ -224,6 +308,40 @@ pub(super) fn emit_map_keys(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     // reverse
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::Call(rt.list_reverse));
+    f.instruction(&Instruction::End);
+    f
+}
+
+/// $map_entries(map: i32) -> i32  (plain list of tuple pointers)
+pub(super) fn emit_map_entries(rt: &RuntimeFuncIndices) -> Function {
+    let mut f = Function::new(vec![
+        (1, ValType::I32), // 1: ptr
+        (1, ValType::I32), // 2: acc
+    ]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Call(rt.obj_field));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::Call(rt.list_cons));
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::Call(rt.obj_field_i32));
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::Call(rt.list_reverse));
     f.instruction(&Instruction::End);

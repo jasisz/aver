@@ -14,7 +14,7 @@ use wasm_encoder::{
     GlobalType, ImportSection, MemorySection, MemoryType, Module, TypeSection, ValType,
 };
 
-use crate::ast::{Expr, FnBody, FnDef, Literal, Stmt, StrPart, TopLevel};
+use crate::ast::{Expr, FnBody, FnDef, Literal, Pattern, Stmt, StrPart, TopLevel};
 use crate::codegen::CodegenContext;
 
 use super::expr::{ExprEmitter, StringLiteral, build_variant_registry};
@@ -615,6 +615,7 @@ fn collect_strings_from_expr(expr: &Expr, strings: &mut HashSet<String>) {
         Expr::Match { subject, arms } => {
             collect_strings_from_expr(&subject.node, strings);
             for arm in arms {
+                collect_strings_from_pattern(&arm.pattern, strings);
                 collect_strings_from_expr(&arm.body.node, strings);
             }
         }
@@ -635,6 +636,20 @@ fn collect_strings_from_expr(expr: &Expr, strings: &mut HashSet<String>) {
         Expr::TailCall(tc) => {
             for arg in &tc.1 {
                 collect_strings_from_expr(&arg.node, strings);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_strings_from_pattern(pattern: &Pattern, strings: &mut HashSet<String>) {
+    match pattern {
+        Pattern::Literal(Literal::Str(s)) => {
+            strings.insert(s.clone());
+        }
+        Pattern::Tuple(items) => {
+            for item in items {
+                collect_strings_from_pattern(item, strings);
             }
         }
         _ => {}

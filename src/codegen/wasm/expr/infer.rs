@@ -6,7 +6,7 @@ use crate::codegen::CodegenContext;
 use crate::ir::{
     CallPlan, SemanticConstructor, WrapperKind, classify_call_plan, classify_constructor_name,
 };
-use crate::types::Type;
+use crate::types::{Type, parse_type_str};
 
 use super::super::types::{WasmType, aver_type_to_wasm};
 use super::ExprEmitter;
@@ -210,6 +210,21 @@ impl<'a> ExprEmitter<'a> {
                     .unwrap_or(Type::Unknown);
                 Some(Type::List(Box::new(elem_ty)))
             }
+            Expr::Tuple(items) => Some(Type::Tuple(
+                items
+                    .iter()
+                    .map(|item| self.infer_aver_type(&item.node).unwrap_or(Type::Unknown))
+                    .collect(),
+            )),
+            Expr::RecordCreate { type_name, .. } => Some(Type::Named(type_name.clone())),
+            Expr::Attr(base, field) => {
+                if let Expr::Ident(base_name) = &base.node
+                    && base_name.chars().next().is_some_and(|c| c.is_uppercase())
+                {
+                    return None;
+                }
+                self.infer_record_field_aver_type(base, field)
+            }
             Expr::InterpolatedStr(_) => Some(Type::Str),
             _ => None,
         }
@@ -320,6 +335,57 @@ impl<'a> ExprEmitter<'a> {
         }
 
         WasmType::I64 // default
+    }
+
+    pub(super) fn infer_record_field_aver_type(
+        &self,
+        base_expr: &Spanned<Expr>,
+        field_name: &str,
+    ) -> Option<Type> {
+        let base_type_name = match self.infer_aver_type(&base_expr.node) {
+            Some(Type::Named(name)) => Some(name),
+            _ => None,
+        };
+
+        if let Some(type_name) = base_type_name.as_deref() {
+            for td in &self.ctx.type_defs {
+                if let crate::ast::TypeDef::Product { name, fields, .. } = td
+                    && name == type_name
+                {
+                    for (fname, ftype) in fields {
+                        if fname == field_name {
+                            return Some(parse_type_str(ftype));
+                        }
+                    }
+                }
+            }
+
+            for module in &self.ctx.modules {
+                for td in &module.type_defs {
+                    if let crate::ast::TypeDef::Product { name, fields, .. } = td
+                        && (name == type_name || format!("{}.{}", module.prefix, name) == type_name)
+                    {
+                        for (fname, ftype) in fields {
+                            if fname == field_name {
+                                return Some(parse_type_str(ftype));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        for td in &self.ctx.type_defs {
+            if let crate::ast::TypeDef::Product { fields, .. } = td {
+                for (fname, ftype) in fields {
+                    if fname == field_name {
+                        return Some(parse_type_str(ftype));
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     pub(super) fn type_str_to_wasm(&self, type_str: &str) -> WasmType {

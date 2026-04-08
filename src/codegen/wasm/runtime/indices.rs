@@ -38,6 +38,7 @@ pub struct RuntimeFuncIndices {
     pub map_set: u32,        // (i32, i32, i64) -> i32  (map, key, value) -> map
     pub map_has: u32,        // (i32, i32) -> i32  (map, key) -> bool
     pub map_keys: u32,       // (i32) -> i32  (map) -> list
+    pub map_entries: u32,    // (i32) -> i32  (map) -> list of tuples
     pub vec_from_list: u32,  // (i32) -> i32  list → vector
     pub vec_get: u32,        // (i32, i64) -> i32  (vec, idx) → Option
     pub vec_len: u32,        // (i32) -> i64  vec → Int
@@ -48,6 +49,7 @@ pub struct RuntimeFuncIndices {
     pub str_chars: u32,      // (i32) -> i32  string → list of chars
     pub str_join: u32,       // (i32, i32) -> i32  join list with separator
     pub int_from_str: u32,   // (i32) -> i32  parse int → Result wrapper
+    pub float_from_str: u32, // (i32) -> i32  parse float → Result wrapper
     /// Total number of runtime functions.
     pub count: u32,
     /// Import function index for writing to stdout (either WASI fd_write or aver/console_print).
@@ -96,6 +98,7 @@ impl RuntimeFuncIndices {
             map_set: next(),
             map_has: next(),
             map_keys: next(),
+            map_entries: next(),
             vec_from_list: next(),
             vec_get: next(),
             vec_len: next(),
@@ -106,6 +109,7 @@ impl RuntimeFuncIndices {
             str_chars: next(),
             str_join: next(),
             int_from_str: next(),
+            float_from_str: next(),
             count: i - base,
             fd_write_import: 0,
             adapter: super::super::WasmAdapter::Aver,
@@ -240,6 +244,9 @@ pub fn rt_type_index(
     if local_idx == rt.map_keys - import_func_count {
         return rti.alloc;
     } // (i32)->i32
+    if local_idx == rt.map_entries - import_func_count {
+        return rti.alloc;
+    } // (i32)->i32
     if local_idx == rt.vec_from_list - import_func_count {
         return rti.alloc;
     } // (i32)->i32
@@ -268,6 +275,9 @@ pub fn rt_type_index(
         return rti.wrap_i32;
     } // (i32,i32)->i32
     if local_idx == rt.int_from_str - import_func_count {
+        return rti.alloc;
+    } // (i32)->i32
+    if local_idx == rt.float_from_str - import_func_count {
         return rti.alloc;
     } // (i32)->i32
 

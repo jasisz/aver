@@ -796,6 +796,317 @@ pub fn emit_int_from_str(rt: &RuntimeFuncIndices) -> Function {
     f
 }
 
+/// $float_from_str(str: i32) -> i32  (Result<Float, String> wrapper ptr)
+///
+/// Supports optional leading '-', a fractional part, and optional `e`/`E`
+/// exponent with optional sign. On parse failure it returns
+/// Result.Err(original_input_string).
+pub fn emit_float_from_str(rt: &RuntimeFuncIndices) -> Function {
+    let mut f = Function::new(vec![
+        (11, ValType::I32), // 1..11: len, idx, negative, seen_dot, saw_digit, ch, digit,
+        //           exp_state, exp_negative, saw_exp_digit, exp_value
+        (2, ValType::F64), // 12..13: value, frac_div
+    ]);
+    // len
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::I64Const(0xFFFFFFFF));
+    f.instruction(&Instruction::I64And);
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::LocalSet(1));
+    // zero-init state
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(9));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(10));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(11));
+    f.instruction(&Instruction::F64Const(0.0));
+    f.instruction(&Instruction::LocalSet(12));
+    f.instruction(&Instruction::F64Const(1.0));
+    f.instruction(&Instruction::LocalSet(13));
+    // Leading '-'
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32GtS);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::I32Load8U(wasm_encoder::MemArg {
+        offset: 8,
+        align: 0,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::I32Const(b'-' as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    // Main scan loop
+    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Load8U(wasm_encoder::MemArg {
+        offset: 8,
+        align: 0,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::LocalSet(6));
+
+    // Exponent sign right after e/E.
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::I32Const(b'+' as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::I32Const(2));
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::Br(1));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::I32Const(b'-' as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalSet(9));
+    f.instruction(&Instruction::I32Const(2));
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::Br(1));
+    f.instruction(&Instruction::End);
+
+    // Inside exponent digits.
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::I32Const(b'0' as i32));
+    f.instruction(&Instruction::I32LtU);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    emit_float_parse_error(&mut f, rt);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::I32Const(b'9' as i32));
+    f.instruction(&Instruction::I32GtU);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    emit_float_parse_error(&mut f, rt);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalSet(10));
+    f.instruction(&Instruction::I32Const(2));
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::I32Const(b'0' as i32));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(7));
+    f.instruction(&Instruction::LocalGet(11));
+    f.instruction(&Instruction::I32Const(10));
+    f.instruction(&Instruction::I32Mul);
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(11));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::Br(1));
+    f.instruction(&Instruction::End);
+
+    // Decimal point.
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::I32Const(b'.' as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    emit_float_parse_error(&mut f, rt);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::Br(1));
+    f.instruction(&Instruction::End);
+
+    // Exponent marker.
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::I32Const(b'e' as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::I32Const(b'E' as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::I32Or);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    emit_float_parse_error(&mut f, rt);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::Br(1));
+    f.instruction(&Instruction::End);
+
+    // Mantissa digit.
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::I32Const(b'0' as i32));
+    f.instruction(&Instruction::I32LtU);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    emit_float_parse_error(&mut f, rt);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::I32Const(b'9' as i32));
+    f.instruction(&Instruction::I32GtU);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    emit_float_parse_error(&mut f, rt);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::I32Const(b'0' as i32));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(7));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(13));
+    f.instruction(&Instruction::F64Const(10.0));
+    f.instruction(&Instruction::F64Mul);
+    f.instruction(&Instruction::LocalSet(13));
+    f.instruction(&Instruction::LocalGet(12));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::F64ConvertI32U);
+    f.instruction(&Instruction::LocalGet(13));
+    f.instruction(&Instruction::F64Div);
+    f.instruction(&Instruction::F64Add);
+    f.instruction(&Instruction::LocalSet(12));
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::LocalGet(12));
+    f.instruction(&Instruction::F64Const(10.0));
+    f.instruction(&Instruction::F64Mul);
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::F64ConvertI32U);
+    f.instruction(&Instruction::F64Add);
+    f.instruction(&Instruction::LocalSet(12));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    // Reject empty / lone '-'
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    emit_float_parse_error(&mut f, rt);
+    f.instruction(&Instruction::End);
+    // Reject dangling exponent marker/sign with no digits.
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    emit_float_parse_error(&mut f, rt);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Const(2));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    emit_float_parse_error(&mut f, rt);
+    f.instruction(&Instruction::End);
+    // Apply exponent.
+    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(11));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(12));
+    f.instruction(&Instruction::F64Const(10.0));
+    f.instruction(&Instruction::F64Div);
+    f.instruction(&Instruction::LocalSet(12));
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::LocalGet(12));
+    f.instruction(&Instruction::F64Const(10.0));
+    f.instruction(&Instruction::F64Mul);
+    f.instruction(&Instruction::LocalSet(12));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(11));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(11));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    // Apply sign
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::F64Const(0.0));
+    f.instruction(&Instruction::LocalGet(12));
+    f.instruction(&Instruction::F64Sub);
+    f.instruction(&Instruction::LocalSet(12));
+    f.instruction(&Instruction::End);
+    // Result.Ok(value)
+    f.instruction(&Instruction::I32Const(WRAP_OK as i32));
+    f.instruction(&Instruction::LocalGet(12));
+    f.instruction(&Instruction::Call(rt.wrap_f64));
+    f.instruction(&Instruction::End);
+    f
+}
+
+fn emit_float_parse_error(f: &mut Function, rt: &RuntimeFuncIndices) {
+    f.instruction(&Instruction::I32Const(WRAP_ERR as i32));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::Call(rt.wrap_i32));
+    f.instruction(&Instruction::Return);
+}
+
 fn emit_is_whitespace(f: &mut Function, ch_local: u32) {
     f.instruction(&Instruction::LocalGet(ch_local));
     f.instruction(&Instruction::I32Const(b' ' as i32));
