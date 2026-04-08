@@ -451,12 +451,69 @@ impl<'a> ExprEmitter<'a> {
                 // Stub: return empty string
                 self.emit_string_literal("");
             }
+            "Time.now" if args.is_empty() => {
+                // Host import returns (ptr, len) — build string object
+                if let Some(&idx) = self.host_import_indices.get("time_now") {
+                    let ptr = self.alloc_local(WasmType::I32);
+                    let len = self.alloc_local(WasmType::I32);
+                    self.instructions.push(Instruction::Call(idx));
+                    self.instructions.push(Instruction::LocalSet(len));
+                    self.instructions.push(Instruction::LocalSet(ptr));
+                    // Alloc string object: header + bytes
+                    let str_ptr = self.alloc_local(WasmType::I32);
+                    self.instructions.push(Instruction::I32Const(8));
+                    self.instructions.push(Instruction::LocalGet(len));
+                    self.instructions.push(Instruction::I32Const(7));
+                    self.instructions.push(Instruction::I32Add);
+                    self.instructions.push(Instruction::I32Const(-8i32));
+                    self.instructions.push(Instruction::I32And);
+                    self.instructions.push(Instruction::I32Add);
+                    self.instructions.push(Instruction::Call(self.rt.alloc));
+                    self.instructions.push(Instruction::LocalSet(str_ptr));
+                    // Header
+                    self.instructions.push(Instruction::LocalGet(str_ptr));
+                    self.instructions.push(Instruction::I64Const(
+                        (value::OBJ_STRING << value::HDR_KIND_SHIFT) as i64,
+                    ));
+                    self.instructions.push(Instruction::LocalGet(len));
+                    self.instructions.push(Instruction::I64ExtendI32U);
+                    self.instructions.push(Instruction::I64Or);
+                    self.instructions
+                        .push(Instruction::I64Store(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 3,
+                            memory_index: 0,
+                        }));
+                    // Copy bytes from host ptr to string object
+                    self.instructions.push(Instruction::LocalGet(str_ptr));
+                    self.instructions.push(Instruction::I32Const(8));
+                    self.instructions.push(Instruction::I32Add);
+                    self.instructions.push(Instruction::LocalGet(ptr));
+                    self.instructions.push(Instruction::LocalGet(len));
+                    self.instructions.push(Instruction::MemoryCopy {
+                        src_mem: 0,
+                        dst_mem: 0,
+                    });
+                    self.instructions.push(Instruction::LocalGet(str_ptr));
+                } else {
+                    self.emit_string_literal("");
+                }
+            }
             "Time.unixMs" if args.is_empty() => {
-                self.instructions.push(Instruction::I64Const(0));
+                if let Some(&idx) = self.host_import_indices.get("time_unixMs") {
+                    self.instructions.push(Instruction::Call(idx));
+                } else {
+                    self.instructions.push(Instruction::I64Const(0));
+                }
             }
             "Time.sleep" if args.len() == 1 => {
-                self.instructions.push(Instruction::Drop);
-                self.instructions.push(Instruction::I32Const(0));
+                if let Some(&idx) = self.host_import_indices.get("time_sleep") {
+                    self.instructions.push(Instruction::Call(idx));
+                    self.instructions.push(Instruction::I32Const(0)); // Unit
+                } else {
+                    self.instructions.push(Instruction::Drop);
+                    self.instructions.push(Instruction::I32Const(0));
+                }
             }
             "Result.withDefault" if args.len() == 2 => {
                 // Same as Option.withDefault

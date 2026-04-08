@@ -71,6 +71,14 @@ pub const ABI_TABLE: &[AbiImport] = &[
         params: &[ValType::I64], // millis
         results: &[],
     },
+    // Returns current UTC timestamp as ISO string.
+    // Host allocates string in WASM memory, returns (ptr, len).
+    AbiImport {
+        effect: "Time.now",
+        import_name: "time_now",
+        params: &[],
+        results: &[ValType::I32, ValType::I32], // ptr, len
+    },
     // --- Math (no native WASM instructions) ---
     AbiImport {
         effect: "Float.sin",

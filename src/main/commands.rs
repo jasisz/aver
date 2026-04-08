@@ -1415,6 +1415,82 @@ fn run_wasm_with_host(wasm_bytes: &[u8]) -> Result<(), String> {
         })
         .map_err(|e| format!("Link error: {}", e))?;
 
+    // aver/time_now() -> (i32, i32)  — returns ISO timestamp string in WASM memory
+    linker
+        .func_wrap(
+            "aver",
+            "time_now",
+            |mut caller: Caller<'_, ()>| -> (i32, i32) {
+                use std::time::{SystemTime, UNIX_EPOCH};
+                let millis = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                let secs = millis / 1000;
+                let ms = millis % 1000;
+                // Simple ISO-8601 formatting from unix timestamp
+                let days = secs / 86400;
+                let time_of_day = secs % 86400;
+                let hours = time_of_day / 3600;
+                let minutes = (time_of_day % 3600) / 60;
+                let seconds = time_of_day % 60;
+                // Days since epoch to Y-M-D (simplified)
+                let mut y = 1970i64;
+                let mut d = days as i64;
+                loop {
+                    let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+                        366
+                    } else {
+                        365
+                    };
+                    if d < days_in_year {
+                        break;
+                    }
+                    d -= days_in_year;
+                    y += 1;
+                }
+                let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+                let month_days = [
+                    31,
+                    if leap { 29 } else { 28 },
+                    31,
+                    30,
+                    31,
+                    30,
+                    31,
+                    31,
+                    30,
+                    31,
+                    30,
+                    31,
+                ];
+                let mut m = 0usize;
+                while m < 12 && d >= month_days[m] {
+                    d -= month_days[m];
+                    m += 1;
+                }
+                let now = format!(
+                    "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+                    y,
+                    m + 1,
+                    d + 1,
+                    hours,
+                    minutes,
+                    seconds,
+                    ms
+                );
+                let bytes = now.as_bytes();
+                let len = bytes.len() as i32;
+                let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
+                // Write to end of memory (simple approach)
+                let ptr = (mem.data_size(&caller) - 512) as i32;
+                mem.data_mut(&mut caller)[ptr as usize..ptr as usize + bytes.len()]
+                    .copy_from_slice(bytes);
+                (ptr, len)
+            },
+        )
+        .map_err(|e| format!("Link error: {}", e))?;
+
     // aver/time_unixMs() -> i64
     linker
         .func_wrap("aver", "time_unixMs", || -> i64 {

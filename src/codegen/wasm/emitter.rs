@@ -262,7 +262,12 @@ pub fn build_wasm_module(
         vec![ValType::I32],
     );
 
-    let rt_base_type_count = 25u32; // 25 type entries (indices 0-24)
+    // 25: () -> (i32, i32) — Time.now, Console.readLine
+    type_section
+        .ty()
+        .function(vec![], vec![ValType::I32, ValType::I32]);
+
+    let rt_base_type_count = 26u32; // 26 type entries (indices 0-25)
 
     // User function types — generate from fn_sigs
     let mut fn_type_indices: HashMap<String, u32> = HashMap::new();
@@ -711,6 +716,7 @@ fn is_host_builtin(name: &str) -> bool {
             | "Float.atan2"
             | "Float.pow"
             | "Random.int"
+            | "Time.now"
             | "Time.unixMs"
             | "Time.sleep"
     )
@@ -746,7 +752,7 @@ fn find_or_add_import_type(
     // Match known signatures to existing type indices
     match (abi_entry.params, abi_entry.results) {
         (&[ValType::I32, ValType::I32], &[]) => rti.fd_write_buf, // (i32,i32)->()
-        (&[], &[ValType::I32, ValType::I32]) => rti.fd_write_buf, // same shape, different semantics but WASM doesn't care about names
+        (&[], &[ValType::I32, ValType::I32]) => 25,               // () -> (i32, i32)
         (&[ValType::I64, ValType::I64], &[ValType::I64]) => {
             // (i64,i64)->i64 — not in our type table, reuse... hmm
             // Actually we need to handle this. For now use a known type.
