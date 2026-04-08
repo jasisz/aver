@@ -11,7 +11,7 @@ use super::liveness::{
 use super::types::type_annotation_to_rust;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
-use crate::ir::{BodyExprPlan, CallPlan, thin_body_plan_is_parent_thin_candidate};
+use crate::ir::{BodyExprPlan, CallPlan, thin_kind_is_parent_thin_candidate};
 use crate::types::{Type, parse_type_str};
 /// Top-level Aver items → Rust items (structs, enums, functions, tests).
 use std::collections::{HashMap, HashSet};
@@ -427,7 +427,7 @@ fn emit_fn_def_with_visibility(
     if fd.effects.is_empty()
         && optimized_thin_plan
             .as_ref()
-            .is_some_and(thin_body_plan_is_parent_thin_candidate)
+            .is_some_and(|plan| thin_kind_is_parent_thin_candidate(plan.kind))
     {
         lines.push("#[inline(always)]".to_string());
     }
