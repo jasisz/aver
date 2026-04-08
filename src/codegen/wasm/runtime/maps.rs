@@ -67,9 +67,10 @@ pub(super) fn emit_map_get(rt: &RuntimeFuncIndices) -> Function {
 /// Prepends new (key, value) entry to the association list.
 /// (Does NOT remove old entries with same key — get returns first match.)
 pub(super) fn emit_map_set(rt: &RuntimeFuncIndices) -> Function {
-    // params: map=0, key=1, value=2(i64). locals: tuple_ptr=3
+    // params: map=0, key=1, value=2(i64). locals: tuple_ptr=3, map_cell=4
     let mut f = Function::new(vec![
         (1, ValType::I32), // 3: tuple_ptr
+        (1, ValType::I32), // 4: map_cell
     ]);
     // Alloc tuple: header + 2 fields
     f.instruction(&Instruction::I32Const(24));
@@ -102,11 +103,44 @@ pub(super) fn emit_map_set(rt: &RuntimeFuncIndices) -> Function {
         align: 3,
         memory_index: 0,
     }));
-    // Cons(tuple, map): tuple as i64
+    // Cons(tuple, map) with OBJ_MAP_ENTRY kind
+    // Alloc 24 bytes: header + head(i64) + tail(i64)
+    let map_cell = 4u32; // local index
+    f.instruction(&Instruction::I32Const(24));
+    f.instruction(&Instruction::Call(rt.alloc));
+    f.instruction(&Instruction::LocalSet(map_cell));
+    // Header: OBJ_MAP_ENTRY, field_count=2
+    f.instruction(&Instruction::LocalGet(map_cell));
+    f.instruction(&Instruction::I64Const(super::super::value::make_header(
+        super::super::value::OBJ_MAP_ENTRY,
+        0,
+        0,
+        2,
+    ) as i64));
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
+    // Head = tuple ptr as i64
+    f.instruction(&Instruction::LocalGet(map_cell));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 8,
+        align: 3,
+        memory_index: 0,
+    }));
+    // Tail = map ptr as i64
+    f.instruction(&Instruction::LocalGet(map_cell));
     f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::Call(rt.list_cons));
+    f.instruction(&Instruction::I64ExtendI32S);
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 16,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::LocalGet(map_cell));
     f.instruction(&Instruction::End);
     f
 }

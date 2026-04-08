@@ -1380,6 +1380,40 @@ fn format_wasm_value(val: i64, mem: &[u8]) -> String {
                     return String::from_utf8_lossy(bytes).to_string();
                 }
             }
+            11 => {
+                // OBJ_MAP_ENTRY — format as {"key": value, ...}
+                let mut entries = Vec::new();
+                let mut cur = ptr;
+                while cur != 0 && cur + 24 <= mem.len() {
+                    let h = u64::from_le_bytes(mem[cur..cur + 8].try_into().unwrap_or([0; 8]));
+                    if (h >> 56) & 0xFF != 11 {
+                        break;
+                    }
+                    let head =
+                        u64::from_le_bytes(mem[cur + 8..cur + 16].try_into().unwrap_or([0; 8]));
+                    // head is tuple ptr — read key and value
+                    let tuple_ptr = head as u32 as usize;
+                    if tuple_ptr + 24 <= mem.len() {
+                        let key_i64 = u64::from_le_bytes(
+                            mem[tuple_ptr + 8..tuple_ptr + 16]
+                                .try_into()
+                                .unwrap_or([0; 8]),
+                        );
+                        let val_i64 = u64::from_le_bytes(
+                            mem[tuple_ptr + 16..tuple_ptr + 24]
+                                .try_into()
+                                .unwrap_or([0; 8]),
+                        );
+                        let key_str = format_wasm_value(key_i64 as i64, mem);
+                        let val_str = format_wasm_value(val_i64 as i64, mem);
+                        entries.push(format!("\"{}\": {}", key_str, val_str));
+                    }
+                    let tail =
+                        u64::from_le_bytes(mem[cur + 16..cur + 24].try_into().unwrap_or([0; 8]));
+                    cur = tail as u32 as usize;
+                }
+                return format!("{{{}}}", entries.join(", "));
+            }
             4 | 9 => {
                 // OBJ_LIST_CONS / OBJ_LIST_CONS_F64
                 let is_f64 = kind == 9;

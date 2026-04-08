@@ -588,6 +588,25 @@ impl<'a> ExprEmitter<'a> {
             Some(Type::Unit) => {
                 self.instructions.push(Instruction::Drop);
             }
+            Some(Type::Map(_, _)) => {
+                // Map → use format_value host import for proper {"k": v} formatting
+                if let Some(&idx) = self.host_import_indices.get("format_value") {
+                    self.instructions.push(Instruction::I64ExtendI32S);
+                    self.instructions.push(Instruction::Call(idx));
+                    // Returns (ptr, len) — just print it
+                    let len = self.alloc_local(WasmType::I32);
+                    let ptr = self.alloc_local(WasmType::I32);
+                    self.instructions.push(Instruction::LocalSet(len));
+                    self.instructions.push(Instruction::LocalSet(ptr));
+                    self.instructions.push(Instruction::LocalGet(ptr));
+                    self.instructions.push(Instruction::LocalGet(len));
+                    self.instructions
+                        .push(Instruction::Call(self.rt.fd_write_buf));
+                } else {
+                    self.instructions
+                        .push(Instruction::Call(self.rt.print_heap));
+                }
+            }
             _ => {
                 let wt = self.infer_expr_type(&args[0].node);
                 match wt {

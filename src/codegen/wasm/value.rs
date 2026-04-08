@@ -31,6 +31,7 @@ pub const OBJ_WRAPPER_F64: u64 = 7; // inner field is f64
 pub const OBJ_WRAPPER_I32: u64 = 8; // inner field is i32 (stored as i64)
 pub const OBJ_LIST_CONS_F64: u64 = 9; // head is f64, tail is i32 (stored as i64)
 pub const OBJ_VECTOR: u64 = 10; // flat array of i64 elements
+pub const OBJ_MAP_ENTRY: u64 = 11; // cons cell in association list (same layout as LIST_CONS)
 
 // ---------------------------------------------------------------------------
 // Wrapper tags (Ok/Err/Some)

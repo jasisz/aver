@@ -591,11 +591,41 @@ impl<'a> ExprEmitter<'a> {
                     align: 3,
                     memory_index: 0,
                 }));
-            // Cons(tuple, map)
+            // Map entry cons cell with OBJ_MAP_ENTRY kind
+            let entry_ptr = self.alloc_local(WasmType::I32);
+            self.instructions.push(Instruction::I32Const(24));
+            self.instructions.push(Instruction::Call(self.rt.alloc));
+            self.instructions.push(Instruction::LocalSet(entry_ptr));
+            self.instructions.push(Instruction::LocalGet(entry_ptr));
+            self.instructions
+                .push(Instruction::I64Const(
+                    value::make_header(value::OBJ_MAP_ENTRY, 0, 0, 2) as i64,
+                ));
+            self.instructions
+                .push(Instruction::I64Store(wasm_encoder::MemArg {
+                    offset: 0,
+                    align: 3,
+                    memory_index: 0,
+                }));
+            self.instructions.push(Instruction::LocalGet(entry_ptr));
             self.instructions.push(Instruction::LocalGet(tuple_ptr));
             self.instructions.push(Instruction::I64ExtendI32U);
+            self.instructions
+                .push(Instruction::I64Store(wasm_encoder::MemArg {
+                    offset: 8,
+                    align: 3,
+                    memory_index: 0,
+                }));
+            self.instructions.push(Instruction::LocalGet(entry_ptr));
             self.instructions.push(Instruction::LocalGet(map_tmp));
-            self.instructions.push(Instruction::Call(self.rt.list_cons));
+            self.instructions.push(Instruction::I64ExtendI32S);
+            self.instructions
+                .push(Instruction::I64Store(wasm_encoder::MemArg {
+                    offset: 16,
+                    align: 3,
+                    memory_index: 0,
+                }));
+            self.instructions.push(Instruction::LocalGet(entry_ptr));
         }
     }
 
