@@ -652,6 +652,7 @@ pub fn emit_str_char_at(rt: &RuntimeFuncIndices) -> Function {
     });
     f.instruction(&Instruction::I32Const(WRAP_SOME as i32));
     f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::Call(rt.wrap_i32));
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
@@ -868,6 +869,7 @@ pub fn emit_char_from_code(rt: &RuntimeFuncIndices) -> Function {
 
     f.instruction(&Instruction::I32Const(WRAP_SOME as i32));
     f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::Call(rt.wrap_i32));
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
@@ -1080,6 +1082,7 @@ pub fn emit_byte_to_hex(rt: &RuntimeFuncIndices) -> Function {
 
     f.instruction(&Instruction::I32Const(WRAP_OK as i32));
     f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::Call(rt.wrap_i32));
     f.instruction(&Instruction::End);
     f
@@ -1126,6 +1129,7 @@ pub fn emit_byte_from_hex(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::I32Const(WRAP_OK as i32));
     f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::Call(rt.wrap));
     f.instruction(&Instruction::End);
     f
@@ -1408,6 +1412,7 @@ pub fn emit_str_chars(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalGet(6));
     f.instruction(&Instruction::I64ExtendI32U);
     f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::Call(rt.list_cons));
     f.instruction(&Instruction::LocalSet(3));
 
@@ -1446,6 +1451,7 @@ pub fn emit_str_split(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalGet(9));
     f.instruction(&Instruction::I64ExtendI32U);
     f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::Call(rt.list_cons));
     f.instruction(&Instruction::LocalSet(8));
     f.instruction(&Instruction::I32Const(0));
@@ -1474,6 +1480,7 @@ pub fn emit_str_split(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalGet(9));
     f.instruction(&Instruction::I64ExtendI32U);
     f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::Call(rt.list_cons));
     f.instruction(&Instruction::LocalSet(8));
     f.instruction(&Instruction::LocalGet(10));
@@ -1489,6 +1496,7 @@ pub fn emit_str_split(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalGet(9));
     f.instruction(&Instruction::I64ExtendI32U);
     f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::Call(rt.list_cons));
     f.instruction(&Instruction::LocalSet(8));
     f.instruction(&Instruction::LocalGet(8));
@@ -1523,6 +1531,7 @@ pub fn emit_str_split(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalGet(9));
     f.instruction(&Instruction::I64ExtendI32U);
     f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::Call(rt.list_cons));
     f.instruction(&Instruction::LocalSet(8));
 
@@ -1544,6 +1553,7 @@ pub fn emit_str_split(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalGet(9));
     f.instruction(&Instruction::I64ExtendI32U);
     f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::Call(rt.list_cons));
     f.instruction(&Instruction::LocalSet(8));
     f.instruction(&Instruction::LocalGet(8));
@@ -1814,6 +1824,7 @@ pub fn emit_int_from_str(rt: &RuntimeFuncIndices) -> Function {
     // Result.Ok(result)
     f.instruction(&Instruction::I32Const(WRAP_OK as i32));
     f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::Call(rt.wrap));
     f.instruction(&Instruction::End);
     f
@@ -2255,6 +2266,7 @@ fn emit_return_err_empty_string(f: &mut Function, rt: &RuntimeFuncIndices, ptr_l
     }));
     f.instruction(&Instruction::I32Const(WRAP_ERR as i32));
     f.instruction(&Instruction::LocalGet(ptr_local));
+    f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::Call(rt.wrap_i32));
     f.instruction(&Instruction::Return);
 }
@@ -2262,6 +2274,7 @@ fn emit_return_err_empty_string(f: &mut Function, rt: &RuntimeFuncIndices, ptr_l
 fn emit_float_parse_error(f: &mut Function, rt: &RuntimeFuncIndices) {
     f.instruction(&Instruction::I32Const(WRAP_ERR as i32));
     f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::Call(rt.wrap_i32));
     f.instruction(&Instruction::Return);
 }

@@ -56,15 +56,22 @@ pub const NONE_SENTINEL: i32 = -1;
 // ---------------------------------------------------------------------------
 // [63:56] = object kind (8 bits)
 // [55:48] = variant/wrapper tag (8 bits)
-// [47:32] = type_id (16 bits)
+// [47:32] = metadata / pointer mask (16 bits)
 // [31:0]  = field_count / length (32 bits)
 
 pub const HDR_KIND_SHIFT: u32 = 56;
 pub const HDR_TAG_SHIFT: u32 = 48;
 #[allow(dead_code)]
 pub const HDR_TYPE_SHIFT: u32 = 32;
+pub const HDR_META_SHIFT: u32 = HDR_TYPE_SHIFT;
+pub const HDR_META_MASK: u64 = 0xFFFF;
+pub const OBJ_FORWARD: u64 = 0xFF;
 
 /// Build a heap object header.
+///
+/// The third field is now runtime metadata:
+/// - fixed-size objects use it as a pointer-field bitmask
+/// - wrappers/vectors/lists use low bits as per-kind flags
 pub fn make_header(kind: u64, variant_tag: u64, type_id: u64, field_count: u64) -> u64 {
     (kind << HDR_KIND_SHIFT)
         | (variant_tag << HDR_TAG_SHIFT)

@@ -8,52 +8,53 @@ use wasm_encoder::{Function, Instruction, ValType};
 use super::super::value::*;
 use super::RuntimeFuncIndices;
 
-/// $vec_from_list(list: i32) -> i32
+/// $vec_from_list(list: i32, elem_ptr_flag: i32) -> i32
 /// Converts a linked list to a flat vector.
 pub(super) fn emit_vec_from_list(rt: &RuntimeFuncIndices) -> Function {
-    // params: list=0. locals: len=1, ptr=2, vec=3, i=4, cur=5
+    // params: list=0, elem_ptr_flag=1. locals: len=2, ptr=3, vec=4, i=5, cur=6
     let mut f = Function::new(vec![
-        (1, ValType::I32), // 1: len
-        (1, ValType::I32), // 2: ptr (traversal)
-        (1, ValType::I32), // 3: vec
-        (1, ValType::I32), // 4: i
-        (1, ValType::I32), // 5: cur
+        (5, ValType::I32), // 2..6: len, ptr, vec, i, cur
     ]);
     // First pass: count length
     f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalSet(1));
-    f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalSet(3));
     f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
     f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32Eqz);
     f.instruction(&Instruction::BrIf(1));
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalSet(1));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::Call(rt.obj_field_i32));
+    f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::Call(rt.obj_field_i32));
+    f.instruction(&Instruction::LocalSet(3));
     f.instruction(&Instruction::Br(0));
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     // Alloc: 8 + len * 8
     f.instruction(&Instruction::I32Const(8));
-    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I32Const(8));
     f.instruction(&Instruction::I32Mul);
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::Call(rt.alloc));
-    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalSet(4));
     // Header
-    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I64Const(
         (OBJ_VECTOR << HDR_KIND_SHIFT) as i64,
     ));
     f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::I64Const(HDR_META_SHIFT as i64));
+    f.instruction(&Instruction::I64Shl);
+    f.instruction(&Instruction::I64Or);
+    f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I64ExtendI32U);
     f.instruction(&Instruction::I64Or);
     f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
@@ -63,21 +64,21 @@ pub(super) fn emit_vec_from_list(rt: &RuntimeFuncIndices) -> Function {
     }));
     // Second pass: copy elements
     f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalSet(4)); // i = 0
+    f.instruction(&Instruction::LocalSet(5)); // i = 0
     f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::LocalSet(5)); // cur = list
+    f.instruction(&Instruction::LocalSet(6)); // cur = list
     f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
     f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(6));
     f.instruction(&Instruction::I32Eqz);
     f.instruction(&Instruction::BrIf(1));
     // vec[i] = head
-    f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::I32Const(8));
     f.instruction(&Instruction::I32Mul);
     f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(6));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::Call(rt.obj_field)); // head as i64
     f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
@@ -86,28 +87,29 @@ pub(super) fn emit_vec_from_list(rt: &RuntimeFuncIndices) -> Function {
         memory_index: 0,
     }));
     // i++, cur = tail
-    f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalSet(4));
     f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::Call(rt.obj_field_i32));
+    f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::Call(rt.obj_field_i32));
+    f.instruction(&Instruction::LocalSet(6));
     f.instruction(&Instruction::Br(0));
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
-    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::End);
     f
 }
 
 /// $vec_get(vec: i32, idx: i64) -> i32  (returns Option: wrapper or NONE)
 pub(super) fn emit_vec_get(rt: &RuntimeFuncIndices) -> Function {
-    // params: vec=0, idx=1(i64). locals: len=2, i=3
+    // params: vec=0, idx=1(i64). locals: len=2, i=3, meta=4
     let mut f = Function::new(vec![
         (1, ValType::I32), // 2: len
         (1, ValType::I32), // 3: i (i32 index)
+        (1, ValType::I32), // 4: header metadata
     ]);
     // len = header & 0xFFFFFFFF
     f.instruction(&Instruction::LocalGet(0));
@@ -120,6 +122,9 @@ pub(super) fn emit_vec_get(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::I64And);
     f.instruction(&Instruction::I32WrapI64);
     f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::Call(rt.obj_meta));
+    f.instruction(&Instruction::LocalSet(4));
     // i = i32(idx)
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::I32WrapI64);
@@ -149,6 +154,9 @@ pub(super) fn emit_vec_get(rt: &RuntimeFuncIndices) -> Function {
         align: 3,
         memory_index: 0,
     }));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::Call(rt.wrap)); // wrap(SOME, value_i64) → i32
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
@@ -241,37 +249,41 @@ pub(super) fn emit_vec_set(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::I32Const(WRAP_SOME as i32));
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::Call(rt.wrap));
     f.instruction(&Instruction::End); // else
     f.instruction(&Instruction::End);
     f
 }
 
-/// $vec_new(size: i64, fill: i64) -> i32
+/// $vec_new(size: i64, fill: i64, fill_ptr_flag: i32) -> i32
 pub(super) fn emit_vec_new(rt: &RuntimeFuncIndices) -> Function {
-    // params: size=0(i64), fill=1(i64). locals: len=2, vec=3, i=4
+    // params: size=0(i64), fill=1(i64), fill_ptr_flag=2(i32). locals: len=3, vec=4, i=5
     let mut f = Function::new(vec![
-        (1, ValType::I32), // 2: len
-        (1, ValType::I32), // 3: vec
-        (1, ValType::I32), // 4: i
+        (3, ValType::I32), // 3..5: len, vec, i
     ]);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I32WrapI64);
-    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalSet(3));
     // alloc
     f.instruction(&Instruction::I32Const(8));
-    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32Const(8));
     f.instruction(&Instruction::I32Mul);
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::Call(rt.alloc));
-    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalSet(4));
     // header
-    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I64Const(
         (OBJ_VECTOR << HDR_KIND_SHIFT) as i64,
     ));
     f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::I64Const(HDR_META_SHIFT as i64));
+    f.instruction(&Instruction::I64Shl);
+    f.instruction(&Instruction::I64Or);
+    f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I64ExtendI32U);
     f.instruction(&Instruction::I64Or);
     f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
@@ -281,15 +293,15 @@ pub(super) fn emit_vec_new(rt: &RuntimeFuncIndices) -> Function {
     }));
     // Fill
     f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalSet(5));
     f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
     f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32GeU);
     f.instruction(&Instruction::BrIf(1));
-    f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::I32Const(8));
     f.instruction(&Instruction::I32Mul);
     f.instruction(&Instruction::I32Add);
@@ -299,14 +311,14 @@ pub(super) fn emit_vec_new(rt: &RuntimeFuncIndices) -> Function {
         align: 3,
         memory_index: 0,
     }));
-    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalSet(5));
     f.instruction(&Instruction::Br(0));
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
-    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::End);
     f
 }
@@ -314,11 +326,12 @@ pub(super) fn emit_vec_new(rt: &RuntimeFuncIndices) -> Function {
 /// $vec_to_list(vec: i32) -> i32
 /// Converts a flat vector back into a linked list, preserving order.
 pub(super) fn emit_vec_to_list(rt: &RuntimeFuncIndices) -> Function {
-    // params: vec=0. locals: len=1, idx=2, acc=3
+    // params: vec=0. locals: len=1, idx=2, acc=3, meta=4
     let mut f = Function::new(vec![
         (1, ValType::I32), // 1: len
         (1, ValType::I32), // 2: idx
         (1, ValType::I32), // 3: acc
+        (1, ValType::I32), // 4: vector metadata
     ]);
 
     // len = header & 0xFFFFFFFF
@@ -332,6 +345,9 @@ pub(super) fn emit_vec_to_list(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::I64And);
     f.instruction(&Instruction::I32WrapI64);
     f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::Call(rt.obj_meta));
+    f.instruction(&Instruction::LocalSet(4));
 
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::LocalSet(3)); // acc = []
@@ -362,6 +378,9 @@ pub(super) fn emit_vec_to_list(rt: &RuntimeFuncIndices) -> Function {
         memory_index: 0,
     }));
     f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::Call(rt.list_cons));
     f.instruction(&Instruction::LocalSet(3));
     f.instruction(&Instruction::Br(0));

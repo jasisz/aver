@@ -242,7 +242,10 @@ impl<'a> ExprEmitter<'a> {
             self.emit_if(wasm_encoder::BlockType::Empty);
 
             if let DispatchBindingPlan::WrapperPayload(binding_name) = &entry.binding {
-                self.emit_wrapper_binding(subj_local, binding_name);
+                let ir::SemanticDispatchPattern::WrapperTag(kind) = &entry.pattern else {
+                    unreachable!();
+                };
+                self.emit_wrapper_binding(subj_local, *kind, binding_name);
             }
 
             self.emit_expr(&arms[entry.arm_index].body.node);
@@ -369,18 +372,25 @@ impl<'a> ExprEmitter<'a> {
         }
     }
 
-    pub(super) fn emit_wrapper_binding(&mut self, subj_local: u32, binding_name: &str) {
+    pub(super) fn emit_wrapper_binding(
+        &mut self,
+        subj_local: u32,
+        kind: WrapperKind,
+        binding_name: &str,
+    ) {
         // Determine inner type STATICALLY from the subject's aver type
         let subj_aver_type = self.local_aver_types.get(&subj_local).cloned();
-        let inner_type = match &subj_aver_type {
-            Some(Type::Result(ok, _)) => aver_type_to_wasm(ok),
-            Some(Type::Option(inner)) => aver_type_to_wasm(inner),
+        let inner_type = match (&subj_aver_type, kind) {
+            (Some(Type::Result(ok, _)), WrapperKind::ResultOk) => aver_type_to_wasm(ok),
+            (Some(Type::Result(_, err)), WrapperKind::ResultErr) => aver_type_to_wasm(err),
+            (Some(Type::Option(inner)), WrapperKind::OptionSome) => aver_type_to_wasm(inner),
             _ => WasmType::I64, // fallback
         };
 
-        let inner_aver_type = match &subj_aver_type {
-            Some(Type::Result(ok, _)) => Some(ok.as_ref().clone()),
-            Some(Type::Option(inner)) => Some(inner.as_ref().clone()),
+        let inner_aver_type = match (&subj_aver_type, kind) {
+            (Some(Type::Result(ok, _)), WrapperKind::ResultOk) => Some(ok.as_ref().clone()),
+            (Some(Type::Result(_, err)), WrapperKind::ResultErr) => Some(err.as_ref().clone()),
+            (Some(Type::Option(inner)), WrapperKind::OptionSome) => Some(inner.as_ref().clone()),
             _ => None,
         };
 
@@ -612,18 +622,41 @@ impl<'a> ExprEmitter<'a> {
             Some(Type::Tuple(types)) => types.clone(),
             _ => vec![Type::Unknown; items.len()],
         };
-        let supported = items
-            .iter()
-            .all(|item| matches!(item, Pattern::Ident(_) | Pattern::Wildcard));
+        self.emit_tuple_shape_check(subj_local, items.len());
+        self.emit_if(wasm_encoder::BlockType::Empty);
 
-        if !supported {
-            self.codegen_error("generic tuple-pattern fallback only supports identifier and wildcard items in the WASM backend");
-            if !is_last {
-                self.emit_generic_arms(subj_local, subj_type, result_local, arms, idx + 1);
-            }
-            return;
+        let matched_local = self.alloc_local(WasmType::I32);
+        self.instructions.push(Instruction::I32Const(1));
+        self.instructions.push(Instruction::LocalSet(matched_local));
+
+        for (i, pattern) in items.iter().enumerate() {
+            let aver_ty = tuple_types.get(i).cloned().unwrap_or(Type::Unknown);
+            let (field_local, field_wasm_type) = self.emit_tuple_item_local(subj_local, i, aver_ty);
+            self.instructions.push(Instruction::LocalGet(matched_local));
+            self.emit_pattern_match_flag(field_local, field_wasm_type, pattern);
+            self.instructions.push(Instruction::I32And);
+            self.instructions.push(Instruction::LocalSet(matched_local));
         }
 
+        self.instructions.push(Instruction::LocalGet(matched_local));
+        self.emit_if(wasm_encoder::BlockType::Empty);
+        self.emit_expr(&arm.body.node);
+        self.instructions.push(Instruction::LocalSet(result_local));
+
+        if !is_last {
+            self.emit_else();
+            self.emit_generic_arms(subj_local, subj_type, result_local, arms, idx + 1);
+        }
+        self.emit_end();
+
+        if !is_last {
+            self.emit_else();
+            self.emit_generic_arms(subj_local, subj_type, result_local, arms, idx + 1);
+        }
+        self.emit_end();
+    }
+
+    fn emit_tuple_shape_check(&mut self, subj_local: u32, tuple_len: usize) {
         self.instructions.push(Instruction::LocalGet(subj_local));
         self.instructions.push(Instruction::I32Const(0));
         self.instructions.push(Instruction::I32GtS);
@@ -633,48 +666,322 @@ impl<'a> ExprEmitter<'a> {
             .push(Instruction::I32Const(value::OBJ_TUPLE as i32));
         self.instructions.push(Instruction::I32Eq);
         self.instructions.push(Instruction::I32And);
-        self.emit_if(wasm_encoder::BlockType::Empty);
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        self.instructions
+            .push(Instruction::I64Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }));
+        self.instructions.push(Instruction::I32WrapI64);
+        self.instructions
+            .push(Instruction::I32Const(tuple_len as i32));
+        self.instructions.push(Instruction::I32Eq);
+        self.instructions.push(Instruction::I32And);
+    }
 
-        for (i, pattern) in items.iter().enumerate() {
-            let Pattern::Ident(binding_name) = pattern else {
-                continue;
-            };
-            if binding_name == "_" {
-                continue;
+    fn emit_tuple_item_local(
+        &mut self,
+        tuple_local: u32,
+        index: usize,
+        aver_ty: Type,
+    ) -> (u32, WasmType) {
+        let field_wasm_type = aver_type_to_wasm(&aver_ty);
+        let field_local = self.alloc_local(field_wasm_type);
+        self.local_aver_types.insert(field_local, aver_ty);
+
+        self.instructions.push(Instruction::LocalGet(tuple_local));
+        self.instructions.push(Instruction::I32Const(index as i32));
+        match field_wasm_type {
+            WasmType::F64 => {
+                self.instructions.push(Instruction::Call(self.rt.obj_field));
+                self.instructions.push(Instruction::F64ReinterpretI64);
             }
+            WasmType::I32 => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.obj_field_i32));
+            }
+            WasmType::I64 => {
+                self.instructions.push(Instruction::Call(self.rt.obj_field));
+            }
+        }
+        self.instructions.push(Instruction::LocalSet(field_local));
+        (field_local, field_wasm_type)
+    }
 
-            let aver_ty = tuple_types.get(i).cloned().unwrap_or(Type::Unknown);
-            let field_wasm_type = aver_type_to_wasm(&aver_ty);
-            let bind_local = self.alloc_local(field_wasm_type);
-            self.locals.insert(binding_name.clone(), bind_local);
-            self.local_aver_types.insert(bind_local, aver_ty);
-
-            self.instructions.push(Instruction::LocalGet(subj_local));
-            self.instructions.push(Instruction::I32Const(i as i32));
-            match field_wasm_type {
-                WasmType::F64 => {
-                    self.instructions.push(Instruction::Call(self.rt.obj_field));
-                    self.instructions.push(Instruction::F64ReinterpretI64);
+    fn emit_pattern_match_flag(&mut self, subj_local: u32, subj_type: WasmType, pattern: &Pattern) {
+        match pattern {
+            Pattern::Wildcard => {
+                self.instructions.push(Instruction::I32Const(1));
+            }
+            Pattern::Ident(name) => {
+                if name != "_" {
+                    let bind_local = self.alloc_local(subj_type);
+                    self.locals.insert(name.clone(), bind_local);
+                    self.instructions.push(Instruction::LocalGet(subj_local));
+                    self.instructions.push(Instruction::LocalSet(bind_local));
+                    if let Some(at) = self.local_aver_types.get(&subj_local).cloned() {
+                        self.local_aver_types.insert(bind_local, at);
+                    }
                 }
-                WasmType::I32 => {
+                self.instructions.push(Instruction::I32Const(1));
+            }
+            Pattern::Literal(lit) => {
+                self.instructions.push(Instruction::LocalGet(subj_local));
+                match lit {
+                    Literal::Int(n) => {
+                        self.instructions.push(Instruction::I64Const(*n));
+                        self.instructions.push(Instruction::I64Eq);
+                    }
+                    Literal::Float(n) => {
+                        self.instructions.push(Instruction::F64Const(*n));
+                        self.instructions.push(Instruction::F64Eq);
+                    }
+                    Literal::Str(s) => {
+                        self.emit_string_literal(s);
+                        self.instructions.push(Instruction::Call(self.rt.str_eq));
+                    }
+                    Literal::Bool(b) => {
+                        self.instructions
+                            .push(Instruction::I32Const(if *b { 1 } else { 0 }));
+                        self.instructions.push(Instruction::I32Eq);
+                    }
+                    Literal::Unit => {
+                        self.instructions.push(Instruction::I32Const(0));
+                        self.instructions.push(Instruction::I32Eq);
+                    }
+                }
+            }
+            Pattern::EmptyList => {
+                self.instructions.push(Instruction::LocalGet(subj_local));
+                self.instructions.push(Instruction::I32Eqz);
+            }
+            Pattern::Cons(head_name, tail_name) => {
+                let elem_aver_type = self
+                    .local_aver_types
+                    .get(&subj_local)
+                    .and_then(|t| match t {
+                        Type::List(inner) => Some(inner.as_ref().clone()),
+                        _ => None,
+                    })
+                    .unwrap_or(Type::Unknown);
+                let elem_wasm_type = aver_type_to_wasm(&elem_aver_type);
+                let expected_kind = match elem_wasm_type {
+                    WasmType::F64 => value::OBJ_LIST_CONS_F64,
+                    WasmType::I32 | WasmType::I64 => value::OBJ_LIST_CONS,
+                };
+
+                self.instructions.push(Instruction::LocalGet(subj_local));
+                self.instructions.push(Instruction::I32Const(0));
+                self.instructions.push(Instruction::I32GtS);
+                self.instructions.push(Instruction::LocalGet(subj_local));
+                self.instructions.push(Instruction::Call(self.rt.obj_kind));
+                self.instructions
+                    .push(Instruction::I32Const(expected_kind as i32));
+                self.instructions.push(Instruction::I32Eq);
+                self.instructions.push(Instruction::I32And);
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
+
+                if head_name != "_" {
+                    let head_local = self.alloc_local(elem_wasm_type);
+                    self.locals.insert(head_name.clone(), head_local);
+                    self.local_aver_types
+                        .insert(head_local, elem_aver_type.clone());
+                    self.instructions.push(Instruction::LocalGet(subj_local));
+                    self.instructions.push(Instruction::I32Const(0));
+                    match elem_wasm_type {
+                        WasmType::F64 => {
+                            self.instructions
+                                .push(Instruction::Call(self.rt.obj_field_f64));
+                        }
+                        WasmType::I32 => {
+                            self.instructions
+                                .push(Instruction::Call(self.rt.obj_field_i32));
+                        }
+                        WasmType::I64 => {
+                            self.instructions.push(Instruction::Call(self.rt.obj_field));
+                        }
+                    }
+                    self.instructions.push(Instruction::LocalSet(head_local));
+                }
+
+                if tail_name != "_" {
+                    let tail_local = self.alloc_local(WasmType::I32);
+                    self.locals.insert(tail_name.clone(), tail_local);
+                    self.instructions.push(Instruction::LocalGet(subj_local));
+                    self.instructions.push(Instruction::I32Const(1));
                     self.instructions
                         .push(Instruction::Call(self.rt.obj_field_i32));
+                    self.instructions.push(Instruction::LocalSet(tail_local));
+                    if let Some(at) = self.local_aver_types.get(&subj_local).cloned() {
+                        self.local_aver_types.insert(tail_local, at);
+                    }
                 }
-                WasmType::I64 => {
-                    self.instructions.push(Instruction::Call(self.rt.obj_field));
+
+                self.instructions.push(Instruction::I32Const(1));
+                self.emit_else();
+                self.instructions.push(Instruction::I32Const(0));
+                self.emit_end();
+            }
+            Pattern::Constructor(ctor_name, bindings) => {
+                let ctor = classify_constructor_name(ctor_name, &self.ir_ctx());
+                match ctor {
+                    SemanticConstructor::NoneValue => {
+                        self.instructions.push(Instruction::LocalGet(subj_local));
+                        self.instructions
+                            .push(Instruction::I32Const(value::NONE_SENTINEL));
+                        self.instructions.push(Instruction::I32Eq);
+                    }
+                    SemanticConstructor::Wrapper(kind) => {
+                        let expected_tag = match kind {
+                            WrapperKind::ResultOk => value::WRAP_OK,
+                            WrapperKind::ResultErr => value::WRAP_ERR,
+                            WrapperKind::OptionSome => value::WRAP_SOME,
+                        };
+
+                        self.instructions.push(Instruction::LocalGet(subj_local));
+                        self.instructions.push(Instruction::I32Const(0));
+                        self.instructions.push(Instruction::I32GtS);
+                        self.instructions.push(Instruction::LocalGet(subj_local));
+                        self.instructions.push(Instruction::Call(self.rt.obj_kind));
+                        self.instructions
+                            .push(Instruction::I32Const(value::OBJ_WRAPPER as i32));
+                        self.instructions.push(Instruction::I32Eq);
+                        self.instructions.push(Instruction::LocalGet(subj_local));
+                        self.instructions.push(Instruction::Call(self.rt.obj_kind));
+                        self.instructions
+                            .push(Instruction::I32Const(value::OBJ_WRAPPER_F64 as i32));
+                        self.instructions.push(Instruction::I32Eq);
+                        self.instructions.push(Instruction::I32Or);
+                        self.instructions.push(Instruction::LocalGet(subj_local));
+                        self.instructions.push(Instruction::Call(self.rt.obj_kind));
+                        self.instructions
+                            .push(Instruction::I32Const(value::OBJ_WRAPPER_I32 as i32));
+                        self.instructions.push(Instruction::I32Eq);
+                        self.instructions.push(Instruction::I32Or);
+                        self.instructions.push(Instruction::LocalGet(subj_local));
+                        self.instructions.push(Instruction::Call(self.rt.obj_tag));
+                        self.instructions
+                            .push(Instruction::I32Const(expected_tag as i32));
+                        self.instructions.push(Instruction::I32Eq);
+                        self.instructions.push(Instruction::I32And);
+                        self.instructions.push(Instruction::I32And);
+                        self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
+                        if let Some(binding_name) = bindings.first()
+                            && binding_name != "_"
+                        {
+                            self.emit_wrapper_binding(subj_local, kind, binding_name);
+                        }
+                        self.instructions.push(Instruction::I32Const(1));
+                        self.emit_else();
+                        self.instructions.push(Instruction::I32Const(0));
+                        self.emit_end();
+                    }
+                    SemanticConstructor::TypeConstructor {
+                        qualified_type_name,
+                        variant_name,
+                    } => {
+                        let info = self
+                            .variant_registry
+                            .get(&(qualified_type_name.clone(), variant_name.clone()));
+                        let expected_tag = info.map(|i| i.tag).unwrap_or(0);
+                        let field_type_names =
+                            info.map(|i| i.field_types.clone()).unwrap_or_default();
+
+                        self.instructions.push(Instruction::LocalGet(subj_local));
+                        self.instructions.push(Instruction::I32Const(0));
+                        self.instructions.push(Instruction::I32GtS);
+                        self.instructions.push(Instruction::LocalGet(subj_local));
+                        self.instructions.push(Instruction::Call(self.rt.obj_kind));
+                        self.instructions
+                            .push(Instruction::I32Const(value::OBJ_VARIANT as i32));
+                        self.instructions.push(Instruction::I32Eq);
+                        self.instructions.push(Instruction::I32And);
+                        self.instructions.push(Instruction::LocalGet(subj_local));
+                        self.instructions.push(Instruction::Call(self.rt.obj_tag));
+                        self.instructions
+                            .push(Instruction::I32Const(expected_tag as i32));
+                        self.instructions.push(Instruction::I32Eq);
+                        self.instructions.push(Instruction::I32And);
+                        self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
+
+                        for (i, binding_name) in bindings.iter().enumerate() {
+                            if binding_name == "_" {
+                                continue;
+                            }
+                            let field_type_name =
+                                field_type_names.get(i).map(|s| s.as_str()).unwrap_or("Int");
+                            let field_wasm_type = self.type_str_to_wasm(field_type_name);
+                            let bind_local = self.alloc_local(field_wasm_type);
+                            self.locals.insert(binding_name.clone(), bind_local);
+                            let aver_ty = match field_type_name {
+                                "Float" => Type::Float,
+                                "Bool" => Type::Bool,
+                                "String" | "Str" => Type::Str,
+                                "Int" => Type::Int,
+                                other => Type::Named(other.to_string()),
+                            };
+                            self.local_aver_types.insert(bind_local, aver_ty);
+
+                            self.instructions.push(Instruction::LocalGet(subj_local));
+                            self.instructions.push(Instruction::I32Const(i as i32));
+                            match field_wasm_type {
+                                WasmType::F64 => {
+                                    self.instructions.push(Instruction::Call(self.rt.obj_field));
+                                    self.instructions.push(Instruction::F64ReinterpretI64);
+                                }
+                                WasmType::I32 => {
+                                    self.instructions
+                                        .push(Instruction::Call(self.rt.obj_field_i32));
+                                }
+                                WasmType::I64 => {
+                                    self.instructions.push(Instruction::Call(self.rt.obj_field));
+                                }
+                            }
+                            self.instructions.push(Instruction::LocalSet(bind_local));
+                        }
+
+                        self.instructions.push(Instruction::I32Const(1));
+                        self.emit_else();
+                        self.instructions.push(Instruction::I32Const(0));
+                        self.emit_end();
+                    }
+                    SemanticConstructor::Unknown(_) => {
+                        self.codegen_error(format!(
+                            "unknown constructor pattern in WASM generic match: {}",
+                            ctor_name
+                        ));
+                        self.instructions.push(Instruction::I32Const(0));
+                    }
                 }
             }
-            self.instructions.push(Instruction::LocalSet(bind_local));
-        }
+            Pattern::Tuple(items) => {
+                let tuple_types = match self.local_aver_types.get(&subj_local) {
+                    Some(Type::Tuple(types)) => types.clone(),
+                    _ => vec![Type::Unknown; items.len()],
+                };
+                self.emit_tuple_shape_check(subj_local, items.len());
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
+                let matched_local = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::I32Const(1));
+                self.instructions.push(Instruction::LocalSet(matched_local));
 
-        self.emit_expr(&arm.body.node);
-        self.instructions.push(Instruction::LocalSet(result_local));
+                for (i, pattern) in items.iter().enumerate() {
+                    let aver_ty = tuple_types.get(i).cloned().unwrap_or(Type::Unknown);
+                    let (field_local, field_wasm_type) =
+                        self.emit_tuple_item_local(subj_local, i, aver_ty);
+                    self.instructions.push(Instruction::LocalGet(matched_local));
+                    self.emit_pattern_match_flag(field_local, field_wasm_type, pattern);
+                    self.instructions.push(Instruction::I32And);
+                    self.instructions.push(Instruction::LocalSet(matched_local));
+                }
 
-        if !is_last {
-            self.emit_else();
-            self.emit_generic_arms(subj_local, subj_type, result_local, arms, idx + 1);
+                self.instructions.push(Instruction::LocalGet(matched_local));
+                self.emit_else();
+                self.instructions.push(Instruction::I32Const(0));
+                self.emit_end();
+            }
         }
-        self.emit_end();
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -805,7 +1112,7 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::I32And);
                 self.emit_if(wasm_encoder::BlockType::Empty);
                 if let Some(binding_name) = bindings.first() {
-                    self.emit_wrapper_binding(subj_local, binding_name);
+                    self.emit_wrapper_binding(subj_local, kind, binding_name);
                 }
                 self.emit_expr(&arm.body.node);
                 self.instructions.push(Instruction::LocalSet(result_local));

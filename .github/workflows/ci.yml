@@ -30,3 +30,24 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+  wasm:
+    name: WASM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy (wasm)
+        run: cargo clippy -p aver-lang --all-targets --features wasm -- -D warnings
+
+      - name: Test (wasm)
+        run: cargo test -p aver-lang --features wasm
+
+      - name: Build (wasm release)
+        run: cargo build -p aver-lang --features wasm --release

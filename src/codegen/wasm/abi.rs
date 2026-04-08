@@ -25,6 +25,21 @@ pub const ABI_MODULE: &str = "aver";
 
 /// Complete ABI table. Each Aver host effect maps to exactly one import.
 pub const ABI_TABLE: &[AbiImport] = &[
+    // --- Args ---
+    // Number of program args visible via Args.get().
+    AbiImport {
+        effect: "Args._len",
+        import_name: "args_len",
+        params: &[],
+        results: &[ValType::I32],
+    },
+    // Indexed program arg, returned as raw ptr+len.
+    AbiImport {
+        effect: "Args._get",
+        import_name: "args_get",
+        params: &[ValType::I32],
+        results: &[ValType::I32, ValType::I32],
+    },
     // --- Console ---
     // Writes bytes to stdout. Host decides how (terminal, browser console, test buffer).
     AbiImport {
@@ -47,6 +62,79 @@ pub const ABI_TABLE: &[AbiImport] = &[
         import_name: "console_readLine",
         params: &[],
         results: &[ValType::I32, ValType::I32], // ptr, len
+    },
+    // --- Terminal ---
+    AbiImport {
+        effect: "Terminal.enableRawMode",
+        import_name: "terminal_enableRawMode",
+        params: &[],
+        results: &[],
+    },
+    AbiImport {
+        effect: "Terminal.disableRawMode",
+        import_name: "terminal_disableRawMode",
+        params: &[],
+        results: &[],
+    },
+    AbiImport {
+        effect: "Terminal.clear",
+        import_name: "terminal_clear",
+        params: &[],
+        results: &[],
+    },
+    AbiImport {
+        effect: "Terminal.moveTo",
+        import_name: "terminal_moveTo",
+        params: &[ValType::I32, ValType::I32],
+        results: &[],
+    },
+    AbiImport {
+        effect: "Terminal.print",
+        import_name: "terminal_print",
+        params: &[ValType::I32, ValType::I32],
+        results: &[],
+    },
+    AbiImport {
+        effect: "Terminal.setColor",
+        import_name: "terminal_setColor",
+        params: &[ValType::I32, ValType::I32],
+        results: &[],
+    },
+    AbiImport {
+        effect: "Terminal.resetColor",
+        import_name: "terminal_resetColor",
+        params: &[],
+        results: &[],
+    },
+    AbiImport {
+        effect: "Terminal.readKey",
+        import_name: "terminal_readKey",
+        params: &[],
+        results: &[ValType::I32, ValType::I32], // ptr, len or (NONE_SENTINEL, 0)
+    },
+    AbiImport {
+        effect: "Terminal.size",
+        import_name: "terminal_size",
+        params: &[],
+        results: &[ValType::I32, ValType::I32], // width, height
+    },
+    AbiImport {
+        effect: "Terminal.hideCursor",
+        import_name: "terminal_hideCursor",
+        params: &[],
+        results: &[],
+    },
+    AbiImport {
+        effect: "Terminal.showCursor",
+        import_name: "terminal_showCursor",
+        params: &[],
+        results: &[],
+    },
+    AbiImport {
+        effect: "Terminal.flush",
+        import_name: "terminal_flush",
+        params: &[],
+        results: &[],
     },
     // --- Random ---
     // Returns a random integer in [min, max] inclusive.
@@ -141,26 +229,37 @@ pub fn collect_needed_imports(
     let mut seen = std::collections::HashSet::new();
     let mut imports = Vec::new();
 
+    let mut add_effect = |effect: &str| {
+        if effect == "Args.get" {
+            for hidden in ["Args._len", "Args._get"] {
+                if seen.insert(hidden.to_string())
+                    && let Some(abi) = lookup(hidden)
+                {
+                    imports.push(abi);
+                }
+            }
+            return;
+        }
+
+        if seen.insert(effect.to_string())
+            && let Some(abi) = lookup(effect)
+        {
+            imports.push(abi);
+        }
+    };
+
     // 1. Effects from user function signatures
     for name in user_fn_names {
         if let Some((_, _, effects)) = fn_sigs.get(*name) {
             for effect in effects {
-                if seen.insert(effect.clone())
-                    && let Some(abi) = lookup(effect)
-                {
-                    imports.push(abi);
-                }
+                add_effect(effect);
             }
         }
     }
 
     // 2. Explicit builtin calls that need host imports (e.g. Float.sin → math_sin)
     for call_name in host_call_names {
-        if seen.insert(call_name.clone())
-            && let Some(abi) = lookup(call_name)
-        {
-            imports.push(abi);
-        }
+        add_effect(call_name);
     }
 
     // Stable order

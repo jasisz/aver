@@ -2,7 +2,6 @@ use super::expr::{
     aver_name_to_rust, classify_body_expr_plan_for_rust, classify_body_plan_for_rust,
     classify_dispatch_plan_for_rust, classify_thin_fn_def_for_rust, clone_arg,
     emit_body_plan_for_rust, emit_dispatch_table_match, emit_expr, emit_stmt,
-    thin_body_plan_is_parent_thin_candidate,
 };
 use super::liveness::{
     EmitCtx, collect_vars, compute_args_used_after_full, compute_block_used_after,
@@ -12,7 +11,7 @@ use super::liveness::{
 use super::types::type_annotation_to_rust;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
-use crate::ir::{BodyExprPlan, CallPlan};
+use crate::ir::{BodyExprPlan, CallPlan, thin_body_plan_is_parent_thin_candidate};
 use crate::types::{Type, parse_type_str};
 /// Top-level Aver items → Rust items (structs, enums, functions, tests).
 use std::collections::{HashMap, HashSet};

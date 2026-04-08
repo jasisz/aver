@@ -54,6 +54,17 @@ pub struct ThinBodyPlan<'a> {
     pub kind: ThinKind,
 }
 
+pub fn thin_kind_is_parent_thin_candidate(kind: ThinKind) -> bool {
+    matches!(
+        kind,
+        ThinKind::Leaf | ThinKind::Direct | ThinKind::Forward | ThinKind::Dispatch
+    )
+}
+
+pub fn thin_body_plan_is_parent_thin_candidate(plan: &ThinBodyPlan<'_>) -> bool {
+    thin_kind_is_parent_thin_candidate(plan.kind) && matches!(plan.body, BodyPlan::SingleExpr(_))
+}
+
 pub trait ThinBodyCtx: CallLowerCtx {
     fn find_fn_def<'a>(&'a self, name: &str) -> Option<&'a FnDef>;
 }

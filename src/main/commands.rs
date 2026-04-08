@@ -1317,16 +1317,23 @@ pub(super) fn cmd_run_vm(
 
 /// Compile to WASM and execute with built-in host.
 /// Uses aver/* import ABI — host provides capabilities natively.
-pub(super) fn cmd_run_wasm(file: &str, module_root_override: Option<&str>) {
+pub(super) fn cmd_run_wasm(
+    file: &str,
+    module_root_override: Option<&str>,
+    program_args: Vec<String>,
+) {
     #[cfg(not(feature = "wasm"))]
     {
-        let _ = (file, module_root_override);
+        let _ = (file, module_root_override, program_args);
         eprintln!("{}", "WASM requires --features wasm".red());
         process::exit(1);
     }
 
     #[cfg(feature = "wasm")]
     {
+        #[cfg(feature = "terminal")]
+        let _terminal_guard = aver_rt::TerminalGuard::new();
+
         use aver::codegen;
 
         let (ctx, _module_root) = build_codegen_context(
@@ -1347,9 +1354,12 @@ pub(super) fn cmd_run_wasm(file: &str, module_root_override: Option<&str>) {
                 process::exit(1);
             }
         };
+        if let Ok(path) = std::env::var("AVER_DEBUG_DUMP_WASM") {
+            let _ = std::fs::write(path, &wasm_bytes);
+        }
 
         // Run with wasmtime host
-        match run_wasm_with_host(&wasm_bytes) {
+        match run_wasm_with_host(&wasm_bytes, &program_args) {
             Ok(()) => {}
             Err(e) => {
                 eprintln!("{}", format!("WASM execution error: {}", e).red());
@@ -1359,7 +1369,6 @@ pub(super) fn cmd_run_wasm(file: &str, module_root_override: Option<&str>) {
     }
 }
 
-#[cfg(feature = "wasm")]
 /// Format a WASM value (i64) by reading heap structures from memory.
 fn format_wasm_value(val: i64, mem: &[u8]) -> String {
     let ptr = val as u32 as usize;
@@ -1498,6 +1507,7 @@ fn format_wasm_value(val: i64, mem: &[u8]) -> String {
     format!("{}", val)
 }
 
+#[cfg(feature = "wasm")]
 /// Format a tagged value to string.
 /// tag: 0=Int, 1=Float(bits), 2=Bool, 3=String(ptr), 4=Heap(ptr), 5=Unit
 fn format_tagged_value(tag: i32, val: i64, mem: &[u8]) -> String {
@@ -1538,11 +1548,51 @@ fn format_tagged_value(tag: i32, val: i64, mem: &[u8]) -> String {
     }
 }
 
-fn run_wasm_with_host(wasm_bytes: &[u8]) -> Result<(), String> {
+#[cfg(feature = "wasm")]
+fn wasm_guest_bytes(caller: &mut wasmtime::Caller<'_, ()>, ptr: i32, len: i32) -> Vec<u8> {
+    if ptr < 0 || len < 0 {
+        return Vec::new();
+    }
+    let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
+    let data = mem.data(&*caller);
+    let start = ptr as usize;
+    let end = start.saturating_add(len as usize);
+    if end > data.len() {
+        return Vec::new();
+    }
+    data[start..end].to_vec()
+}
+
+#[cfg(feature = "wasm")]
+fn wasm_guest_string(caller: &mut wasmtime::Caller<'_, ()>, ptr: i32, len: i32) -> String {
+    String::from_utf8_lossy(&wasm_guest_bytes(caller, ptr, len)).to_string()
+}
+
+#[cfg(feature = "wasm")]
+fn wasm_write_guest_bytes(caller: &mut wasmtime::Caller<'_, ()>, bytes: &[u8]) -> (i32, i32) {
+    let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
+    let mem_size = mem.data_size(&*caller);
+    let reserve = bytes.len().saturating_add(64);
+    let ptr = mem_size.saturating_sub(reserve) as i32;
+    let start = ptr as usize;
+    let end = start.saturating_add(bytes.len());
+    if end <= mem_size {
+        mem.data_mut(caller)[start..end].copy_from_slice(bytes);
+    }
+    (ptr, bytes.len() as i32)
+}
+
+#[cfg(feature = "wasm")]
+fn wasm_write_guest_string(caller: &mut wasmtime::Caller<'_, ()>, text: &str) -> (i32, i32) {
+    wasm_write_guest_bytes(caller, text.as_bytes())
+}
+
+#[cfg(feature = "wasm")]
+fn run_wasm_with_host(wasm_bytes: &[u8], program_args: &[String]) -> Result<(), String> {
     use wasmtime::*;
 
     let engine = Engine::default();
-    let module = Module::new(&engine, wasm_bytes).map_err(|e| format!("Module error: {}", e))?;
+    let module = Module::new(&engine, wasm_bytes).map_err(|e| format!("Module error: {e:#}"))?;
     let mut store = Store::new(&engine, ());
     let mut linker = Linker::new(&engine);
 
@@ -1550,14 +1600,33 @@ fn run_wasm_with_host(wasm_bytes: &[u8]) -> Result<(), String> {
 
     // aver/console_print(ptr: i32, len: i32)
     linker
+        .func_wrap("aver", "args_len", {
+            let program_args = program_args.to_vec();
+            move || -> i32 { program_args.len() as i32 }
+        })
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    linker
+        .func_wrap("aver", "args_get", {
+            let program_args = program_args.to_vec();
+            move |mut caller: Caller<'_, ()>, index: i32| -> (i32, i32) {
+                let arg = program_args
+                    .get(index.max(0) as usize)
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
+                wasm_write_guest_string(&mut caller, arg)
+            }
+        })
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    linker
         .func_wrap(
             "aver",
             "console_print",
             |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
-                let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
-                let data = &mem.data(&caller)[ptr as usize..(ptr as usize + len as usize)];
                 use std::io::Write;
-                std::io::stdout().write_all(data).unwrap();
+                let data = wasm_guest_bytes(&mut caller, ptr, len);
+                std::io::stdout().write_all(&data).unwrap();
             },
         )
         .map_err(|e| format!("Link error: {}", e))?;
@@ -1568,10 +1637,9 @@ fn run_wasm_with_host(wasm_bytes: &[u8]) -> Result<(), String> {
             "aver",
             "console_error",
             |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
-                let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
-                let data = &mem.data(&caller)[ptr as usize..(ptr as usize + len as usize)];
                 use std::io::Write;
-                std::io::stderr().write_all(data).unwrap();
+                let data = wasm_guest_bytes(&mut caller, ptr, len);
+                std::io::stderr().write_all(&data).unwrap();
             },
         )
         .map_err(|e| format!("Link error: {}", e))?;
@@ -1657,14 +1725,7 @@ fn run_wasm_with_host(wasm_bytes: &[u8]) -> Result<(), String> {
                     seconds,
                     ms
                 );
-                let bytes = now.as_bytes();
-                let len = bytes.len() as i32;
-                let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
-                // Write to end of memory (simple approach)
-                let ptr = (mem.data_size(&caller) - 512) as i32;
-                mem.data_mut(&mut caller)[ptr as usize..ptr as usize + bytes.len()]
-                    .copy_from_slice(bytes);
-                (ptr, len)
+                wasm_write_guest_string(&mut caller, &now)
             },
         )
         .map_err(|e| format!("Link error: {}", e))?;
@@ -1710,12 +1771,7 @@ fn run_wasm_with_host(wasm_bytes: &[u8]) -> Result<(), String> {
             |mut caller: Caller<'_, ()>, tag: i32, val: i64| -> (i32, i32) {
                 let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
                 let formatted = format_tagged_value(tag, val, mem.data(&caller));
-                let bytes = formatted.as_bytes();
-                let len = bytes.len() as i32;
-                let ptr = (mem.data_size(&caller) - 1024) as i32;
-                mem.data_mut(&mut caller)[ptr as usize..ptr as usize + bytes.len()]
-                    .copy_from_slice(bytes);
-                (ptr, len)
+                wasm_write_guest_string(&mut caller, &formatted)
             },
         )
         .map_err(|e| format!("Link error: {}", e))?;
@@ -1746,25 +1802,116 @@ fn run_wasm_with_host(wasm_bytes: &[u8]) -> Result<(), String> {
                 let mut input = String::new();
                 std::io::stdin().read_line(&mut input).unwrap_or(0);
                 let trimmed = input.trim_end_matches('\n').trim_end_matches('\r');
-                let bytes = trimmed.as_bytes();
-                let len = bytes.len() as i32;
-
-                // Call the module's exported alloc function to get memory
-                // For now, write to a fixed scratch location
-                let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
-                let mem_size = mem.data_size(&caller);
-                // Write at end of current memory minus some buffer
-                let ptr = (mem_size - 256) as i32;
-                mem.data_mut(&mut caller)[ptr as usize..ptr as usize + bytes.len()]
-                    .copy_from_slice(bytes);
-                (ptr, len)
+                wasm_write_guest_string(&mut caller, trimmed)
             },
         )
         .map_err(|e| format!("Link error: {}", e))?;
 
+    #[cfg(feature = "terminal")]
+    linker
+        .func_wrap("aver", "terminal_enableRawMode", || {
+            aver_rt::terminal_enable_raw_mode().unwrap();
+        })
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    #[cfg(feature = "terminal")]
+    linker
+        .func_wrap("aver", "terminal_disableRawMode", || {
+            aver_rt::terminal_disable_raw_mode().unwrap();
+        })
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    #[cfg(feature = "terminal")]
+    linker
+        .func_wrap("aver", "terminal_clear", || {
+            aver_rt::terminal_clear().unwrap();
+        })
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    #[cfg(feature = "terminal")]
+    linker
+        .func_wrap("aver", "terminal_moveTo", |x: i32, y: i32| {
+            aver_rt::terminal_move_to(x as i64, y as i64).unwrap();
+        })
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    #[cfg(feature = "terminal")]
+    linker
+        .func_wrap(
+            "aver",
+            "terminal_print",
+            |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
+                let text = wasm_guest_string(&mut caller, ptr, len);
+                aver_rt::terminal_print(&text).unwrap();
+            },
+        )
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    #[cfg(feature = "terminal")]
+    linker
+        .func_wrap(
+            "aver",
+            "terminal_setColor",
+            |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
+                let color = wasm_guest_string(&mut caller, ptr, len);
+                aver_rt::terminal_set_color(&color).unwrap();
+            },
+        )
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    #[cfg(feature = "terminal")]
+    linker
+        .func_wrap("aver", "terminal_resetColor", || {
+            aver_rt::terminal_reset_color().unwrap();
+        })
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    #[cfg(feature = "terminal")]
+    linker
+        .func_wrap(
+            "aver",
+            "terminal_readKey",
+            |mut caller: Caller<'_, ()>| -> (i32, i32) {
+                match aver_rt::terminal_read_key() {
+                    Some(key) => wasm_write_guest_string(&mut caller, &key),
+                    None => (-1, 0),
+                }
+            },
+        )
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    #[cfg(feature = "terminal")]
+    linker
+        .func_wrap("aver", "terminal_size", || -> (i32, i32) {
+            let (width, height) = aver_rt::terminal_size().unwrap();
+            (width as i32, height as i32)
+        })
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    #[cfg(feature = "terminal")]
+    linker
+        .func_wrap("aver", "terminal_hideCursor", || {
+            aver_rt::terminal_hide_cursor().unwrap();
+        })
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    #[cfg(feature = "terminal")]
+    linker
+        .func_wrap("aver", "terminal_showCursor", || {
+            aver_rt::terminal_show_cursor().unwrap();
+        })
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    #[cfg(feature = "terminal")]
+    linker
+        .func_wrap("aver", "terminal_flush", || {
+            aver_rt::terminal_flush().unwrap();
+        })
+        .map_err(|e| format!("Link error: {}", e))?;
+
     let instance = linker
         .instantiate(&mut store, &module)
-        .map_err(|e| format!("Instantiation error: {}", e))?;
+        .map_err(|e| format!("Instantiation error: {e:#}"))?;
 
     // Try _start — check its actual return type and provide matching results buffer
     if let Some(start) = instance.get_func(&mut store, "_start") {
@@ -1773,7 +1920,7 @@ fn run_wasm_with_host(wasm_bytes: &[u8]) -> Result<(), String> {
         let mut results: Vec<Val> = (0..num_results).map(|_| Val::I32(0)).collect();
         start
             .call(&mut store, &[], &mut results)
-            .map_err(|e| format!("Execution error: {}", e))?;
+            .map_err(|e| format!("Execution error: {e:#}"))?;
     }
 
     Ok(())

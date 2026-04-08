@@ -138,7 +138,8 @@ impl<'a> ExprEmitter<'a> {
                 self.infer_record_field_type(base, field)
             }
             Expr::TailCall(tc) => {
-                if let Some((_, ret, _)) = self.fn_sigs.get(tc.0.as_str()) {
+                let resolved_name = self.resolve_user_fn_name(tc.0.as_str());
+                if let Some((_, ret, _)) = self.fn_sigs.get(resolved_name.as_str()) {
                     aver_type_to_wasm(ret)
                 } else {
                     self.fn_return_type
@@ -243,7 +244,17 @@ impl<'a> ExprEmitter<'a> {
                 if let Expr::Ident(base_name) = &base.node
                     && base_name.chars().next().is_some_and(|c| c.is_uppercase())
                 {
-                    return None;
+                    let qualified = format!("{}.{}", base_name, field);
+                    return match classify_constructor_name(&qualified, &self.ir_ctx()) {
+                        SemanticConstructor::NoneValue => {
+                            Some(Type::Option(Box::new(Type::Unknown)))
+                        }
+                        SemanticConstructor::TypeConstructor {
+                            qualified_type_name,
+                            ..
+                        } => Some(Type::Named(qualified_type_name)),
+                        SemanticConstructor::Wrapper(_) | SemanticConstructor::Unknown(_) => None,
+                    };
                 }
                 self.infer_record_field_aver_type(base, field)
             }
@@ -276,7 +287,8 @@ impl<'a> ExprEmitter<'a> {
         let plan = classify_call_plan(&callee.node, &self.ir_ctx());
         match plan {
             CallPlan::Function(name) => {
-                if let Some((_, ret_type, _)) = self.fn_sigs.get(name.as_str()) {
+                let resolved_name = self.resolve_user_fn_name(name.as_str());
+                if let Some((_, ret_type, _)) = self.fn_sigs.get(resolved_name.as_str()) {
                     aver_type_to_wasm(ret_type)
                 } else {
                     WasmType::I64
@@ -309,10 +321,12 @@ impl<'a> ExprEmitter<'a> {
     ) -> Option<Type> {
         let plan = classify_call_plan(&callee.node, &self.ir_ctx());
         match plan {
-            CallPlan::Function(name) => self
-                .fn_sigs
-                .get(name.as_str())
-                .map(|(_, ret, _)| ret.clone()),
+            CallPlan::Function(name) => {
+                let resolved_name = self.resolve_user_fn_name(name.as_str());
+                self.fn_sigs
+                    .get(resolved_name.as_str())
+                    .map(|(_, ret, _)| ret.clone())
+            }
             CallPlan::Builtin(name) => self
                 .infer_builtin_call_aver_return_type(name.as_str(), args)
                 .or_else(|| {
@@ -487,6 +501,8 @@ impl<'a> ExprEmitter<'a> {
             "Byte.fromHex" if args.len() == 1 => {
                 Some(Type::Result(Box::new(Type::Int), Box::new(Type::Str)))
             }
+            "Terminal.readKey" if args.is_empty() => Some(Type::Option(Box::new(Type::Str))),
+            "Terminal.size" if args.is_empty() => Some(Type::Named("Terminal.Size".to_string())),
             _ => None,
         }
     }
@@ -503,6 +519,12 @@ impl<'a> ExprEmitter<'a> {
             Some(Type::Named(name)) => Some(name.as_str()),
             _ => None,
         };
+
+        if let Some(type_name) = type_name
+            && type_name == "Terminal.Size"
+        {
+            return WasmType::I64;
+        }
 
         if let Some(type_name) = type_name
             && let Some(fields) = self.record_fields(type_name)
@@ -537,6 +559,15 @@ impl<'a> ExprEmitter<'a> {
             Some(Type::Named(name)) => Some(name),
             _ => None,
         };
+
+        if let Some(type_name) = base_type_name.as_deref()
+            && type_name == "Terminal.Size"
+        {
+            return match field_name {
+                "width" | "height" => Some(Type::Int),
+                _ => None,
+            };
+        }
 
         if let Some(type_name) = base_type_name.as_deref()
             && let Some(fields) = self.record_fields(type_name)

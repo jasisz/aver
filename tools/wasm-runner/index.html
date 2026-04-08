@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Aver WASM Runner</title>
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<main class="shell">
+    <section class="hero">
+        <div class="brand-lockup">
+            <div class="brand-logo" aria-hidden="true">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 100">
+                    <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+                        <g stroke="#1e293b" stroke-width="5">
+                            <circle cx="45" cy="55" r="20"/>
+                            <line x1="65" y1="35" x2="65" y2="75"/>
+                            <polyline points="77 35, 96 75, 115 35"/>
+                            <path d="M 127 55 H 167 C 167 44 158 35 147 35 C 136 35 127 44 127 55 C 127 66 136 75 147 75 C 157 75 163 72 163 67"/>
+                            <line x1="179" y1="75" x2="179" y2="35"/>
+                            <path d="M 179 46 Q 179 35 199 35"/>
+                        </g>
+                        <g stroke="#d97706" stroke-width="6">
+                            <path d="M 215 42 C 215 22 239 22 239 42 C 239 53 229 56 229 66"/>
+                            <line x1="255" y1="24" x2="255" y2="66"/>
+                        </g>
+                    </g>
+                    <circle cx="242" cy="84" r="4.5" fill="#d97706"/>
+                </svg>
+            </div>
+            <div class="brand-copy">
+                <p class="eyebrow">Aver / Browser Host</p>
+                <h1>Aver WASM Runner</h1>
+            </div>
+        </div>
+        <p class="lede">
+            Load a compiled Aver module and host the `aver/*` ABI directly in the browser:
+            <code>aver compile app.av --target wasm</code>.
+        </p>
+    </section>
+
+    <section class="layout">
+        <aside class="panel controls">
+            <div class="dropzone" data-dropzone data-drag="false">
+                <input type="file" accept=".wasm,application/wasm" data-file-input>
+                <p class="dropzone-title">Load WASM</p>
+                <p class="dropzone-copy">Click or drop a compiled Aver module here.</p>
+                <p class="dropzone-meta" data-file-meta>No module selected.</p>
+            </div>
+
+            <div class="button-row">
+                <button type="button" data-run disabled>Run</button>
+                <button type="button" data-stop disabled>Stop</button>
+                <button type="button" data-clear>Clear Output</button>
+            </div>
+
+            <div class="status-card">
+                <p class="status-label">Status</p>
+                <p class="status-value" data-status data-tone="idle">Idle</p>
+                <p class="status-aux" data-raw-mode data-active="false">raw mode off</p>
+                <p class="status-aux" data-line-queued>0 queued lines</p>
+            </div>
+
+            <div class="line-card">
+                <label for="line-input">Console.readLine queue</label>
+                <div class="line-row">
+                    <input id="line-input" type="text" placeholder="Typed line for Console.readLine()" data-line-input>
+                    <button type="button" data-line-button>Queue</button>
+                </div>
+            </div>
+
+            <div class="hint-card">
+                <p class="hint-title">Keyboard</p>
+                <p>When raw mode is enabled, arrow keys, <code>esc</code>, <code>enter</code> and single characters are fed into <code>Terminal.readKey()</code>.</p>
+            </div>
+
+            <div class="hint-card" data-isolation-note data-tone="info">
+                <p class="hint-title">Interactive Mode</p>
+                <p data-isolation-copy>Use the bundled server for live keyboard input.</p>
+            </div>
+        </aside>
+
+        <section class="stack">
+            <section class="panel terminal-panel">
+                <div class="panel-header">
+                    <h2>Terminal</h2>
+                    <p>Canvas renderer for <code>Terminal.*</code></p>
+                </div>
+                <div class="terminal-surface" tabindex="0" data-terminal>
+                    <canvas class="terminal-canvas" data-terminal-canvas></canvas>
+                    <div class="terminal-empty" data-terminal-empty>Load a module to render a terminal frame.</div>
+                </div>
+            </section>
+
+            <section class="panel console-panel">
+                <div class="panel-header">
+                    <h2>Console</h2>
+                    <p>Raw host output for <code>Console.*</code>, <code>print_value</code> and stderr.</p>
+                </div>
+                <div class="console-surface" data-console></div>
+            </section>
+        </section>
+    </section>
+</main>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

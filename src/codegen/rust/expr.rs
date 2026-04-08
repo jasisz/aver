@@ -10,7 +10,7 @@ use crate::ir::{
     BodyExprPlan, BodyPlan, BoolCompareOp, BoolSubjectPlan, CallLowerCtx, CallPlan,
     DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral, DispatchTableShape,
     ForwardArg, ForwardCallPlan, LeafOp, ListMatchShape, MatchDispatchPlan, SemanticConstructor,
-    SemanticDispatchPattern, TailCallPlan, ThinBodyCtx, ThinBodyPlan, ThinKind, WrapperKind,
+    SemanticDispatchPattern, TailCallPlan, ThinBodyCtx, ThinBodyPlan, WrapperKind,
     classify_body_expr_plan, classify_body_plan, classify_bool_subject_plan, classify_call_plan,
     classify_constructor_name, classify_leaf_op, classify_list_match_shape,
     classify_match_dispatch_plan, classify_tail_call_plan, classify_thin_fn_def,
@@ -101,13 +101,6 @@ pub(super) fn classify_thin_fn_def_for_rust<'a>(
 ) -> Option<ThinBodyPlan<'a>> {
     let lower_ctx = RustCallCtx { ctx, ectx };
     classify_thin_fn_def(fd, &lower_ctx)
-}
-
-pub(super) fn thin_body_plan_is_parent_thin_candidate(plan: &ThinBodyPlan<'_>) -> bool {
-    matches!(
-        plan.kind,
-        ThinKind::Leaf | ThinKind::Direct | ThinKind::Forward | ThinKind::Dispatch
-    )
 }
 
 /// Emit a Rust expression from an Aver Expr.

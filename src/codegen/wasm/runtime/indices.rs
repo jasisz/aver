@@ -11,18 +11,24 @@ use wasm_encoder::{TypeSection, ValType};
 #[derive(Debug, Clone, Copy)]
 pub struct RuntimeFuncIndices {
     pub alloc: u32,
-    pub wrap: u32,            // (i32, i64) -> i32
+    pub truncate: u32,        // (i32) -> ()
+    pub collect_begin: u32,   // (i32) -> ()
+    pub collect_end: u32,     // () -> ()
+    pub rebase_i32: u32,      // (i32) -> i32
+    pub retain_i32: u32,      // (i32) -> i32
+    pub wrap: u32,            // (i32, i64, i32) -> i32
     pub wrap_f64: u32,        // (i32, f64) -> i32
-    pub wrap_i32: u32,        // (i32, i32) -> i32
+    pub wrap_i32: u32,        // (i32, i32, i32) -> i32
     pub unwrap: u32,          // (i32) -> i64
     pub unwrap_f64: u32,      // (i32) -> f64
     pub unwrap_i32: u32,      // (i32) -> i32
     pub obj_kind: u32,        // (i32) -> i32
     pub obj_tag: u32,         // (i32) -> i32
+    pub obj_meta: u32,        // (i32) -> i32
     pub obj_field: u32,       // (i32, i32) -> i64
     pub obj_field_f64: u32,   // (i32, i32) -> f64
     pub obj_field_i32: u32,   // (i32, i32) -> i32
-    pub list_cons: u32,       // (i64, i32) -> i32
+    pub list_cons: u32,       // (i64, i32, i32) -> i32
     pub list_cons_f64: u32,   // (f64, i32) -> i32
     pub int_to_str: u32,      // (i64, i32) -> i32
     pub float_to_str: u32,    // (f64, i32) -> i32
@@ -38,15 +44,15 @@ pub struct RuntimeFuncIndices {
     pub list_contains: u32,   // (i32, i64) -> i32
     pub list_zip: u32,        // (i32, i32) -> i32
     pub map_get: u32,         // (i32, i32) -> i32
-    pub map_set: u32,         // (i32, i32, i64) -> i32
+    pub map_set: u32,         // (i32, i32, i64, i32) -> i32
     pub map_has: u32,         // (i32, i32) -> i32
     pub map_keys: u32,        // (i32) -> i32
     pub map_entries: u32,     // (i32) -> i32
-    pub vec_from_list: u32,   // (i32) -> i32
+    pub vec_from_list: u32,   // (i32, i32) -> i32
     pub vec_get: u32,         // (i32, i64) -> i32
     pub vec_len: u32,         // (i32) -> i64
     pub vec_set: u32,         // (i32, i64, i64) -> i32
-    pub vec_new: u32,         // (i64, i64) -> i32
+    pub vec_new: u32,         // (i64, i64, i32) -> i32
     pub vec_to_list: u32,     // (i32) -> i32
     pub str_len: u32,         // (i32) -> i64
     pub str_byte_len: u32,    // (i32) -> i64
@@ -87,6 +93,11 @@ impl RuntimeFuncIndices {
         };
         RuntimeFuncIndices {
             alloc: next(),
+            truncate: next(),
+            collect_begin: next(),
+            collect_end: next(),
+            rebase_i32: next(),
+            retain_i32: next(),
             wrap: next(),
             wrap_f64: next(),
             wrap_i32: next(),
@@ -95,6 +106,7 @@ impl RuntimeFuncIndices {
             unwrap_i32: next(),
             obj_kind: next(),
             obj_tag: next(),
+            obj_meta: next(),
             obj_field: next(),
             obj_field_f64: next(),
             obj_field_i32: next(),
@@ -189,40 +201,52 @@ impl TypeRegistry {
 /// Runtime and import function type signatures. Indices into the type section.
 #[derive(Debug, Clone, Copy)]
 pub struct RtTypeIndices {
-    pub alloc: u32,              // (i32) -> i32
-    pub wrap_i64: u32,           // (i32, i64) -> i32
-    pub wrap_f64: u32,           // (i32, f64) -> i32
-    pub wrap_i32: u32,           // (i32, i32) -> i32
-    pub unwrap_i64: u32,         // (i32) -> i64
-    pub unwrap_f64: u32,         // (i32) -> f64
-    pub unwrap_i32: u32,         // (i32) -> i32
-    pub obj_kind: u32,           // (i32) -> i32
-    pub obj_tag: u32,            // (i32) -> i32
-    pub obj_field_i64: u32,      // (i32, i32) -> i64
-    pub obj_field_f64: u32,      // (i32, i32) -> f64
-    pub obj_field_i32: u32,      // (i32, i32) -> i32
-    pub list_cons_i64: u32,      // (i64, i32) -> i32
-    pub list_cons_f64: u32,      // (f64, i32) -> i32
-    pub print_i64: u32,          // (i64) -> ()
-    pub print_f64: u32,          // (f64) -> ()
-    pub print_i32: u32,          // (i32) -> ()
-    pub int_to_str: u32,         // (i64, i32) -> i32
-    pub float_to_str: u32,       // (f64, i32) -> i32
-    pub fd_write_buf: u32,       // (i32, i32) -> ()
-    pub wasi_fd_write: u32,      // (i32, i32, i32, i32) -> i32
-    pub i64_to_i32: u32,         // (i64) -> i32
-    pub f64_to_i32: u32,         // (f64) -> i32
-    pub i32_i64_to_i32: u32,     // (i32, i64) -> i32
-    pub i32_i32_i64_to_i32: u32, // (i32, i32, i64) -> i32
-    pub i32_i64_i64_to_i32: u32, // (i32, i64, i64) -> i32
-    pub i64_i64_to_i32: u32,     // (i64, i64) -> i32
-    pub i32_i32_i32_to_i32: u32, // (i32, i32, i32) -> i32
-    pub empty_to_i32_i32: u32,   // () -> (i32, i32)
-    pub i32_i64_to_empty: u32,   // (i32, i64) -> ()
-    pub i32_i64_to_i32_i32: u32, // (i32, i64) -> (i32, i32)
-    pub i64_i64_to_i64: u32,     // (i64, i64) -> i64
-    pub empty_to_i64: u32,       // () -> i64
-    pub count: u32,              // total number of distinct base signatures
+    pub alloc: u32,                  // (i32) -> i32
+    pub i32_to_empty: u32,           // (i32) -> ()
+    pub wrap_i64: u32,               // (i32, i64, i32) -> i32
+    pub wrap_f64: u32,               // (i32, f64) -> i32
+    pub wrap_i32: u32,               // (i32, i32, i32) -> i32
+    pub unwrap_i64: u32,             // (i32) -> i64
+    pub unwrap_f64: u32,             // (i32) -> f64
+    pub unwrap_i32: u32,             // (i32) -> i32
+    pub obj_kind: u32,               // (i32) -> i32
+    pub obj_tag: u32,                // (i32) -> i32
+    pub obj_meta: u32,               // (i32) -> i32
+    pub obj_field_i64: u32,          // (i32, i32) -> i64
+    pub obj_field_f64: u32,          // (i32, i32) -> f64
+    pub obj_field_i32: u32,          // (i32, i32) -> i32
+    pub list_cons_i64: u32,          // (i64, i32, i32) -> i32
+    pub list_cons_f64: u32,          // (f64, i32) -> i32
+    pub print_i64: u32,              // (i64) -> ()
+    pub print_f64: u32,              // (f64) -> ()
+    pub print_i32: u32,              // (i32) -> ()
+    pub int_to_str: u32,             // (i64, i32) -> i32
+    pub float_to_str: u32,           // (f64, i32) -> i32
+    pub fd_write_buf: u32,           // (i32, i32) -> ()
+    pub wasi_fd_write: u32,          // (i32, i32, i32, i32) -> i32
+    pub i32_i32_to_i32: u32,         // (i32, i32) -> i32
+    pub i64_i32_to_i32: u32,         // (i64, i32) -> i32
+    pub i64_to_i32: u32,             // (i64) -> i32
+    pub f64_to_i32: u32,             // (f64) -> i32
+    pub i32_i64_to_i32: u32,         // (i32, i64) -> i32
+    pub i32_i64_i32_to_i32: u32,     // (i32, i64, i32) -> i32
+    pub i32_i32_i64_to_i32: u32,     // (i32, i32, i64) -> i32
+    pub i32_i32_i64_i32_to_i32: u32, // (i32, i32, i64, i32) -> i32
+    pub i32_i64_i64_to_i32: u32,     // (i32, i64, i64) -> i32
+    pub i64_i64_to_i32: u32,         // (i64, i64) -> i32
+    pub i64_i64_i32_to_i32: u32,     // (i64, i64, i32) -> i32
+    pub f64_to_f64: u32,             // (f64) -> f64
+    pub f64_f64_to_f64: u32,         // (f64, f64) -> f64
+    pub i32_i32_i32_to_i32: u32,     // (i32, i32, i32) -> i32
+    pub empty_to_i32: u32,           // () -> i32
+    pub empty_to_i32_i32: u32,       // () -> (i32, i32)
+    pub i32_to_i32_i32: u32,         // (i32) -> (i32, i32)
+    pub i32_i64_to_empty: u32,       // (i32, i64) -> ()
+    pub i32_i64_to_i32_i32: u32,     // (i32, i64) -> (i32, i32)
+    pub i64_i64_to_i64: u32,         // (i64, i64) -> i64
+    pub empty_to_i64: u32,           // () -> i64
+    pub empty_to_empty: u32,         // () -> ()
+    pub count: u32,                  // total number of distinct base signatures
 }
 
 /// Emit and intern all base signatures used by runtime helpers and ABI imports.
@@ -230,9 +254,18 @@ pub fn emit_base_type_section(type_section: &mut TypeSection) -> RtTypeIndices {
     let mut registry = TypeRegistry::default();
 
     let alloc = registry.intern(type_section, &[ValType::I32], &[ValType::I32]);
-    let wrap_i64 = registry.intern(type_section, &[ValType::I32, ValType::I64], &[ValType::I32]);
+    let i32_to_empty = registry.intern(type_section, &[ValType::I32], &[]);
+    let wrap_i64 = registry.intern(
+        type_section,
+        &[ValType::I32, ValType::I64, ValType::I32],
+        &[ValType::I32],
+    );
     let wrap_f64 = registry.intern(type_section, &[ValType::I32, ValType::F64], &[ValType::I32]);
-    let wrap_i32 = registry.intern(type_section, &[ValType::I32, ValType::I32], &[ValType::I32]);
+    let wrap_i32 = registry.intern(
+        type_section,
+        &[ValType::I32, ValType::I32, ValType::I32],
+        &[ValType::I32],
+    );
     let unwrap_i64 = registry.intern(type_section, &[ValType::I32], &[ValType::I64]);
     let unwrap_f64 = registry.intern(type_section, &[ValType::I32], &[ValType::F64]);
     let unwrap_i32 = registry.intern(type_section, &[ValType::I32], &[ValType::I32]);
@@ -240,8 +273,11 @@ pub fn emit_base_type_section(type_section: &mut TypeSection) -> RtTypeIndices {
         registry.intern(type_section, &[ValType::I32, ValType::I32], &[ValType::I64]);
     let obj_field_f64 =
         registry.intern(type_section, &[ValType::I32, ValType::I32], &[ValType::F64]);
-    let list_cons_i64 =
-        registry.intern(type_section, &[ValType::I64, ValType::I32], &[ValType::I32]);
+    let list_cons_i64 = registry.intern(
+        type_section,
+        &[ValType::I64, ValType::I32, ValType::I32],
+        &[ValType::I32],
+    );
     let list_cons_f64 =
         registry.intern(type_section, &[ValType::F64, ValType::I32], &[ValType::I32]);
     let print_i64 = registry.intern(type_section, &[ValType::I64], &[]);
@@ -253,13 +289,27 @@ pub fn emit_base_type_section(type_section: &mut TypeSection) -> RtTypeIndices {
         &[ValType::I32, ValType::I32, ValType::I32, ValType::I32],
         &[ValType::I32],
     );
+    let i32_i32_to_i32 =
+        registry.intern(type_section, &[ValType::I32, ValType::I32], &[ValType::I32]);
+    let i64_i32_to_i32 =
+        registry.intern(type_section, &[ValType::I64, ValType::I32], &[ValType::I32]);
     let i64_to_i32 = registry.intern(type_section, &[ValType::I64], &[ValType::I32]);
     let f64_to_i32 = registry.intern(type_section, &[ValType::F64], &[ValType::I32]);
     let i32_i64_to_i32 =
         registry.intern(type_section, &[ValType::I32, ValType::I64], &[ValType::I32]);
+    let i32_i64_i32_to_i32 = registry.intern(
+        type_section,
+        &[ValType::I32, ValType::I64, ValType::I32],
+        &[ValType::I32],
+    );
     let i32_i32_i64_to_i32 = registry.intern(
         type_section,
         &[ValType::I32, ValType::I32, ValType::I64],
+        &[ValType::I32],
+    );
+    let i32_i32_i64_i32_to_i32 = registry.intern(
+        type_section,
+        &[ValType::I32, ValType::I32, ValType::I64, ValType::I32],
         &[ValType::I32],
     );
     let i32_i64_i64_to_i32 = registry.intern(
@@ -269,12 +319,23 @@ pub fn emit_base_type_section(type_section: &mut TypeSection) -> RtTypeIndices {
     );
     let i64_i64_to_i32 =
         registry.intern(type_section, &[ValType::I64, ValType::I64], &[ValType::I32]);
+    let i64_i64_i32_to_i32 = registry.intern(
+        type_section,
+        &[ValType::I64, ValType::I64, ValType::I32],
+        &[ValType::I32],
+    );
+    let f64_to_f64 = registry.intern(type_section, &[ValType::F64], &[ValType::F64]);
+    let f64_f64_to_f64 =
+        registry.intern(type_section, &[ValType::F64, ValType::F64], &[ValType::F64]);
     let i32_i32_i32_to_i32 = registry.intern(
         type_section,
         &[ValType::I32, ValType::I32, ValType::I32],
         &[ValType::I32],
     );
+    let empty_to_i32 = registry.intern(type_section, &[], &[ValType::I32]);
     let empty_to_i32_i32 = registry.intern(type_section, &[], &[ValType::I32, ValType::I32]);
+    let i32_to_i32_i32 =
+        registry.intern(type_section, &[ValType::I32], &[ValType::I32, ValType::I32]);
     let i32_i64_to_empty = registry.intern(type_section, &[ValType::I32, ValType::I64], &[]);
     let i32_i64_to_i32_i32 = registry.intern(
         type_section,
@@ -284,9 +345,11 @@ pub fn emit_base_type_section(type_section: &mut TypeSection) -> RtTypeIndices {
     let i64_i64_to_i64 =
         registry.intern(type_section, &[ValType::I64, ValType::I64], &[ValType::I64]);
     let empty_to_i64 = registry.intern(type_section, &[], &[ValType::I64]);
+    let empty_to_empty = registry.intern(type_section, &[], &[]);
 
     RtTypeIndices {
         alloc,
+        i32_to_empty,
         wrap_i64,
         wrap_f64,
         wrap_i32,
@@ -295,30 +358,41 @@ pub fn emit_base_type_section(type_section: &mut TypeSection) -> RtTypeIndices {
         unwrap_i32,
         obj_kind: unwrap_i32,
         obj_tag: unwrap_i32,
+        obj_meta: unwrap_i32,
         obj_field_i64,
         obj_field_f64,
-        obj_field_i32: wrap_i32,
+        obj_field_i32: i32_i32_to_i32,
         list_cons_i64,
         list_cons_f64,
         print_i64,
         print_f64,
         print_i32,
-        int_to_str: list_cons_i64,
+        int_to_str: i64_i32_to_i32,
         float_to_str: list_cons_f64,
         fd_write_buf,
         wasi_fd_write,
+        i32_i32_to_i32,
+        i64_i32_to_i32,
         i64_to_i32,
         f64_to_i32,
         i32_i64_to_i32,
+        i32_i64_i32_to_i32,
         i32_i32_i64_to_i32,
+        i32_i32_i64_i32_to_i32,
         i32_i64_i64_to_i32,
         i64_i64_to_i32,
+        i64_i64_i32_to_i32,
+        f64_to_f64,
+        f64_f64_to_f64,
         i32_i32_i32_to_i32,
+        empty_to_i32,
         empty_to_i32_i32,
+        i32_to_i32_i32,
         i32_i64_to_empty,
         i32_i64_to_i32_i32,
         i64_i64_to_i64,
         empty_to_i64,
+        empty_to_empty,
         count: registry.count(),
     }
 }
@@ -329,16 +403,19 @@ pub fn lookup_type_index(
     params: &[ValType],
     results: &[ValType],
 ) -> Option<u32> {
-    if params == [ValType::I32] && results == [ValType::I32] {
-        return Some(rti.alloc);
+    if params == [ValType::I32] && results.is_empty() {
+        return Some(rti.i32_to_empty);
     }
-    if params == [ValType::I32, ValType::I64] && results == [ValType::I32] {
+    if params == [ValType::I32] && results == [ValType::I32] {
+        return Some(rti.unwrap_i32);
+    }
+    if params == [ValType::I32, ValType::I64, ValType::I32] && results == [ValType::I32] {
         return Some(rti.wrap_i64);
     }
     if params == [ValType::I32, ValType::F64] && results == [ValType::I32] {
         return Some(rti.wrap_f64);
     }
-    if params == [ValType::I32, ValType::I32] && results == [ValType::I32] {
+    if params == [ValType::I32, ValType::I32, ValType::I32] && results == [ValType::I32] {
         return Some(rti.wrap_i32);
     }
     if params == [ValType::I32] && results == [ValType::I64] {
@@ -353,7 +430,7 @@ pub fn lookup_type_index(
     if params == [ValType::I32, ValType::I32] && results == [ValType::F64] {
         return Some(rti.obj_field_f64);
     }
-    if params == [ValType::I64, ValType::I32] && results == [ValType::I32] {
+    if params == [ValType::I64, ValType::I32, ValType::I32] && results == [ValType::I32] {
         return Some(rti.list_cons_i64);
     }
     if params == [ValType::F64, ValType::I32] && results == [ValType::I32] {
@@ -376,6 +453,9 @@ pub fn lookup_type_index(
     {
         return Some(rti.wasi_fd_write);
     }
+    if params == [ValType::I64, ValType::I32] && results == [ValType::I32] {
+        return Some(rti.i64_i32_to_i32);
+    }
     if params == [ValType::I64] && results == [ValType::I32] {
         return Some(rti.i64_to_i32);
     }
@@ -385,8 +465,16 @@ pub fn lookup_type_index(
     if params == [ValType::I32, ValType::I64] && results == [ValType::I32] {
         return Some(rti.i32_i64_to_i32);
     }
+    if params == [ValType::I32, ValType::I64, ValType::I32] && results == [ValType::I32] {
+        return Some(rti.i32_i64_i32_to_i32);
+    }
     if params == [ValType::I32, ValType::I32, ValType::I64] && results == [ValType::I32] {
         return Some(rti.i32_i32_i64_to_i32);
+    }
+    if params == [ValType::I32, ValType::I32, ValType::I64, ValType::I32]
+        && results == [ValType::I32]
+    {
+        return Some(rti.i32_i32_i64_i32_to_i32);
     }
     if params == [ValType::I32, ValType::I64, ValType::I64] && results == [ValType::I32] {
         return Some(rti.i32_i64_i64_to_i32);
@@ -394,11 +482,26 @@ pub fn lookup_type_index(
     if params == [ValType::I64, ValType::I64] && results == [ValType::I32] {
         return Some(rti.i64_i64_to_i32);
     }
+    if params == [ValType::I64, ValType::I64, ValType::I32] && results == [ValType::I32] {
+        return Some(rti.i64_i64_i32_to_i32);
+    }
+    if params == [ValType::F64] && results == [ValType::F64] {
+        return Some(rti.f64_to_f64);
+    }
+    if params == [ValType::F64, ValType::F64] && results == [ValType::F64] {
+        return Some(rti.f64_f64_to_f64);
+    }
     if params == [ValType::I32, ValType::I32, ValType::I32] && results == [ValType::I32] {
         return Some(rti.i32_i32_i32_to_i32);
     }
+    if params.is_empty() && results == [ValType::I32] {
+        return Some(rti.empty_to_i32);
+    }
     if params.is_empty() && results == [ValType::I32, ValType::I32] {
         return Some(rti.empty_to_i32_i32);
+    }
+    if params == [ValType::I32] && results == [ValType::I32, ValType::I32] {
+        return Some(rti.i32_to_i32_i32);
     }
     if params == [ValType::I32, ValType::I64] && results.is_empty() {
         return Some(rti.i32_i64_to_empty);
@@ -411,6 +514,9 @@ pub fn lookup_type_index(
     }
     if params.is_empty() && results == [ValType::I64] {
         return Some(rti.empty_to_i64);
+    }
+    if params.is_empty() && results.is_empty() {
+        return Some(rti.empty_to_empty);
     }
 
     None
@@ -428,6 +534,21 @@ pub fn rt_type_index(
 
     if local_idx == alloc_local {
         return rti.alloc;
+    }
+    if local_idx == rt.truncate - import_func_count {
+        return rti.i32_to_empty;
+    }
+    if local_idx == rt.collect_begin - import_func_count {
+        return rti.i32_to_empty;
+    }
+    if local_idx == rt.collect_end - import_func_count {
+        return rti.empty_to_empty;
+    }
+    if local_idx == rt.rebase_i32 - import_func_count {
+        return rti.unwrap_i32;
+    }
+    if local_idx == rt.retain_i32 - import_func_count {
+        return rti.unwrap_i32;
     }
     if local_idx == rt.wrap - import_func_count {
         return rti.wrap_i64;
@@ -452,6 +573,9 @@ pub fn rt_type_index(
     }
     if local_idx == rt.obj_tag - import_func_count {
         return rti.obj_tag;
+    }
+    if local_idx == rt.obj_meta - import_func_count {
+        return rti.obj_meta;
     }
     if local_idx == rt.obj_field - import_func_count {
         return rti.obj_field_i64;
@@ -478,10 +602,10 @@ pub fn rt_type_index(
         return rti.fd_write_buf;
     }
     if local_idx == rt.str_eq - import_func_count {
-        return rti.wrap_i32;
+        return rti.i32_i32_to_i32;
     }
     if local_idx == rt.str_concat - import_func_count {
-        return rti.wrap_i32;
+        return rti.i32_i32_to_i32;
     }
     if local_idx == rt.i64_to_str_obj - import_func_count {
         return rti.i64_to_i32;
@@ -490,40 +614,40 @@ pub fn rt_type_index(
         return rti.f64_to_i32;
     }
     if local_idx == rt.list_take - import_func_count {
-        return rti.wrap_i32;
+        return rti.i32_i32_to_i32;
     }
     if local_idx == rt.list_drop - import_func_count {
-        return rti.wrap_i32;
+        return rti.i32_i32_to_i32;
     }
     if local_idx == rt.list_concat - import_func_count {
-        return rti.wrap_i32;
+        return rti.i32_i32_to_i32;
     }
     if local_idx == rt.list_reverse - import_func_count {
-        return rti.alloc;
+        return rti.unwrap_i32;
     }
     if local_idx == rt.list_contains - import_func_count {
         return rti.i32_i64_to_i32;
     }
     if local_idx == rt.list_zip - import_func_count {
-        return rti.wrap_i32;
+        return rti.i32_i32_to_i32;
     }
     if local_idx == rt.map_get - import_func_count {
-        return rti.wrap_i32;
+        return rti.i32_i32_to_i32;
     }
     if local_idx == rt.map_set - import_func_count {
-        return rti.i32_i32_i64_to_i32;
+        return rti.i32_i32_i64_i32_to_i32;
     }
     if local_idx == rt.map_has - import_func_count {
-        return rti.wrap_i32;
+        return rti.i32_i32_to_i32;
     }
     if local_idx == rt.map_keys - import_func_count {
-        return rti.alloc;
+        return rti.unwrap_i32;
     }
     if local_idx == rt.map_entries - import_func_count {
-        return rti.alloc;
+        return rti.unwrap_i32;
     }
     if local_idx == rt.vec_from_list - import_func_count {
-        return rti.alloc;
+        return rti.i32_i32_to_i32;
     }
     if local_idx == rt.vec_get - import_func_count {
         return rti.i32_i64_to_i32;
@@ -535,10 +659,10 @@ pub fn rt_type_index(
         return rti.i32_i64_i64_to_i32;
     }
     if local_idx == rt.vec_new - import_func_count {
-        return rti.i64_i64_to_i32;
+        return rti.i64_i64_i32_to_i32;
     }
     if local_idx == rt.vec_to_list - import_func_count {
-        return rti.alloc;
+        return rti.unwrap_i32;
     }
     if local_idx == rt.str_len - import_func_count {
         return rti.unwrap_i64;
@@ -550,13 +674,13 @@ pub fn rt_type_index(
         return rti.i32_i32_i32_to_i32;
     }
     if local_idx == rt.str_starts_with - import_func_count {
-        return rti.wrap_i32;
+        return rti.i32_i32_to_i32;
     }
     if local_idx == rt.str_ends_with - import_func_count {
-        return rti.wrap_i32;
+        return rti.i32_i32_to_i32;
     }
     if local_idx == rt.str_contains - import_func_count {
-        return rti.wrap_i32;
+        return rti.i32_i32_to_i32;
     }
     if local_idx == rt.str_char_at - import_func_count {
         return rti.i32_i64_to_i32;
@@ -571,37 +695,37 @@ pub fn rt_type_index(
         return rti.i64_to_i32;
     }
     if local_idx == rt.byte_from_hex - import_func_count {
-        return rti.alloc;
+        return rti.unwrap_i32;
     }
     if local_idx == rt.str_trim - import_func_count {
-        return rti.alloc;
+        return rti.unwrap_i32;
     }
     if local_idx == rt.str_slice - import_func_count {
         return rti.i32_i32_i32_to_i32;
     }
     if local_idx == rt.str_chars - import_func_count {
-        return rti.alloc;
+        return rti.unwrap_i32;
     }
     if local_idx == rt.str_split - import_func_count {
-        return rti.wrap_i32;
+        return rti.i32_i32_to_i32;
     }
     if local_idx == rt.str_join - import_func_count {
-        return rti.wrap_i32;
+        return rti.i32_i32_to_i32;
     }
     if local_idx == rt.str_replace - import_func_count {
         return rti.i32_i32_i32_to_i32;
     }
     if local_idx == rt.str_to_lower - import_func_count {
-        return rti.alloc;
+        return rti.unwrap_i32;
     }
     if local_idx == rt.str_to_upper - import_func_count {
-        return rti.alloc;
+        return rti.unwrap_i32;
     }
     if local_idx == rt.int_from_str - import_func_count {
-        return rti.alloc;
+        return rti.unwrap_i32;
     }
     if local_idx == rt.float_from_str - import_func_count {
-        return rti.alloc;
+        return rti.unwrap_i32;
     }
 
     panic!(
@@ -620,8 +744,9 @@ mod tests {
         let rti = emit_base_type_section(&mut type_section);
 
         assert_eq!(rti.alloc, rti.unwrap_i32);
-        assert_eq!(rti.wrap_i32, rti.obj_field_i32);
-        assert_eq!(rti.list_cons_i64, rti.int_to_str);
+        assert_eq!(rti.obj_kind, rti.unwrap_i32);
+        assert_eq!(rti.obj_tag, rti.unwrap_i32);
+        assert_eq!(rti.obj_meta, rti.unwrap_i32);
         assert_eq!(rti.list_cons_f64, rti.float_to_str);
     }
 

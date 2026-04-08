@@ -7,24 +7,31 @@ use wasm_encoder::{Function, Instruction, ValType};
 use super::super::value::*;
 use super::RuntimeFuncIndices;
 
-/// $list_cons(head: i64, tail: i32) -> i32
+/// $list_cons(head: i64, tail: i32, head_ptr_flag: i32) -> i32
 pub(super) fn emit_list_cons_i64(rt: &RuntimeFuncIndices) -> Function {
     let mut f = Function::new(vec![(1, ValType::I32)]); // local: $ptr
     f.instruction(&Instruction::I32Const(24));
     f.instruction(&Instruction::Call(rt.alloc));
-    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalSet(3));
     // header
-    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I64Const(
-        make_header(OBJ_LIST_CONS, 0, 0, 2) as i64
+        (OBJ_LIST_CONS << HDR_KIND_SHIFT) as i64,
     ));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::I64Const(HDR_META_SHIFT as i64));
+    f.instruction(&Instruction::I64Shl);
+    f.instruction(&Instruction::I64Or);
+    f.instruction(&Instruction::I64Const(2));
+    f.instruction(&Instruction::I64Or);
     f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
         offset: 0,
         align: 3,
         memory_index: 0,
     }));
     // head (i64)
-    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
         offset: 8,
@@ -32,7 +39,7 @@ pub(super) fn emit_list_cons_i64(rt: &RuntimeFuncIndices) -> Function {
         memory_index: 0,
     }));
     // tail (i32 → store as i64)
-    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::I64ExtendI32S);
     f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
@@ -40,7 +47,7 @@ pub(super) fn emit_list_cons_i64(rt: &RuntimeFuncIndices) -> Function {
         align: 3,
         memory_index: 0,
     }));
-    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::End);
     f
 }
@@ -111,6 +118,10 @@ pub(super) fn emit_list_take(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::Call(rt.obj_field));
     // result = list_cons(head, result)
     f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::Call(rt.obj_meta));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::Call(rt.list_cons));
     f.instruction(&Instruction::LocalSet(2));
     // ptr = tail
@@ -194,6 +205,10 @@ pub(super) fn emit_list_concat(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::Call(rt.obj_field));
     // b = cons(head, b)
     f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::Call(rt.obj_meta));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::Call(rt.list_cons));
     f.instruction(&Instruction::LocalSet(1));
     // ptr = tail
@@ -231,6 +246,10 @@ pub(super) fn emit_list_reverse(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::Call(rt.obj_field));
     // acc = cons(head, acc)
     f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::Call(rt.obj_meta));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::Call(rt.list_cons));
     f.instruction(&Instruction::LocalSet(1));
     // ptr = tail
@@ -282,12 +301,14 @@ pub(super) fn emit_list_contains(rt: &RuntimeFuncIndices) -> Function {
 /// $list_zip(a: i32, b: i32) -> i32
 /// Zips two lists into list of tuples. Stops at shorter list.
 pub(super) fn emit_list_zip(rt: &RuntimeFuncIndices) -> Function {
-    // params: a=0, b=1. locals: acc=2, head_a=3(i64), head_b=4(i64), ptr=5
+    // params: a=0, b=1. locals: acc=2, head_a=3(i64), head_b=4(i64), tuple_ptr=5,
+    // meta_a=6, meta_b=7
     let mut f = Function::new(vec![
         (1, ValType::I32), // 2: acc
         (1, ValType::I64), // 3: head_a
         (1, ValType::I64), // 4: head_b
         (1, ValType::I32), // 5: tuple_ptr
+        (2, ValType::I32), // 6..7: metadata bits for source lists
     ]);
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::LocalSet(2)); // acc = empty
@@ -308,14 +329,33 @@ pub(super) fn emit_list_zip(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::Call(rt.obj_field));
     f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::Call(rt.obj_meta));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(6));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(rt.obj_meta));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(7));
     // alloc tuple(2): header + 2 fields
     f.instruction(&Instruction::I32Const(24));
     f.instruction(&Instruction::Call(rt.alloc));
     f.instruction(&Instruction::LocalSet(5));
     f.instruction(&Instruction::LocalGet(5));
-    f.instruction(&Instruction::I64Const(
-        make_header(OBJ_TUPLE, 0, 0, 2) as i64
-    ));
+    f.instruction(&Instruction::I64Const((OBJ_TUPLE << HDR_KIND_SHIFT) as i64));
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Shl);
+    f.instruction(&Instruction::I32Or);
+    f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::I64Const(HDR_META_SHIFT as i64));
+    f.instruction(&Instruction::I64Shl);
+    f.instruction(&Instruction::I64Or);
+    f.instruction(&Instruction::I64Const(2));
+    f.instruction(&Instruction::I64Or);
     f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
         offset: 0,
         align: 3,
@@ -339,6 +379,7 @@ pub(super) fn emit_list_zip(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::I64ExtendI32U);
     f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::Call(rt.list_cons));
     f.instruction(&Instruction::LocalSet(2));
     // a = tail, b = tail

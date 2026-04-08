@@ -207,13 +207,17 @@ impl<'a> ExprEmitter<'a> {
         match plan {
             CallPlan::Function(ref name) => {
                 let ret_type = self.infer_call_return_type(callee, args);
+                let resolved_name = self.resolve_user_fn_name(name);
                 for arg in args {
                     self.emit_expr(&arg.node);
                 }
-                if let Some(&fn_idx) = self.fn_indices.get(name.as_str()) {
+                if let Some(&fn_idx) = self.fn_indices.get(resolved_name.as_str()) {
                     self.instructions.push(Instruction::Call(fn_idx));
                 } else {
-                    self.codegen_error(format!("missing function index for call to `{}`", name));
+                    self.codegen_error(format!(
+                        "missing function index for call to `{}`",
+                        resolved_name
+                    ));
                     for _ in args {
                         self.instructions.push(Instruction::Drop);
                     }
@@ -271,6 +275,7 @@ impl<'a> ExprEmitter<'a> {
     /// Emit a wrapper constructor. Value is already on the stack.
     fn emit_wrap(&mut self, kind: WrapperKind, arg: &Spanned<Expr>) {
         let inner_type = self.infer_expr_type(&arg.node);
+        let inner_is_ptr = self.expr_is_heap_ptr(&arg.node);
         let wrap_tag = match kind {
             WrapperKind::ResultOk => value::WRAP_OK,
             WrapperKind::ResultErr => value::WRAP_ERR,
@@ -282,9 +287,17 @@ impl<'a> ExprEmitter<'a> {
             .push(Instruction::I32Const(wrap_tag as i32));
         self.instructions.push(Instruction::LocalGet(tmp));
         match inner_type {
-            WasmType::I64 => self.instructions.push(Instruction::Call(self.rt.wrap)),
+            WasmType::I64 => {
+                self.instructions
+                    .push(Instruction::I32Const(if inner_is_ptr { 1 } else { 0 }));
+                self.instructions.push(Instruction::Call(self.rt.wrap));
+            }
             WasmType::F64 => self.instructions.push(Instruction::Call(self.rt.wrap_f64)),
-            WasmType::I32 => self.instructions.push(Instruction::Call(self.rt.wrap_i32)),
+            WasmType::I32 => {
+                self.instructions
+                    .push(Instruction::I32Const(if inner_is_ptr { 1 } else { 0 }));
+                self.instructions.push(Instruction::Call(self.rt.wrap_i32));
+            }
         }
     }
 
@@ -313,7 +326,7 @@ impl<'a> ExprEmitter<'a> {
             .push(Instruction::I64Const(value::make_header(
                 value::OBJ_VARIANT,
                 tag as u64,
-                0,
+                self.ptr_mask_for_exprs(args.iter()) as u64,
                 field_count as u64,
             ) as i64));
         self.instructions
@@ -376,7 +389,7 @@ impl<'a> ExprEmitter<'a> {
         self.instructions.push(Instruction::I32Eq);
         self.emit_if(result_bt);
         self.instructions.push(Instruction::LocalGet(val_local));
-        self.instructions.push(Instruction::Return);
+        self.emit_boundary_return_from_stack(self.fn_return_type, self.fn_return_is_heap);
         self.emit_else();
         self.instructions.push(Instruction::LocalGet(val_local));
         match ok_wasm_type {
@@ -418,12 +431,26 @@ impl<'a> ExprEmitter<'a> {
                     self.emit_expr(&expr.node);
                     match inner_type {
                         WasmType::I64 => {
+                            self.instructions.push(Instruction::I32Const(
+                                if self.expr_is_heap_ptr(&expr.node) {
+                                    1
+                                } else {
+                                    0
+                                },
+                            ));
                             self.instructions.push(Instruction::Call(self.rt.wrap));
                         }
                         WasmType::F64 => {
                             self.instructions.push(Instruction::Call(self.rt.wrap_f64));
                         }
                         WasmType::I32 => {
+                            self.instructions.push(Instruction::I32Const(
+                                if self.expr_is_heap_ptr(&expr.node) {
+                                    1
+                                } else {
+                                    0
+                                },
+                            ));
                             self.instructions.push(Instruction::Call(self.rt.wrap_i32));
                         }
                     }
@@ -467,6 +494,7 @@ impl<'a> ExprEmitter<'a> {
             return;
         }
         let elem_type = self.infer_expr_type(&items[0].node);
+        let elem_is_ptr = self.expr_is_heap_ptr(&items[0].node);
         self.instructions
             .push(Instruction::I32Const(value::EMPTY_LIST));
         for item in items.iter().rev() {
@@ -484,9 +512,13 @@ impl<'a> ExprEmitter<'a> {
                     self.instructions.push(Instruction::LocalSet(tmp));
                     self.instructions.push(Instruction::I64ExtendI32S);
                     self.instructions.push(Instruction::LocalGet(tmp));
+                    self.instructions
+                        .push(Instruction::I32Const(if elem_is_ptr { 1 } else { 0 }));
                     self.instructions.push(Instruction::Call(self.rt.list_cons));
                 }
                 _ => {
+                    self.instructions
+                        .push(Instruction::I32Const(if elem_is_ptr { 1 } else { 0 }));
                     self.instructions.push(Instruction::Call(self.rt.list_cons));
                 }
             }
@@ -506,9 +538,12 @@ impl<'a> ExprEmitter<'a> {
         self.instructions.push(Instruction::LocalSet(ptr_local));
         self.instructions.push(Instruction::LocalGet(ptr_local));
         self.instructions
-            .push(Instruction::I64Const(
-                value::make_header(value::OBJ_TUPLE, 0, 0, count as u64) as i64,
-            ));
+            .push(Instruction::I64Const(value::make_header(
+                value::OBJ_TUPLE,
+                0,
+                self.ptr_mask_for_exprs(items.iter()) as u64,
+                count as u64,
+            ) as i64));
         self.instructions
             .push(Instruction::I64Store(wasm_encoder::MemArg {
                 offset: 0,
@@ -539,6 +574,21 @@ impl<'a> ExprEmitter<'a> {
             self.instructions.push(Instruction::I32Const(0));
             return;
         }
+        let ptr_mask = items
+            .iter()
+            .enumerate()
+            .fold(0u16, |mask, (idx, (local, _))| {
+                if idx < 16
+                    && self
+                        .local_aver_types
+                        .get(local)
+                        .is_some_and(|ty| self.is_heap_type(ty))
+                {
+                    mask | (1u16 << idx)
+                } else {
+                    mask
+                }
+            });
         let count = items.len();
         let size = 8 + count * 8;
         let ptr_local = self.alloc_local(WasmType::I32);
@@ -547,9 +597,12 @@ impl<'a> ExprEmitter<'a> {
         self.instructions.push(Instruction::LocalSet(ptr_local));
         self.instructions.push(Instruction::LocalGet(ptr_local));
         self.instructions
-            .push(Instruction::I64Const(
-                value::make_header(value::OBJ_TUPLE, 0, 0, count as u64) as i64,
-            ));
+            .push(Instruction::I64Const(value::make_header(
+                value::OBJ_TUPLE,
+                0,
+                ptr_mask as u64,
+                count as u64,
+            ) as i64));
         self.instructions
             .push(Instruction::I64Store(wasm_encoder::MemArg {
                 offset: 0,
@@ -561,6 +614,67 @@ impl<'a> ExprEmitter<'a> {
             self.instructions.push(Instruction::LocalGet(ptr_local));
             self.instructions.push(Instruction::LocalGet(*local));
             match item_type {
+                WasmType::I64 => {}
+                WasmType::F64 => self.instructions.push(Instruction::I64ReinterpretF64),
+                WasmType::I32 => self.instructions.push(Instruction::I64ExtendI32S),
+            }
+            self.instructions
+                .push(Instruction::I64Store(wasm_encoder::MemArg {
+                    offset: (8 + i * 8) as u64,
+                    align: 3,
+                    memory_index: 0,
+                }));
+        }
+
+        self.instructions.push(Instruction::LocalGet(ptr_local));
+    }
+
+    pub(super) fn emit_record_from_locals(&mut self, fields: &[(u32, WasmType)]) {
+        if fields.is_empty() {
+            self.instructions.push(Instruction::I32Const(0));
+            return;
+        }
+        let ptr_mask = fields
+            .iter()
+            .enumerate()
+            .fold(0u16, |mask, (idx, (local, _))| {
+                if idx < 16
+                    && self
+                        .local_aver_types
+                        .get(local)
+                        .is_some_and(|ty| self.is_heap_type(ty))
+                {
+                    mask | (1u16 << idx)
+                } else {
+                    mask
+                }
+            });
+
+        let count = fields.len();
+        let size = 8 + count * 8;
+        let ptr_local = self.alloc_local(WasmType::I32);
+        self.instructions.push(Instruction::I32Const(size as i32));
+        self.instructions.push(Instruction::Call(self.rt.alloc));
+        self.instructions.push(Instruction::LocalSet(ptr_local));
+        self.instructions.push(Instruction::LocalGet(ptr_local));
+        self.instructions
+            .push(Instruction::I64Const(value::make_header(
+                value::OBJ_RECORD,
+                0,
+                ptr_mask as u64,
+                count as u64,
+            ) as i64));
+        self.instructions
+            .push(Instruction::I64Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }));
+
+        for (i, (local, field_type)) in fields.iter().enumerate() {
+            self.instructions.push(Instruction::LocalGet(ptr_local));
+            self.instructions.push(Instruction::LocalGet(*local));
+            match field_type {
                 WasmType::I64 => {}
                 WasmType::F64 => self.instructions.push(Instruction::I64ReinterpretF64),
                 WasmType::I32 => self.instructions.push(Instruction::I64ExtendI32S),
@@ -600,11 +714,11 @@ impl<'a> ExprEmitter<'a> {
             self.instructions.push(Instruction::I32Eq);
             self.emit_if(wasm_encoder::BlockType::Empty);
             self.instructions.push(Instruction::LocalGet(result_local));
-            self.instructions.push(Instruction::Return);
+            self.emit_boundary_return_from_stack(self.fn_return_type, self.fn_return_is_heap);
             self.emit_end();
             self.emit_else();
             self.instructions.push(Instruction::LocalGet(result_local));
-            self.instructions.push(Instruction::Return);
+            self.emit_boundary_return_from_stack(self.fn_return_type, self.fn_return_is_heap);
             self.emit_end();
 
             let ok_type = match self.infer_aver_type(&item.node) {
@@ -639,9 +753,12 @@ impl<'a> ExprEmitter<'a> {
         self.instructions.push(Instruction::LocalSet(ptr_local));
         self.instructions.push(Instruction::LocalGet(ptr_local));
         self.instructions
-            .push(Instruction::I64Const(
-                value::make_header(value::OBJ_RECORD, 0, 0, count as u64) as i64,
-            ));
+            .push(Instruction::I64Const(value::make_header(
+                value::OBJ_RECORD,
+                0,
+                self.ptr_mask_for_exprs(fields.iter().map(|(_, expr)| expr)) as u64,
+                count as u64,
+            ) as i64));
         self.instructions
             .push(Instruction::I64Store(wasm_encoder::MemArg {
                 offset: 0,
@@ -692,6 +809,12 @@ impl<'a> ExprEmitter<'a> {
         }
 
         let count = fields.len();
+        let field_ptr_mask = self.ptr_mask_for_types(
+            &fields
+                .iter()
+                .map(|(_, ty)| crate::types::parse_type_str(ty))
+                .collect::<Vec<_>>(),
+        );
         let size = 8 + count * 8;
         let ptr_local = self.alloc_local(WasmType::I32);
         self.instructions.push(Instruction::I32Const(size as i32));
@@ -699,9 +822,12 @@ impl<'a> ExprEmitter<'a> {
         self.instructions.push(Instruction::LocalSet(ptr_local));
         self.instructions.push(Instruction::LocalGet(ptr_local));
         self.instructions
-            .push(Instruction::I64Const(
-                value::make_header(value::OBJ_RECORD, 0, 0, count as u64) as i64,
-            ));
+            .push(Instruction::I64Const(value::make_header(
+                value::OBJ_RECORD,
+                0,
+                field_ptr_mask as u64,
+                count as u64,
+            ) as i64));
         self.instructions
             .push(Instruction::I64Store(wasm_encoder::MemArg {
                 offset: 0,
@@ -753,9 +879,15 @@ impl<'a> ExprEmitter<'a> {
             // Header
             self.instructions.push(Instruction::LocalGet(tuple_ptr));
             self.instructions
-                .push(Instruction::I64Const(
-                    value::make_header(value::OBJ_TUPLE, 0, 0, 2) as i64,
-                ));
+                .push(Instruction::I64Const(value::make_header(
+                    value::OBJ_TUPLE,
+                    0,
+                    self.ptr_mask_for_types(&[
+                        self.infer_aver_type(&key.node).unwrap_or(Type::Unknown),
+                        self.infer_aver_type(&val.node).unwrap_or(Type::Unknown),
+                    ]) as u64,
+                    2,
+                ) as i64));
             self.instructions
                 .push(Instruction::I64Store(wasm_encoder::MemArg {
                     offset: 0,
@@ -937,10 +1069,72 @@ impl<'a> ExprEmitter<'a> {
 
     fn emit_tailcall(&mut self, tc: &(String, Vec<Spanned<Expr>>)) {
         let (fn_name, args) = tc;
+        let resolved_name = self.resolve_user_fn_name(fn_name);
+        if let (Some(loop_depth), Some(dispatch_local), Some((member_id, param_slots))) = (
+            self.tco_loop_depth,
+            self.mutual_tco_dispatch_local,
+            self.mutual_tco_targets.get(&resolved_name).cloned(),
+        ) {
+            for arg in args {
+                self.emit_expr(&arg.node);
+            }
+
+            let tmp_base = self.next_local;
+            for arg in args {
+                let wt = self.infer_expr_type(&arg.node);
+                self.alloc_local(wt);
+            }
+            for i in (0..args.len()).rev() {
+                self.instructions
+                    .push(Instruction::LocalSet(tmp_base + i as u32));
+            }
+            if let Some(mark_local) = self.boundary_mark_local {
+                self.instructions.push(Instruction::LocalGet(mark_local));
+                self.instructions
+                    .push(Instruction::Call(self.rt.collect_begin));
+                for (arg_idx, arg) in args.iter().enumerate() {
+                    if self.expr_is_heap_ptr(&arg.node) {
+                        self.instructions
+                            .push(Instruction::LocalGet(tmp_base + arg_idx as u32));
+                        self.instructions
+                            .push(Instruction::Call(self.rt.retain_i32));
+                        self.instructions
+                            .push(Instruction::LocalSet(tmp_base + arg_idx as u32));
+                    }
+                }
+                self.instructions
+                    .push(Instruction::Call(self.rt.collect_end));
+                for (arg_idx, arg) in args.iter().enumerate() {
+                    if self.expr_is_heap_ptr(&arg.node) {
+                        self.instructions
+                            .push(Instruction::LocalGet(tmp_base + arg_idx as u32));
+                        self.instructions
+                            .push(Instruction::Call(self.rt.rebase_i32));
+                        self.instructions
+                            .push(Instruction::LocalSet(tmp_base + arg_idx as u32));
+                    }
+                }
+            }
+            for (i, slot) in param_slots.iter().enumerate() {
+                self.instructions
+                    .push(Instruction::LocalGet(tmp_base + i as u32));
+                self.instructions.push(Instruction::LocalSet(*slot));
+            }
+            self.instructions
+                .push(Instruction::I32Const(member_id as i32));
+            self.instructions
+                .push(Instruction::LocalSet(dispatch_local));
+
+            let br_depth = self.block_depth - loop_depth;
+            self.instructions.push(Instruction::Br(br_depth));
+            self.instructions.push(Instruction::Unreachable);
+            return;
+        }
+
         // Only use TCO loop for SELF-calls, not mutual calls
         if let Some(loop_depth) = self
             .tco_loop_depth
-            .filter(|_| fn_name == &self.current_fn_name)
+            .filter(|_| resolved_name == self.current_fn_name)
         {
             for arg in args {
                 self.emit_expr(&arg.node);
@@ -956,6 +1150,35 @@ impl<'a> ExprEmitter<'a> {
                     .push(Instruction::LocalSet(tmp_base + i as u32));
             }
             for i in 0..arg_count {
+                if i == 0
+                    && let Some(mark_local) = self.boundary_mark_local
+                {
+                    self.instructions.push(Instruction::LocalGet(mark_local));
+                    self.instructions
+                        .push(Instruction::Call(self.rt.collect_begin));
+                    for (arg_idx, arg) in args.iter().enumerate() {
+                        if self.expr_is_heap_ptr(&arg.node) {
+                            self.instructions
+                                .push(Instruction::LocalGet(tmp_base + arg_idx as u32));
+                            self.instructions
+                                .push(Instruction::Call(self.rt.retain_i32));
+                            self.instructions
+                                .push(Instruction::LocalSet(tmp_base + arg_idx as u32));
+                        }
+                    }
+                    self.instructions
+                        .push(Instruction::Call(self.rt.collect_end));
+                    for (arg_idx, arg) in args.iter().enumerate() {
+                        if self.expr_is_heap_ptr(&arg.node) {
+                            self.instructions
+                                .push(Instruction::LocalGet(tmp_base + arg_idx as u32));
+                            self.instructions
+                                .push(Instruction::Call(self.rt.rebase_i32));
+                            self.instructions
+                                .push(Instruction::LocalSet(tmp_base + arg_idx as u32));
+                        }
+                    }
+                }
                 self.instructions
                     .push(Instruction::LocalGet(tmp_base + i as u32));
                 self.instructions.push(Instruction::LocalSet(i as u32));
@@ -967,12 +1190,12 @@ impl<'a> ExprEmitter<'a> {
             for arg in args {
                 self.emit_expr(&arg.node);
             }
-            if let Some(&fn_idx) = self.fn_indices.get(fn_name.as_str()) {
+            if let Some(&fn_idx) = self.fn_indices.get(resolved_name.as_str()) {
                 self.instructions.push(Instruction::Call(fn_idx));
             } else {
                 self.codegen_error(format!(
                     "missing function index for tail call to `{}`",
-                    fn_name
+                    resolved_name
                 ));
                 for _ in args {
                     self.instructions.push(Instruction::Drop);

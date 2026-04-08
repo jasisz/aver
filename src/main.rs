@@ -42,7 +42,7 @@ fn main() {
             program_args,
         } => {
             if *wasm {
-                commands::cmd_run_wasm(file, module_root.as_deref());
+                commands::cmd_run_wasm(file, module_root.as_deref(), program_args.clone());
             } else if *self_host {
                 commands::cmd_run_self_hosted(
                     file,

@@ -42,7 +42,12 @@ pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     let mut funcs = Vec::new();
 
     funcs.push(alloc::emit_alloc()); // $alloc
-    funcs.push(alloc::emit_wrap(rt, OBJ_WRAPPER, true)); // $wrap (i64 inner)
+    funcs.push(alloc::emit_truncate_to_mark()); // $truncate
+    funcs.push(alloc::emit_collect_begin()); // $collect_begin
+    funcs.push(alloc::emit_collect_end(rt)); // $collect_end
+    funcs.push(alloc::emit_rebase_i32()); // $rebase_i32
+    funcs.push(alloc::emit_retain_i32(rt)); // $retain_i32
+    funcs.push(alloc::emit_wrap(rt, OBJ_WRAPPER)); // $wrap (i64 inner)
     funcs.push(alloc::emit_wrap_f64(rt)); // $wrap_f64
     funcs.push(alloc::emit_wrap_i32(rt)); // $wrap_i32
     funcs.push(alloc::emit_unwrap_i64()); // $unwrap
@@ -50,6 +55,7 @@ pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     funcs.push(alloc::emit_unwrap_i32()); // $unwrap_i32
     funcs.push(alloc::emit_obj_kind()); // $obj_kind
     funcs.push(alloc::emit_obj_tag()); // $obj_tag
+    funcs.push(alloc::emit_obj_meta()); // $obj_meta
     funcs.push(alloc::emit_obj_field_i64()); // $obj_field
     funcs.push(alloc::emit_obj_field_f64()); // $obj_field_f64
     funcs.push(alloc::emit_obj_field_i32()); // $obj_field_i32

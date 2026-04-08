@@ -218,7 +218,10 @@ wasmtime out/hello.wasm
 
 By default, `--target wasm` emits modules with `aver/*` import ABI — the host provides effect implementations (console I/O, random, time, math). This works with the built-in host (`aver run --wasm`), a browser JS shim, or any custom host. The `--adapter wasi` flag emits WASI imports instead, for standalone execution with `wasmtime`.
 
-Supported: Float arithmetic, sum types, recursive variants, records, string interpolation, List/Map/Vector builtins, TCO. Not supported: Terminal effects (raw mode, key input), multi-module `depends`.
+Supported: Float arithmetic, sum types, recursive variants, records, string interpolation, List/Map/Vector builtins, TCO, and `Terminal.*` in the built-in host. Not supported yet: multi-module `depends`.
+
+For ABI details, browser/JS hosting, and host implementation notes, see [src/codegen/wasm/README.md](src/codegen/wasm/README.md).
+The repo also ships a static browser runner in [tools/wasm-runner/README.md](tools/wasm-runner/README.md).
 
 For generated Rust projects, `aver compile` now exposes policy mode explicitly:
 
