@@ -690,6 +690,22 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions
                     .push(Instruction::Call(self.rt.f64_to_str_obj));
             }
+            Some(Type::Bool) => {
+                // Bool i32 → "true" or "false" string
+                // Use if/else to pick the right static string
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
+                self.emit_string_literal("true");
+                self.emit_else();
+                self.emit_string_literal("false");
+                self.emit_end();
+            }
+            Some(Type::List(_) | Type::Result(_, _) | Type::Option(_) | Type::Named(_)) => {
+                // TODO: proper to_string for complex heap types
+                // For now: convert pointer to number string (shows address)
+                self.instructions.push(Instruction::I64ExtendI32S);
+                self.instructions
+                    .push(Instruction::Call(self.rt.i64_to_str_obj));
+            }
             _ => match wt {
                 WasmType::I64 => {
                     self.instructions

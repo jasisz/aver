@@ -62,6 +62,9 @@ pub fn build_wasm_module(
     for fd in &fn_defs {
         collect_strings_from_body(&fd.body, &mut string_set);
     }
+    // Always include "true" and "false" for Bool→String conversion in interpolation
+    string_set.insert("true".to_string());
+    string_set.insert("false".to_string());
     let mut sorted_strings: Vec<String> = string_set.into_iter().collect();
     sorted_strings.sort();
 
