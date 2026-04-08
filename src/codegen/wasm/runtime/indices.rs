@@ -47,6 +47,14 @@ pub struct RuntimeFuncIndices {
     pub vec_len: u32,        // (i32) -> i64
     pub vec_set: u32,        // (i32, i64, i64) -> i32
     pub vec_new: u32,        // (i64, i64) -> i32
+    pub vec_to_list: u32,    // (i32) -> i32
+    pub str_len: u32,        // (i32) -> i64
+    pub str_byte_len: u32,   // (i32) -> i64
+    pub str_char_at: u32,    // (i32, i64) -> i32
+    pub char_from_code: u32, // (i64) -> i32
+    pub char_to_code: u32,   // (i32) -> i64
+    pub byte_to_hex: u32,    // (i64) -> i32
+    pub byte_from_hex: u32,  // (i32) -> i32
     pub str_trim: u32,       // (i32) -> i32
     pub str_slice: u32,      // (i32, i32, i32) -> i32
     pub str_chars: u32,      // (i32) -> i32
@@ -107,6 +115,14 @@ impl RuntimeFuncIndices {
             vec_len: next(),
             vec_set: next(),
             vec_new: next(),
+            vec_to_list: next(),
+            str_len: next(),
+            str_byte_len: next(),
+            str_char_at: next(),
+            char_from_code: next(),
+            char_to_code: next(),
+            byte_to_hex: next(),
+            byte_from_hex: next(),
             str_trim: next(),
             str_slice: next(),
             str_chars: next(),
@@ -504,6 +520,30 @@ pub fn rt_type_index(
     }
     if local_idx == rt.vec_new - import_func_count {
         return rti.i64_i64_to_i32;
+    }
+    if local_idx == rt.vec_to_list - import_func_count {
+        return rti.alloc;
+    }
+    if local_idx == rt.str_len - import_func_count {
+        return rti.unwrap_i64;
+    }
+    if local_idx == rt.str_byte_len - import_func_count {
+        return rti.unwrap_i64;
+    }
+    if local_idx == rt.str_char_at - import_func_count {
+        return rti.i32_i64_to_i32;
+    }
+    if local_idx == rt.char_from_code - import_func_count {
+        return rti.i64_to_i32;
+    }
+    if local_idx == rt.char_to_code - import_func_count {
+        return rti.unwrap_i64;
+    }
+    if local_idx == rt.byte_to_hex - import_func_count {
+        return rti.i64_to_i32;
+    }
+    if local_idx == rt.byte_from_hex - import_func_count {
+        return rti.alloc;
     }
     if local_idx == rt.str_trim - import_func_count {
         return rti.alloc;

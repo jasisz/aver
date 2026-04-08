@@ -60,7 +60,11 @@ impl<'a> ExprEmitter<'a> {
                 if let Some(&idx) = self.locals.get(name) {
                     self.instructions.push(Instruction::LocalGet(idx));
                 } else {
-                    self.instructions.push(Instruction::I32Const(0));
+                    self.codegen_error(format!(
+                        "unresolved local identifier `{}` in WASM codegen",
+                        name
+                    ));
+                    self.emit_default_value(self.infer_expr_type(expr));
                 }
             }
             Expr::Resolved(slot) => {
@@ -146,35 +150,51 @@ impl<'a> ExprEmitter<'a> {
         }
 
         let instr = match (op, operand_type) {
-            (BinOp::Add, WasmType::I64) => Instruction::I64Add,
-            (BinOp::Add, WasmType::F64) => Instruction::F64Add,
-            (BinOp::Sub, WasmType::I64) => Instruction::I64Sub,
-            (BinOp::Sub, WasmType::F64) => Instruction::F64Sub,
-            (BinOp::Mul, WasmType::I64) => Instruction::I64Mul,
-            (BinOp::Mul, WasmType::F64) => Instruction::F64Mul,
-            (BinOp::Div, WasmType::I64) => Instruction::I64DivS,
-            (BinOp::Div, WasmType::F64) => Instruction::F64Div,
-            (BinOp::Eq, WasmType::I64) => Instruction::I64Eq,
-            (BinOp::Eq, WasmType::F64) => Instruction::F64Eq,
-            (BinOp::Eq, WasmType::I32) => Instruction::I32Eq,
-            (BinOp::Neq, WasmType::I64) => Instruction::I64Ne,
-            (BinOp::Neq, WasmType::F64) => Instruction::F64Ne,
-            (BinOp::Neq, WasmType::I32) => Instruction::I32Ne,
-            (BinOp::Lt, WasmType::I64) => Instruction::I64LtS,
-            (BinOp::Lt, WasmType::F64) => Instruction::F64Lt,
-            (BinOp::Lt, WasmType::I32) => Instruction::I32LtS,
-            (BinOp::Gt, WasmType::I64) => Instruction::I64GtS,
-            (BinOp::Gt, WasmType::F64) => Instruction::F64Gt,
-            (BinOp::Gt, WasmType::I32) => Instruction::I32GtS,
-            (BinOp::Lte, WasmType::I64) => Instruction::I64LeS,
-            (BinOp::Lte, WasmType::F64) => Instruction::F64Le,
-            (BinOp::Lte, WasmType::I32) => Instruction::I32LeS,
-            (BinOp::Gte, WasmType::I64) => Instruction::I64GeS,
-            (BinOp::Gte, WasmType::F64) => Instruction::F64Ge,
-            (BinOp::Gte, WasmType::I32) => Instruction::I32GeS,
-            _ => Instruction::I64Add, // fallback
+            (BinOp::Add, WasmType::I64) => Some(Instruction::I64Add),
+            (BinOp::Add, WasmType::F64) => Some(Instruction::F64Add),
+            (BinOp::Sub, WasmType::I64) => Some(Instruction::I64Sub),
+            (BinOp::Sub, WasmType::F64) => Some(Instruction::F64Sub),
+            (BinOp::Mul, WasmType::I64) => Some(Instruction::I64Mul),
+            (BinOp::Mul, WasmType::F64) => Some(Instruction::F64Mul),
+            (BinOp::Div, WasmType::I64) => Some(Instruction::I64DivS),
+            (BinOp::Div, WasmType::F64) => Some(Instruction::F64Div),
+            (BinOp::Eq, WasmType::I64) => Some(Instruction::I64Eq),
+            (BinOp::Eq, WasmType::F64) => Some(Instruction::F64Eq),
+            (BinOp::Eq, WasmType::I32) => Some(Instruction::I32Eq),
+            (BinOp::Neq, WasmType::I64) => Some(Instruction::I64Ne),
+            (BinOp::Neq, WasmType::F64) => Some(Instruction::F64Ne),
+            (BinOp::Neq, WasmType::I32) => Some(Instruction::I32Ne),
+            (BinOp::Lt, WasmType::I64) => Some(Instruction::I64LtS),
+            (BinOp::Lt, WasmType::F64) => Some(Instruction::F64Lt),
+            (BinOp::Lt, WasmType::I32) => Some(Instruction::I32LtS),
+            (BinOp::Gt, WasmType::I64) => Some(Instruction::I64GtS),
+            (BinOp::Gt, WasmType::F64) => Some(Instruction::F64Gt),
+            (BinOp::Gt, WasmType::I32) => Some(Instruction::I32GtS),
+            (BinOp::Lte, WasmType::I64) => Some(Instruction::I64LeS),
+            (BinOp::Lte, WasmType::F64) => Some(Instruction::F64Le),
+            (BinOp::Lte, WasmType::I32) => Some(Instruction::I32LeS),
+            (BinOp::Gte, WasmType::I64) => Some(Instruction::I64GeS),
+            (BinOp::Gte, WasmType::F64) => Some(Instruction::F64Ge),
+            (BinOp::Gte, WasmType::I32) => Some(Instruction::I32GeS),
+            _ => None,
         };
-        self.instructions.push(instr);
+        if let Some(instr) = instr {
+            self.instructions.push(instr);
+        } else {
+            let result_type = match op {
+                BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => {
+                    WasmType::I32
+                }
+                _ => operand_type,
+            };
+            self.codegen_error(format!(
+                "unsupported binary operation `{:?}` for WASM operand type `{:?}`",
+                op, operand_type
+            ));
+            self.instructions.push(Instruction::Drop);
+            self.instructions.push(Instruction::Drop);
+            self.emit_default_value(result_type);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -186,16 +206,18 @@ impl<'a> ExprEmitter<'a> {
 
         match plan {
             CallPlan::Function(ref name) => {
+                let ret_type = self.infer_call_return_type(callee, args);
                 for arg in args {
                     self.emit_expr(&arg.node);
                 }
                 if let Some(&fn_idx) = self.fn_indices.get(name.as_str()) {
                     self.instructions.push(Instruction::Call(fn_idx));
                 } else {
+                    self.codegen_error(format!("missing function index for call to `{}`", name));
                     for _ in args {
                         self.instructions.push(Instruction::Drop);
                     }
-                    self.instructions.push(Instruction::I32Const(0));
+                    self.emit_default_value(ret_type);
                 }
             }
 
@@ -204,7 +226,8 @@ impl<'a> ExprEmitter<'a> {
                     self.emit_expr(&args[0].node);
                     self.emit_wrap(kind, &args[0]);
                 } else {
-                    self.instructions.push(Instruction::I32Const(0));
+                    self.codegen_error("wrapper call with invalid arity");
+                    self.emit_default_value(WasmType::I32);
                 }
             }
 
@@ -232,13 +255,15 @@ impl<'a> ExprEmitter<'a> {
             }
 
             CallPlan::Dynamic => {
+                let ret_type = self.infer_call_return_type(callee, args);
+                self.codegen_error("dynamic function calls are not supported in the WASM backend");
                 for arg in args {
                     self.emit_expr(&arg.node);
                 }
                 for _ in args {
                     self.instructions.push(Instruction::Drop);
                 }
-                self.instructions.push(Instruction::I32Const(0));
+                self.emit_default_value(ret_type);
             }
         }
     }
@@ -945,10 +970,14 @@ impl<'a> ExprEmitter<'a> {
             if let Some(&fn_idx) = self.fn_indices.get(fn_name.as_str()) {
                 self.instructions.push(Instruction::Call(fn_idx));
             } else {
+                self.codegen_error(format!(
+                    "missing function index for tail call to `{}`",
+                    fn_name
+                ));
                 for _ in args {
                     self.instructions.push(Instruction::Drop);
                 }
-                self.instructions.push(Instruction::I32Const(0));
+                self.emit_default_value(self.fn_return_type);
             }
         }
     }
@@ -976,16 +1005,13 @@ impl<'a> ExprEmitter<'a> {
         if let Some(&(offset, _len)) = self.string_literals.get(s) {
             self.instructions.push(Instruction::I32Const(offset as i32));
         } else {
-            self.instructions.push(Instruction::I32Const(0));
+            self.codegen_error(format!("missing interned string literal `{}`", s));
+            self.emit_default_value(WasmType::I32);
         }
     }
 
     pub(super) fn emit_default_init(&mut self, local: u32, wt: WasmType) {
-        match wt {
-            WasmType::I32 => self.instructions.push(Instruction::I32Const(0)),
-            WasmType::I64 => self.instructions.push(Instruction::I64Const(0)),
-            WasmType::F64 => self.instructions.push(Instruction::F64Const(0.0)),
-        }
+        self.emit_default_value(wt);
         self.instructions.push(Instruction::LocalSet(local));
     }
 }

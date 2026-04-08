@@ -146,93 +146,19 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::Call(self.rt.vec_new));
             }
             "Vector.toList" if args.len() == 1 => {
-                // Convert vector back to list -- TODO full implementation
-                // For now drop and return empty list
-                self.instructions.push(Instruction::Drop);
-                self.instructions.push(Instruction::I32Const(0));
+                self.instructions
+                    .push(Instruction::Call(self.rt.vec_to_list));
             }
             "String.len" if args.len() == 1 => {
+                self.instructions.push(Instruction::Call(self.rt.str_len));
+            }
+            "String.byteLength" if args.len() == 1 => {
                 self.instructions
-                    .push(Instruction::I64Load(wasm_encoder::MemArg {
-                        offset: 0,
-                        align: 3,
-                        memory_index: 0,
-                    }));
-                self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
-                self.instructions.push(Instruction::I64And);
+                    .push(Instruction::Call(self.rt.str_byte_len));
             }
             "String.charAt" if args.len() == 2 => {
-                // args: [str_ptr(i32), idx(i64)] -> returns Option<String>
-                let idx_local = self.alloc_local(WasmType::I64);
-                self.instructions.push(Instruction::LocalSet(idx_local));
-                let str_local = self.alloc_local(WasmType::I32);
-                self.instructions.push(Instruction::LocalSet(str_local));
-                let len_local = self.alloc_local(WasmType::I32);
-                self.instructions.push(Instruction::LocalGet(str_local));
                 self.instructions
-                    .push(Instruction::I64Load(wasm_encoder::MemArg {
-                        offset: 0,
-                        align: 3,
-                        memory_index: 0,
-                    }));
-                self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
-                self.instructions.push(Instruction::I64And);
-                self.instructions.push(Instruction::I32WrapI64);
-                self.instructions.push(Instruction::LocalSet(len_local));
-                self.instructions.push(Instruction::LocalGet(idx_local));
-                self.instructions.push(Instruction::I64Const(0));
-                self.instructions.push(Instruction::I64LtS);
-                self.instructions.push(Instruction::LocalGet(idx_local));
-                self.instructions.push(Instruction::LocalGet(len_local));
-                self.instructions.push(Instruction::I64ExtendI32U);
-                self.instructions.push(Instruction::I64GeU);
-                self.instructions.push(Instruction::I32Or);
-                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
-                self.instructions
-                    .push(Instruction::I32Const(value::NONE_SENTINEL));
-                self.emit_else();
-                let idx_i32_local = self.alloc_local(WasmType::I32);
-                self.instructions.push(Instruction::LocalGet(idx_local));
-                self.instructions.push(Instruction::I32WrapI64);
-                self.instructions.push(Instruction::LocalSet(idx_i32_local));
-                let ptr = self.alloc_local(WasmType::I32);
-                self.instructions.push(Instruction::I32Const(16));
-                self.instructions.push(Instruction::Call(self.rt.alloc));
-                self.instructions.push(Instruction::LocalSet(ptr));
-                self.instructions.push(Instruction::LocalGet(ptr));
-                self.instructions.push(Instruction::I64Const(
-                    (value::OBJ_STRING << value::HDR_KIND_SHIFT | 1) as i64,
-                ));
-                self.instructions
-                    .push(Instruction::I64Store(wasm_encoder::MemArg {
-                        offset: 0,
-                        align: 3,
-                        memory_index: 0,
-                    }));
-                // Copy byte
-                self.instructions.push(Instruction::LocalGet(ptr));
-                self.instructions.push(Instruction::LocalGet(str_local));
-                self.instructions.push(Instruction::I32Const(8));
-                self.instructions.push(Instruction::I32Add);
-                self.instructions.push(Instruction::LocalGet(idx_i32_local));
-                self.instructions.push(Instruction::I32Add);
-                self.instructions
-                    .push(Instruction::I32Load8U(wasm_encoder::MemArg {
-                        offset: 0,
-                        align: 0,
-                        memory_index: 0,
-                    }));
-                self.instructions
-                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
-                        offset: 8,
-                        align: 0,
-                        memory_index: 0,
-                    }));
-                self.instructions
-                    .push(Instruction::I32Const(value::WRAP_SOME as i32));
-                self.instructions.push(Instruction::LocalGet(ptr));
-                self.instructions.push(Instruction::Call(self.rt.wrap_i32));
-                self.emit_end();
+                    .push(Instruction::Call(self.rt.str_char_at));
             }
             "String.trim" if args.len() == 1 => {
                 self.instructions.push(Instruction::Call(self.rt.str_trim));
@@ -259,13 +185,24 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::Call(self.rt.str_join));
             }
             "String.startsWith" | "String.endsWith" | "String.contains" | "String.replace"
-            | "String.split" | "String.toUpper" | "String.toLower" | "String.byteLength"
+            | "String.split" | "String.toUpper" | "String.toLower"
                 if !args.is_empty() =>
             {
+                let ret_type = self.infer_call_return_type(
+                    &crate::ast::Spanned {
+                        node: crate::ast::Expr::Ident(name.to_string()),
+                        line: 0,
+                    },
+                    args,
+                );
+                self.codegen_error(format!(
+                    "builtin `{}` is not implemented in the WASM backend",
+                    name
+                ));
                 for _ in args {
                     self.instructions.push(Instruction::Drop);
                 }
-                self.instructions.push(Instruction::I32Const(0));
+                self.emit_default_value(ret_type);
             }
             "String.fromInt" if args.len() == 1 => {
                 self.instructions
@@ -276,11 +213,14 @@ impl<'a> ExprEmitter<'a> {
                     .push(Instruction::Call(self.rt.f64_to_str_obj));
             }
             "String.fromBool" if args.len() == 1 => {
-                // bool i32 -> "true"/"false" string
-                // Simplified: convert to int then to string
-                self.instructions.push(Instruction::I64ExtendI32S);
-                self.instructions
-                    .push(Instruction::Call(self.rt.i64_to_str_obj));
+                let val = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalSet(val));
+                self.instructions.push(Instruction::LocalGet(val));
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
+                self.emit_string_literal("true");
+                self.emit_else();
+                self.emit_string_literal("false");
+                self.emit_end();
             }
             "Int.mod" if args.len() == 2 => {
                 // args: [a(i64), b(i64)] -> Result<Int, String>
@@ -366,37 +306,41 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::F64Sqrt);
             }
             "Float.sin" if args.len() == 1 => {
-                // Host import -- no native WASM instruction
                 if let Some(&idx) = self.host_import_indices.get("math_sin") {
                     self.instructions.push(Instruction::Call(idx));
                 } else {
-                    // Fallback: return 0.0
+                    self.codegen_error("missing host import `math_sin`");
                     self.instructions.push(Instruction::Drop);
-                    self.instructions.push(Instruction::F64Const(0.0));
+                    self.emit_default_value(WasmType::F64);
                 }
             }
             "Float.cos" if args.len() == 1 => {
                 if let Some(&idx) = self.host_import_indices.get("math_cos") {
                     self.instructions.push(Instruction::Call(idx));
                 } else {
+                    self.codegen_error("missing host import `math_cos`");
                     self.instructions.push(Instruction::Drop);
-                    self.instructions.push(Instruction::F64Const(1.0));
+                    self.emit_default_value(WasmType::F64);
                 }
             }
             "Float.atan2" if args.len() == 2 => {
                 if let Some(&idx) = self.host_import_indices.get("math_atan2") {
                     self.instructions.push(Instruction::Call(idx));
                 } else {
+                    self.codegen_error("missing host import `math_atan2`");
                     self.instructions.push(Instruction::Drop);
                     self.instructions.push(Instruction::Drop);
-                    self.instructions.push(Instruction::F64Const(0.0));
+                    self.emit_default_value(WasmType::F64);
                 }
             }
             "Float.pow" if args.len() == 2 => {
                 if let Some(&idx) = self.host_import_indices.get("math_pow") {
                     self.instructions.push(Instruction::Call(idx));
                 } else {
+                    self.codegen_error("missing host import `math_pow`");
                     self.instructions.push(Instruction::Drop);
+                    self.instructions.push(Instruction::Drop);
+                    self.emit_default_value(WasmType::F64);
                 }
             }
             "Float.min" if args.len() == 2 => {
@@ -425,292 +369,44 @@ impl<'a> ExprEmitter<'a> {
             "Bool.not" if args.len() == 1 => {
                 self.instructions.push(Instruction::I32Eqz);
             }
+            "Byte.toHex" if args.len() == 1 => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.byte_to_hex));
+            }
+            "Byte.fromHex" if args.len() == 1 => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.byte_from_hex));
+            }
             "Char.fromCode" if args.len() == 1 => {
-                // Int(i64) -> Option<String> with UTF-8 encoding.
-                let code64 = self.alloc_local(WasmType::I64);
-                self.instructions.push(Instruction::LocalSet(code64));
-                self.instructions.push(Instruction::LocalGet(code64));
-                self.instructions.push(Instruction::I64Const(0));
-                self.instructions.push(Instruction::I64LtS);
-                self.instructions.push(Instruction::LocalGet(code64));
-                self.instructions.push(Instruction::I64Const(0x10FFFF));
-                self.instructions.push(Instruction::I64GtS);
-                self.instructions.push(Instruction::I32Or);
-                self.instructions.push(Instruction::LocalGet(code64));
-                self.instructions.push(Instruction::I64Const(0xD800));
-                self.instructions.push(Instruction::I64GeS);
-                self.instructions.push(Instruction::LocalGet(code64));
-                self.instructions.push(Instruction::I64Const(0xDFFF));
-                self.instructions.push(Instruction::I64LeS);
-                self.instructions.push(Instruction::I32And);
-                self.instructions.push(Instruction::I32Or);
-                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
                 self.instructions
-                    .push(Instruction::I32Const(value::NONE_SENTINEL));
-                self.emit_else();
-                let code = self.alloc_local(WasmType::I32);
-                self.instructions.push(Instruction::LocalGet(code64));
-                self.instructions.push(Instruction::I32WrapI64);
-                self.instructions.push(Instruction::LocalSet(code));
-                let len = self.alloc_local(WasmType::I32);
-                self.instructions.push(Instruction::LocalGet(code));
-                self.instructions.push(Instruction::I32Const(0x80));
-                self.instructions.push(Instruction::I32LtU);
-                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
-                self.instructions.push(Instruction::I32Const(1));
-                self.emit_else();
-                self.instructions.push(Instruction::LocalGet(code));
-                self.instructions.push(Instruction::I32Const(0x800));
-                self.instructions.push(Instruction::I32LtU);
-                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
-                self.instructions.push(Instruction::I32Const(2));
-                self.emit_else();
-                self.instructions.push(Instruction::LocalGet(code));
-                self.instructions.push(Instruction::I32Const(0x10000));
-                self.instructions.push(Instruction::I32LtU);
-                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
-                self.instructions.push(Instruction::I32Const(3));
-                self.emit_else();
-                self.instructions.push(Instruction::I32Const(4));
-                self.emit_end();
-                self.emit_end();
-                self.emit_end();
-                self.instructions.push(Instruction::LocalSet(len));
-                let ptr = self.alloc_local(WasmType::I32);
-                self.instructions.push(Instruction::I32Const(16));
-                self.instructions.push(Instruction::Call(self.rt.alloc));
-                self.instructions.push(Instruction::LocalSet(ptr));
-                self.instructions.push(Instruction::LocalGet(ptr));
-                self.instructions.push(Instruction::I64Const(
-                    (value::OBJ_STRING << value::HDR_KIND_SHIFT) as i64,
-                ));
-                self.instructions.push(Instruction::LocalGet(len));
-                self.instructions.push(Instruction::I64ExtendI32U);
-                self.instructions.push(Instruction::I64Or);
-                self.instructions
-                    .push(Instruction::I64Store(wasm_encoder::MemArg {
-                        offset: 0,
-                        align: 3,
-                        memory_index: 0,
-                    }));
-                self.instructions.push(Instruction::LocalGet(len));
-                self.instructions.push(Instruction::I32Const(1));
-                self.instructions.push(Instruction::I32Eq);
-                self.emit_if(wasm_encoder::BlockType::Empty);
-                self.instructions.push(Instruction::LocalGet(ptr));
-                self.instructions.push(Instruction::LocalGet(code));
-                self.instructions
-                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
-                        offset: 8,
-                        align: 0,
-                        memory_index: 0,
-                    }));
-                self.emit_else();
-                self.instructions.push(Instruction::LocalGet(len));
-                self.instructions.push(Instruction::I32Const(2));
-                self.instructions.push(Instruction::I32Eq);
-                self.emit_if(wasm_encoder::BlockType::Empty);
-                self.instructions.push(Instruction::LocalGet(ptr));
-                self.instructions.push(Instruction::LocalGet(code));
-                self.instructions.push(Instruction::I32Const(6));
-                self.instructions.push(Instruction::I32ShrU);
-                self.instructions.push(Instruction::I32Const(0xC0));
-                self.instructions.push(Instruction::I32Or);
-                self.instructions
-                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
-                        offset: 8,
-                        align: 0,
-                        memory_index: 0,
-                    }));
-                self.instructions.push(Instruction::LocalGet(ptr));
-                self.instructions.push(Instruction::LocalGet(code));
-                self.instructions.push(Instruction::I32Const(0x3F));
-                self.instructions.push(Instruction::I32And);
-                self.instructions.push(Instruction::I32Const(0x80));
-                self.instructions.push(Instruction::I32Or);
-                self.instructions
-                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
-                        offset: 9,
-                        align: 0,
-                        memory_index: 0,
-                    }));
-                self.emit_else();
-                self.instructions.push(Instruction::LocalGet(len));
-                self.instructions.push(Instruction::I32Const(3));
-                self.instructions.push(Instruction::I32Eq);
-                self.emit_if(wasm_encoder::BlockType::Empty);
-                self.instructions.push(Instruction::LocalGet(ptr));
-                self.instructions.push(Instruction::LocalGet(code));
-                self.instructions.push(Instruction::I32Const(12));
-                self.instructions.push(Instruction::I32ShrU);
-                self.instructions.push(Instruction::I32Const(0xE0));
-                self.instructions.push(Instruction::I32Or);
-                self.instructions
-                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
-                        offset: 8,
-                        align: 0,
-                        memory_index: 0,
-                    }));
-                self.instructions.push(Instruction::LocalGet(ptr));
-                self.instructions.push(Instruction::LocalGet(code));
-                self.instructions.push(Instruction::I32Const(6));
-                self.instructions.push(Instruction::I32ShrU);
-                self.instructions.push(Instruction::I32Const(0x3F));
-                self.instructions.push(Instruction::I32And);
-                self.instructions.push(Instruction::I32Const(0x80));
-                self.instructions.push(Instruction::I32Or);
-                self.instructions
-                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
-                        offset: 9,
-                        align: 0,
-                        memory_index: 0,
-                    }));
-                self.instructions.push(Instruction::LocalGet(ptr));
-                self.instructions.push(Instruction::LocalGet(code));
-                self.instructions.push(Instruction::I32Const(0x3F));
-                self.instructions.push(Instruction::I32And);
-                self.instructions.push(Instruction::I32Const(0x80));
-                self.instructions.push(Instruction::I32Or);
-                self.instructions
-                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
-                        offset: 10,
-                        align: 0,
-                        memory_index: 0,
-                    }));
-                self.emit_else();
-                self.instructions.push(Instruction::LocalGet(ptr));
-                self.instructions.push(Instruction::LocalGet(code));
-                self.instructions.push(Instruction::I32Const(18));
-                self.instructions.push(Instruction::I32ShrU);
-                self.instructions.push(Instruction::I32Const(0xF0));
-                self.instructions.push(Instruction::I32Or);
-                self.instructions
-                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
-                        offset: 8,
-                        align: 0,
-                        memory_index: 0,
-                    }));
-                self.instructions.push(Instruction::LocalGet(ptr));
-                self.instructions.push(Instruction::LocalGet(code));
-                self.instructions.push(Instruction::I32Const(12));
-                self.instructions.push(Instruction::I32ShrU);
-                self.instructions.push(Instruction::I32Const(0x3F));
-                self.instructions.push(Instruction::I32And);
-                self.instructions.push(Instruction::I32Const(0x80));
-                self.instructions.push(Instruction::I32Or);
-                self.instructions
-                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
-                        offset: 9,
-                        align: 0,
-                        memory_index: 0,
-                    }));
-                self.instructions.push(Instruction::LocalGet(ptr));
-                self.instructions.push(Instruction::LocalGet(code));
-                self.instructions.push(Instruction::I32Const(6));
-                self.instructions.push(Instruction::I32ShrU);
-                self.instructions.push(Instruction::I32Const(0x3F));
-                self.instructions.push(Instruction::I32And);
-                self.instructions.push(Instruction::I32Const(0x80));
-                self.instructions.push(Instruction::I32Or);
-                self.instructions
-                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
-                        offset: 10,
-                        align: 0,
-                        memory_index: 0,
-                    }));
-                self.instructions.push(Instruction::LocalGet(ptr));
-                self.instructions.push(Instruction::LocalGet(code));
-                self.instructions.push(Instruction::I32Const(0x3F));
-                self.instructions.push(Instruction::I32And);
-                self.instructions.push(Instruction::I32Const(0x80));
-                self.instructions.push(Instruction::I32Or);
-                self.instructions
-                    .push(Instruction::I32Store8(wasm_encoder::MemArg {
-                        offset: 11,
-                        align: 0,
-                        memory_index: 0,
-                    }));
-                self.emit_end();
-                self.emit_end();
-                self.emit_end();
-                self.instructions
-                    .push(Instruction::I32Const(value::WRAP_SOME as i32));
-                self.instructions.push(Instruction::LocalGet(ptr));
-                self.instructions.push(Instruction::Call(self.rt.wrap_i32));
-                self.emit_end();
+                    .push(Instruction::Call(self.rt.char_from_code));
             }
             "Char.toCode" if args.len() == 1 => {
-                // String -> Int (first byte code)
                 self.instructions
-                    .push(Instruction::I32Load8U(wasm_encoder::MemArg {
-                        offset: 8,
-                        align: 0,
-                        memory_index: 0,
-                    }));
-                self.instructions.push(Instruction::I64ExtendI32U);
+                    .push(Instruction::Call(self.rt.char_to_code));
             }
             "Random.int" if args.len() == 2 => {
-                // Stub: return min (first arg)
-                self.instructions.push(Instruction::Drop); // drop max
-                // min stays
+                if let Some(&idx) = self.host_import_indices.get("random_int") {
+                    self.instructions.push(Instruction::Call(idx));
+                } else {
+                    self.codegen_error("missing host import `random_int`");
+                    self.instructions.push(Instruction::Drop);
+                    self.instructions.push(Instruction::Drop);
+                    self.emit_default_value(WasmType::I64);
+                }
             }
             "Console.readLine" if args.is_empty() => {
-                // Stub: return empty string
-                self.emit_string_literal("");
+                self.emit_host_string_import("console_readLine");
             }
             "Time.now" if args.is_empty() => {
-                // Host import returns (ptr, len) — build string object
-                if let Some(&idx) = self.host_import_indices.get("time_now") {
-                    let ptr = self.alloc_local(WasmType::I32);
-                    let len = self.alloc_local(WasmType::I32);
-                    self.instructions.push(Instruction::Call(idx));
-                    self.instructions.push(Instruction::LocalSet(len));
-                    self.instructions.push(Instruction::LocalSet(ptr));
-                    // Alloc string object: header + bytes
-                    let str_ptr = self.alloc_local(WasmType::I32);
-                    self.instructions.push(Instruction::I32Const(8));
-                    self.instructions.push(Instruction::LocalGet(len));
-                    self.instructions.push(Instruction::I32Const(7));
-                    self.instructions.push(Instruction::I32Add);
-                    self.instructions.push(Instruction::I32Const(-8i32));
-                    self.instructions.push(Instruction::I32And);
-                    self.instructions.push(Instruction::I32Add);
-                    self.instructions.push(Instruction::Call(self.rt.alloc));
-                    self.instructions.push(Instruction::LocalSet(str_ptr));
-                    // Header
-                    self.instructions.push(Instruction::LocalGet(str_ptr));
-                    self.instructions.push(Instruction::I64Const(
-                        (value::OBJ_STRING << value::HDR_KIND_SHIFT) as i64,
-                    ));
-                    self.instructions.push(Instruction::LocalGet(len));
-                    self.instructions.push(Instruction::I64ExtendI32U);
-                    self.instructions.push(Instruction::I64Or);
-                    self.instructions
-                        .push(Instruction::I64Store(wasm_encoder::MemArg {
-                            offset: 0,
-                            align: 3,
-                            memory_index: 0,
-                        }));
-                    // Copy bytes from host ptr to string object
-                    self.instructions.push(Instruction::LocalGet(str_ptr));
-                    self.instructions.push(Instruction::I32Const(8));
-                    self.instructions.push(Instruction::I32Add);
-                    self.instructions.push(Instruction::LocalGet(ptr));
-                    self.instructions.push(Instruction::LocalGet(len));
-                    self.instructions.push(Instruction::MemoryCopy {
-                        src_mem: 0,
-                        dst_mem: 0,
-                    });
-                    self.instructions.push(Instruction::LocalGet(str_ptr));
-                } else {
-                    self.emit_string_literal("");
-                }
+                self.emit_host_string_import("time_now");
             }
             "Time.unixMs" if args.is_empty() => {
                 if let Some(&idx) = self.host_import_indices.get("time_unixMs") {
                     self.instructions.push(Instruction::Call(idx));
                 } else {
-                    self.instructions.push(Instruction::I64Const(0));
+                    self.codegen_error("missing host import `time_unixMs`");
+                    self.emit_default_value(WasmType::I64);
                 }
             }
             "Time.sleep" if args.len() == 1 => {
@@ -718,6 +414,7 @@ impl<'a> ExprEmitter<'a> {
                     self.instructions.push(Instruction::Call(idx));
                     self.instructions.push(Instruction::I32Const(0)); // Unit
                 } else {
+                    self.codegen_error("missing host import `time_sleep`");
                     self.instructions.push(Instruction::Drop);
                     self.instructions.push(Instruction::I32Const(0));
                 }
@@ -757,7 +454,6 @@ impl<'a> ExprEmitter<'a> {
                 self.emit_end();
             }
             _ => {
-                // Unknown builtin -- drop args, return default for inferred type
                 let ret_type = self.infer_call_return_type(
                     &crate::ast::Spanned {
                         node: crate::ast::Expr::Ident(name.to_string()),
@@ -765,14 +461,11 @@ impl<'a> ExprEmitter<'a> {
                     },
                     args,
                 );
+                self.codegen_error(format!("unknown builtin `{}` in WASM backend", name));
                 for _ in args {
                     self.instructions.push(Instruction::Drop);
                 }
-                match ret_type {
-                    WasmType::I64 => self.instructions.push(Instruction::I64Const(0)),
-                    WasmType::F64 => self.instructions.push(Instruction::F64Const(0.0)),
-                    WasmType::I32 => self.instructions.push(Instruction::I32Const(0)),
-                }
+                self.emit_default_value(ret_type);
             }
         }
     }
@@ -893,6 +586,56 @@ impl<'a> ExprEmitter<'a> {
         self.instructions.push(Instruction::LocalGet(count));
     }
 
+    fn emit_string_from_ptr_len(&mut self, ptr_local: u32, len_local: u32) {
+        let str_ptr = self.alloc_local(WasmType::I32);
+        self.instructions.push(Instruction::I32Const(8));
+        self.instructions.push(Instruction::LocalGet(len_local));
+        self.instructions.push(Instruction::I32Const(7));
+        self.instructions.push(Instruction::I32Add);
+        self.instructions.push(Instruction::I32Const(-8i32));
+        self.instructions.push(Instruction::I32And);
+        self.instructions.push(Instruction::I32Add);
+        self.instructions.push(Instruction::Call(self.rt.alloc));
+        self.instructions.push(Instruction::LocalSet(str_ptr));
+        self.instructions.push(Instruction::LocalGet(str_ptr));
+        self.instructions.push(Instruction::I64Const(
+            (value::OBJ_STRING << value::HDR_KIND_SHIFT) as i64,
+        ));
+        self.instructions.push(Instruction::LocalGet(len_local));
+        self.instructions.push(Instruction::I64ExtendI32U);
+        self.instructions.push(Instruction::I64Or);
+        self.instructions
+            .push(Instruction::I64Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }));
+        self.instructions.push(Instruction::LocalGet(str_ptr));
+        self.instructions.push(Instruction::I32Const(8));
+        self.instructions.push(Instruction::I32Add);
+        self.instructions.push(Instruction::LocalGet(ptr_local));
+        self.instructions.push(Instruction::LocalGet(len_local));
+        self.instructions.push(Instruction::MemoryCopy {
+            src_mem: 0,
+            dst_mem: 0,
+        });
+        self.instructions.push(Instruction::LocalGet(str_ptr));
+    }
+
+    fn emit_host_string_import(&mut self, import_name: &str) {
+        if let Some(&idx) = self.host_import_indices.get(import_name) {
+            let ptr = self.alloc_local(WasmType::I32);
+            let len = self.alloc_local(WasmType::I32);
+            self.instructions.push(Instruction::Call(idx));
+            self.instructions.push(Instruction::LocalSet(len));
+            self.instructions.push(Instruction::LocalSet(ptr));
+            self.emit_string_from_ptr_len(ptr, len);
+        } else {
+            self.codegen_error(format!("missing host import `{}`", import_name));
+            self.emit_default_value(WasmType::I32);
+        }
+    }
+
     pub(super) fn emit_value_to_str(&mut self, expr: &Expr) {
         let wt = self.infer_expr_type(expr);
         let at = self.infer_aver_type(expr);
@@ -927,39 +670,7 @@ impl<'a> ExprEmitter<'a> {
             let ptr = self.alloc_local(WasmType::I32);
             self.instructions.push(Instruction::LocalSet(len));
             self.instructions.push(Instruction::LocalSet(ptr));
-            let str_ptr = self.alloc_local(WasmType::I32);
-            self.instructions.push(Instruction::I32Const(8));
-            self.instructions.push(Instruction::LocalGet(len));
-            self.instructions.push(Instruction::I32Const(7));
-            self.instructions.push(Instruction::I32Add);
-            self.instructions.push(Instruction::I32Const(-8i32));
-            self.instructions.push(Instruction::I32And);
-            self.instructions.push(Instruction::I32Add);
-            self.instructions.push(Instruction::Call(self.rt.alloc));
-            self.instructions.push(Instruction::LocalSet(str_ptr));
-            self.instructions.push(Instruction::LocalGet(str_ptr));
-            self.instructions.push(Instruction::I64Const(
-                (value::OBJ_STRING << value::HDR_KIND_SHIFT) as i64,
-            ));
-            self.instructions.push(Instruction::LocalGet(len));
-            self.instructions.push(Instruction::I64ExtendI32U);
-            self.instructions.push(Instruction::I64Or);
-            self.instructions
-                .push(Instruction::I64Store(wasm_encoder::MemArg {
-                    offset: 0,
-                    align: 3,
-                    memory_index: 0,
-                }));
-            self.instructions.push(Instruction::LocalGet(str_ptr));
-            self.instructions.push(Instruction::I32Const(8));
-            self.instructions.push(Instruction::I32Add);
-            self.instructions.push(Instruction::LocalGet(ptr));
-            self.instructions.push(Instruction::LocalGet(len));
-            self.instructions.push(Instruction::MemoryCopy {
-                src_mem: 0,
-                dst_mem: 0,
-            });
-            self.instructions.push(Instruction::LocalGet(str_ptr));
+            self.emit_string_from_ptr_len(ptr, len);
         } else {
             match wt {
                 WasmType::I64 => self
@@ -968,7 +679,12 @@ impl<'a> ExprEmitter<'a> {
                 WasmType::F64 => self
                     .instructions
                     .push(Instruction::Call(self.rt.f64_to_str_obj)),
-                WasmType::I32 => {}
+                WasmType::I32 => {
+                    self.codegen_error(
+                        "missing host import `format_value` for heap value formatting",
+                    );
+                    self.emit_default_value(WasmType::I32);
+                }
             }
         }
     }

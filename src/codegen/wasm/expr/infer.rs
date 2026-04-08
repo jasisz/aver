@@ -481,6 +481,12 @@ impl<'a> ExprEmitter<'a> {
                 ),
                 Box::new(self.infer_aver_type(&args[1].node).unwrap_or(Type::Unknown)),
             )),
+            "Byte.toHex" if args.len() == 1 => {
+                Some(Type::Result(Box::new(Type::Str), Box::new(Type::Str)))
+            }
+            "Byte.fromHex" if args.len() == 1 => {
+                Some(Type::Result(Box::new(Type::Int), Box::new(Type::Str)))
+            }
             _ => None,
         }
     }

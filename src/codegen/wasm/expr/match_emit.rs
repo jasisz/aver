@@ -301,6 +301,7 @@ impl<'a> ExprEmitter<'a> {
                         self.instructions.push(Instruction::I32Eq);
                     }
                     _ => {
+                        self.codegen_error("unsupported dispatch literal in WASM match lowering");
                         self.instructions.push(Instruction::Drop);
                         self.instructions.push(Instruction::I32Const(0));
                     }
@@ -484,6 +485,13 @@ impl<'a> ExprEmitter<'a> {
                         arms,
                         idx,
                     );
+                } else {
+                    self.codegen_error(
+                        "generic cons-pattern fallback is not implemented in the WASM backend",
+                    );
+                    if !is_last {
+                        self.emit_generic_arms(subj_local, subj_type, result_local, arms, idx + 1);
+                    }
                 }
             }
         }
@@ -510,6 +518,7 @@ impl<'a> ExprEmitter<'a> {
             .all(|item| matches!(item, Pattern::Ident(_) | Pattern::Wildcard));
 
         if !supported {
+            self.codegen_error("generic tuple-pattern fallback only supports identifier and wildcard items in the WASM backend");
             if !is_last {
                 self.emit_generic_arms(subj_local, subj_type, result_local, arms, idx + 1);
             }
@@ -598,6 +607,7 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::I32Eq);
             }
             _ => {
+                self.codegen_error("unsupported literal pattern in WASM generic match fallback");
                 self.instructions.push(Instruction::Drop);
                 self.instructions.push(Instruction::I32Const(0));
             }

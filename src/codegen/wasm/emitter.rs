@@ -407,6 +407,10 @@ pub fn build_wasm_module(
 
         emitter.emit_body(&fd.body);
 
+        if !emitter.errors.is_empty() {
+            return Err(emitter.errors.join("\n"));
+        }
+
         if needs_tco {
             emitter.emit_end(); // end loop
         }

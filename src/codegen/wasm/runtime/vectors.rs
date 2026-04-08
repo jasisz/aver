@@ -1,8 +1,8 @@
 /// Vector (flat array) runtime functions for the WASM backend.
 ///
 /// Implements vector operations: `vec_from_list`, `vec_get`, `vec_len`,
-/// `vec_set`, `vec_new`. Vectors are stored as flat arrays in linear memory
-/// with an 8-byte header containing kind and length.
+/// `vec_set`, `vec_new`, `vec_to_list`. Vectors are stored as flat arrays in
+/// linear memory with an 8-byte header containing kind and length.
 use wasm_encoder::{Function, Instruction, ValType};
 
 use super::super::value::*;
@@ -306,6 +306,68 @@ pub(super) fn emit_vec_new(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::Br(0));
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::End);
+    f
+}
+
+/// $vec_to_list(vec: i32) -> i32
+/// Converts a flat vector back into a linked list, preserving order.
+pub(super) fn emit_vec_to_list(rt: &RuntimeFuncIndices) -> Function {
+    // params: vec=0. locals: len=1, idx=2, acc=3
+    let mut f = Function::new(vec![
+        (1, ValType::I32), // 1: len
+        (1, ValType::I32), // 2: idx
+        (1, ValType::I32), // 3: acc
+    ]);
+
+    // len = header & 0xFFFFFFFF
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::I64Const(0xFFFFFFFF));
+    f.instruction(&Instruction::I64And);
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::LocalSet(1));
+
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(3)); // acc = []
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalSet(2)); // idx = len
+
+    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::BrIf(1));
+
+    // idx -= 1
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(2));
+
+    // acc = cons(vec[idx], acc)
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::I32Mul);
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 8,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::Call(rt.list_cons));
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::End);
     f

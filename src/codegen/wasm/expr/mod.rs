@@ -83,6 +83,8 @@ pub(super) struct ExprEmitter<'a> {
     pub host_import_indices: HashMap<String, u32>,
     /// Current function name (for self-TCO check).
     pub current_fn_name: String,
+    /// Codegen diagnostics collected while emitting the current function.
+    pub errors: Vec<String>,
 }
 
 impl<'a> ExprEmitter<'a> {
@@ -113,6 +115,7 @@ impl<'a> ExprEmitter<'a> {
             fn_return_type: WasmType::I32,
             current_fn_name: String::new(),
             host_import_indices: HashMap::new(),
+            errors: Vec::new(),
         }
     }
 
@@ -169,5 +172,18 @@ impl<'a> ExprEmitter<'a> {
 
     pub(super) fn emit_else(&mut self) {
         self.instructions.push(Instruction::Else);
+    }
+
+    pub(super) fn codegen_error(&mut self, message: impl Into<String>) {
+        self.errors
+            .push(format!("{}: {}", self.current_fn_name, message.into()));
+    }
+
+    pub(super) fn emit_default_value(&mut self, wt: WasmType) {
+        match wt {
+            WasmType::I32 => self.instructions.push(Instruction::I32Const(0)),
+            WasmType::I64 => self.instructions.push(Instruction::I64Const(0)),
+            WasmType::F64 => self.instructions.push(Instruction::F64Const(0.0)),
+        }
     }
 }
