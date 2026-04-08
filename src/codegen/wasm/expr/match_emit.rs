@@ -474,9 +474,99 @@ impl<'a> ExprEmitter<'a> {
                 self.emit_end();
             }
             Pattern::Cons(_, _) | Pattern::Tuple(_) => {
-                // Should be handled by MatchDispatchPlan::List
+                if let Pattern::Tuple(items) = &arm.pattern {
+                    self.emit_tuple_pattern_void(
+                        subj_local,
+                        subj_type,
+                        result_local,
+                        items,
+                        arm,
+                        arms,
+                        idx,
+                    );
+                }
             }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn emit_tuple_pattern_void(
+        &mut self,
+        subj_local: u32,
+        subj_type: WasmType,
+        result_local: u32,
+        items: &[Pattern],
+        arm: &MatchArm,
+        arms: &[MatchArm],
+        idx: usize,
+    ) {
+        let is_last = idx == arms.len() - 1;
+        let tuple_types = match self.local_aver_types.get(&subj_local) {
+            Some(Type::Tuple(types)) => types.clone(),
+            _ => vec![Type::Unknown; items.len()],
+        };
+        let supported = items
+            .iter()
+            .all(|item| matches!(item, Pattern::Ident(_) | Pattern::Wildcard));
+
+        if !supported {
+            if !is_last {
+                self.emit_generic_arms(subj_local, subj_type, result_local, arms, idx + 1);
+            }
+            return;
+        }
+
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        self.instructions.push(Instruction::I32Const(0));
+        self.instructions.push(Instruction::I32GtS);
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        self.instructions.push(Instruction::Call(self.rt.obj_kind));
+        self.instructions
+            .push(Instruction::I32Const(value::OBJ_TUPLE as i32));
+        self.instructions.push(Instruction::I32Eq);
+        self.instructions.push(Instruction::I32And);
+        self.emit_if(wasm_encoder::BlockType::Empty);
+
+        for (i, pattern) in items.iter().enumerate() {
+            let Pattern::Ident(binding_name) = pattern else {
+                continue;
+            };
+            if binding_name == "_" {
+                continue;
+            }
+
+            let aver_ty = tuple_types.get(i).cloned().unwrap_or(Type::Unknown);
+            let field_wasm_type = aver_type_to_wasm(&aver_ty);
+            let bind_local = self.alloc_local(field_wasm_type);
+            self.locals.insert(binding_name.clone(), bind_local);
+            self.local_aver_types.insert(bind_local, aver_ty);
+
+            self.instructions.push(Instruction::LocalGet(subj_local));
+            self.instructions.push(Instruction::I32Const(i as i32));
+            match field_wasm_type {
+                WasmType::F64 => {
+                    self.instructions.push(Instruction::Call(self.rt.obj_field));
+                    self.instructions.push(Instruction::F64ReinterpretI64);
+                }
+                WasmType::I32 => {
+                    self.instructions
+                        .push(Instruction::Call(self.rt.obj_field_i32));
+                }
+                WasmType::I64 => {
+                    self.instructions.push(Instruction::Call(self.rt.obj_field));
+                }
+            }
+            self.instructions.push(Instruction::LocalSet(bind_local));
+        }
+
+        self.emit_expr(&arm.body.node);
+        self.instructions.push(Instruction::LocalSet(result_local));
+
+        if !is_last {
+            self.emit_else();
+            self.emit_generic_arms(subj_local, subj_type, result_local, arms, idx + 1);
+        }
+        self.emit_end();
     }
 
     #[allow(clippy::too_many_arguments)]

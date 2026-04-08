@@ -5,6 +5,8 @@
 /// emit_list, emit_tuple, emit_record_create, emit_field_access,
 /// emit_map_literal, emit_interpolated_str, emit_str_part,
 /// emit_tailcall, emit_literal, emit_string_literal, emit_default_init.
+use std::collections::HashMap;
+
 use wasm_encoder::Instruction;
 
 use crate::ast::{BinOp, Expr, Literal, Spanned, Stmt, StrPart};
@@ -82,8 +84,15 @@ impl<'a> ExprEmitter<'a> {
             Expr::MapLiteral(entries) => {
                 self.emit_map_literal(entries);
             }
-            Expr::RecordUpdate { .. } | Expr::IndependentProduct(_, _) => {
-                self.instructions.push(Instruction::I32Const(0));
+            Expr::IndependentProduct(items, unwrap) => {
+                self.emit_independent_product(items, *unwrap);
+            }
+            Expr::RecordUpdate {
+                type_name,
+                base,
+                updates,
+            } => {
+                self.emit_record_update(type_name, base, updates);
             }
         }
     }
@@ -500,6 +509,102 @@ impl<'a> ExprEmitter<'a> {
         self.instructions.push(Instruction::LocalGet(ptr_local));
     }
 
+    fn emit_tuple_from_locals(&mut self, items: &[(u32, WasmType)]) {
+        if items.is_empty() {
+            self.instructions.push(Instruction::I32Const(0));
+            return;
+        }
+        let count = items.len();
+        let size = 8 + count * 8;
+        let ptr_local = self.alloc_local(WasmType::I32);
+        self.instructions.push(Instruction::I32Const(size as i32));
+        self.instructions.push(Instruction::Call(self.rt.alloc));
+        self.instructions.push(Instruction::LocalSet(ptr_local));
+        self.instructions.push(Instruction::LocalGet(ptr_local));
+        self.instructions
+            .push(Instruction::I64Const(
+                value::make_header(value::OBJ_TUPLE, 0, 0, count as u64) as i64,
+            ));
+        self.instructions
+            .push(Instruction::I64Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }));
+
+        for (i, (local, item_type)) in items.iter().enumerate() {
+            self.instructions.push(Instruction::LocalGet(ptr_local));
+            self.instructions.push(Instruction::LocalGet(*local));
+            match item_type {
+                WasmType::I64 => {}
+                WasmType::F64 => self.instructions.push(Instruction::I64ReinterpretF64),
+                WasmType::I32 => self.instructions.push(Instruction::I64ExtendI32S),
+            }
+            self.instructions
+                .push(Instruction::I64Store(wasm_encoder::MemArg {
+                    offset: (8 + i * 8) as u64,
+                    align: 3,
+                    memory_index: 0,
+                }));
+        }
+
+        self.instructions.push(Instruction::LocalGet(ptr_local));
+    }
+
+    fn emit_independent_product(&mut self, items: &[Spanned<Expr>], unwrap: bool) {
+        if !unwrap {
+            self.emit_tuple(items);
+            return;
+        }
+
+        let mut tuple_locals = Vec::with_capacity(items.len());
+
+        for item in items {
+            self.emit_expr(&item.node);
+            let result_local = self.alloc_local(WasmType::I32);
+            self.instructions.push(Instruction::LocalSet(result_local));
+
+            self.instructions.push(Instruction::LocalGet(result_local));
+            self.instructions.push(Instruction::I32Const(0));
+            self.instructions.push(Instruction::I32GtS);
+            self.emit_if(wasm_encoder::BlockType::Empty);
+            self.instructions.push(Instruction::LocalGet(result_local));
+            self.instructions.push(Instruction::Call(self.rt.obj_tag));
+            self.instructions
+                .push(Instruction::I32Const(value::WRAP_ERR as i32));
+            self.instructions.push(Instruction::I32Eq);
+            self.emit_if(wasm_encoder::BlockType::Empty);
+            self.instructions.push(Instruction::LocalGet(result_local));
+            self.instructions.push(Instruction::Return);
+            self.emit_end();
+            self.emit_else();
+            self.instructions.push(Instruction::LocalGet(result_local));
+            self.instructions.push(Instruction::Return);
+            self.emit_end();
+
+            let ok_type = match self.infer_aver_type(&item.node) {
+                Some(Type::Result(ok, _)) => *ok,
+                _ => Type::Unknown,
+            };
+            let ok_wasm_type = aver_type_to_wasm(&ok_type);
+            let ok_local = self.alloc_local(ok_wasm_type);
+            self.instructions.push(Instruction::LocalGet(result_local));
+            match ok_wasm_type {
+                WasmType::I64 => self.instructions.push(Instruction::Call(self.rt.unwrap)),
+                WasmType::F64 => self
+                    .instructions
+                    .push(Instruction::Call(self.rt.unwrap_f64)),
+                WasmType::I32 => self
+                    .instructions
+                    .push(Instruction::Call(self.rt.unwrap_i32)),
+            }
+            self.instructions.push(Instruction::LocalSet(ok_local));
+            tuple_locals.push((ok_local, ok_wasm_type));
+        }
+
+        self.emit_tuple_from_locals(&tuple_locals);
+    }
+
     fn emit_record_create(&mut self, _type_name: &str, fields: &[(String, Spanned<Expr>)]) {
         let count = fields.len();
         let size = 8 + count * 8;
@@ -534,6 +639,77 @@ impl<'a> ExprEmitter<'a> {
                     memory_index: 0,
                 }));
         }
+        self.instructions.push(Instruction::LocalGet(ptr_local));
+    }
+
+    fn emit_record_update(
+        &mut self,
+        type_name: &str,
+        base: &Spanned<Expr>,
+        updates: &[(String, Spanned<Expr>)],
+    ) {
+        let Some(fields) = self.record_fields(type_name).map(|fields| fields.to_vec()) else {
+            self.emit_expr(&base.node);
+            return;
+        };
+
+        let base_local = self.alloc_local(WasmType::I32);
+        self.emit_expr(&base.node);
+        self.instructions.push(Instruction::LocalSet(base_local));
+
+        let mut update_locals = HashMap::with_capacity(updates.len());
+        for (field_name, expr) in updates {
+            let field_type = self.infer_expr_type(&expr.node);
+            let field_local = self.alloc_local(field_type);
+            self.emit_expr(&expr.node);
+            self.instructions.push(Instruction::LocalSet(field_local));
+            update_locals.insert(field_name.as_str(), (field_local, field_type));
+        }
+
+        let count = fields.len();
+        let size = 8 + count * 8;
+        let ptr_local = self.alloc_local(WasmType::I32);
+        self.instructions.push(Instruction::I32Const(size as i32));
+        self.instructions.push(Instruction::Call(self.rt.alloc));
+        self.instructions.push(Instruction::LocalSet(ptr_local));
+        self.instructions.push(Instruction::LocalGet(ptr_local));
+        self.instructions
+            .push(Instruction::I64Const(
+                value::make_header(value::OBJ_RECORD, 0, 0, count as u64) as i64,
+            ));
+        self.instructions
+            .push(Instruction::I64Store(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }));
+
+        for (i, (field_name, _)) in fields.iter().enumerate() {
+            self.instructions.push(Instruction::LocalGet(ptr_local));
+            if let Some(&(field_local, field_type)) = update_locals.get(field_name.as_str()) {
+                self.instructions.push(Instruction::LocalGet(field_local));
+                match field_type {
+                    WasmType::I64 => {}
+                    WasmType::F64 => self.instructions.push(Instruction::I64ReinterpretF64),
+                    WasmType::I32 => self.instructions.push(Instruction::I64ExtendI32S),
+                }
+            } else {
+                self.instructions.push(Instruction::LocalGet(base_local));
+                self.instructions
+                    .push(Instruction::I64Load(wasm_encoder::MemArg {
+                        offset: (8 + i * 8) as u64,
+                        align: 3,
+                        memory_index: 0,
+                    }));
+            }
+            self.instructions
+                .push(Instruction::I64Store(wasm_encoder::MemArg {
+                    offset: (8 + i * 8) as u64,
+                    align: 3,
+                    memory_index: 0,
+                }));
+        }
+
         self.instructions.push(Instruction::LocalGet(ptr_local));
     }
 

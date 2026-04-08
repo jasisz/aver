@@ -105,18 +105,8 @@ impl<'a> ExprEmitter<'a> {
                 // Check if option == NONE_SENTINEL -> return default, else unwrap
                 let opt_local = self.alloc_local(WasmType::I32);
                 let result_type = self.infer_expr_type(&args[1].node);
-                self.instructions.push(Instruction::LocalSet(opt_local)); // save default
-                // Wait -- args already on stack: [option, default]
-                // Need to reorder. Actually let me save both.
                 let def_local = self.alloc_local(result_type);
-                // Stack has [option, default] -- save default first (TOS)
-                // Actually emit_builtin_call receives args already on stack in order.
-                // Stack: [arg0=option, arg1=default]
-                // But WASM stack is LIFO. After emitting args left to right,
-                // TOS = default, below = option.
-                // Save default (TOS)
                 self.instructions.push(Instruction::LocalSet(def_local));
-                // Now TOS = option
                 self.instructions.push(Instruction::LocalSet(opt_local));
                 // Check
                 self.instructions.push(Instruction::LocalGet(opt_local));
@@ -768,10 +758,13 @@ impl<'a> ExprEmitter<'a> {
             }
             _ => {
                 // Unknown builtin -- drop args, return default for inferred type
-                let ret_type = self.infer_call_return_type(&crate::ast::Spanned {
-                    node: crate::ast::Expr::Ident(name.to_string()),
-                    line: 0,
-                });
+                let ret_type = self.infer_call_return_type(
+                    &crate::ast::Spanned {
+                        node: crate::ast::Expr::Ident(name.to_string()),
+                        line: 0,
+                    },
+                    args,
+                );
                 for _ in args {
                     self.instructions.push(Instruction::Drop);
                 }

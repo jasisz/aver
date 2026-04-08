@@ -1,8 +1,11 @@
 // Runtime function and type index definitions for the WASM backend.
 //
-// Contains the `RuntimeFuncIndices` struct (index assignments for all runtime
-// functions), `RtTypeIndices` (type section indices), and the `rt_type_index`
-// dispatch function.
+// This module is the single source of truth for:
+// - runtime function indices
+// - canonical WASM function signatures used by runtime helpers and host imports
+// - mapping runtime functions back to their type-section entries
+
+use wasm_encoder::{TypeSection, ValType};
 
 /// Index assignments for runtime functions within the module.
 #[derive(Debug, Clone, Copy)]
@@ -28,28 +31,28 @@ pub struct RuntimeFuncIndices {
     pub str_concat: u32,     // (i32, i32) -> i32
     pub i64_to_str_obj: u32, // (i64) -> i32
     pub f64_to_str_obj: u32, // (f64) -> i32
-    pub list_take: u32,      // (i32, i64) -> i32
-    pub list_drop: u32,      // (i32, i64) -> i32
+    pub list_take: u32,      // (i32, i32) -> i32
+    pub list_drop: u32,      // (i32, i32) -> i32
     pub list_concat: u32,    // (i32, i32) -> i32
     pub list_reverse: u32,   // (i32) -> i32
-    pub list_contains: u32,  // (i64, i32) -> i32 (value, list) -> bool
+    pub list_contains: u32,  // (i32, i64) -> i32
     pub list_zip: u32,       // (i32, i32) -> i32
-    pub map_get: u32,        // (i32, i32) -> i32  (map, key) -> Option ptr
-    pub map_set: u32,        // (i32, i32, i64) -> i32  (map, key, value) -> map
-    pub map_has: u32,        // (i32, i32) -> i32  (map, key) -> bool
-    pub map_keys: u32,       // (i32) -> i32  (map) -> list
-    pub map_entries: u32,    // (i32) -> i32  (map) -> list of tuples
-    pub vec_from_list: u32,  // (i32) -> i32  list → vector
-    pub vec_get: u32,        // (i32, i64) -> i32  (vec, idx) → Option
-    pub vec_len: u32,        // (i32) -> i64  vec → Int
-    pub vec_set: u32,        // (i32, i64, i64) -> i32  (vec, idx, val) → Option<Vector>
-    pub vec_new: u32,        // (i64, i64) -> i32  (size, fill) → vec
-    pub str_trim: u32,       // (i32) -> i32  trim whitespace
-    pub str_slice: u32,      // (i32, i32, i32) -> i32  substring
-    pub str_chars: u32,      // (i32) -> i32  string → list of chars
-    pub str_join: u32,       // (i32, i32) -> i32  join list with separator
-    pub int_from_str: u32,   // (i32) -> i32  parse int → Result wrapper
-    pub float_from_str: u32, // (i32) -> i32  parse float → Result wrapper
+    pub map_get: u32,        // (i32, i32) -> i32
+    pub map_set: u32,        // (i32, i32, i64) -> i32
+    pub map_has: u32,        // (i32, i32) -> i32
+    pub map_keys: u32,       // (i32) -> i32
+    pub map_entries: u32,    // (i32) -> i32
+    pub vec_from_list: u32,  // (i32) -> i32
+    pub vec_get: u32,        // (i32, i64) -> i32
+    pub vec_len: u32,        // (i32) -> i64
+    pub vec_set: u32,        // (i32, i64, i64) -> i32
+    pub vec_new: u32,        // (i64, i64) -> i32
+    pub str_trim: u32,       // (i32) -> i32
+    pub str_slice: u32,      // (i32, i32, i32) -> i32
+    pub str_chars: u32,      // (i32) -> i32
+    pub str_join: u32,       // (i32, i32) -> i32
+    pub int_from_str: u32,   // (i32) -> i32
+    pub float_from_str: u32, // (i32) -> i32
     /// Total number of runtime functions.
     pub count: u32,
     /// Import function index for writing to stdout (either WASI fd_write or aver/console_print).
@@ -117,28 +120,268 @@ impl RuntimeFuncIndices {
     }
 }
 
-/// Runtime function type signatures. Indices into the type section.
-/// These must match the order in emitter.rs type_section construction.
+#[derive(Default)]
+struct TypeRegistry {
+    entries: Vec<(Vec<ValType>, Vec<ValType>)>,
+}
+
+impl TypeRegistry {
+    fn intern(
+        &mut self,
+        type_section: &mut TypeSection,
+        params: &[ValType],
+        results: &[ValType],
+    ) -> u32 {
+        if let Some((idx, _)) = self
+            .entries
+            .iter()
+            .enumerate()
+            .find(|(_, (ps, rs))| ps.as_slice() == params && rs.as_slice() == results)
+        {
+            return idx as u32;
+        }
+
+        let idx = self.entries.len() as u32;
+        type_section
+            .ty()
+            .function(params.to_vec(), results.to_vec());
+        self.entries.push((params.to_vec(), results.to_vec()));
+        idx
+    }
+
+    fn count(&self) -> u32 {
+        self.entries.len() as u32
+    }
+}
+
+/// Runtime and import function type signatures. Indices into the type section.
 #[derive(Debug, Clone, Copy)]
 pub struct RtTypeIndices {
-    pub alloc: u32,         // 0: (i32) -> i32
-    pub wrap_i64: u32,      // 1: (i32, i64) -> i32
-    pub wrap_f64: u32,      // 2: (i32, f64) -> i32
-    pub wrap_i32: u32,      // 3: (i32, i32) -> i32
-    pub unwrap_i64: u32,    // 4: (i32) -> i64
-    pub unwrap_f64: u32,    // 5: (i32) -> f64
-    pub unwrap_i32: u32,    // 6: (i32) -> i32
-    pub obj_kind: u32,      // 7: (i32) -> i32  (same as unwrap_i32)
-    pub obj_tag: u32,       // 8: (i32) -> i32  (same as unwrap_i32)
-    pub obj_field_i64: u32, // 9: (i32, i32) -> i64
-    pub obj_field_f64: u32, // 10: (i32, i32) -> f64
-    pub obj_field_i32: u32, // 11: (i32, i32) -> i32
-    pub list_cons_i64: u32, // 12: (i64, i32) -> i32
-    pub list_cons_f64: u32, // 13: (f64, i32) -> i32
-    pub int_to_str: u32,    // 17: (i64, i32) -> i32
-    pub float_to_str: u32,  // 18: (f64, i32) -> i32
-    pub fd_write_buf: u32,  // 19: (i32, i32) -> ()
-    pub wasi_fd_write: u32, // 20: (i32, i32, i32, i32) -> i32
+    pub alloc: u32,              // (i32) -> i32
+    pub wrap_i64: u32,           // (i32, i64) -> i32
+    pub wrap_f64: u32,           // (i32, f64) -> i32
+    pub wrap_i32: u32,           // (i32, i32) -> i32
+    pub unwrap_i64: u32,         // (i32) -> i64
+    pub unwrap_f64: u32,         // (i32) -> f64
+    pub unwrap_i32: u32,         // (i32) -> i32
+    pub obj_kind: u32,           // (i32) -> i32
+    pub obj_tag: u32,            // (i32) -> i32
+    pub obj_field_i64: u32,      // (i32, i32) -> i64
+    pub obj_field_f64: u32,      // (i32, i32) -> f64
+    pub obj_field_i32: u32,      // (i32, i32) -> i32
+    pub list_cons_i64: u32,      // (i64, i32) -> i32
+    pub list_cons_f64: u32,      // (f64, i32) -> i32
+    pub print_i64: u32,          // (i64) -> ()
+    pub print_f64: u32,          // (f64) -> ()
+    pub print_i32: u32,          // (i32) -> ()
+    pub int_to_str: u32,         // (i64, i32) -> i32
+    pub float_to_str: u32,       // (f64, i32) -> i32
+    pub fd_write_buf: u32,       // (i32, i32) -> ()
+    pub wasi_fd_write: u32,      // (i32, i32, i32, i32) -> i32
+    pub i64_to_i32: u32,         // (i64) -> i32
+    pub f64_to_i32: u32,         // (f64) -> i32
+    pub i32_i64_to_i32: u32,     // (i32, i64) -> i32
+    pub i32_i32_i64_to_i32: u32, // (i32, i32, i64) -> i32
+    pub i32_i64_i64_to_i32: u32, // (i32, i64, i64) -> i32
+    pub i64_i64_to_i32: u32,     // (i64, i64) -> i32
+    pub i32_i32_i32_to_i32: u32, // (i32, i32, i32) -> i32
+    pub empty_to_i32_i32: u32,   // () -> (i32, i32)
+    pub i32_i64_to_empty: u32,   // (i32, i64) -> ()
+    pub i32_i64_to_i32_i32: u32, // (i32, i64) -> (i32, i32)
+    pub i64_i64_to_i64: u32,     // (i64, i64) -> i64
+    pub empty_to_i64: u32,       // () -> i64
+    pub count: u32,              // total number of distinct base signatures
+}
+
+/// Emit and intern all base signatures used by runtime helpers and ABI imports.
+pub fn emit_base_type_section(type_section: &mut TypeSection) -> RtTypeIndices {
+    let mut registry = TypeRegistry::default();
+
+    let alloc = registry.intern(type_section, &[ValType::I32], &[ValType::I32]);
+    let wrap_i64 = registry.intern(type_section, &[ValType::I32, ValType::I64], &[ValType::I32]);
+    let wrap_f64 = registry.intern(type_section, &[ValType::I32, ValType::F64], &[ValType::I32]);
+    let wrap_i32 = registry.intern(type_section, &[ValType::I32, ValType::I32], &[ValType::I32]);
+    let unwrap_i64 = registry.intern(type_section, &[ValType::I32], &[ValType::I64]);
+    let unwrap_f64 = registry.intern(type_section, &[ValType::I32], &[ValType::F64]);
+    let unwrap_i32 = registry.intern(type_section, &[ValType::I32], &[ValType::I32]);
+    let obj_field_i64 =
+        registry.intern(type_section, &[ValType::I32, ValType::I32], &[ValType::I64]);
+    let obj_field_f64 =
+        registry.intern(type_section, &[ValType::I32, ValType::I32], &[ValType::F64]);
+    let list_cons_i64 =
+        registry.intern(type_section, &[ValType::I64, ValType::I32], &[ValType::I32]);
+    let list_cons_f64 =
+        registry.intern(type_section, &[ValType::F64, ValType::I32], &[ValType::I32]);
+    let print_i64 = registry.intern(type_section, &[ValType::I64], &[]);
+    let print_f64 = registry.intern(type_section, &[ValType::F64], &[]);
+    let print_i32 = registry.intern(type_section, &[ValType::I32], &[]);
+    let fd_write_buf = registry.intern(type_section, &[ValType::I32, ValType::I32], &[]);
+    let wasi_fd_write = registry.intern(
+        type_section,
+        &[ValType::I32, ValType::I32, ValType::I32, ValType::I32],
+        &[ValType::I32],
+    );
+    let i64_to_i32 = registry.intern(type_section, &[ValType::I64], &[ValType::I32]);
+    let f64_to_i32 = registry.intern(type_section, &[ValType::F64], &[ValType::I32]);
+    let i32_i64_to_i32 =
+        registry.intern(type_section, &[ValType::I32, ValType::I64], &[ValType::I32]);
+    let i32_i32_i64_to_i32 = registry.intern(
+        type_section,
+        &[ValType::I32, ValType::I32, ValType::I64],
+        &[ValType::I32],
+    );
+    let i32_i64_i64_to_i32 = registry.intern(
+        type_section,
+        &[ValType::I32, ValType::I64, ValType::I64],
+        &[ValType::I32],
+    );
+    let i64_i64_to_i32 =
+        registry.intern(type_section, &[ValType::I64, ValType::I64], &[ValType::I32]);
+    let i32_i32_i32_to_i32 = registry.intern(
+        type_section,
+        &[ValType::I32, ValType::I32, ValType::I32],
+        &[ValType::I32],
+    );
+    let empty_to_i32_i32 = registry.intern(type_section, &[], &[ValType::I32, ValType::I32]);
+    let i32_i64_to_empty = registry.intern(type_section, &[ValType::I32, ValType::I64], &[]);
+    let i32_i64_to_i32_i32 = registry.intern(
+        type_section,
+        &[ValType::I32, ValType::I64],
+        &[ValType::I32, ValType::I32],
+    );
+    let i64_i64_to_i64 =
+        registry.intern(type_section, &[ValType::I64, ValType::I64], &[ValType::I64]);
+    let empty_to_i64 = registry.intern(type_section, &[], &[ValType::I64]);
+
+    RtTypeIndices {
+        alloc,
+        wrap_i64,
+        wrap_f64,
+        wrap_i32,
+        unwrap_i64,
+        unwrap_f64,
+        unwrap_i32,
+        obj_kind: unwrap_i32,
+        obj_tag: unwrap_i32,
+        obj_field_i64,
+        obj_field_f64,
+        obj_field_i32: wrap_i32,
+        list_cons_i64,
+        list_cons_f64,
+        print_i64,
+        print_f64,
+        print_i32,
+        int_to_str: list_cons_i64,
+        float_to_str: list_cons_f64,
+        fd_write_buf,
+        wasi_fd_write,
+        i64_to_i32,
+        f64_to_i32,
+        i32_i64_to_i32,
+        i32_i32_i64_to_i32,
+        i32_i64_i64_to_i32,
+        i64_i64_to_i32,
+        i32_i32_i32_to_i32,
+        empty_to_i32_i32,
+        i32_i64_to_empty,
+        i32_i64_to_i32_i32,
+        i64_i64_to_i64,
+        empty_to_i64,
+        count: registry.count(),
+    }
+}
+
+/// Lookup the canonical type index for a function signature already interned in the base table.
+pub fn lookup_type_index(
+    rti: &RtTypeIndices,
+    params: &[ValType],
+    results: &[ValType],
+) -> Option<u32> {
+    if params == [ValType::I32] && results == [ValType::I32] {
+        return Some(rti.alloc);
+    }
+    if params == [ValType::I32, ValType::I64] && results == [ValType::I32] {
+        return Some(rti.wrap_i64);
+    }
+    if params == [ValType::I32, ValType::F64] && results == [ValType::I32] {
+        return Some(rti.wrap_f64);
+    }
+    if params == [ValType::I32, ValType::I32] && results == [ValType::I32] {
+        return Some(rti.wrap_i32);
+    }
+    if params == [ValType::I32] && results == [ValType::I64] {
+        return Some(rti.unwrap_i64);
+    }
+    if params == [ValType::I32] && results == [ValType::F64] {
+        return Some(rti.unwrap_f64);
+    }
+    if params == [ValType::I32, ValType::I32] && results == [ValType::I64] {
+        return Some(rti.obj_field_i64);
+    }
+    if params == [ValType::I32, ValType::I32] && results == [ValType::F64] {
+        return Some(rti.obj_field_f64);
+    }
+    if params == [ValType::I64, ValType::I32] && results == [ValType::I32] {
+        return Some(rti.list_cons_i64);
+    }
+    if params == [ValType::F64, ValType::I32] && results == [ValType::I32] {
+        return Some(rti.list_cons_f64);
+    }
+    if params == [ValType::I64] && results.is_empty() {
+        return Some(rti.print_i64);
+    }
+    if params == [ValType::F64] && results.is_empty() {
+        return Some(rti.print_f64);
+    }
+    if params == [ValType::I32] && results.is_empty() {
+        return Some(rti.print_i32);
+    }
+    if params == [ValType::I32, ValType::I32] && results.is_empty() {
+        return Some(rti.fd_write_buf);
+    }
+    if params == [ValType::I32, ValType::I32, ValType::I32, ValType::I32]
+        && results == [ValType::I32]
+    {
+        return Some(rti.wasi_fd_write);
+    }
+    if params == [ValType::I64] && results == [ValType::I32] {
+        return Some(rti.i64_to_i32);
+    }
+    if params == [ValType::F64] && results == [ValType::I32] {
+        return Some(rti.f64_to_i32);
+    }
+    if params == [ValType::I32, ValType::I64] && results == [ValType::I32] {
+        return Some(rti.i32_i64_to_i32);
+    }
+    if params == [ValType::I32, ValType::I32, ValType::I64] && results == [ValType::I32] {
+        return Some(rti.i32_i32_i64_to_i32);
+    }
+    if params == [ValType::I32, ValType::I64, ValType::I64] && results == [ValType::I32] {
+        return Some(rti.i32_i64_i64_to_i32);
+    }
+    if params == [ValType::I64, ValType::I64] && results == [ValType::I32] {
+        return Some(rti.i64_i64_to_i32);
+    }
+    if params == [ValType::I32, ValType::I32, ValType::I32] && results == [ValType::I32] {
+        return Some(rti.i32_i32_i32_to_i32);
+    }
+    if params.is_empty() && results == [ValType::I32, ValType::I32] {
+        return Some(rti.empty_to_i32_i32);
+    }
+    if params == [ValType::I32, ValType::I64] && results.is_empty() {
+        return Some(rti.i32_i64_to_empty);
+    }
+    if params == [ValType::I32, ValType::I64] && results == [ValType::I32, ValType::I32] {
+        return Some(rti.i32_i64_to_i32_i32);
+    }
+    if params == [ValType::I64, ValType::I64] && results == [ValType::I64] {
+        return Some(rti.i64_i64_to_i64);
+    }
+    if params.is_empty() && results == [ValType::I64] {
+        return Some(rti.empty_to_i64);
+    }
+
+    None
 }
 
 /// Get the type index for a given runtime function.
@@ -204,85 +447,124 @@ pub fn rt_type_index(
     }
     if local_idx == rt.str_eq - import_func_count {
         return rti.wrap_i32;
-    } // (i32,i32)->i32
+    }
     if local_idx == rt.str_concat - import_func_count {
         return rti.wrap_i32;
-    } // (i32,i32)->i32
+    }
     if local_idx == rt.i64_to_str_obj - import_func_count {
-        return 18;
-    } // (i64)->i32
+        return rti.i64_to_i32;
+    }
     if local_idx == rt.f64_to_str_obj - import_func_count {
-        return 19;
-    } // (f64)->i32
+        return rti.f64_to_i32;
+    }
     if local_idx == rt.list_take - import_func_count {
         return rti.wrap_i32;
-    } // (i32,i32)->i32
+    }
     if local_idx == rt.list_drop - import_func_count {
         return rti.wrap_i32;
-    } // (i32,i32)->i32
+    }
     if local_idx == rt.list_concat - import_func_count {
         return rti.wrap_i32;
-    } // (i32,i32)->i32
+    }
     if local_idx == rt.list_reverse - import_func_count {
         return rti.alloc;
-    } // (i32)->i32
+    }
     if local_idx == rt.list_contains - import_func_count {
-        return 20;
-    } // (i32,i64)->i32
+        return rti.i32_i64_to_i32;
+    }
     if local_idx == rt.list_zip - import_func_count {
         return rti.wrap_i32;
-    } // (i32,i32)->i32
+    }
     if local_idx == rt.map_get - import_func_count {
         return rti.wrap_i32;
-    } // (i32,i32)->i32
+    }
     if local_idx == rt.map_set - import_func_count {
-        return 21;
-    } // (i32,i32,i64)->i32
+        return rti.i32_i32_i64_to_i32;
+    }
     if local_idx == rt.map_has - import_func_count {
         return rti.wrap_i32;
-    } // (i32,i32)->i32
+    }
     if local_idx == rt.map_keys - import_func_count {
         return rti.alloc;
-    } // (i32)->i32
+    }
     if local_idx == rt.map_entries - import_func_count {
         return rti.alloc;
-    } // (i32)->i32
+    }
     if local_idx == rt.vec_from_list - import_func_count {
         return rti.alloc;
-    } // (i32)->i32
+    }
     if local_idx == rt.vec_get - import_func_count {
-        return 20;
-    } // (i32,i64)->i32
+        return rti.i32_i64_to_i32;
+    }
     if local_idx == rt.vec_len - import_func_count {
         return rti.unwrap_i64;
-    } // (i32)->i64
+    }
     if local_idx == rt.vec_set - import_func_count {
-        return 22;
-    } // (i32,i64,i64)->i32
+        return rti.i32_i64_i64_to_i32;
+    }
     if local_idx == rt.vec_new - import_func_count {
-        return 23;
-    } // (i64,i64)->i32
+        return rti.i64_i64_to_i32;
+    }
     if local_idx == rt.str_trim - import_func_count {
         return rti.alloc;
-    } // (i32)->i32
+    }
     if local_idx == rt.str_slice - import_func_count {
-        return 24;
-    } // (i32,i32,i32)->i32 — new type
+        return rti.i32_i32_i32_to_i32;
+    }
     if local_idx == rt.str_chars - import_func_count {
         return rti.alloc;
-    } // (i32)->i32
+    }
     if local_idx == rt.str_join - import_func_count {
         return rti.wrap_i32;
-    } // (i32,i32)->i32
+    }
     if local_idx == rt.int_from_str - import_func_count {
         return rti.alloc;
-    } // (i32)->i32
+    }
     if local_idx == rt.float_from_str - import_func_count {
         return rti.alloc;
-    } // (i32)->i32
+    }
 
     panic!(
         "Unknown runtime function index: {} (base={})",
         func_idx, import_func_count
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base_type_section_interns_shared_signatures() {
+        let mut type_section = TypeSection::new();
+        let rti = emit_base_type_section(&mut type_section);
+
+        assert_eq!(rti.alloc, rti.unwrap_i32);
+        assert_eq!(rti.wrap_i32, rti.obj_field_i32);
+        assert_eq!(rti.list_cons_i64, rti.int_to_str);
+        assert_eq!(rti.list_cons_f64, rti.float_to_str);
+    }
+
+    #[test]
+    fn abi_lookup_covers_effect_signatures() {
+        let mut type_section = TypeSection::new();
+        let rti = emit_base_type_section(&mut type_section);
+
+        assert_eq!(
+            lookup_type_index(&rti, &[ValType::I64, ValType::I64], &[ValType::I64]),
+            Some(rti.i64_i64_to_i64)
+        );
+        assert_eq!(
+            lookup_type_index(&rti, &[], &[ValType::I64]),
+            Some(rti.empty_to_i64)
+        );
+        assert_eq!(
+            lookup_type_index(
+                &rti,
+                &[ValType::I32, ValType::I64],
+                &[ValType::I32, ValType::I32]
+            ),
+            Some(rti.i32_i64_to_i32_i32)
+        );
+    }
 }

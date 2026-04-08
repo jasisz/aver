@@ -18,7 +18,7 @@ use crate::ast::{Expr, FnBody, FnDef, Literal, Pattern, Stmt, StrPart, TopLevel}
 use crate::codegen::CodegenContext;
 
 use super::expr::{ExprEmitter, StringLiteral, build_variant_registry};
-use super::runtime::{self, RtTypeIndices, RuntimeFuncIndices};
+use super::runtime::{self, RuntimeFuncIndices};
 use super::types::{WasmType, aver_type_to_wasm};
 use super::value;
 
@@ -108,156 +108,8 @@ pub fn build_wasm_module(
     // -----------------------------------------------------------------------
     let mut type_section = TypeSection::new();
 
-    // Runtime function type signatures (indices 0..N)
-    // 0: (i32) -> i32  — $alloc
-    type_section
-        .ty()
-        .function(vec![ValType::I32], vec![ValType::I32]);
-    // 1: (i32, i64) -> i32  — $wrap
-    type_section
-        .ty()
-        .function(vec![ValType::I32, ValType::I64], vec![ValType::I32]);
-    // 2: (i32, f64) -> i32  — $wrap_f64
-    type_section
-        .ty()
-        .function(vec![ValType::I32, ValType::F64], vec![ValType::I32]);
-    // 3: (i32, i32) -> i32  — $wrap_i32
-    type_section
-        .ty()
-        .function(vec![ValType::I32, ValType::I32], vec![ValType::I32]);
-    // 4: (i32) -> i64  — $unwrap
-    type_section
-        .ty()
-        .function(vec![ValType::I32], vec![ValType::I64]);
-    // 5: (i32) -> f64  — $unwrap_f64
-    type_section
-        .ty()
-        .function(vec![ValType::I32], vec![ValType::F64]);
-    // 6: (i32) -> i32  — $unwrap_i32, $obj_kind, $obj_tag
-    type_section
-        .ty()
-        .function(vec![ValType::I32], vec![ValType::I32]);
-    // 7: same as 6 for $obj_kind
-    // 8: same as 6 for $obj_tag
-    // (We reuse type 6 for all (i32)->i32 functions)
-    // 9: (i32, i32) -> i64  — $obj_field
-    type_section
-        .ty()
-        .function(vec![ValType::I32, ValType::I32], vec![ValType::I64]);
-    // 10: (i32, i32) -> f64  — $obj_field_f64
-    type_section
-        .ty()
-        .function(vec![ValType::I32, ValType::I32], vec![ValType::F64]);
-    // 11: (i32, i32) -> i32  — $obj_field_i32 (reuse type 3)
-    // 12: (i64, i32) -> i32  — $list_cons
-    type_section
-        .ty()
-        .function(vec![ValType::I64, ValType::I32], vec![ValType::I32]);
-    // 13: (f64, i32) -> i32  — $list_cons_f64
-    type_section
-        .ty()
-        .function(vec![ValType::F64, ValType::I32], vec![ValType::I32]);
-    // 14: (i64) -> ()  — $print_i64
-    type_section.ty().function(vec![ValType::I64], vec![]);
-    // 15: (f64) -> ()  — $print_f64
-    type_section.ty().function(vec![ValType::F64], vec![]);
-    // 16: (i32) -> ()  — $print_string, $print_bool, $print_heap
-    type_section.ty().function(vec![ValType::I32], vec![]);
-    // 17: (i64, i32) -> i32  — $int_to_str
-    type_section
-        .ty()
-        .function(vec![ValType::I64, ValType::I32], vec![ValType::I32]);
-    // 18: (f64, i32) -> i32  — $float_to_str
-    type_section
-        .ty()
-        .function(vec![ValType::F64, ValType::I32], vec![ValType::I32]);
-    // 19: (i32, i32) -> ()  — $fd_write_buf
-    type_section
-        .ty()
-        .function(vec![ValType::I32, ValType::I32], vec![]);
-    // 20: (i32, i32, i32, i32) -> i32  — WASI fd_write
-    type_section.ty().function(
-        vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32],
-        vec![ValType::I32],
-    );
-
-    let rti = RtTypeIndices {
-        alloc: 0,
-        wrap_i64: 1,
-        wrap_f64: 2,
-        wrap_i32: 3,
-        unwrap_i64: 4,
-        unwrap_f64: 5,
-        unwrap_i32: 6,
-        obj_kind: 6, // reuse (i32)->i32
-        obj_tag: 6,  // reuse (i32)->i32
-        obj_field_i64: 7,
-        obj_field_f64: 8,
-        obj_field_i32: 3, // reuse (i32,i32)->i32
-        list_cons_i64: 9,
-        list_cons_f64: 10,
-        int_to_str: 14,
-        float_to_str: 15, // (f64, i32) -> i32
-        fd_write_buf: 16,
-        wasi_fd_write: 17,
-    };
-
-    // 18: (i64) -> i32  — $i64_to_str_obj
-    type_section
-        .ty()
-        .function(vec![ValType::I64], vec![ValType::I32]);
-    // 19: (f64) -> i32  — $f64_to_str_obj
-    type_section
-        .ty()
-        .function(vec![ValType::F64], vec![ValType::I32]);
-    // 20: (i32, i64) -> i32  — $list_contains
-    type_section
-        .ty()
-        .function(vec![ValType::I32, ValType::I64], vec![ValType::I32]);
-
-    // 21: (i32, i32, i64) -> i32 — $map_set
-    type_section.ty().function(
-        vec![ValType::I32, ValType::I32, ValType::I64],
-        vec![ValType::I32],
-    );
-
-    // 22: (i32, i64, i64) -> i32 — $vec_set
-    type_section.ty().function(
-        vec![ValType::I32, ValType::I64, ValType::I64],
-        vec![ValType::I32],
-    );
-    // 23: (i64, i64) -> i32 — $vec_new
-    type_section
-        .ty()
-        .function(vec![ValType::I64, ValType::I64], vec![ValType::I32]);
-
-    // 24: (i32, i32, i32) -> i32 — $str_slice
-    type_section.ty().function(
-        vec![ValType::I32, ValType::I32, ValType::I32],
-        vec![ValType::I32],
-    );
-
-    // 25: () -> (i32, i32) — Time.now, Console.readLine
-    type_section
-        .ty()
-        .function(vec![], vec![ValType::I32, ValType::I32]);
-
-    // 26: (i64) -> (i32, i32) — format_value
-    type_section
-        .ty()
-        .function(vec![ValType::I64], vec![ValType::I32, ValType::I32]);
-
-    // 27: (i32, i64) -> () — print_value
-    type_section
-        .ty()
-        .function(vec![ValType::I32, ValType::I64], vec![]);
-    // 28: (i32, i64) -> (i32, i32) — format_value
-    type_section.ty().function(
-        vec![ValType::I32, ValType::I64],
-        vec![ValType::I32, ValType::I32],
-    );
-
-    let rt_base_type_count = 29u32; // 29 type entries (indices 0-28)
+    let rti = runtime::emit_base_type_section(&mut type_section);
+    let rt_base_type_count = rti.count;
 
     // User function types — generate from fn_sigs
     let mut fn_type_indices: HashMap<String, u32> = HashMap::new();
@@ -304,7 +156,14 @@ pub fn build_wasm_module(
             let needed =
                 super::abi::collect_needed_imports(&ctx.fn_sigs, &user_fn_names, &host_import_set);
             for abi_entry in &needed {
-                let type_idx = find_or_add_import_type(&mut import_section, &rti, abi_entry);
+                let type_idx =
+                    runtime::lookup_type_index(&rti, abi_entry.params, abi_entry.results)
+                        .ok_or_else(|| {
+                            format!(
+                                "Missing WASM type mapping for ABI import {} ({:?} -> {:?})",
+                                abi_entry.import_name, abi_entry.params, abi_entry.results
+                            )
+                        })?;
                 let idx = import_func_count;
                 import_section.import(
                     super::abi::ABI_MODULE,
@@ -317,11 +176,18 @@ pub fn build_wasm_module(
                 }
                 import_func_count += 1;
             }
-            // If no Console.print effect but program has host calls (for write_stdout helper),
-            // always import console_print
-            if write_stdout_import.is_none() && has_effects {
+            // Runtime helpers reference console_print via fd_write_buf, so keep the
+            // import present even for otherwise pure modules.
+            if write_stdout_import.is_none() {
                 let abi_entry = super::abi::lookup("Console.print").unwrap();
-                let type_idx = find_or_add_import_type(&mut import_section, &rti, abi_entry);
+                let type_idx =
+                    runtime::lookup_type_index(&rti, abi_entry.params, abi_entry.results)
+                        .ok_or_else(|| {
+                            format!(
+                                "Missing WASM type mapping for ABI import {} ({:?} -> {:?})",
+                                abi_entry.import_name, abi_entry.params, abi_entry.results
+                            )
+                        })?;
                 let idx = import_func_count;
                 import_section.import(
                     super::abi::ABI_MODULE,
@@ -333,7 +199,14 @@ pub fn build_wasm_module(
             }
             // Always import print_value and format_value
             if let Some(abi_entry) = super::abi::lookup("Print.value") {
-                let type_idx = find_or_add_import_type(&mut import_section, &rti, abi_entry);
+                let type_idx =
+                    runtime::lookup_type_index(&rti, abi_entry.params, abi_entry.results)
+                        .ok_or_else(|| {
+                            format!(
+                                "Missing WASM type mapping for ABI import {} ({:?} -> {:?})",
+                                abi_entry.import_name, abi_entry.params, abi_entry.results
+                            )
+                        })?;
                 let idx = import_func_count;
                 import_section.import(
                     super::abi::ABI_MODULE,
@@ -344,7 +217,14 @@ pub fn build_wasm_module(
                 import_func_count += 1;
             }
             if let Some(abi_entry) = super::abi::lookup("Format.value") {
-                let type_idx = find_or_add_import_type(&mut import_section, &rti, abi_entry);
+                let type_idx =
+                    runtime::lookup_type_index(&rti, abi_entry.params, abi_entry.results)
+                        .ok_or_else(|| {
+                            format!(
+                                "Missing WASM type mapping for ABI import {} ({:?} -> {:?})",
+                                abi_entry.import_name, abi_entry.params, abi_entry.results
+                            )
+                        })?;
                 let idx = import_func_count;
                 import_section.import(
                     super::abi::ABI_MODULE,
@@ -756,36 +636,6 @@ fn expr_has_tailcall(expr: &Expr) -> bool {
             expr_has_tailcall(&c.node) || args.iter().any(|a| expr_has_tailcall(&a.node))
         }
         _ => false,
-    }
-}
-
-/// Find the type index for an ABI import's signature.
-fn find_or_add_import_type(
-    _import_section: &mut ImportSection,
-    rti: &RtTypeIndices,
-    abi_entry: &super::abi::AbiImport,
-) -> u32 {
-    // Match known signatures to existing type indices
-    match (abi_entry.params, abi_entry.results) {
-        (&[ValType::I32, ValType::I32], &[]) => rti.fd_write_buf, // (i32,i32)->()
-        (&[], &[ValType::I32, ValType::I32]) => 25,               // () -> (i32, i32)
-        (&[ValType::I64], &[ValType::I32, ValType::I32]) => 26,   // (i64) -> (i32, i32)
-        (&[ValType::I32, ValType::I64], &[]) => 27,               // (i32, i64) -> ()
-        (&[ValType::I32, ValType::I64], &[ValType::I32, ValType::I32]) => 28, // (i32, i64) -> (i32, i32)
-        (&[ValType::I64, ValType::I64], &[ValType::I64]) => {
-            // (i64,i64)->i64 — not in our type table, reuse... hmm
-            // Actually we need to handle this. For now use a known type.
-            // list_cons_i64 is (i64,i32)->i32, not matching.
-            // Let's just use the closest match or add dynamically.
-            // For MVP: this type was added in the type section already.
-            // Type index for (i64,i64)->i32 is 23 (vec_new).
-            // But we need (i64,i64)->i64. Hmm.
-            // For now: if Random.int import isn't used in current tests, punt.
-            23 // approximate — will be fixed when Random.int is actually wired
-        }
-        (&[], &[ValType::I64]) => 18, // (->i64) same as i64_to_str_obj? No that's (i64)->i32.
-        (&[ValType::I64], &[]) => 11, // (i64)->() — reuse print_i64 type (14)
-        _ => rti.fd_write_buf,        // fallback
     }
 }
 

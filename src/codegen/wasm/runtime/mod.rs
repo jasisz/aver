@@ -24,7 +24,7 @@ use wasm_encoder::Function;
 
 use super::value::*;
 
-pub use indices::{RtTypeIndices, RuntimeFuncIndices, rt_type_index};
+pub use indices::{RuntimeFuncIndices, emit_base_type_section, lookup_type_index, rt_type_index};
 
 /// Scratch area for IO in linear memory. Reserved: bytes 0-127.
 /// Layout: [0..7] iovec, [8..11] nwritten, [16..37] int_buf,

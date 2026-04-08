@@ -105,7 +105,7 @@ impl<'a> ExprEmitter<'a> {
                     }
                 }
             },
-            Expr::FnCall(callee, _) => self.infer_call_return_type(callee),
+            Expr::FnCall(callee, args) => self.infer_call_return_type(callee, args),
             Expr::Constructor(name, _) => {
                 let ctor = classify_constructor_name(name, &self.ir_ctx());
                 match ctor {
@@ -123,7 +123,11 @@ impl<'a> ExprEmitter<'a> {
                     _ => WasmType::I64,
                 }
             }
-            Expr::List(_) | Expr::Tuple(_) | Expr::RecordCreate { .. } => WasmType::I32,
+            Expr::List(_)
+            | Expr::Tuple(_)
+            | Expr::RecordCreate { .. }
+            | Expr::RecordUpdate { .. } => WasmType::I32,
+            Expr::IndependentProduct(_, _) => WasmType::I32,
             Expr::InterpolatedStr(_) => WasmType::I32,
             Expr::Attr(base, field) => {
                 if let Expr::Ident(base_name) = &base.node
@@ -167,7 +171,7 @@ impl<'a> ExprEmitter<'a> {
                 }
                 _ => self.infer_aver_type(&lhs.node),
             },
-            Expr::FnCall(callee, _) => self.infer_call_aver_return_type(callee),
+            Expr::FnCall(callee, args) => self.infer_call_aver_return_type(callee, args),
             Expr::Constructor(name, inner) => {
                 let ctor = classify_constructor_name(name, &self.ir_ctx());
                 match ctor {
@@ -216,7 +220,25 @@ impl<'a> ExprEmitter<'a> {
                     .map(|item| self.infer_aver_type(&item.node).unwrap_or(Type::Unknown))
                     .collect(),
             )),
-            Expr::RecordCreate { type_name, .. } => Some(Type::Named(type_name.clone())),
+            Expr::IndependentProduct(items, unwrap) => Some(Type::Tuple(
+                items
+                    .iter()
+                    .map(|item| {
+                        let item_ty = self.infer_aver_type(&item.node).unwrap_or(Type::Unknown);
+                        if *unwrap {
+                            match item_ty {
+                                Type::Result(ok, _) => *ok,
+                                other => other,
+                            }
+                        } else {
+                            item_ty
+                        }
+                    })
+                    .collect(),
+            )),
+            Expr::RecordCreate { type_name, .. } | Expr::RecordUpdate { type_name, .. } => {
+                Some(Type::Named(type_name.clone()))
+            }
             Expr::Attr(base, field) => {
                 if let Expr::Ident(base_name) = &base.node
                     && base_name.chars().next().is_some_and(|c| c.is_uppercase())
@@ -246,7 +268,11 @@ impl<'a> ExprEmitter<'a> {
         self.fn_return_type
     }
 
-    pub(super) fn infer_call_return_type(&self, callee: &Spanned<Expr>) -> WasmType {
+    pub(super) fn infer_call_return_type(
+        &self,
+        callee: &Spanned<Expr>,
+        args: &[Spanned<Expr>],
+    ) -> WasmType {
         let plan = classify_call_plan(&callee.node, &self.ir_ctx());
         match plan {
             CallPlan::Function(name) => {
@@ -257,6 +283,11 @@ impl<'a> ExprEmitter<'a> {
                 }
             }
             CallPlan::Builtin(name) => {
+                if let Some(ret_type) =
+                    self.infer_builtin_call_aver_return_type(name.as_str(), args)
+                {
+                    return aver_type_to_wasm(&ret_type);
+                }
                 if let Some((_, ret_type, _)) = self.fn_sigs.get(name.as_str()) {
                     aver_type_to_wasm(ret_type)
                 } else {
@@ -271,13 +302,185 @@ impl<'a> ExprEmitter<'a> {
         }
     }
 
-    pub(super) fn infer_call_aver_return_type(&self, callee: &Spanned<Expr>) -> Option<Type> {
+    pub(super) fn infer_call_aver_return_type(
+        &self,
+        callee: &Spanned<Expr>,
+        args: &[Spanned<Expr>],
+    ) -> Option<Type> {
         let plan = classify_call_plan(&callee.node, &self.ir_ctx());
         match plan {
-            CallPlan::Function(name) | CallPlan::Builtin(name) => self
+            CallPlan::Function(name) => self
                 .fn_sigs
                 .get(name.as_str())
                 .map(|(_, ret, _)| ret.clone()),
+            CallPlan::Builtin(name) => self
+                .infer_builtin_call_aver_return_type(name.as_str(), args)
+                .or_else(|| {
+                    self.fn_sigs
+                        .get(name.as_str())
+                        .map(|(_, ret, _)| ret.clone())
+                }),
+            _ => None,
+        }
+    }
+
+    fn prefer_known_type(&self, current: Type, fallback: Type) -> Type {
+        if matches!(current, Type::Unknown) {
+            fallback
+        } else {
+            current
+        }
+    }
+
+    fn infer_list_elem_aver_type(&self, expr: &Spanned<Expr>) -> Option<Type> {
+        match self.infer_aver_type(&expr.node) {
+            Some(Type::List(elem)) => Some(*elem),
+            _ => None,
+        }
+    }
+
+    fn infer_map_parts(&self, expr: &Spanned<Expr>) -> Option<(Type, Type)> {
+        match self.infer_aver_type(&expr.node) {
+            Some(Type::Map(key, value)) => Some((*key, *value)),
+            _ => None,
+        }
+    }
+
+    fn infer_vector_elem_aver_type(&self, expr: &Spanned<Expr>) -> Option<Type> {
+        match self.infer_aver_type(&expr.node) {
+            Some(Type::Vector(elem)) => Some(*elem),
+            _ => None,
+        }
+    }
+
+    fn infer_option_inner_aver_type(&self, expr: &Spanned<Expr>) -> Option<Type> {
+        match self.infer_aver_type(&expr.node) {
+            Some(Type::Option(inner)) => Some(*inner),
+            _ => None,
+        }
+    }
+
+    fn infer_result_ok_aver_type(&self, expr: &Spanned<Expr>) -> Option<Type> {
+        match self.infer_aver_type(&expr.node) {
+            Some(Type::Result(ok, _)) => Some(*ok),
+            _ => None,
+        }
+    }
+
+    fn infer_builtin_call_aver_return_type(
+        &self,
+        name: &str,
+        args: &[Spanned<Expr>],
+    ) -> Option<Type> {
+        match name {
+            "Map.get" if args.len() == 2 => {
+                let value_ty = self
+                    .infer_map_parts(&args[0])
+                    .map(|(_, value)| value)
+                    .unwrap_or(Type::Unknown);
+                Some(Type::Option(Box::new(value_ty)))
+            }
+            "Map.set" if args.len() == 3 => {
+                let key_ty = self.infer_aver_type(&args[1].node).unwrap_or(Type::Unknown);
+                let value_ty = self.infer_aver_type(&args[2].node).unwrap_or(Type::Unknown);
+                let (map_key, map_value) = self
+                    .infer_map_parts(&args[0])
+                    .unwrap_or((Type::Unknown, Type::Unknown));
+                Some(Type::Map(
+                    Box::new(self.prefer_known_type(map_key, key_ty)),
+                    Box::new(self.prefer_known_type(map_value, value_ty)),
+                ))
+            }
+            "Map.remove" if args.len() == 2 => {
+                let key_ty = self.infer_aver_type(&args[1].node).unwrap_or(Type::Unknown);
+                let (map_key, map_value) = self
+                    .infer_map_parts(&args[0])
+                    .unwrap_or((Type::Unknown, Type::Unknown));
+                Some(Type::Map(
+                    Box::new(self.prefer_known_type(map_key, key_ty)),
+                    Box::new(map_value),
+                ))
+            }
+            "Map.keys" if args.len() == 1 => {
+                let key_ty = self
+                    .infer_map_parts(&args[0])
+                    .map(|(key, _)| key)
+                    .unwrap_or(Type::Unknown);
+                Some(Type::List(Box::new(key_ty)))
+            }
+            "Map.values" if args.len() == 1 => {
+                let value_ty = self
+                    .infer_map_parts(&args[0])
+                    .map(|(_, value)| value)
+                    .unwrap_or(Type::Unknown);
+                Some(Type::List(Box::new(value_ty)))
+            }
+            "Map.entries" if args.len() == 1 => {
+                let (key_ty, value_ty) = self
+                    .infer_map_parts(&args[0])
+                    .unwrap_or((Type::Unknown, Type::Unknown));
+                Some(Type::List(Box::new(Type::Tuple(vec![key_ty, value_ty]))))
+            }
+            "Map.fromList" if args.len() == 1 => {
+                let (key_ty, value_ty) = match self.infer_list_elem_aver_type(&args[0]) {
+                    Some(Type::Tuple(items)) if items.len() == 2 => {
+                        (items[0].clone(), items[1].clone())
+                    }
+                    _ => (Type::Unknown, Type::Unknown),
+                };
+                Some(Type::Map(Box::new(key_ty), Box::new(value_ty)))
+            }
+            "Vector.fromList" if args.len() == 1 => {
+                let elem_ty = self
+                    .infer_list_elem_aver_type(&args[0])
+                    .unwrap_or(Type::Unknown);
+                Some(Type::Vector(Box::new(elem_ty)))
+            }
+            "Vector.get" if args.len() == 2 => {
+                let elem_ty = self
+                    .infer_vector_elem_aver_type(&args[0])
+                    .unwrap_or(Type::Unknown);
+                Some(Type::Option(Box::new(elem_ty)))
+            }
+            "Vector.set" if args.len() == 3 => {
+                let elem_ty = self
+                    .infer_vector_elem_aver_type(&args[0])
+                    .unwrap_or_else(|| {
+                        self.infer_aver_type(&args[2].node).unwrap_or(Type::Unknown)
+                    });
+                Some(Type::Option(Box::new(Type::Vector(Box::new(elem_ty)))))
+            }
+            "Vector.new" if args.len() == 2 => {
+                let elem_ty = self.infer_aver_type(&args[1].node).unwrap_or(Type::Unknown);
+                Some(Type::Vector(Box::new(elem_ty)))
+            }
+            "Vector.toList" if args.len() == 1 => {
+                let elem_ty = self
+                    .infer_vector_elem_aver_type(&args[0])
+                    .unwrap_or(Type::Unknown);
+                Some(Type::List(Box::new(elem_ty)))
+            }
+            "Option.withDefault" if args.len() == 2 => Some(
+                self.prefer_known_type(
+                    self.infer_option_inner_aver_type(&args[0])
+                        .unwrap_or(Type::Unknown),
+                    self.infer_aver_type(&args[1].node).unwrap_or(Type::Unknown),
+                ),
+            ),
+            "Result.withDefault" if args.len() == 2 => Some(
+                self.prefer_known_type(
+                    self.infer_result_ok_aver_type(&args[0])
+                        .unwrap_or(Type::Unknown),
+                    self.infer_aver_type(&args[1].node).unwrap_or(Type::Unknown),
+                ),
+            ),
+            "Option.toResult" if args.len() == 2 => Some(Type::Result(
+                Box::new(
+                    self.infer_option_inner_aver_type(&args[0])
+                        .unwrap_or(Type::Unknown),
+                ),
+                Box::new(self.infer_aver_type(&args[1].node).unwrap_or(Type::Unknown)),
+            )),
             _ => None,
         }
     }
@@ -295,30 +498,12 @@ impl<'a> ExprEmitter<'a> {
             _ => None,
         };
 
-        if let Some(type_name) = type_name {
-            // Look up field type in type_defs
-            for td in &self.ctx.type_defs {
-                if let crate::ast::TypeDef::Product { name, fields, .. } = td
-                    && name == type_name
-                {
-                    for (fname, ftype) in fields {
-                        if fname == field_name {
-                            return self.type_str_to_wasm(ftype);
-                        }
-                    }
-                }
-            }
-            for module in &self.ctx.modules {
-                for td in &module.type_defs {
-                    if let crate::ast::TypeDef::Product { name, fields, .. } = td
-                        && name == type_name
-                    {
-                        for (fname, ftype) in fields {
-                            if fname == field_name {
-                                return self.type_str_to_wasm(ftype);
-                            }
-                        }
-                    }
+        if let Some(type_name) = type_name
+            && let Some(fields) = self.record_fields(type_name)
+        {
+            for (fname, ftype) in fields {
+                if fname == field_name {
+                    return self.type_str_to_wasm(ftype);
                 }
             }
         }
@@ -347,30 +532,12 @@ impl<'a> ExprEmitter<'a> {
             _ => None,
         };
 
-        if let Some(type_name) = base_type_name.as_deref() {
-            for td in &self.ctx.type_defs {
-                if let crate::ast::TypeDef::Product { name, fields, .. } = td
-                    && name == type_name
-                {
-                    for (fname, ftype) in fields {
-                        if fname == field_name {
-                            return Some(parse_type_str(ftype));
-                        }
-                    }
-                }
-            }
-
-            for module in &self.ctx.modules {
-                for td in &module.type_defs {
-                    if let crate::ast::TypeDef::Product { name, fields, .. } = td
-                        && (name == type_name || format!("{}.{}", module.prefix, name) == type_name)
-                    {
-                        for (fname, ftype) in fields {
-                            if fname == field_name {
-                                return Some(parse_type_str(ftype));
-                            }
-                        }
-                    }
+        if let Some(type_name) = base_type_name.as_deref()
+            && let Some(fields) = self.record_fields(type_name)
+        {
+            for (fname, ftype) in fields {
+                if fname == field_name {
+                    return Some(parse_type_str(ftype));
                 }
             }
         }
@@ -398,5 +565,27 @@ impl<'a> ExprEmitter<'a> {
             // User-defined types and unknown types are heap-allocated -> I32
             _ => WasmType::I32,
         }
+    }
+
+    pub(super) fn record_fields(&self, type_name: &str) -> Option<&[(String, String)]> {
+        for td in &self.ctx.type_defs {
+            if let crate::ast::TypeDef::Product { name, fields, .. } = td
+                && name == type_name
+            {
+                return Some(fields.as_slice());
+            }
+        }
+
+        for module in &self.ctx.modules {
+            for td in &module.type_defs {
+                if let crate::ast::TypeDef::Product { name, fields, .. } = td
+                    && (name == type_name || format!("{}.{}", module.prefix, name) == type_name)
+                {
+                    return Some(fields.as_slice());
+                }
+            }
+        }
+
+        None
     }
 }
