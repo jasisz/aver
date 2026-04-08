@@ -1371,17 +1371,25 @@ fn format_wasm_value(val: i64, mem: &[u8]) -> String {
         let kind = (header >> 56) & 0xFF;
         let field_count = header & 0xFFFFFFFF;
 
+        if kind > 11 {
+            // Not a valid heap object kind — treat as integer
+            return format!("{}", val);
+        }
+
         match kind {
             0 => {
-                // OBJ_STRING
+                // OBJ_STRING — nested strings get quotes (aver_display_inner)
                 let len = field_count as usize;
                 if ptr + 8 + len <= mem.len() {
                     let bytes = &mem[ptr + 8..ptr + 8 + len];
-                    return String::from_utf8_lossy(bytes).to_string();
+                    let s = String::from_utf8_lossy(bytes);
+                    return format!("\"{}\"", s);
                 }
             }
             11 => {
                 // OBJ_MAP_ENTRY — format as {"key": value, ...}
+                // Dedup: first occurrence wins (matches Map.get behavior)
+                let mut seen_keys = std::collections::HashSet::new();
                 let mut entries = Vec::new();
                 let mut cur = ptr;
                 while cur != 0 && cur + 24 <= mem.len() {
@@ -1391,7 +1399,6 @@ fn format_wasm_value(val: i64, mem: &[u8]) -> String {
                     }
                     let head =
                         u64::from_le_bytes(mem[cur + 8..cur + 16].try_into().unwrap_or([0; 8]));
-                    // head is tuple ptr — read key and value
                     let tuple_ptr = head as u32 as usize;
                     if tuple_ptr + 24 <= mem.len() {
                         let key_i64 = u64::from_le_bytes(
@@ -1405,8 +1412,10 @@ fn format_wasm_value(val: i64, mem: &[u8]) -> String {
                                 .unwrap_or([0; 8]),
                         );
                         let key_str = format_wasm_value(key_i64 as i64, mem);
-                        let val_str = format_wasm_value(val_i64 as i64, mem);
-                        entries.push(format!("\"{}\": {}", key_str, val_str));
+                        if seen_keys.insert(key_str.clone()) {
+                            let val_str = format_wasm_value(val_i64 as i64, mem);
+                            entries.push(format!("{}: {}", key_str, val_str));
+                        }
                     }
                     let tail =
                         u64::from_le_bytes(mem[cur + 16..cur + 24].try_into().unwrap_or([0; 8]));
@@ -1470,7 +1479,8 @@ fn format_wasm_value(val: i64, mem: &[u8]) -> String {
                     } else if kind == 8 {
                         let inner_ptr = inner as u32 as usize;
                         if inner_ptr >= io_scratch {
-                            format!("\"{}\"", format_wasm_value(inner as i64, mem))
+                            // format_wasm_value already adds quotes for strings
+                            format_wasm_value(inner as i64, mem)
                         } else {
                             format!("{}", inner)
                         }
@@ -1484,17 +1494,48 @@ fn format_wasm_value(val: i64, mem: &[u8]) -> String {
         }
     }
 
-    // Check None sentinel
-    if val == -1 {
-        return "Option.None".to_string();
-    }
-    // Check empty list
-    if val == 0 {
-        return "[]".to_string();
-    }
-
     // Default: print as integer
     format!("{}", val)
+}
+
+/// Format a tagged value to string.
+/// tag: 0=Int, 1=Float(bits), 2=Bool, 3=String(ptr), 4=Heap(ptr), 5=Unit
+fn format_tagged_value(tag: i32, val: i64, mem: &[u8]) -> String {
+    match tag {
+        0 => format!("{}", val),                        // Int
+        1 => format!("{}", f64::from_bits(val as u64)), // Float
+        2 => {
+            if val != 0 {
+                "true".to_string()
+            } else {
+                "false".to_string()
+            }
+        } // Bool
+        3 => {
+            // String pointer
+            let ptr = val as u32 as usize;
+            if ptr + 8 <= mem.len() {
+                let header = u64::from_le_bytes(mem[ptr..ptr + 8].try_into().unwrap_or([0; 8]));
+                let len = (header & 0xFFFFFFFF) as usize;
+                if ptr + 8 + len <= mem.len() {
+                    return String::from_utf8_lossy(&mem[ptr + 8..ptr + 8 + len]).to_string();
+                }
+            }
+            String::new()
+        }
+        4 => {
+            // Heap pointer — check sentinels first
+            if val == 0 {
+                return "[]".to_string();
+            }
+            if val == -1 {
+                return "Option.None".to_string();
+            }
+            format_wasm_value(val, mem)
+        }
+        5 => String::new(), // Unit
+        _ => format!("{}", val),
+    }
 }
 
 fn run_wasm_with_host(wasm_bytes: &[u8]) -> Result<(), String> {
@@ -1646,14 +1687,29 @@ fn run_wasm_with_host(wasm_bytes: &[u8]) -> Result<(), String> {
         })
         .map_err(|e| format!("Link error: {}", e))?;
 
-    // aver/format_value(val: i64) -> (i32, i32) — format any value to string
+    // aver/print_value(tag: i32, val: i64) — format and print any value
+    // tag: 0=Int, 1=Float(bits), 2=Bool, 3=String(ptr), 4=Heap(ptr), 5=Unit
+    linker
+        .func_wrap(
+            "aver",
+            "print_value",
+            |mut caller: Caller<'_, ()>, tag: i32, val: i64| {
+                let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
+                let formatted = format_tagged_value(tag, val, mem.data(&caller));
+                use std::io::Write;
+                std::io::stdout().write_all(formatted.as_bytes()).unwrap();
+            },
+        )
+        .map_err(|e| format!("Link error: {}", e))?;
+
+    // aver/format_value(tag: i32, val: i64) -> (i32, i32) — format to string in memory
     linker
         .func_wrap(
             "aver",
             "format_value",
-            |mut caller: Caller<'_, ()>, val: i64| -> (i32, i32) {
+            |mut caller: Caller<'_, ()>, tag: i32, val: i64| -> (i32, i32) {
                 let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
-                let formatted = format_wasm_value(val, mem.data(&caller));
+                let formatted = format_tagged_value(tag, val, mem.data(&caller));
                 let bytes = formatted.as_bytes();
                 let len = bytes.len() as i32;
                 let ptr = (mem.data_size(&caller) - 1024) as i32;

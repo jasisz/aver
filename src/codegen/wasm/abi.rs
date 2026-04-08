@@ -79,13 +79,21 @@ pub const ABI_TABLE: &[AbiImport] = &[
         params: &[],
         results: &[ValType::I32, ValType::I32], // ptr, len
     },
-    // --- Formatting ---
-    // Formats any value (i64 — may be heap ptr, int, etc.) to a string.
-    // Host walks the heap to produce formatted output.
+    // --- Formatting / Printing ---
+    // Formats and prints any value. Host reads WASM memory for heap values.
+    // tag: 0=Int(i64), 1=Float(f64 bits as i64), 2=Bool(i32 as i64),
+    //      3=String(ptr as i64), 4=Heap(ptr as i64)
+    AbiImport {
+        effect: "Print.value",
+        import_name: "print_value",
+        params: &[ValType::I32, ValType::I64], // tag, val
+        results: &[],
+    },
+    // Formats any value to string (for interpolation).
     AbiImport {
         effect: "Format.value",
         import_name: "format_value",
-        params: &[ValType::I64],
+        params: &[ValType::I32, ValType::I64],  // tag, val
         results: &[ValType::I32, ValType::I32], // ptr, len
     },
     // --- Math (no native WASM instructions) ---

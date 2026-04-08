@@ -568,60 +568,48 @@ impl<'a> ExprEmitter<'a> {
     }
 
     pub(super) fn emit_console_print(&mut self, args: &[Spanned<Expr>]) {
-        let arg_aver_type = self.infer_aver_type(&args[0].node);
+        // All printing delegated to host via print_value(tag, val)
+        // tag: 0=Int, 1=Float, 2=Bool, 3=String, 4=Heap, 5=Unit
+        if let Some(&print_idx) = self.host_import_indices.get("print_value") {
+            let arg_aver_type = self.infer_aver_type(&args[0].node);
+            let wt = self.infer_expr_type(&args[0].node);
 
-        match &arg_aver_type {
-            Some(Type::Int) => {
-                self.instructions.push(Instruction::Call(self.rt.print_i64));
-            }
-            Some(Type::Float) => {
-                self.instructions.push(Instruction::Call(self.rt.print_f64));
-            }
-            Some(Type::Bool) => {
-                self.instructions
-                    .push(Instruction::Call(self.rt.print_bool));
-            }
-            Some(Type::Str) => {
-                self.instructions
-                    .push(Instruction::Call(self.rt.print_string));
-            }
-            Some(Type::Unit) => {
+            let (tag, needs_convert) = match &arg_aver_type {
+                Some(Type::Int) => (0i32, false),
+                Some(Type::Float) => (1, true), // f64 → reinterpret to i64
+                Some(Type::Bool) => (2, false), // will extend i32 to i64
+                Some(Type::Str) => (3, false),
+                Some(Type::Unit) => (5, false),
+                _ => match wt {
+                    WasmType::I64 => (0, false),
+                    WasmType::F64 => (1, true),
+                    WasmType::I32 => (4, false), // heap pointer
+                },
+            };
+
+            if tag == 5 {
+                // Unit → don't print, just drop
                 self.instructions.push(Instruction::Drop);
-            }
-            Some(Type::Map(_, _)) => {
-                // Map → use format_value host import for proper {"k": v} formatting
-                if let Some(&idx) = self.host_import_indices.get("format_value") {
-                    self.instructions.push(Instruction::I64ExtendI32S);
-                    self.instructions.push(Instruction::Call(idx));
-                    // Returns (ptr, len) — just print it
-                    let len = self.alloc_local(WasmType::I32);
-                    let ptr = self.alloc_local(WasmType::I32);
-                    self.instructions.push(Instruction::LocalSet(len));
-                    self.instructions.push(Instruction::LocalSet(ptr));
-                    self.instructions.push(Instruction::LocalGet(ptr));
-                    self.instructions.push(Instruction::LocalGet(len));
-                    self.instructions
-                        .push(Instruction::Call(self.rt.fd_write_buf));
-                } else {
-                    self.instructions
-                        .push(Instruction::Call(self.rt.print_heap));
+            } else {
+                // Convert value to i64
+                let val = self.alloc_local(WasmType::I64);
+                match (wt, needs_convert) {
+                    (WasmType::F64, true) => {
+                        self.instructions.push(Instruction::I64ReinterpretF64);
+                    }
+                    (WasmType::I32, _) => {
+                        self.instructions.push(Instruction::I64ExtendI32S);
+                    }
+                    _ => {} // already i64
                 }
+                self.instructions.push(Instruction::LocalSet(val));
+                self.instructions.push(Instruction::I32Const(tag));
+                self.instructions.push(Instruction::LocalGet(val));
+                self.instructions.push(Instruction::Call(print_idx));
             }
-            _ => {
-                let wt = self.infer_expr_type(&args[0].node);
-                match wt {
-                    WasmType::I64 => {
-                        self.instructions.push(Instruction::Call(self.rt.print_i64));
-                    }
-                    WasmType::F64 => {
-                        self.instructions.push(Instruction::Call(self.rt.print_f64));
-                    }
-                    WasmType::I32 => {
-                        self.instructions
-                            .push(Instruction::Call(self.rt.print_heap));
-                    }
-                }
-            }
+        } else {
+            // No host print — drop value
+            self.instructions.push(Instruction::Drop);
         }
         // Newline
         self.instructions.push(Instruction::I32Const(
@@ -699,86 +687,79 @@ impl<'a> ExprEmitter<'a> {
         let wt = self.infer_expr_type(expr);
         let at = self.infer_aver_type(expr);
         self.emit_expr(expr);
-        match at {
-            Some(Type::Str) => {} // already a string pointer
-            Some(Type::Int) => {
-                self.instructions
-                    .push(Instruction::Call(self.rt.i64_to_str_obj));
+
+        if matches!(at, Some(Type::Str)) {
+            return;
+        }
+
+        if let Some(&fmt_idx) = self.host_import_indices.get("format_value") {
+            let tag = match &at {
+                Some(Type::Int) => 0i32,
+                Some(Type::Float) => 1,
+                Some(Type::Bool) => 2,
+                _ => match wt {
+                    WasmType::I64 => 0,
+                    WasmType::F64 => 1,
+                    WasmType::I32 => 4,
+                },
+            };
+            match (wt, tag) {
+                (WasmType::F64, _) => self.instructions.push(Instruction::I64ReinterpretF64),
+                (WasmType::I32, _) => self.instructions.push(Instruction::I64ExtendI32S),
+                _ => {}
             }
-            Some(Type::Float) => {
-                self.instructions
-                    .push(Instruction::Call(self.rt.f64_to_str_obj));
+            let val = self.alloc_local(WasmType::I64);
+            self.instructions.push(Instruction::LocalSet(val));
+            self.instructions.push(Instruction::I32Const(tag));
+            self.instructions.push(Instruction::LocalGet(val));
+            self.instructions.push(Instruction::Call(fmt_idx));
+            let len = self.alloc_local(WasmType::I32);
+            let ptr = self.alloc_local(WasmType::I32);
+            self.instructions.push(Instruction::LocalSet(len));
+            self.instructions.push(Instruction::LocalSet(ptr));
+            let str_ptr = self.alloc_local(WasmType::I32);
+            self.instructions.push(Instruction::I32Const(8));
+            self.instructions.push(Instruction::LocalGet(len));
+            self.instructions.push(Instruction::I32Const(7));
+            self.instructions.push(Instruction::I32Add);
+            self.instructions.push(Instruction::I32Const(-8i32));
+            self.instructions.push(Instruction::I32And);
+            self.instructions.push(Instruction::I32Add);
+            self.instructions.push(Instruction::Call(self.rt.alloc));
+            self.instructions.push(Instruction::LocalSet(str_ptr));
+            self.instructions.push(Instruction::LocalGet(str_ptr));
+            self.instructions.push(Instruction::I64Const(
+                (value::OBJ_STRING << value::HDR_KIND_SHIFT) as i64,
+            ));
+            self.instructions.push(Instruction::LocalGet(len));
+            self.instructions.push(Instruction::I64ExtendI32U);
+            self.instructions.push(Instruction::I64Or);
+            self.instructions
+                .push(Instruction::I64Store(wasm_encoder::MemArg {
+                    offset: 0,
+                    align: 3,
+                    memory_index: 0,
+                }));
+            self.instructions.push(Instruction::LocalGet(str_ptr));
+            self.instructions.push(Instruction::I32Const(8));
+            self.instructions.push(Instruction::I32Add);
+            self.instructions.push(Instruction::LocalGet(ptr));
+            self.instructions.push(Instruction::LocalGet(len));
+            self.instructions.push(Instruction::MemoryCopy {
+                src_mem: 0,
+                dst_mem: 0,
+            });
+            self.instructions.push(Instruction::LocalGet(str_ptr));
+        } else {
+            match wt {
+                WasmType::I64 => self
+                    .instructions
+                    .push(Instruction::Call(self.rt.i64_to_str_obj)),
+                WasmType::F64 => self
+                    .instructions
+                    .push(Instruction::Call(self.rt.f64_to_str_obj)),
+                WasmType::I32 => {}
             }
-            Some(Type::Bool) => {
-                // Bool i32 → "true" or "false" string
-                // Use if/else to pick the right static string
-                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
-                self.emit_string_literal("true");
-                self.emit_else();
-                self.emit_string_literal("false");
-                self.emit_end();
-            }
-            Some(Type::List(_) | Type::Result(_, _) | Type::Option(_) | Type::Named(_)) => {
-                // Complex heap type → call host format_value import
-                if let Some(&idx) = self.host_import_indices.get("format_value") {
-                    self.instructions.push(Instruction::I64ExtendI32S);
-                    self.instructions.push(Instruction::Call(idx));
-                    // Returns (ptr, len) — build string object
-                    let len = self.alloc_local(WasmType::I32);
-                    let ptr = self.alloc_local(WasmType::I32);
-                    self.instructions.push(Instruction::LocalSet(len));
-                    self.instructions.push(Instruction::LocalSet(ptr));
-                    let str_ptr = self.alloc_local(WasmType::I32);
-                    self.instructions.push(Instruction::I32Const(8));
-                    self.instructions.push(Instruction::LocalGet(len));
-                    self.instructions.push(Instruction::I32Const(7));
-                    self.instructions.push(Instruction::I32Add);
-                    self.instructions.push(Instruction::I32Const(-8i32));
-                    self.instructions.push(Instruction::I32And);
-                    self.instructions.push(Instruction::I32Add);
-                    self.instructions.push(Instruction::Call(self.rt.alloc));
-                    self.instructions.push(Instruction::LocalSet(str_ptr));
-                    self.instructions.push(Instruction::LocalGet(str_ptr));
-                    self.instructions.push(Instruction::I64Const(
-                        (value::OBJ_STRING << value::HDR_KIND_SHIFT) as i64,
-                    ));
-                    self.instructions.push(Instruction::LocalGet(len));
-                    self.instructions.push(Instruction::I64ExtendI32U);
-                    self.instructions.push(Instruction::I64Or);
-                    self.instructions
-                        .push(Instruction::I64Store(wasm_encoder::MemArg {
-                            offset: 0,
-                            align: 3,
-                            memory_index: 0,
-                        }));
-                    self.instructions.push(Instruction::LocalGet(str_ptr));
-                    self.instructions.push(Instruction::I32Const(8));
-                    self.instructions.push(Instruction::I32Add);
-                    self.instructions.push(Instruction::LocalGet(ptr));
-                    self.instructions.push(Instruction::LocalGet(len));
-                    self.instructions.push(Instruction::MemoryCopy {
-                        src_mem: 0,
-                        dst_mem: 0,
-                    });
-                    self.instructions.push(Instruction::LocalGet(str_ptr));
-                } else {
-                    // Fallback: show address
-                    self.instructions.push(Instruction::I64ExtendI32S);
-                    self.instructions
-                        .push(Instruction::Call(self.rt.i64_to_str_obj));
-                }
-            }
-            _ => match wt {
-                WasmType::I64 => {
-                    self.instructions
-                        .push(Instruction::Call(self.rt.i64_to_str_obj));
-                }
-                WasmType::F64 => {
-                    self.instructions
-                        .push(Instruction::Call(self.rt.f64_to_str_obj));
-                }
-                WasmType::I32 => {} // assume string pointer
-            },
         }
     }
 }

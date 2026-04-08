@@ -84,31 +84,6 @@ pub fn build_wasm_module(
         data_offset += 8 + padded_len as u32;
     }
 
-    // Add raw runtime strings
-    let mut rt_strings: HashMap<&str, (u32, u32)> = HashMap::new();
-    let runtime_strs = [
-        "true",
-        "false",
-        "Option.None",
-        "[]",
-        "Result.Ok(",
-        "Result.Err(",
-        "Option.Some(",
-        ")",
-        "[",
-        ", ",
-        "\"",
-    ];
-    for s in &runtime_strs {
-        let offset = data_offset;
-        let len = s.len() as u32;
-        data_bytes.extend_from_slice(s.as_bytes());
-        let padded = ((len + 3) & !3) as usize;
-        data_bytes.resize(data_bytes.len() + padded - s.len(), 0);
-        rt_strings.insert(s, (offset, len));
-        data_offset += padded as u32;
-    }
-
     let heap_base = if data_offset > runtime::IO_SCRATCH_SIZE {
         ((data_offset + 7) & !7) as i32
     } else {
@@ -221,9 +196,6 @@ pub fn build_wasm_module(
         obj_field_i32: 3, // reuse (i32,i32)->i32
         list_cons_i64: 9,
         list_cons_f64: 10,
-        print_i64: 11,
-        print_f64: 12,
-        print_i32_void: 13,
         int_to_str: 14,
         float_to_str: 15, // (f64, i32) -> i32
         fd_write_buf: 16,
@@ -275,7 +247,17 @@ pub fn build_wasm_module(
         .ty()
         .function(vec![ValType::I64], vec![ValType::I32, ValType::I32]);
 
-    let rt_base_type_count = 27u32; // 27 type entries (indices 0-26)
+    // 27: (i32, i64) -> () — print_value
+    type_section
+        .ty()
+        .function(vec![ValType::I32, ValType::I64], vec![]);
+    // 28: (i32, i64) -> (i32, i32) — format_value
+    type_section.ty().function(
+        vec![ValType::I32, ValType::I64],
+        vec![ValType::I32, ValType::I32],
+    );
+
+    let rt_base_type_count = 29u32; // 29 type entries (indices 0-28)
 
     // User function types — generate from fn_sigs
     let mut fn_type_indices: HashMap<String, u32> = HashMap::new();
@@ -349,7 +331,18 @@ pub fn build_wasm_module(
                 write_stdout_import = Some(idx);
                 import_func_count += 1;
             }
-            // Always import format_value for string interpolation of complex types
+            // Always import print_value and format_value
+            if let Some(abi_entry) = super::abi::lookup("Print.value") {
+                let type_idx = find_or_add_import_type(&mut import_section, &rti, abi_entry);
+                let idx = import_func_count;
+                import_section.import(
+                    super::abi::ABI_MODULE,
+                    abi_entry.import_name,
+                    wasm_encoder::EntityType::Function(type_idx),
+                );
+                host_imports.insert(abi_entry.import_name.to_string(), idx);
+                import_func_count += 1;
+            }
             if let Some(abi_entry) = super::abi::lookup("Format.value") {
                 let type_idx = find_or_add_import_type(&mut import_section, &rti, abi_entry);
                 let idx = import_func_count;
@@ -463,19 +456,7 @@ pub fn build_wasm_module(
     let mut code_section = CodeSection::new();
 
     // Runtime function bodies
-    let rt_strs = runtime::RtStrings {
-        true_: *rt_strings.get("true").unwrap_or(&(0, 0)),
-        false_: *rt_strings.get("false").unwrap_or(&(0, 0)),
-        none: *rt_strings.get("Option.None").unwrap_or(&(0, 0)),
-        empty_list: *rt_strings.get("[]").unwrap_or(&(0, 0)),
-        result_ok: *rt_strings.get("Result.Ok(").unwrap_or(&(0, 0)),
-        result_err: *rt_strings.get("Result.Err(").unwrap_or(&(0, 0)),
-        option_some: *rt_strings.get("Option.Some(").unwrap_or(&(0, 0)),
-        close_paren: *rt_strings.get(")").unwrap_or(&(0, 0)),
-        open_bracket: *rt_strings.get("[").unwrap_or(&(0, 0)),
-        comma_space: *rt_strings.get(", ").unwrap_or(&(0, 0)),
-    };
-    let rt_funcs = runtime::emit_runtime_functions(&rt, &rt_strs);
+    let rt_funcs = runtime::emit_runtime_functions(&rt);
     for func in &rt_funcs {
         code_section.function(func);
     }
@@ -774,6 +755,8 @@ fn find_or_add_import_type(
         (&[ValType::I32, ValType::I32], &[]) => rti.fd_write_buf, // (i32,i32)->()
         (&[], &[ValType::I32, ValType::I32]) => 25,               // () -> (i32, i32)
         (&[ValType::I64], &[ValType::I32, ValType::I32]) => 26,   // (i64) -> (i32, i32)
+        (&[ValType::I32, ValType::I64], &[]) => 27,               // (i32, i64) -> ()
+        (&[ValType::I32, ValType::I64], &[ValType::I32, ValType::I32]) => 28, // (i32, i64) -> (i32, i32)
         (&[ValType::I64, ValType::I64], &[ValType::I64]) => {
             // (i64,i64)->i64 — not in our type table, reuse... hmm
             // Actually we need to handle this. For now use a known type.
@@ -786,7 +769,7 @@ fn find_or_add_import_type(
             23 // approximate — will be fixed when Random.int is actually wired
         }
         (&[], &[ValType::I64]) => 18, // (->i64) same as i64_to_str_obj? No that's (i64)->i32.
-        (&[ValType::I64], &[]) => rti.print_i64, // (i64)->() — reuse print_i64 type (14)
+        (&[ValType::I64], &[]) => 11, // (i64)->() — reuse print_i64 type (14)
         _ => rti.fd_write_buf,        // fallback
     }
 }

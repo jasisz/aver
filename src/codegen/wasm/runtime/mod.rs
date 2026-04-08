@@ -25,7 +25,6 @@ use wasm_encoder::Function;
 use super::value::*;
 
 pub use indices::{RtTypeIndices, RuntimeFuncIndices, rt_type_index};
-pub use io::RtStrings;
 
 /// Scratch area for IO in linear memory. Reserved: bytes 0-127.
 /// Layout: [0..7] iovec, [8..11] nwritten, [16..37] int_buf,
@@ -39,7 +38,7 @@ pub(crate) const IO_FLOAT_BUF: u32 = 48; // 48 bytes for float digits (48..95)
 
 /// Emit all runtime function bodies.
 #[allow(clippy::vec_init_then_push)]
-pub fn emit_runtime_functions(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Vec<Function> {
+pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     let mut funcs = Vec::new();
 
     funcs.push(alloc::emit_alloc()); // $alloc
@@ -56,11 +55,6 @@ pub fn emit_runtime_functions(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Vec<
     funcs.push(alloc::emit_obj_field_i32()); // $obj_field_i32
     funcs.push(lists::emit_list_cons_i64(rt)); // $list_cons
     funcs.push(lists::emit_list_cons_f64(rt)); // $list_cons_f64
-    funcs.push(io::emit_print_i64(rt)); // $print_i64
-    funcs.push(io::emit_print_f64(rt)); // $print_f64
-    funcs.push(io::emit_print_string(rt, strs)); // $print_string
-    funcs.push(io::emit_print_bool(rt, strs)); // $print_bool
-    funcs.push(io::emit_print_heap(rt, strs)); // $print_heap
     funcs.push(io::emit_int_to_str()); // $int_to_str
     funcs.push(io::emit_float_to_str()); // $float_to_str
     funcs.push(io::emit_fd_write_buf(rt)); // $fd_write_buf
@@ -78,7 +72,6 @@ pub fn emit_runtime_functions(rt: &RuntimeFuncIndices, strs: &RtStrings) -> Vec<
     funcs.push(maps::emit_map_set(rt)); // $map_set
     funcs.push(maps::emit_map_has(rt)); // $map_has
     funcs.push(maps::emit_map_keys(rt)); // $map_keys
-    funcs.push(io::emit_print_value(rt, strs)); // $print_value
     funcs.push(vectors::emit_vec_from_list(rt)); // $vec_from_list
     funcs.push(vectors::emit_vec_get(rt)); // $vec_get
     funcs.push(vectors::emit_vec_len()); // $vec_len
