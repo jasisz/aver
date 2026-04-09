@@ -47,6 +47,24 @@ A few practical rules:
 - `Terminal.readKey` returns `(ptr, len)` for `Some(String)` and `(-1, 0)` for `Option.None`
 - `Terminal.size` returns `(width: i32, height: i32)` and codegen wraps that into `Terminal.Size`
 
+## Memory Model
+
+The WASM backend uses a single bump-heap allocator (`$alloc`) with boundary compaction at function return and TCO iteration boundaries. No separate GC runtime — the full model is ~1.5 KB of emitted WASM.
+
+**Function return**: `collect_begin(mark)` → `retain_i32(result)` deep-copies reachable objects to a temp area → `collect_end()` rebases internal pointers and copies back → `rebase_i32(result)`. Dead objects between mark and heap_ptr are reclaimed.
+
+**TCO iterations (yard semantics)**: an `iter_mark` is saved at each loop iteration. If the iteration allocated very little (≤256 bytes), compaction is skipped entirely (O(1) — accumulator pattern like list building). Otherwise, full compaction from the function's `fn_mark` reclaims dead objects from previous iterations (replacement pattern like game loops).
+
+**Thin/parent-thin frames**: small pure functions (leaf computations, dispatch) skip boundary work entirely — no mark saved, no compaction on return.
+
+**Exported `alloc`**: modules export `$alloc(size: i32) -> i32` so hosts can allocate guest memory safely for strings returned from host imports.
+
+## Optimized Patterns
+
+- `Option.withDefault(Vector.get(v, i), literal)` → inline bounds check + direct `i64.load`, no Option wrapper allocation
+- `Map.set` with unique keys → prepend only (no rebuild), O(1) insert
+- String concatenation uses `memory.copy` for bulk byte transfer
+
 ## Minimal Browser Host
 
 This is enough to run console-style examples compiled with `aver compile hello.av --target wasm`:
@@ -82,7 +100,8 @@ const formatTagged = (tag, val) => {
 };
 const writeGuestString = (text) => {
   const bytes = te.encode(text);
-  const ptr = mem().length - bytes.length - 64;
+  if (bytes.length <= 32) { mem().set(bytes, 96); return [96, bytes.length]; }
+  const ptr = instance.exports.alloc(bytes.length);
   mem().set(bytes, ptr);
   return [ptr, bytes.length];
 };
