@@ -232,6 +232,20 @@ fn bench_all_modes(
     group.bench_with_input(BenchmarkId::new("vm", label), source, |b, src| {
         b.iter(|| run_vm(src));
     });
+    group.bench_function(BenchmarkId::new("wasm", label), |b| {
+        b.iter(|| {
+            run_external(
+                artifacts.aver_bin,
+                &[
+                    "run",
+                    artifacts.source_file.to_str().unwrap(),
+                    "--module-root",
+                    artifacts.module_root.to_str().unwrap(),
+                    "--wasm",
+                ],
+            )
+        });
+    });
     group.bench_function(BenchmarkId::new("codegen", label), |b| {
         b.iter(|| run_external(artifacts.native_bin.to_str().unwrap(), &[]));
     });

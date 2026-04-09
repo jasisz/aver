@@ -143,6 +143,38 @@ impl<'a> ExprEmitter<'a> {
                     .push(Instruction::I32Const(if value_is_ptr { 1 } else { 0 }));
                 self.instructions.push(Instruction::Call(self.rt.map_set));
             }
+            "Map.len" if args.len() == 1 => {
+                // Walk cons list, count entries. Map ptr is on stack.
+                let map_local = self.alloc_local(WasmType::I32);
+                let count_local = self.alloc_local(WasmType::I64);
+                self.instructions.push(Instruction::LocalSet(map_local));
+                self.instructions.push(Instruction::I64Const(0));
+                self.instructions.push(Instruction::LocalSet(count_local));
+                self.instructions
+                    .push(Instruction::Block(wasm_encoder::BlockType::Empty));
+                self.block_depth += 1;
+                self.instructions
+                    .push(Instruction::Loop(wasm_encoder::BlockType::Empty));
+                self.block_depth += 1;
+                self.instructions.push(Instruction::LocalGet(map_local));
+                self.instructions.push(Instruction::I32Eqz);
+                self.instructions.push(Instruction::BrIf(1));
+                // count += 1
+                self.instructions.push(Instruction::LocalGet(count_local));
+                self.instructions.push(Instruction::I64Const(1));
+                self.instructions.push(Instruction::I64Add);
+                self.instructions.push(Instruction::LocalSet(count_local));
+                // map = tail (field 1)
+                self.instructions.push(Instruction::LocalGet(map_local));
+                self.instructions.push(Instruction::I32Const(1));
+                self.instructions
+                    .push(Instruction::Call(self.rt.obj_field_i32));
+                self.instructions.push(Instruction::LocalSet(map_local));
+                self.instructions.push(Instruction::Br(0));
+                self.emit_end();
+                self.emit_end();
+                self.instructions.push(Instruction::LocalGet(count_local));
+            }
             "Map.has" if args.len() == 2 => {
                 self.instructions.push(Instruction::Call(self.rt.map_has));
             }
