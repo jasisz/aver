@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here.
 
-## 0.9.0 (unreleased)
+## 0.9.0 (2026-04-09)
 
 ### Changed
 - **VM is the default backend** — `aver run`, `verify`, `replay`, and `repl` now use the bytecode VM directly. The `--vm` flag is no longer needed and has been removed.
