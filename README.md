@@ -18,7 +18,7 @@ It is built around one idea: the risky part of AI-written code is usually not sy
 - effectful behavior can be recorded and replayed deterministically
 - `aver why` scores every function's justification coverage: description, verify, decisions
 - `aver context` exports the contract-level view of a module graph for humans or LLMs
-- `aver compile` turns an Aver module graph into a Rust/Cargo project
+- `aver compile` turns an Aver module graph into a Rust/Cargo project or a standalone WASM module
 - `aver proof` exports the pure subset of an Aver module graph to a Lean 4 proof project (default) or Dafny verification file (`--backend dafny`)
 
 This is not a language optimized for humans to type by hand all day. It is optimized for AI to generate code that humans can inspect, constrain, test, and ship.
