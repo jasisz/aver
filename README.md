@@ -177,59 +177,52 @@ LLMs can produce function bodies quickly. They are much worse at preserving the 
 
 Traditional languages usually push that into comments, external docs, stale tests, or team memory. Aver makes those concerns part of the language and tooling.
 
-The intended workflow is explicit: AI writes Aver, humans review contracts and intent, and execution happens through the bytecode VM during development, with deployment also available through Rust code generation or WASM compilation.
+The intended workflow is explicit: AI writes Aver, humans review contracts and intent, and execution happens through the bytecode VM during development, with deployment through Rust code generation or WASM compilation.
 
-### Self-hosted interpreter
+---
+
+## Execution modes
+
+### Default (VM)
 
 ```bash
-aver run hello.av --self-host
-aver replay recordings/ --self-host
+aver run hello.av
 ```
 
-`--self-host` executes the program through the Aver interpreter written in Aver itself, compiled to Rust and cached on demand. There is no separate "aver-self" install step: `cargo install aver-lang` already ships the `self_hosted/` sources inside the crate, and the first `aver run ... --self-host` builds a cached helper binary automatically. That helper cache is shared across guest projects for the same installed Aver build, so changing `--module-root` does not force a rebuild. On the first cold run Aver prints short progress messages while it generates and builds the helper.
+All commands use the bytecode VM. For VM internals, see [docs/vm.md](docs/vm.md).
 
-### WASM backend
+### WASM
 
 ```bash
-# Run via built-in WASM host (requires --features wasm)
-aver run hello.av --wasm
-
-# Compile to .wasm with aver/* import ABI (default)
+# Compile to .wasm (requires --features wasm)
 aver compile hello.av --target wasm
 
-# Compile with WASI adapter (works with standalone wasmtime)
+# Compile with WASI adapter for standalone wasmtime
 aver compile hello.av --target wasm --adapter wasi
-wasmtime out/hello.wasm
+
+# Run via built-in WASM host
+aver run hello.av --wasm
 ```
 
-`--wasm` compiles the program to WebAssembly and executes it with a built-in host (wasmtime). The WASM module uses typed ABI: Int → i64, Float → f64, Bool → i32. Arithmetic compiles to native WASM instructions.
+See [docs/wasm.md](docs/wasm.md) for ABI details and browser hosting.
 
-By default, `--target wasm` emits modules with `aver/*` import ABI — the host provides effect implementations (console I/O, random, time, math). This works with the built-in host (`aver run --wasm`), a browser JS shim, or any custom host. The `--adapter wasi` flag emits WASI imports instead, for standalone execution with `wasmtime`.
-
-Supported: Float arithmetic, sum types, recursive variants, records, string interpolation, List/Map/Vector builtins, TCO, and `Terminal.*` in the built-in host. Not supported yet: multi-module `depends`.
-
-For ABI details, browser/JS hosting, and host implementation notes, see [src/codegen/wasm/README.md](src/codegen/wasm/README.md).
-The repo also ships a static browser runner in [tools/wasm-runner/README.md](tools/wasm-runner/README.md).
-
-For generated Rust projects, `aver compile` now exposes policy mode explicitly:
+### Native Rust
 
 ```bash
-aver compile app.av --policy embed
-aver compile app.av --policy runtime
+aver compile hello.av              # generates Rust/Cargo project
+aver compile hello.av --policy embed   # bake aver.toml into binary
+aver compile hello.av --policy runtime # load aver.toml at runtime
 ```
 
-`embed` bakes the current `aver.toml` into the artifact. `runtime` loads `aver.toml` from the active module root when the binary runs.
+See [docs/rust.md](docs/rust.md) for the generated code model.
 
-Most users should never run `self_hosted/main.av` directly. That entry exists mainly for hacking on the self-host inside this repository; the normal installed interface is still just:
+### Self-hosted
 
 ```bash
 aver run hello.av --self-host
-aver replay recordings/ --self-host
 ```
 
-For `--record` and `aver replay --self-host`, replay and `aver.toml` policy are scoped to the guest program boundary only: the self-host's own bootstrap reads and module loading stay outside the recording. `aver.toml` is loaded from the guest `--module-root` at runtime, so changing guest policy does not invalidate the cached helper.
-
-If you generate self-host-like Rust binaries directly, see [docs/rust.md](docs/rust.md) for the explicit `--with-self-host-support` / `--guest-entry` contract used by `SelfHostRuntime.*`.
+Runs through the Aver interpreter written in Aver itself, compiled to Rust and cached on demand. See [self_hosted/README.md](self_hosted/README.md).
 
 ---
 
@@ -566,6 +559,7 @@ For repository self-documentation via decision exports, see `decisions/architect
 | [docs/extending.md](docs/extending.md) | How to add keywords, namespace functions, expression types |
 | [docs/transpilation.md](docs/transpilation.md) | Overview of `aver compile` and `aver proof` |
 | [docs/rust.md](docs/rust.md) | Rust backend: deployment-oriented Cargo generation |
+| [src/codegen/wasm/README.md](src/codegen/wasm/README.md) | WASM backend: ABI, host interface, browser hosting |
 | [docs/lean.md](docs/lean.md) | Lean backend: proof export and formal-verification path |
 | [docs/dafny.md](docs/dafny.md) | Dafny backend: Z3-powered automated law verification |
 | [docs/independence.md](docs/independence.md) | Independent products: the semantic model behind `?!` and `!` |
