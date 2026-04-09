@@ -166,7 +166,7 @@ impl FnBody {
 
 /// Compile-time resolution metadata for a function body.
 /// Produced by `resolver::resolve_fn` — maps local variable names to slot indices
-/// so the interpreter can use `Vec<Value>` instead of `HashMap` lookups.
+/// so the VM can use `Vec<Value>` instead of `HashMap` lookups.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnResolution {
     /// Total number of local slots needed (params + bindings in body).
@@ -184,7 +184,7 @@ pub struct FnDef {
     pub effects: Vec<Spanned<String>>,
     pub desc: Option<String>,
     pub body: std::sync::Arc<FnBody>,
-    /// `None` for unresolved (REPL, module sub-interpreters).
+    /// `None` for unresolved (REPL, module loading).
     pub resolution: Option<FnResolution>,
 }
 

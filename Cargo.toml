@@ -36,7 +36,7 @@ terminal = ["aver-rt/terminal"]
 wasm = ["dep:wasm-encoder", "dep:wasmtime"]
 
 [dependencies]
-aver-memory = { path = "aver-memory", version = "=0.1.0", features = ["interpreter"] }
+aver-memory = { path = "aver-memory", version = "=0.1.0", features = ["runtime"] }
 aver-rt = { path = "aver-rt", version = "=0.4.0", features = ["http", "random"] }
 clap = { version = "4", features = ["derive"] }
 colored = "2"

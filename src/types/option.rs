@@ -4,7 +4,7 @@
 ///   Option.withDefault(option, default) → T              — unwrap Some or return default
 ///   Option.toResult(option, err)        → Result<T, E>   — convert Option to Result
 ///
-/// Constructors (Some, None) are registered separately in interpreter/core.rs.
+/// Constructors (Some, None) are registered separately in vm/runtime.rs.
 /// No effects required.
 use std::collections::HashMap;
 
@@ -12,7 +12,7 @@ use crate::nan_value::{Arena, NanValue};
 use crate::value::{RuntimeError, Value};
 
 pub fn register(global: &mut HashMap<String, Value>) {
-    // Option namespace already exists (created in interpreter/core.rs for Some/None).
+    // Option namespace already exists (created in vm/runtime.rs for Some/None).
     // We merge our members into it via a separate step in core.rs.
     let _ = global;
 }

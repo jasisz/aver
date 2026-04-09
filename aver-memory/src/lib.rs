@@ -47,15 +47,15 @@ use core::hash::{Hash, Hasher};
 use core::ops::Deref;
 
 // ---------------------------------------------------------------------------
-// ArenaTypes trait — parameterises the arena over interpreter-specific types
+// ArenaTypes trait — parameterises the arena over consumer-specific types
 // ---------------------------------------------------------------------------
 
 /// Trait that defines the function and map types used by the arena.
 ///
 /// The arena stores function values and persistent maps, but their concrete
-/// types depend on the consumer (interpreter, VM, WASM runtime, etc.).
+/// types depend on the consumer (VM, WASM runtime, codegen, etc.).
 pub trait ArenaTypes: Clone + core::fmt::Debug + 'static {
-    /// The function value type (e.g. `FunctionValue` in the interpreter).
+    /// The function value type (e.g. `FunctionValue` in the VM).
     type Fn: Clone + core::fmt::Debug + FnValueName;
     /// The persistent map type (e.g. `AverMap<u64, (NanValue, NanValue)>`).
     type Map: Clone + core::fmt::Debug + MapLike;
@@ -1275,11 +1275,11 @@ mod memory;
 // Feature-gated MapLike impl for aver_rt::AverMap
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "interpreter")]
-/// `PersistentMap` type alias used by the interpreter arena.
+#[cfg(feature = "runtime")]
+/// `PersistentMap` type alias used by the VM arena.
 pub type PersistentMap = aver_rt::AverMap<u64, (NanValue, NanValue)>;
 
-#[cfg(feature = "interpreter")]
+#[cfg(feature = "runtime")]
 impl MapLike for aver_rt::AverMap<u64, (NanValue, NanValue)> {
     fn new() -> Self {
         aver_rt::AverMap::new()

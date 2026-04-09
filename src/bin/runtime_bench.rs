@@ -19,7 +19,6 @@ const PAYMENT_GENERATED_NAME: &str = "runtime_bench_payment_ops";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RuntimeKind {
-    Interpreter,
     Vm,
     Wasm,
     Generated,
@@ -27,12 +26,11 @@ enum RuntimeKind {
 
 impl RuntimeKind {
     fn all() -> &'static [RuntimeKind] {
-        &[Self::Interpreter, Self::Vm, Self::Wasm, Self::Generated]
+        &[Self::Vm, Self::Wasm, Self::Generated]
     }
 
     fn name(self) -> &'static str {
         match self {
-            Self::Interpreter => "interpreter",
             Self::Vm => "vm",
             Self::Wasm => "wasm",
             Self::Generated => "generated",
@@ -113,7 +111,6 @@ struct Config {
 #[derive(Debug)]
 struct CoreResult {
     name: &'static str,
-    interp_ms: f64,
     vm_ms: f64,
     wasm_ms: f64,
     generated_ms: f64,
@@ -125,7 +122,6 @@ struct CoreResult {
 struct AppResult {
     app: &'static str,
     workload: &'static str,
-    interp_ms: f64,
     vm_ms: f64,
     wasm_ms: f64,
     generated_ms: f64,
@@ -149,7 +145,7 @@ struct RunContext<'a> {
 }
 
 fn usage() -> &'static str {
-    "Usage: cargo run --release --bin runtime_bench -- [--suite core|apps|all] [--runtime interpreter|vm|wasm|generated|all] [--core-case SLUG|all] [--app workflow_engine|payment_ops|all] [--workload NAME|all] [--full] [--seed N] [--iters N] [--warmup N] [--output DIR] [--rebuild]"
+    "Usage: cargo run --release --bin runtime_bench -- [--suite core|apps|all] [--runtime vm|wasm|generated|all] [--core-case SLUG|all] [--app workflow_engine|payment_ops|all] [--workload NAME|all] [--full] [--seed N] [--iters N] [--warmup N] [--output DIR] [--rebuild]"
 }
 
 fn parse_suite(value: &str) -> Option<SuiteKind> {
@@ -173,7 +169,6 @@ fn parse_runtimes(value: &str) -> Option<Vec<RuntimeKind>> {
         .filter(|raw| !raw.is_empty())
     {
         let runtime = match part {
-            "interpreter" => RuntimeKind::Interpreter,
             "vm" => RuntimeKind::Vm,
             "wasm" => RuntimeKind::Wasm,
             "generated" => RuntimeKind::Generated,
@@ -493,17 +488,9 @@ fn run_core_once(
     generated_bin: &Path,
 ) -> Result<String, String> {
     match runtime {
-        RuntimeKind::Interpreter => {
-            let mut cmd = Command::new(aver_bin);
-            cmd.current_dir(repo_root).arg("run").arg(source_path);
-            run_capture(&mut cmd, "core interpreter run")
-        }
         RuntimeKind::Vm => {
             let mut cmd = Command::new(aver_bin);
-            cmd.current_dir(repo_root)
-                .arg("run")
-                .arg(source_path)
-                .arg("--vm");
+            cmd.current_dir(repo_root).arg("run").arg(source_path);
             run_capture(&mut cmd, "core vm run")
         }
         RuntimeKind::Wasm => {
@@ -548,46 +535,37 @@ fn bench_core_runtime(
 fn print_core_results(results: &[CoreResult]) {
     println!();
     println!("Core benchmarks — end-to-end wall time (median)");
-    println!("{:-<152}", "");
+    println!("{:-<128}", "");
     println!(
-        "{:<22} {:>12} {:>12} {:>12} {:>12} {:>12} {:>12} {:>12} {:>8}",
+        "{:<22} {:>12} {:>12} {:>12} {:>12} {:>12} {:>8}",
         "Benchmark",
-        "Interp",
         "VM",
         "WASM",
         "Generated",
         "Gen build",
-        "VM speed",
         "WASM speed",
         "Match"
     );
-    println!("{:-<152}", "");
+    println!("{:-<128}", "");
     for result in results {
-        let vm_speed = if result.vm_ms > 0.0 {
-            format!("{:.1}x", result.interp_ms / result.vm_ms)
-        } else {
-            "n/a".to_string()
-        };
         let wasm_speed = if result.wasm_ms > 0.0 {
-            format!("{:.1}x", result.interp_ms / result.wasm_ms)
+            format!("{:.1}x", result.vm_ms / result.wasm_ms)
         } else {
             "n/a".to_string()
         };
         let match_status = if result.outputs_match { "OK" } else { "DIFF" };
         println!(
-            "{:<22} {:>10.3}ms {:>10.3}ms {:>10.3}ms {:>10.3}ms {:>10.3}ms {:>12} {:>12} {:>8}",
+            "{:<22} {:>10.3}ms {:>10.3}ms {:>10.3}ms {:>10.3}ms {:>12} {:>8}",
             result.name,
-            result.interp_ms,
             result.vm_ms,
             result.wasm_ms,
             result.generated_ms,
             result.generated_build_ms,
-            vm_speed,
             wasm_speed,
             match_status
         );
     }
-    println!("{:-<152}", "");
+    println!("{:-<128}", "");
 }
 
 fn benchmark_core(
@@ -629,15 +607,6 @@ fn benchmark_core(
             cfg.rebuild,
         )?;
 
-        let (interp_ms, interp_out) = bench_core_runtime(
-            RuntimeKind::Interpreter,
-            repo_root,
-            aver_bin,
-            &source_path,
-            &generated_bin,
-            cfg.warmup,
-            cfg.iters,
-        )?;
         let (vm_ms, vm_out) = bench_core_runtime(
             RuntimeKind::Vm,
             repo_root,
@@ -668,12 +637,11 @@ fn benchmark_core(
 
         results.push(CoreResult {
             name: case.name,
-            interp_ms,
             vm_ms,
             wasm_ms,
             generated_ms,
             generated_build_ms,
-            outputs_match: interp_out == vm_out && vm_out == wasm_out && wasm_out == generated_out,
+            outputs_match: vm_out == wasm_out && wasm_out == generated_out,
         });
     }
 
@@ -811,16 +779,6 @@ fn run_app_command(
     args: &[String],
 ) -> Result<(), String> {
     let mut cmd = match runtime {
-        RuntimeKind::Interpreter => {
-            let mut cmd = Command::new(aver_bin);
-            cmd.current_dir(repo_root)
-                .arg("run")
-                .arg(repo_root.join(app.entry_file()))
-                .arg("--module-root")
-                .arg(repo_root.join(app.module_root()))
-                .arg("--");
-            cmd
-        }
         RuntimeKind::Vm => {
             let mut cmd = Command::new(aver_bin);
             cmd.current_dir(repo_root)
@@ -828,7 +786,6 @@ fn run_app_command(
                 .arg(repo_root.join(app.entry_file()))
                 .arg("--module-root")
                 .arg(repo_root.join(app.module_root()))
-                .arg("--vm")
                 .arg("--");
             cmd
         }
@@ -925,36 +882,29 @@ fn print_app_results(results: &[AppResult], full: bool) {
             DEFAULT_WORKFLOW_APP_SEED
         );
     }
-    println!("{:-<148}", "");
+    println!("{:-<120}", "");
     println!(
-        "{:<18} {:<18} {:>12} {:>12} {:>12} {:>12} {:>12} {:>12}",
-        "App", "Workload", "Interp", "VM", "WASM", "Generated", "VM speed", "WASM speed"
+        "{:<18} {:<18} {:>12} {:>12} {:>12} {:>12}",
+        "App", "Workload", "VM", "WASM", "Generated", "WASM speed"
     );
-    println!("{:-<148}", "");
+    println!("{:-<120}", "");
     for result in results {
-        let vm_speed = if result.vm_ms > 0.0 {
-            format!("{:.1}x", result.interp_ms / result.vm_ms)
-        } else {
-            "n/a".to_string()
-        };
         let wasm_speed = if result.wasm_ms > 0.0 {
-            format!("{:.1}x", result.interp_ms / result.wasm_ms)
+            format!("{:.1}x", result.vm_ms / result.wasm_ms)
         } else {
             "n/a".to_string()
         };
         println!(
-            "{:<18} {:<18} {:>10.3}ms {:>10.3}ms {:>10.3}ms {:>10.3}ms {:>12} {:>12}",
+            "{:<18} {:<18} {:>10.3}ms {:>10.3}ms {:>10.3}ms {:>12}",
             result.app,
             result.workload,
-            result.interp_ms,
             result.vm_ms,
             result.wasm_ms,
             result.generated_ms,
-            vm_speed,
             wasm_speed
         );
     }
-    println!("{:-<148}", "");
+    println!("{:-<120}", "");
 }
 
 fn benchmark_apps(
@@ -1000,15 +950,6 @@ fn benchmark_apps(
         );
 
         for workload in workloads {
-            let interp_ms = bench_app_runtime(
-                RuntimeKind::Interpreter,
-                app,
-                workload,
-                app_seed,
-                &ctx,
-                cfg.warmup,
-                cfg.iters,
-            )?;
             let vm_ms = bench_app_runtime(
                 RuntimeKind::Vm,
                 app,
@@ -1039,7 +980,6 @@ fn benchmark_apps(
             results.push(AppResult {
                 app: app.name(),
                 workload,
-                interp_ms,
                 vm_ms,
                 wasm_ms,
                 generated_ms,
@@ -1061,7 +1001,7 @@ fn main() {
 
     if cfg.runtimes != RuntimeKind::all() {
         eprintln!(
-            "runtime_bench currently measures all four runtimes together; selective --runtime filtering is not implemented yet"
+            "runtime_bench currently measures all three runtimes together; selective --runtime filtering is not implemented yet"
         );
         std::process::exit(2);
     }

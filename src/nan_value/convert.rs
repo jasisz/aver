@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use crate::value::Value;
 
 /// Extension trait providing `from_value` / `to_value` conversion between
-/// the interpreter's `Value` and `NanValue`.  These methods live here
+/// the runtime `Value` and `NanValue`.  These methods live here
 /// (rather than on `NanValue` directly) because `NanValue` is now defined
 /// in the `aver_memory` crate.
 pub trait NanValueConvert {

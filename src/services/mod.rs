@@ -10,7 +10,7 @@
 /// ```
 ///
 /// Every service module exposes the same three functions:
-/// - `register(global)` — insert the namespace into the interpreter's global env
+/// - `register(global)` — insert the namespace into the global env
 /// - `effects(name)` — return required effects for a builtin name (or empty)
 /// - `call(name, args)` — handle the call, returning `None` if not owned
 ///

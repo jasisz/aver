@@ -135,7 +135,7 @@ impl VM {
 
     pub fn run(&mut self) -> Result<NanValue, VmError> {
         self.run_top_level()?;
-        // If there is no `main` function, finish silently (consistent with the interpreter).
+        // If there is no `main` function, finish silently (as expected).
         let has_main = self
             .code
             .symbols

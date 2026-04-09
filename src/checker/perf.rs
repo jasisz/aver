@@ -18,7 +18,7 @@ pub fn collect_perf_warnings(items: &[TopLevel]) -> Vec<CheckFinding> {
         if let TopLevel::FnDef(fd) = item {
             check_list_len_comparison(fd, &mut warnings);
             // String concat in tail-call args (acc + c) is now O(1) amortized
-            // in all backends (interpreter: in-place push_str, codegen: String append).
+            // in all backends (VM: in-place push_str, codegen: String append).
             // No longer flagged as a performance issue.
             check_nested_eq_match(fd, &mut warnings);
             check_loop_invariant(fd, &mut warnings);

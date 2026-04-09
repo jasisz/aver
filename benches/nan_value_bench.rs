@@ -2,7 +2,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 
 use aver::nan_value::{Arena, NanValue};
 
-/// Fibonacci(25) computed directly with NanValue — no interpreter overhead,
+/// Fibonacci(25) computed directly with NanValue — no runtime overhead,
 /// just measuring value creation/matching/arithmetic speed.
 fn fib_nan(n: i64, arena: &Arena) -> NanValue {
     if n <= 1 {
@@ -67,7 +67,7 @@ fn bench_record_arena(c: &mut Criterion) {
     });
 }
 
-/// Same but with Vec<(String, OldValue)> like old interpreter.
+/// Same but with Vec<(String, OldValue)> like old map-based env.
 fn bench_record_old(c: &mut Criterion) {
     c.bench_function("record create+access 10k old", |b| {
         b.iter(|| {
@@ -78,7 +78,7 @@ fn bench_record_old(c: &mut Criterion) {
                     ("y".to_string(), OldValue::Int(i * 2)),
                     ("z".to_string(), OldValue::Int(i * 3)),
                 ];
-                // Linear scan by name (like old interpreter)
+                // Linear scan by name (like old map-based env)
                 for (_name, val) in &fields {
                     let OldValue::Int(v) = val;
                     sum += v;

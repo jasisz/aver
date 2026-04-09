@@ -1,6 +1,6 @@
 /// Core Aver runtime value type and associated utilities.
 ///
-/// Lives in its own module so both the interpreter and the service
+/// Lives in its own module so the VM and the service
 /// implementations (`services::*`) can import it without circular
 /// dependencies.
 use aver_rt::{AverList, AverVector};
@@ -404,8 +404,7 @@ pub(crate) fn list_reverse(list: &Value) -> Option<Value> {
 // Effect inspection
 // ---------------------------------------------------------------------------
 
-/// Extract the declared effects from a callable value (free function — no
-/// interpreter needed).
+/// Extract the declared effects from a callable value.
 pub fn callable_declared_effects(fn_val: &Value) -> Vec<String> {
     match fn_val {
         Value::Fn(function) => function.effects.as_ref().clone(),

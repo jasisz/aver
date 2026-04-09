@@ -12,23 +12,17 @@ const GENERATED_NAME: &str = "workflow_codegen_bench";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RuntimeKind {
-    Interpreter,
     Vm,
     Generated,
 }
 
 impl RuntimeKind {
     fn all() -> &'static [RuntimeKind] {
-        &[
-            RuntimeKind::Interpreter,
-            RuntimeKind::Vm,
-            RuntimeKind::Generated,
-        ]
+        &[RuntimeKind::Vm, RuntimeKind::Generated]
     }
 
     fn name(self) -> &'static str {
         match self {
-            RuntimeKind::Interpreter => "interpreter",
             RuntimeKind::Vm => "vm",
             RuntimeKind::Generated => "generated",
         }
@@ -36,10 +30,9 @@ impl RuntimeKind {
 
     fn parse(input: &str) -> Option<Vec<RuntimeKind>> {
         match input {
-            "interpreter" => Some(vec![RuntimeKind::Interpreter]),
             "vm" => Some(vec![RuntimeKind::Vm]),
             "generated" => Some(vec![RuntimeKind::Generated]),
-            "both" => Some(vec![RuntimeKind::Interpreter, RuntimeKind::Generated]),
+            "both" => Some(vec![RuntimeKind::Vm, RuntimeKind::Generated]),
             "all" => Some(Self::all().to_vec()),
             _ => None,
         }
@@ -104,7 +97,7 @@ struct BenchResult {
 }
 
 fn usage() -> &'static str {
-    "Usage: cargo run --release --bin workflow_codegen_bench -- [--seed N] [--iters N] [--runtime interpreter|vm|generated|both|all] [--workload NAME|all] [--output DIR] [--rebuild]"
+    "Usage: cargo run --release --bin workflow_codegen_bench -- [--seed N] [--iters N] [--runtime vm|generated|both|all] [--workload NAME|all] [--output DIR] [--rebuild]"
 }
 
 fn repo_root() -> PathBuf {
@@ -305,16 +298,6 @@ fn run_workflow_command(
 ) -> Result<(), String> {
     let context = format!("{} {}", runtime.name(), args.join(" "));
     let mut cmd = match runtime {
-        RuntimeKind::Interpreter => {
-            let mut cmd = Command::new(aver_bin);
-            cmd.current_dir(repo_root)
-                .arg("run")
-                .arg(repo_root.join(ENTRY_FILE))
-                .arg("--module-root")
-                .arg(repo_root.join(MODULE_ROOT))
-                .arg("--");
-            cmd
-        }
         RuntimeKind::Vm => {
             let mut cmd = Command::new(aver_bin);
             cmd.current_dir(repo_root)
@@ -322,7 +305,6 @@ fn run_workflow_command(
                 .arg(repo_root.join(ENTRY_FILE))
                 .arg("--module-root")
                 .arg(repo_root.join(MODULE_ROOT))
-                .arg("--vm")
                 .arg("--");
             cmd
         }
@@ -451,40 +433,23 @@ fn print_result(result: &BenchResult, seed: usize, iters: usize) {
 
 fn print_pair_speedup(results: &[BenchResult]) {
     for workload in Workload::all() {
-        let interpreter = results
-            .iter()
-            .find(|r| r.runtime == RuntimeKind::Interpreter && r.workload == *workload);
         let vm = results
             .iter()
             .find(|r| r.runtime == RuntimeKind::Vm && r.workload == *workload);
         let generated = results
             .iter()
             .find(|r| r.runtime == RuntimeKind::Generated && r.workload == *workload);
-        let Some(interpreter) = interpreter else {
+        let (Some(vm), Some(generated)) = (vm, generated) else {
             continue;
         };
 
-        let interp_secs = interpreter.measured.as_secs_f64();
-        if let Some(vm) = vm {
-            let vm_secs = vm.measured.as_secs_f64();
-            if vm_secs > 0.0 {
-                println!(
-                    "{:<12} vm_speedup={:.2}x",
-                    workload.name(),
-                    interp_secs / vm_secs
-                );
-            }
-        }
-
-        let Some(generated) = generated else {
-            continue;
-        };
+        let vm_secs = vm.measured.as_secs_f64();
         let gen_secs = generated.measured.as_secs_f64();
-        if gen_secs > 0.0 {
+        if gen_secs > 0.0 && vm_secs > 0.0 {
             println!(
                 "{:<12} generated_speedup={:.2}x",
                 workload.name(),
-                interp_secs / gen_secs
+                vm_secs / gen_secs
             );
         }
     }

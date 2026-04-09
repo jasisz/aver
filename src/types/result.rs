@@ -3,7 +3,7 @@
 /// Methods:
 ///   Result.withDefault(result, default) → T  — unwrap Ok or return default
 ///
-/// Constructors (Ok, Err) are registered separately in interpreter/core.rs.
+/// Constructors (Ok, Err) are registered separately in vm/runtime.rs.
 /// No effects required.
 use std::collections::HashMap;
 
@@ -11,7 +11,7 @@ use crate::nan_value::{Arena, NanValue};
 use crate::value::{RuntimeError, Value};
 
 pub fn register(global: &mut HashMap<String, Value>) {
-    // Result namespace already exists (created in interpreter/core.rs for Ok/Err ctors).
+    // Result namespace already exists (created in vm/runtime.rs for Ok/Err ctors).
     // We merge our members into it via a separate step in core.rs.
     // This function registers nothing — see `extra_result_members()`.
     let _ = global;

@@ -4,7 +4,7 @@
 /// and replaces `Expr::Ident(name)` with `Expr::Resolved(depth, slot)` for
 /// variables that are local to the function (parameters + bindings).
 ///
-/// Global/namespace identifiers are left as `Expr::Ident` — the interpreter
+/// Global/namespace identifiers are left as `Expr::Ident` — the VM
 /// falls back to HashMap lookup for those.
 ///
 /// Only top-level `FnDef` bodies are resolved. Top-level `Stmt` items (globals,

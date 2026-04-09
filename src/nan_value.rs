@@ -1,12 +1,12 @@
 //! NaN-boxed compact Value representation — thin re-export layer.
 //!
 //! The core NanValue, Arena, and supporting types now live in the
-//! `aver_memory` crate.  This module defines the interpreter-specific
-//! `InterpreterTypes` that plugs `FunctionValue` and `PersistentMap`
-//! into the generic arena, provides type aliases so existing
+//! `aver_memory` crate.  This module defines `AverTypes` that plugs
+//! `FunctionValue` and `PersistentMap` into the generic arena,
+//! provides type aliases so existing
 //! `use crate::nan_value::{Arena, NanValue, ...}` continues to work,
 //! and keeps the `convert` (Value <-> NanValue) and `tests` submodules
-//! that depend on interpreter-specific types.
+//! that depend on runtime-specific types.
 
 use std::sync::Arc as Rc;
 
@@ -58,14 +58,14 @@ pub use aver_memory::{
 };
 
 // ---------------------------------------------------------------------------
-// Interpreter-specific concrete types
+// Aver-specific concrete types
 // ---------------------------------------------------------------------------
 
-/// The interpreter's concrete arena types.
+/// Concrete arena types for the Aver runtime.
 #[derive(Clone, Debug)]
-pub struct InterpreterTypes;
+pub struct AverTypes;
 
-impl ArenaTypes for InterpreterTypes {
+impl ArenaTypes for AverTypes {
     type Fn = FunctionValue;
     type Map = PersistentMap;
 }
@@ -82,9 +82,9 @@ impl FnValueName for FunctionValue {
 // Type aliases — these make existing code work unchanged
 // ---------------------------------------------------------------------------
 
-pub type Arena = aver_memory::Arena<InterpreterTypes>;
-pub type ArenaEntry = aver_memory::ArenaEntry<InterpreterTypes>;
-pub type ArenaSymbol = aver_memory::ArenaSymbol<InterpreterTypes>;
+pub type Arena = aver_memory::Arena<AverTypes>;
+pub type ArenaEntry = aver_memory::ArenaEntry<AverTypes>;
+pub type ArenaSymbol = aver_memory::ArenaSymbol<AverTypes>;
 
 // ---------------------------------------------------------------------------
 // Extension trait for Value <-> NanValue conversion

@@ -1,6 +1,6 @@
 /// Generate a Rust `mod aver_policy` from an `aver.toml` ProjectConfig.
 ///
-/// The generated module mirrors interpreter semantics:
+/// The generated module mirrors VM semantics:
 /// method-specific policy first, then namespace fallback.
 use crate::config::ProjectConfig;
 

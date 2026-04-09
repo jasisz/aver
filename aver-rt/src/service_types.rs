@@ -27,7 +27,7 @@ pub struct Header {
 }
 
 impl Header {
-    /// Convenience constructor from owned Strings (used by interpreter/aver-rt internals).
+    /// Convenience constructor from owned Strings (used by runtime internals).
     pub fn from_strings(name: String, value: String) -> Self {
         Self {
             name: AverStr::from(name),
