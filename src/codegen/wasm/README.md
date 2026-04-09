@@ -13,8 +13,14 @@ Default output uses the `aver/*` import ABI. That keeps the generated module hos
 
 - `aver compile app.av --target wasm`
   Emits `aver/*` imports such as `aver/console_print`, `aver/time_unixMs`, `aver/format_value`.
+- `aver compile app.av --target wasm --wasm-opt oz`
+  Post-processes the emitted module with `wasm-opt -Oz` for smaller binaries.
+- `aver compile app.av --target wasm --wasm-opt o3`
+  Post-processes the emitted module with `wasm-opt -O3` for speed-oriented optimization.
 - `aver compile app.av --target wasm --adapter wasi`
   Emits WASI imports for standalone `wasmtime`.
+
+`--wasm-opt` requires `binaryen` (`wasm-opt`) to be installed. The toolchain passes the required WASM feature flags automatically because Aver modules use bulk-memory ops and multi-value imports.
 
 ## Built-in Host
 

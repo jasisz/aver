@@ -44,6 +44,17 @@ pub(super) enum WasmAdapter {
     Wasi,
 }
 
+/// Optional post-pass optimization for generated WASM modules.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(super) enum WasmOptMode {
+    /// Optimize for runtime speed.
+    #[value(name = "o3")]
+    O3,
+    /// Optimize aggressively for binary size.
+    #[value(name = "oz")]
+    Oz,
+}
+
 /// Compile target language.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub(super) enum CompileTarget {
@@ -266,6 +277,9 @@ pub(super) enum Commands {
         /// WASM import ABI adapter (default: aver/* capability imports)
         #[arg(long, value_enum)]
         adapter: Option<WasmAdapter>,
+        /// Post-process generated WASM with wasm-opt (`o3` for speed, `oz` for size)
+        #[arg(long, value_enum)]
+        wasm_opt: Option<WasmOptMode>,
     },
     /// Trace justifications: decisions, verify blocks, descriptions
     Why {
@@ -386,6 +400,28 @@ mod tests {
                 assert_eq!(policy, None);
                 assert_eq!(guest_entry.as_deref(), Some("runGuestProgram"));
                 assert!(!with_self_host_support);
+            }
+            _ => panic!("expected compile command"),
+        }
+    }
+
+    #[test]
+    fn compile_accepts_wasm_opt() {
+        let cli = Cli::parse_from([
+            "aver",
+            "compile",
+            "examples/core/hello.av",
+            "--target",
+            "wasm",
+            "--wasm-opt",
+            "oz",
+        ]);
+        match cli.command {
+            Commands::Compile {
+                target, wasm_opt, ..
+            } => {
+                assert_eq!(target, CompileTarget::Wasm);
+                assert_eq!(wasm_opt, Some(WasmOptMode::Oz));
             }
             _ => panic!("expected compile command"),
         }

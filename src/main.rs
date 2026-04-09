@@ -138,6 +138,7 @@ fn main() {
             guest_entry,
             with_self_host_support,
             adapter,
+            wasm_opt,
         } => {
             let policy_mode = (*policy).unwrap_or(if *with_replay {
                 CompilePolicyMode::Runtime
@@ -155,6 +156,7 @@ fn main() {
                 guest_entry: guest_entry.as_deref(),
                 with_self_host_support: *with_self_host_support,
                 adapter: *adapter,
+                wasm_opt: *wasm_opt,
             });
         }
         Commands::Why {
