@@ -198,7 +198,11 @@ impl<'a> ExprEmitter<'a> {
                             .unwrap_or(Type::Unknown);
                         Some(Type::Option(Box::new(inner_ty)))
                     }
-                    _ => None,
+                    SemanticConstructor::TypeConstructor {
+                        qualified_type_name,
+                        ..
+                    } => Some(Type::Named(qualified_type_name)),
+                    SemanticConstructor::Unknown(_) => None,
                 }
             }
             Expr::Match { arms, .. } => arms
@@ -334,6 +338,26 @@ impl<'a> ExprEmitter<'a> {
                         .get(name.as_str())
                         .map(|(_, ret, _)| ret.clone())
                 }),
+            CallPlan::TypeConstructor {
+                qualified_type_name,
+                ..
+            } => Some(Type::Named(qualified_type_name)),
+            CallPlan::Wrapper(WrapperKind::ResultOk)
+            | CallPlan::Wrapper(WrapperKind::ResultErr) => {
+                let inner_ty = args
+                    .first()
+                    .and_then(|a| self.infer_aver_type(&a.node))
+                    .unwrap_or(Type::Unknown);
+                Some(Type::Result(Box::new(inner_ty), Box::new(Type::Unknown)))
+            }
+            CallPlan::Wrapper(WrapperKind::OptionSome) => {
+                let inner_ty = args
+                    .first()
+                    .and_then(|a| self.infer_aver_type(&a.node))
+                    .unwrap_or(Type::Unknown);
+                Some(Type::Option(Box::new(inner_ty)))
+            }
+            CallPlan::NoneValue => Some(Type::Option(Box::new(Type::Unknown))),
             _ => None,
         }
     }

@@ -124,8 +124,11 @@ pub(super) struct ExprEmitter<'a> {
     pub mutual_tco_targets: HashMap<String, (u32, Vec<u32>)>,
     /// Codegen diagnostics collected while emitting the current function.
     pub errors: Vec<String>,
-    /// Current frame / iteration mark used by boundary compaction.
+    /// Current frame mark used by boundary compaction on function return.
     pub boundary_mark_local: Option<u32>,
+    /// Per-iteration mark for TCO loops (yard semantics): only compact
+    /// allocations from the current iteration, not the entire frame.
+    pub iter_mark_local: Option<u32>,
     /// Whether the current function result is a heap pointer in the typed ABI.
     pub fn_return_is_heap: bool,
     /// Thin frame: no boundary compaction or truncate needed on return.
@@ -167,6 +170,7 @@ impl<'a> ExprEmitter<'a> {
             host_import_indices: HashMap::new(),
             errors: Vec::new(),
             boundary_mark_local: None,
+            iter_mark_local: None,
             fn_return_is_heap: false,
             is_thin: false,
             is_parent_thin: false,

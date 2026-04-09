@@ -1583,6 +1583,14 @@ fn wasm_guest_string(caller: &mut wasmtime::Caller<'_, ()>, ptr: i32, len: i32) 
 #[cfg(feature = "wasm")]
 fn wasm_write_guest_bytes(caller: &mut wasmtime::Caller<'_, ()>, bytes: &[u8]) -> (i32, i32) {
     let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
+    // Short strings fit in IO_SCRATCH tail (bytes 96-127). This avoids
+    // writing at the end of linear memory where the heap may have grown.
+    const SCRATCH_BASE: usize = 96;
+    const SCRATCH_CAP: usize = 32;
+    if bytes.len() <= SCRATCH_CAP {
+        mem.data_mut(caller)[SCRATCH_BASE..SCRATCH_BASE + bytes.len()].copy_from_slice(bytes);
+        return (SCRATCH_BASE as i32, bytes.len() as i32);
+    }
     let mem_size = mem.data_size(&*caller);
     let reserve = bytes.len().saturating_add(64);
     let ptr = mem_size.saturating_sub(reserve) as i32;

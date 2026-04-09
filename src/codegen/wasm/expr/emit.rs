@@ -7,7 +7,7 @@
 /// emit_tailcall, emit_literal, emit_string_literal, emit_default_init.
 use std::collections::HashMap;
 
-use wasm_encoder::Instruction;
+use wasm_encoder::{Instruction, ValType};
 
 use crate::ast::{BinOp, Expr, Literal, Spanned, Stmt, StrPart};
 use crate::ir::{
@@ -1088,32 +1088,29 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions
                     .push(Instruction::LocalSet(tmp_base + i as u32));
             }
-            if let Some(mark_local) = self.boundary_mark_local {
+            // Yard semantics with adaptive full-GC: normally compact only the
+            // current iteration [iter_mark, heap_ptr). When the yard has grown
+            // too large (heap_ptr > 2 * iter_mark - fn_mark), fall back to a
+            // full compact from fn_mark to collect dead yard objects.
+            if let Some(iter_mark) = self.iter_mark_local {
+                let fn_mark = self.boundary_mark_local.unwrap_or(iter_mark);
+                // if (heap_ptr > iter_mark + (iter_mark - fn_mark)) use fn_mark
+                self.instructions.push(Instruction::GlobalGet(0));
+                self.instructions.push(Instruction::LocalGet(iter_mark));
+                self.instructions.push(Instruction::LocalGet(iter_mark));
+                self.instructions.push(Instruction::LocalGet(fn_mark));
+                self.instructions.push(Instruction::I32Sub);
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::I32GtU);
+                self.emit_if(wasm_encoder::BlockType::Result(ValType::I32));
+                self.instructions.push(Instruction::LocalGet(fn_mark));
+                self.emit_else();
+                self.instructions.push(Instruction::LocalGet(iter_mark));
+                self.emit_end();
+                self.emit_tco_compaction(args, tmp_base);
+            } else if let Some(mark_local) = self.boundary_mark_local {
                 self.instructions.push(Instruction::LocalGet(mark_local));
-                self.instructions
-                    .push(Instruction::Call(self.rt.collect_begin));
-                for (arg_idx, arg) in args.iter().enumerate() {
-                    if self.expr_is_heap_ptr(&arg.node) {
-                        self.instructions
-                            .push(Instruction::LocalGet(tmp_base + arg_idx as u32));
-                        self.instructions
-                            .push(Instruction::Call(self.rt.retain_i32));
-                        self.instructions
-                            .push(Instruction::LocalSet(tmp_base + arg_idx as u32));
-                    }
-                }
-                self.instructions
-                    .push(Instruction::Call(self.rt.collect_end));
-                for (arg_idx, arg) in args.iter().enumerate() {
-                    if self.expr_is_heap_ptr(&arg.node) {
-                        self.instructions
-                            .push(Instruction::LocalGet(tmp_base + arg_idx as u32));
-                        self.instructions
-                            .push(Instruction::Call(self.rt.rebase_i32));
-                        self.instructions
-                            .push(Instruction::LocalSet(tmp_base + arg_idx as u32));
-                    }
-                }
+                self.emit_tco_compaction(args, tmp_base);
             }
             for (i, slot) in param_slots.iter().enumerate() {
                 self.instructions
@@ -1149,36 +1146,27 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions
                     .push(Instruction::LocalSet(tmp_base + i as u32));
             }
+            // Adaptive yard GC (same logic as mutual TCO above).
+            if let Some(iter_mark) = self.iter_mark_local {
+                let fn_mark = self.boundary_mark_local.unwrap_or(iter_mark);
+                self.instructions.push(Instruction::GlobalGet(0));
+                self.instructions.push(Instruction::LocalGet(iter_mark));
+                self.instructions.push(Instruction::LocalGet(iter_mark));
+                self.instructions.push(Instruction::LocalGet(fn_mark));
+                self.instructions.push(Instruction::I32Sub);
+                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::I32GtU);
+                self.emit_if(wasm_encoder::BlockType::Result(ValType::I32));
+                self.instructions.push(Instruction::LocalGet(fn_mark));
+                self.emit_else();
+                self.instructions.push(Instruction::LocalGet(iter_mark));
+                self.emit_end();
+                self.emit_tco_compaction(args, tmp_base);
+            } else if let Some(mark_local) = self.boundary_mark_local {
+                self.instructions.push(Instruction::LocalGet(mark_local));
+                self.emit_tco_compaction(args, tmp_base);
+            }
             for i in 0..arg_count {
-                if i == 0
-                    && let Some(mark_local) = self.boundary_mark_local
-                {
-                    self.instructions.push(Instruction::LocalGet(mark_local));
-                    self.instructions
-                        .push(Instruction::Call(self.rt.collect_begin));
-                    for (arg_idx, arg) in args.iter().enumerate() {
-                        if self.expr_is_heap_ptr(&arg.node) {
-                            self.instructions
-                                .push(Instruction::LocalGet(tmp_base + arg_idx as u32));
-                            self.instructions
-                                .push(Instruction::Call(self.rt.retain_i32));
-                            self.instructions
-                                .push(Instruction::LocalSet(tmp_base + arg_idx as u32));
-                        }
-                    }
-                    self.instructions
-                        .push(Instruction::Call(self.rt.collect_end));
-                    for (arg_idx, arg) in args.iter().enumerate() {
-                        if self.expr_is_heap_ptr(&arg.node) {
-                            self.instructions
-                                .push(Instruction::LocalGet(tmp_base + arg_idx as u32));
-                            self.instructions
-                                .push(Instruction::Call(self.rt.rebase_i32));
-                            self.instructions
-                                .push(Instruction::LocalSet(tmp_base + arg_idx as u32));
-                        }
-                    }
-                }
                 self.instructions
                     .push(Instruction::LocalGet(tmp_base + i as u32));
                 self.instructions.push(Instruction::LocalSet(i as u32));
@@ -1236,5 +1224,34 @@ impl<'a> ExprEmitter<'a> {
     pub(super) fn emit_default_init(&mut self, local: u32, wt: WasmType) {
         self.emit_default_value(wt);
         self.instructions.push(Instruction::LocalSet(local));
+    }
+
+    /// Emit collect_begin / retain / collect_end / rebase for TCO branch.
+    /// The mark i32 must already be on the WASM stack when this is called.
+    fn emit_tco_compaction(&mut self, args: &[Spanned<Expr>], tmp_base: u32) {
+        self.instructions
+            .push(Instruction::Call(self.rt.collect_begin));
+        for (arg_idx, arg) in args.iter().enumerate() {
+            if self.expr_is_heap_ptr(&arg.node) {
+                self.instructions
+                    .push(Instruction::LocalGet(tmp_base + arg_idx as u32));
+                self.instructions
+                    .push(Instruction::Call(self.rt.retain_i32));
+                self.instructions
+                    .push(Instruction::LocalSet(tmp_base + arg_idx as u32));
+            }
+        }
+        self.instructions
+            .push(Instruction::Call(self.rt.collect_end));
+        for (arg_idx, arg) in args.iter().enumerate() {
+            if self.expr_is_heap_ptr(&arg.node) {
+                self.instructions
+                    .push(Instruction::LocalGet(tmp_base + arg_idx as u32));
+                self.instructions
+                    .push(Instruction::Call(self.rt.rebase_i32));
+                self.instructions
+                    .push(Instruction::LocalSet(tmp_base + arg_idx as u32));
+            }
+        }
     }
 }

@@ -609,6 +609,13 @@ fn emit_plain_user_function(
     }
 
     if needs_tco {
+        // Allocate iter_mark for yard semantics: each TCO iteration only
+        // compacts its own allocations, not the entire frame.
+        if emitter.boundary_mark_local.is_some() {
+            let iter_mark = emitter.alloc_local(WasmType::I32);
+            emitter.iter_mark_local = Some(iter_mark);
+        }
+
         emitter
             .instructions
             .push(Instruction::Loop(wasm_encoder::BlockType::Result(
@@ -616,6 +623,13 @@ fn emit_plain_user_function(
             )));
         emitter.block_depth += 1;
         emitter.enable_tco_loop();
+
+        // Save heap_ptr at iteration start — survivors from previous
+        // iterations live below this mark and won't be re-copied.
+        if let Some(iter_mark) = emitter.iter_mark_local {
+            emitter.instructions.push(Instruction::GlobalGet(0));
+            emitter.instructions.push(Instruction::LocalSet(iter_mark));
+        }
     }
 
     emitter.emit_body(&entry.fd.body);
@@ -643,13 +657,58 @@ fn emit_plain_user_function(
 }
 
 fn build_mutual_tco_groups(
-    _ctx: &CodegenContext,
-    _user_fns: &[UserFnEntry<'_>],
+    ctx: &CodegenContext,
+    user_fns: &[UserFnEntry<'_>],
 ) -> Vec<MutualTcoGroup> {
-    // Mutual trampolines stay disabled while WASM uses the lighter parent-thin
-    // boundary model for helper chains. Re-enable once mutual tail-call lanes
-    // are ported cleanly from the VM/aver-memory story.
-    Vec::new()
+    let mut groups = Vec::new();
+    let mut next_group_id = 1usize;
+
+    let entry_index_by_name: HashMap<String, usize> = user_fns
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| entry.module_prefix.is_none() && entry.fd.name != "main")
+        .map(|(idx, entry)| (entry.fd.name.clone(), idx))
+        .collect();
+    let entry_fns: Vec<&FnDef> = ctx.fn_defs.iter().filter(|fd| fd.name != "main").collect();
+    for group in crate::call_graph::tailcall_scc_components(&entry_fns) {
+        let member_indices: Vec<usize> = group
+            .iter()
+            .filter_map(|fd| entry_index_by_name.get(&fd.name).copied())
+            .collect();
+        if member_indices.len() > 1 {
+            groups.push(MutualTcoGroup {
+                trampoline_name: format!("__mutual_tco_trampoline_{}", next_group_id),
+                member_indices,
+            });
+            next_group_id += 1;
+        }
+    }
+
+    for module in &ctx.modules {
+        let module_index_by_name: HashMap<String, usize> = user_fns
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.module_prefix.as_deref() == Some(module.prefix.as_str()))
+            .map(|(idx, entry)| (entry.fd.name.clone(), idx))
+            .collect();
+
+        let module_fns: Vec<&FnDef> = module.fn_defs.iter().collect();
+        for group in crate::call_graph::tailcall_scc_components(&module_fns) {
+            let member_indices: Vec<usize> = group
+                .iter()
+                .filter_map(|fd| module_index_by_name.get(&fd.name).copied())
+                .collect();
+            if member_indices.len() > 1 {
+                groups.push(MutualTcoGroup {
+                    trampoline_name: format!("__mutual_tco_trampoline_{}", next_group_id),
+                    member_indices,
+                });
+                next_group_id += 1;
+            }
+        }
+    }
+
+    groups
 }
 
 fn build_mutual_tco_layout(
@@ -834,6 +893,10 @@ fn emit_mutual_tco_trampoline(
         .instructions
         .push(Instruction::LocalSet(boundary_mark_local));
 
+    // Yard semantics: per-iteration mark for mutual TCO trampoline.
+    let iter_mark = emitter.alloc_local(WasmType::I32);
+    emitter.iter_mark_local = Some(iter_mark);
+
     emitter
         .instructions
         .push(Instruction::Loop(wasm_encoder::BlockType::Result(
@@ -841,6 +904,11 @@ fn emit_mutual_tco_trampoline(
         )));
     emitter.block_depth += 1;
     emitter.enable_tco_loop();
+
+    // Save heap_ptr at iteration start.
+    emitter.instructions.push(Instruction::GlobalGet(0));
+    emitter.instructions.push(Instruction::LocalSet(iter_mark));
+
     emit_mutual_dispatch_chain(&mut emitter, group, layout, user_fns, 0);
 
     if !emitter.errors.is_empty() {

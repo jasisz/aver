@@ -119,6 +119,7 @@ export class AverBrowserHost {
         this.lineQueue = [];
         this.programArgs = [];
         this.rawMode = false;
+        this.lastFlushMs = 0;
     }
 
     setInstance(instance) {
@@ -245,6 +246,15 @@ export class AverBrowserHost {
     }
 
     postTerminalSnapshot() {
+        // Throttle to ~60fps to prevent message queue from growing
+        // unboundedly when the WASM module flushes faster than the
+        // main thread can render.
+        const now = performance.now();
+        if (now - this.lastFlushMs < 16) {
+            return;
+        }
+        this.lastFlushMs = now;
+
         const snapshot = this.terminal.toSnapshot();
         this.post({
             type: "terminal",
@@ -309,6 +319,16 @@ export class AverBrowserHost {
 
     writeGuestString(text) {
         const bytes = this.encoder.encode(text);
+        // Use the tail of IO_SCRATCH (bytes 96-127) for short strings.
+        // Bytes 0-95 are reserved for IO_IOVEC, int_buf, float_buf etc.
+        const SCRATCH_STRING_BASE = 96;
+        const SCRATCH_STRING_CAP = IO_SCRATCH_SIZE - SCRATCH_STRING_BASE; // 32 bytes
+        if (bytes.length <= SCRATCH_STRING_CAP) {
+            const mem = this.memoryView();
+            mem.set(bytes, SCRATCH_STRING_BASE);
+            return [SCRATCH_STRING_BASE, bytes.length];
+        }
+        // Longer string: write at the end of memory.
         const mem = this.memoryView();
         const ptr = Math.max(IO_SCRATCH_SIZE, mem.length - bytes.length - 64);
         mem.set(bytes, ptr);
