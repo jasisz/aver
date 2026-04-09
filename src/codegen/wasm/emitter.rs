@@ -422,7 +422,9 @@ pub fn build_wasm_module(
     // Check which functions have TailCall expressions
     let tco_fns: HashSet<String> = user_fns
         .iter()
-        .filter(|entry| body_has_tailcall(&entry.fd.body))
+        .filter(|entry| {
+            body_has_self_tailcall(&entry.fd.body, &entry.fd.name, &entry.canonical_name)
+        })
         .map(|entry| entry.canonical_name.clone())
         .collect();
 
@@ -641,58 +643,13 @@ fn emit_plain_user_function(
 }
 
 fn build_mutual_tco_groups(
-    ctx: &CodegenContext,
-    user_fns: &[UserFnEntry<'_>],
+    _ctx: &CodegenContext,
+    _user_fns: &[UserFnEntry<'_>],
 ) -> Vec<MutualTcoGroup> {
-    let mut groups = Vec::new();
-    let mut next_group_id = 1usize;
-
-    let entry_index_by_name: HashMap<String, usize> = user_fns
-        .iter()
-        .enumerate()
-        .filter(|(_, entry)| entry.module_prefix.is_none() && entry.fd.name != "main")
-        .map(|(idx, entry)| (entry.fd.name.clone(), idx))
-        .collect();
-    let entry_fns: Vec<&FnDef> = ctx.fn_defs.iter().filter(|fd| fd.name != "main").collect();
-    for group in crate::call_graph::tailcall_scc_components(&entry_fns) {
-        let member_indices: Vec<usize> = group
-            .iter()
-            .filter_map(|fd| entry_index_by_name.get(&fd.name).copied())
-            .collect();
-        if member_indices.len() > 1 {
-            groups.push(MutualTcoGroup {
-                trampoline_name: format!("__mutual_tco_trampoline_{}", next_group_id),
-                member_indices,
-            });
-            next_group_id += 1;
-        }
-    }
-
-    for module in &ctx.modules {
-        let module_index_by_name: HashMap<String, usize> = user_fns
-            .iter()
-            .enumerate()
-            .filter(|(_, entry)| entry.module_prefix.as_deref() == Some(module.prefix.as_str()))
-            .map(|(idx, entry)| (entry.fd.name.clone(), idx))
-            .collect();
-
-        let module_fns: Vec<&FnDef> = module.fn_defs.iter().collect();
-        for group in crate::call_graph::tailcall_scc_components(&module_fns) {
-            let member_indices: Vec<usize> = group
-                .iter()
-                .filter_map(|fd| module_index_by_name.get(&fd.name).copied())
-                .collect();
-            if member_indices.len() > 1 {
-                groups.push(MutualTcoGroup {
-                    trampoline_name: format!("__mutual_tco_trampoline_{}", next_group_id),
-                    member_indices,
-                });
-                next_group_id += 1;
-            }
-        }
-    }
-
-    groups
+    // Mutual trampolines stay disabled while WASM uses the lighter parent-thin
+    // boundary model for helper chains. Re-enable once mutual tail-call lanes
+    // are ported cleanly from the VM/aver-memory story.
+    Vec::new()
 }
 
 fn build_mutual_tco_layout(
@@ -958,6 +915,12 @@ fn collect_strings_from_expr(expr: &Expr, strings: &mut HashSet<String>) {
                 collect_strings_from_expr(&item.node, strings);
             }
         }
+        Expr::MapLiteral(entries) => {
+            for (key, value) in entries {
+                collect_strings_from_expr(&key.node, strings);
+                collect_strings_from_expr(&value.node, strings);
+            }
+        }
         Expr::RecordCreate { fields, .. } => {
             for (_, expr) in fields {
                 collect_strings_from_expr(&expr.node, strings);
@@ -1095,22 +1058,30 @@ fn is_host_builtin(name: &str) -> bool {
     )
 }
 
-fn body_has_tailcall(body: &FnBody) -> bool {
+fn body_has_self_tailcall(body: &FnBody, local_name: &str, canonical_name: &str) -> bool {
     match body {
         FnBody::Block(stmts) => stmts.iter().any(|s| match s {
-            Stmt::Expr(e) => expr_has_tailcall(&e.node),
-            Stmt::Binding(_, _, e) => expr_has_tailcall(&e.node),
+            Stmt::Expr(e) => expr_has_self_tailcall(&e.node, local_name, canonical_name),
+            Stmt::Binding(_, _, e) => expr_has_self_tailcall(&e.node, local_name, canonical_name),
         }),
     }
 }
 
-fn expr_has_tailcall(expr: &Expr) -> bool {
+fn expr_has_self_tailcall(expr: &Expr, local_name: &str, canonical_name: &str) -> bool {
     match expr {
-        Expr::TailCall(_) => true,
-        Expr::Match { arms, .. } => arms.iter().any(|arm| expr_has_tailcall(&arm.body.node)),
-        Expr::BinOp(_, l, r) => expr_has_tailcall(&l.node) || expr_has_tailcall(&r.node),
+        Expr::TailCall(boxed) => boxed.0 == local_name || boxed.0 == canonical_name,
+        Expr::Match { arms, .. } => arms
+            .iter()
+            .any(|arm| expr_has_self_tailcall(&arm.body.node, local_name, canonical_name)),
+        Expr::BinOp(_, l, r) => {
+            expr_has_self_tailcall(&l.node, local_name, canonical_name)
+                || expr_has_self_tailcall(&r.node, local_name, canonical_name)
+        }
         Expr::FnCall(c, args) => {
-            expr_has_tailcall(&c.node) || args.iter().any(|a| expr_has_tailcall(&a.node))
+            expr_has_self_tailcall(&c.node, local_name, canonical_name)
+                || args
+                    .iter()
+                    .any(|a| expr_has_self_tailcall(&a.node, local_name, canonical_name))
         }
         _ => false,
     }
