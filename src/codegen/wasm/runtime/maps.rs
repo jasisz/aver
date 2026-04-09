@@ -73,11 +73,13 @@ pub(super) fn emit_map_get(rt: &RuntimeFuncIndices) -> Function {
 }
 
 /// $map_set(map: i32, key: i32, value: i64, value_ptr_flag: i32) -> i32
-/// Prepends new (key, value) entry and removes older entries with the same key.
+/// Prepends new (key, value) entry. If key already exists, removes the old entry first.
+/// Fast path: when no duplicate is found, just prepend (one alloc, no rebuild).
 pub(super) fn emit_map_set(rt: &RuntimeFuncIndices) -> Function {
     // params: map=0, key=1, value=2(i64), value_ptr_flag=3
-    // locals: tuple_ptr=4, cur=5, entry_tuple=6, entry_key=7, kept_rev=8, filtered_tail=9, map_cell=10
-    let mut f = Function::new(vec![(7, ValType::I32)]);
+    // locals: tuple_ptr=4, cur=5, entry_tuple=6, entry_key=7,
+    //         kept_rev=8, filtered_tail=9, map_cell=10, found_dup=11
+    let mut f = Function::new(vec![(8, ValType::I32)]);
     // Alloc tuple: header + 2 fields
     f.instruction(&Instruction::I32Const(24));
     f.instruction(&Instruction::Call(rt.alloc));
@@ -118,12 +120,88 @@ pub(super) fn emit_map_set(rt: &RuntimeFuncIndices) -> Function {
         align: 3,
         memory_index: 0,
     }));
+
+    // --- Fast path: scan for duplicate, if none found just prepend ---
+    // found_dup = 0; cur = map
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(11));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalSet(5));
+    // Scan for duplicate key
+    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::BrIf(1)); // end of list → no dup
+    // entry_key
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Call(rt.obj_field));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Call(rt.obj_field));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(rt.str_eq));
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    // Found duplicate
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalSet(11));
+    f.instruction(&Instruction::Br(2)); // break out of loop
+    f.instruction(&Instruction::End);
+    // next
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::Call(rt.obj_field_i32));
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // loop
+    f.instruction(&Instruction::End); // block
+
+    // If no duplicate: just prepend new entry to original map
+    f.instruction(&Instruction::LocalGet(11));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+        ValType::I32,
+    )));
+    f.instruction(&Instruction::I32Const(24));
+    f.instruction(&Instruction::Call(rt.alloc));
+    f.instruction(&Instruction::LocalSet(10));
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::I64Const(
+        make_header(OBJ_MAP_ENTRY, 0, 0, 2) as i64
+    ));
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 8,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::LocalGet(0)); // original map as tail
+    f.instruction(&Instruction::I64ExtendI32S);
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 16,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::Else);
+
+    // --- Slow path: duplicate found, rebuild without old entry ---
     // kept_rev = [] ; cur = map
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::LocalSet(8));
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalSet(5));
-    // Scan old map and keep only entries with different keys.
+    // Scan and collect non-duplicate entries in reverse
     f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
     f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
     f.instruction(&Instruction::LocalGet(5));
@@ -236,6 +314,7 @@ pub(super) fn emit_map_set(rt: &RuntimeFuncIndices) -> Function {
         memory_index: 0,
     }));
     f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::End); // end if/else
     f.instruction(&Instruction::End);
     f
 }
