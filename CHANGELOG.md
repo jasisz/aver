@@ -2,12 +2,18 @@
 
 All notable changes to Aver are documented here.
 
-## 0.8.3 (2026-04-07)
+## 0.9.0 (unreleased)
 
 ### Added
-- **WASM backend** — `aver compile --target wasm` and `aver run --wasm`. Typed ABI: Int→i64, Float→f64, arithmetic as native WASM instructions. Supports sum types, records, recursive variants, string interpolation, List/Map/Vector builtins, TCO.
-- **`aver/*` import ABI** — WASM modules declare host imports (`aver/console_print`, `aver/random_int`, `aver/math_sin` etc.) instead of WASI. Works with built-in host, browser JS shim, or custom host. `--adapter wasi` flag for standalone wasmtime.
+- **WASM backend** — `aver compile --target wasm` and `aver run --wasm`. Typed ABI (Int→i64, Float→f64, Bool→i32, heap types→i32 ptr), own `aver/*` import ABI, `--adapter wasi` for standalone wasmtime. Mutual TCO via dispatch trampolines. Bump allocator with boundary compaction and yard semantics (~1.5 KB runtime). Modules export `$alloc` for safe host string allocation.
+- **`aver/*` import ABI** — WASM modules declare host imports (`aver/console_print`, `aver/random_int`, `aver/math_sin` etc.) instead of WASI. Works with built-in host, browser JS shim, or custom host.
 - **`aver-memory` crate** — extracted NaN-boxed value representation and arena allocator into a standalone crate. Shared by interpreter and VM.
+- **Browser WASM runner** — `tools/wasm-runner/` with terminal canvas rendering, SharedArrayBuffer keyboard input, and ~60fps flush throttle.
+- **WASM in comparison bench** — `cargo bench --bench comparison_bench` includes `--wasm` mode.
+
+### Improved
+- **WASM performance** — yard semantics for TCO loops (skip compaction on small growth, full GC otherwise), inline `Vector.get+withDefault` (zero-alloc cell reads), fast-path `Map.set` (prepend-only for unique keys). Game of Life: 1300 FPS. Map build 5k: 0.07s.
+- **VM tail-call skip** — skip young-to-yard promotion when growth is ≤4 entries.
 
 ## 0.8.2 (2026-04-03)
 
