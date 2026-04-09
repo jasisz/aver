@@ -252,6 +252,14 @@ impl<'a> ExprEmitter<'a> {
             }
 
             CallPlan::Builtin(ref name) => {
+                // Fast path: Option.withDefault(Vector.get(v, i), default_literal)
+                // → inline bounds check + direct load, no wrapper allocation.
+                if name == "Option.withDefault"
+                    && args.len() == 2
+                    && self.try_emit_vec_get_or_default(&args[0], &args[1])
+                {
+                    return;
+                }
                 for arg in args {
                     self.emit_expr(&arg.node);
                 }
@@ -1185,6 +1193,93 @@ impl<'a> ExprEmitter<'a> {
     }
 
     // -----------------------------------------------------------------------
+    /// Try to emit `Option.withDefault(Vector.get(v, i), default)` as inline
+    /// bounds check + direct load, avoiding the Option wrapper allocation.
+    /// Returns true if the pattern was matched and code was emitted.
+    fn try_emit_vec_get_or_default(
+        &mut self,
+        option_expr: &Spanned<Expr>,
+        default_expr: &Spanned<Expr>,
+    ) -> bool {
+        // Check: option_expr is FnCall(Vector.get, [vec, idx])
+        let Expr::FnCall(callee, inner_args) = &option_expr.node else {
+            return false;
+        };
+        if inner_args.len() != 2 {
+            return false;
+        }
+        let inner_plan = classify_call_plan(&callee.node, &self.ir_ctx());
+        if !matches!(inner_plan, CallPlan::Builtin(ref n) if n == "Vector.get") {
+            return false;
+        }
+        // Check: default is a literal (Int or Bool)
+        let Expr::Literal(ref default_lit) = default_expr.node else {
+            return false;
+        };
+
+        let result_type = self.infer_expr_type(&default_expr.node);
+
+        // Emit: vec, idx (evaluate Vector.get's args but don't call vec_get)
+        self.emit_expr(&inner_args[0].node); // vec: i32
+        self.emit_expr(&inner_args[1].node); // idx: i64
+
+        let vec_local = self.alloc_local(WasmType::I32);
+        let idx_local = self.alloc_local(WasmType::I64);
+        let len_local = self.alloc_local(WasmType::I32);
+        let i_local = self.alloc_local(WasmType::I32);
+        self.instructions.push(Instruction::LocalSet(idx_local));
+        self.instructions.push(Instruction::LocalSet(vec_local));
+
+        // len = header & 0xFFFFFFFF
+        self.instructions.push(Instruction::LocalGet(vec_local));
+        self.instructions
+            .push(Instruction::I64Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }));
+        self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
+        self.instructions.push(Instruction::I64And);
+        self.instructions.push(Instruction::I32WrapI64);
+        self.instructions.push(Instruction::LocalSet(len_local));
+        // i = i32(idx)
+        self.instructions.push(Instruction::LocalGet(idx_local));
+        self.instructions.push(Instruction::I32WrapI64);
+        self.instructions.push(Instruction::LocalSet(i_local));
+        // Bounds check: i < 0 || i >= len → default
+        self.instructions.push(Instruction::LocalGet(i_local));
+        self.instructions.push(Instruction::I32Const(0));
+        self.instructions.push(Instruction::I32LtS);
+        self.instructions.push(Instruction::LocalGet(i_local));
+        self.instructions.push(Instruction::LocalGet(len_local));
+        self.instructions.push(Instruction::I32GeS);
+        self.instructions.push(Instruction::I32Or);
+        self.emit_if(wasm_encoder::BlockType::Result(result_type.to_val_type()));
+        // Out of bounds: default literal
+        self.emit_literal(default_lit);
+        self.emit_else();
+        // In bounds: load vec[i] directly
+        self.instructions.push(Instruction::LocalGet(vec_local));
+        self.instructions.push(Instruction::LocalGet(i_local));
+        self.instructions.push(Instruction::I32Const(8));
+        self.instructions.push(Instruction::I32Mul);
+        self.instructions.push(Instruction::I32Add);
+        self.instructions
+            .push(Instruction::I64Load(wasm_encoder::MemArg {
+                offset: 8,
+                align: 3,
+                memory_index: 0,
+            }));
+        // Convert i64 to result type if needed
+        match result_type {
+            WasmType::I64 => {}
+            WasmType::F64 => self.instructions.push(Instruction::F64ReinterpretI64),
+            WasmType::I32 => self.instructions.push(Instruction::I32WrapI64),
+        }
+        self.emit_end();
+        true
+    }
+
     // Helpers
     // -----------------------------------------------------------------------
 

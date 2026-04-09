@@ -400,6 +400,10 @@ pub fn build_wasm_module(
 
     export_section.export("memory", ExportKind::Memory, 0);
 
+    // Export $alloc so hosts can allocate guest memory for strings
+    // returned by host imports (readLine, readKey, format_value, etc.)
+    export_section.export("alloc", ExportKind::Func, rt.alloc);
+
     module.section(&export_section);
 
     // -----------------------------------------------------------------------

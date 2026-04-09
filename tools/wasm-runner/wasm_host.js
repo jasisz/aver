@@ -319,16 +319,22 @@ export class AverBrowserHost {
 
     writeGuestString(text) {
         const bytes = this.encoder.encode(text);
-        // Use the tail of IO_SCRATCH (bytes 96-127) for short strings.
-        // Bytes 0-95 are reserved for IO_IOVEC, int_buf, float_buf etc.
+        // Short strings: use IO_SCRATCH tail (bytes 96-127).
         const SCRATCH_STRING_BASE = 96;
-        const SCRATCH_STRING_CAP = IO_SCRATCH_SIZE - SCRATCH_STRING_BASE; // 32 bytes
+        const SCRATCH_STRING_CAP = IO_SCRATCH_SIZE - SCRATCH_STRING_BASE;
         if (bytes.length <= SCRATCH_STRING_CAP) {
             const mem = this.memoryView();
             mem.set(bytes, SCRATCH_STRING_BASE);
             return [SCRATCH_STRING_BASE, bytes.length];
         }
-        // Longer string: write at the end of memory.
+        // Longer strings: allocate via exported $alloc to avoid heap collision.
+        if (this.instance?.exports?.alloc) {
+            const ptr = this.instance.exports.alloc(bytes.length);
+            const mem = this.memoryView();
+            mem.set(bytes, ptr);
+            return [ptr, bytes.length];
+        }
+        // Fallback: end of memory (legacy modules without alloc export).
         const mem = this.memoryView();
         const ptr = Math.max(IO_SCRATCH_SIZE, mem.length - bytes.length - 64);
         mem.set(bytes, ptr);

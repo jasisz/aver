@@ -163,6 +163,58 @@ pub(super) fn emit_vec_get(rt: &RuntimeFuncIndices) -> Function {
     f
 }
 
+/// Unused — vec_get_or_default is now inlined at call site in emit.rs.
+#[allow(dead_code)]
+fn _emit_vec_get_or_default() -> Function {
+    // params: vec=0, idx=1(i64), default=2(i64). locals: len=3, i=4
+    let mut f = Function::new(vec![
+        (1, ValType::I32), // 3: len
+        (1, ValType::I32), // 4: i
+    ]);
+    // len = header count
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::I64Const(0xFFFFFFFF));
+    f.instruction(&Instruction::I64And);
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::LocalSet(3));
+    // i = i32(idx)
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::LocalSet(4));
+    // Bounds check
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32LtS);
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32GeS);
+    f.instruction(&Instruction::I32Or);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+        ValType::I64,
+    )));
+    f.instruction(&Instruction::LocalGet(2)); // default
+    f.instruction(&Instruction::Else);
+    // In bounds: load vec[i] directly
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::I32Mul);
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 8,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f
+}
+
 /// $vec_len(vec: i32) -> i64
 pub(super) fn emit_vec_len() -> Function {
     let mut f = Function::new(vec![]);
