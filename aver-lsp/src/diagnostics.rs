@@ -4,15 +4,13 @@ use tower_lsp_server::ls_types::{
 
 use std::sync::Arc as Rc;
 
-use aver::ast::VerifyKind;
-use aver::ast::{Expr, FnBody, FnDef, Spanned, TopLevel};
+use aver::ast::{Expr, FnBody, FnDef, Spanned, TopLevel, VerifyKind};
 use aver::checker::{
-    VerifyCaseOutcome, VerifyCaseResult, VerifyLawContext, VerifyResult,
     check_module_intent_with_sigs, collect_verify_coverage_warnings, expr_to_str,
     merge_verify_blocks,
 };
 use aver::lexer::{Lexer, LexerError};
-use aver::nan_value::Arena;
+use aver::nan_value::{Arena, NanValueConvert};
 use aver::parser::Parser;
 use aver::resolver;
 use aver::tco;
@@ -304,7 +302,6 @@ fn make_verify_vm_helper(
         Spanned {
             node: Expr::Constructor("Result.Ok".to_string(), Some(Box::new(body_expr.clone()))),
             line: body_expr.line,
-            col: body_expr.col,
         }
     } else {
         body_expr
@@ -405,45 +402,17 @@ fn verify_run_diagnostics(mut items: Vec<TopLevel>, base_dir: Option<&str>) -> V
 
     for plan in &plans {
         let block = &plan.block;
-        let case_total = block.cases.len();
-        let is_law = matches!(block.kind, VerifyKind::Law(_));
-        let law_context_template = if let VerifyKind::Law(law) = &block.kind {
-            Some(format!(
-                "{} == {}",
-                expr_to_str(&law.lhs),
-                expr_to_str(&law.rhs)
-            ))
-        } else {
-            None
-        };
 
         for (idx, ((left_expr, right_expr), case_fns)) in
             block.cases.iter().zip(&plan.cases).enumerate()
         {
             let case_str = format!("{} == {}", expr_to_str(left_expr), expr_to_str(right_expr));
-            let span = block.case_spans.get(idx).cloned();
-            let (line, col) = span
-                .as_ref()
-                .map(|s| (s.line, s.col))
-                .unwrap_or((block.line, 0));
-
-            let law_context = if let VerifyKind::Law(_) = &block.kind {
-                let givens: Vec<(String, String)> = block
-                    .case_givens
-                    .get(idx)
-                    .map(|gs| {
-                        gs.iter()
-                            .map(|(name, expr)| (name.clone(), expr_to_str(expr)))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                Some(VerifyLawContext {
-                    givens,
-                    law_expr: law_context_template.clone().unwrap_or_default(),
-                })
-            } else {
-                None
-            };
+            let line = block
+                .case_spans
+                .get(idx)
+                .map(|s| s.line)
+                .unwrap_or(block.line);
+            let col = 0usize;
 
             // Guard check
             if let Some(guard_name) = &case_fns.guard {

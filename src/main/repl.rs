@@ -261,7 +261,7 @@ fn repl_execute(accumulated: &[TopLevel], new_items: &[TopLevel]) -> Result<(), 
                 program.push(item.clone());
                 let getter = format!("__repl_get_{}", idx);
                 let getter_items = parse_source(&format!("fn {}()\n    {}", getter, name))
-                    .map_err(|e| format!("{}", e))?;
+                    .map_err(|e| e.to_string())?;
                 program.extend(getter_items);
                 actions.push(Action::ShowBinding {
                     getter,
@@ -302,7 +302,7 @@ fn repl_execute(accumulated: &[TopLevel], new_items: &[TopLevel]) -> Result<(), 
     let (code, globals) = vm::compile_program_with_modules(&program, &mut arena, None, "<repl>")
         .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
-    machine.run_top_level().map_err(|e| format!("{}", e))?;
+    machine.run_top_level().map_err(|e| e.to_string())?;
 
     // Display results — use machine.arena for all NanValue rendering.
     for action in &actions {
@@ -316,13 +316,13 @@ fn repl_execute(accumulated: &[TopLevel], new_items: &[TopLevel]) -> Result<(), 
             Action::ShowBinding { getter, name } => {
                 let nv = machine
                     .run_named_function(getter, &[])
-                    .map_err(|e| format!("{}", e))?;
+                    .map_err(|e| e.to_string())?;
                 println!("{} = {}", name, nv.repr(&machine.arena));
             }
             Action::ShowExpr { getter } => {
                 let nv = machine
                     .run_named_function(getter, &[])
-                    .map_err(|e| format!("{}", e))?;
+                    .map_err(|e| e.to_string())?;
                 if let Some(display) = nv.display(&machine.arena) {
                     println!("{}", display);
                 }
