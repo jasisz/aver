@@ -204,7 +204,7 @@ aver compile hello.av --target wasm --adapter wasi
 aver run hello.av --wasm
 ```
 
-See [docs/wasm.md](docs/wasm.md) for ABI details and browser hosting.
+See [docs/wasm.md](docs/wasm.md) for ABI, memory model, and browser hosting.
 
 ### Native Rust
 
@@ -559,7 +559,7 @@ For repository self-documentation via decision exports, see `decisions/architect
 | [docs/extending.md](docs/extending.md) | How to add keywords, namespace functions, expression types |
 | [docs/transpilation.md](docs/transpilation.md) | Overview of `aver compile` and `aver proof` |
 | [docs/rust.md](docs/rust.md) | Rust backend: deployment-oriented Cargo generation |
-| [src/codegen/wasm/README.md](src/codegen/wasm/README.md) | WASM backend: ABI, host interface, browser hosting |
+| [docs/wasm.md](docs/wasm.md) | WASM backend: ABI, memory model, browser hosting |
 | [docs/lean.md](docs/lean.md) | Lean backend: proof export and formal-verification path |
 | [docs/dafny.md](docs/dafny.md) | Dafny backend: Z3-powered automated law verification |
 | [docs/independence.md](docs/independence.md) | Independent products: the semantic model behind `?!` and `!` |
