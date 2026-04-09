@@ -86,8 +86,15 @@ impl VM {
         }
 
         if has_local_young {
-            self.arena
-                .promote_young_roots_to_yard(arena_mark, frame_roots);
+            // Small young growth (≤4 entries) means the iteration appended a
+            // few objects (e.g. one cons cell) without significant temporaries.
+            // Skip promotion — the entries stay in young, protected by
+            // arena_mark.  The next return boundary will evacuate them.
+            let young_growth = self.arena.young_len() - arena_mark as usize;
+            if young_growth > 4 {
+                self.arena
+                    .promote_young_roots_to_yard(arena_mark, frame_roots);
+            }
         }
     }
 
