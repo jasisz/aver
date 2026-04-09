@@ -36,6 +36,15 @@ pub fn register(global: &mut HashMap<String, Value>) {
     );
 }
 
+pub const DECLARED_EFFECTS: &[&str] = &[
+    "Tcp.send",
+    "Tcp.ping",
+    "Tcp.connect",
+    "Tcp.writeLine",
+    "Tcp.readLine",
+    "Tcp.close",
+];
+
 pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
         "Tcp.send" => &["Tcp.send"],

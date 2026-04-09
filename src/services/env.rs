@@ -30,6 +30,8 @@ pub fn register(global: &mut HashMap<String, Value>) {
     );
 }
 
+pub const DECLARED_EFFECTS: &[&str] = &["Env.get", "Env.set"];
+
 pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
         "Env.get" => &["Env.get"],

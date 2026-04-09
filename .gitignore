@@ -6,3 +6,4 @@ out/
 .junie/
 .env
 tools/wasm-runner/target/
+*.cwasm/

@@ -538,13 +538,7 @@ fn print_core_results(results: &[CoreResult]) {
     println!("{:-<128}", "");
     println!(
         "{:<22} {:>12} {:>12} {:>12} {:>12} {:>12} {:>8}",
-        "Benchmark",
-        "VM",
-        "WASM",
-        "Generated",
-        "Gen build",
-        "WASM speed",
-        "Match"
+        "Benchmark", "VM", "WASM", "Generated", "Gen build", "WASM speed", "Match"
     );
     println!("{:-<128}", "");
     for result in results {

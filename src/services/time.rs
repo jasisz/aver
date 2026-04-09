@@ -32,6 +32,8 @@ pub fn register(global: &mut HashMap<String, Value>) {
     );
 }
 
+pub const DECLARED_EFFECTS: &[&str] = &["Time.now", "Time.unixMs", "Time.sleep"];
+
 pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
         "Time.now" => &["Time.now"],

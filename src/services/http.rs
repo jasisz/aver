@@ -32,6 +32,15 @@ pub fn register(global: &mut HashMap<String, Value>) {
     );
 }
 
+pub const DECLARED_EFFECTS: &[&str] = &[
+    "Http.get",
+    "Http.head",
+    "Http.delete",
+    "Http.post",
+    "Http.put",
+    "Http.patch",
+];
+
 pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
         "Http.get" => &["Http.get"],

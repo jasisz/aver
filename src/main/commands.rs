@@ -21,7 +21,6 @@ use aver::codegen;
 use aver::codegen::ModuleInfo;
 use aver::codegen::lean as lean_codegen;
 use aver::codegen::rust as rust_codegen;
-use aver::value::{Value, aver_repr};
 use aver::nan_value::{Arena, NanValueConvert};
 use aver::resolver;
 use aver::source::{find_module_file, require_module_declaration};
@@ -29,6 +28,7 @@ use aver::tail_check::collect_non_tail_recursion_warnings_with_sigs;
 use aver::tco;
 use aver::types::checker::run_type_check_full;
 use aver::types::{Type, parse_type_str};
+use aver::value::{Value, aver_repr};
 use aver::verify_law::{
     collect_contextual_helper_law_hints, collect_missing_helper_law_hints,
     contextual_helper_law_message, missing_helper_law_message,
@@ -1961,7 +1961,6 @@ fn run_wasm_with_host(wasm_bytes: &[u8], program_args: &[String]) -> Result<(), 
 
     Ok(())
 }
-
 
 pub(super) fn cmd_run_self_hosted(
     file: &str,

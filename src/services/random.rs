@@ -28,6 +28,8 @@ pub fn register(global: &mut HashMap<String, Value>) {
     );
 }
 
+pub const DECLARED_EFFECTS: &[&str] = &["Random.int", "Random.float"];
+
 pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
         "Random.int" => &["Random.int"],

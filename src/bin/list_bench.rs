@@ -114,9 +114,8 @@ fn build_vm() -> Result<vm::VM, String> {
 
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
-    let (code, globals) =
-        vm::compile_program_with_modules(&items, &mut arena, None, "<bench>")
-            .map_err(|e| format!("VM compile error: {}", e))?;
+    let (code, globals) = vm::compile_program_with_modules(&items, &mut arena, None, "<bench>")
+        .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
     machine.run_top_level().map_err(|e| format!("{}", e))?;
     Ok(machine)

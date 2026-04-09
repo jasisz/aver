@@ -43,6 +43,17 @@ pub fn register(global: &mut HashMap<String, Value>) {
     );
 }
 
+pub const DECLARED_EFFECTS: &[&str] = &[
+    "Disk.readText",
+    "Disk.writeText",
+    "Disk.appendText",
+    "Disk.exists",
+    "Disk.delete",
+    "Disk.deleteDir",
+    "Disk.listDir",
+    "Disk.makeDir",
+];
+
 pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
         "Disk.readText" => &["Disk.readText"],

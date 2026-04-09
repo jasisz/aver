@@ -38,6 +38,8 @@ pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
     global.insert("HttpServer".to_string(), NanValue::new_namespace(ns_idx));
 }
 
+pub const DECLARED_EFFECTS: &[&str] = &["HttpServer.listen", "HttpServer.listenWith"];
+
 pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
         "HttpServer.listen" => &["HttpServer.listen"],

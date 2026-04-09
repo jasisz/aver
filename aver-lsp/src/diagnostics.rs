@@ -4,8 +4,8 @@ use tower_lsp_server::ls_types::{
 
 use std::sync::Arc as Rc;
 
-use aver::ast::{Expr, FnBody, FnDef, Spanned, TopLevel};
 use aver::ast::VerifyKind;
+use aver::ast::{Expr, FnBody, FnDef, Spanned, TopLevel};
 use aver::checker::{
     VerifyCaseOutcome, VerifyCaseResult, VerifyLawContext, VerifyResult,
     check_module_intent_with_sigs, collect_verify_coverage_warnings, expr_to_str,
@@ -351,19 +351,41 @@ fn verify_run_diagnostics(mut items: Vec<TopLevel>, base_dir: Option<&str>) -> V
             let prefix = format!("__verify_{}_{}_{}", block.fn_name, block_idx, case_idx);
             let left_name = format!("{}_left", prefix);
             let right_name = format!("{}_right", prefix);
-            items.push(make_verify_vm_helper(left_name.clone(), block.line, left_expr, true));
-            items.push(make_verify_vm_helper(right_name.clone(), block.line, right_expr, true));
+            items.push(make_verify_vm_helper(
+                left_name.clone(),
+                block.line,
+                left_expr,
+                true,
+            ));
+            items.push(make_verify_vm_helper(
+                right_name.clone(),
+                block.line,
+                right_expr,
+                true,
+            ));
             let guard_name = sample_guards
                 .and_then(|guards| guards.get(case_idx))
                 .cloned()
                 .map(|guard_expr| {
                     let name = format!("{}_guard", prefix);
-                    items.push(make_verify_vm_helper(name.clone(), block.line, guard_expr, false));
+                    items.push(make_verify_vm_helper(
+                        name.clone(),
+                        block.line,
+                        guard_expr,
+                        false,
+                    ));
                     name
                 });
-            case_plans.push(CaseFns { left: left_name, right: right_name, guard: guard_name });
+            case_plans.push(CaseFns {
+                left: left_name,
+                right: right_name,
+                guard: guard_name,
+            });
         }
-        plans.push(Plan { block: block.clone(), cases: case_plans });
+        plans.push(Plan {
+            block: block.clone(),
+            cases: case_plans,
+        });
     }
 
     resolver::resolve_program(&mut items);
@@ -386,7 +408,11 @@ fn verify_run_diagnostics(mut items: Vec<TopLevel>, base_dir: Option<&str>) -> V
         let case_total = block.cases.len();
         let is_law = matches!(block.kind, VerifyKind::Law(_));
         let law_context_template = if let VerifyKind::Law(law) = &block.kind {
-            Some(format!("{} == {}", expr_to_str(&law.lhs), expr_to_str(&law.rhs)))
+            Some(format!(
+                "{} == {}",
+                expr_to_str(&law.lhs),
+                expr_to_str(&law.rhs)
+            ))
         } else {
             None
         };
@@ -405,7 +431,11 @@ fn verify_run_diagnostics(mut items: Vec<TopLevel>, base_dir: Option<&str>) -> V
                 let givens: Vec<(String, String)> = block
                     .case_givens
                     .get(idx)
-                    .map(|gs| gs.iter().map(|(name, expr)| (name.clone(), expr_to_str(expr))).collect())
+                    .map(|gs| {
+                        gs.iter()
+                            .map(|(name, expr)| (name.clone(), expr_to_str(expr)))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 Some(VerifyLawContext {
                     givens,

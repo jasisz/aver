@@ -108,4 +108,3 @@ pub(super) fn format_type_errors(errors: &[TypeError]) -> String {
     }
     out.join("\n")
 }
-

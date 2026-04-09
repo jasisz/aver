@@ -5,8 +5,8 @@
 use std::sync::Arc as Rc;
 
 use aver::ast::{FnBody, FnDef, Stmt, TopLevel};
-use aver::nan_value::{Arena, NanValue, NanValueConvert};
 use aver::lexer::Lexer;
+use aver::nan_value::{Arena, NanValue, NanValueConvert};
 use aver::parser::Parser;
 use aver::resolver::resolve_program;
 use aver::tco;
@@ -61,7 +61,9 @@ fn eval(src: &str) -> Value {
             resolution: None,
         });
         let mut machine = vm_compile(&[wrapper]);
-        let result = machine.run_named_function("__eval", &[]).expect("eval failed");
+        let result = machine
+            .run_named_function("__eval", &[])
+            .expect("eval failed");
         result.to_value(&machine.arena)
     } else {
         panic!("expected a single expression, got: {:?}", item);
@@ -102,7 +104,9 @@ fn call_fn(src: &str, fn_name: &str, args: Vec<Value>) -> Value {
         .iter()
         .map(|v| NanValue::from_value(v, &mut machine.arena))
         .collect();
-    let result = machine.run_named_function(fn_name, &nv_args).expect("call failed");
+    let result = machine
+        .run_named_function(fn_name, &nv_args)
+        .expect("call failed");
     result.to_value(&machine.arena)
 }
 
@@ -118,7 +122,9 @@ fn run_program_lookup(src: &str, var_name: &str) -> Value {
     items.extend(getter_items);
     let mut machine = vm_compile(&items);
     machine.run_top_level().expect("top-level failed");
-    let result = machine.run_named_function("__get", &[]).expect("lookup failed");
+    let result = machine
+        .run_named_function("__get", &[])
+        .expect("lookup failed");
     result.to_value(&machine.arena)
 }
 
@@ -2136,10 +2142,14 @@ mod tcp_tests {
 #[test]
 fn verify_error_prop_ok_unwraps() {
     // `?` on Ok in a verify case should unwrap normally:  ok()? == 42
-    let src = "fn ok() -> Result<Int, String>\n    Result.Ok(42)\nfn __test() -> Bool\n    ok()? == 42\n";
+    let src =
+        "fn ok() -> Result<Int, String>\n    Result.Ok(42)\nfn __test() -> Bool\n    ok()? == 42\n";
     // `?` on Ok should unwrap and the value should equal 42
     // We use call_fn to evaluate the test helper
-    assert_eq!(call_fn(src, "ok", vec![]), Value::Ok(Box::new(Value::Int(42))));
+    assert_eq!(
+        call_fn(src, "ok", vec![]),
+        Value::Ok(Box::new(Value::Int(42)))
+    );
 }
 
 #[test]
@@ -2208,10 +2218,7 @@ fn verify_does_not_require_result_err_shape_coverage() {
 #[test]
 fn verify_does_not_require_bool_shape_coverage() {
     let src = "fn sign(n: Int) -> Bool\n    match n\n        0 -> true\n        _ -> false\n";
-    assert_eq!(
-        call_fn(src, "sign", vec![Value::Int(0)]),
-        Value::Bool(true)
-    );
+    assert_eq!(call_fn(src, "sign", vec![Value::Int(0)]), Value::Bool(true));
 }
 
 #[test]
@@ -2252,9 +2259,12 @@ mod module_runtime_tests {
         resolve_program(&mut items);
         let mut arena = Arena::new();
         vm::register_service_types(&mut arena);
-        let root_str = module_root.to_str().expect("module_root is not valid UTF-8");
-        let (code, globals) = vm::compile_program_with_modules(&items, &mut arena, Some(root_str), "<test>")
-            .expect("VM compile failed");
+        let root_str = module_root
+            .to_str()
+            .expect("module_root is not valid UTF-8");
+        let (code, globals) =
+            vm::compile_program_with_modules(&items, &mut arena, Some(root_str), "<test>")
+                .expect("VM compile failed");
         let mut machine = vm::VM::new(code, globals, arena);
         machine.run_top_level().expect("top-level failed");
         machine
@@ -2287,7 +2297,9 @@ fn main() -> Int
 "#;
 
         let mut machine = vm_build_with_modules(app_src, &root);
-        let out = machine.run_named_function("main", &[]).expect("main call failed")
+        let out = machine
+            .run_named_function("main", &[])
+            .expect("main call failed")
             .to_value(&machine.arena);
         assert_eq!(out, Value::Int(8));
 
@@ -2325,7 +2337,9 @@ fn probe() -> Int
 "#;
 
         let mut machine = vm_build_with_modules(app_src, &root);
-        let out = machine.run_named_function("probe", &[]).expect("probe call failed")
+        let out = machine
+            .run_named_function("probe", &[])
+            .expect("probe call failed")
             .to_value(&machine.arena);
         assert_eq!(out, Value::Int(110));
 
@@ -2358,7 +2372,9 @@ fn main() -> Unit
 "#;
 
         let mut machine = vm_build_with_modules(app_src, &root);
-        let out = machine.run_named_function("main", &[]).expect("main call failed")
+        let out = machine
+            .run_named_function("main", &[])
+            .expect("main call failed")
             .to_value(&machine.arena);
         assert_eq!(out, Value::Unit);
 
@@ -2407,11 +2423,14 @@ fn startedAt() -> String
         let mut arena = Arena::new();
         vm::register_service_types(&mut arena);
         let root_str = root.to_str().expect("utf-8");
-        let (code, globals) = vm::compile_program_with_modules(&items, &mut arena, Some(root_str), "<test>")
-            .expect("VM compile failed");
+        let (code, globals) =
+            vm::compile_program_with_modules(&items, &mut arena, Some(root_str), "<test>")
+                .expect("VM compile failed");
         let mut machine = vm::VM::new(code, globals, arena);
         machine.run_top_level().expect("top-level failed");
-        let out = machine.run_named_function("__test", &[]).expect("call failed")
+        let out = machine
+            .run_named_function("__test", &[])
+            .expect("call failed")
             .to_value(&machine.arena);
         assert_eq!(out, Value::Str("2026-03-08T12:00:00Z".to_string()));
 
@@ -2457,7 +2476,9 @@ fn main() -> Int
 "#;
 
         let mut machine = vm_build_with_modules(app_src, &root);
-        let out = machine.run_named_function("main", &[]).expect("main call failed")
+        let out = machine
+            .run_named_function("main", &[])
+            .expect("main call failed")
             .to_value(&machine.arena);
         assert_eq!(out, Value::Int(7));
 
@@ -2515,7 +2536,9 @@ fn main() -> Int
 "#;
 
         let mut machine = vm_build_with_modules(app_src, &root);
-        let out = machine.run_named_function("main", &[]).expect("main call failed")
+        let out = machine
+            .run_named_function("main", &[])
+            .expect("main call failed")
             .to_value(&machine.arena);
         assert_eq!(out, Value::Int(7));
 
@@ -2812,7 +2835,9 @@ fn ping() -> Unit
 "#;
         let mut machine = vm_build_with_effects(src);
         machine.start_recording();
-        let out = machine.run_named_function("ping", &[]).expect("ping failed")
+        let out = machine
+            .run_named_function("ping", &[])
+            .expect("ping failed")
             .to_value(&machine.arena);
         assert_eq!(out, Value::Unit);
 
@@ -2851,7 +2876,9 @@ fn check() -> Bool
             }],
             true,
         );
-        let out = machine.run_named_function("check", &[]).expect("check failed")
+        let out = machine
+            .run_named_function("check", &[])
+            .expect("check failed")
             .to_value(&machine.arena);
         assert_eq!(out, Value::Bool(true));
         machine
@@ -2883,10 +2910,14 @@ fn check() -> Bool
             }],
             false,
         );
-        let err = machine.run_named_function("check", &[]).expect_err("expected replay mismatch");
+        let err = machine
+            .run_named_function("check", &[])
+            .expect_err("expected replay mismatch");
         let err_str = err.to_string();
         assert!(
-            err_str.contains("replay") || err_str.contains("mismatch") || err_str.contains("Replay"),
+            err_str.contains("replay")
+                || err_str.contains("mismatch")
+                || err_str.contains("Replay"),
             "expected ReplayMismatch, got: {}",
             err_str
         );

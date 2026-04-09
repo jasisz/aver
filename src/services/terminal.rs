@@ -51,6 +51,21 @@ pub fn register(global: &mut HashMap<String, Value>) {
     );
 }
 
+pub const DECLARED_EFFECTS: &[&str] = &[
+    "Terminal.enableRawMode",
+    "Terminal.disableRawMode",
+    "Terminal.clear",
+    "Terminal.moveTo",
+    "Terminal.print",
+    "Terminal.setColor",
+    "Terminal.resetColor",
+    "Terminal.readKey",
+    "Terminal.size",
+    "Terminal.hideCursor",
+    "Terminal.showCursor",
+    "Terminal.flush",
+];
+
 pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
         "Terminal.enableRawMode" => &["Terminal.enableRawMode"],

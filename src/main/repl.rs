@@ -5,11 +5,11 @@ use colored::Colorize;
 
 use aver::ast::{Expr, FnBody, FnDef, Spanned, Stmt, TopLevel, TypeDef};
 use aver::checker::{expr_to_str, merge_verify_blocks};
-use aver::nan_value::{Arena, NanValue, NanValueConvert};
+use aver::nan_value::{Arena, NanValueConvert};
 use aver::resolver;
 use aver::source::parse_source;
 use aver::types::checker::run_type_check_with_base;
-use aver::value::Value;
+use aver::value::{Value, aver_repr};
 use aver::vm;
 
 use crate::shared::print_type_errors;
@@ -20,14 +20,12 @@ pub(super) fn is_incomplete(source: &str) -> bool {
         return false;
     }
 
-    // Inside a block: last non-empty line is indented
     if let Some(last) = lines.iter().rev().find(|l| !l.trim().is_empty())
         && (last.starts_with("    ") || last.starts_with('\t'))
     {
         return true;
     }
 
-    // Block header without a body (only 1 line so far)
     let first = lines[0].trim();
     let needs_body = first.starts_with("fn ")
         || first.starts_with("type ")
@@ -47,222 +45,6 @@ pub(super) fn repl_help() {
     println!();
     println!("Multi-line input: fn/type/record/verify/module start a block.");
     println!("Press Enter on an empty line to finish a block.");
-}
-
-/// Build a VM from accumulated items and run it. Returns the arena for display.
-/// Compile accumulated items + a wrapper that evaluates `expr` and calls it via VM.
-fn repl_eval_expr(
-    accumulated: &[TopLevel],
-    expr_item: &TopLevel,
-) -> Result<(Value, Arena), String> {
-    // Wrap the expression in a __repl_eval function so the VM can call it
-    let expr = match expr_item {
-        TopLevel::Stmt(Stmt::Expr(e)) => e.clone(),
-        TopLevel::Stmt(Stmt::Binding(name, ty, e)) => {
-            // For bindings, we need to evaluate the expression and return it
-            return repl_eval_binding(accumulated, name, ty.as_deref(), e);
-        }
-        _ => return Err("not an expression".to_string()),
-    };
-
-    let wrapper = TopLevel::FnDef(FnDef {
-        name: "__repl_eval".to_string(),
-        params: vec![],
-        line: 0,
-        return_type: "Unit".to_string(),
-        effects: vec![],
-        desc: None,
-        body: Rc::new(FnBody::from_expr(expr)),
-        resolution: None,
-    });
-
-    let mut all: Vec<TopLevel> = accumulated.to_vec();
-    all.push(wrapper);
-    resolver::resolve_program(&mut all);
-
-    let mut arena = Arena::new();
-    vm::register_service_types(&mut arena);
-    let (code, globals) =
-        vm::compile_program_with_modules(&all, &mut arena, None, "<repl>")
-            .map_err(|e| format!("VM compile error: {}", e))?;
-    let mut machine = vm::VM::new(code, globals, arena);
-    machine.run_top_level().map_err(|e| format!("{}", e))?;
-    let result = machine
-        .run_named_function("__repl_eval", &[])
-        .map_err(|e| format!("{}", e))?;
-    let val = result.to_value(&machine.arena);
-    let arena = machine.arena;
-    Ok((val, arena))
-}
-
-fn repl_eval_binding(
-    accumulated: &[TopLevel],
-    _name: &str,
-    _ty: Option<&str>,
-    expr: &Spanned<Expr>,
-) -> Result<(aver::value::Value, Arena), String> {
-    let wrapper = TopLevel::FnDef(FnDef {
-        name: "__repl_eval".to_string(),
-        params: vec![],
-        line: 0,
-        return_type: "Unit".to_string(),
-        effects: vec![],
-        desc: None,
-        body: Rc::new(FnBody::from_expr(expr.clone())),
-        resolution: None,
-    });
-
-    let mut all: Vec<TopLevel> = accumulated.to_vec();
-    all.push(wrapper);
-    resolver::resolve_program(&mut all);
-
-    let mut arena = Arena::new();
-    vm::register_service_types(&mut arena);
-    let (code, globals) =
-        vm::compile_program_with_modules(&all, &mut arena, None, "<repl>")
-            .map_err(|e| format!("VM compile error: {}", e))?;
-    let mut machine = vm::VM::new(code, globals, arena);
-    machine.run_top_level().map_err(|e| format!("{}", e))?;
-    let result = machine
-        .run_named_function("__repl_eval", &[])
-        .map_err(|e| format!("{}", e))?;
-    let val = result.to_value(&machine.arena);
-    let arena = machine.arena;
-    Ok((val, arena))
-}
-
-fn repl_run_verify(accumulated: &[TopLevel]) {
-    let verify_blocks = merge_verify_blocks(accumulated);
-    if verify_blocks.is_empty() {
-        return;
-    }
-
-    // Build VM verify plans
-    let mut items: Vec<TopLevel> = accumulated.to_vec();
-    struct CaseFns {
-        left: String,
-        right: String,
-    }
-    struct Plan {
-        block: aver::ast::VerifyBlock,
-        cases: Vec<CaseFns>,
-    }
-
-    let mut plans = Vec::new();
-    for (block_idx, block) in verify_blocks.iter().enumerate() {
-        let mut case_plans = Vec::new();
-        for (case_idx, (left_expr, right_expr)) in block.cases.iter().cloned().enumerate() {
-            let prefix = format!("__verify_{}_{}_{}", block.fn_name, block_idx, case_idx);
-            let left_name = format!("{}_left", prefix);
-            let right_name = format!("{}_right", prefix);
-            items.push(TopLevel::FnDef(FnDef {
-                name: left_name.clone(),
-                params: vec![],
-                line: block.line,
-                return_type: "Unit".to_string(),
-                effects: vec![],
-                desc: None,
-                body: Rc::new(FnBody::from_expr(Spanned {
-                    node: Expr::Constructor(
-                        "Result.Ok".to_string(),
-                        Some(Box::new(left_expr)),
-                    ),
-                    line: block.line,
-                })),
-                resolution: None,
-            }));
-            items.push(TopLevel::FnDef(FnDef {
-                name: right_name.clone(),
-                params: vec![],
-                line: block.line,
-                return_type: "Unit".to_string(),
-                effects: vec![],
-                desc: None,
-                body: Rc::new(FnBody::from_expr(Spanned {
-                    node: Expr::Constructor(
-                        "Result.Ok".to_string(),
-                        Some(Box::new(right_expr)),
-                    ),
-                    line: block.line,
-                })),
-                resolution: None,
-            }));
-            case_plans.push(CaseFns {
-                left: left_name,
-                right: right_name,
-            });
-        }
-        plans.push(Plan {
-            block: block.clone(),
-            cases: case_plans,
-        });
-    }
-
-    resolver::resolve_program(&mut items);
-    let mut arena = Arena::new();
-    vm::register_service_types(&mut arena);
-    let (code, globals) = match vm::compile_program_with_modules(&items, &mut arena, None, "<repl>")
-    {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("{} {}", "Error:".red(), e);
-            return;
-        }
-    };
-    let mut machine = vm::VM::new(code, globals, arena);
-
-    for plan in &plans {
-        let block = &plan.block;
-        let mut passed = 0usize;
-        let mut failed = 0usize;
-
-        for ((left_expr, right_expr), case_fns) in
-            block.cases.iter().zip(&plan.cases)
-        {
-            let case_str = format!("{} == {}", expr_to_str(left_expr), expr_to_str(right_expr));
-
-            let left_result = machine
-                .run_named_function(&case_fns.left, &[])
-                .map(|v| v.to_value(&machine.arena));
-            let right_result = machine
-                .run_named_function(&case_fns.right, &[])
-                .map(|v| v.to_value(&machine.arena));
-
-            match (left_result, right_result) {
-                (Ok(aver::value::Value::Ok(l)), Ok(aver::value::Value::Ok(r))) if *l == *r => {
-                    passed += 1;
-                }
-                (Ok(aver::value::Value::Ok(l)), Ok(aver::value::Value::Ok(r))) => {
-                    failed += 1;
-                    eprintln!(
-                        "  {} {} — expected {}, got {}",
-                        "✗".red(),
-                        case_str,
-                        aver::value::aver_repr(&r),
-                        aver::value::aver_repr(&l)
-                    );
-                }
-                (Err(e), _) | (_, Err(e)) => {
-                    failed += 1;
-                    eprintln!("  {} {} — {}", "✗".red(), case_str, e);
-                }
-                _ => {
-                    failed += 1;
-                    eprintln!("  {} {} — unexpected error", "✗".red(), case_str);
-                }
-            }
-        }
-
-        if failed == 0 {
-            println!(
-                "  {} {}  {}/{}",
-                "✓".green(),
-                block.fn_name,
-                passed,
-                passed + failed
-            );
-        }
-    }
 }
 
 pub(super) fn repl_env(accumulated: &[TopLevel]) {
@@ -292,6 +74,270 @@ pub(super) fn repl_env(accumulated: &[TopLevel]) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// VM verify plans — same approach as commands.rs::build_verify_vm_plans
+// ---------------------------------------------------------------------------
+
+struct VerifyCaseFns {
+    left: String,
+    right: String,
+}
+
+struct VerifyPlan {
+    block: aver::ast::VerifyBlock,
+    cases: Vec<VerifyCaseFns>,
+}
+
+fn make_verify_helper(
+    name: String,
+    line: usize,
+    body_expr: Spanned<Expr>,
+    effects: Vec<Spanned<String>>,
+) -> TopLevel {
+    TopLevel::FnDef(FnDef {
+        name,
+        params: vec![],
+        line,
+        return_type: String::new(),
+        effects,
+        desc: None,
+        body: Rc::new(FnBody::from_expr(Spanned {
+            node: Expr::Constructor("Result.Ok".to_string(), Some(Box::new(body_expr))),
+            line,
+        })),
+        resolution: None,
+    })
+}
+
+/// Inject __verify_* helper functions into `program` and return plans for execution.
+fn build_verify_plans(
+    program: &mut Vec<TopLevel>,
+    verify_blocks: &[aver::ast::VerifyBlock],
+    effects: &[Spanned<String>],
+) -> Vec<VerifyPlan> {
+    let mut plans = Vec::with_capacity(verify_blocks.len());
+
+    for (block_idx, block) in verify_blocks.iter().enumerate() {
+        let mut case_plans = Vec::with_capacity(block.cases.len());
+        for (case_idx, (left_expr, right_expr)) in block.cases.iter().cloned().enumerate() {
+            let prefix = format!("__verify_{}_{}_{}", block.fn_name, block_idx, case_idx);
+            let left_name = format!("{}_left", prefix);
+            let right_name = format!("{}_right", prefix);
+            program.push(make_verify_helper(
+                left_name.clone(),
+                block.line,
+                left_expr,
+                effects.to_vec(),
+            ));
+            program.push(make_verify_helper(
+                right_name.clone(),
+                block.line,
+                right_expr,
+                effects.to_vec(),
+            ));
+            case_plans.push(VerifyCaseFns {
+                left: left_name,
+                right: right_name,
+            });
+        }
+        plans.push(VerifyPlan {
+            block: block.clone(),
+            cases: case_plans,
+        });
+    }
+
+    plans
+}
+
+fn run_verify_plans(machine: &mut vm::VM, plans: &[VerifyPlan]) {
+    for plan in plans {
+        let block = &plan.block;
+        let mut passed = 0usize;
+        let mut failed = 0usize;
+        let case_total = block.cases.len();
+
+        for ((left_expr, right_expr), case_fns) in block.cases.iter().zip(&plan.cases) {
+            let case_str = format!("{} == {}", expr_to_str(left_expr), expr_to_str(right_expr));
+
+            let left_result = machine
+                .run_named_function(&case_fns.left, &[])
+                .map(|v| v.to_value(&machine.arena));
+            let right_result = machine
+                .run_named_function(&case_fns.right, &[])
+                .map(|v| v.to_value(&machine.arena));
+
+            match (left_result, right_result) {
+                (Ok(Value::Ok(l)), Ok(Value::Ok(r))) if *l == *r => {
+                    passed += 1;
+                }
+                (Ok(Value::Ok(l)), Ok(Value::Ok(r))) => {
+                    failed += 1;
+                    eprintln!(
+                        "  {} {} — expected {}, got {}",
+                        "✗".red(),
+                        case_str,
+                        aver_repr(&r),
+                        aver_repr(&l)
+                    );
+                }
+                (Ok(Value::Err(e)), _) | (_, Ok(Value::Err(e))) => {
+                    failed += 1;
+                    eprintln!(
+                        "  {} {} — ? hit Result.Err({})",
+                        "✗".red(),
+                        case_str,
+                        aver_repr(&e)
+                    );
+                }
+                (Err(e), _) | (_, Err(e)) => {
+                    failed += 1;
+                    eprintln!("  {} {} — {}", "✗".red(), case_str, e);
+                }
+                _ => {
+                    failed += 1;
+                    eprintln!("  {} {} — unexpected result shape", "✗".red(), case_str);
+                }
+            }
+        }
+
+        if failed == 0 {
+            println!(
+                "  {} {}      {}/{}",
+                "✓".green(),
+                block.fn_name,
+                passed,
+                case_total
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Core REPL execution
+// ---------------------------------------------------------------------------
+
+/// Compile accumulated + new_items together, execute top-level, then call
+/// getter functions for display.  All new items see each other.
+fn repl_execute(accumulated: &[TopLevel], new_items: &[TopLevel]) -> Result<(), String> {
+    // Build program = accumulated + new items.
+    // Bindings stay as top-level statements (executed by run_top_level).
+    // Bare expressions become wrapper functions (avoids double evaluation).
+    let mut program: Vec<TopLevel> = accumulated.to_vec();
+
+    // Grant all known service effects to REPL wrappers.  The type checker
+    // already validated effect usage on the original expressions before we
+    // get here, so this cannot open a hole — it only prevents the VM from
+    // rejecting a wrapper whose body the type checker already approved.
+    let all_effects: Vec<Spanned<String>> = aver::services::all_effect_names()
+        .into_iter()
+        .map(|s| Spanned {
+            node: s.to_string(),
+            line: 0,
+        })
+        .collect();
+
+    enum Action {
+        Defined(String),
+        DefinedType(String),
+        ShowBinding { getter: String, name: String },
+        ShowExpr { getter: String },
+    }
+    let mut actions: Vec<Action> = Vec::new();
+
+    for (idx, item) in new_items.iter().enumerate() {
+        match item {
+            TopLevel::FnDef(fd) => {
+                program.push(item.clone());
+                actions.push(Action::Defined(fd.name.clone()));
+            }
+            TopLevel::TypeDef(td) => {
+                program.push(item.clone());
+                let name = match td {
+                    TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name.clone(),
+                };
+                actions.push(Action::DefinedType(name));
+            }
+            TopLevel::Stmt(Stmt::Binding(name, _, _)) => {
+                program.push(item.clone());
+                let getter = format!("__repl_get_{}", idx);
+                let getter_items = parse_source(&format!("fn {}()\n    {}", getter, name))
+                    .map_err(|e| format!("{}", e))?;
+                program.extend(getter_items);
+                actions.push(Action::ShowBinding {
+                    getter,
+                    name: name.clone(),
+                });
+            }
+            TopLevel::Stmt(Stmt::Expr(expr)) => {
+                let getter = format!("__repl_eval_{}", idx);
+                program.push(TopLevel::FnDef(FnDef {
+                    name: getter.clone(),
+                    params: vec![],
+                    line: expr.line,
+                    return_type: String::new(),
+                    effects: all_effects.clone(),
+                    desc: None,
+                    body: Rc::new(FnBody::from_expr(expr.clone())),
+                    resolution: None,
+                }));
+                actions.push(Action::ShowExpr { getter });
+            }
+            TopLevel::Verify(_) => {
+                program.push(item.clone());
+            }
+            _ => {
+                program.push(item.clone());
+            }
+        }
+    }
+
+    // Build verify plans BEFORE compilation — injects __verify_* helper fns.
+    let verify_blocks = merge_verify_blocks(&program);
+    let verify_plans = build_verify_plans(&mut program, &verify_blocks, &all_effects);
+
+    // Compile and run once.
+    resolver::resolve_program(&mut program);
+    let mut arena = Arena::new();
+    vm::register_service_types(&mut arena);
+    let (code, globals) = vm::compile_program_with_modules(&program, &mut arena, None, "<repl>")
+        .map_err(|e| format!("VM compile error: {}", e))?;
+    let mut machine = vm::VM::new(code, globals, arena);
+    machine.run_top_level().map_err(|e| format!("{}", e))?;
+
+    // Display results — use machine.arena for all NanValue rendering.
+    for action in &actions {
+        match action {
+            Action::Defined(name) => {
+                println!("{}", format!("defined: {}", name).cyan());
+            }
+            Action::DefinedType(name) => {
+                println!("{}", format!("defined type: {}", name).cyan());
+            }
+            Action::ShowBinding { getter, name } => {
+                let nv = machine
+                    .run_named_function(getter, &[])
+                    .map_err(|e| format!("{}", e))?;
+                println!("{} = {}", name, nv.repr(&machine.arena));
+            }
+            Action::ShowExpr { getter } => {
+                let nv = machine
+                    .run_named_function(getter, &[])
+                    .map_err(|e| format!("{}", e))?;
+                if let Some(display) = nv.display(&machine.arena) {
+                    println!("{}", display);
+                }
+            }
+        }
+    }
+
+    // Execute verify plans.
+    if !verify_plans.is_empty() {
+        run_verify_plans(&mut machine, &verify_plans);
+    }
+
+    Ok(())
+}
+
 pub(super) fn cmd_repl() {
     let mut accumulated: Vec<TopLevel> = Vec::new();
     let mut buffer: Vec<String> = Vec::new();
@@ -314,7 +360,7 @@ pub(super) fn cmd_repl() {
             Ok(0) => {
                 println!();
                 break;
-            } // EOF (Ctrl+D)
+            }
             Ok(_) => {}
             Err(_) => break,
         }
@@ -323,7 +369,6 @@ pub(super) fn cmd_repl() {
             .trim_end_matches('\r')
             .to_string();
 
-        // REPL commands — only when buffer is empty
         if buffer.is_empty() && line.trim().starts_with(':') {
             match line.trim() {
                 ":quit" | ":q" => {
@@ -353,18 +398,15 @@ pub(super) fn cmd_repl() {
         buffer.push(line.clone());
         let source = buffer.join("\n");
 
-        // Incomplete input and not an empty line → prompt for more
         if is_incomplete(&source) && !line.trim().is_empty() {
             continue;
         }
 
-        // Empty input → ignore
         if source.trim().is_empty() {
             buffer.clear();
             continue;
         }
 
-        // Parse
         let new_items = match parse_source(&source) {
             Ok(items) => items,
             Err(e) => {
@@ -379,7 +421,7 @@ pub(super) fn cmd_repl() {
             continue;
         }
 
-        // Typecheck (accumulated + new items)
+        // Typecheck accumulated + new items together.
         let all: Vec<TopLevel> = accumulated
             .iter()
             .chain(new_items.iter())
@@ -392,56 +434,15 @@ pub(super) fn cmd_repl() {
             continue;
         }
 
-        // Execute new items via VM
-        let mut ok = true;
-        for item in &new_items {
-            match item {
-                TopLevel::FnDef(fd) => {
-                    println!("{}", format!("defined: {}", fd.name).cyan());
-                }
-                TopLevel::TypeDef(td) => {
-                    let name = match td {
-                        TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name,
-                    };
-                    println!("{}", format!("defined type: {}", name).cyan());
-                }
-                TopLevel::Stmt(s) => {
-                    match repl_eval_expr(&accumulated, item) {
-                        Ok((val, arena)) => match s {
-                            Stmt::Binding(name, _, _) => {
-                                let nv = NanValue::from_value(&val, &mut Arena::new());
-                                println!("{} = {}", name, nv.repr(&arena));
-                            }
-                            Stmt::Expr(_) => {
-                                let nv = NanValue::from_value(&val, &mut Arena::new());
-                                if let Some(display) = nv.display(&arena) {
-                                    println!("{}", display);
-                                }
-                            }
-                        },
-                        Err(e) => {
-                            eprintln!("{} {}", "Error:".red(), e);
-                            ok = false;
-                            break;
-                        }
-                    }
-                }
-                TopLevel::Verify(_) => {
-                    // Run verify blocks with all accumulated items + new
-                    let tentative: Vec<TopLevel> = accumulated
-                        .iter()
-                        .chain(new_items.iter())
-                        .cloned()
-                        .collect();
-                    repl_run_verify(&tentative);
-                }
-                _ => {}
+        match repl_execute(&accumulated, &new_items) {
+            Ok(()) => {
+                accumulated.extend(new_items);
+            }
+            Err(e) => {
+                eprintln!("{} {}", "Error:".red(), e);
             }
         }
 
-        if ok {
-            accumulated.extend(new_items);
-        }
         buffer.clear();
     }
 }

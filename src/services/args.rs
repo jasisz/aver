@@ -21,6 +21,8 @@ pub fn register(global: &mut HashMap<String, Value>) {
     );
 }
 
+pub const DECLARED_EFFECTS: &[&str] = &["Args.get"];
+
 pub fn effects(name: &str) -> &'static [&'static str] {
     match name {
         "Args.get" => &["Args.get"],

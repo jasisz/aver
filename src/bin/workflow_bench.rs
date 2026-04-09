@@ -244,9 +244,7 @@ fn run_workload(
             vec!["show_task".to_string(), format!("t{}", seed)],
             iters,
         )?,
-        Workload::RunRules => {
-            benchmark_query(&mut machine, vec!["run_rules".to_string()], iters)?
-        }
+        Workload::RunRules => benchmark_query(&mut machine, vec!["run_rules".to_string()], iters)?,
     };
 
     Ok((seed_elapsed, measured))
