@@ -7,7 +7,7 @@
 /// emit_tailcall, emit_literal, emit_string_literal, emit_default_init.
 use std::collections::HashMap;
 
-use wasm_encoder::{Instruction, ValType};
+use wasm_encoder::Instruction;
 
 use crate::ast::{BinOp, Expr, Literal, Spanned, Stmt, StrPart};
 use crate::ir::{
@@ -1088,26 +1088,21 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions
                     .push(Instruction::LocalSet(tmp_base + i as u32));
             }
-            // Yard semantics with adaptive full-GC: normally compact only the
-            // current iteration [iter_mark, heap_ptr). When the yard has grown
-            // too large (heap_ptr > 2 * iter_mark - fn_mark), fall back to a
-            // full compact from fn_mark to collect dead yard objects.
+            // Yard semantics: skip compaction when heap barely grew (accumulator
+            // pattern like stepLoop — O(1)), full GC from fn_mark otherwise
+            // (replacement pattern like gameLoop — collects dead old values).
             if let Some(iter_mark) = self.iter_mark_local {
                 let fn_mark = self.boundary_mark_local.unwrap_or(iter_mark);
-                // if (heap_ptr > iter_mark + (iter_mark - fn_mark)) use fn_mark
+                // if (heap_ptr - iter_mark > 256) → full GC, else skip
                 self.instructions.push(Instruction::GlobalGet(0));
                 self.instructions.push(Instruction::LocalGet(iter_mark));
-                self.instructions.push(Instruction::LocalGet(iter_mark));
-                self.instructions.push(Instruction::LocalGet(fn_mark));
                 self.instructions.push(Instruction::I32Sub);
-                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::I32Const(256));
                 self.instructions.push(Instruction::I32GtU);
-                self.emit_if(wasm_encoder::BlockType::Result(ValType::I32));
+                self.emit_if(wasm_encoder::BlockType::Empty);
                 self.instructions.push(Instruction::LocalGet(fn_mark));
-                self.emit_else();
-                self.instructions.push(Instruction::LocalGet(iter_mark));
-                self.emit_end();
                 self.emit_tco_compaction(args, tmp_base);
+                self.emit_end();
             } else if let Some(mark_local) = self.boundary_mark_local {
                 self.instructions.push(Instruction::LocalGet(mark_local));
                 self.emit_tco_compaction(args, tmp_base);
@@ -1146,22 +1141,18 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions
                     .push(Instruction::LocalSet(tmp_base + i as u32));
             }
-            // Adaptive yard GC (same logic as mutual TCO above).
+            // Yard semantics: skip when heap barely grew, full GC otherwise.
             if let Some(iter_mark) = self.iter_mark_local {
                 let fn_mark = self.boundary_mark_local.unwrap_or(iter_mark);
                 self.instructions.push(Instruction::GlobalGet(0));
                 self.instructions.push(Instruction::LocalGet(iter_mark));
-                self.instructions.push(Instruction::LocalGet(iter_mark));
-                self.instructions.push(Instruction::LocalGet(fn_mark));
                 self.instructions.push(Instruction::I32Sub);
-                self.instructions.push(Instruction::I32Add);
+                self.instructions.push(Instruction::I32Const(256));
                 self.instructions.push(Instruction::I32GtU);
-                self.emit_if(wasm_encoder::BlockType::Result(ValType::I32));
+                self.emit_if(wasm_encoder::BlockType::Empty);
                 self.instructions.push(Instruction::LocalGet(fn_mark));
-                self.emit_else();
-                self.instructions.push(Instruction::LocalGet(iter_mark));
-                self.emit_end();
                 self.emit_tco_compaction(args, tmp_base);
+                self.emit_end();
             } else if let Some(mark_local) = self.boundary_mark_local {
                 self.instructions.push(Instruction::LocalGet(mark_local));
                 self.emit_tco_compaction(args, tmp_base);

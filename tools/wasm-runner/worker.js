@@ -22,6 +22,7 @@ async function runModule(wasmBytes) {
         host.post({ type: "status", level: "success", text: "Finished." });
         host.post({ type: "finished", ok: true });
     } catch (error) {
+        console.error("[aver-wasm]", error);
         const message = error instanceof Error ? error.message : String(error);
         host.post({ type: "status", level: "error", text: message });
         host.post({ type: "finished", ok: false, error: message });
