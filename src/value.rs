@@ -109,11 +109,8 @@ pub struct FunctionValue {
     pub return_type: Rc<String>,
     pub effects: Rc<Vec<String>>,
     pub body: Rc<FnBody>,
-    pub(crate) lowered_body: Rc<crate::interpreter::lowered::LoweredFunctionBody>,
     /// Compile-time resolution metadata (slot layout for locals).
     pub resolution: Option<crate::ast::FnResolution>,
-    /// True only for functions selected by `compute_memo_fns` in the
-    /// interpreter that defined them.
     pub memo_eligible: bool,
     /// Optional function-specific global scope (used by imported module
     /// functions so they resolve names in their home module).
@@ -401,6 +398,19 @@ pub(crate) fn list_concat(left: &Value, right: &Value) -> Option<Value> {
 
 pub(crate) fn list_reverse(list: &Value) -> Option<Value> {
     list_view(list).map(|items| Value::List(items.reverse()))
+}
+
+// ---------------------------------------------------------------------------
+// Effect inspection
+// ---------------------------------------------------------------------------
+
+/// Extract the declared effects from a callable value (free function — no
+/// interpreter needed).
+pub fn callable_declared_effects(fn_val: &Value) -> Vec<String> {
+    match fn_val {
+        Value::Fn(function) => function.effects.as_ref().clone(),
+        _ => vec![],
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -20,7 +20,7 @@ Aver is closer to "pure and constrained" than to modern abstraction-heavy functi
 
 No, because then the reviewer would need to understand Rust macros.
 
-The whole point is that the artifact is readable without knowing the implementation language. Aver reads the same whether it runs through the interpreter, VM, or native Rust codegen. A Rust macro DSL would make readability depend on a layer of Rust that is already hard to review.
+The whole point is that the artifact is readable without knowing the implementation language. Aver reads the same whether it runs through the VM, self-hosted path, or native Rust codegen. A Rust macro DSL would make readability depend on a layer of Rust that is already hard to review.
 
 ---
 
@@ -69,7 +69,7 @@ If the guarantees live outside the artifact, you're just making software easier 
 
 No, but it is still young.
 
-The same source file runs unchanged through four execution modes: tree-walking interpreter, bytecode VM, self-hosted (an Aver interpreter written in Aver, compiled to Rust), and native Rust codegen. The self-hosted pipeline alone is several thousand lines of Aver — lexer, parser, evaluator — running through the full stack.
+The same source file runs unchanged through three execution modes: bytecode VM, self-hosted (an Aver interpreter written in Aver, compiled to Rust), and native Rust codegen. The self-hosted pipeline alone is several thousand lines of Aver — lexer, parser, evaluator — running through the full stack.
 
 The language has its own LSP and generates proof obligations for Lean and Dafny.
 

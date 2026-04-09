@@ -1,17 +1,16 @@
-use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::hint::black_box;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use aver::ast::TopLevel;
-use aver::interpreter::{Interpreter, Value, aver_repr};
+use aver::nan_value::{Arena, NanValue, NanValueConvert};
 use aver::resolver;
 use aver::source::{parse_source, require_module_declaration};
 use aver::tco;
 use aver::types::checker::run_type_check_full;
-use aver::value::list_from_vec;
+use aver::value::{Value, aver_repr, list_from_vec};
+use aver::vm;
 
 const MODULE_ROOT: &str = "projects/workflow_engine";
 const ENTRY_FILE: &str = "projects/workflow_engine/app/cli.av";
@@ -100,33 +99,7 @@ fn read_file(path: &str) -> Result<String, String> {
     fs::read_to_string(path).map_err(|e| format!("Cannot open file '{}': {}", path, e))
 }
 
-fn load_dep_modules(
-    interp: &mut Interpreter,
-    items: &[TopLevel],
-    module_root: &str,
-) -> Result<(), String> {
-    let mut loading = Vec::new();
-    let mut loading_set = HashSet::new();
-    if let Some(module) = items.iter().find_map(|item| {
-        if let TopLevel::Module(module) = item {
-            Some(module)
-        } else {
-            None
-        }
-    }) {
-        for dep_name in &module.depends {
-            let ns = interp
-                .load_module(dep_name, module_root, &mut loading, &mut loading_set)
-                .map_err(|e| e.to_string())?;
-            interp
-                .define_module_path(dep_name, ns)
-                .map_err(|e| e.to_string())?;
-        }
-    }
-    Ok(())
-}
-
-fn build_interpreter() -> Result<Interpreter, String> {
+fn build_vm() -> Result<vm::VM, String> {
     let source = read_file(ENTRY_FILE)?;
     let mut items = parse_source(&source)?;
     require_module_declaration(&items, ENTRY_FILE)?;
@@ -145,31 +118,25 @@ fn build_interpreter() -> Result<Interpreter, String> {
 
     resolver::resolve_program(&mut items);
 
-    let mut interp = Interpreter::new();
-    load_dep_modules(&mut interp, &items, MODULE_ROOT)?;
-
-    for item in &items {
-        if let TopLevel::TypeDef(td) = item {
-            interp.register_type_def(td);
-        }
-    }
-    for item in &items {
-        if let TopLevel::FnDef(fd) = item {
-            interp.exec_fn_def(fd).map_err(|e| e.to_string())?;
-        }
-    }
-
-    Ok(interp)
+    let mut arena = Arena::new();
+    vm::register_service_types(&mut arena);
+    let (code, globals) =
+        vm::compile_program_with_modules(&items, &mut arena, Some(MODULE_ROOT), ENTRY_FILE)
+            .map_err(|e| format!("VM compile error: {}", e))?;
+    let mut machine = vm::VM::new(code, globals, arena);
+    machine.run_top_level().map_err(|e| format!("{}", e))?;
+    Ok(machine)
 }
 
-fn call_fn(interp: &mut Interpreter, name: &str, args: Vec<Value>) -> Result<Value, String> {
-    let fn_val = interp
-        .lookup(name)
-        .map_err(|_| format!("function '{}' not found", name))?;
-    let allowed = Interpreter::callable_declared_effects(&fn_val);
-    interp
-        .call_value_with_effects_pub(fn_val, args, &format!("<{}>", name), allowed)
-        .map_err(|e| e.to_string())
+fn call_fn(machine: &mut vm::VM, name: &str, args: Vec<Value>) -> Result<Value, String> {
+    let nv_args: Vec<NanValue> = args
+        .iter()
+        .map(|v| NanValue::from_value(v, &mut machine.arena))
+        .collect();
+    let result = machine
+        .run_named_function(name, &nv_args)
+        .map_err(|e| e.to_string())?;
+    Ok(result.to_value(&machine.arena))
 }
 
 fn unwrap_ok(value: Value, context: &str) -> Result<Value, String> {
@@ -191,8 +158,8 @@ where
     list_from_vec(items.into_iter().map(Value::Str).collect())
 }
 
-fn execute_args(interp: &mut Interpreter, args: Vec<String>) -> Result<Value, String> {
-    let value = call_fn(interp, "executeArgs", vec![string_list(args.clone())])?;
+fn execute_args(machine: &mut vm::VM, args: Vec<String>) -> Result<Value, String> {
+    let value = call_fn(machine, "executeArgs", vec![string_list(args.clone())])?;
     unwrap_ok(value, &format!("executeArgs({})", args.join(" ")))
 }
 
@@ -205,14 +172,14 @@ fn reset_store() -> Result<(), String> {
     Ok(())
 }
 
-fn init_store(interp: &mut Interpreter) -> Result<(), String> {
-    let _ = unwrap_ok(call_fn(interp, "initCli", vec![])?, "initCli")?;
+fn init_store(machine: &mut vm::VM) -> Result<(), String> {
+    let _ = unwrap_ok(call_fn(machine, "initCli", vec![])?, "initCli")?;
     Ok(())
 }
 
-fn create_project(interp: &mut Interpreter) -> Result<(), String> {
+fn create_project(machine: &mut vm::VM) -> Result<(), String> {
     let _ = execute_args(
-        interp,
+        machine,
         vec![
             "create_project".to_string(),
             "alpha".to_string(),
@@ -234,27 +201,27 @@ fn create_task_args(task_index: usize) -> Vec<String> {
     ]
 }
 
-fn seed_tasks(interp: &mut Interpreter, seed: usize) -> Result<Duration, String> {
+fn seed_tasks(machine: &mut vm::VM, seed: usize) -> Result<Duration, String> {
     reset_store()?;
-    init_store(interp)?;
-    create_project(interp)?;
+    init_store(machine)?;
+    create_project(machine)?;
 
     let started = Instant::now();
     for idx in 1..=seed {
-        black_box(execute_args(interp, create_task_args(idx))?);
+        black_box(execute_args(machine, create_task_args(idx))?);
     }
     Ok(started.elapsed())
 }
 
 fn benchmark_query(
-    interp: &mut Interpreter,
+    machine: &mut vm::VM,
     args: Vec<String>,
     iters: usize,
 ) -> Result<Duration, String> {
-    black_box(execute_args(interp, args.clone())?);
+    black_box(execute_args(machine, args.clone())?);
     let started = Instant::now();
     for _ in 0..iters {
-        black_box(execute_args(interp, args.clone())?);
+        black_box(execute_args(machine, args.clone())?);
     }
     Ok(started.elapsed())
 }
@@ -264,18 +231,22 @@ fn run_workload(
     seed: usize,
     iters: usize,
 ) -> Result<(Duration, Duration), String> {
-    let mut interp = build_interpreter()?;
-    let seed_elapsed = seed_tasks(&mut interp, seed)?;
+    let mut machine = build_vm()?;
+    let seed_elapsed = seed_tasks(&mut machine, seed)?;
 
     let measured = match workload {
         Workload::SeedTasks => seed_elapsed,
-        Workload::ListTasks => benchmark_query(&mut interp, vec!["list_tasks".to_string()], iters)?,
+        Workload::ListTasks => {
+            benchmark_query(&mut machine, vec!["list_tasks".to_string()], iters)?
+        }
         Workload::ShowTask => benchmark_query(
-            &mut interp,
+            &mut machine,
             vec!["show_task".to_string(), format!("t{}", seed)],
             iters,
         )?,
-        Workload::RunRules => benchmark_query(&mut interp, vec!["run_rules".to_string()], iters)?,
+        Workload::RunRules => {
+            benchmark_query(&mut machine, vec!["run_rules".to_string()], iters)?
+        }
     };
 
     Ok((seed_elapsed, measured))

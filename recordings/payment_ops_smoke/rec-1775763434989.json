@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "request_id": "rec-1775763434989",
+  "timestamp": "unix-1775763434",
+  "program_file": "projects/payment_ops/main.av",
+  "module_root": "projects/payment_ops",
+  "entry_fn": "main",
+  "input": null,
+  "effects": [
+    {
+      "seq": 1,
+      "type": "Disk.makeDir",
+      "args": [
+        "/tmp/aver_payment_ops"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": {
+          "$ok": null
+        }
+      }
+    },
+    {
+      "seq": 2,
+      "type": "Disk.exists",
+      "args": [
+        "/tmp/aver_payment_ops/payment_events.txt"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": false
+      }
+    },
+    {
+      "seq": 3,
+      "type": "Disk.writeText",
+      "args": [
+        "/tmp/aver_payment_ops/payment_events.txt",
+        ""
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": {
+          "$ok": null
+        }
+      }
+    },
+    {
+      "seq": 4,
+      "type": "Disk.exists",
+      "args": [
+        "/tmp/aver_payment_ops/settlements.txt"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": false
+      }
+    },
+    {
+      "seq": 5,
+      "type": "Disk.writeText",
+      "args": [
+        "/tmp/aver_payment_ops/settlements.txt",
+        ""
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": {
+          "$ok": null
+        }
+      }
+    },
+    {
+      "seq": 6,
+      "type": "Disk.exists",
+      "args": [
+        "/tmp/aver_payment_ops/cases.txt"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": false
+      }
+    },
+    {
+      "seq": 7,
+      "type": "Disk.writeText",
+      "args": [
+        "/tmp/aver_payment_ops/cases.txt",
+        ""
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": {
+          "$ok": null
+        }
+      }
+    },
+    {
+      "seq": 8,
+      "type": "Disk.exists",
+      "args": [
+        "/tmp/aver_payment_ops/audits.txt"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": false
+      }
+    },
+    {
+      "seq": 9,
+      "type": "Disk.writeText",
+      "args": [
+        "/tmp/aver_payment_ops/audits.txt",
+        ""
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": {
+          "$ok": null
+        }
+      }
+    },
+    {
+      "seq": 10,
+      "type": "Console.print",
+      "args": [
+        "Payment Ops CLI\nUsage: <command> [args]\nUse shell quotes for values with spaces.\nUse '-' for an optional empty field.\n\nImports:\n  ingest_webhooks provider path\n  import_settlement provider path\n  reconcile provider\n\nQueries:\n  show_payment payment_id\n  list_cases [open|resolved|all]\n  provider_summary provider\n  show_audit [subject_id]\n\nManual review:\n  resolve_case case_id resolution\n  help"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      }
+    }
+  ],
+  "output": {
+    "kind": "value",
+    "value": null
+  }
+}

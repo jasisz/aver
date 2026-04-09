@@ -230,4 +230,4 @@ pub use intent::{
 };
 pub use law::{collect_verify_law_dependency_warnings, collect_verify_law_dependency_warnings_in};
 pub use perf::{collect_perf_warnings, collect_perf_warnings_in};
-pub use verify::{expr_to_str, merge_verify_blocks, run_verify};
+pub use verify::{expr_to_str, merge_verify_blocks};

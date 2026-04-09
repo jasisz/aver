@@ -8,7 +8,7 @@
 
 # Aver
 
-Aver is a statically typed language designed for AI to write in and humans to review, with a fast interpreter for iteration, a bytecode VM for runtime execution, a Rust backend for deployment, Lean proof export for pure core logic, and Dafny verification for automated law checking via Z3.
+Aver is a statically typed language designed for AI to write in and humans to review, with a bytecode VM for runtime execution, a Rust backend for deployment, a WASM backend for browser and embedded targets, Lean proof export for pure core logic, and Dafny verification for automated law checking via Z3.
 
 It is built around one idea: the risky part of AI-written code is usually not syntax, it is missing intent. Aver makes that intent explicit and machine-readable:
 
@@ -177,19 +177,7 @@ LLMs can produce function bodies quickly. They are much worse at preserving the 
 
 Traditional languages usually push that into comments, external docs, stale tests, or team memory. Aver makes those concerns part of the language and tooling.
 
-The intended workflow is explicit: AI writes Aver, humans review contracts and intent, and execution happens through the interpreter or bytecode VM during development, with deployment also available through Rust code generation.
-
-### Bytecode VM
-
-```bash
-aver run hello.av --vm
-aver verify hello.av --vm
-aver replay recordings/ --vm
-```
-
-`--vm` executes the same Aver program, verify cases, or replay session through the bytecode virtual machine instead of the tree-walking interpreter. This is useful when you want a runtime path that is closer to the eventual compiled model, while keeping the same source language and effect checks.
-
-For the VM internals and design rationale, see [docs/vm.md](docs/vm.md).
+The intended workflow is explicit: AI writes Aver, humans review contracts and intent, and execution happens through the bytecode VM during development, with deployment also available through Rust code generation or WASM compilation.
 
 ### Self-hosted interpreter
 
@@ -458,14 +446,14 @@ For namespaces, effectful services, and the standard library, see [docs/services
 
 Aver has four backend paths:
 
-- interpreter-first workflow for `run`, `check`, `verify`, `replay`, and `context`
+- VM-based workflow for `run`, `check`, `verify`, `replay`, and `context`
 - Rust compilation for generating a native Cargo project with `aver compile`
 - Lean proof export for pure core logic and `verify` / `verify law` obligations with `aver proof`
   Supported law shapes become real universal theorems; the rest stay as
   executable samples or checked-domain theorems instead of fake proofs.
 - Dafny verification for automated `verify law` checking via Z3 with `aver proof --backend dafny`
 
-The interpreter and generated Rust now share more practical behavior through `aver-rt` than the name alone suggests: list teardown, deep `append -> match` paths, and string helpers such as `String.slice` are intentionally centralized there so one runtime fix can improve both execution paths.
+The VM and generated Rust share practical behavior through `aver-rt`: list teardown, deep `append -> match` paths, and string helpers such as `String.slice` are intentionally centralized there so one runtime fix can improve both execution paths.
 
 Typical Rust flow:
 

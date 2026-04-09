@@ -4,16 +4,16 @@ All notable changes to Aver are documented here.
 
 ## 0.9.0 (unreleased)
 
-### Added
-- **WASM backend** — `aver compile --target wasm` and `aver run --wasm`. Typed ABI (Int→i64, Float→f64, Bool→i32, heap types→i32 ptr), own `aver/*` import ABI, `--adapter wasi` for standalone wasmtime. Mutual TCO via dispatch trampolines. Bump allocator with boundary compaction and yard semantics (~1.5 KB runtime). Modules export `$alloc` for safe host string allocation.
-- **`aver/*` import ABI** — WASM modules declare host imports (`aver/console_print`, `aver/random_int`, `aver/math_sin` etc.) instead of WASI. Works with built-in host, browser JS shim, or custom host.
-- **`aver-memory` crate** — extracted NaN-boxed value representation and arena allocator into a standalone crate. Shared by interpreter and VM.
-- **Browser WASM runner** — `tools/wasm-runner/` with terminal canvas rendering, SharedArrayBuffer keyboard input, and ~60fps flush throttle.
-- **WASM in comparison bench** — `cargo bench --bench comparison_bench` includes `--wasm` mode.
+### Changed
+- **VM is the default backend** — `aver run`, `verify`, `replay`, and `repl` now use the bytecode VM directly. The `--vm` flag is no longer needed and has been removed.
 
-### Improved
-- **WASM performance** — yard semantics for TCO loops (skip compaction on small growth, full GC otherwise), inline `Vector.get+withDefault` (zero-alloc cell reads), fast-path `Map.set` (prepend-only for unique keys). Game of Life: 1300 FPS. Map build 5k: 0.07s.
-- **VM tail-call skip** — skip young-to-yard promotion when growth is ≤4 entries.
+### Removed
+- **Tree-walking interpreter** — ~7500 lines removed. The VM covers all use cases the interpreter handled.
+
+### Added
+- **WASM backend** — `aver compile --target wasm` and `aver run --wasm`. Own `aver/*` import ABI with `--adapter wasi` for standalone wasmtime. Works with built-in host, browser JS shim, or custom host.
+- **Browser WASM runner** — `tools/wasm-runner/` with terminal canvas rendering and keyboard input.
+- **`aver-memory` crate** — standalone NaN-boxed value representation and arena allocator.
 
 ## 0.8.2 (2026-04-03)
 

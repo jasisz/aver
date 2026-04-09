@@ -15,15 +15,14 @@ use aver::checker::{
     CheckFinding, VerifyResult, check_module_intent_with_sigs_in, collect_cse_warnings_in,
     collect_independence_warnings_in, collect_perf_warnings_in,
     collect_verify_coverage_warnings_in, collect_verify_law_dependency_warnings_in, expr_to_str,
-    index_decisions, merge_verify_blocks, run_verify,
+    index_decisions, merge_verify_blocks,
 };
 use aver::codegen;
 use aver::codegen::ModuleInfo;
 use aver::codegen::lean as lean_codegen;
 use aver::codegen::rust as rust_codegen;
-use aver::interpreter::{Interpreter, RecordingConfig, Value, aver_repr};
+use aver::value::{Value, aver_repr};
 use aver::nan_value::{Arena, NanValueConvert};
-use aver::replay::{JsonValue, RecordedOutcome, value_to_json};
 use aver::resolver;
 use aver::source::{find_module_file, require_module_declaration};
 use aver::tail_check::collect_non_tail_recursion_warnings_with_sigs;
@@ -39,9 +38,8 @@ use aver::vm;
 use super::diagnostic;
 
 use crate::shared::{
-    apply_runtime_policy_to_vm, compile_program_for_exec, compute_memo_fns, format_type_errors,
-    load_dep_modules, load_runtime_policy, parse_file, print_type_errors, read_file,
-    resolve_module_root, run_entry_function, run_top_level_statements,
+    apply_runtime_policy_to_vm, compute_memo_fns, format_type_errors, load_runtime_policy,
+    parse_file, print_type_errors, read_file, resolve_module_root,
 };
 
 pub(super) fn generate_request_id() -> String {
@@ -1964,129 +1962,6 @@ fn run_wasm_with_host(wasm_bytes: &[u8], program_args: &[String]) -> Result<(), 
     Ok(())
 }
 
-pub(super) fn cmd_run(
-    file: &str,
-    module_root_override: Option<&str>,
-    run_verify_blocks: bool,
-    record_dir: Option<&str>,
-    program_args: Vec<String>,
-) {
-    if run_verify_blocks && record_dir.is_some() {
-        eprintln!(
-            "{}",
-            "Cannot combine --verify and --record in one run; record should capture only main flow."
-                .red()
-        );
-        process::exit(1);
-    }
-
-    let (mut interp, items, module_root) =
-        match compile_program_for_exec(file, module_root_override) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("{}", e.red());
-                process::exit(1);
-            }
-        };
-
-    interp.set_cli_args(program_args);
-
-    let recording_target = if let Some(dir) = record_dir {
-        let request_id = generate_request_id();
-        let timestamp = generate_timestamp();
-        let (record_program_file, record_module_root) = recording_paths(file, &module_root);
-        let out_path = match prepare_recording_path(dir, &request_id) {
-            Ok(path) => path,
-            Err(e) => {
-                eprintln!("{}", e.red());
-                process::exit(1);
-            }
-        };
-        interp.configure_recording_sink(RecordingConfig {
-            path: out_path.clone(),
-            request_id: request_id.clone(),
-            timestamp: timestamp.clone(),
-            program_file: record_program_file,
-            module_root: record_module_root,
-            entry_fn: "main".to_string(),
-            input: JsonValue::Null,
-        });
-        interp.start_recording();
-        if let Err(e) = interp.persist_recording_snapshot(RecordedOutcome::Value(JsonValue::Null)) {
-            eprintln!("{}", e.to_string().red());
-            process::exit(1);
-        }
-        Some(out_path)
-    } else {
-        None
-    };
-
-    // Terminal guard — restores raw mode / cursor / colors on drop (even on panic).
-    #[cfg(feature = "terminal")]
-    let _terminal_guard = aver_rt::TerminalGuard::new();
-
-    let mut runtime_failure: Option<String> = run_top_level_statements(&mut interp, &items).err();
-
-    let mut main_result: Option<Result<Value, String>> = None;
-    if runtime_failure.is_none() && interp.lookup("main").is_ok() {
-        let result = run_entry_function(&mut interp, "main", vec![]);
-        if let Ok(Value::Err(err)) = &result {
-            runtime_failure = Some(format!("Main returned error: {}", aver_repr(err)));
-        } else if let Err(e) = &result {
-            runtime_failure = Some(e.clone());
-        }
-        main_result = Some(result);
-    }
-
-    if recording_target.is_some() {
-        let output = if let Some(msg) = &runtime_failure {
-            RecordedOutcome::RuntimeError(msg.clone())
-        } else {
-            match &main_result {
-                Some(Ok(v)) => match value_to_json(v) {
-                    Ok(json) => RecordedOutcome::Value(json),
-                    Err(e) => RecordedOutcome::RuntimeError(e),
-                },
-                Some(Err(e)) => RecordedOutcome::RuntimeError(e.clone()),
-                None => RecordedOutcome::Value(JsonValue::Null),
-            }
-        };
-
-        if let Err(e) = interp.persist_recording_snapshot(output) {
-            eprintln!("{}", e.to_string().red());
-            process::exit(1);
-        }
-        if let Some(path) = interp.recording_sink_path() {
-            println!("Recording saved: {}", path.display());
-        }
-    }
-
-    if let Some(msg) = runtime_failure {
-        eprintln!("{}", msg.red());
-        process::exit(1);
-    }
-
-    // Optionally run verify blocks
-    if run_verify_blocks {
-        println!();
-        let verify_blocks = merge_verify_blocks(&items);
-        let mut results = Vec::new();
-        for vb in &verify_blocks {
-            results.push(run_verify(vb, &mut interp));
-        }
-        let failed: usize = results.iter().map(|r| r.failed).sum();
-        let verify_source = read_file(file).unwrap_or_default();
-        let file_results = vec![VerifyFileResult {
-            path: file.to_string(),
-            source: verify_source,
-            blocks: results,
-        }];
-        render_verify_output(&file_results, &module_root, false, false);
-        if failed > 0 {
-            process::exit(1);
-        }
-    }
-}
 
 pub(super) fn cmd_run_self_hosted(
     file: &str,
@@ -2106,9 +1981,28 @@ pub(super) fn cmd_run_self_hosted(
 
     // Keep CLI parity with host `aver run` until the self-host carries its own
     // full front-end pipeline (type checker + TCO + module diagnostics).
-    if let Err(e) = compile_program_for_exec(file, module_root_override) {
-        eprintln!("{}", e.red());
-        process::exit(1);
+    {
+        let mr = resolve_module_root(module_root_override);
+        let source = match read_file(file) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("{}", e.red());
+                process::exit(1);
+            }
+        };
+        let mut items = match parse_file(&source) {
+            Ok(i) => i,
+            Err(e) => {
+                eprintln!("{}", e.red());
+                process::exit(1);
+            }
+        };
+        tco::transform_program(&mut items);
+        let tc = run_type_check_full(&items, Some(&mr));
+        if !tc.errors.is_empty() {
+            eprintln!("{}", format_type_errors(&tc.errors).red());
+            process::exit(1);
+        }
     }
 
     let module_root = resolve_module_root(module_root_override);
@@ -2787,62 +2681,6 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
     }
 }
 
-fn run_verify_for_items(
-    mut items: Vec<TopLevel>,
-    module_root: &str,
-) -> Result<Vec<VerifyResult>, String> {
-    // TCO transform — rewrite tail-position calls in recursive SCCs
-    tco::transform_program(&mut items);
-
-    // Static type check — verify should use the same soundness gate as run/check
-    let tc_result = run_type_check_full(&items, Some(module_root));
-    if !tc_result.errors.is_empty() {
-        return Err(format_type_errors(&tc_result.errors));
-    }
-
-    // Compile-time variable resolution
-    resolver::resolve_program(&mut items);
-
-    // Auto-memoization
-    let memo_fns = compute_memo_fns(&items, &tc_result);
-
-    let mut interp = Interpreter::new();
-    interp.enable_memo(memo_fns);
-
-    // Load aver.toml runtime policy if present
-    match aver::config::ProjectConfig::load_from_dir(std::path::Path::new(&module_root)) {
-        Ok(Some(config)) => interp.set_runtime_policy(config),
-        Ok(None) => {}
-        Err(e) => return Err(format!("aver.toml: {}", e)),
-    }
-
-    load_dep_modules(&mut interp, &items, module_root)?;
-
-    // Register type definitions (constructors)
-    for item in &items {
-        if let TopLevel::TypeDef(td) = item {
-            interp.register_type_def(td);
-        }
-    }
-
-    // Register all functions
-    for item in &items {
-        if let TopLevel::FnDef(fd) = item
-            && let Err(e) = interp.exec_fn_def(fd)
-        {
-            return Err(e.to_string());
-        }
-    }
-
-    let verify_blocks = merge_verify_blocks(&items);
-
-    let mut results = Vec::new();
-    for vb in &verify_blocks {
-        results.push(run_verify(vb, &mut interp));
-    }
-    Ok(results)
-}
-
 fn run_verify_for_items_vm(
     mut items: Vec<TopLevel>,
     module_root: &str,
@@ -2888,17 +2726,12 @@ fn run_verify_for_file(
     file: &str,
     module_root: &str,
     deps: bool,
-    vm_mode: bool,
 ) -> Result<Vec<VerifyFileResult>, String> {
     let units = collect_check_units(file, module_root, deps)?;
     let mut file_results = Vec::new();
 
     for (path, source, items) in units {
-        let blocks = if vm_mode {
-            run_verify_for_items_vm(items, module_root, &path)?
-        } else {
-            run_verify_for_items(items, module_root)?
-        };
+        let blocks = run_verify_for_items_vm(items, module_root, &path)?;
         file_results.push(VerifyFileResult {
             path,
             source,
@@ -3153,7 +2986,7 @@ pub(super) fn cmd_verify(
     let mut printed_any = false;
 
     for file in &inputs {
-        match run_verify_for_file(file, &module_root, deps, true) {
+        match run_verify_for_file(file, &module_root, deps) {
             Ok(file_results) => {
                 // Render immediately — streaming output
                 let has_blocks = file_results.iter().any(|fr| !fr.blocks.is_empty());

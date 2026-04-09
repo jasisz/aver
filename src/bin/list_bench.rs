@@ -2,13 +2,13 @@ use std::env;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use aver::ast::TopLevel;
-use aver::interpreter::{Interpreter, Value};
+use aver::nan_value::{Arena, NanValue, NanValueConvert};
 use aver::resolver;
 use aver::source::parse_source;
 use aver::tco;
 use aver::types::checker::run_type_check_full;
-use aver::value::list_from_vec;
+use aver::value::{Value, list_from_vec};
+use aver::vm;
 
 const PROGRAM: &str = r#"
 module ListBench
@@ -101,7 +101,7 @@ fn usage() -> &'static str {
     "Usage: cargo run --release --bin list_bench -- [--size N] [--iters N] [--workload NAME|all]"
 }
 
-fn build_interpreter() -> Result<Interpreter, String> {
+fn build_vm() -> Result<vm::VM, String> {
     let mut items = parse_source(PROGRAM)?;
     tco::transform_program(&mut items);
 
@@ -112,40 +112,38 @@ fn build_interpreter() -> Result<Interpreter, String> {
 
     resolver::resolve_program(&mut items);
 
-    let mut interp = Interpreter::new();
-    for item in &items {
-        match item {
-            TopLevel::FnDef(fd) => interp.exec_fn_def(fd).map_err(|e| e.to_string())?,
-            TopLevel::Stmt(stmt) => {
-                interp.exec_stmt(stmt).map_err(|e| e.to_string())?;
-            }
-            _ => {}
-        }
-    }
-    Ok(interp)
+    let mut arena = Arena::new();
+    vm::register_service_types(&mut arena);
+    let (code, globals) =
+        vm::compile_program_with_modules(&items, &mut arena, None, "<bench>")
+            .map_err(|e| format!("VM compile error: {}", e))?;
+    let mut machine = vm::VM::new(code, globals, arena);
+    machine.run_top_level().map_err(|e| format!("{}", e))?;
+    Ok(machine)
 }
 
 fn run_workload(
-    interp: &mut Interpreter,
+    machine: &mut vm::VM,
     workload: Workload,
     size: usize,
     iters: usize,
 ) -> Result<Duration, String> {
-    let fn_val = interp
-        .lookup(workload.fn_name())
-        .map_err(|e| e.to_string())?;
     let args = workload.args(size);
+    let nv_args: Vec<NanValue> = args
+        .iter()
+        .map(|v| NanValue::from_value(v, &mut machine.arena))
+        .collect();
 
     black_box(
-        interp
-            .call_value_pub(fn_val.clone(), args.clone())
+        machine
+            .run_named_function(workload.fn_name(), &nv_args)
             .map_err(|e| e.to_string())?,
     );
 
     let started = Instant::now();
     for _ in 0..iters {
-        let result = interp
-            .call_value_pub(fn_val.clone(), args.clone())
+        let result = machine
+            .run_named_function(workload.fn_name(), &nv_args)
             .map_err(|e| e.to_string())?;
         black_box(result);
     }
@@ -206,10 +204,10 @@ fn main() {
         }
     };
 
-    let mut interp = match build_interpreter() {
-        Ok(interp) => interp,
+    let mut machine = match build_vm() {
+        Ok(m) => m,
         Err(msg) => {
-            eprintln!("cannot build benchmark interpreter: {msg}");
+            eprintln!("cannot build benchmark VM: {msg}");
             std::process::exit(1);
         }
     };
@@ -221,7 +219,7 @@ fn main() {
 
     println!("list_bench size={size} iters={iters}");
     for workload in workloads {
-        match run_workload(&mut interp, workload, size, iters) {
+        match run_workload(&mut machine, workload, size, iters) {
             Ok(total) => {
                 let avg = total / iters as u32;
                 println!("{:<18} total={:?} avg={:?}", workload.name(), total, avg);

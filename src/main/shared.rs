@@ -5,12 +5,9 @@ use colored::Colorize;
 
 use aver::ast::TopLevel;
 use aver::call_graph::{find_recursive_fns, recursive_callsite_counts};
-use aver::interpreter::{Interpreter, Value};
-use aver::resolver;
-use aver::source::{parse_source, require_module_declaration};
-use aver::tco;
+use aver::source::parse_source;
 use aver::types;
-use aver::types::checker::{TypeCheckResult, TypeError, run_type_check_full};
+use aver::types::checker::{TypeCheckResult, TypeError};
 use aver::vm;
 
 pub(super) fn read_file(path: &str) -> Result<String, String> {
@@ -44,32 +41,6 @@ pub(super) fn apply_runtime_policy_to_vm(
 ) -> Result<(), String> {
     if let Some(config) = load_runtime_policy(module_root)? {
         machine.set_runtime_policy(config);
-    }
-    Ok(())
-}
-
-pub(super) fn load_dep_modules(
-    interp: &mut Interpreter,
-    items: &[TopLevel],
-    module_root: &str,
-) -> Result<(), String> {
-    let mut loading = Vec::new();
-    let mut loading_set = std::collections::HashSet::new();
-    if let Some(module) = items.iter().find_map(|i| {
-        if let TopLevel::Module(m) = i {
-            Some(m)
-        } else {
-            None
-        }
-    }) {
-        for dep_name in &module.depends {
-            let ns = interp
-                .load_module(dep_name, module_root, &mut loading, &mut loading_set)
-                .map_err(|e| e.to_string())?;
-            interp
-                .define_module_path(dep_name, ns)
-                .map_err(|e| e.to_string())?;
-        }
     }
     Ok(())
 }
@@ -138,79 +109,3 @@ pub(super) fn format_type_errors(errors: &[TypeError]) -> String {
     out.join("\n")
 }
 
-pub(super) fn compile_program_for_exec(
-    file: &str,
-    module_root_override: Option<&str>,
-) -> Result<(Interpreter, Vec<TopLevel>, String), String> {
-    let module_root = resolve_module_root(module_root_override);
-    let source = read_file(file)?;
-    let mut items = parse_file(&source)?;
-    require_module_declaration(&items, file)?;
-
-    // TCO transform — rewrite tail-position calls in recursive SCCs
-    tco::transform_program(&mut items);
-
-    // Static type check — block execution on any error
-    let tc_result = run_type_check_full(&items, Some(&module_root));
-    if !tc_result.errors.is_empty() {
-        return Err(format_type_errors(&tc_result.errors));
-    }
-
-    // Compile-time variable resolution
-    resolver::resolve_program(&mut items);
-
-    // Auto-memoization: find pure recursive fns with memo-safe params
-    let memo_fns = compute_memo_fns(&items, &tc_result);
-
-    let mut interp = Interpreter::new();
-    interp.enable_memo(memo_fns);
-
-    // Load aver.toml runtime policy if present
-    if let Some(config) = load_runtime_policy(&module_root)? {
-        interp.set_runtime_policy(config);
-    }
-
-    load_dep_modules(&mut interp, &items, &module_root)?;
-
-    // Register type definitions (constructors)
-    for item in &items {
-        if let TopLevel::TypeDef(td) = item {
-            interp.register_type_def(td);
-        }
-    }
-
-    // Register all function definitions
-    for item in &items {
-        if let TopLevel::FnDef(fd) = item {
-            interp.exec_fn_def(fd).map_err(|e| e.to_string())?;
-        }
-    }
-
-    Ok((interp, items, module_root))
-}
-
-pub(super) fn run_top_level_statements(
-    interp: &mut Interpreter,
-    items: &[TopLevel],
-) -> Result<(), String> {
-    for item in items {
-        if let TopLevel::Stmt(stmt) = item {
-            interp.exec_stmt(stmt).map_err(|e| e.to_string())?;
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn run_entry_function(
-    interp: &mut Interpreter,
-    entry_fn: &str,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    let fn_val = interp
-        .lookup(entry_fn)
-        .map_err(|_| format!("Entry function '{}' not found", entry_fn))?;
-    let allowed = Interpreter::callable_declared_effects(&fn_val);
-    interp
-        .call_value_with_effects_pub(fn_val, args, &format!("<{}>", entry_fn), allowed)
-        .map_err(|e| e.to_string())
-}

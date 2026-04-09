@@ -1,12 +1,12 @@
 # Aver VM
 
-This document describes the current bytecode virtual machine used by `aver run --vm`, `aver verify --vm`, and `aver replay --vm`.
+This document describes the bytecode virtual machine used by `aver run`, `aver verify`, and `aver replay`.
 
 It is a design note, not a frozen spec. The opcode set and internal representation may still change while the VM matures.
 
 ## What It Is
 
-The Aver VM is a small stack machine that executes the same surface language as the tree-walking interpreter.
+The Aver VM is the sole execution backend for Aver programs.
 
 It is intentionally **language-shaped**, not generic:
 
@@ -58,14 +58,12 @@ The classifier is deliberately less strict than a pure "single expression only" 
 - nullary variant constructors (`Status.Todo`) are treated as inline results, so they can still stay on the thin / parent-thin fast path
 - list destructuring and obviously aggregate-building builtins still stay out of `parent-thin`
 
-Execution-backed commands can run through the interpreter or through the VM:
+Execution-backed commands run through the VM:
 
 ```bash
 aver run app.av
-aver run app.av --vm
 aver verify app.av
-aver verify app.av --vm
-aver replay recordings/ --vm
+aver replay recordings/
 ```
 
 ## Value Representation
@@ -376,13 +374,13 @@ The current VM no longer uses arm-local match-region opcodes. In practice they w
 Two recent fixes are worth calling out because they affected real example programs:
 
 - mutual tail calls with a larger target `local_count` now resize the VM stack before clearing new locals, which removed a crash in large verify suites such as `examples/data/json.av`
-- ordered string comparison in the VM now matches the interpreter, so examples like `examples/data/date.av` behave the same under `verify` and `verify --vm`
+- ordered string comparison was corrected, so examples like `examples/data/date.av` behave correctly under `verify`
 
-Those are not design shifts, but they matter because they closed the last obvious gaps between the interpreter semantics and the production VM path.
+Those are not design shifts, but they matter because they closed the last obvious correctness gaps in the VM path.
 
 ## Effects And Host Runtime
 
-The VM enforces declared effects at runtime, like the interpreter does.
+The VM enforces declared effects at runtime.
 
 That logic does not live in the main execute loop. Instead:
 

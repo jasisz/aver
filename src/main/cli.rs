@@ -315,10 +315,9 @@ mod tests {
     fn verify_accepts_deps_flag() {
         let cli = Cli::parse_from(["aver", "verify", "examples/modules/app.av", "--deps"]);
         match cli.command {
-            Commands::Verify { file, deps, vm, .. } => {
+            Commands::Verify { file, deps, .. } => {
                 assert_eq!(file, "examples/modules/app.av");
                 assert!(deps);
-                assert!(!vm);
             }
             _ => panic!("expected verify command"),
         }

@@ -2,7 +2,7 @@
 
 ## What is this?
 
-Aver is a programming language designed for AI-assisted development. Its interpreter and bytecode VM are written in Rust. The language prioritises human and machine readability: every function carries an optional prose description, and architectural decisions are first-class citizens expressed as `decision` blocks co-located with the code they describe. This file is the single entry point for any AI resuming work on this project — read it before touching any source file.
+Aver is a programming language designed for AI-assisted development. Its bytecode VM is written in Rust. The language prioritises human and machine readability: every function carries an optional prose description, and architectural decisions are first-class citizens expressed as `decision` blocks co-located with the code they describe. This file is the single entry point for any AI resuming work on this project — read it before touching any source file.
 
 ## Project philosophy
 
@@ -38,12 +38,12 @@ Below: implementation details relevant to development only.
 - **`Type::Named(String)`** in the type system: capitalized identifiers (including dotted names like `Tcp.Connection`) in type annotations resolve to named types. Compatible only with the same name or internal `Unknown` fallback.
 - **`Tcp.Connection` record**: fields `id: String`, `host: String`, `port: Int`. No longer opaque — constructable via `Tcp.Connection(id = ..., host = ..., port = ...)`. Actual socket in thread-local `HashMap` keyed by `id`. `NEXT_ID: AtomicU64` generates "tcp-1", "tcp-2", etc.
 - **Static type checker** (`src/types/checker/`): internal `Type::Unknown` recovery after earlier errors so analysis can continue. Bare `Unknown` does **not** satisfy concrete types in constraints — only nested `Unknown` is tolerated (gradual typing). Match pattern bindings are typed: `Result.Ok(x)` on `Result<Int, String>` gives `x: Int`.
-- **Auto-memoization** (`src/call_graph.rs`, `src/types/checker/memo.rs`, `src/interpreter/core.rs`): call graph built from AST, Tarjan SCC detects recursion, `call_fn_ref` checks/stores per-function HashMap cache (capped at 4096). Eligibility: pure + recursive + all params memo-safe (scalars, records/variants of scalars).
-- **TCO** (`src/tco.rs`): transform pass rewrites tail-position `FnCall` → `Expr::TailCall` in recursive SCCs. Interpreter trampoline in `call_fn_ref`: self-TCO rebinds args, mutual TCO switches to target fn. Pipeline: `parse → tco_transform → typecheck → resolve → interpret`.
-- **Compile-time variable resolution** (`src/resolver.rs`): `Ident("x")` → `Resolved(slot)` inside FnDef bodies. `EnvFrame::Slots(Vec<Rc<Value>>)` for O(1) lookup. REPL and sub-interpreters use unresolved path (`EnvFrame::Owned(HashMap)`).
+- **Auto-memoization** (`src/call_graph.rs`, `src/types/checker/memo.rs`): call graph built from AST, Tarjan SCC detects recursion. Eligibility: pure + recursive + all params memo-safe (scalars, records/variants of scalars). VM caches per-function results (capped at 4096).
+- **TCO** (`src/tco.rs`): transform pass rewrites tail-position `FnCall` → `Expr::TailCall` in recursive SCCs. VM handles tail calls via frame reuse. Pipeline: `parse → tco_transform → typecheck → resolve → compile → execute`.
+- **Compile-time variable resolution** (`src/resolver.rs`): `Ident("x")` → `Resolved(slot)` inside FnDef bodies.
 - **Bytecode VM** (`src/vm/`): stack VM over `NanValue`, with language-shaped opcodes for lists, records, variants, wrappers, tuple literals/patterns, and tail calls. `src/vm/runtime.rs` is the host/effect bridge; `src/vm/execute.rs` is the core loop; `src/vm/compiler.rs` lowers resolved AST to bytecode.
 - **`check` command**: warns when module has no `intent =`, function with effects/Result return has no `?` description, file exceeds 250 lines. `fn main()` is exempt from `?` requirement.
-- **Entry-point effect enforcement**: `main`/top-level entry calls use `call_value_with_effects_pub(...)` with synthetic call frame.
+- **Entry-point effect enforcement**: `main`/top-level entry calls enforce declared effects at the entry boundary.
 - **Opaque types** (`exposes opaque [T]`): module-level access control for types. An opaque type is visible in signatures (can be passed, returned, stored) but cannot be constructed, have its fields accessed, or be pattern-matched from outside the defining module. Enforced at compile time in the typechecker; `load_module_sigs` registers a dummy sig (type resolves) but omits field types, constructors, and variant info. Parser recognizes `exposes opaque` after the `Exposes` token by checking for `Ident("opaque")`.
 - **WASM backend** (`src/codegen/wasm/`, feature-gated behind `--features wasm`): compiles Aver to standalone WASM modules with typed ABI (Int→i64, Float→f64, Bool→i32, heap types→i32 ptr). Uses shared `ir::` lowering infrastructure (CallPlan, MatchDispatchPlan, SemanticConstructor). Default output uses own import ABI (`aver/*`) — host provides effect implementations. `--adapter wasi` flag emits WASI imports for standalone wasmtime. `aver run --wasm` uses built-in wasmtime host. Supports: Float arithmetic, user-defined sum types, recursive variants, records with typed field access, string interpolation/equality/concat, List/Map/Vector builtins, TCO (self-call and mutual via trampolines). ABI table in `abi.rs` is single source of truth for import mappings. Runtime functions (alloc, print formatters, str_eq, list ops, map ops) emitted inline in module (~1.5 KB). Memory model: bump allocator + boundary compaction with yard semantics (iter_mark skip/full heuristic for TCO loops). Modules export `$alloc` for safe host string allocation. Optimized patterns: inline `Option.withDefault(Vector.get(...), lit)` (zero-alloc cell read), fast-path `Map.set` (prepend-only for unique keys).
 - **Independent products** (`?!` / `!`): a tuple followed by `!` is a product of independent computations; `?!` adds Result unwrapping. `Expr::IndependentProduct(Vec<Spanned<Expr>>, bool)` in AST. Parser detects `?` + `!` or bare `!` after tuple in `parse_postfix`. Typechecker: `?!` verifies all elements are `Result<T, E>` with compatible error types and that elements are function calls; `!` infers as regular tuple. Interpreter: sequential evaluation with replay groups. Codegen: `std::thread::scope` with real parallelism. VM: `CALL_PAR` dispatches callable values plus per-branch arity, so aliases like `f = foo; (f(x), f(y))!` work. Replay: effects within a product share `group_id`, matched by `branch_path + effect_occurrence + effect_type + effect_args`, not execution order. See [docs/independence.md](docs/independence.md).
@@ -74,16 +74,6 @@ src/
                         patterns.rs — match patterns
                         module.rs  — module block, effect sets, top-level dispatch
                         types.rs   — type annotations, record/sum type defs
-
-  interpreter/        — Tree-walking evaluator. Split into submodules:
-                        core.rs    — Interpreter struct, env management, memo
-                        eval.rs    — eval_expr: literals, binops, match, interp strings
-                        exec.rs    — exec_stmt, exec_body, exec_fn_def, exec_items
-                        builtins.rs — call_builtin dispatch (constructors, services)
-                        effects.rs — ExecutionMode (Normal/Record/Replay), effect interception
-                        ops.rs     — call_fn_ref, tco_trampoline, call_value
-                        patterns.rs — match_pattern, eval_match
-                        api.rs     — public helpers (call_value_with_effects_pub, lookup)
 
   types/
     mod.rs            — enum Type, parse_type_str, compatible()
@@ -132,13 +122,13 @@ src/
   main.rs             — CLI entry point, delegates to main/ submodules.
   main/
     cli.rs            — clap CLI definition (Commands enum)
-    commands.rs       — cmd_run, cmd_check, cmd_verify
+    commands.rs       — cmd_run_vm, cmd_check, cmd_verify
     replay_cmd.rs     — cmd_replay
     repl.rs           — cmd_repl (interactive REPL)
     context_cmd.rs    — cmd_context
     context_data.rs   — project context data collection
     context_format.rs — Markdown context formatting
-    shared.rs         — shared helpers (compile_program_for_exec, load_dep_modules)
+    shared.rs         — shared helpers (type checking, memo, runtime policy)
 
   services/           — Effectful namespace adapters over shared `aver-rt` runtime:
     console.rs        — Console.print/error/warn/readLine  ! [Console.print] / friends
@@ -187,7 +177,7 @@ Tests live in `tests/` and cover four layers:
 | `tests/lexer_spec.rs` | Token kinds, INDENT/DEDENT, string interpolation, comments |
 | `tests/parser_spec.rs` | AST shape for all constructs (bindings, fns, match, verify, decision, module, type defs) |
 | `tests/typechecker_spec.rs` | Valid programs pass; type errors, effect violations, assignment errors |
-| `tests/eval_spec.rs` | Arithmetic, builtins, list ops, constructors, match, pipe, map/filter/fold, user-defined types |
+| `tests/eval_spec.rs` | VM runtime semantics: arithmetic, builtins, list ops, constructors, match, pipe, map/filter/fold, user-defined types, effects, modules, replay |
 
 The `src/lib.rs` exports all modules as `pub mod` so integration tests can access them via `use aver::...`.
 
@@ -224,42 +214,7 @@ The `src/lib.rs` exports all modules as `pub mod` so integration tests can acces
 2. Add a match arm in the `keyword()` function in `src/lexer.rs`
 3. Add the corresponding AST node(s) to `src/ast.rs` if needed
 4. Add a `parse_*` method in the appropriate `src/parser/*.rs` submodule and call it from `parse_top_level()` in `module.rs`
-5. Add execution logic in the appropriate `src/interpreter/*.rs` submodule (`eval.rs` for expressions, `exec.rs` for statements)
-
-**Concrete example — adding `maintain` (goal-based looping):**
-
-Aver has no `for`/`while`. Future iteration uses goal-based constructs. Here is the extension pattern for a `maintain` keyword:
-
-```
-// lexer.rs — add:
-Maintain,
-
-// keyword() — add:
-"maintain" => Some(TokenKind::Maintain),
-
-// ast.rs — add to Expr:
-Maintain(Box<Expr>, Box<Expr>),  // condition, body block
-
-// parser/expr.rs — add method:
-fn parse_maintain(&mut self) -> Result<Expr, ParseError> {
-    self.expect_exact(&TokenKind::Maintain)?;
-    let cond = self.parse_expr()?;
-    self.expect_exact(&TokenKind::Colon)?;
-    // parse indented body block
-}
-
-// interpreter/eval.rs — add to eval_expr():
-Expr::Maintain(cond, body) => {
-    loop {
-        match self.eval_expr(cond)? {
-            Value::Bool(false) => break,
-            Value::Bool(true)  => { self.eval_expr(body)?; }
-            _ => return Err(RuntimeError::Error("maintain condition must be Bool".into())),
-        }
-    }
-    Ok(Value::Unit)
-}
-```
+5. Add a handler in the VM compiler (`src/vm/compiler.rs`) to emit the appropriate opcodes
 
 ### How to add a new namespace function
 
@@ -274,13 +229,13 @@ All functions live in namespaces (e.g., `Int.abs`, `List.len`, `Console.print`).
 2. Register the member name in `register()` so it appears in the namespace's `members` map.
 3. Add the type signature in `src/types/checker/builtins.rs` in the corresponding sigs section.
 
-To create a new pure namespace, follow the pattern in `src/types/char.rs` or `src/types/int.rs`: implement `register()`, `effects()`, and `call()`, add `pub mod` in `types/mod.rs`, wire dispatch in `interpreter/builtins.rs` and effects in `interpreter/effects.rs`. For effectful namespaces, use `src/services/` instead.
+To create a new pure namespace, follow the pattern in `src/types/char.rs` or `src/types/int.rs`: implement `register()`, `effects()`, and `call()`, add `pub mod` in `types/mod.rs`, wire dispatch in `src/vm/runtime.rs`. For effectful namespaces, use `src/services/` instead.
 
 ### How to add a new expression type
 
 1. Add a variant to `Expr` in `ast.rs`
 2. Parse it in `parser/expr.rs` (typically in `parse_atom` or a new precedence level)
-3. Evaluate it in `interpreter/eval.rs` inside `eval_expr`'s `match expr` block
+3. Compile it in `src/vm/compiler.rs` to emit the appropriate opcodes
 4. If it should appear in verify cases, update `expr_to_str` in `checker.rs`
 
 ## Known issues / edge cases

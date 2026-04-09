@@ -48,7 +48,7 @@ Vector is a persistent indexed sequence — use it for grids, buffers, lookup ta
 
 ### `Result` namespace
 
-Source: `src/types/result.rs` + constructors in `src/interpreter/core.rs`.
+Source: `src/types/result.rs` + constructors in `src/vm/runtime.rs`.
 
 | Function | Signature | Notes |
 |---|---|---|
@@ -58,7 +58,7 @@ Source: `src/types/result.rs` + constructors in `src/interpreter/core.rs`.
 
 ### `Option` namespace
 
-Source: `src/types/option.rs` + constructors in `src/interpreter/core.rs`.
+Source: `src/types/option.rs` + constructors in `src/vm/runtime.rs`.
 
 | Function | Signature | Notes |
 |---|---|---|

@@ -40,7 +40,7 @@ Options:
 
 Use Rust when you want:
 - a normal Cargo project
-- deployment without the Aver interpreter
+- deployment without the Aver runtime
 - Rust tests generated from `verify`
 
 Use Lean when you want:

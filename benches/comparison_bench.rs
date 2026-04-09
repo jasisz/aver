@@ -1,6 +1,6 @@
 #![allow(clippy::approx_constant)]
-//! Benchmark comparing all execution modes on the same programs:
-//!   interpreter (tree-walk), VM (bytecode), codegen (native Rust),
+//! Benchmark comparing execution modes on the same programs:
+//!   VM (bytecode), codegen (native Rust), WASM,
 //!   self-hosted (`aver run --self-host`).
 //!
 //! Codegen runs as an external compiled binary. Self-hosted runs through the real CLI path,
@@ -15,7 +15,6 @@ use criterion::{
 use std::io::Write;
 use std::process::Command;
 
-use aver::interpreter::Interpreter;
 use aver::nan_value::Arena;
 use aver::resolver;
 use aver::source::parse_source;
@@ -23,16 +22,6 @@ use aver::tco;
 use aver::vm;
 
 // ── Runners ──────────────────────────────────────────────────────────────────
-
-fn run_interpreter(source: &str) {
-    let mut items = parse_source(source).expect("parse error");
-    tco::transform_program(&mut items);
-    resolver::resolve_program(&mut items);
-    let mut interp = Interpreter::new();
-    interp.exec_items(&items).expect("exec error");
-    let main_fn = interp.lookup("main").expect("no main");
-    let _ = interp.call_value_pub(main_fn, vec![]).expect("call error");
-}
 
 fn run_vm(source: &str) {
     let mut items = parse_source(source).expect("parse error");
@@ -226,9 +215,6 @@ fn bench_all_modes(
     source: &str,
     artifacts: &BenchArtifacts<'_>,
 ) {
-    group.bench_with_input(BenchmarkId::new("interpreter", label), source, |b, src| {
-        b.iter(|| run_interpreter(src));
-    });
     group.bench_with_input(BenchmarkId::new("vm", label), source, |b, src| {
         b.iter(|| run_vm(src));
     });

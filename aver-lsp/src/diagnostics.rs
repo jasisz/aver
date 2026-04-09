@@ -2,18 +2,23 @@ use tower_lsp_server::ls_types::{
     Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, Position, Range, Uri,
 };
 
-use aver::ast::TopLevel;
+use std::sync::Arc as Rc;
+
+use aver::ast::{Expr, FnBody, FnDef, Spanned, TopLevel};
 use aver::ast::VerifyKind;
 use aver::checker::{
-    VerifyCaseOutcome, check_module_intent_with_sigs, collect_verify_coverage_warnings,
-    merge_verify_blocks, run_verify,
+    VerifyCaseOutcome, VerifyCaseResult, VerifyLawContext, VerifyResult,
+    check_module_intent_with_sigs, collect_verify_coverage_warnings, expr_to_str,
+    merge_verify_blocks,
 };
-use aver::interpreter::Interpreter;
 use aver::lexer::{Lexer, LexerError};
+use aver::nan_value::Arena;
 use aver::parser::Parser;
 use aver::resolver;
 use aver::tco;
 use aver::types::checker::{TypeError, run_type_check_full};
+use aver::value::{Value, aver_repr};
+use aver::vm;
 
 /// Run the full Aver analysis pipeline on source text and return LSP diagnostics.
 pub fn diagnose(source: &str, base_dir: Option<&str>, uri: Option<&Uri>) -> Vec<Diagnostic> {
@@ -111,7 +116,7 @@ pub fn diagnose(source: &str, base_dir: Option<&str>, uri: Option<&Uri>) -> Vec<
 
     // Phase 6: Run verify blocks (only when no type errors)
     if tc_result.errors.is_empty() {
-        diagnostics.extend(verify_run_diagnostics(&mut items, base_dir));
+        diagnostics.extend(verify_run_diagnostics(items, base_dir));
     }
 
     diagnostics
@@ -289,73 +294,172 @@ fn verify_hygiene_diagnostics(items: &[TopLevel]) -> Vec<Diagnostic> {
     diagnostics
 }
 
-fn verify_run_diagnostics(items: &mut [TopLevel], base_dir: Option<&str>) -> Vec<Diagnostic> {
-    // Resolve variables for interpreter
-    resolver::resolve_program(items);
-
-    let mut interp = Interpreter::new();
-
-    // Register type definitions
-    for item in items.iter() {
-        if let TopLevel::TypeDef(td) = item {
-            interp.register_type_def(td);
+fn make_verify_vm_helper(
+    name: String,
+    line: usize,
+    body_expr: Spanned<Expr>,
+    wrap_ok: bool,
+) -> TopLevel {
+    let body_expr = if wrap_ok {
+        Spanned {
+            node: Expr::Constructor("Result.Ok".to_string(), Some(Box::new(body_expr.clone()))),
+            line: body_expr.line,
+            col: body_expr.col,
         }
+    } else {
+        body_expr
+    };
+    TopLevel::FnDef(FnDef {
+        name,
+        params: vec![],
+        line,
+        return_type: "Unit".to_string(),
+        effects: vec![],
+        desc: None,
+        body: Rc::new(FnBody::from_expr(body_expr)),
+        resolution: None,
+    })
+}
+
+fn verify_run_diagnostics(mut items: Vec<TopLevel>, base_dir: Option<&str>) -> Vec<Diagnostic> {
+    tco::transform_program(&mut items);
+
+    let verify_blocks = merge_verify_blocks(&items);
+    if verify_blocks.is_empty() {
+        return vec![];
     }
 
-    // Register all functions
-    for item in items.iter() {
-        if let TopLevel::FnDef(fd) = item
-            && interp.exec_fn_def(fd).is_err()
-        {
-            return vec![];
-        }
+    // Build verify plans — add __verify_* helper fns to items
+    struct CaseFns {
+        left: String,
+        right: String,
+        guard: Option<String>,
+    }
+    struct Plan {
+        block: aver::ast::VerifyBlock,
+        cases: Vec<CaseFns>,
     }
 
-    // Load dependency modules if base_dir available
-    if let Some(base) = base_dir {
-        let mut loading = Vec::new();
-        let mut loading_set = std::collections::HashSet::new();
-        if let Some(TopLevel::Module(m)) = items.iter().find(|i| matches!(i, TopLevel::Module(_))) {
-            for dep_name in &m.depends {
-                if let Ok(ns) = interp.load_module(dep_name, base, &mut loading, &mut loading_set) {
-                    let _ = interp.define_module_path(dep_name, ns);
-                }
-            }
+    let mut plans = Vec::with_capacity(verify_blocks.len());
+    for (block_idx, block) in verify_blocks.iter().enumerate() {
+        let mut case_plans = Vec::with_capacity(block.cases.len());
+        let sample_guards = match &block.kind {
+            VerifyKind::Law(law) => Some(&law.sample_guards),
+            VerifyKind::Cases => None,
+        };
+        for (case_idx, (left_expr, right_expr)) in block.cases.iter().cloned().enumerate() {
+            let prefix = format!("__verify_{}_{}_{}", block.fn_name, block_idx, case_idx);
+            let left_name = format!("{}_left", prefix);
+            let right_name = format!("{}_right", prefix);
+            items.push(make_verify_vm_helper(left_name.clone(), block.line, left_expr, true));
+            items.push(make_verify_vm_helper(right_name.clone(), block.line, right_expr, true));
+            let guard_name = sample_guards
+                .and_then(|guards| guards.get(case_idx))
+                .cloned()
+                .map(|guard_expr| {
+                    let name = format!("{}_guard", prefix);
+                    items.push(make_verify_vm_helper(name.clone(), block.line, guard_expr, false));
+                    name
+                });
+            case_plans.push(CaseFns { left: left_name, right: right_name, guard: guard_name });
         }
+        plans.push(Plan { block: block.clone(), cases: case_plans });
     }
 
-    let verify_blocks = merge_verify_blocks(items);
+    resolver::resolve_program(&mut items);
+
+    let source_file = "";
+    let mut arena = Arena::new();
+    vm::register_service_types(&mut arena);
+    let (code, globals) =
+        match vm::compile_program_with_modules(&items, &mut arena, base_dir, source_file) {
+            Ok(v) => v,
+            Err(_) => return vec![],
+        };
+    let mut machine = vm::VM::new(code, globals, arena);
+    machine.set_silent_console(true);
+
     let mut diagnostics = Vec::new();
 
-    for vb in &verify_blocks {
-        let result = run_verify(vb, &mut interp);
-        for cr in &result.case_results {
-            let (line, col) = cr
-                .span
+    for plan in &plans {
+        let block = &plan.block;
+        let case_total = block.cases.len();
+        let is_law = matches!(block.kind, VerifyKind::Law(_));
+        let law_context_template = if let VerifyKind::Law(law) = &block.kind {
+            Some(format!("{} == {}", expr_to_str(&law.lhs), expr_to_str(&law.rhs)))
+        } else {
+            None
+        };
+
+        for (idx, ((left_expr, right_expr), case_fns)) in
+            block.cases.iter().zip(&plan.cases).enumerate()
+        {
+            let case_str = format!("{} == {}", expr_to_str(left_expr), expr_to_str(right_expr));
+            let span = block.case_spans.get(idx).cloned();
+            let (line, col) = span
                 .as_ref()
                 .map(|s| (s.line, s.col))
-                .unwrap_or((vb.line, 0));
+                .unwrap_or((block.line, 0));
 
-            let (severity, message) = match &cr.outcome {
-                VerifyCaseOutcome::Pass | VerifyCaseOutcome::Skipped => continue,
-                VerifyCaseOutcome::Mismatch { expected, actual } => (
-                    DiagnosticSeverity::ERROR,
+            let law_context = if let VerifyKind::Law(_) = &block.kind {
+                let givens: Vec<(String, String)> = block
+                    .case_givens
+                    .get(idx)
+                    .map(|gs| gs.iter().map(|(name, expr)| (name.clone(), expr_to_str(expr))).collect())
+                    .unwrap_or_default();
+                Some(VerifyLawContext {
+                    givens,
+                    law_expr: law_context_template.clone().unwrap_or_default(),
+                })
+            } else {
+                None
+            };
+
+            // Guard check
+            if let Some(guard_name) = &case_fns.guard {
+                match machine.run_named_function(guard_name, &[]) {
+                    Ok(v) => {
+                        let val = v.to_value(&machine.arena);
+                        if val == Value::Bool(false) {
+                            continue; // skipped
+                        }
+                    }
+                    Err(_) => continue,
+                }
+            }
+
+            let left_result = machine
+                .run_named_function(&case_fns.left, &[])
+                .map(|v| v.to_value(&machine.arena));
+            let right_result = machine
+                .run_named_function(&case_fns.right, &[])
+                .map(|v| v.to_value(&machine.arena));
+
+            let outcome = match (left_result, right_result) {
+                (Ok(Value::Ok(left_val)), Ok(Value::Ok(right_val))) => {
+                    if *left_val == *right_val {
+                        continue; // pass
+                    }
                     format!(
                         "verify mismatch: {} — expected {}, got {}",
-                        cr.case_expr, expected, actual
-                    ),
-                ),
-                VerifyCaseOutcome::RuntimeError { error } => (
-                    DiagnosticSeverity::ERROR,
-                    format!("verify runtime error: {} — {}", cr.case_expr, error),
-                ),
-                VerifyCaseOutcome::UnexpectedErr { err_repr } => (
-                    DiagnosticSeverity::ERROR,
+                        case_str,
+                        aver_repr(&right_val),
+                        aver_repr(&left_val)
+                    )
+                }
+                (Ok(Value::Err(err_val)), _) | (_, Ok(Value::Err(err_val))) => {
                     format!(
-                        "verify error propagation: {} — ? hit {}",
-                        cr.case_expr, err_repr
-                    ),
-                ),
+                        "verify error propagation: {} — ? hit Result.Err({})",
+                        case_str,
+                        aver_repr(&err_val)
+                    )
+                }
+                (Err(e), _) | (_, Err(e)) => {
+                    format!("verify runtime error: {} — {}", case_str, e)
+                }
+                _ => {
+                    format!("verify runtime error: {} — unexpected shape", case_str)
+                }
             };
 
             diagnostics.push(Diagnostic {
@@ -366,12 +470,12 @@ fn verify_run_diagnostics(items: &mut [TopLevel], base_dir: Option<&str>) -> Vec
                     },
                     end: Position {
                         line: line.saturating_sub(1) as u32,
-                        character: (col + cr.case_expr.len()).min(200) as u32,
+                        character: (col + case_str.len()).min(200) as u32,
                     },
                 },
-                severity: Some(severity),
+                severity: Some(DiagnosticSeverity::ERROR),
                 source: Some("aver-verify".to_string()),
-                message,
+                message: outcome,
                 ..Default::default()
             });
         }

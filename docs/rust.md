@@ -5,7 +5,7 @@ Rust is the deployment backend for Aver.
 Use it when you want:
 - a native Cargo project
 - a normal Rust build/test/run loop
-- deployment without the Aver interpreter
+- deployment without the Aver runtime
 
 ## Quick start
 
@@ -142,7 +142,7 @@ When the guest entry has a parameter named `guestArgs: List<String>`, generated 
 
 ## Supported features
 
-Everything the interpreter supports is transpilable:
+All language features are transpilable:
 
 | Feature | Status |
 |---------|--------|
