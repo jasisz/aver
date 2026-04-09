@@ -2184,7 +2184,7 @@ pub(super) fn cmd_run_self_hosted(
 
     if run_verify_blocks {
         println!();
-        cmd_verify(file, module_root_override, false, false, false, false);
+        cmd_verify(file, module_root_override, false, false, false);
     }
 }
 
@@ -3135,7 +3135,6 @@ pub(super) fn cmd_verify(
     path: &str,
     module_root_override: Option<&str>,
     deps: bool,
-    vm_mode: bool,
     verbose: bool,
     json: bool,
 ) {
@@ -3154,7 +3153,7 @@ pub(super) fn cmd_verify(
     let mut printed_any = false;
 
     for file in &inputs {
-        match run_verify_for_file(file, &module_root, deps, vm_mode) {
+        match run_verify_for_file(file, &module_root, deps, true) {
             Ok(file_results) => {
                 // Render immediately — streaming output
                 let has_blocks = file_results.iter().any(|fr| !fr.blocks.is_empty());

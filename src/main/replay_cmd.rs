@@ -839,7 +839,6 @@ pub(super) fn cmd_replay(
     diff: bool,
     test_mode: bool,
     check_args: bool,
-    vm_mode: bool,
     self_host_mode: bool,
     json: bool,
 ) {
@@ -859,10 +858,8 @@ pub(super) fn cmd_replay(
     for file in &files {
         let result = if self_host_mode {
             replay_recording_file_self_host(file, diff, check_args)
-        } else if vm_mode {
-            replay_recording_file_vm(file, diff, check_args)
         } else {
-            replay_recording_file(file, diff, check_args)
+            replay_recording_file_vm(file, diff, check_args)
         };
         match result {
             Ok(rr) => {

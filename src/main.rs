@@ -35,7 +35,6 @@ fn main() {
             module_root,
             verify,
             record,
-            vm,
             self_host,
             profile,
             wasm,
@@ -51,7 +50,7 @@ fn main() {
                     record.as_deref(),
                     program_args.clone(),
                 );
-            } else if *vm || *profile {
+            } else {
                 commands::cmd_run_vm(
                     file,
                     module_root.as_deref(),
@@ -59,14 +58,6 @@ fn main() {
                     record.as_deref(),
                     program_args.clone(),
                     *profile,
-                );
-            } else {
-                commands::cmd_run(
-                    file,
-                    module_root.as_deref(),
-                    *verify,
-                    record.as_deref(),
-                    program_args.clone(),
                 );
             }
         }
@@ -83,11 +74,10 @@ fn main() {
             file,
             module_root,
             deps,
-            vm,
             verbose,
             json,
         } => {
-            commands::cmd_verify(file, module_root.as_deref(), *deps, *vm, *verbose, *json);
+            commands::cmd_verify(file, module_root.as_deref(), *deps, *verbose, *json);
         }
         Commands::Format { path, check } => {
             format_cmd::cmd_format(path, *check);
@@ -97,11 +87,10 @@ fn main() {
             diff,
             test,
             check_args,
-            vm,
             self_host,
             json,
         } => {
-            replay_cmd::cmd_replay(recording, *diff, *test, *check_args, *vm, *self_host, *json);
+            replay_cmd::cmd_replay(recording, *diff, *test, *check_args, *self_host, *json);
         }
         Commands::Repl => {
             repl::cmd_repl();

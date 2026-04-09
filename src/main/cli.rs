@@ -136,17 +136,14 @@ pub(super) enum Commands {
         /// Record effect calls and persist a replay session JSON into this directory
         #[arg(long)]
         record: Option<String>,
-        /// Execute using the bytecode VM instead of the tree-walking interpreter
-        #[arg(long)]
-        vm: bool,
         /// Execute using the self-hosted Aver interpreter compiled to Rust
-        #[arg(long, conflicts_with_all = ["vm", "profile"])]
+        #[arg(long, conflicts_with = "profile")]
         self_host: bool,
-        /// Print VM opcode/function profile after execution (implies --vm)
+        /// Print VM opcode/function profile after execution
         #[arg(long)]
         profile: bool,
         /// Compile to WASM and execute with built-in host (aver/* import ABI)
-        #[arg(long, conflicts_with_all = ["vm", "self_host", "profile"])]
+        #[arg(long, conflicts_with_all = ["self_host", "profile"])]
         wasm: bool,
         /// Arguments passed to the Aver program (available via Args.get()), after --
         #[arg(last = true)]
@@ -179,9 +176,6 @@ pub(super) enum Commands {
         /// Also run verify blocks for transitive `depends [...]` modules
         #[arg(long)]
         deps: bool,
-        /// Execute verify cases on the bytecode VM instead of the tree-walking interpreter
-        #[arg(long)]
-        vm: bool,
         /// Show full diagnostic detail (source snippets on failures)
         #[arg(long)]
         verbose: bool,
@@ -210,11 +204,8 @@ pub(super) enum Commands {
         /// Validate effect arguments in addition to effect sequence/type
         #[arg(long = "check-args")]
         check_args: bool,
-        /// Replay using the bytecode VM instead of the tree-walking interpreter
-        #[arg(long)]
-        vm: bool,
         /// Replay using the self-hosted Aver interpreter compiled to Rust
-        #[arg(long, conflicts_with = "vm")]
+        #[arg(long)]
         self_host: bool,
         /// Output results as JSON (NDJSON, one object per line)
         #[arg(long)]
@@ -334,35 +325,13 @@ mod tests {
     }
 
     #[test]
-    fn verify_accepts_vm_flag() {
-        let cli = Cli::parse_from(["aver", "verify", "examples/modules/app.av", "--vm"]);
-        match cli.command {
-            Commands::Verify { vm, .. } => assert!(vm),
-            _ => panic!("expected verify command"),
-        }
-    }
-
-    #[test]
     fn run_accepts_self_host_flag() {
         let cli = Cli::parse_from(["aver", "run", "examples/modules/app.av", "--self-host"]);
         match cli.command {
-            Commands::Run { self_host, vm, .. } => {
+            Commands::Run { self_host, .. } => {
                 assert!(self_host);
-                assert!(!vm);
             }
             _ => panic!("expected run command"),
-        }
-    }
-
-    #[test]
-    fn replay_accepts_vm_flag() {
-        let cli = Cli::parse_from(["aver", "replay", "recordings", "--vm"]);
-        match cli.command {
-            Commands::Replay { vm, self_host, .. } => {
-                assert!(vm);
-                assert!(!self_host);
-            }
-            _ => panic!("expected replay command"),
         }
     }
 
@@ -370,9 +339,8 @@ mod tests {
     fn replay_accepts_self_host_flag() {
         let cli = Cli::parse_from(["aver", "replay", "recordings", "--self-host"]);
         match cli.command {
-            Commands::Replay { self_host, vm, .. } => {
+            Commands::Replay { self_host, .. } => {
                 assert!(self_host);
-                assert!(!vm);
             }
             _ => panic!("expected replay command"),
         }
