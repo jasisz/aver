@@ -140,6 +140,7 @@ pub(super) struct ExprEmitter<'a> {
 }
 
 impl<'a> ExprEmitter<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         fn_indices: &'a HashMap<String, u32>,
         rt: &'a RuntimeFuncIndices,

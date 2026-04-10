@@ -202,20 +202,18 @@ body { display: flex; flex-direction: column; overflow: hidden; }
     flex: 1;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
     min-height: 0;
     background: #111827;
 }
 
 .terminal-surface {
+    flex: 1;
     outline: none;
     overflow: hidden;
 }
 
 .terminal-canvas {
     image-rendering: pixelated;
-    display: block;
 }
 
 .terminal-empty {
