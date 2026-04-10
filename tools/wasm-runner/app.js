@@ -241,7 +241,13 @@ async function loadSelectedFile(file) {
     state.wasmName = file.name;
     dom.fileMeta.textContent = `${file.name} · ${(file.size / 1024).toFixed(1)} KB`;
     dom.runButton.disabled = false;
-    setStatus("Module loaded. Ready to run.", "success");
+    // Switch to game mode (hide editor, show terminal)
+    document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
+    setWorkspaceMode("game");
+    setOutputMode("terminal");
+    clearOutput();
+    setStatus(`Running ${file.name}…`, "info");
+    runSelectedModule({ cols: 80, rows: 35 });
 }
 
 async function onFileChange(fileList) {
