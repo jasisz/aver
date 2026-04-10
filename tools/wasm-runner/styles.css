@@ -194,6 +194,7 @@ body { display: flex; flex-direction: column; overflow: hidden; }
     display: flex;
     flex-direction: column;
     min-width: 300px;
+    min-height: 0;
     background: #111827;
 }
 
@@ -334,6 +335,19 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .workspace[data-mode="game"] .editor-pane { display: none; }
 .workspace[data-mode="game"] .output-pane { flex: 1; }
 
+.game-layout {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+}
+
+.game-output {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
 /* ── Source viewer (game source code) ────────────────────────────── */
 
 .source-viewer {
@@ -343,6 +357,8 @@ body { display: flex; flex-direction: column; overflow: hidden; }
     min-width: 300px;
     max-width: 50%;
     flex: 1;
+    min-height: 0;
+    overflow: hidden;
 }
 
 .workspace[data-mode="game"][data-show-source="true"] .source-viewer { display: flex; }

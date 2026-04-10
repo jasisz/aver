@@ -77,30 +77,34 @@
 
     <!-- Right: output -->
     <section class="output-pane" data-output-pane>
-        <div class="source-viewer" data-source-viewer>
-            <div class="source-tabs" data-source-tabs></div>
-            <pre class="source-code" data-source-code></pre>
-        </div>
         <div class="back-bar">
             <button data-back>← Back</button>
             <button data-toggle-source class="btn-subtle">Source</button>
         </div>
-        <!-- Terminal (hidden until Terminal.* is used) -->
-        <div class="terminal-wrap" data-terminal-wrap style="display:none">
-            <div class="terminal-surface" tabindex="0" data-terminal>
-                <canvas class="terminal-canvas" data-terminal-canvas></canvas>
-                <div class="terminal-empty" data-terminal-empty></div>
+        <div class="game-layout">
+            <div class="source-viewer" data-source-viewer>
+                <div class="source-tabs" data-source-tabs></div>
+                <pre class="source-code" data-source-code></pre>
             </div>
-            <p class="terminal-hint" data-raw-mode data-active="false">
-                Arrow keys, esc, enter → Terminal.readKey()
-            </p>
-        </div>
-        <!-- Console -->
-        <div class="console-wrap" data-console-wrap>
-            <div class="console-surface" data-console></div>
-            <div class="readline-bar" data-readline-bar style="display:none">
-                <input type="text" placeholder="Console.readLine()…" data-line-input>
-                <button type="button" data-line-button>Send</button>
+            <div class="game-output">
+                <!-- Terminal (hidden until Terminal.* is used) -->
+                <div class="terminal-wrap" data-terminal-wrap style="display:none">
+                    <div class="terminal-surface" tabindex="0" data-terminal>
+                        <canvas class="terminal-canvas" data-terminal-canvas></canvas>
+                        <div class="terminal-empty" data-terminal-empty></div>
+                    </div>
+                    <p class="terminal-hint" data-raw-mode data-active="false">
+                        Arrow keys, esc, enter → Terminal.readKey()
+                    </p>
+                </div>
+                <!-- Console -->
+                <div class="console-wrap" data-console-wrap>
+                    <div class="console-surface" data-console></div>
+                    <div class="readline-bar" data-readline-bar style="display:none">
+                        <input type="text" placeholder="Console.readLine()…" data-line-input>
+                        <button type="button" data-line-button>Send</button>
+                    </div>
+                </div>
             </div>
         </div>
     </section>
