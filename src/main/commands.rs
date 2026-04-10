@@ -3344,6 +3344,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         with_self_host_support,
         adapter,
         wasm_opt,
+        strip,
     } = opts;
 
     // WASM target: simplified pipeline, no replay/policy/guest-entry support yet
@@ -3355,6 +3356,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
             module_root_override,
             adapter,
             wasm_opt,
+            strip,
         );
         return;
     }
@@ -3422,6 +3424,7 @@ fn cmd_compile_wasm(
     module_root_override: Option<&str>,
     adapter: Option<super::cli::WasmAdapter>,
     wasm_opt: Option<super::cli::WasmOptMode>,
+    strip: bool,
 ) {
     #[cfg(not(feature = "wasm"))]
     {
@@ -3432,6 +3435,7 @@ fn cmd_compile_wasm(
             module_root_override,
             adapter,
             wasm_opt,
+            strip,
         );
         eprintln!(
             "{}",
@@ -3457,7 +3461,7 @@ fn cmd_compile_wasm(
             Some(super::cli::WasmAdapter::Wasi) => codegen::wasm::WasmAdapter::Wasi,
             _ => codegen::wasm::WasmAdapter::Aver,
         };
-        match codegen::wasm::emit_wasm_with_adapter(&ctx, wasm_adapter) {
+        match codegen::wasm::emit_wasm_with_options(&ctx, wasm_adapter, strip) {
             Ok(wasm_bytes) => {
                 let out_path = Path::new(output_dir);
                 if let Err(e) = std::fs::create_dir_all(out_path) {
@@ -3769,6 +3773,7 @@ pub(super) struct CompileOptions<'a> {
     pub(super) with_self_host_support: bool,
     pub(super) adapter: Option<super::cli::WasmAdapter>,
     pub(super) wasm_opt: Option<super::cli::WasmOptMode>,
+    pub(super) strip: bool,
 }
 
 pub(super) fn cmd_proof(

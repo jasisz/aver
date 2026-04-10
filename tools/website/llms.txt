@@ -254,6 +254,8 @@ aver format file.av                 # auto-format
 aver context file.av --budget 10kb  # contract-level export for LLMs
 aver compile file.av -o out/        # Rust codegen
 aver compile file.av --target wasm  # WASM compilation
+aver compile file.av --target wasm --wasm-opt oz          # size-optimized
+aver compile file.av --target wasm --wasm-opt oz --strip  # smallest binary
 aver proof file.av -o proof/        # Lean 4 proof export
 aver proof file.av --backend dafny  # Dafny verification export
 aver replay recordings/ --test      # replay effectful recordings

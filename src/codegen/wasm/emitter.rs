@@ -57,6 +57,7 @@ struct MutualTcoLayout {
 pub fn build_wasm_module(
     ctx: &CodegenContext,
     adapter: super::WasmAdapter,
+    strip: bool,
 ) -> Result<Vec<u8>, String> {
     let mut module = Module::new();
 
@@ -406,9 +407,14 @@ pub fn build_wasm_module(
             .collect::<Vec<_>>()
             .join("|")
     };
-    let variant_name_offset = runtime::IO_SCRATCH_SIZE as usize + data_bytes.len();
-    let variant_name_bytes = variant_name_json.as_bytes();
-    data_bytes.extend_from_slice(variant_name_bytes);
+    let (variant_name_offset, variant_name_len) = if strip {
+        (0, 0)
+    } else {
+        let offset = runtime::IO_SCRATCH_SIZE as usize + data_bytes.len();
+        let bytes = variant_name_json.as_bytes();
+        data_bytes.extend_from_slice(bytes);
+        (offset, bytes.len())
+    };
 
     // Nullary sentinel table: sentinel→name mapping for host display.
     let sentinel_name_json = {
@@ -428,9 +434,14 @@ pub fn build_wasm_module(
             .collect::<Vec<_>>()
             .join("|")
     };
-    let sentinel_name_offset = runtime::IO_SCRATCH_SIZE as usize + data_bytes.len();
-    let sentinel_name_bytes = sentinel_name_json.as_bytes();
-    data_bytes.extend_from_slice(sentinel_name_bytes);
+    let (sentinel_name_offset, sentinel_name_len) = if strip {
+        (0, 0)
+    } else {
+        let offset = runtime::IO_SCRATCH_SIZE as usize + data_bytes.len();
+        let bytes = sentinel_name_json.as_bytes();
+        data_bytes.extend_from_slice(bytes);
+        (offset, bytes.len())
+    };
 
     // Global 4: variant_names_ptr, Global 5: variant_names_len
     global_section.global(
@@ -447,7 +458,7 @@ pub fn build_wasm_module(
             mutable: false,
             shared: false,
         },
-        &ConstExpr::i32_const(variant_name_bytes.len() as i32),
+        &ConstExpr::i32_const(variant_name_len as i32),
     );
 
     // Global 6: sentinel_names_ptr, Global 7: sentinel_names_len
@@ -465,7 +476,7 @@ pub fn build_wasm_module(
             mutable: false,
             shared: false,
         },
-        &ConstExpr::i32_const(sentinel_name_bytes.len() as i32),
+        &ConstExpr::i32_const(sentinel_name_len as i32),
     );
 
     module.section(&global_section);

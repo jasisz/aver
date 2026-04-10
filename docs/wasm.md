@@ -22,6 +22,26 @@ Default output uses the `aver/*` import ABI. That keeps the generated module hos
 
 `--wasm-opt` requires `binaryen` (`wasm-opt`) to be installed. The toolchain passes the required WASM feature flags automatically because Aver modules use bulk-memory ops and multi-value imports.
 
+### `--strip`
+
+`aver compile app.av --target wasm --strip` omits the variant and sentinel name tables from the data section. This removes the type-name strings used for display (e.g. `Console.print(Color.Black)` prints `-2` instead of `Color.Black`). The game logic is unaffected — only cosmetic display of nullary variants changes.
+
+Combine with `--wasm-opt oz` for smallest binaries:
+
+```bash
+aver compile app.av --target wasm --wasm-opt oz --strip
+```
+
+### String deduplication
+
+String literals are deduplicated at compile time. Each unique string appears once in the data section regardless of how many times it is referenced in source code.
+
+## Nullary Variant Sentinels
+
+User-defined nullary variants (e.g. `Color.Black`, `Tile.Wall`, `PieceKind.T`) use unique negative i32 sentinel values instead of heap allocation. This eliminates allocation overhead and simplifies pattern matching to a single `i32.eq` instruction.
+
+`Option.None` uses sentinel `-1` (existing). User-defined nullary variants start at `-2` and count downward. The mapping is exported in the module as `$sentinel_names_ptr/len` so hosts can display variant names.
+
 ## Built-in Host
 
 `aver run app.av --wasm` compiles with the `aver/*` ABI and executes the module with a built-in wasmtime host in [src/main/commands.rs](../src/main/commands.rs).
