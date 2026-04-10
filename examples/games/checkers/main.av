@@ -367,11 +367,20 @@ fn applyPlayerMove(state: GameState, turn: List<Point>) -> GameState
 verify applyPlayerMove
     applyPlayerMove(initState(6), [Board.pt(0, 5), Board.pt(1, 4)]).moveNum => 2
 
-fn readInput(state: GameState) -> GameState
-    ? "Drain all queued keys"
+fn readInput(state: GameState, playerColor: Color) -> GameState
+    ? "Drain queued keys, stop if turn changed or game over."
+    ! [Terminal.readKey]
+    match state.gameOver
+        true -> state
+        false -> match state.currentPlayer == playerColor
+            false -> state
+            true -> readOneKey(state, playerColor)
+
+fn readOneKey(state: GameState, playerColor: Color) -> GameState
+    ? "Read one key and continue draining if still player's turn."
     ! [Terminal.readKey]
     match Terminal.readKey()
-        Option.Some(k) -> readInput(handleKey(state, k))
+        Option.Some(k) -> readInput(handleKey(state, k), playerColor)
         Option.None -> state
 
 fn playerPhase(state: GameState) -> Result<String, String>
@@ -382,7 +391,7 @@ fn playerPhase(state: GameState) -> Result<String, String>
     ]
     renderFrame(state)
     Time.sleep(50)
-    newState = readInput(state)
+    newState = readInput(state, state.currentPlayer)
     match newState.currentPlayer == state.currentPlayer
         true -> playerPhaseCheck(newState)
         false -> gameLoop(checkGameOver(newState))
