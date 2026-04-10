@@ -407,7 +407,7 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 /* ── Touch controls (mobile gamepad) ─────────────────────────────── */
 
 .touch-controls {
-    display: none;
+    display: flex;
     gap: 0.75rem;
     padding: 0.5rem 0.75rem;
     padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
@@ -477,9 +477,6 @@ body { display: flex; flex-direction: column; overflow: hidden; }
     max-width: 130px;
 }
 
-@media (max-width: 1024px) {
-    .touch-controls { display: flex; }
-}
 
 /* ── Responsive ──────────────────────────────────────────────────── */
 
