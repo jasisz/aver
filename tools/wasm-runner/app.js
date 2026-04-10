@@ -136,25 +136,8 @@ function terminalAvailableHeight() {
 }
 
 function autoSizeTerminalSurface(preferredRows = null) {
-    if (dom.terminal.dataset.empty === "true" && preferredRows == null) {
-        dom.terminal.style.height = "";
-        return;
-    }
-
-    const styles = getComputedStyle(dom.terminal);
-    const cellHeight = Number.parseFloat(styles.getPropertyValue("--cell-height")) || 18;
-    const paddingY =
-        Number.parseFloat(styles.paddingTop || "0") +
-        Number.parseFloat(styles.paddingBottom || "0");
-    const maxHeight = terminalAvailableHeight();
-
-    let nextHeight = maxHeight;
-    if (preferredRows != null) {
-        const fitted = preferredRows * cellHeight + paddingY;
-        nextHeight = Math.min(Math.max(220, fitted), maxHeight);
-    }
-
-    dom.terminal.style.height = `${Math.round(nextHeight)}px`;
+    // Let flex handle sizing — don't set explicit height.
+    dom.terminal.style.height = "";
 }
 
 function spawnWorker(fixedSize) {
