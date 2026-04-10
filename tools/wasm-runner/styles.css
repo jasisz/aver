@@ -448,20 +448,23 @@ body { display: flex; flex-direction: column; overflow: hidden; }
     border-color: var(--accent);
 }
 
-/* Cross layout for WASD and arrows */
+/* Keyboard layout for WASD and arrows */
 .touch-grid {
     display: grid;
-    grid-template-columns: 40px 40px 40px;
-    grid-template-rows: 40px 40px;
+    grid-template-columns: repeat(3, 40px);
+    grid-template-rows: repeat(2, 40px);
     gap: 3px;
-    justify-items: center;
 }
 
-.wasd button:nth-child(1) { grid-column: 2; grid-row: 1; } /* W */
-.wasd button:nth-child(2) { grid-column: 1; grid-row: 2; } /* A */
-.wasd button:nth-child(3) { grid-column: 2; grid-row: 2; } /* S */
-.wasd button:nth-child(4) { grid-column: 3; grid-row: 2; } /* D */
+/* QWE / ASD layout */
+.wasd button:nth-child(1) { grid-column: 1; grid-row: 1; } /* Q */
+.wasd button:nth-child(2) { grid-column: 2; grid-row: 1; } /* W */
+.wasd button:nth-child(3) { grid-column: 3; grid-row: 1; } /* E */
+.wasd button:nth-child(4) { grid-column: 1; grid-row: 2; } /* A */
+.wasd button:nth-child(5) { grid-column: 2; grid-row: 2; } /* S */
+.wasd button:nth-child(6) { grid-column: 3; grid-row: 2; } /* D */
 
+/*   ↑  / ←↓→ layout */
 .arrows button:nth-child(1) { grid-column: 2; grid-row: 1; } /* ↑ */
 .arrows button:nth-child(2) { grid-column: 1; grid-row: 2; } /* ← */
 .arrows button:nth-child(3) { grid-column: 2; grid-row: 2; } /* ↓ */
