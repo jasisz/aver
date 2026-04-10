@@ -156,6 +156,30 @@ export class AverBrowserHost {
         this.keyQueue = [];
     }
 
+    setSharedLineBuffer(buffer) {
+        this.lineBufferView = buffer ? new Int32Array(buffer) : null;
+        this.lineBufferBytes = buffer ? new Uint8Array(buffer) : null;
+    }
+
+    /// Blocking readLine: wait on SharedArrayBuffer for main thread to signal.
+    blockingReadLine() {
+        // Layout: [0]=ready flag, [1]=length, [2..]=UTF-8 bytes
+        const view = this.lineBufferView;
+        if (!view) {
+            // No shared buffer — fall back to queue
+            return this.lineQueue.length > 0 ? this.lineQueue.shift() : "";
+        }
+        // Signal main thread we need a line
+        Atomics.store(view, 0, 0); // ready=0
+        this.post({ type: "readline-wait" });
+        // Block until main thread sets ready=1
+        Atomics.wait(view, 0, 0);
+        const len = Atomics.load(view, 1);
+        if (len <= 0) return "";
+        const bytes = this.lineBufferBytes.slice(8, 8 + len);
+        return new TextDecoder().decode(bytes);
+    }
+
     setProgramArgs(args) {
         this.programArgs = Array.isArray(args) ? args.map((arg) => String(arg)) : [];
     }
@@ -189,7 +213,7 @@ export class AverBrowserHost {
                     this.postConsole("stderr", this.readRawString(ptr, len));
                 },
                 console_readLine: () => {
-                    const line = this.lineQueue.length > 0 ? this.lineQueue.shift() : "";
+                    const line = this.blockingReadLine();
                     this.post({
                         type: "line-queue",
                         queued: this.lineQueue.length,
