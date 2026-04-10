@@ -1,6 +1,14 @@
-# Aver — Full Documentation Index
+# Aver — Deep Documentation Index
 
-> For a compact overview, see llms.txt. This file lists all documentation sources for deep context.
+> Start with `llms.txt`. This file is not a second compact guide; it is a routing index for deeper docs, examples, and implementation context.
+
+## Recommended read order
+
+1. `llms.txt` for syntax guardrails and the minimal working shape of an Aver file
+2. `docs/language.md` for the full surface-language contract
+3. `docs/services.md` for stdlib and effect namespaces
+4. one or two raw `.av` examples close to your task
+5. `AGENTS.md` only if you need repository internals or implementation details
 
 ## Primary docs (read these first)
 - [llms.txt](https://averlang.dev/llms.txt) — compact language overview with examples

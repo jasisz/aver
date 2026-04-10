@@ -10,32 +10,78 @@
 - Written in: Rust
 - Backends: bytecode VM, Rust codegen, WASM, Lean 4 proof export, Dafny verification
 
-## Why Aver exists
+## Before you write Aver
 
-AI writes code fluently. That's the problem. Python, TypeScript, Go — they let you do anything: mutate state, throw exceptions, capture closures, hide side effects. AI will happily use all of it. The result is code that works but is full of implicit behavior — hard to verify, hard to audit, hard to review with confidence.
+If you only remember one section, make it this one:
 
-Aver doesn't make AI's job easier. It makes the reviewer's job possible.
+- Files end with `.av`, not `.aver`
+- Each file starts with exactly one `module <Name>` declaration
+- Module metadata uses `intent =` and `exposes [...]`
+- Bindings are `name = expr` or `name: Type = expr` — no `let`, `val`, or `var`
+- Constructors are always qualified: `Result.Ok`, `Result.Err`, `Option.Some`, `Option.None`
+- There is no `if` / `else`; use `match`
+- Match arm bodies must start on the same line as `->`; for complex logic, extract a helper function
+- Effects are explicit: `! [Console.print]`, `! [Http.get]`
+- Pure functions get colocated `verify` blocks
+- Effectful flows should usually be tested through record/replay, not `verify`
+- Parse integers with `Int.fromString`, which returns `Result<Int, String>`
+- `Console.readLine()` returns `Result<String, String>`, not plain `String`
 
-Every function carries its intent (`?` descriptions). Side effects are visible in the type system (`! [Console.print]`). Tests are executable specs co-located with the function (`verify` blocks). Architectural decisions are first-class syntax (`decision` blocks). There is no null, no exceptions, no mutation, no closures, no if/else, no loops, no magic.
+## Minimal correct file
 
-## Quick reference
+```aver
+module Hello
+    intent = "Tiny intro module."
+    exposes [greet, main]
+
+fn greet(name: String) -> String
+    ? "Builds a greeting."
+    "Hello, {name}!"
+
+verify greet
+    greet("Aver") => "Hello, Aver!"
+
+fn main() -> Unit
+    ? "Entry point."
+    ! [Console.print]
+    Console.print(greet("world"))
+```
+
+This shows the core pattern:
+
+- a pure function
+- a `verify` block directly below it
+- an effectful `main`
+
+## Core syntax
 
 ### Types
 
-Primitives: `Int`, `Float`, `String`, `Bool`, `Unit`
-Compound: `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>`
-Tuples: `(A, B, ...)`
-Function types: `Fn(A) -> B`, `Fn(A) -> B ! [Effect]`
-User-defined sum types: `type Shape` with `Shape.Circle(Float)`, `Shape.Rect(Float, Float)`
-User-defined records: `record User` with `User(name = "A", age = 1)`, field access `u.name`
+Primitives:
 
-`Unit` means "no meaningful value" (like void). Rendered as `()` in diagnostics.
+- `Int`
+- `Float`
+- `String`
+- `Bool`
+- `Unit`
+
+Common compound types:
+
+- `Result<T, E>`
+- `Option<T>`
+- `List<T>`
+- `Vector<T>`
+- `Map<K, V>`
+- tuples: `(A, B, ...)`
+- function types: `Fn(A) -> B`, `Fn(A) -> B ! [Effect]`
+
+`Unit` means "no meaningful value" and renders as `()` in diagnostics.
 
 ### Bindings
 
-All bindings are immutable. No `val`/`var` keywords.
+All bindings are immutable.
 
-```
+```aver
 name = "Alice"
 age: Int = 30
 xs: List<Int> = []
@@ -43,7 +89,7 @@ xs: List<Int> = []
 
 ### Functions
 
-```
+```aver
 fn add(a: Int, b: Int) -> Int
     a + b
 
@@ -53,72 +99,166 @@ fn fetchUser(id: String) -> Result<String, String>
     Http.get("https://api.example.com/users/{id}")
 ```
 
-- `? "..."` — prose description (what and why). Continuation lines are additional string literals.
-- `! [Effect1, Effect2]` — effect declaration (statically and runtime enforced).
-- Body uses indentation. Last expression is the return value.
-- No `return` keyword.
-- `main` returns `Unit` or `Result<Unit, String>`.
+Rules:
 
-### Match (the only branching construct)
+- `? "..."` is the prose description
+- `! [...]` declares effects
+- indentation defines the body
+- the last expression is the return value
+- there is no `return` keyword
+- `main` returns `Unit` or `Result<Unit, String>`
 
-No `if`/`else`. All branching is `match`:
+### Match
 
-```
+There is no `if` / `else`. All branching is `match`.
+
+```aver
 match value
     42 -> "exact"
     _ -> "anything"
-    x -> "bound to {x}"
     [] -> "empty list"
     [h, ..t] -> "head {h}"
     Result.Ok(v) -> "ok: {v}"
     Result.Err(e) -> "err: {e}"
     Shape.Circle(r) -> "circle"
-    (a, b) -> "pair"
 ```
 
-Constructors are always qualified: `Result.Ok`, `Option.None`, `Shape.Circle`.
+Boolean branching:
 
-Boolean branching pattern:
-```
+```aver
 match x > 0
-    true  -> "positive"
+    true -> "positive"
     false -> "non-positive"
 ```
 
+Important: the expression for an arm must begin on the same line as `->`.
+
+Good:
+
+```aver
+match x > 0
+    true -> "positive"
+    false -> helper(x)
+```
+
+Avoid:
+
+```aver
+match x > 0
+    true ->
+        "positive"
+```
+
+### Constructors and user-defined types
+
+UpperCamel callees are constructors. They are always qualified when namespaced.
+
+```aver
+Result.Ok(42)
+Result.Err("bad")
+Option.Some("hello")
+Option.None
+```
+
+Sum types:
+
+```aver
+type Shape
+    Circle(Float)
+    Rect(Float, Float)
+    Point
+```
+
+Records:
+
+```aver
+record User
+    name: String
+    age: Int
+```
+
+Record construction uses named fields:
+
+```aver
+User(name = "A", age = 1)
+```
+
+### Modules
+
+```aver
+module Billing
+    intent = "Billing application core."
+    exposes [charge, refund]
+    depends [Core.Types, Infra.Store]
+```
+
+Rules:
+
+- `module` must be the first top-level item
+- `intent` describes the module's purpose
+- `exposes` lists public functions and types
+- `depends` resolves from `--module-root`
+- opaque exports use `exposes opaque [TypeName]`
+
 ### Effects
 
-Effects are exact method-level names declared on every function that uses them:
+Effects are method-level and exact.
 
-```
+```aver
 fn save(data: String) -> Unit
     ? "Writes data to disk."
     ! [Disk.writeText]
     Disk.writeText("out.txt", data)
 ```
 
-If `save` calls `Console.print` without declaring it, the compiler errors. Effects propagate — callers must declare all effects of their callees.
+If a function calls `Console.print`, `Http.get`, or another effectful capability without declaring it, the compiler errors. Effects also propagate through calls, so callers must declare the effects required by their callees.
 
-### Verify blocks
+Example with input parsing:
 
-Regular verify (executable examples):
+```aver
+fn askName() -> String
+    ? "Reads a name or falls back to stranger."
+    ! [Console.readLine]
+    input = Console.readLine()
+    match input
+        Result.Ok(line) -> line
+        Result.Err(_) -> "stranger"
 ```
+
+### Verify and replay
+
+Regular verify:
+
+```aver
+fn add(a: Int, b: Int) -> Int
+    a + b
+
 verify add
     add(1, 2) => 3
     add(0, 0) => 0
 ```
 
-Law verify (finite universal checks over explicit domains):
-```
+Law verify:
+
+```aver
 verify add law commutative
     given a: Int = -2..2
     given b: Int = [-1, 0, 1]
     add(a, b) => add(b, a)
 ```
 
-### Decision blocks
+Use `verify` for pure logic. Use replay for effectful flows.
 
-First-class syntax for architectural rationale:
+```text
+aver run app.av --record recordings/
+aver replay recordings/ --test --diff
 ```
+
+### Decisions
+
+Architectural rationale is first-class syntax:
+
+```aver
 decision UseResultNotExceptions
     date = "2024-01-15"
     reason =
@@ -129,368 +269,107 @@ decision UseResultNotExceptions
     impacts = [safeDivide, safeRoot]
 ```
 
-### Modules
-
-```
-module Billing
-    intent =
-        "Billing application core."
-    exposes [charge, refund]
-    depends [Core.Types, Infra.Store]
-```
-
-- `module` must be first top-level item
-- `intent` is prose description of the module's purpose
-- `exposes` lists public functions
-- `depends` lists module dependencies (resolved from `--module-root`)
-
-Opaque types: `exposes opaque [Discount]` — visible in signatures but cannot be constructed or destructured from outside the module.
-
-### User-defined types
-
-Sum types:
-```
-type Shape
-    Circle(Float)
-    Rect(Float, Float)
-    Point
-```
-
-Records:
-```
-record User
-    name: String
-    age: Int
-```
-
-Record update: `User.update(u, age = 31)`
-
-### String interpolation
-
-```
-greeting = "Hello, {name}! Age: {age}"
-```
-
 ### Operators
 
-Arithmetic: `+`, `-`, `*`, `/` (operands must match types, no implicit promotion)
-Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
-Error propagation: `expr?` (unwraps Result.Ok, propagates Err)
-Independence: `(a, b)!` (parallel), `(a, b)?!` (parallel + Result unwrap)
+- arithmetic: `+`, `-`, `*`, `/`
+- comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
+- error propagation: `expr?`
+- independence: `(a, b)!`, `(a, b)?!`
 
-### Recursion (no loops)
+### Recursion
 
-```
+There are no loops. Use recursion and pattern matching.
+
+```aver
 fn sum(xs: List<Int>) -> Int
     match xs
         [] -> 0
         [h, ..t] -> h + sum(t)
 ```
 
-Tail-call optimization is automatic. Auto-memoization for pure recursive functions with scalar arguments.
+Tail-call optimization is automatic.
 
-## What Aver deliberately omits
+## Common namespaces
 
-| Absent | Instead |
-|--------|---------|
-| `null` | `Option<T>` with `Some`/`None` |
-| Exceptions | `Result<T, E>` — errors are values |
-| Mutable state | All bindings immutable |
-| Closures | All functions top-level, no captured variables |
-| `if`/`else` | `match` is exhaustive |
-| `for`/`while` | Recursion + pattern matching + TCO |
-| Async runtime | Independence (`?!`) for parallelism |
-| Decorators, reflection | No implicit behavior |
+Useful pure functions:
 
-## Standard library
+- `Int.fromString : String -> Result<Int, String>`
+- `Int.toString : Int -> String`
+- `Float.fromString : String -> Result<Float, String>`
+- `String.trim : String -> String`
+- `List.len : List<T> -> Int`
+- `Map.get : Map<K, V> -> Option<V>`
+- `Vector.get : Vector<T> -> Option<T>`
+- `Result.withDefault`
+- `Option.withDefault`
 
-### Pure namespaces
+Useful effectful namespaces:
 
-- `Int`: abs, min, max, mod, toString, toFloat, fromString, fromFloat
-- `Float`: abs, floor, ceil, round, sin, cos, sqrt, min, max, toString, fromString, fromInt
-- `String`: len, chars, split, join, contains, startsWith, endsWith, trim, slice, replace, toUpper, toLower, repeat
-- `Bool`: or, and, not
-- `List`: len, prepend, concat, reverse, contains, zip, take, drop
-- `Vector`: new, get, set, len, fromList, toList (O(1) indexed access)
-- `Map`: empty, get, set, has, remove, len, keys, values, entries, fromList
-- `Result`: Ok, Err, withDefault
-- `Option`: Some, None, withDefault, toResult
-- `Char`: toCode, fromCode
-- `Byte`: toHex, fromHex
+- `Console.print`
+- `Console.error`
+- `Console.warn`
+- `Console.readLine`
+- `Http.get`
+- `Disk.readText`
+- `Disk.writeText`
+- `Tcp.connect`
+- `Terminal.readKey`
 
-No built-in `List.map`, `List.filter`, `List.fold`. Write them with recursion:
+Notably absent:
 
-```
-fn filter(xs: List<Int>, pred: Fn(Int) -> Bool) -> List<Int>
-    match xs
-        [] -> []
-        [h, ..t] -> match pred(h)
-            true  -> List.prepend(h, filter(t, pred))
-            false -> filter(t, pred)
-```
+- no built-in `List.map`
+- no built-in `List.filter`
+- no built-in `List.fold`
 
-### Effectful namespaces
-
-- `Console`: print, error, warn, readLine
-- `Http`: get, post, put, patch, delete, head
-- `Disk`: readText, writeText, appendText, exists, delete, deleteDir, listDir, makeDir
-- `Tcp`: connect, writeLine, readLine, close, send, ping
-- `Terminal`: enableRawMode, readKey, setCursor, print, clear, size (feature-gated)
-- `Time`: now, unixMs, sleep
-- `Env`: get, set
-- `Args`: get
-- `HttpServer`: listen, listenWith
+Write these with recursion.
 
 ## Toolchain
 
-```
-aver run file.av                    # run with VM
-aver run file.av --vm               # explicit VM mode
-aver run file.av --self-host        # self-hosted interpreter
-aver verify file.av                 # run all verify blocks
-aver check file.av                  # static diagnostics (missing intent, verify, effects)
-aver why file.av                    # justification coverage score
-aver format file.av                 # auto-format
-aver context file.av --budget 10kb  # contract-level export for LLMs
-aver compile file.av -o out/        # Rust codegen
-aver compile file.av --target wasm             # WASM compilation
-aver compile file.av --target wasm --wasm-opt oz  # size-optimized
-aver proof file.av -o proof/        # Lean 4 proof export
-aver proof file.av --backend dafny  # Dafny verification export
-aver replay recordings/ --test      # replay effectful recordings
-```
-
-### aver context (AI navigation)
-
-`aver context` exports the contract-level view of a module graph — types, effects, intents, verify examples — sized to fit an LLM context window. Start with `--budget 10kb`, zoom in as needed.
-
-### aver.toml (project configuration)
-
-Runtime effect policies:
-```
-[effects.Http]
-hosts = ["api.example.com", "*.internal.corp"]
-
-[effects.Disk]
-paths = ["./data/**"]
-
-[effects.Env]
-keys = ["APP_*", "TOKEN"]
+```text
+aver run file.av
+aver run file.av --vm
+aver run file.av --self-host
+aver verify file.av
+aver check file.av
+aver why file.av
+aver format file.av
+aver context file.av --budget 10kb
+aver compile file.av -o out/
+aver compile file.av --target wasm
+aver compile file.av --target wasm --wasm-opt oz
+aver proof file.av -o proof/
+aver proof file.av --backend dafny
+aver replay recordings/ --test --diff
 ```
 
-Check-time suppressions:
-```
-[[check.suppress]]
-slug = "non-tail-recursion"
-files = ["**/eval/**"]
-reason = "Tree-walking interpreter — CPS would destroy correspondence."
+For AI navigation, start with:
+
+```text
+aver context file.av --budget 10kb
 ```
 
-## Complete example: Calculator
+Then zoom in with `--focus <symbol>` or a larger budget.
 
-```
-module Calculator
-    intent =
-        "Safe calculator demonstrating Result types, match expressions,"
-        "and co-located verification. Errors are values, not exceptions."
-    exposes [safeDivide, safeRoot]
+## Common mistakes
 
-decision NoExceptions
-    date = "2024-01-15"
-    reason =
-        "Exceptions make error paths invisible at the call site."
-        "Result forces the caller to acknowledge failure explicitly,"
-        "which is essential when AI tooling reads code without running it."
-    chosen = "Result"
-    rejected = ["Exceptions", "Nullable"]
-    impacts = [safeDivide, safeRoot]
-
-fn safeDivide(a: Int, b: Int) -> Result<Int, String>
-    ? "Safe integer division. Returns Err when divisor is zero."
-    match b
-        0 -> Result.Err("Division by zero")
-        _ -> Result.Ok(a / b)
-
-verify safeDivide
-    safeDivide(10, 2) => Result.Ok(5)
-    safeDivide(7, 0)  => Result.Err("Division by zero")
-    safeDivide(9, 3)  => Result.Ok(3)
-    safeDivide(0, 5)  => Result.Ok(0)
-
-fn safeRoot(n: Int) -> Result<Int, String>
-    ? "Returns Err for negative input, Ok otherwise."
-    match n < 0
-        true  -> Result.Err("Cannot take root of negative number")
-        false -> Result.Ok(n)
-
-verify safeRoot
-    safeRoot(4)   => Result.Ok(4)
-    safeRoot(0)   => Result.Ok(0)
-    safeRoot(-1)  => Result.Err("Cannot take root of negative number")
-
-fn main() -> Unit
-    ! [Console.print]
-    Console.print(safeDivide(10, 2))
-    Console.print(safeDivide(7, 0))
-```
-
-## Complete example: Effects and console
-
-```
-module ConsoleDemo
-    intent =
-        "Demonstrate all four Console methods: print, error, warn, readLine."
-    exposes [main]
-
-fn greet(name: String) -> Unit
-    ? "Print a greeting to stdout."
-    ! [Console.print]
-    Console.print("Hello, {name}!")
-
-fn reportProblem(msg: String) -> Unit
-    ? "Write an error message to stderr."
-    ! [Console.error]
-    Console.error(msg)
-
-fn askName() -> String
-    ? "Read a name from stdin; fall back to 'stranger' on EOF."
-    ! [Console.readLine]
-    result = Console.readLine()
-    match result
-        Result.Ok(line) -> line
-        Result.Err(_)   -> "stranger"
-
-fn main() -> Unit
-    ? "Full console demo."
-    ! [Console.error, Console.print, Console.readLine]
-    greet("world")
-    reportProblem("Something went wrong (not really).")
-    name = askName()
-    greet(name)
-```
-
-## Complete example: Records, verify laws, and domain modeling
-
-```
-module OrderTotal
-    intent =
-        "Calculate order totals from a list of items, discount, and tax rate."
-        "Validation happens at construction — if you have a Discount, it is valid."
-    exposes [calculateTotal, Item, mkDiscount, mkTaxRate]
-
-record Item
-    price: Float
-    quantity: Int
-
-record Discount
-    percent: Float
-
-record TaxRate
-    percent: Float
-
-fn mkDiscount(percent: Float) -> Result<Discount, String>
-    ? "Constructs a Discount only if percent is in 0-100."
-    match percent < 0.0
-        true  -> Result.Err("Discount cannot be negative")
-        false -> match percent > 100.0
-            true  -> Result.Err("Discount cannot exceed 100%")
-            false -> Result.Ok(Discount(percent = percent))
-
-verify mkDiscount
-    mkDiscount(0.0)   => Result.Ok(Discount(percent = 0.0))
-    mkDiscount(-0.1)  => Result.Err("Discount cannot be negative")
-    mkDiscount(100.1) => Result.Err("Discount cannot exceed 100%")
-
-fn sumItems(items: List<Item>) -> Float
-    ? "Recursively sums price * quantity for each item."
-    match items
-        [] -> 0.0
-        [head, ..tail] -> Float.fromInt(head.quantity) * head.price + sumItems(tail)
-
-verify sumItems
-    sumItems([]) => 0.0
-    sumItems([Item(price = 7.0, quantity = 4)]) => 7.0 * 4.0
-
-verify sumItems law sumSplitsOverConcat
-    given a: Item = [Item(price = 5.0, quantity = 3), Item(price = 10.0, quantity = 1)]
-    given b: Item = [Item(price = 7.0, quantity = 2), Item(price = 3.0, quantity = 4)]
-    sumItems([a, b]) => sumItems([a]) + sumItems([b])
-
-fn applyDiscount(subtotal: Float, d: Discount) -> Float
-    ? "Reduces subtotal by the discount percentage."
-    subtotal - subtotal * (d.percent / 100.0)
-
-verify applyDiscount law discountNeverIncreasesPositive
-    given subtotal: Float = [50.0, 100.0, 200.0]
-    given d: Discount = [Discount(percent = 0.0), Discount(percent = 25.0), Discount(percent = 100.0)]
-    applyDiscount(subtotal, d) <= subtotal => true
-
-fn calculateTotal(items: List<Item>, d: Discount, t: TaxRate) -> Float
-    ? "Sums items, applies discount, applies tax."
-    subtotal = sumItems(items)
-    afterDiscount = applyDiscount(subtotal, d)
-    afterDiscount + afterDiscount * (t.percent / 100.0)
-
-verify calculateTotal law zeroDiscountZeroTaxIsSubtotal
-    given items: List<Item> = [[Item(price = 10.0, quantity = 2)], [Item(price = 5.0, quantity = 3)]]
-    calculateTotal(items, Discount(percent = 0.0), TaxRate(percent = 0.0)) => sumItems(items)
-```
-
-## Common patterns
-
-Recursive list processing:
-```
-fn collectPositive(xs: List<Int>) -> List<Int>
-    match xs
-        [] -> []
-        [h, ..t] -> match h > 0
-            true  -> List.prepend(h, collectPositive(t))
-            false -> collectPositive(t)
-```
-
-Error propagation:
-```
-fn parseAndDivide(a: String, b: String) -> Result<Int, String>
-    x = Int.fromString(a)?
-    y = Int.fromString(b)?
-    safeDivide(x, y)?
-```
-
-Map operations:
-```
-ages = Map.fromList([("alice", 30), ("bob", 25)])
-match Map.get(ages, "alice")
-    Option.Some(age) -> "Alice is {age}"
-    Option.None -> "Unknown"
-```
-
-Vector (indexed access):
-```
-grid = Vector.new(100, 0)
-updated = Vector.set(grid, 42, 1)
-match Vector.get(grid, 42)
-    Option.Some(v) -> v
-    Option.None -> 0
-```
-
-## Common mistakes to avoid
-
-1. Using `if`/`else` — use `match` instead
-2. Using `val`/`var` — just `name = expr`
-3. Bare constructors: `Ok(x)` — must be `Result.Ok(x)`
-4. Missing effect declaration — compiler will error
-5. Closures or lambdas — not supported, use named top-level functions
-6. Mutable variables — not supported, use recursion with accumulators
-7. `List.map`/`List.filter` — not built-in, write with recursion
-8. Pipe operator `|>` — not supported
-9. Positional record destructuring in match — bind the record, use field access
-10. Multi-line match arms — arm body must follow `->` on the same line. For complex logic, extract into a named function
+1. Writing `.aver` files instead of `.av`
+2. Using `let`, `val`, or `var` instead of `name = expr`
+3. Using bare constructors like `Ok(x)` instead of `Result.Ok(x)`
+4. Using `String.toInt` instead of `Int.fromString`
+5. Assuming `Console.readLine()` returns `String` instead of `Result<String, String>`
+6. Using `if` / `else` instead of `match`
+7. Writing multi-line match arms instead of extracting a helper
+8. Putting `verify` on effectful flows instead of using replay
+9. Expecting closures or lambdas — not supported
+10. Expecting mutable variables — not supported
+11. Expecting `List.map`, `List.filter`, or `List.fold` to exist
 
 ## Further reading
 
 - Language Guide: https://github.com/jasisz/aver/blob/main/docs/language.md
 - Services (stdlib): https://github.com/jasisz/aver/blob/main/docs/services.md
-- Common Pushback (FAQ): https://github.com/jasisz/aver/blob/main/docs/pushback.md
+- Constructors: https://github.com/jasisz/aver/blob/main/docs/constructors.md
+- Common Pushback: https://github.com/jasisz/aver/blob/main/docs/pushback.md
 - Independence (?!): https://github.com/jasisz/aver/blob/main/docs/independence.md
 - Lean proofs: https://github.com/jasisz/aver/blob/main/docs/lean.md
 - Dafny verification: https://github.com/jasisz/aver/blob/main/docs/dafny.md
