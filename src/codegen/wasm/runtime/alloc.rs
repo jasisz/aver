@@ -1089,14 +1089,6 @@ pub(super) fn emit_unwrap_i32() -> Function {
 /// $obj_kind(ptr: i32) -> i32
 pub(super) fn emit_obj_kind() -> Function {
     let mut f = Function::new(vec![]);
-    // Guard: sentinel values (negative i32) return 0xFF (invalid kind)
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::I32LtS);
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-    f.instruction(&Instruction::I32Const(0xFF));
-    f.instruction(&Instruction::Return);
-    f.instruction(&Instruction::End);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
         offset: 0,
@@ -1115,14 +1107,6 @@ pub(super) fn emit_obj_kind() -> Function {
 /// $obj_tag(ptr: i32) -> i32
 pub(super) fn emit_obj_tag() -> Function {
     let mut f = Function::new(vec![]);
-    // Guard: sentinel values (negative i32) return 0xFF (invalid tag)
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::I32LtS);
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-    f.instruction(&Instruction::I32Const(0xFF));
-    f.instruction(&Instruction::Return);
-    f.instruction(&Instruction::End);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
         offset: 0,

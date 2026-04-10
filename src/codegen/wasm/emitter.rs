@@ -57,7 +57,6 @@ struct MutualTcoLayout {
 pub fn build_wasm_module(
     ctx: &CodegenContext,
     adapter: super::WasmAdapter,
-    strip: bool,
 ) -> Result<Vec<u8>, String> {
     let mut module = Module::new();
 
@@ -407,41 +406,9 @@ pub fn build_wasm_module(
             .collect::<Vec<_>>()
             .join("|")
     };
-    let (variant_name_offset, variant_name_len) = if strip {
-        (0, 0)
-    } else {
-        let offset = runtime::IO_SCRATCH_SIZE as usize + data_bytes.len();
-        let bytes = variant_name_json.as_bytes();
-        data_bytes.extend_from_slice(bytes);
-        (offset, bytes.len())
-    };
-
-    // Nullary sentinel table: sentinel→name mapping for host display.
-    let sentinel_name_json = {
-        let mut entries: Vec<(i32, String)> = Vec::new();
-        for ((type_name, variant_name), info) in &variant_registry {
-            if let Some(sentinel) = info.nullary_sentinel {
-                let full = format!("{}.{}", type_name, variant_name);
-                if !entries.iter().any(|(s, _)| *s == sentinel) {
-                    entries.push((sentinel, full));
-                }
-            }
-        }
-        entries.sort_by_key(|(s, _)| *s);
-        entries
-            .iter()
-            .map(|(s, n)| format!("{}:{}", s, n))
-            .collect::<Vec<_>>()
-            .join("|")
-    };
-    let (sentinel_name_offset, sentinel_name_len) = if strip {
-        (0, 0)
-    } else {
-        let offset = runtime::IO_SCRATCH_SIZE as usize + data_bytes.len();
-        let bytes = sentinel_name_json.as_bytes();
-        data_bytes.extend_from_slice(bytes);
-        (offset, bytes.len())
-    };
+    let variant_name_offset = runtime::IO_SCRATCH_SIZE as usize + data_bytes.len();
+    let variant_name_bytes = variant_name_json.as_bytes();
+    data_bytes.extend_from_slice(variant_name_bytes);
 
     // Global 4: variant_names_ptr, Global 5: variant_names_len
     global_section.global(
@@ -458,25 +425,7 @@ pub fn build_wasm_module(
             mutable: false,
             shared: false,
         },
-        &ConstExpr::i32_const(variant_name_len as i32),
-    );
-
-    // Global 6: sentinel_names_ptr, Global 7: sentinel_names_len
-    global_section.global(
-        GlobalType {
-            val_type: ValType::I32,
-            mutable: false,
-            shared: false,
-        },
-        &ConstExpr::i32_const(sentinel_name_offset as i32),
-    );
-    global_section.global(
-        GlobalType {
-            val_type: ValType::I32,
-            mutable: false,
-            shared: false,
-        },
-        &ConstExpr::i32_const(sentinel_name_len as i32),
+        &ConstExpr::i32_const(variant_name_bytes.len() as i32),
     );
 
     module.section(&global_section);
@@ -498,8 +447,6 @@ pub fn build_wasm_module(
     export_section.export("alloc", ExportKind::Func, rt.alloc);
     export_section.export("$variant_names_ptr", ExportKind::Global, 4);
     export_section.export("$variant_names_len", ExportKind::Global, 5);
-    export_section.export("$sentinel_names_ptr", ExportKind::Global, 6);
-    export_section.export("$sentinel_names_len", ExportKind::Global, 7);
 
     module.section(&export_section);
 

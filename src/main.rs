@@ -128,7 +128,6 @@ fn main() {
             with_self_host_support,
             adapter,
             wasm_opt,
-            strip,
         } => {
             let policy_mode = (*policy).unwrap_or(if *with_replay {
                 CompilePolicyMode::Runtime
@@ -147,7 +146,6 @@ fn main() {
                 with_self_host_support: *with_self_host_support,
                 adapter: *adapter,
                 wasm_opt: *wasm_opt,
-                strip: *strip,
             });
         }
         Commands::Why {

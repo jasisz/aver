@@ -88,13 +88,11 @@ Notes:
 aver compile file.av -o /tmp/out --module-root .
 aver compile file.av --target wasm -o /tmp/out
 aver compile file.av --target wasm --wasm-opt oz -o /tmp/out
-aver compile file.av --target wasm --wasm-opt oz --strip -o /tmp/out
 ```
 
 - Default: Rust codegen, emits a modular Cargo project
 - `--target wasm`: standalone WASM module with aver/* imports
 - `--wasm-opt oz`: post-process with binaryen for ~50% size reduction
-- `--strip`: omit variant/sentinel name tables from data section
 
 ### Proof
 

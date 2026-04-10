@@ -271,9 +271,6 @@ pub(super) enum Commands {
         /// Post-process generated WASM with wasm-opt (`o3` for speed, `oz` for size)
         #[arg(long, value_enum)]
         wasm_opt: Option<WasmOptMode>,
-        /// Strip debug name tables from WASM binary (variant and sentinel names)
-        #[arg(long)]
-        strip: bool,
     },
     /// Trace justifications: decisions, verify blocks, descriptions
     Why {

@@ -927,34 +927,22 @@ impl<'a> ExprEmitter<'a> {
                         let field_type_names =
                             info.map(|i| i.field_types.clone()).unwrap_or_default();
 
-                        // Nullary variants use sentinel comparison.
-                        if let Some(Some(sentinel)) = info.map(|i| i.nullary_sentinel) {
-                            self.instructions.push(Instruction::LocalGet(subj_local));
-                            self.instructions.push(Instruction::I32Const(sentinel));
-                            self.instructions.push(Instruction::I32Eq);
-                            self.emit_if(wasm_encoder::BlockType::Result(
-                                wasm_encoder::ValType::I32,
-                            ));
-                        } else {
-                            self.instructions.push(Instruction::LocalGet(subj_local));
-                            self.instructions.push(Instruction::I32Const(0));
-                            self.instructions.push(Instruction::I32GtS);
-                            self.instructions.push(Instruction::LocalGet(subj_local));
-                            self.instructions.push(Instruction::Call(self.rt.obj_kind));
-                            self.instructions
-                                .push(Instruction::I32Const(value::OBJ_VARIANT as i32));
-                            self.instructions.push(Instruction::I32Eq);
-                            self.instructions.push(Instruction::I32And);
-                            self.instructions.push(Instruction::LocalGet(subj_local));
-                            self.instructions.push(Instruction::Call(self.rt.obj_tag));
-                            self.instructions
-                                .push(Instruction::I32Const(expected_tag as i32));
-                            self.instructions.push(Instruction::I32Eq);
-                            self.instructions.push(Instruction::I32And);
-                            self.emit_if(wasm_encoder::BlockType::Result(
-                                wasm_encoder::ValType::I32,
-                            ));
-                        }
+                        self.instructions.push(Instruction::LocalGet(subj_local));
+                        self.instructions.push(Instruction::I32Const(0));
+                        self.instructions.push(Instruction::I32GtS);
+                        self.instructions.push(Instruction::LocalGet(subj_local));
+                        self.instructions.push(Instruction::Call(self.rt.obj_kind));
+                        self.instructions
+                            .push(Instruction::I32Const(value::OBJ_VARIANT as i32));
+                        self.instructions.push(Instruction::I32Eq);
+                        self.instructions.push(Instruction::I32And);
+                        self.instructions.push(Instruction::LocalGet(subj_local));
+                        self.instructions.push(Instruction::Call(self.rt.obj_tag));
+                        self.instructions
+                            .push(Instruction::I32Const(expected_tag as i32));
+                        self.instructions.push(Instruction::I32Eq);
+                        self.instructions.push(Instruction::I32And);
+                        self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
 
                         for (i, binding_name) in bindings.iter().enumerate() {
                             if binding_name == "_" {
@@ -1199,31 +1187,23 @@ impl<'a> ExprEmitter<'a> {
         let expected_tag = info.map(|i| i.tag).unwrap_or(0);
         let field_type_names: Vec<String> = info.map(|i| i.field_types.clone()).unwrap_or_default();
 
-        // Nullary variants use sentinel comparison (single i32.eq).
-        if let Some(Some(sentinel)) = info.map(|i| i.nullary_sentinel) {
-            self.instructions.push(Instruction::LocalGet(subj_local));
-            self.instructions.push(Instruction::I32Const(sentinel));
-            self.instructions.push(Instruction::I32Eq);
-            self.emit_if(wasm_encoder::BlockType::Empty);
-        } else {
-            // Variant match must agree on both kind and tag.
-            self.instructions.push(Instruction::LocalGet(subj_local));
-            self.instructions.push(Instruction::I32Const(0));
-            self.instructions.push(Instruction::I32GtS);
-            self.instructions.push(Instruction::LocalGet(subj_local));
-            self.instructions.push(Instruction::Call(self.rt.obj_kind));
-            self.instructions
-                .push(Instruction::I32Const(value::OBJ_VARIANT as i32));
-            self.instructions.push(Instruction::I32Eq);
-            self.instructions.push(Instruction::I32And);
-            self.instructions.push(Instruction::LocalGet(subj_local));
-            self.instructions.push(Instruction::Call(self.rt.obj_tag));
-            self.instructions
-                .push(Instruction::I32Const(expected_tag as i32));
-            self.instructions.push(Instruction::I32Eq);
-            self.instructions.push(Instruction::I32And);
-            self.emit_if(wasm_encoder::BlockType::Empty);
-        }
+        // Variant match must agree on both kind and tag.
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        self.instructions.push(Instruction::I32Const(0));
+        self.instructions.push(Instruction::I32GtS);
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        self.instructions.push(Instruction::Call(self.rt.obj_kind));
+        self.instructions
+            .push(Instruction::I32Const(value::OBJ_VARIANT as i32));
+        self.instructions.push(Instruction::I32Eq);
+        self.instructions.push(Instruction::I32And);
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        self.instructions.push(Instruction::Call(self.rt.obj_tag));
+        self.instructions
+            .push(Instruction::I32Const(expected_tag as i32));
+        self.instructions.push(Instruction::I32Eq);
+        self.instructions.push(Instruction::I32And);
+        self.emit_if(wasm_encoder::BlockType::Empty);
 
         // Bind fields
         for (i, binding_name) in bindings.iter().enumerate() {

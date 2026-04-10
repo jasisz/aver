@@ -125,7 +125,6 @@ export class AverBrowserHost {
     setInstance(instance) {
         this.instance = instance;
         this.variantNames = this.loadVariantNames();
-        this.sentinelNames = this.loadSentinelNames();
     }
 
     loadVariantNames() {
@@ -134,25 +133,6 @@ export class AverBrowserHost {
             const exports = this.instance.exports;
             const ptr = exports.$variant_names_ptr?.value;
             const len = exports.$variant_names_len?.value;
-            if (ptr == null || len == null || len === 0) return map;
-            const bytes = new Uint8Array(exports.memory.buffer, ptr, len);
-            const text = new TextDecoder().decode(bytes);
-            for (const entry of text.split("|")) {
-                const colon = entry.indexOf(":");
-                if (colon > 0) {
-                    map[entry.slice(0, colon)] = entry.slice(colon + 1);
-                }
-            }
-        } catch (_) {}
-        return map;
-    }
-
-    loadSentinelNames() {
-        const map = {};
-        try {
-            const exports = this.instance.exports;
-            const ptr = exports.$sentinel_names_ptr?.value;
-            const len = exports.$sentinel_names_len?.value;
             if (ptr == null || len == null || len === 0) return map;
             const bytes = new Uint8Array(exports.memory.buffer, ptr, len);
             const text = new TextDecoder().decode(bytes);
@@ -456,11 +436,6 @@ export class AverBrowserHost {
 
     formatWasmValue(value) {
         const signed = BigInt.asIntN(64, value);
-        const i32val = Number(BigInt.asIntN(32, value));
-        // Check nullary variant sentinels (negative i32 values)
-        if (i32val < -1 && this.sentinelNames && this.sentinelNames[i32val]) {
-            return this.sentinelNames[i32val];
-        }
         const ptr = Number(BigInt.asUintN(32, value));
         const mem = this.memoryView();
         if (ptr < IO_SCRATCH_SIZE || ptr + 8 > mem.length) {

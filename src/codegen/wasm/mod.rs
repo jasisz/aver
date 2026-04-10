@@ -26,7 +26,7 @@ pub enum WasmAdapter {
 
 /// Emit a WASM binary module from the Aver codegen context.
 pub fn emit_wasm(ctx: &CodegenContext) -> Result<Vec<u8>, String> {
-    emit_wasm_with_options(ctx, WasmAdapter::default(), false)
+    emit_wasm_with_adapter(ctx, WasmAdapter::default())
 }
 
 /// Emit a WASM binary module with the specified import ABI adapter.
@@ -34,14 +34,5 @@ pub fn emit_wasm_with_adapter(
     ctx: &CodegenContext,
     adapter: WasmAdapter,
 ) -> Result<Vec<u8>, String> {
-    emit_wasm_with_options(ctx, adapter, false)
-}
-
-/// Emit a WASM binary module with full options.
-pub fn emit_wasm_with_options(
-    ctx: &CodegenContext,
-    adapter: WasmAdapter,
-    strip: bool,
-) -> Result<Vec<u8>, String> {
-    emitter::build_wasm_module(ctx, adapter, strip)
+    emitter::build_wasm_module(ctx, adapter)
 }
