@@ -2,6 +2,16 @@
 
 All notable changes to Aver are documented here.
 
+## 0.9.1 (2026-04-10)
+
+### Added
+- **Aver Playground** — write and run Aver in the browser at [averlang.dev](https://averlang.dev). In-browser compiler, 7 playable games, source viewer, syntax highlighting.
+
+### Fixed
+- **WASM variant equality** — nullary variants (`Color.White == Color.White`) now compare correctly.
+- **WASM variant display** — shows type names instead of `Variant#0`.
+- **WASM `Console.readLine`** — properly wrapped in `Result.Ok`, blocking via SharedArrayBuffer.
+
 ## 0.9.0 (2026-04-09)
 
 ### Changed
