@@ -80,6 +80,40 @@
         <div class="back-bar">
             <button data-back>← Back</button>
         </div>
+        <div class="touch-controls" data-touch-controls>
+            <div class="touch-group">
+                <div class="touch-label">Move</div>
+                <div class="touch-grid wasd">
+                    <button data-key="q">Q</button>
+                    <button data-key="w">W</button>
+                    <button data-key="e">E</button>
+                    <button data-key="a">A</button>
+                    <button data-key="s">S</button>
+                    <button data-key="d">D</button>
+                </div>
+            </div>
+            <div class="touch-group">
+                <div class="touch-label">Cursor</div>
+                <div class="touch-grid arrows">
+                    <button data-key="up">↑</button>
+                    <button data-key="left">←</button>
+                    <button data-key="down">↓</button>
+                    <button data-key="right">→</button>
+                </div>
+            </div>
+            <div class="touch-group">
+                <div class="touch-label">Action</div>
+                <div class="touch-actions">
+                    <button data-key=" ">Spc</button>
+                    <button data-key="enter">↵</button>
+                    <button data-key="escape">Esc</button>
+                    <button data-key=",">,</button>
+                    <button data-key=".">.</button>
+                    <button data-key="x">X</button>
+                    <button data-key=">">&gt;</button>
+                </div>
+            </div>
+        </div>
         <div class="game-layout">
             <div class="source-viewer" data-source-viewer>
                 <div class="source-tabs" data-source-tabs></div>
@@ -95,40 +129,6 @@
                     <p class="terminal-hint" data-raw-mode data-active="false">
                         Arrow keys, esc, enter → Terminal.readKey()
                     </p>
-                    <div class="touch-controls" data-touch-controls>
-                        <div class="touch-group">
-                            <div class="touch-label">Move</div>
-                            <div class="touch-grid wasd">
-                                <button data-key="q">Q</button>
-                                <button data-key="w">W</button>
-                                <button data-key="e">E</button>
-                                <button data-key="a">A</button>
-                                <button data-key="s">S</button>
-                                <button data-key="d">D</button>
-                            </div>
-                        </div>
-                        <div class="touch-group">
-                            <div class="touch-label">Cursor</div>
-                            <div class="touch-grid arrows">
-                                <button data-key="up">↑</button>
-                                <button data-key="left">←</button>
-                                <button data-key="down">↓</button>
-                                <button data-key="right">→</button>
-                            </div>
-                        </div>
-                        <div class="touch-group">
-                            <div class="touch-label">Action</div>
-                            <div class="touch-actions">
-                                <button data-key=" ">Spc</button>
-                                <button data-key="enter">↵</button>
-                                <button data-key="escape">Esc</button>
-                                <button data-key=",">,</button>
-                                <button data-key=".">.</button>
-                                <button data-key="x">X</button>
-                                <button data-key=">">&gt;</button>
-                            </div>
-                        </div>
-                    </div>
                 </div>
                 <!-- Console -->
                 <div class="console-wrap" data-console-wrap>

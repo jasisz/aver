@@ -21,8 +21,6 @@ body {
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    /* iPhone Safari: toolbar overlays bottom of viewport */
-    max-height: calc(100% - 44px);
 }
 
 /* ── Top bar ──────────────────────────────────────────────────────── */
@@ -420,19 +418,14 @@ body {
 .touch-controls {
     display: flex;
     gap: 0.5rem;
-    padding: 0.35rem 0.5rem 0.35rem;
+    padding: 0.35rem 0.5rem;
     background: var(--surface);
-    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
     justify-content: center;
     align-items: flex-start;
     flex-shrink: 0;
 }
 
-@supports (padding-bottom: env(safe-area-inset-bottom)) {
-    .touch-controls {
-        padding-bottom: max(0.35rem, env(safe-area-inset-bottom));
-    }
-}
 
 .touch-group { text-align: center; }
 
