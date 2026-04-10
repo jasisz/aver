@@ -90,8 +90,10 @@ pub type ArenaSymbol = aver_memory::ArenaSymbol<AverTypes>;
 // Extension trait for Value <-> NanValue conversion
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "runtime")]
 pub use convert::NanValueConvert;
 
+#[cfg(feature = "runtime")]
 mod convert;
 
 #[cfg(test)]

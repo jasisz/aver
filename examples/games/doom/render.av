@@ -577,7 +577,6 @@ fn renderHud(state: GameState) -> Unit
     Terminal.moveTo(hudX, 12)
     Terminal.print("X/ESC quit")
     Terminal.resetColor()
-    renderMessages(state.messages, hudX, 0)
 
 fn renderMessages(msgs: List<String>, hudX: Int, i: Int) -> Unit
     ? "Show recent messages below controls"

@@ -1379,6 +1379,54 @@ pub(super) fn cmd_run_wasm(
 }
 
 #[cfg(feature = "wasm")]
+thread_local! {
+    static VARIANT_NAMES: std::cell::RefCell<std::collections::HashMap<u32, String>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+#[cfg(feature = "wasm")]
+fn load_variant_names_from_instance(
+    instance: &wasmtime::Instance,
+    store: &mut wasmtime::Store<()>,
+) {
+    let ptr_global = instance.get_global(&mut *store, "$variant_names_ptr");
+    let len_global = instance.get_global(&mut *store, "$variant_names_len");
+    if let (Some(pg), Some(lg)) = (ptr_global, len_global) {
+        let ptr = pg.get(&mut *store).i32().unwrap_or(0) as usize;
+        let len = lg.get(&mut *store).i32().unwrap_or(0) as usize;
+        if len > 0 {
+            let mem = instance
+                .get_memory(&mut *store, "memory")
+                .expect("memory export");
+            let data = mem.data(&*store);
+            if ptr + len <= data.len() {
+                let text = String::from_utf8_lossy(&data[ptr..ptr + len]).to_string();
+                let mut map = std::collections::HashMap::new();
+                for entry in text.split('|') {
+                    if let Some(colon) = entry.find(':') {
+                        if let Ok(tag) = entry[..colon].parse::<u32>() {
+                            map.insert(tag, entry[colon + 1..].to_string());
+                        }
+                    }
+                }
+                VARIANT_NAMES.with(|names| *names.borrow_mut() = map);
+            }
+        }
+    }
+}
+
+#[cfg(feature = "wasm")]
+fn variant_name(tag: u64) -> String {
+    VARIANT_NAMES.with(|names| {
+        names
+            .borrow()
+            .get(&(tag as u32))
+            .cloned()
+            .unwrap_or_else(|| format!("Variant#{}", tag))
+    })
+}
+
+#[cfg(feature = "wasm")]
 /// Format a WASM value (i64) by reading heap structures from memory.
 fn format_wasm_value(val: i64, mem: &[u8]) -> String {
     let ptr = val as u32 as usize;
@@ -1508,6 +1556,43 @@ fn format_wasm_value(val: i64, mem: &[u8]) -> String {
                     };
                     return format!("{}({})", prefix, inner_str);
                 }
+            }
+            2 => {
+                // OBJ_VARIANT
+                let tag = (header >> 48) & 0xFF;
+                let count = field_count as usize;
+                let mut fields = Vec::new();
+                for i in 0..count {
+                    if ptr + 8 + (i + 1) * 8 <= mem.len() {
+                        let field = u64::from_le_bytes(
+                            mem[ptr + 8 + i * 8..ptr + 8 + (i + 1) * 8]
+                                .try_into()
+                                .unwrap_or([0; 8]),
+                        );
+                        fields.push(format_wasm_value(field as i64, mem));
+                    }
+                }
+                let name = variant_name(tag);
+                if count == 0 {
+                    return name;
+                }
+                return format!("{}({})", name, fields.join(", "));
+            }
+            1 => {
+                // OBJ_RECORD
+                let count = field_count as usize;
+                let mut fields = Vec::new();
+                for i in 0..count {
+                    if ptr + 8 + (i + 1) * 8 <= mem.len() {
+                        let field = u64::from_le_bytes(
+                            mem[ptr + 8 + i * 8..ptr + 8 + (i + 1) * 8]
+                                .try_into()
+                                .unwrap_or([0; 8]),
+                        );
+                        fields.push(format_wasm_value(field as i64, mem));
+                    }
+                }
+                return format!("Record({})", fields.join(", "));
             }
             _ => {}
         }
@@ -1948,6 +2033,9 @@ fn run_wasm_with_host(wasm_bytes: &[u8], program_args: &[String]) -> Result<(), 
     let instance = linker
         .instantiate(&mut store, &module)
         .map_err(|e| format!("Instantiation error: {e:#}"))?;
+
+    // Load variant name table from globals before execution starts.
+    load_variant_names_from_instance(&instance, &mut store);
 
     // Try _start — check its actual return type and provide matching results buffer
     if let Some(start) = instance.get_func(&mut store, "_start") {

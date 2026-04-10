@@ -138,6 +138,44 @@ impl<'a> ExprEmitter<'a> {
                 }
                 return;
             }
+            // Variant/record equality: compare heap object headers.
+            // Two nullary variants of the same constructor have identical headers.
+            // For variants with fields this is a tag-only check (same semantics as
+            // the VM: structural equality on variant tag + field count).
+            if matches!(lhs_aver, Some(Type::Named(_))) {
+                let a_local = self.alloc_local(WasmType::I32);
+                let b_local = self.alloc_local(WasmType::I32);
+                self.emit_expr(&lhs.node);
+                self.instructions.push(Instruction::LocalSet(a_local));
+                self.emit_expr(&rhs.node);
+                self.instructions.push(Instruction::LocalSet(b_local));
+                // Fast path: same pointer
+                self.instructions.push(Instruction::LocalGet(a_local));
+                self.instructions.push(Instruction::LocalGet(b_local));
+                self.instructions.push(Instruction::I32Eq);
+                // Slow path: compare headers (i64 at offset 0)
+                self.instructions.push(Instruction::LocalGet(a_local));
+                self.instructions
+                    .push(Instruction::I64Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
+                self.instructions.push(Instruction::LocalGet(b_local));
+                self.instructions
+                    .push(Instruction::I64Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
+                self.instructions.push(Instruction::I64Eq);
+                // Either pointer match OR header match
+                self.instructions.push(Instruction::I32Or);
+                if matches!(op, BinOp::Neq) {
+                    self.instructions.push(Instruction::I32Eqz);
+                }
+                return;
+            }
         }
 
         self.emit_expr(&lhs.node);

@@ -25,26 +25,31 @@ include = [
 
 [lib]
 name = "aver"
+crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "aver"
 path = "src/main.rs"
 
 [features]
-default = ["terminal"]
+default = ["runtime", "terminal"]
+runtime = ["dep:aver-rt", "aver-memory/runtime", "dep:clap", "dep:colored", "dep:toml"]
 terminal = ["aver-rt/terminal"]
-wasm = ["dep:wasm-encoder", "dep:wasmtime"]
+wasm = ["wasm-compile", "dep:wasmtime"]
+wasm-compile = ["dep:wasm-encoder"]
+playground = ["wasm-compile", "dep:wasm-bindgen"]
 
 [dependencies]
-aver-memory = { path = "aver-memory", version = "=0.1.0", features = ["runtime"] }
-aver-rt = { path = "aver-rt", version = "=0.4.0", features = ["http", "random"] }
-clap = { version = "4", features = ["derive"] }
-colored = "2"
+aver-memory = { path = "aver-memory", version = "=0.1.0" }
+aver-rt = { path = "aver-rt", version = "=0.4.0", features = ["http", "random"], optional = true }
+clap = { version = "4", features = ["derive"], optional = true }
+colored = { version = "2", optional = true }
 thiserror = "1"
-toml = "0.8"
+toml = { version = "0.8", optional = true }
 url = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+wasm-bindgen = { version = "0.2", optional = true }
 wasm-encoder = { version = "0.225", optional = true }
 wasmtime = { version = "29", optional = true, default-features = false, features = ["cranelift", "runtime"] }
 

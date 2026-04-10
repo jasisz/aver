@@ -364,6 +364,9 @@ pub fn build_wasm_module(
     });
     module.section(&memory_section);
 
+    // Build variant registry early — needed for global section (name table)
+    let variant_registry = build_variant_registry(ctx);
+
     // -----------------------------------------------------------------------
     // Global section
     // -----------------------------------------------------------------------
@@ -386,6 +389,45 @@ pub fn build_wasm_module(
             &ConstExpr::i32_const(0),
         );
     }
+
+    // Variant name table: build tag→name mapping so hosts can display names.
+    let variant_name_json = {
+        let mut entries: Vec<(u32, String)> = Vec::new();
+        for ((type_name, variant_name), info) in &variant_registry {
+            let full = format!("{}.{}", type_name, variant_name);
+            if !entries.iter().any(|(t, _)| *t == info.tag) {
+                entries.push((info.tag, full));
+            }
+        }
+        entries.sort_by_key(|(t, _)| *t);
+        entries
+            .iter()
+            .map(|(t, n)| format!("{}:{}", t, n))
+            .collect::<Vec<_>>()
+            .join("|")
+    };
+    let variant_name_offset = runtime::IO_SCRATCH_SIZE as usize + data_bytes.len();
+    let variant_name_bytes = variant_name_json.as_bytes();
+    data_bytes.extend_from_slice(variant_name_bytes);
+
+    // Global 4: variant_names_ptr, Global 5: variant_names_len
+    global_section.global(
+        GlobalType {
+            val_type: ValType::I32,
+            mutable: false,
+            shared: false,
+        },
+        &ConstExpr::i32_const(variant_name_offset as i32),
+    );
+    global_section.global(
+        GlobalType {
+            val_type: ValType::I32,
+            mutable: false,
+            shared: false,
+        },
+        &ConstExpr::i32_const(variant_name_bytes.len() as i32),
+    );
+
     module.section(&global_section);
 
     // -----------------------------------------------------------------------
@@ -403,6 +445,8 @@ pub fn build_wasm_module(
     // Export $alloc so hosts can allocate guest memory for strings
     // returned by host imports (readLine, readKey, format_value, etc.)
     export_section.export("alloc", ExportKind::Func, rt.alloc);
+    export_section.export("$variant_names_ptr", ExportKind::Global, 4);
+    export_section.export("$variant_names_len", ExportKind::Global, 5);
 
     module.section(&export_section);
 
@@ -419,9 +463,6 @@ pub fn build_wasm_module(
 
     // Build type field index map
     let type_fields: HashMap<(String, String), u32> = build_type_fields(ctx);
-
-    // Build variant registry for sum types
-    let variant_registry = build_variant_registry(ctx);
 
     // Check which functions have TailCall expressions
     let tco_fns: HashSet<String> = user_fns

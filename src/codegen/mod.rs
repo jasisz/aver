@@ -4,10 +4,13 @@
 /// for a target language. Current backends: Rust deployment and Lean proof export.
 pub(crate) mod builtins;
 pub(crate) mod common;
+#[cfg(feature = "runtime")]
 pub mod dafny;
+#[cfg(feature = "runtime")]
 pub mod lean;
+#[cfg(feature = "runtime")]
 pub mod rust;
-#[cfg(feature = "wasm")]
+#[cfg(feature = "wasm-compile")]
 pub mod wasm;
 
 use std::collections::{HashMap, HashSet};
@@ -48,6 +51,7 @@ pub struct CodegenContext {
     /// Set of module prefixes for qualified name resolution (e.g. "Models.User").
     pub module_prefixes: HashSet<String>,
     /// Embedded runtime policy from `aver.toml` for generated code.
+    #[cfg(feature = "runtime")]
     pub policy: Option<crate::config::ProjectConfig>,
     /// Emit generated scoped runtime support (replay and/or runtime-loaded policy).
     pub emit_replay_runtime: bool,
@@ -135,6 +139,7 @@ pub fn build_context(
         project_name,
         modules,
         module_prefixes,
+        #[cfg(feature = "runtime")]
         policy: None,
         emit_replay_runtime: false,
         runtime_policy_from_env: false,

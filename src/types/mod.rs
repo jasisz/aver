@@ -13,11 +13,15 @@ pub mod char;
 pub mod checker;
 pub mod float;
 pub mod int;
+#[cfg(feature = "runtime")]
 pub mod list;
+#[cfg(feature = "runtime")]
 pub mod map;
 pub mod option;
 pub mod result;
+#[cfg(feature = "runtime")]
 pub mod string;
+#[cfg(feature = "runtime")]
 pub mod vector;
 
 #[derive(Debug, Clone, PartialEq)]

@@ -115,7 +115,7 @@ function clearOutput() {
 
 function terminalMetrics() {
     const styles = getComputedStyle(dom.terminal);
-    const cellWidth = Number.parseFloat(styles.getPropertyValue("--cell-width")) || 10;
+    const cellWidth = Number.parseFloat(styles.getPropertyValue("--cell-width")) || 9;
     const cellHeight = Number.parseFloat(styles.getPropertyValue("--cell-height")) || 18;
     const paddingX =
         Number.parseFloat(styles.paddingLeft || "0") +
@@ -157,7 +157,7 @@ function autoSizeTerminalSurface(preferredRows = null) {
     dom.terminal.style.height = `${Math.round(nextHeight)}px`;
 }
 
-function spawnWorker() {
+function spawnWorker(fixedSize) {
     if (state.worker) {
         state.worker.terminate();
     }
@@ -172,7 +172,7 @@ function spawnWorker() {
     });
 
     autoSizeTerminalSurface();
-    const { cols, rows } = terminalMetrics();
+    const { cols, rows } = fixedSize || terminalMetrics();
     worker.postMessage({ type: "resize", cols, rows });
     for (const line of state.queuedLines) {
         worker.postMessage({ type: "line", line });
@@ -214,6 +214,10 @@ function handleWorkerMessage(event) {
             if (!message.ok && message.error) {
                 appendConsole("stderr", message.error);
             }
+            // If a game just ended, show back-to-editor option
+            if (workspace && workspace.dataset.mode === "game") {
+                setStatus("Game ended. Click ← Back or pick another.", "idle");
+            }
             break;
         default:
             break;
@@ -240,7 +244,7 @@ async function onFileChange(fileList) {
     await loadSelectedFile(file);
 }
 
-async function runSelectedModule() {
+async function runSelectedModule(fixedSize) {
     if (!state.wasmBytes) {
         setStatus("Load a `.wasm` file first.", "error");
         return;
@@ -252,7 +256,7 @@ async function runSelectedModule() {
     dom.stopButton.disabled = false;
     dom.terminal.dataset.empty = "false";
     dom.terminal.focus({ preventScroll: true });
-    const worker = spawnWorker();
+    const worker = spawnWorker(fixedSize);
     const wasmBytes = state.wasmBytes.slice(0);
     worker.postMessage({ type: "run", wasmBytes, programArgs: state.programArgs }, [wasmBytes]);
 }
@@ -400,7 +404,7 @@ function queueTerminalFrame(message) {
 function terminalStyleMetrics() {
     const styles = getComputedStyle(dom.terminal);
     return {
-        cellWidth: Number.parseFloat(styles.getPropertyValue("--cell-width")) || 10,
+        cellWidth: Number.parseFloat(styles.getPropertyValue("--cell-width")) || 9,
         cellHeight: Number.parseFloat(styles.getPropertyValue("--cell-height")) || 18,
     };
 }
@@ -464,33 +468,21 @@ function drawTerminalSnapshot(snapshot) {
     ctx.fillStyle = TERM_BG;
     ctx.fillRect(0, 0, width, height);
 
+    // Render each character individually at grid-aligned positions.
+    // This prevents wide glyphs (braille, emoji) from shifting subsequent columns.
+    let prevColorIndex = -1;
     for (let row = 0; row < snapshot.rows; row += 1) {
         const rowBase = row * snapshot.cols;
-        let col = 0;
-        while (col < snapshot.cols) {
+        const y = row * cellHeight;
+        for (let col = 0; col < snapshot.cols; col += 1) {
+            const code = chars[rowBase + col] ?? TERMINAL_SPACE_CODE;
+            if (code === TERMINAL_SPACE_CODE) continue;
             const colorIndex = colors[rowBase + col] ?? 0;
-            let endCol = col + 1;
-            let hasVisibleChar = (chars[rowBase + col] ?? TERMINAL_SPACE_CODE) !== TERMINAL_SPACE_CODE;
-
-            while (endCol < snapshot.cols && colors[rowBase + endCol] === colorIndex) {
-                if ((chars[rowBase + endCol] ?? TERMINAL_SPACE_CODE) !== TERMINAL_SPACE_CODE) {
-                    hasVisibleChar = true;
-                }
-                endCol += 1;
-            }
-
-            if (hasVisibleChar) {
-                const start = rowBase + col;
-                const end = rowBase + endCol;
+            if (colorIndex !== prevColorIndex) {
                 ctx.fillStyle = TERM_COLORS[colorName(colorIndex)] || TERM_COLORS.default;
-                ctx.fillText(
-                    codePointsToString(chars, start, end),
-                    col * cellWidth,
-                    row * cellHeight,
-                );
+                prevColorIndex = colorIndex;
             }
-
-            col = endCol;
+            ctx.fillText(String.fromCodePoint(code), col * cellWidth, y);
         }
     }
 
@@ -577,4 +569,202 @@ window.addEventListener("resize", () => {
 setLineQueueCount(0);
 setRawMode(false);
 updateIsolationNote();
-setStatus("Drop a compiled Aver `.wasm` module to start.", "idle");
+setStatus("Pick a game or write Aver code to start.", "idle");
+
+// ---------------------------------------------------------------------------
+// Game gallery
+// ---------------------------------------------------------------------------
+
+const outputPane = document.querySelector("[data-output-pane]");
+const workspace = document.querySelector(".workspace");
+
+function setOutputMode(mode) {
+    // mode: "console" | "terminal"
+    if (outputPane) outputPane.dataset.mode = mode;
+}
+
+function setWorkspaceMode(mode) {
+    // mode: "edit" | "game"
+    if (workspace) workspace.dataset.mode = mode;
+}
+
+function backToEditor() {
+    stopRun();
+    state.programArgs = [];
+    setWorkspaceMode("edit");
+    setOutputMode("console");
+    document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
+    setStatus("Ready.", "success");
+}
+
+document.querySelector("[data-back]")?.addEventListener("click", backToEditor);
+
+document.querySelectorAll("[data-game]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+        const name = btn.dataset.game;
+        const args = btn.dataset.args ? btn.dataset.args.split(" ") : [];
+        document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        state.programArgs = args;
+        const isConsoleGame = btn.hasAttribute("data-console-game");
+        setWorkspaceMode("game");
+        setOutputMode(isConsoleGame ? "console" : "terminal");
+        clearOutput();
+        const readlineBar = document.querySelector("[data-readline-bar]");
+        if (readlineBar) readlineBar.style.display = isConsoleGame ? "flex" : "none";
+        setStatus(`Loading ${name}…`, "info");
+
+        try {
+            const resp = await fetch(`./${name}.wasm`);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const bytes = await resp.arrayBuffer();
+            state.wasmBytes = bytes;
+            state.wasmName = `${name}.wasm`;
+            dom.fileMeta.textContent = `${name}.wasm — ${(bytes.byteLength / 1024).toFixed(1)} KB`;
+            dom.runButton.disabled = false;
+            runSelectedModule(isConsoleGame ? undefined : { cols: 80, rows: 35 });
+        } catch (e) {
+            setStatus(`Failed to load ${name}: ${e.message}`, "error");
+        }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Code editor + in-browser compile
+// ---------------------------------------------------------------------------
+
+const EXAMPLES = {
+    hello: `fn main() -> Unit\n    ! [Console.print]\n    Console.print("Hello, World!")\n    Console.print("Hello from the Aver Playground!")`,
+    calculator: `fn add(a: Int, b: Int) -> Int\n    a + b\n\nfn divide(a: Int, b: Int) -> Result<Int, String>\n    match b\n        0 -> Result.Err("Division by zero")\n        _ -> Result.Ok(a / b)\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(add(2, 3))\n    Console.print(divide(10, 2))\n    Console.print(divide(10, 0))\n\nverify add\n    add(1, 2) => 3\n    add(0, 0) => 0`,
+    fibonacci: `fn fib(n: Int) -> Int\n    match n\n        0 -> 0\n        1 -> 1\n        _ -> fib(n - 1) + fib(n - 2)\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print("fib(10) = {fib(10)}")\n    Console.print("fib(20) = {fib(20)}")\n\nverify fib\n    fib(0) => 0\n    fib(1) => 1\n    fib(10) => 55`,
+    shapes: `type Shape\n    Circle(Float)\n    Rectangle(Float, Float)\n\nfn area(shape: Shape) -> Float\n    match shape\n        Shape.Circle(r) -> 3.14159 * r * r\n        Shape.Rectangle(w, h) -> w * h\n\nfn main() -> Unit\n    ! [Console.print]\n    c = Shape.Circle(5.0)\n    r = Shape.Rectangle(3.0, 4.0)\n    Console.print("circle area = {Float.toString(area(c))}")\n    Console.print("rect area = {Float.toString(area(r))}")\n\nverify area\n    area(Shape.Circle(1.0)) => 3.14159\n    area(Shape.Rectangle(3.0, 4.0)) => 12.0`,
+    quicksort: `fn filterLess(xs: List<Int>, pivot: Int) -> List<Int>\n    match xs\n        [] -> []\n        [h, ..t] -> match h < pivot\n            true -> List.prepend(h, filterLess(t, pivot))\n            false -> filterLess(t, pivot)\n\nfn filterGte(xs: List<Int>, pivot: Int) -> List<Int>\n    match xs\n        [] -> []\n        [h, ..t] -> match h >= pivot\n            true -> List.prepend(h, filterGte(t, pivot))\n            false -> filterGte(t, pivot)\n\nfn quicksort(xs: List<Int>) -> List<Int>\n    match xs\n        [] -> []\n        [pivot, ..rest] -> List.concat(List.concat(quicksort(filterLess(rest, pivot)), [pivot]), quicksort(filterGte(rest, pivot)))\n\nfn main() -> Unit\n    ! [Console.print]\n    input = [38, 27, 43, 3, 9, 82, 10]\n    Console.print("input:  {input}")\n    Console.print("sorted: {quicksort(input)}")\n\nverify quicksort\n    quicksort([]) => []\n    quicksort([3, 1, 2]) => [1, 2, 3]`,
+    rle: `type RlePair\n    Pair(String, Int)\n\nfn encode(chars: List<String>, current: String, count: Int, acc: List<RlePair>) -> List<RlePair>\n    match chars\n        [] -> List.reverse(List.prepend(RlePair.Pair(current, count), acc))\n        [h, ..t] -> match h == current\n            true -> encode(t, current, count + 1, acc)\n            false -> encode(t, h, 1, List.prepend(RlePair.Pair(current, count), acc))\n\nfn rleEncode(input: String) -> List<RlePair>\n    chars = String.chars(input)\n    match chars\n        [] -> []\n        [first, ..rest] -> encode(rest, first, 1, [])\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(rleEncode("aaabbbccddddee"))`,
+};
+
+const codeEditor = document.querySelector("[data-code-editor]");
+const compileRunBtn = document.querySelector("[data-compile-run]");
+const examplesSelect = document.querySelector("[data-examples]");
+
+let compiler = null;
+
+async function loadCompiler() {
+    if (compiler) return compiler;
+    setStatus("Loading compiler (first time)…", "info");
+    const mod = await import("./wasm/aver.js");
+    await mod.default("./wasm/aver_bg.wasm");
+    compiler = mod;
+    return compiler;
+}
+
+if (compileRunBtn) {
+    compileRunBtn.addEventListener("click", async () => {
+        const source = codeEditor.value;
+        if (!source.trim()) return;
+
+        document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
+        setWorkspaceMode("edit");
+
+        const usesTerminal = source.includes("Terminal.");
+        setOutputMode(usesTerminal ? "terminal" : "console");
+        clearOutput();
+        // Show readline bar for console programs
+        const readlineBar = document.querySelector("[data-readline-bar]");
+        if (readlineBar) readlineBar.style.display = usesTerminal ? "none" : "flex";
+
+        try {
+            const comp = await loadCompiler();
+            setStatus("Compiling…", "info");
+            const t0 = performance.now();
+            const wasmBytes = comp.aver_compile(source);
+            const ms = (performance.now() - t0).toFixed(0);
+
+            state.wasmBytes = wasmBytes.buffer;
+            state.wasmName = "playground.wasm";
+            dom.fileMeta.textContent = `Compiled in ${ms}ms — ${(wasmBytes.length / 1024).toFixed(1)} KB`;
+            dom.runButton.disabled = false;
+            runSelectedModule();
+        } catch (e) {
+            const msg = e.message || String(e);
+            setStatus("Compile error", "error");
+            appendConsole("stderr", msg);
+        }
+    });
+}
+
+const highlightEl = document.querySelector("[data-highlight]");
+
+function updateHighlight() {
+    if (!highlightEl || !codeEditor) return;
+    import("./highlight.js").then(({ highlightAver }) => {
+        highlightEl.innerHTML = highlightAver(codeEditor.value) + "\n";
+        // Sync scroll
+        highlightEl.scrollTop = codeEditor.scrollTop;
+        highlightEl.scrollLeft = codeEditor.scrollLeft;
+    });
+}
+
+if (codeEditor) {
+    codeEditor.addEventListener("input", updateHighlight);
+    codeEditor.addEventListener("scroll", () => {
+        if (highlightEl) {
+            highlightEl.scrollTop = codeEditor.scrollTop;
+            highlightEl.scrollLeft = codeEditor.scrollLeft;
+        }
+    });
+    codeEditor.addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+            e.preventDefault();
+            compileRunBtn?.click();
+        }
+        if (e.key === "Tab") {
+            e.preventDefault();
+            const s = codeEditor.selectionStart;
+            const end = codeEditor.selectionEnd;
+            codeEditor.value = codeEditor.value.substring(0, s) + "    " + codeEditor.value.substring(end);
+            codeEditor.selectionStart = codeEditor.selectionEnd = s + 4;
+        }
+    });
+    codeEditor.value = EXAMPLES.hello;
+    updateHighlight();
+}
+
+if (examplesSelect) {
+    examplesSelect.addEventListener("change", () => {
+        const name = examplesSelect.value;
+        if (EXAMPLES[name] && codeEditor) {
+            codeEditor.value = EXAMPLES[name];
+            updateHighlight();
+        }
+    });
+}
+
+// Check button
+const checkBtn = document.querySelector("[data-check]");
+if (checkBtn) {
+    checkBtn.addEventListener("click", async () => {
+        const source = codeEditor?.value;
+        if (!source?.trim()) return;
+
+        setWorkspaceMode("edit");
+        setOutputMode("console");
+        clearOutput();
+
+        try {
+            const comp = await loadCompiler();
+            setStatus("Checking…", "info");
+            const result = comp.aver_check(source);
+            appendConsole(result.startsWith("error") ? "stderr" : "stdout", result);
+            setStatus(result.includes("error") ? "Check found errors" : "Check passed",
+                      result.includes("error") ? "error" : "success");
+        } catch (e) {
+            appendConsole("stderr", e.message || String(e));
+            setStatus("Check failed", "error");
+        }
+    });
+}
+
+// Preload compiler in background
+loadCompiler().then(() => {
+    setStatus("Ready — pick a game or write code.", "success");
+}).catch(() => {});

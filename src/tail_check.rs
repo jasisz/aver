@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::{Expr, FnBody, Spanned, Stmt, StrPart, TopLevel};
 use crate::call_graph;
+#[cfg(feature = "runtime")]
 use crate::verify_law::canonical_spec_ref;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,9 +16,45 @@ pub struct NonTailRecursionWarning {
 }
 
 pub fn collect_non_tail_recursion_warnings(items: &[TopLevel]) -> Vec<NonTailRecursionWarning> {
-    collect_non_tail_recursion_warnings_in(items, None)
+    let mut fn_to_scc: HashMap<String, HashSet<String>> = HashMap::new();
+    for scc in call_graph::find_tco_groups(items) {
+        for name in &scc {
+            fn_to_scc.insert(name.clone(), scc.clone());
+        }
+    }
+
+    let mut warnings = Vec::new();
+    for item in items {
+        let TopLevel::FnDef(fd) = item else {
+            continue;
+        };
+        let Some(scc_members) = fn_to_scc.get(&fd.name) else {
+            continue;
+        };
+        let callsite_lines: Vec<usize> =
+            collect_non_tail_recursive_call_lines_body(&fd.body, scc_members)
+                .into_iter()
+                .filter(|&ln| ln >= fd.line)
+                .collect();
+        if callsite_lines.is_empty() {
+            continue;
+        }
+        let recursive_calls = callsite_lines.len();
+        warnings.push(NonTailRecursionWarning {
+            fn_name: fd.name.clone(),
+            line: fd.line,
+            recursive_calls,
+            callsite_lines,
+            message: format!(
+                "non-tail recursion in '{}' — {} recursive callsite(s) remain after tail-call optimization; rewrite it to tail recursion or make it a spec",
+                fd.name, recursive_calls
+            ),
+        });
+    }
+    warnings
 }
 
+#[cfg(feature = "runtime")]
 pub fn collect_non_tail_recursion_warnings_with_sigs(
     items: &[TopLevel],
     fn_sigs: &crate::verify_law::FnSigMap,
@@ -25,6 +62,7 @@ pub fn collect_non_tail_recursion_warnings_with_sigs(
     collect_non_tail_recursion_warnings_in(items, Some(fn_sigs))
 }
 
+#[cfg(feature = "runtime")]
 fn collect_non_tail_recursion_warnings_in(
     items: &[TopLevel],
     fn_sigs: Option<&crate::verify_law::FnSigMap>,
@@ -71,6 +109,7 @@ fn collect_non_tail_recursion_warnings_in(
     warnings
 }
 
+#[cfg(feature = "runtime")]
 fn collect_canonical_spec_functions(
     items: &[TopLevel],
     fn_sigs: Option<&crate::verify_law::FnSigMap>,

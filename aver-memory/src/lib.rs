@@ -1309,3 +1309,45 @@ impl MapLike for aver_rt::AverMap<u64, (NanValue, NanValue)> {
         aver_rt::AverMap::values(self)
     }
 }
+
+// ---------------------------------------------------------------------------
+// Stub PersistentMap when runtime is off (BTreeMap-based)
+// ---------------------------------------------------------------------------
+
+#[cfg(not(feature = "runtime"))]
+/// Stub `PersistentMap` for non-runtime builds (e.g. wasm-compile only).
+#[derive(Clone, Debug)]
+pub struct PersistentMap(alloc::collections::BTreeMap<u64, (NanValue, NanValue)>);
+
+#[cfg(not(feature = "runtime"))]
+impl MapLike for PersistentMap {
+    fn new() -> Self {
+        PersistentMap(alloc::collections::BTreeMap::new())
+    }
+
+    fn get(&self, key: &u64) -> Option<&(NanValue, NanValue)> {
+        self.0.get(key)
+    }
+
+    fn insert(&self, key: u64, value: (NanValue, NanValue)) -> Self {
+        let mut m = self.0.clone();
+        m.insert(key, value);
+        PersistentMap(m)
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (&u64, &(NanValue, NanValue))> {
+        self.0.iter()
+    }
+
+    fn values(&self) -> impl Iterator<Item = &(NanValue, NanValue)> {
+        self.0.values()
+    }
+}

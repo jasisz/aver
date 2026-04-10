@@ -2,6 +2,7 @@ mod coverage;
 mod cse;
 mod independence;
 mod intent;
+#[cfg(feature = "runtime")]
 mod law;
 mod perf;
 mod verify;
@@ -228,6 +229,7 @@ pub use intent::{
     check_module_intent, check_module_intent_with_sigs, check_module_intent_with_sigs_in,
     index_decisions,
 };
+#[cfg(feature = "runtime")]
 pub use law::{collect_verify_law_dependency_warnings, collect_verify_law_dependency_warnings_in};
 pub use perf::{collect_perf_warnings, collect_perf_warnings_in};
 pub use verify::{expr_to_str, merge_verify_blocks};

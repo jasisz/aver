@@ -113,7 +113,7 @@ export class AverBrowserHost {
         this.instance = null;
         this.decoder = new TextDecoder();
         this.encoder = new TextEncoder();
-        this.terminal = new TerminalBuffer(80, 24);
+        this.terminal = new TerminalBuffer(80, 35);
         this.keyQueue = [];
         this.keyQueueView = null;
         this.lineQueue = [];
@@ -124,6 +124,26 @@ export class AverBrowserHost {
 
     setInstance(instance) {
         this.instance = instance;
+        this.variantNames = this.loadVariantNames();
+    }
+
+    loadVariantNames() {
+        const map = {};
+        try {
+            const exports = this.instance.exports;
+            const ptr = exports.$variant_names_ptr?.value;
+            const len = exports.$variant_names_len?.value;
+            if (ptr == null || len == null || len === 0) return map;
+            const bytes = new Uint8Array(exports.memory.buffer, ptr, len);
+            const text = new TextDecoder().decode(bytes);
+            for (const entry of text.split("|")) {
+                const colon = entry.indexOf(":");
+                if (colon > 0) {
+                    map[entry.slice(0, colon)] = entry.slice(colon + 1);
+                }
+            }
+        } catch (_) {}
+        return map;
     }
 
     setTerminalSize(cols, rows) {
@@ -525,11 +545,13 @@ export class AverBrowserHost {
     }
 
     formatVariant(ptr, count, tag) {
+        const name = (this.variantNames && this.variantNames[tag]) || `Variant#${tag}`;
         const fields = [];
         for (let i = 0; i < count; i += 1) {
             fields.push(this.formatWasmValue(this.readU64(ptr + 8 + i * 8)));
         }
-        return `Variant#${tag}(${fields.join(", ")})`;
+        if (count === 0) return name;
+        return `${name}(${fields.join(", ")})`;
     }
 
     formatVector(ptr, count) {

@@ -3,7 +3,12 @@
 /// Lives in its own module so the VM and the service
 /// implementations (`services::*`) can import it without circular
 /// dependencies.
+#[cfg(feature = "runtime")]
 use aver_rt::{AverList, AverVector};
+#[cfg(not(feature = "runtime"))]
+type AverList<T> = Vec<T>;
+#[cfg(not(feature = "runtime"))]
+type AverVector<T> = Vec<T>;
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 use thiserror::Error;
@@ -366,36 +371,44 @@ pub(crate) fn list_view(value: &Value) -> Option<ListView<'_>> {
     }
 }
 
+#[cfg(feature = "runtime")]
 pub fn list_slice(value: &Value) -> Option<&[Value]> {
     list_view(value).and_then(AverList::as_slice)
 }
 
+#[cfg(feature = "runtime")]
 pub fn list_from_vec(items: Vec<Value>) -> Value {
     Value::List(AverList::from_vec(items))
 }
 
+#[cfg(feature = "runtime")]
 pub fn list_to_vec(value: &Value) -> Option<Vec<Value>> {
     list_view(value).map(AverList::to_vec)
 }
 
+#[cfg(feature = "runtime")]
 pub fn list_len(value: &Value) -> Option<usize> {
     list_view(value).map(AverList::len)
 }
 
+#[cfg(feature = "runtime")]
 pub fn list_head(value: &Value) -> Option<Value> {
     list_view(value).and_then(|items| items.first().cloned())
 }
 
+#[cfg(feature = "runtime")]
 pub(crate) fn list_prepend(item: Value, list: &Value) -> Option<Value> {
     list_view(list).map(|items| Value::List(AverList::prepend(item, items)))
 }
 
+#[cfg(feature = "runtime")]
 pub(crate) fn list_concat(left: &Value, right: &Value) -> Option<Value> {
     let left = list_view(left)?;
     let right = list_view(right)?;
     Some(Value::List(AverList::concat(left, right)))
 }
 
+#[cfg(feature = "runtime")]
 pub(crate) fn list_reverse(list: &Value) -> Option<Value> {
     list_view(list).map(|items| Value::List(items.reverse()))
 }
