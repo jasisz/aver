@@ -49,13 +49,11 @@
 <section class="hero">
     <div class="hero-text">
         <p class="hero-thesis">Code is cheap to generate. Expensive to trust.</p>
-        <h1>The AI-native language where code <em>explains itself</em></h1>
+        <h1>The AI-native language where code <span>explains itself.</span></h1>
         <p class="hero-sub">Aver is a language where every function carries its intent, side effects are visible in the type system, and tests are executable specs next to the code. The optimization target is the reviewer, not the generator.</p>
-        <div class="hero-signals">
-            <span class="hero-chip">VM for dev</span>
-            <span class="hero-chip">Rust for deploy</span>
-            <span class="hero-chip">WASM for browsers</span>
-            <a href="llms.txt" class="hero-chip hero-chip-link">For Agents</a>
+        <div class="hero-meta">
+            <span class="hero-meta-item">Three backends: VM, Rust, standalone WASM.</span>
+            <a href="llms.txt" class="hero-meta-link">For agents: llms.txt</a>
         </div>
         <div class="hero-cta">
             <a href="playground/" class="btn btn-primary">Try in browser</a>
@@ -64,7 +62,8 @@
         <p class="hero-proof">MIT licensed &middot; Written in Rust &middot; v0.9 &middot; <a href="https://crates.io/crates/aver-lang" target="_blank">crates.io</a></p>
     </div>
     <div class="hero-code">
-        <pre class="code-block"><span class="hl-keyword">fn</span> <span class="hl-fn">safeDivide</span>(a: <span class="hl-type">Int</span>, b: <span class="hl-type">Int</span>) <span class="hl-operator">-></span> <span class="hl-type">Result</span>&lt;<span class="hl-type">Int</span>, <span class="hl-type">String</span>&gt;
+        <div class="hero-window">
+            <pre class="code-block hero-code-block"><span class="hl-keyword">fn</span> <span class="hl-fn">safeDivide</span>(a: <span class="hl-type">Int</span>, b: <span class="hl-type">Int</span>) <span class="hl-operator">-></span> <span class="hl-type">Result</span>&lt;<span class="hl-type">Int</span>, <span class="hl-type">String</span>&gt;
     <span class="hl-effect">?</span> <span class="hl-desc">"Safe integer division. Returns Err on zero."</span>
     <span class="hl-keyword">match</span> b
         <span class="hl-number">0</span> <span class="hl-operator">-></span> Result.Err(<span class="hl-string">"Division by zero"</span>)
@@ -73,6 +72,7 @@
 <span class="hl-keyword">verify</span> <span class="hl-fn">safeDivide</span>
     safeDivide(<span class="hl-number">10</span>, <span class="hl-number">2</span>) <span class="hl-operator">=></span> Result.Ok(<span class="hl-number">5</span>)
     safeDivide(<span class="hl-number">7</span>, <span class="hl-number">0</span>)  <span class="hl-operator">=></span> Result.Err(<span class="hl-string">"Division by zero"</span>)</pre>
+        </div>
     </div>
 </section>
 
