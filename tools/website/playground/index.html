@@ -150,14 +150,6 @@
     divide(<span class="hl-number">10</span>, <span class="hl-number">2</span>) <span class="hl-operator">=></span> <span class="hl-builtin">Result</span>.Ok(<span class="hl-number">5</span>)
     divide(<span class="hl-number">10</span>, <span class="hl-number">0</span>) <span class="hl-operator">=></span> <span class="hl-builtin">Result</span>.Err(<span class="hl-string">"Division by zero"</span>)</pre>
 
-        <div class="about-feature" style="margin-top:1rem; padding:0.75rem; background:var(--bg); border-radius:8px; border:1px solid var(--border);">
-            <strong>Native WASM — no emscripten, no runtime</strong>
-            <span>Games run as standalone WASM modules compiled directly from Aver source. Snake is 5.8 KB. Tetris is 10 KB. A full roguelike is 28 KB. Drop your own <code>.wasm</code> file to run it here.</span>
-            <pre style="margin-top:0.5rem; font-size:0.7rem; color:var(--muted); white-space:pre-wrap;">cargo install aver-lang
-aver compile your_game.av --target wasm
-# drop the .wasm file into the playground</pre>
-        </div>
-
         <div class="about-links">
             <a href="https://github.com/jasisz/aver" target="_blank">GitHub</a>
             <a href="https://github.com/jasisz/aver/blob/main/README.md" target="_blank">README</a>
