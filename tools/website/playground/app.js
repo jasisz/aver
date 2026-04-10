@@ -972,7 +972,11 @@ const GAME_TOUCH = {
             { key: "down", text: "↓" }, { key: "right", text: "→" },
         ]},
         { label: "", keys: [
-            { key: "enter", text: "Select" }, { key: "q", text: "Quit" },
+            { key: "enter", text: "Select" }, { key: "escape", text: "Esc" },
+        ]},
+        { label: "AI depth", keys: [
+            { key: "+", text: "+" }, { key: "-", text: "-" },
+            { key: "q", text: "Quit" },
         ]},
     ],
     rogue: [

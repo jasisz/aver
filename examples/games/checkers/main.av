@@ -302,12 +302,16 @@ verify moveLabel
     moveLabel([Board.pt(1, 2), Board.pt(0, 3)]) => "b6→a5"
 
 fn renderHelp(state: GameState) -> Unit
-    ? "Show controls help"
-    ! [Terminal.moveTo, Terminal.print]
+    ? "Show who plays whom, AI depth, and controls"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    Terminal.moveTo(0, 14)
+    Terminal.setColor("green")
+    Terminal.print(" You (black) vs AI (white) · depth {Int.toString(state.searchDepth)} · +/- to change")
+    Terminal.resetColor()
     Terminal.moveTo(0, 15)
     match state.selected
-        Option.Some(sel) -> Terminal.print("Arrows: move | Enter: confirm move | ESC: deselect | Q: quit")
-        Option.None -> Terminal.print("Arrows: move cursor | Enter: select piece | Q: quit")
+        Option.Some(sel) -> Terminal.print(" Arrows:move  Enter:confirm  Esc:deselect  Q:quit")
+        Option.None -> Terminal.print(" Arrows:move  Enter:select piece  Q:quit            ")
 
 fn handleKey(state: GameState, key: String) -> GameState
     ? "Handle a keypress in player phase"
@@ -318,6 +322,8 @@ fn handleKey(state: GameState, key: String) -> GameState
         "right" -> GameState.update(state, cursorX = clamp(state.cursorX + 1, 0, 7))
         "enter" -> handleEnter(state)
         "esc" -> GameState.update(state, selected = Option.None, pieceMoves = [])
+        "+" -> GameState.update(state, searchDepth = state.searchDepth + 1)
+        "-" -> GameState.update(state, searchDepth = Int.max(state.searchDepth - 1, 1))
         "q" -> GameState.update(state, gameOver = true)
         _ -> state
 
