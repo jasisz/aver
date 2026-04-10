@@ -1,0 +1,741 @@
+module Main
+    intent =
+        "The Dungeon of Non-Aver — a roguelike where you fight the programming"
+        "concepts that Aver deliberately rejects. Turn-based, procedurally"
+        "generated, with FOV and AI. No if/else was harmed in the making."
+    depends [Types, Map, Fov, Pathfinding, Combat, Render]
+
+decision TurnBasedImmutableState
+    date = "2026-03-18"
+    author = "szymon"
+    reason =
+        "Turn-based loop lets us thread immutable GameState without"
+        "frame timing. Player acts, then each entity acts. State goes"
+        "in, state comes out. No mutation, no side channels."
+    chosen = "TurnBasedStateThreading"
+    rejected = ["RealTimeLoop", "MutableGameWorld"]
+    impacts = [GameState, gameLoop]
+
+record GameState
+    gameMap: List<List<Tile>>
+    player: Player
+    entities: List<Entity>
+    items: List<Item>
+    visible: List<Point>
+    visGrid: List<List<Bool>>
+    remembered: List<List<Bool>>
+    messages: List<String>
+    seed: Int
+    gameOver: Bool
+
+fn buildVisGrid(visible: List<Point>, grid: List<List<Bool>>, i: Int) -> List<List<Bool>>
+    ? "Build visibility grid from point list for O(1) lookups"
+    match i == List.len(visible)
+        true -> grid
+        false -> match Vector.get(Vector.fromList(visible), i)
+            Option.Some(p) -> buildVisGrid(visible, setRemCell(grid, p.x, p.y), i + 1)
+            Option.None -> grid
+
+verify buildVisGrid
+    List.len(buildVisGrid([Types.pt(1, 1)], emptyRemembered(0), 0)) => 30
+
+fn emptyRemembered(y: Int) -> List<List<Bool>>
+    ? "Build 30 rows of 50 false values"
+    emptyRememberedAcc(y, [])
+
+verify emptyRemembered
+    List.len(emptyRemembered(0)) => 30
+
+fn emptyRememberedAcc(y: Int, acc: List<List<Bool>>) -> List<List<Bool>>
+    ? "Accumulator helper for emptyRemembered"
+    match y == 30
+        true -> List.reverse(acc)
+        false -> emptyRememberedAcc(y + 1, List.prepend(emptyRemRow(0), acc))
+
+verify emptyRememberedAcc
+    List.len(emptyRememberedAcc(0, [])) => 30
+    List.len(emptyRememberedAcc(29, [])) => 1
+
+fn emptyRemRow(x: Int) -> List<Bool>
+    ? "Build a row of 50 false values"
+    emptyRemRowAcc(x, [])
+
+verify emptyRemRow
+    List.len(emptyRemRow(0)) => 50
+    List.len(emptyRemRow(49)) => 1
+
+fn emptyRemRowAcc(x: Int, acc: List<Bool>) -> List<Bool>
+    ? "Accumulator helper for emptyRemRow"
+    match x == 50
+        true -> List.reverse(acc)
+        false -> emptyRemRowAcc(x + 1, List.prepend(false, acc))
+
+verify emptyRemRowAcc
+    List.len(emptyRemRowAcc(0, [])) => 50
+    List.len(emptyRemRowAcc(49, [])) => 1
+
+fn markRemembered(rem: List<List<Bool>>, visible: List<Point>, i: Int) -> List<List<Bool>>
+    ? "Mark all visible points as remembered"
+    match i == List.len(visible)
+        true -> rem
+        false -> match Vector.get(Vector.fromList(visible), i)
+            Option.Some(p) -> markRemembered(setRemCell(rem, p.x, p.y), visible, i + 1)
+            Option.None -> rem
+
+verify markRemembered
+    List.len(markRemembered(emptyRemembered(0), [], 0)) => 30
+
+fn setRemCell(rem: List<List<Bool>>, x: Int, y: Int) -> List<List<Bool>>
+    ? "Set one remembered cell to true"
+    match Vector.get(Vector.fromList(rem), y)
+        Option.Some(row) -> setRemRow(rem, y, setRemCol(row, x, 0), 0)
+        Option.None -> rem
+
+verify setRemCell
+    List.len(setRemCell(emptyRemembered(0), 0, 0)) => 30
+
+fn setRemCol(row: List<Bool>, x: Int, i: Int) -> List<Bool>
+    ? "Rebuild row with position x set to true"
+    setRemColAcc(row, x, i, [])
+
+verify setRemCol
+    List.len(setRemCol(emptyRemRow(0), 3, 0)) => 50
+
+fn setRemColAcc(row: List<Bool>, x: Int, i: Int, acc: List<Bool>) -> List<Bool>
+    ? "Accumulator helper for setRemCol"
+    match i == List.len(row)
+        true -> List.reverse(acc)
+        false -> setRemColStep(row, x, i, acc)
+
+verify setRemColAcc
+    List.len(setRemColAcc(emptyRemRow(0), 3, 0, [])) => 50
+
+fn setRemColStep(row: List<Bool>, x: Int, i: Int, acc: List<Bool>) -> List<Bool>
+    ? "Process one cell in setRemCol"
+    nextI = i + 1
+    match Vector.get(Vector.fromList(row), i)
+        Option.Some(v) -> match i == x
+            true -> setRemColAcc(row, x, nextI, List.prepend(true, acc))
+            false -> setRemColAcc(row, x, nextI, List.prepend(v, acc))
+        Option.None -> List.reverse(acc)
+
+verify setRemColStep
+    List.len(setRemColStep(emptyRemRow(0), 3, 0, [])) => 50
+
+fn setRemRow(rem: List<List<Bool>>, y: Int, newRow: List<Bool>, i: Int) -> List<List<Bool>>
+    ? "Replace row y in remembered grid"
+    setRemRowAcc(rem, y, newRow, i, [])
+
+verify setRemRow
+    List.len(setRemRow(emptyRemembered(0), 0, emptyRemRow(0), 0)) => 30
+
+fn setRemRowAcc(rem: List<List<Bool>>, y: Int, newRow: List<Bool>, i: Int, acc: List<List<Bool>>) -> List<List<Bool>>
+    ? "Accumulator helper for setRemRow"
+    match i == List.len(rem)
+        true -> List.reverse(acc)
+        false -> setRemRowStep(rem, y, newRow, i, acc)
+
+verify setRemRowAcc
+    List.len(setRemRowAcc(emptyRemembered(0), 0, emptyRemRow(0), 0, [])) => 30
+
+fn setRemRowStep(rem: List<List<Bool>>, y: Int, newRow: List<Bool>, i: Int, acc: List<List<Bool>>) -> List<List<Bool>>
+    ? "Process one row in setRemRow"
+    nextI = i + 1
+    match Vector.get(Vector.fromList(rem), i)
+        Option.Some(row) -> match i == y
+            true -> setRemRowAcc(rem, y, newRow, nextI, List.prepend(newRow, acc))
+            false -> setRemRowAcc(rem, y, newRow, nextI, List.prepend(row, acc))
+        Option.None -> List.reverse(acc)
+
+verify setRemRowStep
+    List.len(setRemRowStep(emptyRemembered(0), 0, emptyRemRow(0), 0, [])) => 30
+
+fn addMessage(state: GameState, msg: String) -> GameState
+    ? "Add message to log, keep last 5"
+    GameState.update(state, messages = List.prepend(msg, takeMessages(state.messages, 4, 0)))
+
+verify addMessage
+    List.len(addMessage(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), "hello").messages) => 1
+
+fn takeMessages(msgs: List<String>, n: Int, i: Int) -> List<String>
+    ? "Take first n messages"
+    takeMessagesAcc(msgs, n, i, [])
+
+verify takeMessages
+    List.len(takeMessages(["a", "b", "c"], 2, 0)) => 2
+    List.len(takeMessages([], 3, 0)) => 0
+
+fn takeMessagesAcc(msgs: List<String>, n: Int, i: Int, acc: List<String>) -> List<String>
+    ? "Accumulator helper for takeMessages"
+    match i == n
+        true -> List.reverse(acc)
+        false -> takeMessagesStep(msgs, n, i, acc)
+
+verify takeMessagesAcc
+    List.len(takeMessagesAcc(["a", "b", "c"], 2, 0, [])) => 2
+
+fn takeMessagesStep(msgs: List<String>, n: Int, i: Int, acc: List<String>) -> List<String>
+    ? "Process one message in takeMessages"
+    match Vector.get(Vector.fromList(msgs), i)
+        Option.Some(m) -> takeMessagesAcc(msgs, n, i + 1, List.prepend(m, acc))
+        Option.None -> List.reverse(acc)
+
+verify takeMessagesStep
+    List.len(takeMessagesStep(["a", "b"], 2, 0, [])) => 2
+
+fn spawnEntities(seed: Int, rooms: List<Room>, i: Int, floor: Int) -> List<Entity>
+    ? "Spawn enemies in rooms, scaled by floor (skip first room)"
+    List.reverse(spawnEntitiesAcc(seed, rooms, i, floor, []))
+
+verify spawnEntities
+    List.len(spawnEntities(42, [], 0, 1)) => 0
+    List.len(spawnEntities(42, [Room(x = 5, y = 5, w = 6, h = 4)], 0, 1)) => 0
+
+fn spawnEntitiesAcc(seed: Int, rooms: List<Room>, i: Int, floor: Int, acc: List<Entity>) -> List<Entity>
+    ? "Accumulator helper for spawnEntities"
+    match i == List.len(rooms)
+        true -> acc
+        false -> spawnEntitiesStep(seed, rooms, i, floor, acc)
+
+verify spawnEntitiesAcc
+    List.len(spawnEntitiesAcc(42, [], 0, 1, [])) => 0
+
+fn spawnEntitiesStep(seed: Int, rooms: List<Room>, i: Int, floor: Int, acc: List<Entity>) -> List<Entity>
+    ? "Process one room in spawnEntities"
+    nextI = i + 1
+    match i == 0
+        true -> spawnEntitiesAcc(seed, rooms, nextI, floor, acc)
+        false -> match Vector.get(Vector.fromList(rooms), i)
+            Option.Some(room) -> spawnEntitiesAcc(Map.nextSeed(seed), rooms, nextI, floor, List.prepend(spawnOneEntity(seed, room, i, floor), acc))
+            Option.None -> spawnEntitiesAcc(seed, rooms, nextI, floor, acc)
+
+verify spawnEntitiesStep
+    List.len(spawnEntitiesStep(42, [Room(x = 5, y = 5, w = 6, h = 4)], 0, 1, [])) => 0
+
+fn spawnOneEntity(seed: Int, room: Room, idx: Int, floor: Int) -> Entity
+    ? "Spawn entity scaled by floor — deeper = stronger"
+    cx = room.x + room.w / 2
+    cy = room.y + room.h / 2
+    kind = Result.withDefault(Int.mod(idx, 3), 0)
+    base = match kind
+        0 -> Types.makeIfElse(cx, cy)
+        1 -> Types.makeLoop(cx, cy)
+        _ -> Types.makeNull(cx, cy)
+    scaleEntity(base, floor)
+
+verify spawnOneEntity
+    spawnOneEntity(42, Room(x = 10, y = 10, w = 6, h = 4), 3, 1).pos.x => 13
+
+fn scaleEntity(entity: Entity, floor: Int) -> Entity
+    ? "Scale entity stats by floor number"
+    bonus = floor - 1
+    hpBonus = bonus * 2
+    Entity.update(entity, hp = entity.hp + hpBonus, maxHp = entity.maxHp + hpBonus, attack = entity.attack + bonus, defense = entity.defense + bonus)
+
+verify scaleEntity
+    scaleEntity(Types.makeIfElse(0, 0), 1).hp => 6
+    scaleEntity(Types.makeIfElse(0, 0), 3).hp => 10
+    scaleEntity(Types.makeIfElse(0, 0), 3).attack => 5
+
+fn spawnItems(seed: Int, rooms: List<Room>, i: Int) -> List<Item>
+    ? "Spawn items in some rooms"
+    List.reverse(spawnItemsAcc(seed, rooms, i, []))
+
+verify spawnItems
+    List.len(spawnItems(42, [], 0)) => 0
+
+fn spawnItemsAcc(seed: Int, rooms: List<Room>, i: Int, acc: List<Item>) -> List<Item>
+    ? "Accumulator helper for spawnItems"
+    match i == List.len(rooms)
+        true -> acc
+        false -> match Vector.get(Vector.fromList(rooms), i)
+            Option.Some(room) -> spawnItemInRoom(seed, rooms, room, i, acc)
+            Option.None -> spawnItemsAcc(seed, rooms, i + 1, acc)
+
+verify spawnItemsAcc
+    List.len(spawnItemsAcc(42, [], 0, [])) => 0
+
+fn spawnItemInRoom(seed: Int, rooms: List<Room>, room: Room, i: Int, acc: List<Item>) -> List<Item>
+    ? "Maybe spawn an item in this room"
+    cx = room.x + 1
+    cy = room.y + 1
+    kind = Result.withDefault(Int.mod(i, 3), 0)
+    nextI = i + 1
+    match Result.withDefault(Int.mod(i, 2), 0) == 0
+        true -> spawnItemsAcc(Map.nextSeed(seed), rooms, nextI, List.prepend(makeItemByKind(cx, cy, kind), acc))
+        false -> spawnItemsAcc(seed, rooms, nextI, acc)
+
+verify spawnItemInRoom
+    List.len(spawnItemInRoom(42, [Room(x = 5, y = 5, w = 6, h = 4)], Room(x = 5, y = 5, w = 6, h = 4), 0, [])) => 1
+
+fn makeItemByKind(x: Int, y: Int, kind: Int) -> Item
+    ? "Create item by kind index"
+    match kind
+        0 -> Types.makePurity(x, y)
+        1 -> Types.makeScroll(x, y)
+        _ -> Types.makeImmutable(x, y)
+
+verify makeItemByKind
+    makeItemByKind(1, 1, 0).name => "Potion of Purity"
+    makeItemByKind(1, 1, 1).name => "Scroll of Pattern Match"
+    makeItemByKind(1, 1, 2).name => "Shield of Immutability"
+
+fn initGame(seed: Int) -> GameState
+    ? "Generate a new dungeon floor"
+    gameMap = Map.generateMap(seed)
+    rooms = Map.generateRooms(seed)
+    startRoom = Option.withDefault(Vector.get(Vector.fromList(rooms), 0), Room(x = 5, y = 5, w = 6, h = 4))
+    px = startRoom.x + startRoom.w / 2
+    py = startRoom.y + startRoom.h / 2
+    player = Types.makePlayer(px, py)
+    ents = spawnEntities(seed, rooms, 0, 1)
+    itms = spawnItems(seed, rooms, 0)
+    vis = Fov.computeFov(gameMap, Types.pt(px, py), 8)
+    rem = markRemembered(emptyRemembered(0), vis, 0)
+    GameState(gameMap = gameMap, player = player, entities = ents, items = itms, visible = vis, visGrid = buildVisGrid(vis, emptyRemembered(0), 0), remembered = rem, messages = ["You enter the Dungeon of Non-Aver. Match your way through!"], seed = Map.nextSeed(seed), gameOver = false)
+
+verify initGame
+    initGame(42).gameOver => false
+    initGame(42).player.hp => 20
+
+fn updateFov(state: GameState) -> GameState
+    ? "Recompute FOV from player position"
+    vis = Fov.computeFov(state.gameMap, state.player.pos, 8)
+    rem = markRemembered(state.remembered, vis, 0)
+    GameState.update(state, visible = vis, visGrid = buildVisGrid(vis, emptyRemembered(0), 0), remembered = rem)
+
+verify updateFov
+    updateFov(GameState(gameMap = Map.generateMap(42), player = Types.makePlayer(10, 10), entities = [], items = [], visible = [], visGrid = emptyRemembered(0), remembered = emptyRemembered(0), messages = [], seed = 42, gameOver = false)).visible => Fov.computeFov(Map.generateMap(42), Types.pt(10, 10), 8)
+
+fn tryMove(state: GameState, dx: Int, dy: Int) -> GameState
+    ? "Try to move player by delta, handle combat and items"
+    ! [Random.int]
+    nx = state.player.pos.x + dx
+    ny = state.player.pos.y + dy
+    match Bool.not(Types.tileWalkable(Map.getT(state.gameMap, nx, ny)))
+        true -> state
+        false -> tryMoveToTile(state, nx, ny)
+
+fn tryMoveToTile(state: GameState, nx: Int, ny: Int) -> GameState
+    ? "Handle what happens at target tile"
+    ! [Random.int]
+    match Combat.entityAtPos(state.entities, Types.pt(nx, ny), 0)
+        Option.Some(idx) -> attackEntity(state, idx)
+        Option.None -> movePlayerTo(state, nx, ny)
+
+fn attackEntity(state: GameState, idx: Int) -> GameState
+    ? "Player attacks entity at index"
+    ! [Random.int]
+    match Vector.get(Vector.fromList(state.entities), idx)
+        Option.Some(target) -> resolveAttack(state, target, idx)
+        Option.None -> state
+
+fn resolveAttack(state: GameState, target: Entity, idx: Int) -> GameState
+    ? "Calculate and apply damage"
+    ! [Random.int]
+    dmg = Types.calcDamage(state.player.attack, target.defense)
+    hit = Combat.applyDamageToEntity(target, dmg)
+    match Combat.isEntityDead(hit)
+        true -> killEntity(state, target, idx, dmg)
+        false -> alertNearby(addMessage(GameState.update(state, entities = Combat.replaceEntity(state.entities, idx, hit, 0)), "You hit {target.name} for {Int.toString(dmg)}!"), state.player.pos, 12, 0)
+
+fn killEntity(state: GameState, target: Entity, idx: Int, dmg: Int) -> GameState
+    ? "Kill entity — for-loop gets one respawn (off-by-one error)"
+    ! [Random.int]
+    match target.kind
+        EntityKind.FeralLoop -> loopRespawn(state, target, idx)
+        _ -> actualKill(state, target, idx)
+
+fn loopRespawn(state: GameState, target: Entity, idx: Int) -> GameState
+    ? "for-loop respawns once with half HP (off-by-one — iterates one more time)"
+    ! [Random.int]
+    match Random.int(0, 1) == 0
+        true -> addMessage(GameState.update(state, entities = Combat.replaceEntity(state.entities, idx, Entity.update(target, hp = target.maxHp / 2), 0)), "{target.name} reaches i=0 but iterates AGAIN! (respawns at half HP)")
+        false -> actualKill(state, target, idx)
+
+fn actualKill(state: GameState, target: Entity, idx: Int) -> GameState
+    ? "Actually remove entity and gain exp"
+    newPlayer = Combat.gainExp(state.player, Combat.expForKill(target.kind))
+    addMessage(GameState.update(state, entities = Combat.removeAt(state.entities, idx, 0), player = newPlayer), "You defeated {target.name}! (+{Int.toString(Combat.expForKill(target.kind))} exp)")
+
+verify actualKill
+    List.len(actualKill(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [Types.makeIfElse(1, 1)], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makeIfElse(1, 1), 0).entities) => 0
+
+fn movePlayerTo(state: GameState, nx: Int, ny: Int) -> GameState
+    ? "Move player and pick up items"
+    movedPlayer = Player.update(state.player, pos = Types.pt(nx, ny))
+    match Combat.itemAtPos(state.items, Types.pt(nx, ny), 0)
+        Option.Some(idx) -> pickUpItem(GameState.update(state, player = movedPlayer), idx)
+        Option.None -> checkStairs(GameState.update(state, player = movedPlayer))
+
+verify movePlayerTo
+    movePlayerTo(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), 3, 4).player.pos.x => 3
+
+fn pickUpItem(state: GameState, idx: Int) -> GameState
+    ? "Pick up item at index"
+    match Vector.get(Vector.fromList(state.items), idx)
+        Option.Some(item) -> applyItem(state, item, idx)
+        Option.None -> state
+
+verify pickUpItem
+    pickUpItem(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [], items = [Types.makePurity(0, 0)], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), 0).player.hp => 20
+
+fn applyItem(state: GameState, item: Item, idx: Int) -> GameState
+    ? "Apply item effect"
+    match item.kind
+        ItemKind.PotionOfPurity -> addMessage(GameState.update(state, player = Combat.healPlayer(state.player, item.value), items = Combat.removeItemAt(state.items, idx, 0)), "You drink {item.name}. Purity restored! (+{Int.toString(item.value)} HP)")
+        ItemKind.ScrollOfPatternMatch -> addMessage(GameState.update(state, player = Player.update(state.player, attack = state.player.attack + item.value), items = Combat.removeItemAt(state.items, idx, 0)), "You read {item.name}. Your pattern matching grows stronger! (+{Int.toString(item.value)} ATK)")
+        ItemKind.ShieldOfImmutability -> addMessage(GameState.update(state, player = Player.update(state.player, defense = state.player.defense + item.value), items = Combat.removeItemAt(state.items, idx, 0)), "You equip {item.name}. Nothing can change you! (+{Int.toString(item.value)} DEF)")
+
+verify applyItem
+    applyItem(GameState(gameMap = [], player = Player.update(Types.makePlayer(0, 0), hp = 10), entities = [], items = [Types.makePurity(0, 0)], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makePurity(0, 0), 0).player.hp => 18
+
+fn checkStairs(state: GameState) -> GameState
+    ? "Check if player stepped on stairs"
+    match Map.getT(state.gameMap, state.player.pos.x, state.player.pos.y)
+        Tile.StairsDown -> addMessage(state, "You see stairs leading deeper into Non-Aver...")
+        _ -> state
+
+verify checkStairs
+    List.len(checkStairs(GameState(gameMap = [[Tile.Floor]], player = Types.makePlayer(0, 0), entities = [], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false)).messages) => 0
+
+fn entityAI(state: GameState, i: Int) -> GameState
+    ? "Run AI for each entity with unique behavior per kind"
+    ! [Random.int]
+    match i == List.len(state.entities)
+        true -> state
+        false -> entityAIStep(state, i)
+
+fn entityAIStep(state: GameState, i: Int) -> GameState
+    ? "Process one entity and continue to next"
+    ! [Random.int]
+    nextI = i + 1
+    match Vector.get(Vector.fromList(state.entities), i)
+        Option.Some(entity) -> entityAI(processOneEntity(state, entity, i), nextI)
+        Option.None -> entityAI(state, nextI)
+
+fn processOneEntity(state: GameState, entity: Entity, i: Int) -> GameState
+    ? "Dispatch: visible = active, alerted = investigate, else sleep"
+    ! [Random.int]
+    match Bool.or(Fov.containsPt(state.visible, entity.pos, 0), Types.dist(entity.pos, state.player.pos) == 1)
+        true -> processActiveEntity(state, entity, i)
+        false -> processAlertedEntity(state, entity, i)
+
+fn processAlertedEntity(state: GameState, entity: Entity, i: Int) -> GameState
+    ? "Alerted entity moves toward alert source (heard combat nearby)"
+    match entity.alertPos
+        Option.Some(target) -> moveToAlert(state, entity, i, target)
+        Option.None -> decayAlert(state, entity, i)
+
+verify processAlertedEntity
+    processAlertedEntity(GameState(gameMap = Map.generateMap(42), player = Types.makePlayer(10, 10), entities = [Entity.update(Types.makeIfElse(12, 10), alertPos = Option.Some(Types.pt(10, 10)), alertTurns = 2)], items = [], visible = [], visGrid = emptyRemembered(0), remembered = emptyRemembered(0), messages = [], seed = 42, gameOver = false), Entity.update(Types.makeIfElse(12, 10), alertPos = Option.Some(Types.pt(10, 10)), alertTurns = 2), 0).entities => Combat.replaceEntity([Entity.update(Types.makeIfElse(12, 10), alertPos = Option.Some(Types.pt(10, 10)), alertTurns = 2)], 0, Entity.update(Types.makeIfElse(12, 10), alertPos = Option.Some(Types.pt(10, 10)), alertTurns = 1), 0)
+
+fn moveToAlert(state: GameState, entity: Entity, i: Int, target: Point) -> GameState
+    ? "Entity investigates alert position"
+    match entity.alertTurns < 1
+        true -> GameState.update(state, entities = Combat.replaceEntity(state.entities, i, Entity.update(entity, alertPos = Option.None, alertTurns = 0), 0))
+        false -> moveToAlertStep(state, entity, i, target)
+
+verify moveToAlert
+    moveToAlert(GameState(gameMap = Map.generateMap(42), player = Types.makePlayer(10, 10), entities = [Entity.update(Types.makeIfElse(12, 10), alertPos = Option.Some(Types.pt(10, 10)), alertTurns = 0)], items = [], visible = [], visGrid = emptyRemembered(0), remembered = emptyRemembered(0), messages = [], seed = 42, gameOver = false), Entity.update(Types.makeIfElse(12, 10), alertPos = Option.Some(Types.pt(10, 10)), alertTurns = 0), 0, Types.pt(10, 10)).entities => [Entity.update(Types.makeIfElse(12, 10), alertPos = Option.None, alertTurns = 0)]
+
+fn moveToAlertStep(state: GameState, entity: Entity, i: Int, target: Point) -> GameState
+    ? "Take one step toward alert and decrement turns"
+    next = Combat.stepToward(entity.pos, target)
+    moved = match Types.tileWalkable(Map.getT(state.gameMap, next.x, next.y))
+        true -> match Combat.entityAtPos(state.entities, next, 0)
+            Option.Some(blocked) -> entity
+            Option.None -> Entity.update(entity, pos = next)
+        false -> entity
+    GameState.update(state, entities = Combat.replaceEntity(state.entities, i, Entity.update(moved, alertTurns = entity.alertTurns - 1), 0))
+
+verify moveToAlertStep
+    moveToAlertStep(GameState(gameMap = Map.generateMap(42), player = Types.makePlayer(10, 10), entities = [Entity.update(Types.makeIfElse(12, 10), alertPos = Option.Some(Types.pt(10, 10)), alertTurns = 2)], items = [], visible = [], visGrid = emptyRemembered(0), remembered = emptyRemembered(0), messages = [], seed = 42, gameOver = false), Entity.update(Types.makeIfElse(12, 10), alertPos = Option.Some(Types.pt(10, 10)), alertTurns = 2), 0, Types.pt(10, 10)).entities => [Entity.update(Types.makeIfElse(12, 10), alertPos = Option.Some(Types.pt(10, 10)), alertTurns = 1)]
+
+fn decayAlert(state: GameState, entity: Entity, i: Int) -> GameState
+    ? "No alert — entity stays put"
+    state
+
+verify decayAlert
+    decayAlert(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makeIfElse(1, 1), 0).gameOver => false
+
+fn alertNearby(state: GameState, combatPos: Point, radius: Int, i: Int) -> GameState
+    ? "Alert all entities within radius of combat (they heard the fight)"
+    match i == List.len(state.entities)
+        true -> state
+        false -> alertNearbyStep(state, combatPos, radius, i)
+
+verify alertNearby
+    alertNearby(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [Types.makeIfElse(2, 2)], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.pt(3, 3), 5, 0).entities => [Entity.update(Types.makeIfElse(2, 2), alertPos = Option.Some(Types.pt(3, 3)), alertTurns = 8)]
+
+fn alertNearbyStep(state: GameState, combatPos: Point, radius: Int, i: Int) -> GameState
+    ? "Alert one entity and continue to next"
+    nextI = i + 1
+    match Vector.get(Vector.fromList(state.entities), i)
+        Option.Some(entity) -> alertNearby(alertOneEntity(state, entity, combatPos, radius, i), combatPos, radius, nextI)
+        Option.None -> alertNearby(state, combatPos, radius, nextI)
+
+verify alertNearbyStep
+    alertNearbyStep(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [Types.makeIfElse(2, 2)], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.pt(3, 3), 5, 0).entities => [Entity.update(Types.makeIfElse(2, 2), alertPos = Option.Some(Types.pt(3, 3)), alertTurns = 8)]
+
+fn alertOneEntity(state: GameState, entity: Entity, combatPos: Point, radius: Int, i: Int) -> GameState
+    ? "Alert one entity if within radius and not already visible"
+    match Types.dist(entity.pos, combatPos) < radius
+        true -> match Bool.not(Fov.containsPt(state.visible, entity.pos, 0))
+            true -> GameState.update(state, entities = Combat.replaceEntity(state.entities, i, Entity.update(entity, alertPos = Option.Some(combatPos), alertTurns = 8), 0))
+            false -> state
+        false -> state
+
+verify alertOneEntity
+    alertOneEntity(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [Types.makeIfElse(2, 2)], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makeIfElse(2, 2), Types.pt(3, 3), 5, 0).entities => [Entity.update(Types.makeIfElse(2, 2), alertPos = Option.Some(Types.pt(3, 3)), alertTurns = 8)]
+
+fn processActiveEntity(state: GameState, entity: Entity, i: Int) -> GameState
+    ? "Active entity: attack if adjacent, otherwise move"
+    ! [Random.int]
+    match Types.dist(entity.pos, state.player.pos) == 1
+        true -> entityAttacks(state, entity, i)
+        false -> entityBehavior(state, entity, i)
+
+fn entityAttacks(state: GameState, entity: Entity, i: Int) -> GameState
+    ? "Entity attacks with kind-specific twist"
+    ! [Random.int]
+    match entity.kind
+        EntityKind.WildIfElse -> ifElseAttack(state, entity, i)
+        EntityKind.FeralLoop -> loopAttack(state, entity, i)
+        EntityKind.TheNull -> nullAttack(state, entity, i)
+
+fn ifElseAttack(state: GameState, entity: Entity, i: Int) -> GameState
+    ? "if/else: 50% chance of double hit (branch prediction fail)"
+    ! [Random.int]
+    dmg = Types.calcDamage(entity.attack, state.player.defense)
+    doubled = Random.int(0, 1)
+    totalDmg = match doubled == 1
+        true -> dmg * 2
+        false -> dmg
+    newPlayer = Combat.applyDamageToPlayer(state.player, totalDmg)
+    match Combat.isPlayerDead(newPlayer)
+        true -> addMessage(GameState.update(state, player = newPlayer, gameOver = true), "{entity.name} branch-predicts your death!")
+        false -> match doubled == 1
+            true -> addMessage(GameState.update(state, player = newPlayer), "{entity.name} takes BOTH branches! {Int.toString(totalDmg)} dmg!")
+            false -> addMessage(GameState.update(state, player = newPlayer), "{entity.name} hits you for {Int.toString(dmg)}.")
+
+fn loopAttack(state: GameState, entity: Entity, i: Int) -> GameState
+    ? "for-loop: normal attack but respawns once when killed (off-by-one)"
+    dmg = Types.calcDamage(entity.attack, state.player.defense)
+    newPlayer = Combat.applyDamageToPlayer(state.player, dmg)
+    match Combat.isPlayerDead(newPlayer)
+        true -> addMessage(GameState.update(state, player = newPlayer, gameOver = true), "{entity.name} iterates you to death!")
+        false -> addMessage(GameState.update(state, player = newPlayer), "{entity.name} iterates on you for {Int.toString(dmg)}!")
+
+verify loopAttack
+    loopAttack(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [Types.makeLoop(1, 0)], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makeLoop(1, 0), 0).player.hp < 20 => true
+
+fn nullAttack(state: GameState, entity: Entity, i: Int) -> GameState
+    ? "null: steals EXP instead of dealing HP damage (null dereference — wipes memory)"
+    stolen = Int.max(1, state.player.exp / 4)
+    newPlayer = Player.update(state.player, exp = Int.max(0, state.player.exp - stolen))
+    addMessage(GameState.update(state, player = newPlayer), "{entity.name} dereferences your memory! -{Int.toString(stolen)} EXP!")
+
+verify nullAttack
+    nullAttack(GameState(gameMap = [], player = Player.update(Types.makePlayer(0, 0), exp = 40), entities = [Types.makeNull(1, 0)], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makeNull(1, 0), 0).player.exp => 30
+
+fn entityBehavior(state: GameState, entity: Entity, i: Int) -> GameState
+    ? "Movement behavior by kind"
+    ! [Random.int]
+    match entity.kind
+        EntityKind.WildIfElse -> ifElseBehavior(state, entity, i)
+        EntityKind.FeralLoop -> loopBehavior(state, entity, i)
+        EntityKind.TheNull -> nullBehavior(state, entity, i)
+
+fn ifElseBehavior(state: GameState, entity: Entity, i: Int) -> GameState
+    ? "if/else: randomly either chase (A*) or wander (no pattern matching = random guess)"
+    ! [Random.int]
+    match Fov.containsPt(state.visible, entity.pos, 0)
+        true -> match Random.int(0, 1) == 0
+            true -> entityMoveToward(state, entity, i, state.player.pos)
+            false -> entityMoveRandom(state, entity, i)
+        false -> state
+
+fn loopBehavior(state: GameState, entity: Entity, i: Int) -> GameState
+    ? "for-loop: patrol in circle until player within 3 tiles, then chase"
+    match Types.dist(entity.pos, state.player.pos) < 4
+        true -> entityMoveToward(state, entity, i, state.player.pos)
+        false -> loopPatrol(state, entity, i)
+
+verify loopBehavior
+    loopBehavior(GameState(gameMap = Map.generateMap(42), player = Types.makePlayer(40, 25), entities = [Types.makeLoop(5, 5)], items = [], visible = [], visGrid = emptyRemembered(0), remembered = emptyRemembered(0), messages = [], seed = 42, gameOver = false), Types.makeLoop(5, 5), 0).gameOver => false
+
+fn loopPatrol(state: GameState, entity: Entity, i: Int) -> GameState
+    ? "for-loop patrols: moves in a square pattern based on turn count"
+    step = Result.withDefault(Int.mod(state.seed, 4), 0)
+    dx = match step
+        0 -> 1
+        1 -> 0
+        2 -> 0 - 1
+        _ -> 0
+    dy = match step
+        0 -> 0
+        1 -> 1
+        2 -> 0
+        _ -> 0 - 1
+    target = Types.pt(entity.pos.x + dx, entity.pos.y + dy)
+    match Types.tileWalkable(Map.getT(state.gameMap, target.x, target.y))
+        true -> match Combat.entityAtPos(state.entities, target, 0)
+            Option.Some(blocked) -> state
+            Option.None -> GameState.update(state, entities = Combat.replaceEntity(state.entities, i, Entity.update(entity, pos = target), 0))
+        false -> state
+
+verify loopPatrol
+    loopPatrol(GameState(gameMap = Map.generateMap(42), player = Types.makePlayer(40, 25), entities = [Types.makeLoop(5, 5)], items = [], visible = [], visGrid = emptyRemembered(0), remembered = emptyRemembered(0), messages = [], seed = 42, gameOver = false), Types.makeLoop(5, 5), 0).gameOver => false
+
+fn nullBehavior(state: GameState, entity: Entity, i: Int) -> GameState
+    ? "null: teleports to random nearby floor tile (unpredictable)"
+    ! [Random.int]
+    tx = entity.pos.x + Random.int(0 - 4, 4)
+    ty = entity.pos.y + Random.int(0 - 4, 4)
+    match Map.inMap(tx, ty)
+        true -> match Types.tileWalkable(Map.getT(state.gameMap, tx, ty))
+            true -> match Combat.entityAtPos(state.entities, Types.pt(tx, ty), 0)
+                Option.Some(blocked) -> state
+                Option.None -> GameState.update(state, entities = Combat.replaceEntity(state.entities, i, Entity.update(entity, pos = Types.pt(tx, ty)), 0))
+            false -> state
+        false -> state
+
+fn entityMoveToward(state: GameState, entity: Entity, i: Int, target: Point) -> GameState
+    ? "Move entity toward target using BFS pathfinding"
+    match Pathfinding.nextStepAStar(state.gameMap, entity.pos, target, state.entities)
+        Option.Some(next) -> match Combat.entityAtPos(state.entities, next, 0)
+            Option.Some(blocked) -> state
+            Option.None -> GameState.update(state, entities = Combat.replaceEntity(state.entities, i, Entity.update(entity, pos = next), 0))
+        Option.None -> state
+
+verify entityMoveToward
+    entityMoveToward(GameState(gameMap = Map.setT(Map.emptyMap(), 2, 1, Tile.Floor), player = Types.makePlayer(0, 0), entities = [Types.makeIfElse(1, 1)], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makeIfElse(1, 1), 0, Types.pt(2, 1)).entities => [Entity.update(Types.makeIfElse(1, 1), pos = Types.pt(2, 1))]
+
+fn entityMoveRandom(state: GameState, entity: Entity, i: Int) -> GameState
+    ? "Move entity in random direction"
+    ! [Random.int]
+    dx = Random.int(0 - 1, 1)
+    dy = Random.int(0 - 1, 1)
+    target = Types.pt(entity.pos.x + dx, entity.pos.y + dy)
+    match Types.tileWalkable(Map.getT(state.gameMap, target.x, target.y))
+        true -> match Combat.entityAtPos(state.entities, target, 0)
+            Option.Some(blocked) -> state
+            Option.None -> GameState.update(state, entities = Combat.replaceEntity(state.entities, i, Entity.update(entity, pos = target), 0))
+        false -> state
+
+fn descend(state: GameState) -> GameState
+    ? "Go down to next floor"
+    newFloor = state.player.floor + 1
+    newSeed = Map.nextSeed(state.seed)
+    newMap = Map.generateMap(newSeed)
+    rooms = Map.generateRooms(newSeed)
+    startRoom = Option.withDefault(Vector.get(Vector.fromList(rooms), 0), Room(x = 5, y = 5, w = 6, h = 4))
+    px = startRoom.x + startRoom.w / 2
+    py = startRoom.y + startRoom.h / 2
+    newPlayer = Player.update(state.player, pos = Types.pt(px, py), floor = newFloor)
+    ents = spawnEntities(newSeed, rooms, 0, newFloor)
+    itms = spawnItems(newSeed, rooms, 0)
+    vis = Fov.computeFov(newMap, Types.pt(px, py), 8)
+    rem = markRemembered(emptyRemembered(0), vis, 0)
+    addMessage(GameState(gameMap = newMap, player = newPlayer, entities = ents, items = itms, visible = vis, visGrid = buildVisGrid(vis, emptyRemembered(0), 0), remembered = rem, messages = state.messages, seed = Map.nextSeed(newSeed), gameOver = false), "You descend to floor {Int.toString(newFloor)} of Non-Aver!")
+
+verify descend
+    descend(initGame(42)).player.floor => 2
+
+fn handleInput(state: GameState, key: String) -> GameState
+    ? "Process player input"
+    ! [Random.int]
+    match key
+        "up" -> tryMove(state, 0, 0 - 1)
+        "down" -> tryMove(state, 0, 1)
+        "left" -> tryMove(state, 0 - 1, 0)
+        "right" -> tryMove(state, 1, 0)
+        ">" -> handleDescend(state)
+        "q" -> GameState.update(state, gameOver = true)
+        "esc" -> GameState.update(state, gameOver = true)
+        _ -> state
+
+fn handleDescend(state: GameState) -> GameState
+    ? "Try to descend stairs"
+    match Map.getT(state.gameMap, state.player.pos.x, state.player.pos.y)
+        Tile.StairsDown -> descend(state)
+        _ -> addMessage(state, "No stairs here.")
+
+verify handleDescend
+    List.len(handleDescend(GameState(gameMap = [[Tile.Floor]], player = Types.makePlayer(0, 0), entities = [], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false)).messages) => 1
+
+fn playerTurn(state: GameState, key: String) -> GameState
+    ? "Full player turn: input, AI responses, FOV update"
+    ! [Random.int]
+    moved = handleInput(state, key)
+    afterAI = entityAI(moved, 0)
+    updateFov(afterAI)
+
+fn renderFrame(state: GameState) -> Unit
+    ? "Draw everything"
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+    ]
+    Terminal.clear()
+    Render.renderMap(state.gameMap, state.visGrid, state.remembered, state.entities, state.items, state.player)
+    Render.renderHud(state.player, state.messages)
+    Terminal.flush()
+
+fn readKey(state: GameState) -> GameState
+    ? "Wait for a keypress"
+    ! [Random.int, Terminal.readKey]
+    match Terminal.readKey()
+        Option.Some(k) -> handleInput(state, k)
+        Option.None -> readKey(state)
+
+fn gameLoop(state: GameState) -> Result<String, String>
+    ? "Main game loop — wait for input, process turn, repeat"
+    ! [
+        Random.int,
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
+        Time.sleep,
+    ]
+    renderFrame(state)
+    match state.gameOver
+        true -> Result.Ok("Game over on floor {Int.toString(state.player.floor)}. EXP: {Int.toString(state.player.exp)}. The Aver way prevails!")
+        false -> waitAndProcess(state)
+
+fn waitAndProcess(state: GameState) -> Result<String, String>
+    ? "Wait for key and process turn"
+    ! [
+        Random.int,
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
+        Time.sleep,
+    ]
+    match Terminal.readKey()
+        Option.Some(k) -> gameLoop(playerTurn(state, k))
+        Option.None -> waitAndProcess(state)
+
+fn run() -> Result<String, String>
+    ? "Setup terminal, init game, run loop"
+    ! [
+        Random.int,
+        Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
+        Time.sleep,
+    ]
+    Terminal.enableRawMode()
+    Terminal.hideCursor()
+    seed = Random.int(1, 999999)
+    result = gameLoop(initGame(seed))
+    Terminal.showCursor()
+    Terminal.disableRawMode()
+    Terminal.clear()
+    result
+
+fn main()
+    ? "Entry point — descend into the Dungeon of Non-Aver"
+    ! [
+        Console.print,
+        Random.int,
+        Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
+        Time.sleep,
+    ]
+    match run()
+        Result.Ok(msg) -> Console.print(msg)
+        Result.Err(err) -> Console.print("Error: {err}")

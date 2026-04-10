@@ -186,8 +186,12 @@ export class AverBrowserHost {
         // Layout: [0]=ready flag, [1]=length, [2..]=UTF-8 bytes
         const view = this.lineBufferView;
         if (!view) {
-            // No shared buffer — fall back to queue
-            return this.lineQueue.length > 0 ? this.lineQueue.shift() : "";
+            if (this.lineQueue.length > 0) {
+                return this.lineQueue.shift();
+            }
+            throw new Error(
+                "Console.readLine() requires cross-origin isolation. Serve the playground with COOP/COEP headers.",
+            );
         }
         // Signal main thread we need a line
         Atomics.store(view, 0, 0); // ready=0
@@ -331,6 +335,10 @@ export class AverBrowserHost {
     }
 
     dequeueKey() {
+        if (this.keyQueue.length > 0) {
+            return this.keyQueue.shift();
+        }
+
         if (this.keyQueueView) {
             const head = Atomics.load(this.keyQueueView, KEY_QUEUE_HEAD);
             const tail = Atomics.load(this.keyQueueView, KEY_QUEUE_TAIL);
@@ -343,11 +351,7 @@ export class AverBrowserHost {
             return decodeKeyCode(code);
         }
 
-        if (this.keyQueue.length === 0) {
-            return null;
-        }
-
-        return this.keyQueue.shift();
+        return null;
     }
 
     postConsole(level, text) {

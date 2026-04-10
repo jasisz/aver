@@ -1,0 +1,373 @@
+module Map
+    intent =
+        "Map module for roguelike: 50x30 tile grid."
+        "Procedural room-based generation from a seed, pure and verify-able."
+    depends [Types]
+
+record Room
+    x: Int
+    y: Int
+    w: Int
+    h: Int
+
+fn mapW() -> Int
+    ? "Map width constant"
+    50
+
+verify mapW
+    mapW() => 50
+
+fn mapH() -> Int
+    ? "Map height constant"
+    30
+
+verify mapH
+    mapH() => 30
+
+fn buildRowAcc(n: Int, acc: List<Tile>) -> List<Tile>
+    ? "Build a row of n Wall tiles using accumulator"
+    match n == 0
+        true -> acc
+        false -> buildRowAcc(n - 1, List.prepend(Tile.Wall, acc))
+
+verify buildRowAcc
+    List.len(buildRowAcc(0, [])) => 0
+    List.len(buildRowAcc(5, [])) => 5
+
+fn buildRow(n: Int) -> List<Tile>
+    ? "Build a row of n Wall tiles"
+    buildRowAcc(n, [])
+
+verify buildRow
+    List.len(buildRow(0)) => 0
+    List.len(buildRow(5)) => 5
+    List.len(buildRow(50)) => 50
+
+fn buildRowsAcc(n: Int, acc: List<List<Tile>>) -> List<List<Tile>>
+    ? "Build n rows of Wall tiles using accumulator"
+    match n == 0
+        true -> acc
+        false -> buildRowsAcc(n - 1, List.prepend(buildRow(mapW()), acc))
+
+verify buildRowsAcc
+    List.len(buildRowsAcc(0, [])) => 0
+    List.len(buildRowsAcc(3, [])) => 3
+
+fn buildRows(n: Int) -> List<List<Tile>>
+    ? "Build n rows of Wall tiles"
+    buildRowsAcc(n, [])
+
+verify buildRows
+    List.len(buildRows(0)) => 0
+    List.len(buildRows(3)) => 3
+
+fn emptyMap() -> List<List<Tile>>
+    ? "Create a 50x30 map filled with Wall tiles"
+    buildRows(mapH())
+
+verify emptyMap
+    List.len(emptyMap()) => 30
+
+fn inMap(x: Int, y: Int) -> Bool
+    ? "True if (x,y) is within map bounds 0-49, 0-29"
+    Bool.and(Bool.and(x > 0 - 1, x < mapW()), Bool.and(y > 0 - 1, y < mapH()))
+
+verify inMap
+    inMap(0, 0) => true
+    inMap(49, 29) => true
+    inMap(50, 0) => false
+    inMap(0, 30) => false
+    inMap(0 - 1, 0) => false
+
+fn getT(map: List<List<Tile>>, x: Int, y: Int) -> Tile
+    ? "Get tile at (x,y), Wall if out of bounds"
+    match Vector.get(Vector.fromList(map), y)
+        Option.Some(row) -> match Vector.get(Vector.fromList(row), x)
+            Option.Some(tile) -> tile
+            Option.None -> Tile.Wall
+        Option.None -> Tile.Wall
+
+verify getT
+    getT(emptyMap(), 0, 0) => Tile.Wall
+    getT(emptyMap(), 99, 99) => Tile.Wall
+
+fn setCol(row: List<Tile>, x: Int, tile: Tile, col: Int) -> List<Tile>
+    ? "Rebuild a row replacing column x with tile"
+    setColAcc(row, x, tile, col, [])
+
+verify setCol
+    List.len(setCol(buildRow(50), 3, Tile.Floor, 0)) => 50
+
+fn setColAcc(row: List<Tile>, x: Int, tile: Tile, col: Int, acc: List<Tile>) -> List<Tile>
+    ? "Accumulator helper for setCol"
+    match col == mapW()
+        true -> List.reverse(acc)
+        false -> setColStep(row, x, tile, col, acc)
+
+verify setColAcc
+    List.len(setColAcc(buildRow(50), 3, Tile.Floor, 0, [])) => 50
+
+fn setColStep(row: List<Tile>, x: Int, tile: Tile, col: Int, acc: List<Tile>) -> List<Tile>
+    ? "Process one column in setCol"
+    nextCol = col + 1
+    match Vector.get(Vector.fromList(row), col)
+        Option.Some(v) -> match col == x
+            true -> setColAcc(row, x, tile, nextCol, List.prepend(tile, acc))
+            false -> setColAcc(row, x, tile, nextCol, List.prepend(v, acc))
+        Option.None -> List.reverse(acc)
+
+verify setColStep
+    List.len(setColStep(buildRow(50), 3, Tile.Floor, 0, [])) => 50
+
+fn setRow(map: List<List<Tile>>, x: Int, y: Int, tile: Tile, row: Int) -> List<List<Tile>>
+    ? "Rebuild rows replacing cell at (x,y)"
+    setRowAcc(map, x, y, tile, row, [])
+
+verify setRow
+    List.len(setRow(emptyMap(), 3, 5, Tile.Floor, 0)) => 30
+
+fn setRowAcc(map: List<List<Tile>>, x: Int, y: Int, tile: Tile, row: Int, acc: List<List<Tile>>) -> List<List<Tile>>
+    ? "Accumulator helper for setRow"
+    match row == mapH()
+        true -> List.reverse(acc)
+        false -> setRowStep(map, x, y, tile, row, acc)
+
+verify setRowAcc
+    List.len(setRowAcc(emptyMap(), 3, 5, Tile.Floor, 0, [])) => 30
+
+fn setRowStep(map: List<List<Tile>>, x: Int, y: Int, tile: Tile, row: Int, acc: List<List<Tile>>) -> List<List<Tile>>
+    ? "Process one row in setRow"
+    nextRow = row + 1
+    match Vector.get(Vector.fromList(map), row)
+        Option.Some(r) -> match row == y
+            true -> setRowAcc(map, x, y, tile, nextRow, List.prepend(setCol(r, x, tile, 0), acc))
+            false -> setRowAcc(map, x, y, tile, nextRow, List.prepend(r, acc))
+        Option.None -> List.reverse(acc)
+
+verify setRowStep
+    List.len(setRowStep(emptyMap(), 3, 5, Tile.Floor, 0, [])) => 30
+
+fn setT(map: List<List<Tile>>, x: Int, y: Int, tile: Tile) -> List<List<Tile>>
+    ? "Set one tile at (x,y), returning updated map"
+    setRow(map, x, y, tile, 0)
+
+verify setT
+    getT(setT(emptyMap(), 5, 5, Tile.Floor), 5, 5) => Tile.Floor
+    getT(setT(emptyMap(), 5, 5, Tile.Floor), 6, 5) => Tile.Wall
+
+fn carveRoomRow(map: List<List<Tile>>, x: Int, y: Int, endX: Int) -> List<List<Tile>>
+    ? "Set tiles from x to endX-1 on row y to Floor"
+    match x == endX
+        true -> map
+        false -> carveRoomRow(setT(map, x, y, Tile.Floor), x + 1, y, endX)
+
+verify carveRoomRow
+    getT(carveRoomRow(emptyMap(), 2, 3, 5), 2, 3) => Tile.Floor
+    getT(carveRoomRow(emptyMap(), 2, 3, 5), 4, 3) => Tile.Floor
+    getT(carveRoomRow(emptyMap(), 2, 3, 5), 5, 3) => Tile.Wall
+
+fn carveRoomRows(map: List<List<Tile>>, x: Int, y: Int, endX: Int, endY: Int) -> List<List<Tile>>
+    ? "Carve rows from y to endY-1"
+    match y == endY
+        true -> map
+        false -> carveRoomRows(carveRoomRow(map, x, y, endX), x, y + 1, endX, endY)
+
+verify carveRoomRows
+    getT(carveRoomRows(emptyMap(), 2, 2, 5, 5), 3, 3) => Tile.Floor
+    getT(carveRoomRows(emptyMap(), 2, 2, 5, 5), 5, 5) => Tile.Wall
+
+fn carveRoom(map: List<List<Tile>>, x: Int, y: Int, w: Int, h: Int) -> List<List<Tile>>
+    ? "Set a rectangle of tiles to Floor"
+    carveRoomRows(map, x, y, Int.min(x + w, mapW()), Int.min(y + h, mapH()))
+
+verify carveRoom
+    getT(carveRoom(emptyMap(), 2, 2, 3, 3), 2, 2) => Tile.Floor
+    getT(carveRoom(emptyMap(), 2, 2, 3, 3), 4, 4) => Tile.Floor
+    getT(carveRoom(emptyMap(), 2, 2, 3, 3), 5, 5) => Tile.Wall
+    getT(carveRoom(emptyMap(), 2, 2, 3, 3), 1, 2) => Tile.Wall
+
+fn carveHStep(map: List<List<Tile>>, x: Int, endX: Int, y: Int) -> List<List<Tile>>
+    ? "Carve horizontal corridor one step at a time"
+    match x == endX
+        true -> map
+        false -> carveHStep(setT(map, x, y, Tile.Floor), x + 1, endX, y)
+
+verify carveHStep
+    getT(carveHStep(emptyMap(), 2, 5, 3), 2, 3) => Tile.Floor
+    getT(carveHStep(emptyMap(), 2, 5, 3), 4, 3) => Tile.Floor
+    getT(carveHStep(emptyMap(), 2, 5, 3), 5, 3) => Tile.Wall
+
+fn carveHCorridor(map: List<List<Tile>>, x1: Int, x2: Int, y: Int) -> List<List<Tile>>
+    ? "Carve a horizontal corridor from x1 to x2 on row y"
+    match x1 < x2
+        true -> carveHStep(map, x1, x2 + 1, y)
+        false -> carveHStep(map, x2, x1 + 1, y)
+
+verify carveHCorridor
+    getT(carveHCorridor(emptyMap(), 2, 5, 3), 2, 3) => Tile.Floor
+    getT(carveHCorridor(emptyMap(), 2, 5, 3), 5, 3) => Tile.Floor
+    getT(carveHCorridor(emptyMap(), 2, 5, 3), 6, 3) => Tile.Wall
+
+fn carveVStep(map: List<List<Tile>>, x: Int, y: Int, endY: Int) -> List<List<Tile>>
+    ? "Carve vertical corridor one step at a time"
+    match y == endY
+        true -> map
+        false -> carveVStep(setT(map, x, y, Tile.Floor), x, y + 1, endY)
+
+verify carveVStep
+    getT(carveVStep(emptyMap(), 3, 2, 5), 3, 2) => Tile.Floor
+    getT(carveVStep(emptyMap(), 3, 2, 5), 3, 4) => Tile.Floor
+    getT(carveVStep(emptyMap(), 3, 2, 5), 3, 5) => Tile.Wall
+
+fn carveVCorridor(map: List<List<Tile>>, y1: Int, y2: Int, x: Int) -> List<List<Tile>>
+    ? "Carve a vertical corridor from y1 to y2 on column x"
+    match y1 < y2
+        true -> carveVStep(map, x, y1, y2 + 1)
+        false -> carveVStep(map, x, y2, y1 + 1)
+
+verify carveVCorridor
+    getT(carveVCorridor(emptyMap(), 2, 5, 3), 3, 2) => Tile.Floor
+    getT(carveVCorridor(emptyMap(), 2, 5, 3), 3, 5) => Tile.Floor
+    getT(carveVCorridor(emptyMap(), 2, 5, 3), 3, 6) => Tile.Wall
+
+fn nextSeed(s: Int) -> Int
+    ? "Linear congruential pseudo-random step"
+    Result.withDefault(Int.mod(s * 1103515245 + 12345, 2147483648), 0)
+
+verify nextSeed
+    nextSeed(0) => 12345
+    nextSeed(1) => 1103527590
+
+fn seedToRange(s: Int, lo: Int, hi: Int) -> Int
+    ? "Map seed value to range [lo, hi]"
+    lo + Result.withDefault(Int.mod(Int.abs(s), hi - lo + 1), 0)
+
+verify seedToRange
+    seedToRange(100, 0, 9) => 0
+    seedToRange(103, 0, 9) => 3
+
+fn roomFromSeed(s: Int) -> Room
+    ? "Generate a room from seed"
+    Room(x = seedToRange(s, 1, 38), y = seedToRange(nextSeed(s), 1, 19), w = seedToRange(nextSeed(nextSeed(s)), 4, 10), h = seedToRange(nextSeed(nextSeed(nextSeed(s))), 3, 7))
+
+verify roomFromSeed
+    roomFromSeed(42).w > 3 => true
+    roomFromSeed(42).h > 2 => true
+
+fn advanceSeed(s: Int, n: Int) -> Int
+    ? "Advance seed n steps"
+    match n == 0
+        true -> s
+        false -> advanceSeed(nextSeed(s), n - 1)
+
+verify advanceSeed
+    advanceSeed(42, 0) => 42
+    advanceSeed(0, 1) => 12345
+
+fn roomCenterX(room: Room) -> Int
+    ? "X coordinate of room center"
+    room.x + Result.withDefault(Int.mod(room.w, 100), 0) / 2
+
+verify roomCenterX
+    roomCenterX(Room(x = 5, y = 3, w = 10, h = 6)) => 10
+
+fn roomCenterY(room: Room) -> Int
+    ? "Y coordinate of room center"
+    room.y + Result.withDefault(Int.mod(room.h, 100), 0) / 2
+
+verify roomCenterY
+    roomCenterY(Room(x = 5, y = 3, w = 10, h = 6)) => 6
+
+fn connectRooms(map: List<List<Tile>>, r1: Room, r2: Room) -> List<List<Tile>>
+    ? "Connect two rooms with an L-shaped corridor"
+    carveVCorridor(carveHCorridor(map, roomCenterX(r1), roomCenterX(r2), roomCenterY(r1)), roomCenterY(r1), roomCenterY(r2), roomCenterX(r2))
+
+verify connectRooms
+    List.len(connectRooms(emptyMap(), Room(x = 2, y = 2, w = 4, h = 4), Room(x = 10, y = 10, w = 4, h = 4))) => 30
+
+fn genRoom1(map: List<List<Tile>>, s: Int) -> List<List<Tile>>
+    ? "Carve the first room"
+    carveRoom(map, roomFromSeed(s).x, roomFromSeed(s).y, roomFromSeed(s).w, roomFromSeed(s).h)
+
+verify genRoom1
+    List.len(genRoom1(emptyMap(), 42)) => 30
+
+fn genRoom2(map: List<List<Tile>>, s: Int) -> List<List<Tile>>
+    ? "Carve the second room and connect to first"
+    connectRooms(carveRoom(map, roomFromSeed(advanceSeed(s, 4)).x, roomFromSeed(advanceSeed(s, 4)).y, roomFromSeed(advanceSeed(s, 4)).w, roomFromSeed(advanceSeed(s, 4)).h), roomFromSeed(s), roomFromSeed(advanceSeed(s, 4)))
+
+verify genRoom2
+    List.len(genRoom2(emptyMap(), 42)) => 30
+
+fn genRoom3(map: List<List<Tile>>, s: Int) -> List<List<Tile>>
+    ? "Carve the third room and connect to second"
+    connectRooms(carveRoom(map, roomFromSeed(advanceSeed(s, 8)).x, roomFromSeed(advanceSeed(s, 8)).y, roomFromSeed(advanceSeed(s, 8)).w, roomFromSeed(advanceSeed(s, 8)).h), roomFromSeed(advanceSeed(s, 4)), roomFromSeed(advanceSeed(s, 8)))
+
+verify genRoom3
+    List.len(genRoom3(emptyMap(), 42)) => 30
+
+fn genRoom4(map: List<List<Tile>>, s: Int) -> List<List<Tile>>
+    ? "Carve the fourth room and connect to third"
+    connectRooms(carveRoom(map, roomFromSeed(advanceSeed(s, 12)).x, roomFromSeed(advanceSeed(s, 12)).y, roomFromSeed(advanceSeed(s, 12)).w, roomFromSeed(advanceSeed(s, 12)).h), roomFromSeed(advanceSeed(s, 8)), roomFromSeed(advanceSeed(s, 12)))
+
+verify genRoom4
+    List.len(genRoom4(emptyMap(), 42)) => 30
+
+fn genRoom5(map: List<List<Tile>>, s: Int) -> List<List<Tile>>
+    ? "Carve the fifth room and connect to fourth"
+    connectRooms(carveRoom(map, roomFromSeed(advanceSeed(s, 16)).x, roomFromSeed(advanceSeed(s, 16)).y, roomFromSeed(advanceSeed(s, 16)).w, roomFromSeed(advanceSeed(s, 16)).h), roomFromSeed(advanceSeed(s, 12)), roomFromSeed(advanceSeed(s, 16)))
+
+verify genRoom5
+    List.len(genRoom5(emptyMap(), 42)) => 30
+
+fn genRoom6(map: List<List<Tile>>, s: Int) -> List<List<Tile>>
+    ? "Carve the sixth room and connect to fifth"
+    connectRooms(carveRoom(map, roomFromSeed(advanceSeed(s, 20)).x, roomFromSeed(advanceSeed(s, 20)).y, roomFromSeed(advanceSeed(s, 20)).w, roomFromSeed(advanceSeed(s, 20)).h), roomFromSeed(advanceSeed(s, 16)), roomFromSeed(advanceSeed(s, 20)))
+
+verify genRoom6
+    List.len(genRoom6(emptyMap(), 42)) => 30
+
+fn placeStairs(map: List<List<Tile>>, s: Int) -> List<List<Tile>>
+    ? "Place stairs down in center of last room"
+    setT(map, roomCenterX(roomFromSeed(advanceSeed(s, 20))), roomCenterY(roomFromSeed(advanceSeed(s, 20))), Tile.StairsDown)
+
+verify placeStairs
+    List.len(placeStairs(emptyMap(), 42)) => 30
+
+fn generateMap(seed: Int) -> List<List<Tile>>
+    ? "Procedural map generation: 6 rooms connected by corridors with stairs in the last room"
+    placeStairs(genRoom6(genRoom5(genRoom4(genRoom3(genRoom2(genRoom1(emptyMap(), seed), seed), seed), seed), seed), seed), seed)
+
+verify generateMap
+    List.len(generateMap(42)) => 30
+
+fn generateRooms(seed: Int) -> List<Room>
+    ? "Return the 6 rooms generated for this seed"
+    [roomFromSeed(seed), roomFromSeed(advanceSeed(seed, 4)), roomFromSeed(advanceSeed(seed, 8)), roomFromSeed(advanceSeed(seed, 12)), roomFromSeed(advanceSeed(seed, 16)), roomFromSeed(advanceSeed(seed, 20))]
+
+verify generateRooms
+    List.len(generateRooms(42)) => 6
+
+fn findFloorRow(map: List<List<Tile>>, x: Int, y: Int) -> Option<Point>
+    ? "Scan row y from column x for Floor tile"
+    match x == mapW()
+        true -> Option.None
+        false -> match getT(map, x, y) == Tile.Floor
+            true -> Option.Some(Types.pt(x, y))
+            false -> findFloorRow(map, x + 1, y)
+
+verify findFloorRow
+    findFloorRow(emptyMap(), 0, 0) => Option.None
+    findFloorRow(setT(emptyMap(), 3, 5, Tile.Floor), 0, 5) => Option.Some(Types.pt(3, 5))
+
+fn findFloor(map: List<List<Tile>>, x: Int, y: Int) -> Option<Point>
+    ? "Find first floor tile scanning from (x,y) left-to-right, top-to-bottom"
+    match y == mapH()
+        true -> Option.None
+        false -> match findFloorRow(map, x, y)
+            Option.Some(p) -> Option.Some(p)
+            Option.None -> findFloor(map, 0, y + 1)
+
+verify findFloor
+    findFloor(emptyMap(), 0, 0) => Option.None
+    findFloor(setT(emptyMap(), 3, 3, Tile.Floor), 0, 0) => Option.Some(Types.pt(3, 3))

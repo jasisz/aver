@@ -1,0 +1,211 @@
+module Types
+    intent =
+        "Shared types for the roguelike: points, tiles, entities, items."
+    depends []
+
+record Point
+    x: Int
+    y: Int
+
+fn pt(x: Int, y: Int) -> Point
+    ? "Shorthand Point constructor"
+    Point(x = x, y = y)
+
+verify pt
+    pt(3, 4).x => 3
+
+fn ptEq(a: Point, b: Point) -> Bool
+    ? "True if two points are equal"
+    Bool.and(a.x == b.x, a.y == b.y)
+
+verify ptEq
+    ptEq(pt(1, 2), pt(1, 2)) => true
+    ptEq(pt(1, 2), pt(3, 4)) => false
+
+fn dist(a: Point, b: Point) -> Int
+    ? "Manhattan distance between two points"
+    Int.abs(a.x - b.x) + Int.abs(a.y - b.y)
+
+verify dist
+    dist(pt(0, 0), pt(3, 4)) => 7
+    dist(pt(2, 2), pt(2, 2)) => 0
+
+type Tile
+    Wall
+    Floor
+    StairsDown
+    Door
+
+type EntityKind
+    WildIfElse
+    FeralLoop
+    TheNull
+
+record Entity
+    pos: Point
+    kind: EntityKind
+    hp: Int
+    maxHp: Int
+    attack: Int
+    defense: Int
+    name: String
+    alertPos: Option<Point>
+    alertTurns: Int
+
+type ItemKind
+    PotionOfPurity
+    ScrollOfPatternMatch
+    ShieldOfImmutability
+
+record Item
+    pos: Point
+    kind: ItemKind
+    name: String
+    value: Int
+
+record Player
+    pos: Point
+    hp: Int
+    maxHp: Int
+    attack: Int
+    defense: Int
+    floor: Int
+    exp: Int
+
+fn makePlayer(x: Int, y: Int) -> Player
+    ? "Create starting player at position"
+    Player(pos = pt(x, y), hp = 20, maxHp = 20, attack = 5, defense = 2, floor = 1, exp = 0)
+
+verify makePlayer
+    makePlayer(5, 5).hp => 20
+    makePlayer(5, 5).attack => 5
+
+fn makeIfElse(x: Int, y: Int) -> Entity
+    ? "Create a Wild if/else — branches without matching"
+    Entity(pos = pt(x, y), kind = EntityKind.WildIfElse, hp = 6, maxHp = 6, attack = 3, defense = 1, name = "Wild if/else", alertPos = Option.None, alertTurns = 0)
+
+verify makeIfElse
+    makeIfElse(3, 3).hp => 6
+    makeIfElse(3, 3).name => "Wild if/else"
+
+fn makeLoop(x: Int, y: Int) -> Entity
+    ? "Create a Feral Loop — it never terminates"
+    Entity(pos = pt(x, y), kind = EntityKind.FeralLoop, hp = 12, maxHp = 12, attack = 5, defense = 2, name = "Feral for-loop", alertPos = Option.None, alertTurns = 0)
+
+verify makeLoop
+    makeLoop(3, 3).hp => 12
+
+fn makeNull(x: Int, y: Int) -> Entity
+    ? "Create The Null — the billion dollar mistake"
+    Entity(pos = pt(x, y), kind = EntityKind.TheNull, hp = 20, maxHp = 20, attack = 8, defense = 3, name = "The Null", alertPos = Option.None, alertTurns = 0)
+
+verify makeNull
+    makeNull(3, 3).hp => 20
+
+fn makePurity(x: Int, y: Int) -> Item
+    ? "Create a Potion of Purity — restores referential transparency"
+    Item(pos = pt(x, y), kind = ItemKind.PotionOfPurity, name = "Potion of Purity", value = 8)
+
+verify makePurity
+    makePurity(1, 1).value => 8
+
+fn makeScroll(x: Int, y: Int) -> Item
+    ? "Create a Scroll of Pattern Match — exhaustive destruction"
+    Item(pos = pt(x, y), kind = ItemKind.ScrollOfPatternMatch, name = "Scroll of Pattern Match", value = 3)
+
+verify makeScroll
+    makeScroll(1, 1).value => 3
+
+fn makeImmutable(x: Int, y: Int) -> Item
+    ? "Create a Shield of Immutability — nothing can change you"
+    Item(pos = pt(x, y), kind = ItemKind.ShieldOfImmutability, name = "Shield of Immutability", value = 2)
+
+verify makeImmutable
+    makeImmutable(1, 1).value => 2
+
+fn entityGlyph(kind: EntityKind) -> String
+    ? "Display character for entity"
+    match kind
+        EntityKind.WildIfElse -> "?"
+        EntityKind.FeralLoop -> "∞"
+        EntityKind.TheNull -> "∅"
+
+verify entityGlyph
+    entityGlyph(EntityKind.WildIfElse) => "?"
+    entityGlyph(EntityKind.FeralLoop) => "∞"
+    entityGlyph(EntityKind.TheNull) => "∅"
+
+fn entityColor(kind: EntityKind) -> String
+    ? "Terminal color for entity"
+    match kind
+        EntityKind.WildIfElse -> "yellow"
+        EntityKind.FeralLoop -> "red"
+        EntityKind.TheNull -> "magenta"
+
+verify entityColor
+    entityColor(EntityKind.WildIfElse) => "yellow"
+    entityColor(EntityKind.FeralLoop) => "red"
+    entityColor(EntityKind.TheNull) => "magenta"
+
+fn itemGlyph(kind: ItemKind) -> String
+    ? "Display character for item"
+    match kind
+        ItemKind.PotionOfPurity -> "♥"
+        ItemKind.ScrollOfPatternMatch -> "⚡"
+        ItemKind.ShieldOfImmutability -> "◆"
+
+verify itemGlyph
+    itemGlyph(ItemKind.PotionOfPurity) => "♥"
+    itemGlyph(ItemKind.ScrollOfPatternMatch) => "⚡"
+    itemGlyph(ItemKind.ShieldOfImmutability) => "◆"
+
+fn itemColor(kind: ItemKind) -> String
+    ? "Terminal color for item"
+    match kind
+        ItemKind.PotionOfPurity -> "red"
+        ItemKind.ScrollOfPatternMatch -> "cyan"
+        ItemKind.ShieldOfImmutability -> "blue"
+
+verify itemColor
+    itemColor(ItemKind.PotionOfPurity) => "red"
+    itemColor(ItemKind.ScrollOfPatternMatch) => "cyan"
+    itemColor(ItemKind.ShieldOfImmutability) => "blue"
+
+fn tileGlyph(tile: Tile) -> String
+    ? "Display character for tile"
+    match tile
+        Tile.Wall -> "#"
+        Tile.Floor -> "·"
+        Tile.StairsDown -> ">"
+        Tile.Door -> "+"
+
+verify tileGlyph
+    tileGlyph(Tile.Wall) => "#"
+    tileGlyph(Tile.Floor) => "·"
+    tileGlyph(Tile.StairsDown) => ">"
+    tileGlyph(Tile.Door) => "+"
+
+fn tileWalkable(tile: Tile) -> Bool
+    ? "True if tile can be walked on"
+    match tile
+        Tile.Wall -> false
+        _ -> true
+
+verify tileWalkable
+    tileWalkable(Tile.Floor) => true
+    tileWalkable(Tile.Wall) => false
+    tileWalkable(Tile.Door) => true
+
+fn calcDamage(attack: Int, defense: Int) -> Int
+    ? "Damage formula: attack minus defense, minimum 1"
+    Int.max(1, attack - defense)
+
+verify calcDamage
+    calcDamage(5, 2) => 3
+    calcDamage(2, 5) => 1
+    calcDamage(10, 0) => 10
+
+verify calcDamage law alwaysPositive
+    given atk: Int = 0..5
+    given def: Int = 0..5
+    calcDamage(atk, def) > 0 => true

@@ -1,0 +1,176 @@
+module Logic
+    intent =
+        "Tetris game logic: collision detection, piece movement,"
+        "placement, line scoring, and spawn mechanics."
+    depends [Board, Pieces]
+
+record GameState
+    board: List<List<Option<PieceKind>>>
+    piece: Piece
+    px: Int
+    py: Int
+    score: Int
+    level: Int
+    lines: Int
+    gameOver: Bool
+    tickMs: Int
+
+fn mkState(board: List<List<Option<PieceKind>>>, piece: Piece, px: Int, py: Int) -> GameState
+    ? "Test helper: game state with defaults"
+    GameState(board = board, piece = piece, px = px, py = py, score = 0, level = 0, lines = 0, gameOver = false, tickMs = 500)
+
+verify mkState
+    mkState(Board.emptyBoard(), Piece(kind = PieceKind.I, rotation = 0), 3, 0).px => 3
+
+fn checkPoints(board: List<List<Option<PieceKind>>>, points: List<Point>) -> Bool
+    ? "Check each point for collision"
+    match points
+        [] -> false
+        [p, ..rest] -> match Bool.or(Bool.or(p.x < 0, p.x > 9), Bool.or(p.y < 0, p.y > 19))
+            true -> true
+            false -> match Board.getCell(board, p.x, p.y)
+                Option.None -> checkPoints(board, rest)
+                Option.Some(_) -> true
+
+verify checkPoints
+    checkPoints(Board.emptyBoard(), []) => false
+    checkPoints(Board.emptyBoard(), [Board.pt(5, 5)]) => false
+    checkPoints(Board.emptyBoard(), [Board.pt(0 - 1, 0)]) => true
+    checkPoints(Board.emptyBoard(), [Board.pt(10, 0)]) => true
+
+fn checkCollision(board: List<List<Option<PieceKind>>>, piece: Piece, px: Int, py: Int) -> Bool
+    ? "True if piece at (px,py) collides with walls or cells"
+    checkPoints(board, Pieces.absolutePoints(piece, px, py))
+
+verify checkCollision
+    checkCollision(Board.emptyBoard(), Piece(kind = PieceKind.I, rotation = 0), 3, 0) => false
+    checkCollision(Board.emptyBoard(), Piece(kind = PieceKind.I, rotation = 0), 0 - 1, 0) => true
+    checkCollision(Board.emptyBoard(), Piece(kind = PieceKind.I, rotation = 0), 8, 0) => true
+    checkCollision(Board.emptyBoard(), Piece(kind = PieceKind.I, rotation = 0), 3, 19) => true
+
+fn rotatePiece(state: GameState) -> GameState
+    ? "Rotate piece clockwise if no collision"
+    match checkCollision(state.board, Piece(kind = state.piece.kind, rotation = Result.withDefault(Int.mod(state.piece.rotation + 1, 4), 0)), state.px, state.py)
+        true -> state
+        false -> GameState.update(state, piece = Piece(kind = state.piece.kind, rotation = Result.withDefault(Int.mod(state.piece.rotation + 1, 4), 0)))
+
+verify rotatePiece
+    rotatePiece(mkState(Board.emptyBoard(), Piece(kind = PieceKind.I, rotation = 0), 3, 0)).piece.rotation => 1
+    rotatePiece(mkState(Board.emptyBoard(), Piece(kind = PieceKind.I, rotation = 3), 3, 0)).piece.rotation => 0
+
+fn moveLeft(state: GameState) -> GameState
+    ? "Move piece left if no collision"
+    newPx = state.px - 1
+    match checkCollision(state.board, state.piece, newPx, state.py)
+        true -> state
+        false -> GameState.update(state, px = newPx)
+
+verify moveLeft
+    moveLeft(mkState(Board.emptyBoard(), Piece(kind = PieceKind.O, rotation = 0), 5, 5)).px => 4
+    moveLeft(mkState(Board.emptyBoard(), Piece(kind = PieceKind.O, rotation = 0), 0, 5)).px => 0
+
+fn moveRight(state: GameState) -> GameState
+    ? "Move piece right if no collision"
+    newPx = state.px + 1
+    match checkCollision(state.board, state.piece, newPx, state.py)
+        true -> state
+        false -> GameState.update(state, px = newPx)
+
+verify moveRight
+    moveRight(mkState(Board.emptyBoard(), Piece(kind = PieceKind.O, rotation = 0), 5, 5)).px => 6
+    moveRight(mkState(Board.emptyBoard(), Piece(kind = PieceKind.O, rotation = 0), 8, 5)).px => 8
+
+fn moveDown(state: GameState) -> GameState
+    ? "Move piece down if no collision"
+    newPy = state.py + 1
+    match checkCollision(state.board, state.piece, state.px, newPy)
+        true -> state
+        false -> GameState.update(state, py = newPy)
+
+verify moveDown
+    moveDown(mkState(Board.emptyBoard(), Piece(kind = PieceKind.O, rotation = 0), 5, 5)).py => 6
+    moveDown(mkState(Board.emptyBoard(), Piece(kind = PieceKind.O, rotation = 0), 5, 18)).py => 18
+
+fn placePoints(board: List<List<Option<PieceKind>>>, points: List<Point>, kind: PieceKind) -> List<List<Option<PieceKind>>>
+    ? "Set each point on the board"
+    match points
+        [] -> board
+        [p, ..rest] -> placePoints(Board.setCell(board, p.x, p.y, kind), rest, kind)
+
+verify placePoints
+    placePoints(Board.emptyBoard(), [], PieceKind.Z) => Board.emptyBoard()
+    Board.getCell(placePoints(Board.emptyBoard(), [Board.pt(3, 3)], PieceKind.Z), 3, 3) => Option.Some(PieceKind.Z)
+
+fn placePiece(board: List<List<Option<PieceKind>>>, piece: Piece, px: Int, py: Int) -> List<List<Option<PieceKind>>>
+    ? "Place piece cells on board"
+    placePoints(board, Pieces.absolutePoints(piece, px, py), piece.kind)
+
+verify placePiece
+    Board.getCell(placePiece(Board.emptyBoard(), Piece(kind = PieceKind.O, rotation = 0), 4, 4), 4, 4) => Option.Some(PieceKind.O)
+    Board.getCell(placePiece(Board.emptyBoard(), Piece(kind = PieceKind.O, rotation = 0), 4, 4), 5, 4) => Option.Some(PieceKind.O)
+    Board.getCell(placePiece(Board.emptyBoard(), Piece(kind = PieceKind.O, rotation = 0), 4, 4), 3, 4) => Option.None
+
+fn hardDrop(state: GameState) -> GameState
+    ? "Drop piece as far down as possible"
+    newPy = state.py + 1
+    match checkCollision(state.board, state.piece, state.px, newPy)
+        true -> state
+        false -> hardDrop(GameState.update(state, py = newPy))
+
+verify hardDrop
+    hardDrop(mkState(Board.emptyBoard(), Piece(kind = PieceKind.O, rotation = 0), 4, 0)).py => 18
+
+fn computeScore(cleared: Int, level: Int) -> Int
+    ? "Score based on lines cleared and level"
+    mult = level + 1
+    match cleared
+        0 -> 0
+        1 -> 100 * mult
+        2 -> 300 * mult
+        3 -> 500 * mult
+        _ -> 800 * mult
+
+verify computeScore
+    computeScore(0, 0) => 0
+    computeScore(1, 0) => 100
+    computeScore(4, 0) => 800
+    computeScore(1, 1) => 200
+    computeScore(4, 1) => 1600
+
+verify computeScore law zeroLinesZeroScore
+    given level: Int = 0..5
+    computeScore(0, level) => 0
+
+verify computeScore law levelScalesLineScore
+    given level: Int = 0..3
+    computeScore(1, level + 1) => computeScore(1, level) + 100
+
+verify computeScore law tetrisDoublesSingle
+    given level: Int = 0..3
+    computeScore(4, level) => 8 * computeScore(1, level)
+
+fn lockSpawn(spawned: GameState) -> GameState
+    ? "Check if spawned piece collides (game over)"
+    match checkCollision(spawned.board, spawned.piece, spawned.px, spawned.py)
+        true -> GameState.update(spawned, gameOver = true)
+        false -> spawned
+
+verify lockSpawn
+    lockSpawn(mkState(Board.emptyBoard(), Piece(kind = PieceKind.I, rotation = 0), 3, 0)).gameOver => false
+
+fn handleKey(state: GameState, key: String) -> GameState
+    ? "Handle a single key press"
+    match key
+        "left" -> moveLeft(state)
+        "right" -> moveRight(state)
+        "up" -> rotatePiece(state)
+        "down" -> moveDown(state)
+        " " -> hardDrop(state)
+        "q" -> GameState.update(state, gameOver = true)
+        "esc" -> GameState.update(state, gameOver = true)
+        _ -> state
+
+verify handleKey
+    handleKey(mkState(Board.emptyBoard(), Piece(kind = PieceKind.O, rotation = 0), 5, 5), "left").px => 4
+    handleKey(mkState(Board.emptyBoard(), Piece(kind = PieceKind.O, rotation = 0), 5, 5), "right").px => 6
+    handleKey(mkState(Board.emptyBoard(), Piece(kind = PieceKind.O, rotation = 0), 5, 5), "q").gameOver => true

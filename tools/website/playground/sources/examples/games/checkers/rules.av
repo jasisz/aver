@@ -1,0 +1,444 @@
+module Rules
+    intent =
+        "Checkers game rules: legal move generation, forced captures,"
+        "multi-jump chains, turn application, and promotion."
+    depends [Board]
+
+decision ForcedCaptureRule
+    date = "2026-03-18"
+    author = "szymon"
+    reason =
+        "Captures are mandatory in international draughts. If any jump exists,"
+        "all non-jump moves are excluded from legalMoves. This matches the"
+        "standard rules and simplifies the AI search tree."
+    chosen = "ForcedCapture"
+    rejected = ["OptionalCapture"]
+    impacts = [legalMoves, Board.startBoard]
+
+fn forwardDir(color: Color) -> Int
+    ? "Y direction for forward movement: black moves up (-1), white moves down (+1)"
+    match color
+        Color.Black -> 0 - 1
+        Color.White -> 1
+
+verify forwardDir
+    forwardDir(Color.Black) => 0 - 1
+    forwardDir(Color.White) => 1
+
+fn sameSign(a: Int, b: Int) -> Bool
+    ? "True if a and b have the same sign"
+    match a > 0
+        true -> b > 0
+        false -> b < 0
+
+verify sameSign
+    sameSign(1, 2) => true
+    sameSign(0 - 1, 0 - 2) => true
+    sameSign(1, 0 - 1) => false
+
+fn canMoveDir(cell: CellContent, dy: Int, color: Color) -> Bool
+    ? "True if this piece can move in direction dy for given color"
+    match Board.isKing(cell)
+        true -> true
+        false -> sameSign(dy, forwardDir(color))
+
+verify canMoveDir
+    canMoveDir(CellContent.BlackMan, 0 - 1, Color.Black) => true
+    canMoveDir(CellContent.BlackMan, 1, Color.Black) => false
+    canMoveDir(CellContent.BlackKing, 1, Color.Black) => true
+    canMoveDir(CellContent.BlackKing, 0 - 1, Color.Black) => true
+
+fn isLegalStep(board: List<List<CellContent>>, fx: Int, fy: Int, tx: Int, ty: Int, color: Color) -> Bool
+    ? "True if moving from (fx,fy) to (tx,ty) is a valid step"
+    match Bool.not(Board.inBounds(tx, ty))
+        true -> false
+        false -> match Bool.not(Board.isEmpty(Board.getCell(board, tx, ty)))
+            true -> false
+            false -> isLegalStepDir(board, fx, fy, tx, ty, color)
+
+verify isLegalStep
+    isLegalStep(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 3, 3, 2, 2, Color.Black) => true
+    isLegalStep(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 3, 3, 2, 4, Color.Black) => false
+    isLegalStep(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackKing), 3, 3, 2, 4, Color.Black) => true
+
+fn isLegalStepDir(board: List<List<CellContent>>, fx: Int, fy: Int, tx: Int, ty: Int, color: Color) -> Bool
+    ? "Check direction validity for a step"
+    dy = ty - fy
+    match Int.abs(tx - fx) == 1
+        true -> match Int.abs(dy) == 1
+            true -> canMoveDir(Board.getCell(board, fx, fy), dy, color)
+            false -> false
+        false -> false
+
+verify isLegalStepDir
+    isLegalStepDir(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 3, 3, 2, 2, Color.Black) => true
+    isLegalStepDir(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 3, 3, 2, 4, Color.Black) => false
+
+fn isLegalJump(board: List<List<CellContent>>, fx: Int, fy: Int, tx: Int, ty: Int, color: Color) -> Bool
+    ? "True if jumping from (fx,fy) over a piece to (tx,ty) is valid"
+    match Bool.not(Board.inBounds(tx, ty))
+        true -> false
+        false -> match Bool.not(Board.isEmpty(Board.getCell(board, tx, ty)))
+            true -> false
+            false -> isLegalJumpInner(board, fx, fy, tx, ty, color)
+
+verify isLegalJump
+    isLegalJump(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.WhiteMan), 3, 3, 1, 1, Color.Black) => true
+    isLegalJump(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.BlackMan), 3, 3, 1, 1, Color.Black) => false
+    isLegalJump(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 4, CellContent.WhiteMan), 3, 3, 1, 5, Color.Black) => true
+
+fn isLegalJumpInner(board: List<List<CellContent>>, fx: Int, fy: Int, tx: Int, ty: Int, color: Color) -> Bool
+    ? "Check jump geometry and captured piece"
+    match Int.abs(tx - fx) == 2
+        true -> match Int.abs(ty - fy) == 2
+            true -> isLegalJumpCapture(board, fx, fy, tx, ty, color)
+            false -> false
+        false -> false
+
+verify isLegalJumpInner
+    isLegalJumpInner(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.WhiteMan), 3, 3, 1, 1, Color.Black) => true
+    isLegalJumpInner(Board.buildEmptyBoard(8), 3, 3, 2, 2, Color.Black) => false
+
+fn isLegalJumpCapture(board: List<List<CellContent>>, fx: Int, fy: Int, tx: Int, ty: Int, color: Color) -> Bool
+    ? "Check that middle cell has opponent (men can capture backwards)"
+    mx = (fx + tx) / 2
+    my = (fy + ty) / 2
+    Board.isOpponent(Board.getCell(board, mx, my), color)
+
+verify isLegalJumpCapture
+    isLegalJumpCapture(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.WhiteMan), 3, 3, 1, 1, Color.Black) => true
+    isLegalJumpCapture(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.BlackMan), 3, 3, 1, 1, Color.Black) => false
+
+fn stepsForPiece(board: List<List<CellContent>>, x: Int, y: Int, color: Color) -> List<List<Point>>
+    ? "All legal step turns from (x,y) — each is [from, to]"
+    tryStep(board, x, y, 0 - 1, 0 - 1, color, tryStep(board, x, y, 1, 0 - 1, color, tryStep(board, x, y, 0 - 1, 1, color, tryStep(board, x, y, 1, 1, color, []))))
+
+verify stepsForPiece
+    List.len(stepsForPiece(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 3, 3, Color.Black)) => 2
+
+fn tryStep(board: List<List<CellContent>>, x: Int, y: Int, dx: Int, dy: Int, color: Color, acc: List<List<Point>>) -> List<List<Point>>
+    ? "Add step to acc if legal"
+    tx = x + dx
+    ty = y + dy
+    match isLegalStep(board, x, y, tx, ty, color)
+        true -> List.prepend([Board.pt(x, y), Board.pt(tx, ty)], acc)
+        false -> acc
+
+verify tryStep
+    tryStep(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 3, 3, 0 - 1, 0 - 1, Color.Black, []) => [[Board.pt(3, 3), Board.pt(2, 2)]]
+    tryStep(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 3, 3, 0 - 1, 1, Color.Black, []) => []
+
+fn jumpsFromPos(board: List<List<CellContent>>, x: Int, y: Int, color: Color) -> List<List<Point>>
+    ? "All immediate jumps from (x,y) — returns list of [from, to]"
+    tryJump(board, x, y, 0 - 2, 0 - 2, color, tryJump(board, x, y, 2, 0 - 2, color, tryJump(board, x, y, 0 - 2, 2, color, tryJump(board, x, y, 2, 2, color, []))))
+
+verify jumpsFromPos
+    jumpsFromPos(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.WhiteMan), 3, 3, Color.Black) => [[Board.pt(3, 3), Board.pt(1, 1)]]
+
+fn tryJump(board: List<List<CellContent>>, x: Int, y: Int, dx: Int, dy: Int, color: Color, acc: List<List<Point>>) -> List<List<Point>>
+    ? "Add jump to acc if legal"
+    tx = x + dx
+    ty = y + dy
+    match isLegalJump(board, x, y, tx, ty, color)
+        true -> List.prepend([Board.pt(x, y), Board.pt(tx, ty)], acc)
+        false -> acc
+
+verify tryJump
+    tryJump(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.WhiteMan), 3, 3, 0 - 2, 0 - 2, Color.Black, []) => [[Board.pt(3, 3), Board.pt(1, 1)]]
+    tryJump(Board.buildEmptyBoard(8), 3, 3, 0 - 2, 0 - 2, Color.Black, []) => []
+
+fn applyJump(board: List<List<CellContent>>, fx: Int, fy: Int, tx: Int, ty: Int) -> List<List<CellContent>>
+    ? "Execute one jump: move piece, remove captured, handle promotion"
+    mx = (fx + tx) / 2
+    my = (fy + ty) / 2
+    piece = Board.getCell(board, fx, fy)
+    finalPiece = match Board.shouldPromote(piece, ty)
+        true -> Board.promote(piece)
+        false -> piece
+    Board.setCell(Board.setCell(Board.setCell(board, fx, fy, CellContent.Empty), mx, my, CellContent.Empty), tx, ty, finalPiece)
+
+verify applyJump
+    Board.getCell(applyJump(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.WhiteMan), 3, 3, 1, 1), 1, 1) => CellContent.BlackMan
+    Board.getCell(applyJump(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.WhiteMan), 3, 3, 1, 1), 2, 2) => CellContent.Empty
+    Board.getCell(applyJump(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.WhiteMan), 3, 3, 1, 1), 3, 3) => CellContent.Empty
+
+fn jumpChains(board: List<List<CellContent>>, x: Int, y: Int, color: Color, path: List<Point>) -> List<List<Point>>
+    ? "Find all multi-jump chains from (x,y), building path"
+    continuations = jumpsFromPos(board, x, y, color)
+    match continuations
+        [] -> match List.len(path) > 1
+            true -> [path]
+            false -> []
+        _ -> expandChains(board, continuations, color, path, 0)
+
+verify jumpChains
+    jumpChains(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.WhiteMan), 3, 3, Color.Black, [Board.pt(3, 3)]) => [[Board.pt(3, 3), Board.pt(1, 1)]]
+
+fn expandChains(board: List<List<CellContent>>, jumps: List<List<Point>>, color: Color, path: List<Point>, i: Int) -> List<List<Point>>
+    ? "Expand each jump continuation into chains"
+    expandChainsAcc(board, jumps, color, path, i, [])
+
+verify expandChains
+    expandChains(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.WhiteMan), [[Board.pt(3, 3), Board.pt(1, 1)]], Color.Black, [Board.pt(3, 3)], 0) => [[Board.pt(3, 3), Board.pt(1, 1)]]
+
+fn expandChainsAcc(board: List<List<CellContent>>, jumps: List<List<Point>>, color: Color, path: List<Point>, i: Int, acc: List<List<Point>>) -> List<List<Point>>
+    ? "Tail-recursive chain expansion with accumulator"
+    match i == List.len(jumps)
+        true -> acc
+        false -> match Vector.get(Vector.fromList(jumps), i)
+            Option.Some(jump) -> expandOneChain(board, jumps, jump, color, path, i, acc)
+            Option.None -> acc
+
+verify expandChainsAcc
+    expandChainsAcc(Board.buildEmptyBoard(8), [], Color.Black, [], 0, []) => []
+
+fn expandOneChain(board: List<List<CellContent>>, jumps: List<List<Point>>, jump: List<Point>, color: Color, path: List<Point>, i: Int, acc: List<List<Point>>) -> List<List<Point>>
+    ? "Expand one jump into chain and concat with rest"
+    nextI = i + 1
+    match Vector.get(Vector.fromList(jump), 1)
+        Option.Some(to) -> expandOneChainLand(board, jumps, jump, to, color, path, nextI, acc)
+        Option.None -> expandChainsAcc(board, jumps, color, path, nextI, acc)
+
+verify expandOneChain
+    expandOneChain(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.WhiteMan), [[Board.pt(3, 3), Board.pt(1, 1)]], [Board.pt(3, 3), Board.pt(1, 1)], Color.Black, [Board.pt(3, 3)], 0, []) => [[Board.pt(3, 3), Board.pt(1, 1)]]
+
+fn expandOneChainLand(board: List<List<CellContent>>, jumps: List<List<Point>>, jump: List<Point>, to: Point, color: Color, path: List<Point>, nextI: Int, acc: List<List<Point>>) -> List<List<Point>>
+    ? "Land after jump and continue expansion"
+    expandChainsAcc(board, jumps, color, path, nextI, List.concat(acc, jumpAfterLand(board, jump, to, color, path)))
+
+verify expandOneChainLand
+    expandOneChainLand(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.WhiteMan), [[Board.pt(3, 3), Board.pt(1, 1)]], [Board.pt(3, 3), Board.pt(1, 1)], Board.pt(1, 1), Color.Black, [Board.pt(3, 3)], 1, []) => [[Board.pt(3, 3), Board.pt(1, 1)]]
+
+fn jumpAfterLand(board: List<List<CellContent>>, jump: List<Point>, to: Point, color: Color, path: List<Point>) -> List<List<Point>>
+    ? "After landing, continue chain or return path"
+    match Vector.get(Vector.fromList(jump), 0)
+        Option.Some(from) -> jumpChains(applyJump(board, from.x, from.y, to.x, to.y), to.x, to.y, color, List.concat(path, [to]))
+        Option.None -> []
+
+verify jumpAfterLand
+    jumpAfterLand(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.WhiteMan), [Board.pt(3, 3), Board.pt(1, 1)], Board.pt(1, 1), Color.Black, [Board.pt(3, 3)]) => [[Board.pt(3, 3), Board.pt(1, 1)]]
+
+fn allJumpsForPiece(board: List<List<CellContent>>, x: Int, y: Int, color: Color) -> List<List<Point>>
+    ? "All jump chain turns from (x,y)"
+    jumpChains(board, x, y, color, [Board.pt(x, y)])
+
+verify allJumpsForPiece
+    allJumpsForPiece(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 3, 3, Color.Black) => []
+
+fn collectMoves(board: List<List<CellContent>>, color: Color, x: Int, y: Int, getMovesForPiece: String) -> List<List<Point>>
+    ? "Collect moves for all pieces of color, scanning board from (x,y)"
+    collectMovesAcc(board, color, x, y, getMovesForPiece, [])
+
+verify collectMoves
+    collectMoves(Board.buildEmptyBoard(8), Color.Black, 0, 0, "steps") => []
+
+fn collectMovesAcc(board: List<List<CellContent>>, color: Color, x: Int, y: Int, getMovesForPiece: String, acc: List<List<Point>>) -> List<List<Point>>
+    ? "Tail-recursive move collection with accumulator"
+    match y == 8
+        true -> acc
+        false -> match x == 8
+            true -> collectMovesAcc(board, color, 0, y + 1, getMovesForPiece, acc)
+            false -> collectMovesCellAcc(board, color, x, y, getMovesForPiece, acc)
+
+verify collectMovesAcc
+    collectMovesAcc(Board.buildEmptyBoard(8), Color.Black, 0, 0, "steps", []) => []
+
+fn collectMovesCellAcc(board: List<List<CellContent>>, color: Color, x: Int, y: Int, getMovesForPiece: String, acc: List<List<Point>>) -> List<List<Point>>
+    ? "Check one cell and continue scanning with accumulator"
+    nextX = x + 1
+    match Board.isColor(Board.getCell(board, x, y), color)
+        true -> collectMovesAcc(board, color, nextX, y, getMovesForPiece, List.concat(acc, movesForCell(board, x, y, color, getMovesForPiece)))
+        false -> collectMovesAcc(board, color, nextX, y, getMovesForPiece, acc)
+
+verify collectMovesCellAcc
+    collectMovesCellAcc(Board.buildEmptyBoard(8), Color.Black, 0, 0, "steps", []) => []
+
+fn collectMovesCell(board: List<List<CellContent>>, color: Color, x: Int, y: Int, getMovesForPiece: String) -> List<List<Point>>
+    ? "Check one cell and continue scanning"
+    nextX = x + 1
+    match Board.isColor(Board.getCell(board, x, y), color)
+        true -> List.concat(movesForCell(board, x, y, color, getMovesForPiece), collectMoves(board, color, nextX, y, getMovesForPiece))
+        false -> collectMoves(board, color, nextX, y, getMovesForPiece)
+
+verify collectMovesCell
+    collectMovesCell(Board.buildEmptyBoard(8), Color.Black, 0, 0, "steps") => []
+
+fn movesForCell(board: List<List<CellContent>>, x: Int, y: Int, color: Color, kind: String) -> List<List<Point>>
+    ? "Get moves for one cell based on kind"
+    match kind
+        "steps" -> stepsForPiece(board, x, y, color)
+        "jumps" -> allJumpsForPiece(board, x, y, color)
+        _ -> []
+
+verify movesForCell
+    movesForCell(Board.buildEmptyBoard(8), 0, 0, Color.Black, "bogus") => []
+
+fn allSteps(board: List<List<CellContent>>, color: Color) -> List<List<Point>>
+    ? "All legal step turns for color"
+    collectMoves(board, color, 0, 0, "steps")
+
+verify allSteps
+    allSteps(Board.buildEmptyBoard(8), Color.Black) => []
+
+fn allJumps(board: List<List<CellContent>>, color: Color) -> List<List<Point>>
+    ? "All legal jump chain turns for color"
+    collectMoves(board, color, 0, 0, "jumps")
+
+verify allJumps
+    allJumps(Board.buildEmptyBoard(8), Color.Black) => []
+
+fn maxLen(turns: List<List<Point>>, i: Int, best: Int) -> Int
+    ? "Find the maximum path length among turns"
+    match i == List.len(turns)
+        true -> best
+        false -> maxLenStep(turns, i, best)
+
+verify maxLen
+    maxLen([[Board.pt(0, 0), Board.pt(1, 1)], [Board.pt(0, 0), Board.pt(1, 1), Board.pt(2, 2)]], 0, 0) => 3
+
+fn maxLenStep(turns: List<List<Point>>, i: Int, best: Int) -> Int
+    ? "One step of maxLen"
+    nextI = i + 1
+    match Vector.get(Vector.fromList(turns), i)
+        Option.Some(turn) -> maxLen(turns, nextI, Int.max(best, List.len(turn)))
+        Option.None -> maxLen(turns, nextI, best)
+
+verify maxLenStep
+    maxLenStep([[Board.pt(0, 0), Board.pt(1, 1)]], 0, 0) => 2
+
+fn filterByLen(turns: List<List<Point>>, targetLen: Int, i: Int) -> List<List<Point>>
+    ? "Keep only turns with the given length"
+    List.reverse(filterByLenAcc(turns, targetLen, i, []))
+
+verify filterByLen
+    List.len(filterByLen([[Board.pt(0, 0), Board.pt(1, 1)], [Board.pt(0, 0), Board.pt(1, 1), Board.pt(2, 2)]], 3, 0)) => 1
+
+fn filterByLenAcc(turns: List<List<Point>>, targetLen: Int, i: Int, acc: List<List<Point>>) -> List<List<Point>>
+    ? "Tail-recursive filter by length"
+    match i == List.len(turns)
+        true -> acc
+        false -> filterByLenStep(turns, targetLen, i, acc)
+
+verify filterByLenAcc
+    filterByLenAcc([], 2, 0, []) => []
+    List.len(filterByLenAcc([[Board.pt(0, 0), Board.pt(1, 1)]], 2, 0, [])) => 1
+
+fn filterByLenStep(turns: List<List<Point>>, targetLen: Int, i: Int, acc: List<List<Point>>) -> List<List<Point>>
+    ? "One step of filterByLen"
+    nextI = i + 1
+    match Vector.get(Vector.fromList(turns), i)
+        Option.Some(turn) -> match List.len(turn) == targetLen
+            true -> filterByLenAcc(turns, targetLen, nextI, List.prepend(turn, acc))
+            false -> filterByLenAcc(turns, targetLen, nextI, acc)
+        Option.None -> filterByLenAcc(turns, targetLen, nextI, acc)
+
+verify filterByLenStep
+    List.len(filterByLenStep([[Board.pt(0, 0), Board.pt(1, 1)]], 2, 0, [])) => 1
+
+fn longestJumps(jumps: List<List<Point>>) -> List<List<Point>>
+    ? "Keep only jump chains with maximum captures (forced maximum capture rule)"
+    filterByLen(jumps, maxLen(jumps, 0, 0), 0)
+
+verify longestJumps
+    List.len(longestJumps([[Board.pt(0, 0), Board.pt(1, 1)], [Board.pt(0, 0), Board.pt(1, 1), Board.pt(2, 2)]])) => 1
+
+fn legalMoves(board: List<List<CellContent>>, color: Color) -> List<List<Point>>
+    ? "All legal turns: if jumps exist, only longest jumps (maximum capture); otherwise steps"
+    jumps = allJumps(board, color)
+    match jumps
+        [] -> allSteps(board, color)
+        _ -> longestJumps(jumps)
+
+verify legalMoves
+    List.len(legalMoves(Board.startBoard(), Color.Black)) => 7
+
+fn hasJumps(board: List<List<CellContent>>, color: Color) -> Bool
+    ? "True if forced capture exists"
+    match allJumps(board, color)
+        [] -> false
+        _ -> true
+
+verify hasJumps
+    hasJumps(Board.startBoard(), Color.Black) => false
+    hasJumps(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.WhiteMan), Color.Black) => true
+
+fn applyStep(board: List<List<CellContent>>, fx: Int, fy: Int, tx: Int, ty: Int) -> List<List<CellContent>>
+    ? "Execute one step: move piece, handle promotion"
+    piece = Board.getCell(board, fx, fy)
+    finalPiece = match Board.shouldPromote(piece, ty)
+        true -> Board.promote(piece)
+        false -> piece
+    Board.setCell(Board.setCell(board, fx, fy, CellContent.Empty), tx, ty, finalPiece)
+
+verify applyStep
+    Board.getCell(applyStep(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 3, 3, 2, 2), 2, 2) => CellContent.BlackMan
+    Board.getCell(applyStep(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 3, 3, 2, 2), 3, 3) => CellContent.Empty
+
+fn applyTurnMoves(board: List<List<CellContent>>, turn: List<Point>, i: Int) -> List<List<CellContent>>
+    ? "Apply consecutive moves in a turn path"
+    applyTurnMovesVec(board, turn, Vector.fromList(turn), i)
+
+verify applyTurnMoves
+    applyTurnMoves(Board.startBoard(), [Board.pt(0, 5)], 0) => Board.startBoard()
+
+fn applyTurnMovesVec(board: List<List<CellContent>>, turn: List<Point>, turnVec: Vector<Point>, i: Int) -> List<List<CellContent>>
+    ? "Apply consecutive moves using precomputed vector"
+    match i + 1 == List.len(turn)
+        true -> board
+        false -> applyTurnMoveVec(board, turn, turnVec, i)
+
+verify applyTurnMovesVec
+    applyTurnMovesVec(Board.startBoard(), [Board.pt(0, 5)], Vector.fromList([Board.pt(0, 5)]), 0) => Board.startBoard()
+
+fn applyTurnMoveVec(board: List<List<CellContent>>, turn: List<Point>, turnVec: Vector<Point>, i: Int) -> List<List<CellContent>>
+    ? "Apply one move in path and continue"
+    match Vector.get(turnVec, i)
+        Option.Some(from) -> match Vector.get(turnVec, i + 1)
+            Option.Some(to) -> applyTurnMoveStepVec(board, turn, turnVec, from, to, i)
+            Option.None -> board
+        Option.None -> board
+
+verify applyTurnMoveVec
+    applyTurnMoveVec(Board.startBoard(), [], Vector.fromList([]), 0) => Board.startBoard()
+
+fn applyTurnMove(board: List<List<CellContent>>, turn: List<Point>, i: Int) -> List<List<CellContent>>
+    ? "Apply one move in path and continue"
+    applyTurnMoveVec(board, turn, Vector.fromList(turn), i)
+
+verify applyTurnMove
+    applyTurnMove(Board.startBoard(), [], 0) => Board.startBoard()
+
+fn applyTurnMoveStepVec(board: List<List<CellContent>>, turn: List<Point>, turnVec: Vector<Point>, from: Point, to: Point, i: Int) -> List<List<CellContent>>
+    ? "Decide step or jump and apply"
+    nextI = i + 1
+    match Int.abs(to.x - from.x) == 2
+        true -> applyTurnMovesVec(applyJump(board, from.x, from.y, to.x, to.y), turn, turnVec, nextI)
+        false -> applyTurnMovesVec(applyStep(board, from.x, from.y, to.x, to.y), turn, turnVec, nextI)
+
+verify applyTurnMoveStepVec
+    Board.getCell(applyTurnMoveStepVec(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), [Board.pt(3, 3), Board.pt(2, 2)], Vector.fromList([Board.pt(3, 3), Board.pt(2, 2)]), Board.pt(3, 3), Board.pt(2, 2), 0), 2, 2) => CellContent.BlackMan
+
+fn applyTurnMoveStep(board: List<List<CellContent>>, turn: List<Point>, from: Point, to: Point, i: Int) -> List<List<CellContent>>
+    ? "Decide step or jump and apply"
+    applyTurnMoveStepVec(board, turn, Vector.fromList(turn), from, to, i)
+
+verify applyTurnMoveStep
+    Board.getCell(applyTurnMoveStep(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), [Board.pt(3, 3), Board.pt(2, 2)], Board.pt(3, 3), Board.pt(2, 2), 0), 2, 2) => CellContent.BlackMan
+
+fn applyTurn(board: List<List<CellContent>>, turn: List<Point>) -> List<List<CellContent>>
+    ? "Apply a complete turn (step or jump chain)"
+    applyTurnMoves(board, turn, 0)
+
+verify applyTurn
+    List.len(applyTurn(Board.startBoard(), [Board.pt(0, 5), Board.pt(1, 4)])) => 8
+
+fn hasLegalMoves(board: List<List<CellContent>>, color: Color) -> Bool
+    ? "True if the player has any legal moves"
+    match legalMoves(board, color)
+        [] -> false
+        _ -> true
+
+verify hasLegalMoves
+    hasLegalMoves(Board.startBoard(), Color.Black) => true
+    hasLegalMoves(Board.startBoard(), Color.White) => true
+    hasLegalMoves(Board.buildEmptyBoard(8), Color.Black) => false

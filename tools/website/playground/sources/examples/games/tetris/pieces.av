@@ -1,0 +1,163 @@
+module Pieces
+    intent =
+        "Tetris piece definitions: offsets, rotations, colors."
+        "Seven standard tetrominoes using PieceKind from Board."
+    depends [Board]
+
+record Piece
+    kind: PieceKind
+    rotation: Int
+
+fn intToKind(n: Int) -> PieceKind
+    ? "Convert random int (0-6) to piece kind"
+    match n
+        0 -> PieceKind.I
+        1 -> PieceKind.O
+        2 -> PieceKind.T
+        3 -> PieceKind.S
+        4 -> PieceKind.Z
+        5 -> PieceKind.J
+        _ -> PieceKind.L
+
+verify intToKind
+    intToKind(0) => PieceKind.I
+    intToKind(6) => PieceKind.L
+
+fn iOffsets(rot: Int) -> List<Point>
+    ? "I-piece offsets"
+    match rot
+        0 -> [Board.pt(0, 1), Board.pt(1, 1), Board.pt(2, 1), Board.pt(3, 1)]
+        1 -> [Board.pt(2, 0), Board.pt(2, 1), Board.pt(2, 2), Board.pt(2, 3)]
+        2 -> [Board.pt(0, 2), Board.pt(1, 2), Board.pt(2, 2), Board.pt(3, 2)]
+        _ -> [Board.pt(1, 0), Board.pt(1, 1), Board.pt(1, 2), Board.pt(1, 3)]
+
+verify iOffsets
+    List.len(iOffsets(0)) => 4
+
+fn oOffsets(rot: Int) -> List<Point>
+    ? "O-piece offsets (rotation invariant)"
+    [Board.pt(0, 0), Board.pt(1, 0), Board.pt(0, 1), Board.pt(1, 1)]
+
+verify oOffsets
+    List.len(oOffsets(0)) => 4
+
+fn tOffsets(rot: Int) -> List<Point>
+    ? "T-piece offsets"
+    match rot
+        0 -> [Board.pt(1, 0), Board.pt(0, 1), Board.pt(1, 1), Board.pt(2, 1)]
+        1 -> [Board.pt(1, 0), Board.pt(1, 1), Board.pt(2, 1), Board.pt(1, 2)]
+        2 -> [Board.pt(0, 1), Board.pt(1, 1), Board.pt(2, 1), Board.pt(1, 2)]
+        _ -> [Board.pt(1, 0), Board.pt(0, 1), Board.pt(1, 1), Board.pt(1, 2)]
+
+verify tOffsets
+    List.len(tOffsets(0)) => 4
+
+fn sOffsets(rot: Int) -> List<Point>
+    ? "S-piece offsets"
+    match rot
+        0 -> [Board.pt(1, 0), Board.pt(2, 0), Board.pt(0, 1), Board.pt(1, 1)]
+        1 -> [Board.pt(1, 0), Board.pt(1, 1), Board.pt(2, 1), Board.pt(2, 2)]
+        2 -> [Board.pt(1, 1), Board.pt(2, 1), Board.pt(0, 2), Board.pt(1, 2)]
+        _ -> [Board.pt(0, 0), Board.pt(0, 1), Board.pt(1, 1), Board.pt(1, 2)]
+
+verify sOffsets
+    List.len(sOffsets(0)) => 4
+
+fn zOffsets(rot: Int) -> List<Point>
+    ? "Z-piece offsets"
+    match rot
+        0 -> [Board.pt(0, 0), Board.pt(1, 0), Board.pt(1, 1), Board.pt(2, 1)]
+        1 -> [Board.pt(2, 0), Board.pt(1, 1), Board.pt(2, 1), Board.pt(1, 2)]
+        2 -> [Board.pt(0, 1), Board.pt(1, 1), Board.pt(1, 2), Board.pt(2, 2)]
+        _ -> [Board.pt(1, 0), Board.pt(0, 1), Board.pt(1, 1), Board.pt(0, 2)]
+
+verify zOffsets
+    List.len(zOffsets(0)) => 4
+
+fn jOffsets(rot: Int) -> List<Point>
+    ? "J-piece offsets"
+    match rot
+        0 -> [Board.pt(0, 0), Board.pt(0, 1), Board.pt(1, 1), Board.pt(2, 1)]
+        1 -> [Board.pt(1, 0), Board.pt(2, 0), Board.pt(1, 1), Board.pt(1, 2)]
+        2 -> [Board.pt(0, 1), Board.pt(1, 1), Board.pt(2, 1), Board.pt(2, 2)]
+        _ -> [Board.pt(1, 0), Board.pt(1, 1), Board.pt(0, 2), Board.pt(1, 2)]
+
+verify jOffsets
+    List.len(jOffsets(0)) => 4
+
+fn lOffsets(rot: Int) -> List<Point>
+    ? "L-piece offsets"
+    match rot
+        0 -> [Board.pt(2, 0), Board.pt(0, 1), Board.pt(1, 1), Board.pt(2, 1)]
+        1 -> [Board.pt(1, 0), Board.pt(1, 1), Board.pt(1, 2), Board.pt(2, 2)]
+        2 -> [Board.pt(0, 1), Board.pt(1, 1), Board.pt(2, 1), Board.pt(0, 2)]
+        _ -> [Board.pt(0, 0), Board.pt(1, 0), Board.pt(1, 1), Board.pt(1, 2)]
+
+verify lOffsets
+    List.len(lOffsets(0)) => 4
+
+fn pieceOffsets(kind: PieceKind, rot: Int) -> List<Point>
+    ? "4 cell offsets for a piece kind at rotation (0-3)"
+    match kind
+        PieceKind.I -> iOffsets(rot)
+        PieceKind.O -> oOffsets(rot)
+        PieceKind.T -> tOffsets(rot)
+        PieceKind.S -> sOffsets(rot)
+        PieceKind.Z -> zOffsets(rot)
+        PieceKind.J -> jOffsets(rot)
+        PieceKind.L -> lOffsets(rot)
+
+verify pieceOffsets
+    List.len(pieceOffsets(PieceKind.I, 0)) => 4
+    List.len(pieceOffsets(PieceKind.O, 0)) => 4
+    List.len(pieceOffsets(PieceKind.T, 0)) => 4
+    List.len(pieceOffsets(PieceKind.S, 0)) => 4
+    List.len(pieceOffsets(PieceKind.Z, 0)) => 4
+    List.len(pieceOffsets(PieceKind.J, 0)) => 4
+    List.len(pieceOffsets(PieceKind.L, 0)) => 4
+    pieceOffsets(PieceKind.O, 0) => [Board.pt(0, 0), Board.pt(1, 0), Board.pt(0, 1), Board.pt(1, 1)]
+
+fn offsetToAbs(offsets: List<Point>, px: Int, py: Int) -> List<Point>
+    ? "Map offsets to absolute positions"
+    offsetToAbsAcc(offsets, px, py, [])
+
+verify offsetToAbs
+    offsetToAbs([], 0, 0) => []
+    List.len(offsetToAbs([Board.pt(0, 0), Board.pt(1, 0)], 3, 5)) => 2
+
+fn offsetToAbsAcc(offsets: List<Point>, px: Int, py: Int, acc: List<Point>) -> List<Point>
+    ? "Map offsets with accumulator"
+    match offsets
+        [] -> List.reverse(acc)
+        [o, ..rest] -> offsetToAbsAcc(rest, px, py, List.prepend(Board.pt(o.x + px, o.y + py), acc))
+
+verify offsetToAbsAcc
+    offsetToAbsAcc([], 0, 0, []) => []
+    List.len(offsetToAbsAcc([Board.pt(0, 0)], 1, 2, [])) => 1
+
+fn absolutePoints(piece: Piece, px: Int, py: Int) -> List<Point>
+    ? "Convert piece offsets to board coordinates"
+    offsetToAbs(pieceOffsets(piece.kind, piece.rotation), px, py)
+
+verify absolutePoints
+    List.len(absolutePoints(Piece(kind = PieceKind.I, rotation = 0), 3, 0)) => 4
+
+fn pieceColor(kind: PieceKind) -> String
+    ? "Terminal color name for piece kind"
+    match kind
+        PieceKind.I -> "cyan"
+        PieceKind.O -> "yellow"
+        PieceKind.T -> "magenta"
+        PieceKind.S -> "green"
+        PieceKind.Z -> "red"
+        PieceKind.J -> "blue"
+        PieceKind.L -> "white"
+
+verify pieceColor
+    pieceColor(PieceKind.I) => "cyan"
+    pieceColor(PieceKind.O) => "yellow"
+    pieceColor(PieceKind.T) => "magenta"
+    pieceColor(PieceKind.S) => "green"
+    pieceColor(PieceKind.Z) => "red"
+    pieceColor(PieceKind.J) => "blue"
+    pieceColor(PieceKind.L) => "white"

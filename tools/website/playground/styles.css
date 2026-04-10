@@ -77,9 +77,25 @@ body {
     color: var(--muted);
 }
 
+.isolation-note {
+    padding: 0.45rem 1rem;
+    border-bottom: 1px solid var(--border);
+    background: rgba(217, 119, 6, 0.12);
+    color: var(--muted);
+    font-size: 0.75rem;
+}
+
+.isolation-note code {
+    background: rgba(15, 23, 42, 0.8);
+    color: var(--text);
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+}
+
 [data-tone="success"] { color: var(--green); }
 [data-tone="error"] { color: var(--red); }
 [data-tone="info"] { color: var(--accent); }
+[data-tone="warn"] { color: #fbbf24; }
 
 /* ── Workspace (editor + output) ──────────────────────────────────── */
 
@@ -608,7 +624,7 @@ body {
         flex-wrap: wrap;
         gap: 0.4rem;
     }
-    .intro { display: none; }
+    .intro-link { display: none; }
     .game-nav { order: 3; width: 100%; }
 
     .workspace {

@@ -1,0 +1,531 @@
+module Ai
+    intent =
+        "Checkers AI: board evaluation with piece count, king bonus, and center"
+        "control; alpha-beta pruning search; best move selection."
+    depends [Board, Rules]
+
+decision EvaluationStrategy
+    date = "2026-03-18"
+    author = "szymon"
+    reason =
+        "A simple evaluation function combines three heuristics: piece count"
+        "(material advantage), king bonus (kings are worth 3x a man), and"
+        "center control (pieces on center squares score extra). This is cheap"
+        "to compute and effective for search depths up to 6."
+    chosen = "PieceCountPlusKingPlusCenterControl"
+    rejected = ["PieceCountOnly", "AdvancedPositionalTables"]
+    impacts = [evaluateBoard]
+
+decision AlphaBetaPruning
+    date = "2026-03-18"
+    author = "szymon"
+    reason =
+        "Alpha-beta prunes branches that cannot improve the result. Same"
+        "correctness as plain minimax, fewer nodes evaluated. Enables"
+        "depth 6 search where plain minimax would be too slow."
+    chosen = "AlphaBeta"
+    rejected = ["PlainMinimax"]
+    impacts = [alphaBeta, bestMove]
+
+decision RootParallelScoring
+    date = "2026-04-03"
+    author = "szymon"
+    reason =
+        "Root candidates are independent once each move is applied to the board."
+        "Scoring that first layer in small fixed batches keeps the search model"
+        "simple, preserves move quality, and lets Aver show real concurrency"
+        "without parallelizing the whole tree."
+    chosen = "RootParallelBatchesOfFour"
+    rejected = ["SequentialRootScoring", "ParallelEveryNode"]
+    impacts = [rootParallelWidth, scoreAllMoves, scoreWindow, buildResult]
+
+record ScoredMove
+    move: List<Point>
+    score: Int
+
+record AiResult
+    move: List<Point>
+    score: Int
+    candidates: List<ScoredMove>
+    depth: Int
+    thinkMs: Int
+
+fn rootParallelWidth() -> Int
+    ? "Number of root candidates scored together in one independent-product batch"
+    4
+
+verify rootParallelWidth
+    rootParallelWidth() => 4
+
+fn pieceValue(cell: CellContent, color: Color) -> Int
+    ? "Score a single cell: +1 own man, +3 own king, negated for opponent"
+    match Board.isColor(cell, color)
+        true -> match Board.isKing(cell)
+            true -> 3
+            false -> 1
+        false -> match Board.isColor(cell, Board.opponent(color))
+            true -> match Board.isKing(cell)
+                true -> 0 - 3
+                false -> 0 - 1
+            false -> 0
+
+verify pieceValue
+    pieceValue(CellContent.BlackMan, Color.Black) => 1
+    pieceValue(CellContent.BlackKing, Color.Black) => 3
+    pieceValue(CellContent.WhiteMan, Color.Black) => 0 - 1
+    pieceValue(CellContent.WhiteKing, Color.Black) => 0 - 3
+    pieceValue(CellContent.Empty, Color.Black) => 0
+
+verify pieceValue law antisymmetry
+    given v: Int = 0..3
+    pieceValue(CellContent.BlackMan, Color.Black) + pieceValue(CellContent.BlackMan, Color.White) => 0
+
+verify pieceValue law kingWorthTripleMan
+    given v: Int = 0..1
+    pieceValue(CellContent.BlackKing, Color.Black) => 3 * pieceValue(CellContent.BlackMan, Color.Black)
+
+fn isCenterSquare(x: Int, y: Int) -> Bool
+    ? "True if (x,y) is one of the four center squares"
+    Bool.and(Bool.and(x > 2, x < 5), Bool.and(y > 2, y < 5))
+
+verify isCenterSquare
+    isCenterSquare(3, 3) => true
+    isCenterSquare(4, 4) => true
+    isCenterSquare(0, 0) => false
+
+fn centerBonus(cell: CellContent, x: Int, y: Int, color: Color) -> Int
+    ? "Extra point for own piece on center, minus for opponent"
+    match isCenterSquare(x, y)
+        true -> match Board.isColor(cell, color)
+            true -> 1
+            false -> match Board.isColor(cell, Board.opponent(color))
+                true -> 0 - 1
+                false -> 0
+        false -> 0
+
+verify centerBonus
+    centerBonus(CellContent.BlackMan, 3, 3, Color.Black) => 1
+    centerBonus(CellContent.WhiteMan, 3, 3, Color.Black) => 0 - 1
+    centerBonus(CellContent.BlackMan, 0, 0, Color.Black) => 0
+
+verify centerBonus law emptyNeutral
+    given x: Int = 3..4
+    given y: Int = 3..4
+    centerBonus(CellContent.Empty, x, y, Color.Black) => 0
+
+fn evalScan(board: List<List<CellContent>>, color: Color, x: Int, y: Int) -> Int
+    ? "Scan board accumulating evaluation score"
+    evalScanAcc(board, color, x, y, 0)
+
+verify evalScan
+    evalScan(Board.buildEmptyBoard(8), Color.Black, 0, 0) => 0
+
+fn evalScanAcc(board: List<List<CellContent>>, color: Color, x: Int, y: Int, acc: Int) -> Int
+    ? "Tail-recursive board scan with accumulator"
+    match y == 8
+        true -> acc
+        false -> match x == 8
+            true -> evalScanAcc(board, color, 0, y + 1, acc)
+            false -> evalScanAcc(board, color, x + 1, y, acc + evalScanCell(board, color, x, y))
+
+verify evalScanAcc
+    evalScanAcc(Board.buildEmptyBoard(8), Color.Black, 0, 0, 0) => 0
+
+fn evalScanCell(board: List<List<CellContent>>, color: Color, x: Int, y: Int) -> Int
+    ? "Evaluate one cell"
+    cell = Board.getCell(board, x, y)
+    pieceValue(cell, color) + centerBonus(cell, x, y, color)
+
+verify evalScanCell
+    evalScanCell(Board.buildEmptyBoard(8), Color.Black, 0, 0) => 0
+
+fn evaluateBoard(board: List<List<CellContent>>, color: Color) -> Int
+    ? "Static board evaluation: piece count + king bonus + center control"
+    evalScan(board, color, 0, 0)
+
+verify evaluateBoard
+    evaluateBoard(Board.buildEmptyBoard(8), Color.Black) => 0
+    evaluateBoard(Board.startBoard(), Color.Black) => 0
+    evaluateBoard(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), Color.Black) => 2
+    evaluateBoard(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackKing), Color.Black) => 4
+
+fn alphaBeta(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, isMax: Bool, color: Color, aiColor: Color) -> Int
+    ? "Alpha-beta pruning search"
+    match depth < 1
+        true -> evaluateBoard(board, aiColor)
+        false -> abAtDepth(board, depth, alpha, beta, isMax, color, aiColor)
+
+verify alphaBeta
+    alphaBeta(Board.buildEmptyBoard(8), 0, 0 - 9999, 9999, true, Color.Black, Color.Black) => 0
+    alphaBeta(Board.startBoard(), 0, 0 - 9999, 9999, true, Color.Black, Color.Black) => 0
+
+fn abAtDepth(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, isMax: Bool, color: Color, aiColor: Color) -> Int
+    ? "Alpha-beta at non-leaf: get moves and search"
+    moves = Rules.legalMoves(board, color)
+    match moves
+        [] -> abNoMoves(isMax)
+        _ -> abSearch(board, depth, alpha, beta, isMax, color, aiColor, moves, 0, abInit(isMax))
+
+verify abAtDepth
+    abAtDepth(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, true, Color.Black, Color.Black) => 0 - 9999
+
+fn abNoMoves(isMax: Bool) -> Int
+    ? "No moves: worst score for current player"
+    match isMax
+        true -> 0 - 9999
+        false -> 9999
+
+verify abNoMoves
+    abNoMoves(true) => 0 - 9999
+    abNoMoves(false) => 9999
+
+fn abInit(isMax: Bool) -> Int
+    ? "Initial best for alpha-beta"
+    match isMax
+        true -> 0 - 9999
+        false -> 9999
+
+verify abInit
+    abInit(true) => 0 - 9999
+    abInit(false) => 9999
+
+fn abSearch(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, isMax: Bool, color: Color, aiColor: Color, moves: List<List<Point>>, i: Int, best: Int) -> Int
+    ? "Iterate moves with alpha-beta pruning"
+    match i == List.len(moves)
+        true -> best
+        false -> match alpha > beta
+            true -> best
+            false -> abSearchNext(board, depth, alpha, beta, isMax, color, aiColor, moves, i, best)
+
+verify abSearch
+    abSearch(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, true, Color.Black, Color.Black, [], 0, 0 - 9999) => 0 - 9999
+
+fn abSearchNext(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, isMax: Bool, color: Color, aiColor: Color, moves: List<List<Point>>, i: Int, best: Int) -> Int
+    ? "Fetch move at index and score it"
+    nextI = i + 1
+    match Vector.get(Vector.fromList(moves), i)
+        Option.Some(move) -> abSearchScore(board, depth, alpha, beta, isMax, color, aiColor, moves, nextI, best, move)
+        Option.None -> best
+
+verify abSearchNext
+    abSearchNext(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, true, Color.Black, Color.Black, [[]], 0, 0 - 9999) => 0
+
+fn abSearchScore(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, isMax: Bool, color: Color, aiColor: Color, moves: List<List<Point>>, nextI: Int, best: Int, move: List<Point>) -> Int
+    ? "Score move via alpha-beta and continue"
+    score = alphaBeta(Rules.applyTurn(board, move), depth - 1, alpha, beta, Bool.not(isMax), Board.opponent(color), aiColor)
+    abSearchContinue(board, depth, alpha, beta, isMax, color, aiColor, moves, nextI, best, score)
+
+verify abSearchScore
+    abSearchScore(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, true, Color.Black, Color.Black, [[]], 1, 0 - 9999, []) => 0
+
+fn abSearchContinue(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, isMax: Bool, color: Color, aiColor: Color, moves: List<List<Point>>, nextI: Int, best: Int, score: Int) -> Int
+    ? "Update best/alpha/beta and tail-call abSearch"
+    match isMax
+        true -> abSearch(board, depth, Int.max(alpha, score), beta, true, color, aiColor, moves, nextI, Int.max(best, score))
+        false -> abSearch(board, depth, alpha, Int.min(beta, score), false, color, aiColor, moves, nextI, Int.min(best, score))
+
+verify abSearchContinue
+    abSearchContinue(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, true, Color.Black, Color.Black, [[]], 1, 0 - 9999, 5) => 5
+    abSearchContinue(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, false, Color.Black, Color.Black, [[]], 1, 9999, 5) => 5
+
+fn scoreRootMove(board: List<List<CellContent>>, color: Color, depth: Int, move: List<Point>) -> ScoredMove
+    ? "Score one root candidate independently from sibling candidates"
+    score = alphaBeta(Rules.applyTurn(board, move), depth - 1, 0 - 9999, 9999, false, Board.opponent(color), color)
+    ScoredMove(move = move, score = score)
+
+verify scoreRootMove
+    scoreRootMove(Board.buildEmptyBoard(8), Color.Black, 1, []).score => 0
+
+fn singleJumpBoard() -> List<List<CellContent>>
+    ? "Board with one forced black jump, useful for deterministic AI verifies"
+    Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.WhiteMan)
+
+verify singleJumpBoard
+    List.len(Rules.legalMoves(singleJumpBoard(), Color.Black)) => 1
+
+fn scoreAllMoves(board: List<List<CellContent>>, color: Color, depth: Int, moves: List<List<Point>>) -> List<ScoredMove>
+    ? "Score root candidates in parallel windows using independent products"
+    match moves
+        [] -> []
+        _ -> scoreBatchAndRest(board, color, depth, moves)
+
+verify scoreAllMoves
+    List.len(scoreAllMoves(Board.buildEmptyBoard(8), Color.Black, 1, [])) => 0
+    List.len(scoreAllMoves(Board.buildEmptyBoard(8), Color.Black, 1, [[], []])) => 2
+
+fn scoreBatchAndRest(board: List<List<CellContent>>, color: Color, depth: Int, moves: List<List<Point>>) -> List<ScoredMove>
+    ? "Score one root batch, then continue with the remaining moves"
+    List.reverse(scoreBatchAndRestAcc(board, color, depth, moves, []))
+
+verify scoreBatchAndRest
+    List.len(scoreBatchAndRest(Board.buildEmptyBoard(8), Color.Black, 1, [[], [], [], []])) => 4
+
+fn scoreBatchAndRestAcc(board: List<List<CellContent>>, color: Color, depth: Int, moves: List<List<Point>>, acc: List<ScoredMove>) -> List<ScoredMove>
+    ? "Tail-recursive batched root scoring"
+    batch = List.take(moves, rootParallelWidth())
+    rest = List.drop(moves, rootParallelWidth())
+    match moves
+        [] -> acc
+        _ -> scoreBatchAndRestAcc(board, color, depth, rest, prependScored(scoreWindow(board, color, depth, batch), acc))
+
+verify scoreBatchAndRestAcc
+    scoreBatchAndRestAcc(Board.buildEmptyBoard(8), Color.Black, 1, [], []) => []
+    List.len(scoreBatchAndRestAcc(Board.buildEmptyBoard(8), Color.Black, 1, [[], []], [])) => 2
+
+fn prependScored(scored: List<ScoredMove>, acc: List<ScoredMove>) -> List<ScoredMove>
+    ? "Prepend a scored batch so one final reverse restores original order"
+    match scored
+        [] -> acc
+        [item, ..rest] -> prependScored(rest, List.prepend(item, acc))
+
+verify prependScored
+    prependScored([], []) => []
+    prependScored([ScoredMove(move = [Board.pt(0, 0)], score = 1)], []) => [ScoredMove(move = [Board.pt(0, 0)], score = 1)]
+
+fn scoreWindow(board: List<List<CellContent>>, color: Color, depth: Int, batch: List<List<Point>>) -> List<ScoredMove>
+    ? "Score up to four root candidates together"
+    width = List.len(batch)
+    batchVec = Vector.fromList(batch)
+    match width
+        0 -> []
+        1 -> scoreWindow1(board, color, depth, batchVec)
+        2 -> scoreWindow2(board, color, depth, batchVec)
+        3 -> scoreWindow3(board, color, depth, batchVec)
+        _ -> scoreWindow4(board, color, depth, batchVec)
+
+verify scoreWindow
+    List.len(scoreWindow(Board.buildEmptyBoard(8), Color.Black, 1, [[], [], [], []])) => 4
+
+fn scoreWindow1(board: List<List<CellContent>>, color: Color, depth: Int, batchVec: Vector<List<Point>>) -> List<ScoredMove>
+    ? "Score one root candidate"
+    match Vector.get(batchVec, 0)
+        Option.Some(a) -> [scoreRootMove(board, color, depth, a)]
+        Option.None -> []
+
+verify scoreWindow1
+    List.len(scoreWindow1(Board.buildEmptyBoard(8), Color.Black, 1, Vector.fromList([[]]))) => 1
+
+fn scoreWindow2(board: List<List<CellContent>>, color: Color, depth: Int, batchVec: Vector<List<Point>>) -> List<ScoredMove>
+    ? "Score two root candidates in parallel"
+    match Vector.get(batchVec, 0)
+        Option.Some(a) -> scoreWindow2Right(board, color, depth, batchVec, a)
+        Option.None -> []
+
+verify scoreWindow2
+    List.len(scoreWindow2(Board.buildEmptyBoard(8), Color.Black, 1, Vector.fromList([[], []]))) => 2
+
+fn scoreWindow2Right(board: List<List<CellContent>>, color: Color, depth: Int, batchVec: Vector<List<Point>>, a: List<Point>) -> List<ScoredMove>
+    ? "Load the second move for a two-way root-parallel batch"
+    match Vector.get(batchVec, 1)
+        Option.Some(b) -> scorePair(board, color, depth, a, b)
+        Option.None -> [scoreRootMove(board, color, depth, a)]
+
+verify scoreWindow2Right
+    List.len(scoreWindow2Right(Board.buildEmptyBoard(8), Color.Black, 1, Vector.fromList([[], []]), [])) => 2
+
+fn scoreWindow3(board: List<List<CellContent>>, color: Color, depth: Int, batchVec: Vector<List<Point>>) -> List<ScoredMove>
+    ? "Score three root candidates in parallel"
+    match Vector.get(batchVec, 0)
+        Option.Some(a) -> scoreWindow3Second(board, color, depth, batchVec, a)
+        Option.None -> []
+
+verify scoreWindow3
+    List.len(scoreWindow3(Board.buildEmptyBoard(8), Color.Black, 1, Vector.fromList([[], [], []]))) => 3
+
+fn scoreWindow3Second(board: List<List<CellContent>>, color: Color, depth: Int, batchVec: Vector<List<Point>>, a: List<Point>) -> List<ScoredMove>
+    ? "Load the second move for a three-way root-parallel batch"
+    match Vector.get(batchVec, 1)
+        Option.Some(b) -> scoreWindow3Third(board, color, depth, batchVec, a, b)
+        Option.None -> [scoreRootMove(board, color, depth, a)]
+
+verify scoreWindow3Second
+    List.len(scoreWindow3Second(Board.buildEmptyBoard(8), Color.Black, 1, Vector.fromList([[], [], []]), [])) => 3
+
+fn scoreWindow3Third(board: List<List<CellContent>>, color: Color, depth: Int, batchVec: Vector<List<Point>>, a: List<Point>, b: List<Point>) -> List<ScoredMove>
+    ? "Load the third move for a three-way root-parallel batch"
+    match Vector.get(batchVec, 2)
+        Option.Some(c) -> scoreTriple(board, color, depth, a, b, c)
+        Option.None -> scorePair(board, color, depth, a, b)
+
+verify scoreWindow3Third
+    List.len(scoreWindow3Third(Board.buildEmptyBoard(8), Color.Black, 1, Vector.fromList([[], [], []]), [], [])) => 3
+
+fn scoreWindow4(board: List<List<CellContent>>, color: Color, depth: Int, batchVec: Vector<List<Point>>) -> List<ScoredMove>
+    ? "Score four root candidates in parallel"
+    match Vector.get(batchVec, 0)
+        Option.Some(a) -> scoreWindow4Second(board, color, depth, batchVec, a)
+        Option.None -> []
+
+verify scoreWindow4
+    List.len(scoreWindow4(Board.buildEmptyBoard(8), Color.Black, 1, Vector.fromList([[], [], [], []]))) => 4
+
+fn scoreWindow4Second(board: List<List<CellContent>>, color: Color, depth: Int, batchVec: Vector<List<Point>>, a: List<Point>) -> List<ScoredMove>
+    ? "Load the second move for a four-way root-parallel batch"
+    match Vector.get(batchVec, 1)
+        Option.Some(b) -> scoreWindow4Third(board, color, depth, batchVec, a, b)
+        Option.None -> [scoreRootMove(board, color, depth, a)]
+
+verify scoreWindow4Second
+    List.len(scoreWindow4Second(Board.buildEmptyBoard(8), Color.Black, 1, Vector.fromList([[], [], [], []]), [])) => 4
+
+fn scoreWindow4Third(board: List<List<CellContent>>, color: Color, depth: Int, batchVec: Vector<List<Point>>, a: List<Point>, b: List<Point>) -> List<ScoredMove>
+    ? "Load the third move for a four-way root-parallel batch"
+    match Vector.get(batchVec, 2)
+        Option.Some(c) -> scoreWindow4Fourth(board, color, depth, batchVec, a, b, c)
+        Option.None -> scorePair(board, color, depth, a, b)
+
+verify scoreWindow4Third
+    List.len(scoreWindow4Third(Board.buildEmptyBoard(8), Color.Black, 1, Vector.fromList([[], [], [], []]), [], [])) => 4
+
+fn scoreWindow4Fourth(board: List<List<CellContent>>, color: Color, depth: Int, batchVec: Vector<List<Point>>, a: List<Point>, b: List<Point>, c: List<Point>) -> List<ScoredMove>
+    ? "Load the fourth move for a four-way root-parallel batch"
+    match Vector.get(batchVec, 3)
+        Option.Some(d) -> scoreQuad(board, color, depth, a, b, c, d)
+        Option.None -> scoreTriple(board, color, depth, a, b, c)
+
+verify scoreWindow4Fourth
+    List.len(scoreWindow4Fourth(Board.buildEmptyBoard(8), Color.Black, 1, Vector.fromList([[], [], [], []]), [], [], [])) => 4
+
+fn scorePair(board: List<List<CellContent>>, color: Color, depth: Int, a: List<Point>, b: List<Point>) -> List<ScoredMove>
+    ? "Score two root moves together"
+    data = (scoreRootMove(board, color, depth, a), scoreRootMove(board, color, depth, b))!
+    match data
+        (sa, sb) -> [sa, sb]
+
+verify scorePair
+    List.len(scorePair(Board.buildEmptyBoard(8), Color.Black, 1, [], [])) => 2
+
+fn scoreTriple(board: List<List<CellContent>>, color: Color, depth: Int, a: List<Point>, b: List<Point>, c: List<Point>) -> List<ScoredMove>
+    ? "Score three root moves together"
+    data = (scoreRootMove(board, color, depth, a), scoreRootMove(board, color, depth, b), scoreRootMove(board, color, depth, c))!
+    match data
+        (sa, sb, sc) -> [sa, sb, sc]
+
+verify scoreTriple
+    List.len(scoreTriple(Board.buildEmptyBoard(8), Color.Black, 1, [], [], [])) => 3
+
+fn scoreQuad(board: List<List<CellContent>>, color: Color, depth: Int, a: List<Point>, b: List<Point>, c: List<Point>, d: List<Point>) -> List<ScoredMove>
+    ? "Score four root moves together"
+    data = (scoreRootMove(board, color, depth, a), scoreRootMove(board, color, depth, b), scoreRootMove(board, color, depth, c), scoreRootMove(board, color, depth, d))!
+    match data
+        (sa, sb, sc, sd) -> [sa, sb, sc, sd]
+
+verify scoreQuad
+    List.len(scoreQuad(Board.buildEmptyBoard(8), Color.Black, 1, [], [], [], [])) => 4
+
+fn findBest(scored: List<ScoredMove>, i: Int, bestScore: Int, bestIdx: Int) -> Int
+    ? "Find index of highest-scored move"
+    nextI = i + 1
+    match i == List.len(scored)
+        true -> bestIdx
+        false -> match Vector.get(Vector.fromList(scored), i)
+            Option.Some(sm) -> match sm.score > bestScore
+                true -> findBest(scored, nextI, sm.score, i)
+                false -> findBest(scored, nextI, bestScore, bestIdx)
+            Option.None -> bestIdx
+
+verify findBest
+    findBest([ScoredMove(move = [Board.pt(0, 0)], score = 5), ScoredMove(move = [Board.pt(1, 1)], score = 10)], 0, 0 - 9999, 0) => 1
+
+fn sortScored(scored: List<ScoredMove>) -> List<ScoredMove>
+    ? "Sort scored moves by score descending (insertion sort)"
+    sortScoredRec(scored, 0, [])
+
+verify sortScored
+    match Vector.get(Vector.fromList(sortScored([ScoredMove(move = [Board.pt(0, 0)], score = 1), ScoredMove(move = [Board.pt(1, 1)], score = 5)])), 0)
+        Option.Some(sm) -> sm.score
+        Option.None -> 0
+    => 5
+
+fn sortScoredRec(scored: List<ScoredMove>, i: Int, acc: List<ScoredMove>) -> List<ScoredMove>
+    ? "Insert each element into sorted accumulator"
+    match i == List.len(scored)
+        true -> acc
+        false -> match Vector.get(Vector.fromList(scored), i)
+            Option.Some(sm) -> sortScoredRec(scored, i + 1, insertSorted(acc, sm, 0))
+            Option.None -> acc
+
+verify sortScoredRec
+    sortScoredRec([], 0, [ScoredMove(move = [], score = 1)]) => [ScoredMove(move = [], score = 1)]
+
+fn insertSorted(sorted: List<ScoredMove>, item: ScoredMove, i: Int) -> List<ScoredMove>
+    ? "Insert item into descending-sorted list"
+    appended = List.concat(sorted, [item])
+    match i == List.len(sorted)
+        true -> appended
+        false -> match Vector.get(Vector.fromList(sorted), i)
+            Option.Some(cur) -> match item.score > cur.score
+                true -> List.concat(List.concat(takeN(sorted, i), [item]), dropN(sorted, i))
+                false -> insertSorted(sorted, item, i + 1)
+            Option.None -> appended
+
+verify insertSorted
+    insertSorted([], ScoredMove(move = [Board.pt(0, 0)], score = 7), 0) => [ScoredMove(move = [Board.pt(0, 0)], score = 7)]
+
+fn takeN(xs: List<ScoredMove>, n: Int) -> List<ScoredMove>
+    ? "Take first n elements"
+    List.reverse(takeNAcc(xs, n, []))
+
+verify takeN
+    takeN([ScoredMove(move = [Board.pt(0, 0)], score = 1), ScoredMove(move = [Board.pt(1, 1)], score = 2)], 1) => [ScoredMove(move = [Board.pt(0, 0)], score = 1)]
+
+fn takeNAcc(xs: List<ScoredMove>, n: Int, acc: List<ScoredMove>) -> List<ScoredMove>
+    ? "Tail-recursive take helper"
+    match n == 0
+        true -> acc
+        false -> match xs
+            [] -> acc
+            [x, ..rest] -> takeNAcc(rest, n - 1, List.prepend(x, acc))
+
+verify takeNAcc
+    takeNAcc([ScoredMove(move = [Board.pt(0, 0)], score = 1), ScoredMove(move = [Board.pt(1, 1)], score = 2)], 1, []) => [ScoredMove(move = [Board.pt(0, 0)], score = 1)]
+
+fn dropN(xs: List<ScoredMove>, n: Int) -> List<ScoredMove>
+    ? "Drop first n elements"
+    dropNAcc(xs, n)
+
+verify dropN
+    dropN([ScoredMove(move = [Board.pt(0, 0)], score = 1), ScoredMove(move = [Board.pt(1, 1)], score = 2)], 1) => [ScoredMove(move = [Board.pt(1, 1)], score = 2)]
+
+fn dropNAcc(xs: List<ScoredMove>, n: Int) -> List<ScoredMove>
+    ? "Tail-recursive drop helper"
+    match n == 0
+        true -> xs
+        false -> match xs
+            [] -> []
+            [_x, ..rest] -> dropNAcc(rest, n - 1)
+
+verify dropNAcc
+    dropNAcc([ScoredMove(move = [Board.pt(0, 0)], score = 1), ScoredMove(move = [Board.pt(1, 1)], score = 2)], 1) => [ScoredMove(move = [Board.pt(1, 1)], score = 2)]
+
+fn bestMoveResult(board: List<List<CellContent>>, color: Color, depth: Int) -> Option<AiResult>
+    ? "Full AI result with all scored candidates sorted"
+    moves = Rules.legalMoves(board, color)
+    match moves
+        [] -> Option.None
+        _ -> buildResult(board, color, depth, moves)
+
+verify bestMoveResult
+    bestMoveResult(Board.buildEmptyBoard(8), Color.Black, 1) => Option.None
+    bestMoveResult(singleJumpBoard(), Color.Black, 1) => Option.Some(AiResult(move = [Board.pt(3, 3), Board.pt(1, 1)], score = 1, candidates = [ScoredMove(move = [Board.pt(3, 3), Board.pt(1, 1)], score = 1)], depth = 1, thinkMs = 0))
+
+fn buildResult(board: List<List<CellContent>>, color: Color, depth: Int, moves: List<List<Point>>) -> Option<AiResult>
+    ? "Score all moves and build result"
+    scored = sortScored(scoreAllMoves(board, color, depth, moves))
+    match Vector.get(Vector.fromList(scored), 0)
+        Option.Some(best) -> Option.Some(AiResult(move = best.move, score = best.score, candidates = scored, depth = depth, thinkMs = 0))
+        Option.None -> Option.None
+
+verify buildResult
+    buildResult(Board.buildEmptyBoard(8), Color.Black, 1, []) => Option.None
+    buildResult(Board.buildEmptyBoard(8), Color.Black, 1, [[]]) => Option.Some(AiResult(move = [], score = 0, candidates = [ScoredMove(move = [], score = 0)], depth = 1, thinkMs = 0))
+
+fn bestMove(board: List<List<CellContent>>, color: Color, depth: Int) -> Option<List<Point>>
+    ? "Pick the best turn using alpha-beta search"
+    match bestMoveResult(board, color, depth)
+        Option.Some(result) -> Option.Some(result.move)
+        Option.None -> Option.None
+
+verify bestMove
+    bestMove(Board.buildEmptyBoard(8), Color.Black, 1) => Option.None
+    bestMove(singleJumpBoard(), Color.Black, 1) => Option.Some([Board.pt(3, 3), Board.pt(1, 1)])

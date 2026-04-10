@@ -93,10 +93,11 @@ body { overflow-x: hidden; }
 }
 
 .hero h1 {
-    font-size: 2.75rem;
+    font-size: 2.35rem;
     line-height: 1.15;
     letter-spacing: -0.02em;
     margin-bottom: 1rem;
+    max-width: 11ch;
 }
 
 .hero h1 em {
@@ -105,19 +106,49 @@ body { overflow-x: hidden; }
 }
 
 .hero-thesis {
-    font-size: 1.15rem;
-    font-weight: 600;
+    font-size: 2.2rem;
+    font-weight: 800;
     color: var(--accent);
-    margin-bottom: 0.5rem;
-    letter-spacing: -0.01em;
+    margin-bottom: 0.75rem;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
 }
 
 .hero-sub {
     color: var(--muted);
     font-size: 1.1rem;
     line-height: 1.6;
-    margin-bottom: 1.5rem;
+    margin-bottom: 1rem;
     max-width: 480px;
+}
+
+.hero-signals {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    margin-bottom: 1.25rem;
+}
+
+.hero-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.35rem 0.65rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+.hero-chip-link {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.hero-chip-link:hover {
+    border-color: var(--accent);
+    color: var(--accent);
 }
 
 .hero-cta { display: flex; gap: 0.75rem; }
@@ -454,7 +485,8 @@ body { overflow-x: hidden; }
         padding: 3rem 1.25rem 2.5rem;
         gap: 2rem;
     }
-    .hero h1 { font-size: 2rem; }
+    .hero h1 { font-size: 1.8rem; max-width: none; }
+    .hero-thesis { font-size: 1.7rem; }
     .hero-sub { font-size: 1rem; }
 
     .features-grid { grid-template-columns: 1fr; }
@@ -473,7 +505,8 @@ body { overflow-x: hidden; }
 }
 
 @media (max-width: 480px) {
-    .hero h1 { font-size: 1.6rem; }
+    .hero h1 { font-size: 1.45rem; }
+    .hero-thesis { font-size: 1.4rem; }
     .nav-links a:not(:last-child):not(:nth-last-child(2)) { display: none; }
     .games-grid { gap: 0.6rem; }
     .game-card { min-width: 90px; padding: 1rem; }

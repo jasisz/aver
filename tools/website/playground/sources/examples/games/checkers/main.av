@@ -1,0 +1,483 @@
+module Main
+    intent =
+        "Checkers game: human vs AI with terminal UI and decision trace."
+        "Arrow keys to move cursor, Enter to select/move."
+    depends [Board, Rules, Ai, Render]
+
+decision ImmutableStateThreading
+    date = "2026-03-18"
+    author = "szymon"
+    reason =
+        "Same pattern as Snake and Tetris — immutable GameState threaded"
+        "through a TCO game loop. Pure game logic is verifiable."
+    chosen = "ImmutableStateThreading"
+    rejected = ["MutableGlobalState"]
+    impacts = [Board.startBoard, Rules.legalMoves, Ai.bestMove]
+
+record GameState
+    board: List<List<CellContent>>
+    currentPlayer: Color
+    moveNum: Int
+    aiColor: Color
+    searchDepth: Int
+    gameOver: Bool
+    lastAiResult: Option<AiResult>
+    cursorX: Int
+    cursorY: Int
+    selected: Option<Point>
+    pieceMoves: List<List<Point>>
+
+fn parseDepth(args: List<String>) -> Int
+    ? "Parse depth from first CLI arg, default 6, minimum 1"
+    match Vector.get(Vector.fromList(args), 0)
+        Option.Some(s) -> Int.max(1, Result.withDefault(Int.fromString(s), 6))
+        Option.None -> 6
+
+verify parseDepth
+    parseDepth([]) => 6
+    parseDepth(["0"]) => 1
+    parseDepth(["-5"]) => 1
+    parseDepth(["4"]) => 4
+
+fn initState(depth: Int) -> GameState
+    ? "Starting game state: human plays black, AI plays white, cursor at center"
+    GameState(board = Board.startBoard(), currentPlayer = Color.Black, moveNum = 1, aiColor = Color.White, searchDepth = depth, gameOver = false, lastAiResult = Option.None, cursorX = 3, cursorY = 5, selected = Option.None, pieceMoves = [])
+
+verify initState
+    initState(6).moveNum => 1
+    initState(6).cursorX => 3
+    initState(4).searchDepth => 4
+
+fn clamp(v: Int, lo: Int, hi: Int) -> Int
+    ? "Clamp value between lo and hi"
+    Int.max(lo, Int.min(hi, v))
+
+verify clamp
+    clamp(5, 0, 7) => 5
+    clamp(0 - 1, 0, 7) => 0
+    clamp(9, 0, 7) => 7
+
+fn firstPoint(points: List<Point>) -> Option<Point>
+    ? "First point of a move path"
+    match points
+        [point, ..rest] -> Option.Some(point)
+        [] -> Option.None
+
+verify firstPoint
+    firstPoint([]) => Option.None
+    firstPoint([Board.pt(0, 5), Board.pt(1, 4)]) => Option.Some(Board.pt(0, 5))
+
+fn lastPoint(points: List<Point>) -> Option<Point>
+    ? "Last point of a move path"
+    match points
+        [] -> Option.None
+        [point, ..rest] -> match rest
+            [] -> Option.Some(point)
+            _ -> lastPoint(rest)
+
+verify lastPoint
+    lastPoint([]) => Option.None
+    lastPoint([Board.pt(0, 5), Board.pt(1, 4)]) => Option.Some(Board.pt(1, 4))
+
+fn turnDestinations(turns: List<List<Point>>, i: Int) -> List<Point>
+    ? "Extract the last point of each turn"
+    List.reverse(turnDestinationsAcc(List.drop(turns, i), []))
+
+verify turnDestinations
+    turnDestinations([[Board.pt(0, 5), Board.pt(1, 4)]], 0) => [Board.pt(1, 4)]
+
+fn turnDestinationsAcc(turns: List<List<Point>>, acc: List<Point>) -> List<Point>
+    ? "Tail-recursive destination extraction"
+    match turns
+        [] -> acc
+        [turn, ..rest] -> match lastPoint(turn)
+            Option.Some(last) -> turnDestinationsAcc(rest, List.prepend(last, acc))
+            Option.None -> turnDestinationsAcc(rest, acc)
+
+verify turnDestinationsAcc
+    turnDestinationsAcc([], []) => []
+    turnDestinationsAcc([[Board.pt(0, 5), Board.pt(1, 4)]], []) => [Board.pt(1, 4)]
+
+fn movesFromPiece(moves: List<List<Point>>, from: Point, i: Int) -> List<List<Point>>
+    ? "Filter moves starting from a given point"
+    List.reverse(movesFromPieceAcc(List.drop(moves, i), from, []))
+
+verify movesFromPiece
+    List.len(movesFromPiece([[Board.pt(0, 5), Board.pt(1, 4)], [Board.pt(2, 5), Board.pt(3, 4)]], Board.pt(0, 5), 0)) => 1
+
+fn movesFromPieceAcc(moves: List<List<Point>>, from: Point, acc: List<List<Point>>) -> List<List<Point>>
+    ? "Tail-recursive move filtering by origin"
+    match moves
+        [] -> acc
+        [turn, ..rest] -> match firstPoint(turn)
+            Option.Some(start) -> match Bool.and(start.x == from.x, start.y == from.y)
+                true -> movesFromPieceAcc(rest, from, List.prepend(turn, acc))
+                false -> movesFromPieceAcc(rest, from, acc)
+            Option.None -> movesFromPieceAcc(rest, from, acc)
+
+verify movesFromPieceAcc
+    movesFromPieceAcc([], Board.pt(0, 5), []) => []
+    movesFromPieceAcc([[Board.pt(0, 5), Board.pt(1, 4)]], Board.pt(0, 5), []) => [[Board.pt(0, 5), Board.pt(1, 4)]]
+
+fn findTurnByDest(turns: List<List<Point>>, dest: Point, i: Int) -> Option<List<Point>>
+    ? "Find the turn whose last point matches dest"
+    findTurnByDestFrom(List.drop(turns, i), dest)
+
+verify findTurnByDest
+    findTurnByDest([[Board.pt(0, 5), Board.pt(1, 4)]], Board.pt(1, 4), 0) => Option.Some([Board.pt(0, 5), Board.pt(1, 4)])
+    findTurnByDest([[Board.pt(0, 5), Board.pt(1, 4)]], Board.pt(7, 7), 0) => Option.None
+
+fn findTurnByDestFrom(turns: List<List<Point>>, dest: Point) -> Option<List<Point>>
+    ? "Tail-recursive turn lookup by destination"
+    match turns
+        [] -> Option.None
+        [turn, ..rest] -> match lastPoint(turn)
+            Option.Some(last) -> match Bool.and(last.x == dest.x, last.y == dest.y)
+                true -> Option.Some(turn)
+                false -> findTurnByDestFrom(rest, dest)
+            Option.None -> findTurnByDestFrom(rest, dest)
+
+verify findTurnByDestFrom
+    findTurnByDestFrom([], Board.pt(1, 4)) => Option.None
+    findTurnByDestFrom([[Board.pt(0, 5), Board.pt(1, 4)]], Board.pt(1, 4)) => Option.Some([Board.pt(0, 5), Board.pt(1, 4)])
+    findTurnByDestFrom([[Board.pt(0, 5), Board.pt(1, 4)]], Board.pt(7, 7)) => Option.None
+
+fn highlights(state: GameState) -> List<Point>
+    ? "Legal destinations to highlight (only when piece selected)"
+    match state.selected
+        Option.Some(sel) -> turnDestinations(state.pieceMoves, 0)
+        Option.None -> []
+
+verify highlights
+    List.len(highlights(initState(6))) => 0
+
+fn handleAiTurn(state: GameState) -> GameState
+    ? "AI makes a move with full decision trace"
+    match Ai.bestMoveResult(state.board, state.aiColor, state.searchDepth)
+        Option.Some(result) -> applyAiResult(state, result)
+        Option.None -> GameState.update(state, gameOver = true)
+
+verify handleAiTurn
+    handleAiTurn(GameState(board = Board.buildEmptyBoard(8), currentPlayer = Color.Black, moveNum = 1, aiColor = Color.White, searchDepth = 1, gameOver = false, lastAiResult = Option.None, cursorX = 0, cursorY = 0, selected = Option.None, pieceMoves = [])).gameOver => true
+
+fn applyAiResult(state: GameState, result: AiResult) -> GameState
+    ? "Apply AI result to game state"
+    GameState.update(state, board = Rules.applyTurn(state.board, result.move), currentPlayer = Board.opponent(state.aiColor), moveNum = state.moveNum + 1, lastAiResult = Option.Some(result))
+
+verify applyAiResult
+    applyAiResult(GameState(board = Board.startBoard(), currentPlayer = Color.White, moveNum = 1, aiColor = Color.White, searchDepth = 1, gameOver = false, lastAiResult = Option.None, cursorX = 0, cursorY = 0, selected = Option.None, pieceMoves = []), AiResult(move = [Board.pt(1, 2), Board.pt(0, 3)], score = 0, candidates = [], depth = 1, thinkMs = 0)).moveNum => 2
+
+fn stampThinkTime(state: GameState, ms: Int) -> GameState
+    ? "Update last AI result with actual think time"
+    match state.lastAiResult
+        Option.Some(result) -> GameState.update(state, lastAiResult = Option.Some(AiResult.update(result, thinkMs = ms)))
+        Option.None -> state
+
+verify stampThinkTime
+    stampThinkTime(initState(6), 42).lastAiResult => Option.None
+
+fn checkGameOver(state: GameState) -> GameState
+    ? "Check if current player has no moves or no pieces"
+    match Bool.or(Bool.not(Rules.hasLegalMoves(state.board, state.currentPlayer)), Board.countColor(state.board, state.currentPlayer, 0, 0) == 0)
+        true -> GameState.update(state, gameOver = true)
+        false -> state
+
+verify checkGameOver
+    checkGameOver(initState(6)).gameOver => false
+
+fn renderFrame(state: GameState) -> Unit
+    ? "Draw the full game frame"
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+    ]
+    Terminal.clear()
+    Render.renderBoard(state.board, state.selected, highlights(state), Board.pt(state.cursorX, state.cursorY))
+    Render.renderStatus(state.currentPlayer, state.moveNum)
+    renderAiInfo(state)
+    renderHelp(state)
+    Terminal.flush()
+
+fn renderAiInfo(state: GameState) -> Unit
+    ? "Show AI decision trace with candidates on right side"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    match state.lastAiResult
+        Option.Some(result) -> renderAiPanel(result)
+        Option.None -> Terminal.moveTo(0, 0)
+
+fn renderAiPanel(result: AiResult) -> Unit
+    ? "Draw AI decision panel on the right side of the board"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    Terminal.moveTo(22, 1)
+    Terminal.setColor("cyan")
+    Terminal.print("AI depth={Int.toString(result.depth)} {Int.toString(result.thinkMs)}ms")
+    Terminal.resetColor()
+    Terminal.moveTo(22, 2)
+    Terminal.setColor("yellow")
+    Terminal.print("root-parallel x{Int.toString(Ai.rootParallelWidth())} | {Int.toString(List.len(result.candidates))} moves")
+    Terminal.resetColor()
+    renderCandidates(result.candidates, result.move, 0)
+
+fn renderCandidates(candidates: List<ScoredMove>, chosen: List<Point>, i: Int) -> Unit
+    ? "Render candidate moves list"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    match i == Int.min(List.len(candidates), 6)
+        true -> Terminal.moveTo(0, 0)
+        false -> match Vector.get(Vector.fromList(candidates), i)
+            Option.Some(sm) -> renderOneCandidate(candidates, chosen, sm, i)
+            Option.None -> Terminal.moveTo(0, 0)
+
+fn renderOneCandidate(candidates: List<ScoredMove>, chosen: List<Point>, sm: ScoredMove, i: Int) -> Unit
+    ? "Render one candidate move"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    Terminal.moveTo(22, i + 4)
+    match isChosenMove(sm.move, chosen)
+        true -> renderChosenCandidate(sm, i)
+        false -> renderOtherCandidate(sm, i)
+    renderCandidates(candidates, chosen, i + 1)
+
+fn renderChosenCandidate(sm: ScoredMove, i: Int) -> Unit
+    ? "Render the chosen move in green"
+    ! [Terminal.print, Terminal.resetColor, Terminal.setColor]
+    Terminal.setColor("green")
+    Terminal.print("★ ")
+    Terminal.print(moveLabel(sm.move))
+    Terminal.print("  {Int.toString(sm.score)}")
+    Terminal.resetColor()
+
+fn renderOtherCandidate(sm: ScoredMove, i: Int) -> Unit
+    ? "Render non-chosen candidate in white"
+    ! [Terminal.print]
+    Terminal.print("  ")
+    Terminal.print(moveLabel(sm.move))
+    Terminal.print("  {Int.toString(sm.score)}")
+
+fn isChosenMove(a: List<Point>, b: List<Point>) -> Bool
+    ? "True if two moves are the same (compare first and last points)"
+    match Vector.get(Vector.fromList(a), 0)
+        Option.Some(af) -> match Vector.get(Vector.fromList(b), 0)
+            Option.Some(bf) -> Bool.and(Bool.and(af.x == bf.x, af.y == bf.y), sameLastPoint(a, b))
+            Option.None -> false
+        Option.None -> false
+
+verify isChosenMove
+    isChosenMove([Board.pt(1, 2), Board.pt(0, 3)], [Board.pt(1, 2), Board.pt(0, 3)]) => true
+    isChosenMove([Board.pt(1, 2), Board.pt(0, 3)], [Board.pt(3, 4), Board.pt(5, 6)]) => false
+
+fn sameLastPoint(a: List<Point>, b: List<Point>) -> Bool
+    ? "True if last points match"
+    match Vector.get(Vector.fromList(a), List.len(a) - 1)
+        Option.Some(al) -> match Vector.get(Vector.fromList(b), List.len(b) - 1)
+            Option.Some(bl) -> Bool.and(al.x == bl.x, al.y == bl.y)
+            Option.None -> false
+        Option.None -> false
+
+verify sameLastPoint
+    sameLastPoint([Board.pt(1, 2), Board.pt(3, 4)], [Board.pt(5, 6), Board.pt(3, 4)]) => true
+    sameLastPoint([Board.pt(1, 2), Board.pt(3, 4)], [Board.pt(5, 6), Board.pt(7, 8)]) => false
+
+fn colChar(x: Int) -> String
+    ? "Column letter for x coordinate"
+    match x
+        0 -> "a"
+        1 -> "b"
+        2 -> "c"
+        3 -> "d"
+        4 -> "e"
+        5 -> "f"
+        6 -> "g"
+        _ -> "h"
+
+verify colChar
+    colChar(0) => "a"
+
+fn moveLabel(move: List<Point>) -> String
+    ? "Human-readable label for a move path"
+    match firstPoint(move)
+        Option.Some(from) -> match lastPoint(move)
+            Option.Some(to) -> "{colChar(from.x)}{Int.toString(8 - from.y)}→{colChar(to.x)}{Int.toString(8 - to.y)}"
+            Option.None -> "?"
+        Option.None -> "?"
+
+verify moveLabel
+    moveLabel([Board.pt(1, 2), Board.pt(0, 3)]) => "b6→a5"
+
+fn renderHelp(state: GameState) -> Unit
+    ? "Show who plays whom, AI depth, and controls"
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    Terminal.moveTo(0, 14)
+    Terminal.setColor("green")
+    Terminal.print(" You (black) vs AI (white) · depth {Int.toString(state.searchDepth)} · +/- to change")
+    Terminal.resetColor()
+    Terminal.moveTo(0, 15)
+    match state.selected
+        Option.Some(sel) -> Terminal.print(" Arrows:move  Enter:confirm  Esc:deselect  Q:quit")
+        Option.None -> Terminal.print(" Arrows:move  Enter:select piece  Q:quit            ")
+
+fn handleKey(state: GameState, key: String) -> GameState
+    ? "Handle a keypress in player phase"
+    match key
+        "up" -> GameState.update(state, cursorY = clamp(state.cursorY - 1, 0, 7))
+        "down" -> GameState.update(state, cursorY = clamp(state.cursorY + 1, 0, 7))
+        "left" -> GameState.update(state, cursorX = clamp(state.cursorX - 1, 0, 7))
+        "right" -> GameState.update(state, cursorX = clamp(state.cursorX + 1, 0, 7))
+        "enter" -> handleEnter(state)
+        "esc" -> GameState.update(state, selected = Option.None, pieceMoves = [])
+        "+" -> GameState.update(state, searchDepth = state.searchDepth + 1)
+        "-" -> GameState.update(state, searchDepth = Int.max(state.searchDepth - 1, 1))
+        "q" -> GameState.update(state, gameOver = true)
+        _ -> state
+
+verify handleKey
+    handleKey(initState(6), "right").cursorX => 4
+    handleKey(initState(6), "up").cursorY => 4
+
+fn handleEnter(state: GameState) -> GameState
+    ? "Enter key: select piece or confirm destination"
+    match state.selected
+        Option.Some(sel) -> handleDestination(state)
+        Option.None -> handleSelection(state)
+
+verify handleEnter
+    handleEnter(initState(6)).selected => Option.None
+
+fn handleSelection(state: GameState) -> GameState
+    ? "Try to select the piece under cursor"
+    moves = Rules.legalMoves(state.board, state.currentPlayer)
+    pMoves = movesFromPiece(moves, Board.pt(state.cursorX, state.cursorY), 0)
+    match pMoves
+        [] -> state
+        _ -> GameState.update(state, selected = Option.Some(Board.pt(state.cursorX, state.cursorY)), pieceMoves = pMoves)
+
+verify handleSelection
+    handleSelection(initState(6)).selected => Option.None
+
+fn handleDestination(state: GameState) -> GameState
+    ? "Try to move to cursor position"
+    match findTurnByDest(state.pieceMoves, Board.pt(state.cursorX, state.cursorY), 0)
+        Option.Some(turn) -> applyPlayerMove(state, turn)
+        Option.None -> state
+
+verify handleDestination
+    handleDestination(initState(6)) => initState(6)
+
+fn applyPlayerMove(state: GameState, turn: List<Point>) -> GameState
+    ? "Apply player move and switch to opponent"
+    GameState.update(state, board = Rules.applyTurn(state.board, turn), currentPlayer = Board.opponent(state.currentPlayer), moveNum = state.moveNum + 1, selected = Option.None, pieceMoves = [])
+
+verify applyPlayerMove
+    applyPlayerMove(initState(6), [Board.pt(0, 5), Board.pt(1, 4)]).moveNum => 2
+
+fn readInput(state: GameState, playerColor: Color) -> GameState
+    ? "Drain queued keys, stop if turn changed or game over."
+    ! [Terminal.readKey]
+    match state.gameOver
+        true -> state
+        false -> match state.currentPlayer == playerColor
+            false -> state
+            true -> readOneKey(state, playerColor)
+
+fn readOneKey(state: GameState, playerColor: Color) -> GameState
+    ? "Read one key and continue draining if still player's turn."
+    ! [Terminal.readKey]
+    match Terminal.readKey()
+        Option.Some(k) -> readInput(handleKey(state, k), playerColor)
+        Option.None -> state
+
+fn playerPhase(state: GameState) -> Result<String, String>
+    ? "Player turn: render, read input, check if move was made"
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
+    renderFrame(state)
+    Time.sleep(50)
+    newState = readInput(state, state.currentPlayer)
+    match newState.currentPlayer == state.currentPlayer
+        true -> playerPhaseCheck(newState)
+        false -> gameLoop(checkGameOver(newState))
+
+fn playerPhaseCheck(state: GameState) -> Result<String, String>
+    ? "Check for quit or continue player phase"
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
+    match state.gameOver
+        true -> Result.Ok("Quit. Thanks for playing!")
+        false -> playerPhase(state)
+
+fn aiPhase(state: GameState) -> Result<String, String>
+    ? "AI turn: show thinking, time the search, continue"
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
+    renderFrame(state)
+    Terminal.moveTo(0, 14)
+    Terminal.print("AI thinking (depth {Int.toString(state.searchDepth)}, root-parallel x{Int.toString(Ai.rootParallelWidth())})...")
+    Terminal.flush()
+    t0 = Time.unixMs()
+    aiState = handleAiTurn(state)
+    t1 = Time.unixMs()
+    gameLoop(checkGameOver(stampThinkTime(aiState, t1 - t0)))
+
+fn gameLoop(state: GameState) -> Result<String, String>
+    ? "Main game loop — TCO recursive"
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
+    match state.gameOver
+        true -> gameOverResult(state)
+        false -> gameTurn(state)
+
+fn gameOverResult(state: GameState) -> Result<String, String>
+    ? "Show game over and return"
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+        Time.sleep,
+    ]
+    renderFrame(state)
+    Terminal.moveTo(0, 14)
+    Terminal.print("Game over!")
+    Terminal.flush()
+    Time.sleep(2000)
+    Result.Ok("Game over! Move {Int.toString(state.moveNum)}")
+
+fn gameTurn(state: GameState) -> Result<String, String>
+    ? "Dispatch to player or AI"
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
+    match state.currentPlayer == state.aiColor
+        true -> aiPhase(state)
+        false -> playerPhase(state)
+
+fn run() -> Result<String, String>
+    ? "Setup terminal, run game, teardown"
+    ! [
+        Args.get,
+        Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
+        Time.sleep, Time.unixMs,
+    ]
+    depth = parseDepth(Args.get())
+    Terminal.enableRawMode()
+    Terminal.hideCursor()
+    result = gameLoop(initState(depth))
+    Terminal.showCursor()
+    Terminal.disableRawMode()
+    Terminal.clear()
+    result
+
+fn main()
+    ? "Entry point"
+    ! [
+        Args.get,
+        Console.print,
+        Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
+        Time.sleep, Time.unixMs,
+    ]
+    match run()
+        Result.Ok(msg) -> Console.print(msg)
+        Result.Err(err) -> Console.print("Error: {err}")

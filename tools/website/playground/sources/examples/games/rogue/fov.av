@@ -1,0 +1,237 @@
+module Fov
+    intent =
+        "Field-of-view computation using recursive shadowcasting (8-octant)."
+    depends [Types]
+
+record Visibility
+    visible: List<Point>
+
+fn getT(map: List<List<Tile>>, x: Int, y: Int) -> Tile
+    ? "Get tile at (x, y), defaulting to Wall if out of bounds"
+    match Vector.get(Vector.fromList(map), y)
+        Option.Some(row) -> match Vector.get(Vector.fromList(row), x)
+            Option.Some(t) -> t
+            Option.None -> Tile.Wall
+        Option.None -> Tile.Wall
+
+verify getT
+    getT([[Tile.Floor, Tile.Wall], [Tile.Door, Tile.Floor]], 0, 0) => Tile.Floor
+    getT([[Tile.Floor, Tile.Wall], [Tile.Door, Tile.Floor]], 1, 0) => Tile.Wall
+    getT([[Tile.Floor, Tile.Wall], [Tile.Door, Tile.Floor]], 0, 1) => Tile.Door
+    getT([[Tile.Floor, Tile.Wall], [Tile.Door, Tile.Floor]], 5, 5) => Tile.Wall
+
+fn isWall(map: List<List<Tile>>, x: Int, y: Int) -> Bool
+    ? "True if tile at (x, y) is a wall"
+    match getT(map, x, y)
+        Tile.Wall -> true
+        _ -> false
+
+verify isWall
+    isWall([[Tile.Wall]], 0, 0) => true
+    isWall([[Tile.Floor]], 0, 0) => false
+
+fn containsPt(pts: List<Point>, target: Point, i: Int) -> Bool
+    ? "Check if target point is in pts starting from index i"
+    match Vector.get(Vector.fromList(pts), i)
+        Option.None -> false
+        Option.Some(p) -> match Types.ptEq(p, target)
+            true -> true
+            false -> containsPt(pts, target, i + 1)
+
+verify containsPt
+    containsPt([Types.pt(1, 2), Types.pt(3, 4)], Types.pt(3, 4), 0) => true
+    containsPt([Types.pt(1, 2), Types.pt(3, 4)], Types.pt(5, 6), 0) => false
+    containsPt([], Types.pt(0, 0), 0) => false
+
+fn transformOctant(octant: Int, row: Int, col: Int) -> Point
+    ? "Coordinate delta for a given octant, row, and col — returns dx,dy as Point"
+    negRow = 0 - row
+    negCol = 0 - col
+    match octant
+        0 -> Types.pt(col, negRow)
+        1 -> Types.pt(row, negCol)
+        2 -> Types.pt(row, col)
+        3 -> Types.pt(col, row)
+        4 -> Types.pt(negCol, row)
+        5 -> Types.pt(negRow, col)
+        6 -> Types.pt(negRow, negCol)
+        _ -> Types.pt(negCol, negRow)
+
+verify transformOctant
+    transformOctant(0, 3, 2).x => 2
+    transformOctant(0, 3, 2).y => 0 - 3
+    transformOctant(2, 3, 2).x => 3
+    transformOctant(2, 3, 2).y => 2
+    transformOctant(4, 3, 2).x => 0 - 2
+    transformOctant(4, 3, 2).y => 3
+    transformOctant(7, 3, 2).x => 0 - 2
+    transformOctant(7, 3, 2).y => 0 - 3
+
+fn inRadius(row: Int, col: Int, radius: Int) -> Bool
+    ? "True if (row, col) is within Euclidean radius (squared check)"
+    row * row + col * col <= radius * radius
+
+verify inRadius
+    inRadius(0, 0, 5) => true
+    inRadius(3, 4, 5) => true
+    inRadius(4, 4, 5) => false
+
+fn cellStartSlope(col: Int, row: Int) -> Int
+    ? "Start (left) slope of cell: col * 1000 / row"
+    col * 1000 / row
+
+verify cellStartSlope
+    cellStartSlope(0, 1) => 0
+    cellStartSlope(1, 2) => 500
+    cellStartSlope(2, 3) => 666
+
+fn cellEndSlope(col: Int, row: Int) -> Int
+    ? "End (right) slope of cell: (col + 1) * 1000 / row"
+    (col + 1) * 1000 / row
+
+verify cellEndSlope
+    cellEndSlope(0, 1) => 1000
+    cellEndSlope(0, 2) => 500
+    cellEndSlope(1, 2) => 1000
+
+fn minCol(startSlope: Int, row: Int) -> Int
+    ? "Minimum column at this row for startSlope"
+    (startSlope * row + 500) / 1000
+
+verify minCol
+    minCol(0, 1) => 0
+    minCol(500, 2) => 1
+    minCol(1000, 1) => 1
+
+fn maxCol(endSlope: Int, row: Int) -> Int
+    ? "Maximum column at this row for endSlope"
+    (endSlope * row + 500) / 1000
+
+verify maxCol
+    maxCol(1000, 1) => 1
+    maxCol(500, 2) => 1
+    maxCol(1000, 3) => 3
+
+fn wallFromFloorDeeper(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, acc: List<Point>, cx: Int, cy: Int) -> List<Point>
+    ? "Handle transition from floor to wall: recurse deeper then continue row"
+    newEnd = cellStartSlope(col, row)
+    accWithPt = List.concat(acc, [Types.pt(cx, cy)])
+    deeper = scanOctant(map, ox, oy, radius, octant, row + 1, startSlope, newEnd, accWithPt)
+    scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, startSlope, endSlope, true, deeper)
+
+verify wallFromFloorDeeper
+    List.len(wallFromFloorDeeper([[Tile.Wall]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, [], 0, 0)) => 1
+
+fn floorFromWallResume(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, acc: List<Point>, cx: Int, cy: Int) -> List<Point>
+    ? "Handle transition from wall to floor: update startSlope and continue"
+    newStart = cellEndSlope(col, row)
+    scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, newStart, endSlope, false, List.concat(acc, [Types.pt(cx, cy)]))
+
+verify floorFromWallResume
+    List.len(floorFromWallResume([[Tile.Floor, Tile.Floor]], 0, 0, 2, 2, 1, 0, 1, 0, 1000, [], 0, 0)) => 2
+
+fn scanRowWall(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, prevWall: Bool, acc: List<Point>, cx: Int, cy: Int) -> List<Point>
+    ? "Handle a wall cell during row scan"
+    match prevWall
+        true -> scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, startSlope, endSlope, true, List.concat(acc, [Types.pt(cx, cy)]))
+        false -> wallFromFloorDeeper(map, ox, oy, radius, octant, row, col, maxC, startSlope, endSlope, acc, cx, cy)
+
+verify scanRowWall
+    List.len(scanRowWall([[Tile.Wall]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, true, [], 0, 0)) => 1
+    List.len(scanRowWall([[Tile.Wall]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, false, [], 0, 0)) => 1
+
+fn scanRowFloor(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, prevWall: Bool, acc: List<Point>, cx: Int, cy: Int) -> List<Point>
+    ? "Handle a floor cell during row scan"
+    match prevWall
+        true -> floorFromWallResume(map, ox, oy, radius, octant, row, col, maxC, startSlope, endSlope, acc, cx, cy)
+        false -> scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, startSlope, endSlope, false, List.concat(acc, [Types.pt(cx, cy)]))
+
+verify scanRowFloor
+    List.len(scanRowFloor([[Tile.Floor]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, false, [], 0, 0)) => 1
+    List.len(scanRowFloor([[Tile.Floor, Tile.Floor]], 0, 0, 2, 2, 1, 0, 1, 0, 1000, true, [], 0, 0)) => 2
+
+fn scanRowCell(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, prevWall: Bool, acc: List<Point>, cx: Int, cy: Int) -> List<Point>
+    ? "Process one cell in the row: check wall or floor and delegate"
+    match isWall(map, cx, cy)
+        true -> scanRowWall(map, ox, oy, radius, octant, row, col, maxC, startSlope, endSlope, prevWall, acc, cx, cy)
+        false -> scanRowFloor(map, ox, oy, radius, octant, row, col, maxC, startSlope, endSlope, prevWall, acc, cx, cy)
+
+verify scanRowCell
+    List.len(scanRowCell([[Tile.Wall]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, false, [], 0, 0)) => 1
+
+fn scanRowInRadius(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, prevWall: Bool, acc: List<Point>) -> List<Point>
+    ? "Process a cell that is within radius"
+    d = transformOctant(octant, row, col)
+    cx = ox + d.x
+    cy = oy + d.y
+    scanRowCell(map, ox, oy, radius, octant, row, col, maxC, startSlope, endSlope, prevWall, acc, cx, cy)
+
+verify scanRowInRadius
+    List.len(scanRowInRadius([[Tile.Floor]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, false, [])) => 1
+
+fn scanRow(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, prevWall: Bool, acc: List<Point>) -> List<Point>
+    ? "Scan cells in one row from col to maxC, accumulating visible points"
+    match col > maxC
+        true -> match prevWall
+            true -> acc
+            false -> scanOctant(map, ox, oy, radius, octant, row + 1, startSlope, endSlope, acc)
+        false -> match inRadius(row, col, radius)
+            false -> scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, startSlope, endSlope, prevWall, acc)
+            true -> scanRowInRadius(map, ox, oy, radius, octant, row, col, maxC, startSlope, endSlope, prevWall, acc)
+
+verify scanRow
+    List.len(scanRow([[Tile.Floor]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, false, [])) => 1
+
+fn scanOctant(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, startSlope: Int, endSlope: Int, acc: List<Point>) -> List<Point>
+    ? "Recursively scan one octant row by row using shadowcasting"
+    match row > radius
+        true -> acc
+        false -> match startSlope >= endSlope
+            true -> acc
+            false -> scanRow(map, ox, oy, radius, octant, row, minCol(startSlope, row), maxCol(endSlope, row), startSlope, endSlope, false, acc)
+
+verify scanOctant
+    List.len(scanOctant([[Tile.Floor]], 0, 0, 1, 2, 1, 0, 1000, [])) => 1
+    List.len(scanOctant([[Tile.Floor]], 0, 0, 1, 2, 2, 0, 1000, [])) => 0
+
+fn scanAllOctants(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, acc: List<Point>) -> List<Point>
+    ? "Scan octants 0 through 7, accumulating visible points"
+    match octant > 7
+        true -> acc
+        false -> scanAllOctants(map, ox, oy, radius, octant + 1, scanOctant(map, ox, oy, radius, octant, 1, 0, 1000, acc))
+
+verify scanAllOctants
+    List.len(scanAllOctants([[Tile.Floor]], 0, 0, 0, 0, [])) => 0
+
+fn dedup(pts: List<Point>, i: Int, acc: List<Point>) -> List<Point>
+    ? "Remove duplicate points from the list"
+    match Vector.get(Vector.fromList(pts), i)
+        Option.None -> acc
+        Option.Some(p) -> dedupStep(pts, i, acc, p)
+
+verify dedup
+    List.len(dedup([Types.pt(1, 1), Types.pt(1, 1), Types.pt(2, 2)], 0, [])) => 2
+    List.len(dedup([], 0, [])) => 0
+
+fn dedupStep(pts: List<Point>, i: Int, acc: List<Point>, p: Point) -> List<Point>
+    ? "Process one point in dedup"
+    nextI = i + 1
+    match containsPt(acc, p, 0)
+        true -> dedup(pts, nextI, acc)
+        false -> dedup(pts, nextI, List.concat(acc, [p]))
+
+verify dedupStep
+    List.len(dedupStep([Types.pt(1, 1), Types.pt(2, 2)], 0, [], Types.pt(1, 1))) => 2
+
+fn computeFov(map: List<List<Tile>>, origin: Point, radius: Int) -> List<Point>
+    ? "Compute all visible points from origin within given radius using recursive shadowcasting"
+    raw = scanAllOctants(map, origin.x, origin.y, radius, 0, [Types.pt(origin.x, origin.y)])
+    dedup(raw, 0, [])
+
+verify computeFov
+    containsPt(computeFov([[Tile.Floor, Tile.Floor, Tile.Floor]], Types.pt(1, 0), 1), Types.pt(1, 0), 0) => true
+    containsPt(computeFov([[Tile.Floor, Tile.Floor, Tile.Floor]], Types.pt(1, 0), 1), Types.pt(0, 0), 0) => true
+    containsPt(computeFov([[Tile.Floor, Tile.Floor, Tile.Floor]], Types.pt(1, 0), 1), Types.pt(2, 0), 0) => true
+    containsPt(computeFov([[Tile.Floor, Tile.Wall, Tile.Floor]], Types.pt(0, 0), 2), Types.pt(0, 0), 0) => true
+    containsPt(computeFov([[Tile.Floor, Tile.Wall, Tile.Floor]], Types.pt(0, 0), 2), Types.pt(1, 0), 0) => true
+    containsPt(computeFov([[Tile.Floor, Tile.Wall, Tile.Floor]], Types.pt(0, 0), 2), Types.pt(2, 0), 0) => false

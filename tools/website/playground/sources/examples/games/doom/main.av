@@ -1,0 +1,350 @@
+module Main
+    intent =
+        "Doom-like raycasting FPS rendered with Unicode Braille characters."
+        "Procedural levels, wall textures, enemies with AI, minimap."
+    depends [Math, Level, Render, Types, Rng, Enemy]
+
+decision BrailleRendering
+    date = "2026-03-24"
+    author = "szymon"
+    reason =
+        "Unicode Braille characters encode a 2x4 dot matrix in a single glyph,"
+        "giving 4x vertical resolution compared to plain ASCII. This produces"
+        "smooth wall edges without needing a graphics library."
+    chosen = "BrailleEncoding"
+    rejected = ["AsciiShading", "AnsiBlockChars"]
+    impacts = ["renderFrame", "columnBraille", "cellBits"]
+
+fn moveSpeed() -> Float
+    ? "Player movement speed per tick"
+    0.15
+
+verify moveSpeed
+    moveSpeed() => 0.15
+
+fn turnSpeed() -> Float
+    ? "Player turn speed per tick in radians (~8 degrees)"
+    0.14
+
+verify turnSpeed
+    turnSpeed() => 0.14
+
+fn spawnInRoom(room: Level.Room, seed: Int) -> Enemy
+    ? "Spawn an enemy at the center of a room"
+    kind = pickKind(seed)
+    cx = Int.toFloat(room.x + room.w / 2) + 0.5
+    cy = Int.toFloat(room.y + room.h / 2) + 0.5
+    Types.mkEnemy(cx, cy, kind, Types.enemyMaxHp(kind))
+
+verify spawnInRoom
+    spawnInRoom(Level.Room(x = 4, y = 4, w = 6, h = 4), 42).x => 7.5
+
+fn pickKind(seed: Int) -> EnemyKind
+    ? "Choose enemy kind from seed"
+    n = Rng.seedToRange(seed, 0, 2)
+    match n
+        0 -> EnemyKind.Imp
+        1 -> EnemyKind.Demon
+        _ -> EnemyKind.Ghost
+
+verify pickKind
+    Types.enemyMaxHp(pickKind(42)) > 0 => true
+
+fn spawnEnemies(rooms: List<Level.Room>, seed: Int, i: Int, acc: List<Enemy>) -> List<Enemy>
+    ? "Spawn one enemy per room, skipping room 0 (player start)"
+    match i == List.len(rooms)
+        true -> acc
+        false -> match Vector.get(Vector.fromList(rooms), i)
+            Option.Some(room) -> spawnSkipFirst(rooms, seed, i, acc, room)
+            Option.None -> acc
+
+verify spawnEnemies
+    spawnEnemies([], 42, 0, []) => []
+
+fn spawnSkipFirst(rooms: List<Level.Room>, seed: Int, i: Int, acc: List<Enemy>, room: Level.Room) -> List<Enemy>
+    ? "Skip first room, spawn in rest"
+    next = i + 1
+    match i == 0
+        true -> spawnEnemies(rooms, Rng.nextSeed(seed), next, acc)
+        false -> spawnEnemies(rooms, Rng.nextSeed(seed), next, List.concat(acc, [spawnInRoom(room, seed)]))
+
+verify spawnSkipFirst
+    spawnSkipFirst([Level.Room(x = 1, y = 1, w = 2, h = 2)], 42, 0, [], Level.Room(x = 1, y = 1, w = 2, h = 2)) => []
+
+fn initGame(seed: Int) -> GameState
+    ? "Create initial game state from seed"
+    levelMap = Level.generateLevel(seed)
+    wallMap = Level.generateWallTypes(seed)
+    rooms = Level.getRooms(seed)
+    pos = Level.startPos(seed)
+    enemies = spawnEnemies(rooms, Rng.nextSeed(seed), 0, [])
+    match pos
+        (px, py) -> GameState(levelMap = levelMap, wallMap = wallMap, player = Player(x = px, y = py, angle = 0.0, hp = 100), enemies = enemies, seed = seed, messages = ["Welcome to Braille Doom!"], gameOver = false, turnCount = 0)
+
+verify initGame
+    List.len(initGame(42).levelMap) => 32
+
+fn tryMove(state: GameState, dx: Float, dy: Float) -> Player
+    ? "Attempt to move the player; slide along walls if blocked"
+    p = state.player
+    nx = p.x + dx
+    ny = p.y + dy
+    canX = Bool.not(Level.isWall(state.levelMap, Float.floor(nx), Float.floor(p.y)))
+    canY = Bool.not(Level.isWall(state.levelMap, Float.floor(p.x), Float.floor(ny)))
+    slideMove(p, nx, ny, canX, canY)
+
+verify tryMove
+    tryMove(GameState(levelMap = Level.buildMap(4, "####", []), wallMap = [], player = Player(x = 1.0, y = 1.0, angle = 0.0, hp = 100), enemies = [], seed = 0, messages = [], gameOver = false, turnCount = 0), 1.0, 0.0).x => 1.0
+
+fn slideMove(player: Player, nx: Float, ny: Float, canX: Bool, canY: Bool) -> Player
+    ? "Apply wall-sliding movement based on axis availability"
+    match canX
+        true -> match canY
+            true -> Player.update(player, x = nx, y = ny)
+            false -> Player.update(player, x = nx)
+        false -> match canY
+            true -> Player.update(player, y = ny)
+            false -> player
+
+verify slideMove
+    slideMove(Player(x = 1.0, y = 1.0, angle = 0.0, hp = 100), 2.0, 3.0, false, true).y => 3.0
+    slideMove(Player(x = 1.0, y = 1.0, angle = 0.0, hp = 100), 2.0, 3.0, true, true).x => 2.0
+    slideMove(Player(x = 1.0, y = 1.0, angle = 0.0, hp = 100), 2.0, 3.0, true, false).x => 2.0
+
+fn moveForward(state: GameState) -> Player
+    ? "Move player forward"
+    tryMove(state, Float.cos(state.player.angle) * moveSpeed(), Float.sin(state.player.angle) * moveSpeed())
+
+verify moveForward
+    moveForward(GameState(levelMap = Level.buildMap(4, "####", []), wallMap = [], player = Player(x = 1.0, y = 1.0, angle = 0.0, hp = 100), enemies = [], seed = 0, messages = [], gameOver = false, turnCount = 0)).x => 1.0
+
+fn moveBackward(state: GameState) -> Player
+    ? "Move player backward"
+    tryMove(state, 0.0 - Float.cos(state.player.angle) * moveSpeed(), 0.0 - Float.sin(state.player.angle) * moveSpeed())
+
+verify moveBackward
+    moveBackward(GameState(levelMap = Level.buildMap(4, "####", []), wallMap = [], player = Player(x = 1.0, y = 1.0, angle = 0.0, hp = 100), enemies = [], seed = 0, messages = [], gameOver = false, turnCount = 0)).x => 1.0
+
+fn strafeLeft(state: GameState) -> Player
+    ? "Strafe left"
+    sideAngle = state.player.angle - Float.pi() / 2.0
+    tryMove(state, Float.cos(sideAngle) * moveSpeed(), Float.sin(sideAngle) * moveSpeed())
+
+verify strafeLeft
+    strafeLeft(GameState(levelMap = Level.buildMap(4, "####", []), wallMap = [], player = Player(x = 1.0, y = 1.0, angle = 0.0, hp = 100), enemies = [], seed = 0, messages = [], gameOver = false, turnCount = 0)).y => 1.0
+
+fn strafeRight(state: GameState) -> Player
+    ? "Strafe right"
+    sideAngle = state.player.angle + Float.pi() / 2.0
+    tryMove(state, Float.cos(sideAngle) * moveSpeed(), Float.sin(sideAngle) * moveSpeed())
+
+verify strafeRight
+    strafeRight(GameState(levelMap = Level.buildMap(4, "####", []), wallMap = [], player = Player(x = 1.0, y = 1.0, angle = 0.0, hp = 100), enemies = [], seed = 0, messages = [], gameOver = false, turnCount = 0)).y => 1.0
+
+fn turnLeft(state: GameState) -> Player
+    ? "Turn player left"
+    Player.update(state.player, angle = Math.normalizeAngle(state.player.angle - turnSpeed()))
+
+verify turnLeft
+    turnLeft(GameState(levelMap = [], wallMap = [], player = Player(x = 1.0, y = 1.0, angle = 0.0, hp = 100), enemies = [], seed = 0, messages = [], gameOver = false, turnCount = 0)).angle => Math.normalizeAngle(0.0 - turnSpeed())
+
+fn turnRight(state: GameState) -> Player
+    ? "Turn player right"
+    Player.update(state.player, angle = Math.normalizeAngle(state.player.angle + turnSpeed()))
+
+verify turnRight
+    turnRight(GameState(levelMap = [], wallMap = [], player = Player(x = 1.0, y = 1.0, angle = 0.0, hp = 100), enemies = [], seed = 0, messages = [], gameOver = false, turnCount = 0)).angle => turnSpeed()
+
+fn turnAndMove(state: GameState, turned: Player) -> Player
+    ? "Apply turn, then move forward in new direction"
+    movedState = GameState.update(state, player = turned)
+    moveForward(movedState)
+
+verify turnAndMove
+    turnAndMove(GameState(levelMap = Level.buildMap(4, "####", []), wallMap = [], player = Player(x = 1.0, y = 1.0, angle = 0.0, hp = 100), enemies = [], seed = 0, messages = [], gameOver = false, turnCount = 0), Player(x = 1.0, y = 1.0, angle = turnSpeed(), hp = 100)).angle => turnSpeed()
+
+fn handleInput(state: GameState, key: String) -> GameState
+    ? "Update game state based on a key press"
+    match key
+        " " -> handleShoot(state)
+        "w" -> GameState.update(state, player = moveForward(state))
+        "s" -> GameState.update(state, player = moveBackward(state))
+        "a" -> GameState.update(state, player = strafeLeft(state))
+        "d" -> GameState.update(state, player = strafeRight(state))
+        "e" -> GameState.update(state, player = turnAndMove(state, turnRight(state)))
+        "q" -> GameState.update(state, player = turnAndMove(state, turnLeft(state)))
+        "left" -> GameState.update(state, player = turnLeft(state))
+        "right" -> GameState.update(state, player = turnRight(state))
+        "," -> GameState.update(state, player = turnLeft(state))
+        "." -> GameState.update(state, player = turnRight(state))
+        _ -> state
+
+verify handleInput
+    handleInput(GameState(levelMap = [], wallMap = [], player = Player(x = 1.0, y = 1.0, angle = 0.0, hp = 100), enemies = [], seed = 0, messages = [], gameOver = false, turnCount = 0), "z").turnCount => 0
+
+fn handleShoot(state: GameState) -> GameState
+    ? "Fire a shot along the player's facing direction"
+    result = Enemy.shootRay(state.enemies, state.player.x, state.player.y, state.player.angle, state.levelMap)
+    match result
+        (newEnemies, msg) -> GameState.update(state, enemies = newEnemies, messages = List.concat(state.messages, [msg]))
+
+verify handleShoot
+    List.len(handleShoot(GameState(levelMap = Level.buildMap(4, "####", []), wallMap = [], player = Player(x = 1.0, y = 1.0, angle = 0.0, hp = 100), enemies = [], seed = 0, messages = [], gameOver = false, turnCount = 0)).messages) => 1
+
+fn updateTurn(state: GameState) -> GameState
+    ? "Run enemy AI and apply damage after player moves"
+    newEnemies = Enemy.updateEnemies(state.enemies, state.player.x, state.player.y, state.levelMap, Rng.advanceSeed(state.seed, state.turnCount), state.turnCount, 0, [])
+    damaged = Enemy.applyEnemyDamage(newEnemies, state.player, 0)
+    isOver = damaged.hp < 1
+    msgs = match isOver
+        true -> ["You died!"]
+        false -> match damaged.hp < state.player.hp
+            true -> List.concat(state.messages, ["Ouch! HP: {Int.toString(damaged.hp)}"])
+            false -> state.messages
+    trimmedMsgs = trimMessages(msgs)
+    GameState.update(state, enemies = newEnemies, player = damaged, turnCount = state.turnCount + 1, gameOver = isOver, messages = trimmedMsgs)
+
+verify updateTurn
+    updateTurn(GameState(levelMap = Level.buildMap(4, "....", []), wallMap = [], player = Player(x = 1.0, y = 1.0, angle = 0.0, hp = 100), enemies = [], seed = 0, messages = [], gameOver = false, turnCount = 0)).turnCount => 1
+
+fn trimMessages(msgs: List<String>) -> List<String>
+    ? "Keep only the last 3 messages"
+    match List.len(msgs) > 3
+        true -> trimMessages(dropFirst(msgs))
+        false -> msgs
+
+verify trimMessages
+    List.len(trimMessages(["a", "b", "c", "d", "e"])) => 3
+    trimMessages(["a", "b"]) => ["a", "b"]
+    trimMessages([]) => []
+
+fn dropFirst(xs: List<String>) -> List<String>
+    ? "Remove first element of a string list"
+    match xs
+        [_, ..rest] -> rest
+        _ -> []
+
+verify dropFirst
+    dropFirst(["a", "b", "c"]) => ["b", "c"]
+    dropFirst([]) => []
+
+fn gameLoop(state: GameState) -> Unit
+    ? "Main game loop: render, read input, update state, repeat"
+    ! [
+        Console.print,
+        Random.int,
+        Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
+        Time.sleep,
+    ]
+    Terminal.clear()
+    Render.renderFrame(state)
+    Terminal.flush()
+    match state.gameOver
+        true -> gameOverScreen(state)
+        false -> waitAndProcess(state)
+
+fn gameOverScreen(state: GameState) -> Unit
+    ? "Show game over then wait for quit"
+    ! [
+        Console.print,
+        Random.int,
+        Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
+        Time.sleep,
+    ]
+    Terminal.setColor("red")
+    Terminal.moveTo(25, 10)
+    Terminal.print("YOU DIED")
+    Terminal.setColor("white")
+    Terminal.moveTo(20, 12)
+    Terminal.print("Press X to quit")
+    Terminal.resetColor()
+    Terminal.flush()
+    waitForQuit()
+
+fn waitForQuit() -> Unit
+    ? "Wait for q key to exit"
+    ! [
+        Console.print,
+        Random.int,
+        Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
+        Time.sleep,
+    ]
+    match Terminal.readKey()
+        Option.Some(k) -> match k
+            "escape" -> cleanup()
+            "x" -> cleanup()
+            _ -> waitForQuit()
+        Option.None -> waitForQuitSleep()
+
+fn waitForQuitSleep() -> Unit
+    ? "Sleep and retry"
+    ! [
+        Console.print,
+        Random.int,
+        Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
+        Time.sleep,
+    ]
+    Time.sleep(16)
+    waitForQuit()
+
+fn waitAndProcess(state: GameState) -> Unit
+    ? "Wait for key then dispatch"
+    ! [
+        Console.print,
+        Random.int,
+        Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
+        Time.sleep,
+    ]
+    match Terminal.readKey()
+        Option.Some(k) -> dispatch(state, k)
+        Option.None -> waitAfterNone(state)
+
+fn waitAfterNone(state: GameState) -> Unit
+    ? "Brief sleep then retry"
+    ! [
+        Console.print,
+        Random.int,
+        Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
+        Time.sleep,
+    ]
+    Time.sleep(16)
+    waitAndProcess(state)
+
+fn dispatch(state: GameState, key: String) -> Unit
+    ? "Handle quit or continue game loop"
+    ! [
+        Console.print,
+        Random.int,
+        Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
+        Time.sleep,
+    ]
+    match key
+        "escape" -> cleanup()
+        "x" -> cleanup()
+        _ -> gameLoop(updateTurn(handleInput(state, key)))
+
+fn cleanup() -> Unit
+    ? "Restore terminal state before exit"
+    ! [
+        Terminal.clear, Terminal.disableRawMode, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.showCursor,
+    ]
+    Terminal.disableRawMode()
+    Terminal.showCursor()
+    Terminal.clear()
+    Terminal.moveTo(0, 0)
+    Terminal.resetColor()
+    Terminal.print("Thanks for playing Braille Doom!\n")
+    Terminal.flush()
+
+fn main() -> Unit
+    ! [
+        Console.print,
+        Random.int,
+        Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor,
+        Time.sleep,
+    ]
+    Terminal.enableRawMode()
+    Terminal.hideCursor()
+    Terminal.clear()
+    seed = Random.int(1, 999999)
+    gameLoop(initGame(seed))

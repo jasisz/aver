@@ -39,7 +39,9 @@ const state = {
     queuedLines: [],
     rawMode: false,
     sharedKeyView: null,
+    sharedLineBuffer: null,
     programArgs: [],
+    activeGame: null,
     pendingTerminal: null,
     terminalFrame: 0,
     lastTerminal: null,
@@ -93,7 +95,7 @@ function setLineQueueCount(count) {
 
 function appendConsole(level, text) {
     const line = document.createElement("div");
-    line.className = `console-line console-${level}`;
+    line.className = `console-line ${level}`;
     line.textContent = text;
     dom.console.appendChild(line);
     dom.console.scrollTop = dom.console.scrollHeight;
@@ -222,6 +224,7 @@ function handleWorkerMessage(event) {
 async function loadSelectedFile(file) {
     state.wasmBytes = await file.arrayBuffer();
     state.wasmName = file.name;
+    state.activeGame = null;
     dom.fileMeta.textContent = `${file.name} · ${(file.size / 1024).toFixed(1)} KB`;
     dom.runButton.disabled = false;
     // Switch to game mode (hide editor)
@@ -378,6 +381,24 @@ function keyToCode(key) {
     }
 }
 
+function runtimeKeyForCurrentModule(key) {
+    const normalized = key === "escape" ? "esc" : key;
+    if (normalized === "esc" && state.activeGame === "doom") {
+        return "escape";
+    }
+    return normalized;
+}
+
+function dispatchRuntimeKey(key) {
+    if (!state.worker) {
+        return;
+    }
+    const runtimeKey = runtimeKeyForCurrentModule(key);
+    if (!enqueueSharedKey(runtimeKey)) {
+        state.worker.postMessage({ type: "key", key: runtimeKey });
+    }
+}
+
 function enqueueSharedKey(key) {
     if (!state.sharedKeyView) {
         return false;
@@ -403,16 +424,19 @@ function updateIsolationNote() {
     const interactiveReady =
         typeof SharedArrayBuffer === "function" && window.crossOriginIsolated;
 
-    if (interactiveReady) {
-        dom.isolationNote.dataset.tone = "ok";
-        dom.isolationCopy.innerHTML =
-            'Interactive <code>Terminal.readKey()</code> is live. This page is running in an isolated context.';
+    if (!dom.isolationNote || !dom.isolationCopy) {
         return;
     }
 
+    if (interactiveReady) {
+        dom.isolationNote.hidden = true;
+        return;
+    }
+
+    dom.isolationNote.hidden = false;
     dom.isolationNote.dataset.tone = "warn";
     dom.isolationCopy.innerHTML =
-        'Live keyboard input needs cross-origin isolation. Start this runner with <code>python3 serve.py 4173</code>, not plain <code>python3 -m http.server</code>.';
+        'Interactive <code>Terminal.readKey()</code> and <code>Console.readLine()</code> need cross-origin isolation. Start this runner with <code>python3 serve.py 4173</code>, not plain <code>python3 -m http.server</code>.';
 }
 
 function applyTerminalFrame(message) {
@@ -597,9 +621,7 @@ window.addEventListener("keydown", (event) => {
         return;
     }
     event.preventDefault();
-    if (!enqueueSharedKey(key)) {
-        state.worker.postMessage({ type: "key", key });
-    }
+    dispatchRuntimeKey(key);
 });
 
 new ResizeObserver(() => {
@@ -639,6 +661,7 @@ function setWorkspaceMode(mode) {
 function backToEditor() {
     stopRun();
     state.programArgs = [];
+    state.activeGame = null;
     const ws = document.querySelector(".workspace");
     if (ws) ws.dataset.showSource = "false";
     setWorkspaceMode("edit");
@@ -657,6 +680,7 @@ document.querySelectorAll("[data-game]").forEach(btn => {
         document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
         btn.classList.add("active");
         state.programArgs = args;
+        state.activeGame = name;
         const isConsoleGame = btn.hasAttribute("data-console-game");
         setWorkspaceMode("game");
         setOutputMode(isConsoleGame ? "console" : "terminal");
@@ -718,6 +742,7 @@ if (compileRunBtn) {
 
         document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
         setWorkspaceMode("edit");
+        state.activeGame = null;
 
         const usesTerminal = source.includes("Terminal.");
         setOutputMode(usesTerminal ? "terminal" : "console");
@@ -802,6 +827,7 @@ if (checkBtn) {
 
         setWorkspaceMode("edit");
         setOutputMode("console");
+        state.activeGame = null;
         clearOutput();
 
         try {
@@ -856,19 +882,19 @@ const GAME_SOURCES = {
     doom:     ["examples/games/doom/types.av", "examples/games/doom/math.av", "examples/games/doom/rng.av", "examples/games/doom/level.av", "examples/games/doom/enemy.av", "examples/games/doom/render.av", "examples/games/doom/main.av"],
 };
 
-const GITHUB_RAW = "https://raw.githubusercontent.com/jasisz/aver/main/";
+const PLAYGROUND_SOURCES_ROOT = "./sources/";
 const sourceCache = {};
 
 async function fetchSource(path) {
     if (sourceCache[path]) return sourceCache[path];
     try {
-        const resp = await fetch(GITHUB_RAW + path);
-        if (!resp.ok) return `// Failed to load ${path}`;
+        const resp = await fetch(PLAYGROUND_SOURCES_ROOT + path);
+        if (!resp.ok) return `// Failed to load bundled source: ${path}`;
         const text = await resp.text();
         sourceCache[path] = text;
         return text;
     } catch (_) {
-        return `// Failed to load ${path}`;
+        return `// Failed to load bundled source: ${path}`;
     }
 }
 
@@ -916,7 +942,6 @@ document.querySelector("[data-toggle-source]")?.addEventListener("click", () => 
 });
 
 // Load source when game is selected
-const origGameClickHandlers = [];
 document.querySelectorAll("[data-game]").forEach(btn => {
     btn.addEventListener("click", () => {
         const ws = document.querySelector(".workspace");
@@ -972,7 +997,7 @@ const GAME_TOUCH = {
             { key: "down", text: "↓" }, { key: "right", text: "→" },
         ]},
         { label: "Play", keys: [
-            { key: "enter", text: "↵" }, { key: "escape", text: "Esc" },
+            { key: "enter", text: "↵" }, { key: "esc", text: "Esc" },
             { key: "q", text: "Q" },
         ]},
         { label: "AI", keys: [
@@ -997,7 +1022,7 @@ const GAME_TOUCH = {
             { key: "left", text: "←" }, { key: "right", text: "→" },
         ]},
         { label: "", keys: [
-            { key: " ", text: "Spc" }, { key: "escape", text: "Esc" },
+            { key: " ", text: "Spc" }, { key: "esc", text: "Esc" },
         ]},
     ],
     // wumpus: console game, no touch controls
@@ -1036,11 +1061,7 @@ function buildTouchControls(gameName) {
             btn.textContent = k.text;
             btn.addEventListener("click", (e) => {
                 e.preventDefault();
-                if (state.worker) {
-                    if (!enqueueSharedKey(k.key)) {
-                        state.worker.postMessage({ type: "key", key: k.key });
-                    }
-                }
+                dispatchRuntimeKey(k.key);
             });
             wrap.appendChild(btn);
         }
@@ -1120,8 +1141,3 @@ if (urlGame) {
         document.addEventListener("touchend", onEnd);
     }
 }
-
-// Preload compiler in background
-loadCompiler().then(() => {
-    setStatus("Ready — pick a game or write code.", "success");
-}).catch(() => {});
