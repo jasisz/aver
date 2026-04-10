@@ -34,6 +34,9 @@ self.onmessage = (event) => {
 
     if (type === "init-input") {
         host.setSharedKeyBuffer(event.data.keyBuffer);
+        if (event.data.lineBuffer) {
+            host.setSharedLineBuffer(event.data.lineBuffer);
+        }
         return;
     }
 

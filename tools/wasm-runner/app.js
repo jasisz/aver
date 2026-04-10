@@ -163,12 +163,14 @@ function spawnWorker(fixedSize) {
     }
 
     state.sharedKeyView = createSharedKeyView();
+    state.sharedLineBuffer = createSharedLineBuffer();
     const worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
     worker.onmessage = handleWorkerMessage;
     state.worker = worker;
     worker.postMessage({
         type: "init-input",
         keyBuffer: state.sharedKeyView ? state.sharedKeyView.buffer : null,
+        lineBuffer: state.sharedLineBuffer,
     });
 
     autoSizeTerminalSurface();
@@ -203,6 +205,16 @@ function handleWorkerMessage(event) {
         case "line-queue":
             setLineQueueCount(message.queued);
             break;
+        case "readline-wait": {
+            // Worker is blocked waiting for a line — show input
+            const readlineBar = document.querySelector("[data-readline-bar]");
+            if (readlineBar) {
+                readlineBar.style.display = "flex";
+                const input = readlineBar.querySelector("input");
+                if (input) input.focus();
+            }
+            break;
+        }
         case "finished":
             if (state.worker) {
                 state.worker.terminate();
@@ -276,10 +288,14 @@ function stopRun() {
 function queueConsoleLine() {
     const line = dom.lineInput.value;
     dom.lineInput.value = "";
-    state.queuedLines.push(line);
-    setLineQueueCount(state.queuedLines.length);
-    if (state.worker) {
-        state.worker.postMessage({ type: "line", line });
+    if (state.sharedLineBuffer) {
+        sendLineToWorker(line);
+    } else {
+        state.queuedLines.push(line);
+        setLineQueueCount(state.queuedLines.length);
+        if (state.worker) {
+            state.worker.postMessage({ type: "line", line });
+        }
     }
 }
 
@@ -309,6 +325,35 @@ function createSharedKeyView() {
 
     const bytes = Int32Array.BYTES_PER_ELEMENT * (KEY_QUEUE_DATA + KEY_QUEUE_CAPACITY);
     return new Int32Array(new SharedArrayBuffer(bytes));
+}
+
+// Shared buffer for blocking Console.readLine:
+// Layout: [0]=ready (Int32), [1]=length (Int32), [8..]=UTF-8 bytes
+const LINE_BUFFER_SIZE = 1024;
+
+function createSharedLineBuffer() {
+    if (typeof SharedArrayBuffer !== "function" || !window.crossOriginIsolated) {
+        return null;
+    }
+    return new SharedArrayBuffer(LINE_BUFFER_SIZE);
+}
+
+function sendLineToWorker(line) {
+    const buf = state.sharedLineBuffer;
+    if (!buf) {
+        // Fallback: queue-based (non-blocking)
+        state.worker?.postMessage({ type: "line", line });
+        return;
+    }
+    const view = new Int32Array(buf);
+    const bytes = new TextEncoder().encode(line);
+    const byteView = new Uint8Array(buf);
+    const maxLen = LINE_BUFFER_SIZE - 8;
+    const len = Math.min(bytes.length, maxLen);
+    byteView.set(bytes.subarray(0, len), 8);
+    Atomics.store(view, 1, len); // length
+    Atomics.store(view, 0, 1);   // ready = 1
+    Atomics.notify(view, 0);     // wake worker
 }
 
 function keyToCode(key) {
