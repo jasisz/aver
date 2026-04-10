@@ -126,28 +126,44 @@ impl<'a> ExprEmitter<'a> {
             }
         }
 
-        // String equality: use str_eq runtime function for content comparison
-        if matches!(op, BinOp::Eq | BinOp::Neq) && operand_type == WasmType::I32 {
+        // Heap object equality (I32 pointers) or I64 values that might be
+        // heap pointers (parameters of Named types default to I64).
+        if matches!(op, BinOp::Eq | BinOp::Neq) && operand_type != WasmType::F64 {
             let lhs_aver = self.infer_aver_type(&lhs.node);
+
+            // String equality: content comparison via str_eq runtime
             if matches!(lhs_aver, Some(Type::Str)) {
                 self.emit_expr(&lhs.node);
+                if lhs_type != WasmType::I32 {
+                    self.instructions.push(Instruction::I32WrapI64);
+                }
                 self.emit_expr(&rhs.node);
+                if rhs_type != WasmType::I32 {
+                    self.instructions.push(Instruction::I32WrapI64);
+                }
                 self.instructions.push(Instruction::Call(self.rt.str_eq));
                 if matches!(op, BinOp::Neq) {
-                    self.instructions.push(Instruction::I32Eqz); // invert
+                    self.instructions.push(Instruction::I32Eqz);
                 }
                 return;
             }
-            // Variant/record equality: compare heap object headers.
-            // Two nullary variants of the same constructor have identical headers.
-            // For variants with fields this is a tag-only check (same semantics as
-            // the VM: structural equality on variant tag + field count).
-            if matches!(lhs_aver, Some(Type::Named(_))) {
+
+            // Named/variant/record types: compare heap object headers.
+            if matches!(
+                lhs_aver,
+                Some(Type::Named(_)) | Some(Type::Option(_)) | Some(Type::Result(_, _))
+            ) {
                 let a_local = self.alloc_local(WasmType::I32);
                 let b_local = self.alloc_local(WasmType::I32);
                 self.emit_expr(&lhs.node);
+                if lhs_type != WasmType::I32 {
+                    self.instructions.push(Instruction::I32WrapI64);
+                }
                 self.instructions.push(Instruction::LocalSet(a_local));
                 self.emit_expr(&rhs.node);
+                if rhs_type != WasmType::I32 {
+                    self.instructions.push(Instruction::I32WrapI64);
+                }
                 self.instructions.push(Instruction::LocalSet(b_local));
                 // Fast path: same pointer
                 self.instructions.push(Instruction::LocalGet(a_local));
@@ -359,6 +375,16 @@ impl<'a> ExprEmitter<'a> {
             .get(&(type_name.to_string(), variant_name.to_string()));
         let tag = info.map(|i| i.tag).unwrap_or(0);
         let field_count = args.len();
+
+        // Nullary variants use pre-allocated singletons for pointer equality.
+        if field_count == 0 {
+            let key = (type_name.to_string(), variant_name.to_string());
+            if let Some(&addr) = self.nullary_variant_addrs.get(&key) {
+                self.instructions.push(Instruction::I32Const(addr as i32));
+                return;
+            }
+        }
+
         let size = 8 + field_count * 8;
 
         let ptr_local = self.alloc_local(WasmType::I32);
