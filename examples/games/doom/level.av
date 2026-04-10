@@ -89,10 +89,18 @@ fn setTile(levelMap: List<String>, x: Int, y: Int, ch: String, row: Int, acc: Li
     match row == List.len(levelMap)
         true -> acc
         false -> match Vector.get(Vector.fromList(levelMap), row)
-            Option.Some(r) -> match row == y
-                true -> setTile(levelMap, x, y, ch, row + 1, List.concat(acc, [setCharAt(r, x, ch, 0, "")]))
-                false -> setTile(levelMap, x, y, ch, row + 1, List.concat(acc, [r]))
+            Option.Some(r) -> setTileRow(levelMap, x, y, ch, row, acc, r)
             Option.None -> acc
+
+fn setTileRow(levelMap: List<String>, x: Int, y: Int, ch: String, row: Int, acc: List<String>, r: String) -> List<String>
+    ? "Handle one row of setTile"
+    nextRow = row + 1
+    match row == y
+        true -> setTile(levelMap, x, y, ch, nextRow, List.concat(acc, [setCharAt(r, x, ch, 0, "")]))
+        false -> setTile(levelMap, x, y, ch, nextRow, List.concat(acc, [r]))
+
+verify setTileRow
+    charAt(setTileRow(["####", "####"], 1, 0, ".", 0, [], "####"), 1, 0) => "."
 
 verify setTile
     charAt(setTile(["####", "####"], 1, 0, ".", 0, []), 1, 0) => "."
@@ -320,8 +328,9 @@ verify connectAll
 
 fn connectNext(levelMap: List<String>, rooms: List<Room>, i: Int, r1: Room) -> List<String>
     ? "Connect room i with room i+1"
-    match Vector.get(Vector.fromList(rooms), i + 1)
-        Option.Some(r2) -> connectAll(connectRooms(levelMap, r1, r2), rooms, i + 1)
+    next = i + 1
+    match Vector.get(Vector.fromList(rooms), next)
+        Option.Some(r2) -> connectAll(connectRooms(levelMap, r1, r2), rooms, next)
         Option.None -> levelMap
 
 verify connectNext
@@ -340,8 +349,9 @@ verify connectAllWalls
 
 fn connectWallsNext(wallMap: List<String>, rooms: List<Room>, i: Int, r1: Room) -> List<String>
     ? "Mark wall type for corridor between rooms i and i+1"
-    match Vector.get(Vector.fromList(rooms), i + 1)
-        Option.Some(r2) -> connectAllWalls(connectWalls(wallMap, r1, r2), rooms, i + 1)
+    next = i + 1
+    match Vector.get(Vector.fromList(rooms), next)
+        Option.Some(r2) -> connectAllWalls(connectWalls(wallMap, r1, r2), rooms, next)
         Option.None -> wallMap
 
 verify connectWallsNext

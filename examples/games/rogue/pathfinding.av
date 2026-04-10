@@ -97,15 +97,25 @@ fn filterNewNeighbors(map: List<List<Tile>>, nbrs: List<Point>, to: Point, entit
     ? "Filter neighbor points to walkable ones not in open or closed, or the target even if occupied"
     match Vector.get(Vector.fromList(nbrs), i)
         Option.None -> acc
-        Option.Some(p) -> match containsPos(open, p, 0)
-            true -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, i + 1, acc)
-            false -> match containsPos(closed, p, 0)
-                true -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, i + 1, acc)
-                false -> match Types.ptEq(p, to)
-                    true -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, i + 1, List.concat(acc, [BfsNode(pos = p, parentX = parent.x, parentY = parent.y, hasParent = true, dist = parentDist + 1)]))
-                    false -> match isWalkable(map, p, entities)
-                        true -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, i + 1, List.concat(acc, [BfsNode(pos = p, parentX = parent.x, parentY = parent.y, hasParent = true, dist = parentDist + 1)]))
-                        false -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, i + 1, acc)
+        Option.Some(p) -> filterNeighborPoint(map, nbrs, to, entities, open, closed, parent, parentDist, i, acc, p)
+
+fn filterNeighborPoint(map: List<List<Tile>>, nbrs: List<Point>, to: Point, entities: List<Entity>, open: List<BfsNode>, closed: List<BfsNode>, parent: Point, parentDist: Int, i: Int, acc: List<BfsNode>, p: Point) -> List<BfsNode>
+    ? "Check one neighbor point and recurse"
+    nextI = i + 1
+    newNode = BfsNode(pos = p, parentX = parent.x, parentY = parent.y, hasParent = true, dist = parentDist + 1)
+    accWithNode = List.concat(acc, [newNode])
+    match containsPos(open, p, 0)
+        true -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, nextI, acc)
+        false -> match containsPos(closed, p, 0)
+            true -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, nextI, acc)
+            false -> match Types.ptEq(p, to)
+                true -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, nextI, accWithNode)
+                false -> match isWalkable(map, p, entities)
+                    true -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, nextI, accWithNode)
+                    false -> filterNewNeighbors(map, nbrs, to, entities, open, closed, parent, parentDist, nextI, acc)
+
+verify filterNeighborPoint
+    List.len(filterNeighborPoint(testMap3(), [Types.pt(6, 5)], Types.pt(9, 9), emptyEnts(), emptyNodes(), emptyNodes(), Types.pt(5, 5), 0, 0, [], Types.pt(6, 5))) => 1
 
 verify filterNewNeighbors
     List.len(filterNewNeighbors(testMap3(), [Types.pt(5, 4), Types.pt(6, 5)], Types.pt(9, 9), emptyEnts(), emptyNodes(), emptyNodes(), Types.pt(5, 5), 0, 0, emptyNodes())) => 3
@@ -169,11 +179,20 @@ fn bfsSearch(map: List<List<Tile>>, from: Point, to: Point, entities: List<Entit
     ? "BFS loop: expand front of open queue, stop when target found or depth exceeded"
     match Vector.get(Vector.fromList(open), 0)
         Option.None -> Option.None
-        Option.Some(current) -> match current.dist > maxDepth
-            true -> Option.None
-            false -> match Types.ptEq(current.pos, to)
-                true -> tracePath(List.concat(closed, [current]), to, from)
-                false -> bfsSearch(map, from, to, entities, appendAll(restOfQueue(open, 1, []), expandNode(map, current, to, entities, open, closed), 0), List.concat(closed, [current]), maxDepth)
+        Option.Some(current) -> bfsProcessNode(map, from, to, entities, open, closed, maxDepth, current)
+
+fn bfsProcessNode(map: List<List<Tile>>, from: Point, to: Point, entities: List<Entity>, open: List<BfsNode>, closed: List<BfsNode>, maxDepth: Int, current: BfsNode) -> Option<Point>
+    ? "Process one BFS node"
+    closedWithCurrent = List.concat(closed, [current])
+    match current.dist > maxDepth
+        true -> Option.None
+        false -> match Types.ptEq(current.pos, to)
+            true -> tracePath(closedWithCurrent, to, from)
+            false -> bfsSearch(map, from, to, entities, appendAll(restOfQueue(open, 1, []), expandNode(map, current, to, entities, open, closed), 0), closedWithCurrent, maxDepth)
+
+verify bfsProcessNode
+    bfsProcessNode(testMap3(), Types.pt(5, 5), Types.pt(7, 5), emptyEnts(), [mkStart(5, 5)], emptyNodes(), 15, mkStart(5, 5)) => Option.Some(Types.pt(6, 5))
+    bfsProcessNode(Map.emptyMap(), Types.pt(5, 5), Types.pt(7, 5), emptyEnts(), [mkStart(5, 5)], emptyNodes(), 0, mkStart(5, 5)) => Option.None
 
 verify bfsSearch
     bfsSearch(testMap3(), Types.pt(5, 5), Types.pt(7, 5), emptyEnts(), [mkStart(5, 5)], emptyNodes(), 15) => Option.Some(Types.pt(6, 5))

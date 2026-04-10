@@ -117,7 +117,7 @@ fn detectSide(wallMap: List<String>, mx: Int, my: Int, ox: Float, oy: Float, dx:
     ? "Determine which side of the wall was hit (0=NS, 1=EW)"
     prevDist = dist - 0.04
     pmx = Float.floor(ox + dx * prevDist)
-    pmy = Float.floor(oy + dy * prevDist)
+    _pmy = Float.floor(oy + dy * prevDist)
     side = match pmx == mx
         true -> 0
         false -> 1
@@ -150,6 +150,8 @@ fn textureBits(wt: WallType, side: Int, pixY: Int, col: Int) -> Int
 
 verify textureBits
     textureBits(WallType.Stone, 0, 0, 0) => 1
+    textureBits(WallType.Brick, 0, 1, 0) => 2 + 16
+    textureBits(WallType.Metal, 1, 0, 0) => 8
 
 fn stoneBits(side: Int, pixY: Int) -> Int
     ? "Stone: full fill, darker on EW side"
@@ -393,6 +395,8 @@ fn isEnemyVisible(screenCol: Int, eDist: Float, zbuf: List<RayHit>) -> Bool
 
 verify isEnemyVisible
     isEnemyVisible(0, 1.0, [RayHit(dist = 10.0, side = 0, wallType = WallType.Stone)]) => true
+    isEnemyVisible(0 - 1, 1.0, [RayHit(dist = 10.0, side = 0, wallType = WallType.Stone)]) => false
+    isEnemyVisible(0, 0.1, [RayHit(dist = 10.0, side = 0, wallType = WallType.Stone)]) => false
 
 fn drawEnemyChar(e: Enemy, screenCol: Int, eDist: Float, enemies: List<Enemy>, zbuf: List<RayHit>, px: Float, py: Float, pAngle: Float, i: Int) -> Unit
     ? "Draw enemy using solid Unicode block characters"
@@ -469,6 +473,7 @@ fn isInsideShape(kind: EnemyKind, col: Int, row: Int, spriteW: Int, spriteH: Int
 
 verify isInsideShape
     isInsideShape(EnemyKind.Demon, 5, 5, 10, 10) => true
+    isInsideShape(EnemyKind.Demon, 0, 0, 10, 10) => false
 
 fn shapeWidth(kind: EnemyKind, cy: Float) -> Float
     ? "Silhouette width at normalized Y (0=top, 1=bottom)"
@@ -479,6 +484,8 @@ fn shapeWidth(kind: EnemyKind, cy: Float) -> Float
 
 verify shapeWidth
     shapeWidth(EnemyKind.Ghost, 0.5) => 0.85
+    shapeWidth(EnemyKind.Imp, 0.5) => 0.55
+    shapeWidth(EnemyKind.Demon, 0.5) => 0.95
 
 fn impWidth(cy: Float) -> Float
     ? "Imp: humanoid — small head, neck, wide torso, legs with gap"
@@ -536,7 +543,7 @@ fn renderFrame(state: GameState) -> Unit
 fn renderCrosshair() -> Unit
     ? "Draw a crosshair at screen center"
     ! [
-        Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+        Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
     Terminal.setColor("white")
     Terminal.moveTo(screenW() / 2, screenH() / 2)
@@ -548,7 +555,7 @@ fn renderCrosshair() -> Unit
 fn renderHud(state: GameState) -> Unit
     ? "Draw position info, HP, and controls"
     ! [
-        Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+        Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
     ]
     hudX = screenW() + 2
     Terminal.setColor("yellow")

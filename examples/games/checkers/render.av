@@ -53,6 +53,9 @@ fn pieceGlyph(cell: CellContent) -> String
 
 verify pieceGlyph
     pieceGlyph(CellContent.BlackMan) => "●●"
+    pieceGlyph(CellContent.BlackKing) => "♛♛"
+    pieceGlyph(CellContent.WhiteMan) => "●●"
+    pieceGlyph(CellContent.WhiteKing) => "♛♛"
     pieceGlyph(CellContent.Empty) => "░░"
 
 fn pieceColor(cell: CellContent) -> String
@@ -66,6 +69,8 @@ fn pieceColor(cell: CellContent) -> String
 
 verify pieceColor
     pieceColor(CellContent.BlackMan) => "red"
+    pieceColor(CellContent.BlackKing) => "red"
+    pieceColor(CellContent.WhiteMan) => "blue"
     pieceColor(CellContent.WhiteKing) => "blue"
     pieceColor(CellContent.Empty) => "white"
 
@@ -220,8 +225,9 @@ fn renderColLabels(c: Int) -> Unit
 fn renderColLabelsNext(c: Int) -> Unit
     ? "One label and continue"
     ! [Terminal.moveTo, Terminal.print]
-    drawAt(c + 1, 10, colLabel(c))
-    renderColLabels(c + 1)
+    nextC = c + 1
+    drawAt(nextC, 10, colLabel(c))
+    renderColLabels(nextC)
 
 fn colLabel(c: Int) -> String
     ? "Column label A-H"
@@ -248,9 +254,10 @@ fn renderRowLabels(r: Int) -> Unit
 fn renderRowLabelsNext(r: Int) -> Unit
     ? "One row label"
     ! [Terminal.moveTo, Terminal.print]
-    Terminal.moveTo(0, r + 1)
+    nextR = r + 1
+    Terminal.moveTo(0, nextR)
     Terminal.print(" {rowLabel(r)}")
-    renderRowLabels(r + 1)
+    renderRowLabels(nextR)
 
 fn rowLabel(r: Int) -> String
     ? "Row label: row 0 = 8, row 7 = 1"
@@ -276,6 +283,7 @@ fn colorName(c: Color) -> String
 
 verify colorName
     colorName(Color.Black) => "Black"
+    colorName(Color.White) => "White"
 
 fn playerColor(c: Color) -> String
     ? "Terminal color for player"
@@ -285,6 +293,7 @@ fn playerColor(c: Color) -> String
 
 verify playerColor
     playerColor(Color.Black) => "red"
+    playerColor(Color.White) => "blue"
 
 fn renderStatus(currentPlayer: Color, moveNum: Int) -> Unit
     ? "Show current player and move number"

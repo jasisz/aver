@@ -35,11 +35,22 @@ verify emptyRow
 
 fn buildBoard(n: Int) -> List<List<Option<PieceKind>>>
     ? "Build n empty rows"
+    buildBoardAcc(n, [])
+
+fn buildBoardAcc(n: Int, acc: List<List<Option<PieceKind>>>) -> List<List<Option<PieceKind>>>
+    ? "Build board rows with accumulator"
     match n == 0
-        true -> []
-        false -> List.prepend(emptyRow(), buildBoard(n - 1))
+        true -> acc
+        false -> buildBoardAcc(n - 1, List.prepend(emptyRow(), acc))
+
+verify buildBoardAcc
+    List.len(buildBoardAcc(0, [])) => 0
+    List.len(buildBoardAcc(2, [])) => 2
+    List.len(buildBoardAcc(1, [emptyRow()])) => 2
 
 verify buildBoard
+    List.len(buildBoard(0)) => 0
+    List.len(buildBoard(1)) => 1
     List.len(buildBoard(3)) => 3
 
 fn emptyBoard() -> List<List<Option<PieceKind>>>
@@ -58,8 +69,11 @@ fn getCell(board: List<List<Option<PieceKind>>>, x: Int, y: Int) -> Option<Piece
             false -> getCell(rest, x, y - 1)
 
 verify getCell
+    getCell([], 0, 0) => Option.None
     getCell(emptyBoard(), 0, 0) => Option.None
     getCell(emptyBoard(), 9, 19) => Option.None
+    getCell(setCell(emptyBoard(), 5, 5, PieceKind.T), 5, 5) => Option.Some(PieceKind.T)
+    getCell([emptyRow(), emptyRow()], 0, 0) => Option.None
 
 fn getCellInRow(row: List<Option<PieceKind>>, x: Int) -> Option<PieceKind>
     ? "Get cell value from one row, Option.None if out of bounds or empty."
@@ -70,30 +84,51 @@ fn getCellInRow(row: List<Option<PieceKind>>, x: Int) -> Option<PieceKind>
             false -> getCellInRow(rest, x - 1)
 
 verify getCellInRow
+    getCellInRow([], 0) => Option.None
     getCellInRow([Option.Some(PieceKind.I), Option.None], 0) => Option.Some(PieceKind.I)
     getCellInRow([Option.Some(PieceKind.I), Option.None], 1) => Option.None
 
 fn setCellCols(r: List<Option<PieceKind>>, x: Int, val: Option<PieceKind>) -> List<Option<PieceKind>>
     ? "Rebuild a row replacing column x"
+    setCellColsAcc(r, x, val, [])
+
+fn setCellColsAcc(r: List<Option<PieceKind>>, x: Int, val: Option<PieceKind>, acc: List<Option<PieceKind>>) -> List<Option<PieceKind>>
+    ? "Rebuild row with accumulator"
     match r
-        [] -> []
+        [] -> List.reverse(acc)
         [cell, ..rest] -> match x == 0
-            true -> List.prepend(val, rest)
-            false -> List.prepend(cell, setCellCols(rest, x - 1, val))
+            true -> List.concat(List.reverse(List.prepend(val, acc)), rest)
+            false -> setCellColsAcc(rest, x - 1, val, List.prepend(cell, acc))
+
+verify setCellColsAcc
+    setCellColsAcc([], 0, Option.None, []) => []
+    List.len(setCellColsAcc([Option.None, Option.None], 0, Option.Some(PieceKind.I), [])) => 2
 
 verify setCellCols
+    setCellCols([], 0, Option.Some(PieceKind.T)) => []
     List.len(setCellCols(emptyRow(), 3, Option.Some(PieceKind.T))) => 10
+    List.len(setCellCols([Option.None, Option.None], 0, Option.Some(PieceKind.I))) => 2
 
 fn setCellRows(board: List<List<Option<PieceKind>>>, x: Int, y: Int, val: Option<PieceKind>) -> List<List<Option<PieceKind>>>
     ? "Rebuild rows replacing cell at (x,y)"
+    setCellRowsAcc(board, x, y, val, [])
+
+fn setCellRowsAcc(board: List<List<Option<PieceKind>>>, x: Int, y: Int, val: Option<PieceKind>, acc: List<List<Option<PieceKind>>>) -> List<List<Option<PieceKind>>>
+    ? "Rebuild rows with accumulator"
     match board
-        [] -> []
+        [] -> List.reverse(acc)
         [row, ..rest] -> match y == 0
-            true -> List.prepend(setCellCols(row, x, val), rest)
-            false -> List.prepend(row, setCellRows(rest, x, y - 1, val))
+            true -> List.concat(List.reverse(List.prepend(setCellCols(row, x, val), acc)), rest)
+            false -> setCellRowsAcc(rest, x, y - 1, val, List.prepend(row, acc))
+
+verify setCellRowsAcc
+    setCellRowsAcc([], 0, 0, Option.None, []) => []
+    List.len(setCellRowsAcc([emptyRow(), emptyRow()], 0, 0, Option.Some(PieceKind.I), [])) => 2
 
 verify setCellRows
+    setCellRows([], 0, 0, Option.Some(PieceKind.T)) => []
     List.len(setCellRows(emptyBoard(), 3, 5, Option.Some(PieceKind.T))) => 20
+    List.len(setCellRows([emptyRow(), emptyRow()], 0, 0, Option.Some(PieceKind.I))) => 2
 
 fn setCell(board: List<List<Option<PieceKind>>>, x: Int, y: Int, val: PieceKind) -> List<List<Option<PieceKind>>>
     ? "Return board with cell (x,y) set to Option.Some(val)"
@@ -112,20 +147,31 @@ fn isFullRow(row: List<Option<PieceKind>>) -> Bool
             Option.Some(_) -> isFullRow(rest)
 
 verify isFullRow
+    isFullRow([]) => true
     isFullRow([Option.Some(PieceKind.I), Option.Some(PieceKind.O), Option.Some(PieceKind.T), Option.Some(PieceKind.S), Option.Some(PieceKind.Z), Option.Some(PieceKind.J), Option.Some(PieceKind.L), Option.Some(PieceKind.I), Option.Some(PieceKind.O), Option.Some(PieceKind.T)]) => true
     isFullRow([Option.Some(PieceKind.I), Option.None, Option.Some(PieceKind.T), Option.Some(PieceKind.S), Option.Some(PieceKind.Z), Option.Some(PieceKind.J), Option.Some(PieceKind.L), Option.Some(PieceKind.I), Option.Some(PieceKind.O), Option.Some(PieceKind.T)]) => false
     isFullRow(emptyRow()) => false
 
 fn filterRows(board: List<List<Option<PieceKind>>>) -> List<List<Option<PieceKind>>>
     ? "Keep only non-full rows"
+    filterRowsAcc(board, [])
+
+fn filterRowsAcc(board: List<List<Option<PieceKind>>>, acc: List<List<Option<PieceKind>>>) -> List<List<Option<PieceKind>>>
+    ? "Keep non-full rows with accumulator"
     match board
-        [] -> []
+        [] -> List.reverse(acc)
         [row, ..rest] -> match isFullRow(row)
-            true -> filterRows(rest)
-            false -> List.prepend(row, filterRows(rest))
+            true -> filterRowsAcc(rest, acc)
+            false -> filterRowsAcc(rest, List.prepend(row, acc))
+
+verify filterRowsAcc
+    filterRowsAcc([], []) => []
+    List.len(filterRowsAcc([emptyRow(), fullRow()], [])) => 1
 
 verify filterRows
+    filterRows([]) => []
     List.len(filterRows(emptyBoard())) => 20
+    List.len(filterRows([emptyRow(), fullRow(), emptyRow()])) => 2
 
 fn prependEmpty(board: List<List<Option<PieceKind>>>, n: Int) -> List<List<Option<PieceKind>>>
     ? "Prepend n empty rows"
@@ -146,14 +192,25 @@ verify clearLines
 
 fn countFullRows(board: List<List<Option<PieceKind>>>) -> Int
     ? "Count full rows in board"
+    countFullRowsAcc(board, 0)
+
+fn countFullRowsAcc(board: List<List<Option<PieceKind>>>, acc: Int) -> Int
+    ? "Count full rows with accumulator"
     match board
-        [] -> 0
+        [] -> acc
         [row, ..rest] -> match isFullRow(row)
-            true -> 1 + countFullRows(rest)
-            false -> countFullRows(rest)
+            true -> countFullRowsAcc(rest, acc + 1)
+            false -> countFullRowsAcc(rest, acc)
+
+verify countFullRowsAcc
+    countFullRowsAcc([], 0) => 0
+    countFullRowsAcc([fullRow(), emptyRow()], 0) => 1
 
 verify countFullRows
+    countFullRows([]) => 0
     countFullRows(emptyBoard()) => 0
+    countFullRows([fullRow(), emptyRow(), fullRow()]) => 2
+    countFullRows([emptyRow(), emptyRow()]) => 0
 
 fn countCleared(board: List<List<Option<PieceKind>>>) -> Int
     ? "Count full rows in board"

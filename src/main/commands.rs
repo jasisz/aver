@@ -1382,6 +1382,8 @@ pub(super) fn cmd_run_wasm(
 thread_local! {
     static VARIANT_NAMES: std::cell::RefCell<std::collections::HashMap<u32, String>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
+    static SENTINEL_NAMES: std::cell::RefCell<std::collections::HashMap<i32, String>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 #[cfg(feature = "wasm")]
@@ -1413,6 +1415,32 @@ fn load_variant_names_from_instance(
             }
         }
     }
+
+    // Load sentinel names for nullary variant display.
+    let sptr_global = instance.get_global(&mut *store, "$sentinel_names_ptr");
+    let slen_global = instance.get_global(&mut *store, "$sentinel_names_len");
+    if let (Some(pg), Some(lg)) = (sptr_global, slen_global) {
+        let ptr = pg.get(&mut *store).i32().unwrap_or(0) as usize;
+        let len = lg.get(&mut *store).i32().unwrap_or(0) as usize;
+        if len > 0 {
+            let mem = instance
+                .get_memory(&mut *store, "memory")
+                .expect("memory export");
+            let data = mem.data(&*store);
+            if ptr + len <= data.len() {
+                let text = String::from_utf8_lossy(&data[ptr..ptr + len]).to_string();
+                let mut map = std::collections::HashMap::new();
+                for entry in text.split('|') {
+                    if let Some(colon) = entry.find(':')
+                        && let Ok(sentinel) = entry[..colon].parse::<i32>()
+                    {
+                        map.insert(sentinel, entry[colon + 1..].to_string());
+                    }
+                }
+                SENTINEL_NAMES.with(|names| *names.borrow_mut() = map);
+            }
+        }
+    }
 }
 
 #[cfg(feature = "wasm")]
@@ -1427,8 +1455,22 @@ fn variant_name(tag: u64) -> String {
 }
 
 #[cfg(feature = "wasm")]
+fn sentinel_name(sentinel: i32) -> Option<String> {
+    SENTINEL_NAMES.with(|names| names.borrow().get(&sentinel).cloned())
+}
+
+#[cfg(feature = "wasm")]
 /// Format a WASM value (i64) by reading heap structures from memory.
 fn format_wasm_value(val: i64, mem: &[u8]) -> String {
+    let i32val = val as i32;
+
+    // Check nullary variant sentinels (negative i32 < -1)
+    if i32val < -1 {
+        if let Some(name) = sentinel_name(i32val) {
+            return name;
+        }
+    }
+
     let ptr = val as u32 as usize;
     let io_scratch = 128; // IO_SCRATCH_SIZE
 

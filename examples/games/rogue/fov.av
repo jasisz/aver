@@ -45,15 +45,17 @@ verify containsPt
 
 fn transformOctant(octant: Int, row: Int, col: Int) -> Point
     ? "Coordinate delta for a given octant, row, and col — returns dx,dy as Point"
+    negRow = 0 - row
+    negCol = 0 - col
     match octant
-        0 -> Types.pt(col, 0 - row)
-        1 -> Types.pt(row, 0 - col)
+        0 -> Types.pt(col, negRow)
+        1 -> Types.pt(row, negCol)
         2 -> Types.pt(row, col)
         3 -> Types.pt(col, row)
-        4 -> Types.pt(0 - col, row)
-        5 -> Types.pt(0 - row, col)
-        6 -> Types.pt(0 - row, 0 - col)
-        _ -> Types.pt(0 - col, 0 - row)
+        4 -> Types.pt(negCol, row)
+        5 -> Types.pt(negRow, col)
+        6 -> Types.pt(negRow, negCol)
+        _ -> Types.pt(negCol, negRow)
 
 verify transformOctant
     transformOctant(0, 3, 2).x => 2
@@ -110,40 +112,43 @@ verify maxCol
     maxCol(500, 2) => 1
     maxCol(1000, 3) => 3
 
-fn onWallFromFloor(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, acc: List<Point>, cx: Int, cy: Int) -> List<Point>
+fn wallFromFloorDeeper(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, acc: List<Point>, cx: Int, cy: Int) -> List<Point>
     ? "Handle transition from floor to wall: recurse deeper then continue row"
     newEnd = cellStartSlope(col, row)
-    deeper = scanOctant(map, ox, oy, radius, octant, row + 1, startSlope, newEnd, acc)
-    scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, startSlope, endSlope, true, List.concat(deeper, [Types.pt(cx, cy)]))
+    accWithPt = List.concat(acc, [Types.pt(cx, cy)])
+    deeper = scanOctant(map, ox, oy, radius, octant, row + 1, startSlope, newEnd, accWithPt)
+    scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, startSlope, endSlope, true, deeper)
 
-verify onWallFromFloor
-    List.len(onWallFromFloor([[Tile.Wall]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, [], 0, 0)) => 1
+verify wallFromFloorDeeper
+    List.len(wallFromFloorDeeper([[Tile.Wall]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, [], 0, 0)) => 1
 
-fn onFloorFromWall(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, acc: List<Point>, cx: Int, cy: Int) -> List<Point>
+fn floorFromWallResume(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, acc: List<Point>, cx: Int, cy: Int) -> List<Point>
     ? "Handle transition from wall to floor: update startSlope and continue"
     newStart = cellEndSlope(col, row)
     scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, newStart, endSlope, false, List.concat(acc, [Types.pt(cx, cy)]))
 
-verify onFloorFromWall
-    List.len(onFloorFromWall([[Tile.Floor, Tile.Floor]], 0, 0, 2, 2, 1, 0, 1, 0, 1000, [], 0, 0)) => 2
+verify floorFromWallResume
+    List.len(floorFromWallResume([[Tile.Floor, Tile.Floor]], 0, 0, 2, 2, 1, 0, 1, 0, 1000, [], 0, 0)) => 2
 
 fn scanRowWall(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, prevWall: Bool, acc: List<Point>, cx: Int, cy: Int) -> List<Point>
     ? "Handle a wall cell during row scan"
     match prevWall
         true -> scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, startSlope, endSlope, true, List.concat(acc, [Types.pt(cx, cy)]))
-        false -> onWallFromFloor(map, ox, oy, radius, octant, row, col, maxC, startSlope, endSlope, acc, cx, cy)
+        false -> wallFromFloorDeeper(map, ox, oy, radius, octant, row, col, maxC, startSlope, endSlope, acc, cx, cy)
 
 verify scanRowWall
     List.len(scanRowWall([[Tile.Wall]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, true, [], 0, 0)) => 1
+    List.len(scanRowWall([[Tile.Wall]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, false, [], 0, 0)) => 1
 
 fn scanRowFloor(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, prevWall: Bool, acc: List<Point>, cx: Int, cy: Int) -> List<Point>
     ? "Handle a floor cell during row scan"
     match prevWall
-        true -> onFloorFromWall(map, ox, oy, radius, octant, row, col, maxC, startSlope, endSlope, acc, cx, cy)
+        true -> floorFromWallResume(map, ox, oy, radius, octant, row, col, maxC, startSlope, endSlope, acc, cx, cy)
         false -> scanRow(map, ox, oy, radius, octant, row, col + 1, maxC, startSlope, endSlope, false, List.concat(acc, [Types.pt(cx, cy)]))
 
 verify scanRowFloor
     List.len(scanRowFloor([[Tile.Floor]], 0, 0, 1, 2, 1, 0, 0, 0, 1000, false, [], 0, 0)) => 1
+    List.len(scanRowFloor([[Tile.Floor, Tile.Floor]], 0, 0, 2, 2, 1, 0, 1, 0, 1000, true, [], 0, 0)) => 2
 
 fn scanRowCell(map: List<List<Tile>>, ox: Int, oy: Int, radius: Int, octant: Int, row: Int, col: Int, maxC: Int, startSlope: Int, endSlope: Int, prevWall: Bool, acc: List<Point>, cx: Int, cy: Int) -> List<Point>
     ? "Process one cell in the row: check wall or floor and delegate"
@@ -202,9 +207,17 @@ fn dedup(pts: List<Point>, i: Int, acc: List<Point>) -> List<Point>
     ? "Remove duplicate points from the list"
     match Vector.get(Vector.fromList(pts), i)
         Option.None -> acc
-        Option.Some(p) -> match containsPt(acc, p, 0)
-            true -> dedup(pts, i + 1, acc)
-            false -> dedup(pts, i + 1, List.concat(acc, [p]))
+        Option.Some(p) -> dedupStep(pts, i, acc, p)
+
+fn dedupStep(pts: List<Point>, i: Int, acc: List<Point>, p: Point) -> List<Point>
+    ? "Process one point in dedup"
+    nextI = i + 1
+    match containsPt(acc, p, 0)
+        true -> dedup(pts, nextI, acc)
+        false -> dedup(pts, nextI, List.concat(acc, [p]))
+
+verify dedupStep
+    List.len(dedupStep([Types.pt(1, 1), Types.pt(2, 2)], 0, [], Types.pt(1, 1))) => 2
 
 verify dedup
     List.len(dedup([Types.pt(1, 1), Types.pt(1, 1), Types.pt(2, 2)], 0, [])) => 2

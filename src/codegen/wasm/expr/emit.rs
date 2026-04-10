@@ -377,8 +377,18 @@ impl<'a> ExprEmitter<'a> {
             .variant_registry
             .get(&(type_name.to_string(), variant_name.to_string()));
         let tag = info.map(|i| i.tag).unwrap_or(0);
-        let field_count = args.len();
 
+        // Nullary variants use a sentinel value instead of heap allocation.
+        if let Some(Some(sentinel)) = info.map(|i| i.nullary_sentinel) {
+            for arg in args {
+                self.emit_expr(&arg.node);
+                self.instructions.push(Instruction::Drop);
+            }
+            self.instructions.push(Instruction::I32Const(sentinel));
+            return;
+        }
+
+        let field_count = args.len();
         let size = 8 + field_count * 8;
 
         let ptr_local = self.alloc_local(WasmType::I32);

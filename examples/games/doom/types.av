@@ -79,6 +79,8 @@ fn enemyColor(kind: EnemyKind) -> String
 
 verify enemyColor
     enemyColor(EnemyKind.Imp) => "red"
+    enemyColor(EnemyKind.Demon) => "magenta"
+    enemyColor(EnemyKind.Ghost) => "cyan"
 
 fn enemyMaxHp(kind: EnemyKind) -> Int
     ? "Default HP for enemy kind"
@@ -90,6 +92,7 @@ fn enemyMaxHp(kind: EnemyKind) -> Int
 verify enemyMaxHp
     enemyMaxHp(EnemyKind.Imp) => 3
     enemyMaxHp(EnemyKind.Demon) => 8
+    enemyMaxHp(EnemyKind.Ghost) => 4
 
 fn dirArrow(angle: Float) -> String
     ? "Direction arrow for minimap based on player angle (8 sectors)"

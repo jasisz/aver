@@ -31,6 +31,7 @@ fn isPlayerDead(player: Player) -> Bool
 
 verify isPlayerDead
     isPlayerDead(Types.makePlayer(0, 0)) => false
+    isPlayerDead(Player.update(Types.makePlayer(0, 0), hp = 0)) => true
 
 fn healPlayer(player: Player, amount: Int) -> Player
     ? "Heal player, capped at maxHp"
@@ -56,6 +57,7 @@ fn expForKill(kind: EntityKind) -> Int
 
 verify expForKill
     expForKill(EntityKind.WildIfElse) => 5
+    expForKill(EntityKind.FeralLoop) => 15
     expForKill(EntityKind.TheNull) => 30
 
 fn moveEntity(entity: Entity, dx: Int, dy: Int) -> Entity
@@ -103,39 +105,84 @@ verify itemAtPos
 
 fn removeAt(entities: List<Entity>, idx: Int, i: Int) -> List<Entity>
     ? "Remove entity at index"
+    List.reverse(removeAtAcc(entities, idx, i, []))
+
+fn removeAtAcc(entities: List<Entity>, idx: Int, i: Int, acc: List<Entity>) -> List<Entity>
+    ? "Accumulator helper for removeAt"
     match i == List.len(entities)
-        true -> []
-        false -> match Vector.get(Vector.fromList(entities), i)
-            Option.Some(e) -> match i == idx
-                true -> removeAt(entities, idx, i + 1)
-                false -> List.prepend(e, removeAt(entities, idx, i + 1))
-            Option.None -> []
+        true -> acc
+        false -> removeAtStep(entities, idx, i, acc)
+
+fn removeAtStep(entities: List<Entity>, idx: Int, i: Int, acc: List<Entity>) -> List<Entity>
+    ? "Process one entity in removeAt"
+    nextI = i + 1
+    match Vector.get(Vector.fromList(entities), i)
+        Option.Some(e) -> match i == idx
+            true -> removeAtAcc(entities, idx, nextI, acc)
+            false -> removeAtAcc(entities, idx, nextI, List.prepend(e, acc))
+        Option.None -> acc
+
+verify removeAtAcc
+    List.len(removeAtAcc([Types.makeIfElse(0, 0), Types.makeLoop(1, 1)], 0, 0, [])) => 1
+
+verify removeAtStep
+    List.len(removeAtStep([Types.makeIfElse(0, 0), Types.makeLoop(1, 1)], 0, 0, [])) => 1
 
 verify removeAt
     List.len(removeAt([Types.makeIfElse(0, 0), Types.makeLoop(1, 1)], 0, 0)) => 1
 
 fn removeItemAt(items: List<Item>, idx: Int, i: Int) -> List<Item>
     ? "Remove item at index"
+    List.reverse(removeItemAtAcc(items, idx, i, []))
+
+fn removeItemAtAcc(items: List<Item>, idx: Int, i: Int, acc: List<Item>) -> List<Item>
+    ? "Accumulator helper for removeItemAt"
     match i == List.len(items)
-        true -> []
-        false -> match Vector.get(Vector.fromList(items), i)
-            Option.Some(item) -> match i == idx
-                true -> removeItemAt(items, idx, i + 1)
-                false -> List.prepend(item, removeItemAt(items, idx, i + 1))
-            Option.None -> []
+        true -> acc
+        false -> removeItemAtStep(items, idx, i, acc)
+
+fn removeItemAtStep(items: List<Item>, idx: Int, i: Int, acc: List<Item>) -> List<Item>
+    ? "Process one item in removeItemAt"
+    nextI = i + 1
+    match Vector.get(Vector.fromList(items), i)
+        Option.Some(item) -> match i == idx
+            true -> removeItemAtAcc(items, idx, nextI, acc)
+            false -> removeItemAtAcc(items, idx, nextI, List.prepend(item, acc))
+        Option.None -> acc
+
+verify removeItemAtAcc
+    List.len(removeItemAtAcc([Types.makePurity(0, 0), Types.makeScroll(1, 1)], 0, 0, [])) => 1
+
+verify removeItemAtStep
+    List.len(removeItemAtStep([Types.makePurity(0, 0), Types.makeScroll(1, 1)], 0, 0, [])) => 1
 
 verify removeItemAt
     List.len(removeItemAt([Types.makePurity(0, 0), Types.makeScroll(1, 1)], 0, 0)) => 1
 
 fn replaceEntity(entities: List<Entity>, idx: Int, newEntity: Entity, i: Int) -> List<Entity>
     ? "Replace entity at index"
+    List.reverse(replaceEntityAcc(entities, idx, newEntity, i, []))
+
+fn replaceEntityAcc(entities: List<Entity>, idx: Int, newEntity: Entity, i: Int, acc: List<Entity>) -> List<Entity>
+    ? "Accumulator helper for replaceEntity"
     match i == List.len(entities)
-        true -> []
-        false -> match Vector.get(Vector.fromList(entities), i)
-            Option.Some(e) -> match i == idx
-                true -> List.prepend(newEntity, replaceEntity(entities, idx, newEntity, i + 1))
-                false -> List.prepend(e, replaceEntity(entities, idx, newEntity, i + 1))
-            Option.None -> []
+        true -> acc
+        false -> replaceEntityStep(entities, idx, newEntity, i, acc)
+
+fn replaceEntityStep(entities: List<Entity>, idx: Int, newEntity: Entity, i: Int, acc: List<Entity>) -> List<Entity>
+    ? "Process one entity in replaceEntity"
+    nextI = i + 1
+    match Vector.get(Vector.fromList(entities), i)
+        Option.Some(e) -> match i == idx
+            true -> replaceEntityAcc(entities, idx, newEntity, nextI, List.prepend(newEntity, acc))
+            false -> replaceEntityAcc(entities, idx, newEntity, nextI, List.prepend(e, acc))
+        Option.None -> acc
+
+verify replaceEntityAcc
+    List.len(replaceEntityAcc([Types.makeIfElse(0, 0)], 0, Types.makeLoop(1, 1), 0, [])) => 1
+
+verify replaceEntityStep
+    List.len(replaceEntityStep([Types.makeIfElse(0, 0)], 0, Types.makeLoop(1, 1), 0, [])) => 1
 
 verify replaceEntity
     Vector.get(Vector.fromList(replaceEntity([Types.makeIfElse(0, 0)], 0, Types.makeLoop(1, 1), 0)), 0) => Option.Some(Types.makeLoop(1, 1))
@@ -155,9 +202,11 @@ verify signOf
 
 fn stepToward(from: Point, to: Point) -> Point
     ? "Move one step toward target (greedy)"
-    dx = signOf(to.x - from.x)
-    dy = signOf(to.y - from.y)
-    match Int.abs(to.x - from.x) > Int.abs(to.y - from.y)
+    diffX = to.x - from.x
+    diffY = to.y - from.y
+    dx = signOf(diffX)
+    dy = signOf(diffY)
+    match Int.abs(diffX) > Int.abs(diffY)
         true -> Types.pt(from.x + dx, from.y)
         false -> Types.pt(from.x, from.y + dy)
 

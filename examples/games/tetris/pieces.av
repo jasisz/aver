@@ -110,15 +110,29 @@ fn pieceOffsets(kind: PieceKind, rot: Int) -> List<Point>
 verify pieceOffsets
     List.len(pieceOffsets(PieceKind.I, 0)) => 4
     List.len(pieceOffsets(PieceKind.O, 0)) => 4
+    List.len(pieceOffsets(PieceKind.T, 0)) => 4
+    List.len(pieceOffsets(PieceKind.S, 0)) => 4
+    List.len(pieceOffsets(PieceKind.Z, 0)) => 4
+    List.len(pieceOffsets(PieceKind.J, 0)) => 4
+    List.len(pieceOffsets(PieceKind.L, 0)) => 4
     pieceOffsets(PieceKind.O, 0) => [Board.pt(0, 0), Board.pt(1, 0), Board.pt(0, 1), Board.pt(1, 1)]
 
 fn offsetToAbs(offsets: List<Point>, px: Int, py: Int) -> List<Point>
     ? "Map offsets to absolute positions"
+    offsetToAbsAcc(offsets, px, py, [])
+
+fn offsetToAbsAcc(offsets: List<Point>, px: Int, py: Int, acc: List<Point>) -> List<Point>
+    ? "Map offsets with accumulator"
     match offsets
-        [] -> []
-        [o, ..rest] -> List.prepend(Board.pt(o.x + px, o.y + py), offsetToAbs(rest, px, py))
+        [] -> List.reverse(acc)
+        [o, ..rest] -> offsetToAbsAcc(rest, px, py, List.prepend(Board.pt(o.x + px, o.y + py), acc))
+
+verify offsetToAbsAcc
+    offsetToAbsAcc([], 0, 0, []) => []
+    List.len(offsetToAbsAcc([Board.pt(0, 0)], 1, 2, [])) => 1
 
 verify offsetToAbs
+    offsetToAbs([], 0, 0) => []
     List.len(offsetToAbs([Board.pt(0, 0), Board.pt(1, 0)], 3, 5)) => 2
 
 fn absolutePoints(piece: Piece, px: Int, py: Int) -> List<Point>
@@ -141,4 +155,9 @@ fn pieceColor(kind: PieceKind) -> String
 
 verify pieceColor
     pieceColor(PieceKind.I) => "cyan"
+    pieceColor(PieceKind.O) => "yellow"
+    pieceColor(PieceKind.T) => "magenta"
+    pieceColor(PieceKind.S) => "green"
     pieceColor(PieceKind.Z) => "red"
+    pieceColor(PieceKind.J) => "blue"
+    pieceColor(PieceKind.L) => "white"

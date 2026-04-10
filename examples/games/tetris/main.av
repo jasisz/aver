@@ -190,9 +190,10 @@ fn tickGravity(state: GameState) -> Result<String, String>
         Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
         Time.sleep,
     ]
-    match Logic.checkCollision(state.board, state.piece, state.px, state.py + 1)
+    nextY = state.py + 1
+    match Logic.checkCollision(state.board, state.piece, state.px, nextY)
         true -> gameLoop(lockAndSpawn(state))
-        false -> gameLoop(GameState.update(state, py = state.py + 1))
+        false -> gameLoop(GameState.update(state, py = nextY))
 
 fn tick(state: GameState) -> Result<String, String>
     ? "One game tick: check game over then apply gravity"

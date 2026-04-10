@@ -58,17 +58,27 @@ verify validRoom
     validRoom(20) => true
     validRoom(21) => false
 
+fn roomListItem(r: Int, rest: List<Int>) -> String
+    ? "Format a single room entry and recurse on remainder."
+    rs = Int.toString(r)
+    match rest
+        [] -> rs
+        _ -> "{rs}, {roomList(rest)}"
+
+verify roomListItem
+    roomListItem(5, []) => "5"
+    roomListItem(1, [2, 3]) => "1, 2, 3"
+
 fn roomList(rooms: List<Int>) -> String
     ? "Comma-separated room numbers."
     match rooms
         [] -> ""
-        [r, ..rest] -> match rest
-            [] -> Int.toString(r)
-            _ -> "{Int.toString(r)}, {roomList(rest)}"
+        [r, ..rest] -> roomListItem(r, rest)
 
 verify roomList
     roomList([1, 2, 3]) => "1, 2, 3"
     roomList([7]) => "7"
+    roomList([]) => ""
 
 fn randRoom() -> Int
     ? "Pick a random room number 1-20."
@@ -99,11 +109,14 @@ record Game
     bat2: Int
     arrows: Int
 
-type Outcome
-    Continue(Game)
-    Win(String)
-    Lose(String)
-    Bats(Game)
+type RoomCheck
+    Safe(Game)
+    Hazard(String)
+    BatTrap(Game)
+
+type ShotResult
+    Hit(String)
+    Miss(Game)
 
 fn nthRoom(rooms: List<Int>, index: Int) -> Int
     ? "Extract room at index; crash-safe via Option.withDefault."
@@ -126,34 +139,36 @@ fn newGame() -> Game
          bat2 = nthRoom(rooms, 5),
          arrows = 5)
 
-fn checkRoom(game: Game) -> Outcome
+fn hasBats(game: Game) -> Bool
+    ? "True when the player is on a bat colony square."
+    match game.player == game.bat1
+        true -> true
+        false -> game.player == game.bat2
+
+verify hasBats
+    hasBats(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5)) => false
+    hasBats(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 3, bat2 = 14, arrows = 5)) => true
+    hasBats(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 3, arrows = 5)) => true
+
+fn checkRoom(game: Game) -> RoomCheck
     ? "Check hazards after entering a room."
     match game.player == game.wumpus
-        true -> Outcome.Lose("The Wumpus devours you!")
+        true -> RoomCheck.Hazard("The Wumpus devours you!")
         false -> match game.player == game.pit1
-            true -> Outcome.Lose("You fall into a bottomless pit!")
+            true -> RoomCheck.Hazard("You fall into a bottomless pit!")
             false -> match game.player == game.pit2
-                true -> Outcome.Lose("You fall into a bottomless pit!")
-                false -> checkBats(game)
+                true -> RoomCheck.Hazard("You fall into a bottomless pit!")
+                false -> match hasBats(game)
+                    true -> RoomCheck.BatTrap(game)
+                    false -> RoomCheck.Safe(game)
 
 verify checkRoom
-    checkRoom(Game(player = 5, wumpus = 5, pit1 = 1, pit2 = 2, bat1 = 3, bat2 = 4, arrows = 5)) => Outcome.Lose("The Wumpus devours you!")
-    checkRoom(Game(player = 1, wumpus = 5, pit1 = 1, pit2 = 2, bat1 = 3, bat2 = 4, arrows = 5)) => Outcome.Lose("You fall into a bottomless pit!")
-    checkRoom(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5)) => Outcome.Continue(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5))
+    checkRoom(Game(player = 5, wumpus = 5, pit1 = 1, pit2 = 2, bat1 = 3, bat2 = 4, arrows = 5)) => RoomCheck.Hazard("The Wumpus devours you!")
+    checkRoom(Game(player = 1, wumpus = 5, pit1 = 1, pit2 = 2, bat1 = 3, bat2 = 4, arrows = 5)) => RoomCheck.Hazard("You fall into a bottomless pit!")
+    checkRoom(Game(player = 2, wumpus = 5, pit1 = 6, pit2 = 7, bat1 = 2, bat2 = 14, arrows = 5)) => RoomCheck.BatTrap(Game(player = 2, wumpus = 5, pit1 = 6, pit2 = 7, bat1 = 2, bat2 = 14, arrows = 5))
+    checkRoom(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5)) => RoomCheck.Safe(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5))
 
-fn checkBats(game: Game) -> Outcome
-    ? "Super bats signal a teleport; the I/O layer handles the random move."
-    match game.player == game.bat1
-        true -> Outcome.Bats(game)
-        false -> match game.player == game.bat2
-            true -> Outcome.Bats(game)
-            false -> Outcome.Continue(game)
-
-verify checkBats
-    checkBats(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5)) => Outcome.Continue(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5))
-    checkBats(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 3, bat2 = 14, arrows = 5)) => Outcome.Bats(Game(player = 3, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 3, bat2 = 14, arrows = 5))
-
-fn movePlayer(game: Game, room: Int) -> Result<Outcome, String>
+fn movePlayer(game: Game, room: Int) -> Result<RoomCheck, String>
     ? "Move to an adjacent room and check hazards."
     match validRoom(room)
         false -> Result.Err("Room must be between 1 and 20!")
@@ -162,36 +177,37 @@ fn movePlayer(game: Game, room: Int) -> Result<Outcome, String>
             false -> Result.Err("That room is not adjacent!")
 
 verify movePlayer
-    movePlayer(Game(player = 1, wumpus = 10, pit1 = 15, pit2 = 16, bat1 = 18, bat2 = 19, arrows = 5), 2) => Result.Ok(Outcome.Continue(Game(player = 2, wumpus = 10, pit1 = 15, pit2 = 16, bat1 = 18, bat2 = 19, arrows = 5)))
+    movePlayer(Game(player = 1, wumpus = 10, pit1 = 15, pit2 = 16, bat1 = 18, bat2 = 19, arrows = 5), 2) => Result.Ok(RoomCheck.Safe(Game(player = 2, wumpus = 10, pit1 = 15, pit2 = 16, bat1 = 18, bat2 = 19, arrows = 5)))
     movePlayer(Game(player = 1, wumpus = 10, pit1 = 15, pit2 = 16, bat1 = 18, bat2 = 19, arrows = 5), 3) => Result.Err("That room is not adjacent!")
     movePlayer(Game(player = 1, wumpus = 10, pit1 = 15, pit2 = 16, bat1 = 18, bat2 = 19, arrows = 5), 0) => Result.Err("Room must be between 1 and 20!")
     movePlayer(Game(player = 1, wumpus = 10, pit1 = 15, pit2 = 16, bat1 = 18, bat2 = 19, arrows = 5), 99) => Result.Err("Room must be between 1 and 20!")
 
-fn shootArrow(game: Game, room: Int) -> Result<Outcome, String>
+fn shootArrow(game: Game, room: Int) -> Result<ShotResult, String>
     ? "Shoot an arrow into an adjacent room."
     match validRoom(room)
         false -> Result.Err("Room must be between 1 and 20!")
         true -> match isAdjacent(game.player, room)
             false -> Result.Err("You can't shoot there!")
             true -> match room == game.wumpus
-                true -> Result.Ok(Outcome.Win("Your arrow strikes the Wumpus! You win!"))
+                true -> Result.Ok(ShotResult.Hit("Your arrow strikes the Wumpus! You win!"))
                 false -> arrowMissed(game)
 
 verify shootArrow
-    shootArrow(Game(player = 1, wumpus = 2, pit1 = 10, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5), 2) => Result.Ok(Outcome.Win("Your arrow strikes the Wumpus! You win!"))
-    shootArrow(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 1), 5) => Result.Ok(Outcome.Lose("Out of arrows. The Wumpus finds you."))
+    shootArrow(Game(player = 1, wumpus = 2, pit1 = 10, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5), 2) => Result.Ok(ShotResult.Hit("Your arrow strikes the Wumpus! You win!"))
+    shootArrow(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 1), 5) => Result.Ok(ShotResult.Miss(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 0)))
     shootArrow(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5), 3) => Result.Err("You can't shoot there!")
     shootArrow(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 5), 0) => Result.Err("Room must be between 1 and 20!")
 
-fn arrowMissed(game: Game) -> Result<Outcome, String>
+fn arrowMissed(game: Game) -> Result<ShotResult, String>
     ? "Handle a missed arrow shot — check remaining arrows."
-    match game.arrows == 1
-        true -> Result.Ok(Outcome.Lose("Out of arrows. The Wumpus finds you."))
-        false -> Result.Ok(Outcome.Continue(Game.update(game, arrows = game.arrows - 1)))
+    match game.arrows <= 0
+        true -> Result.Err("No arrows remaining!")
+        false -> Result.Ok(ShotResult.Miss(Game.update(game, arrows = game.arrows - 1)))
 
 verify arrowMissed
-    arrowMissed(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 1)) => Result.Ok(Outcome.Lose("Out of arrows. The Wumpus finds you."))
-    arrowMissed(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 3)) => Result.Ok(Outcome.Continue(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 2)))
+    arrowMissed(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 0)) => Result.Err("No arrows remaining!")
+    arrowMissed(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 1)) => Result.Ok(ShotResult.Miss(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 0)))
+    arrowMissed(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 3)) => Result.Ok(ShotResult.Miss(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 13, bat2 = 14, arrows = 2)))
 
 fn wumpusNearby(game: Game) -> Bool
     ? "True when the Wumpus is in an adjacent room."
@@ -268,32 +284,47 @@ fn dispatchAction(game: Game, action: String, room: Int) -> Result<String, Strin
     ? "Route m/s action to move or shoot."
     ! [Console.print, Console.readLine, Random.int]
     match action
-        "m" -> handleResult(game, movePlayer(game, room))
-        "s" -> handleResult(game, shootArrow(game, room))
+        "m" -> handleMoveResult(game, movePlayer(game, room))
+        "s" -> handleShotResult(game, shootArrow(game, room))
         _ -> retry(game, "Type 'm' or 's'.")
 
-fn handleResult(game: Game, result: Result<Outcome, String>) -> Result<String, String>
-    ? "Unwrap action result: retry on error, resolve on outcome."
+fn handleMoveResult(game: Game, result: Result<RoomCheck, String>) -> Result<String, String>
+    ? "Unwrap move result: retry on error, resolve room check on success."
     ! [Console.print, Console.readLine, Random.int]
     match result
         Result.Err(msg) -> retry(game, msg)
-        Result.Ok(outcome) -> resolveOutcome(outcome)
+        Result.Ok(rc) -> resolveRoomCheck(rc)
 
-fn resolveOutcome(outcome: Outcome) -> Result<String, String>
-    ? "Win/Lose ends the game, Bats teleport, Continue loops."
+fn handleShotResult(game: Game, result: Result<ShotResult, String>) -> Result<String, String>
+    ? "Unwrap shot result: retry on error, resolve shot on success."
     ! [Console.print, Console.readLine, Random.int]
-    match outcome
-        Outcome.Win(msg) -> Result.Ok(msg)
-        Outcome.Lose(msg) -> Result.Ok(msg)
-        Outcome.Bats(game) -> teleportAndCheck(game)
-        Outcome.Continue(game) -> gameLoop(game)
+    match result
+        Result.Err(msg) -> retry(game, msg)
+        Result.Ok(sr) -> resolveShotResult(sr)
+
+fn resolveRoomCheck(rc: RoomCheck) -> Result<String, String>
+    ? "Hazard ends the game, BatTrap teleports, Safe continues."
+    ! [Console.print, Console.readLine, Random.int]
+    match rc
+        RoomCheck.Hazard(msg) -> Result.Ok(msg)
+        RoomCheck.BatTrap(game) -> teleportAndCheck(game)
+        RoomCheck.Safe(game) -> gameLoop(game)
+
+fn resolveShotResult(sr: ShotResult) -> Result<String, String>
+    ? "Hit ends the game with victory, Miss checks remaining arrows."
+    ! [Console.print, Console.readLine, Random.int]
+    match sr
+        ShotResult.Hit(msg) -> Result.Ok(msg)
+        ShotResult.Miss(game) -> match game.arrows <= 0
+            true -> Result.Ok("Out of arrows. The Wumpus finds you.")
+            false -> gameLoop(game)
 
 fn teleportAndCheck(game: Game) -> Result<String, String>
     ? "Bats carry you to a random room; check hazards there."
     ! [Console.print, Console.readLine, Random.int]
     dest = randRoom()
     Console.print("Super bats carry you to room {Int.toString(dest)}!")
-    resolveOutcome(checkRoom(Game.update(game, player = dest)))
+    resolveRoomCheck(checkRoom(Game.update(game, player = dest)))
 
 fn retry(game: Game, msg: String) -> Result<String, String>
     ? "Print an error message and re-enter the game loop."
@@ -304,7 +335,7 @@ fn retry(game: Game, msg: String) -> Result<String, String>
 fn startGame(game: Game) -> Result<String, String>
     ? "Check starting room for hazards, then enter the game loop."
     ! [Console.print, Console.readLine, Random.int]
-    resolveOutcome(checkRoom(game))
+    resolveRoomCheck(checkRoom(game))
 
 fn main() -> Unit
     ? "Starts Hunt the Wumpus."

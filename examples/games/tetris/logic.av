@@ -33,7 +33,10 @@ fn checkPoints(board: List<List<Option<PieceKind>>>, points: List<Point>) -> Boo
                 Option.Some(_) -> true
 
 verify checkPoints
+    checkPoints(Board.emptyBoard(), []) => false
     checkPoints(Board.emptyBoard(), [Board.pt(5, 5)]) => false
+    checkPoints(Board.emptyBoard(), [Board.pt(0 - 1, 0)]) => true
+    checkPoints(Board.emptyBoard(), [Board.pt(10, 0)]) => true
 
 fn checkCollision(board: List<List<Option<PieceKind>>>, piece: Piece, px: Int, py: Int) -> Bool
     ? "True if piece at (px,py) collides with walls or cells"
@@ -57,9 +60,10 @@ verify rotatePiece
 
 fn moveLeft(state: GameState) -> GameState
     ? "Move piece left if no collision"
-    match checkCollision(state.board, state.piece, state.px - 1, state.py)
+    newPx = state.px - 1
+    match checkCollision(state.board, state.piece, newPx, state.py)
         true -> state
-        false -> GameState.update(state, px = state.px - 1)
+        false -> GameState.update(state, px = newPx)
 
 verify moveLeft
     moveLeft(mkState(Board.emptyBoard(), Piece(kind = PieceKind.O, rotation = 0), 5, 5)).px => 4
@@ -67,9 +71,10 @@ verify moveLeft
 
 fn moveRight(state: GameState) -> GameState
     ? "Move piece right if no collision"
-    match checkCollision(state.board, state.piece, state.px + 1, state.py)
+    newPx = state.px + 1
+    match checkCollision(state.board, state.piece, newPx, state.py)
         true -> state
-        false -> GameState.update(state, px = state.px + 1)
+        false -> GameState.update(state, px = newPx)
 
 verify moveRight
     moveRight(mkState(Board.emptyBoard(), Piece(kind = PieceKind.O, rotation = 0), 5, 5)).px => 6
@@ -77,9 +82,10 @@ verify moveRight
 
 fn moveDown(state: GameState) -> GameState
     ? "Move piece down if no collision"
-    match checkCollision(state.board, state.piece, state.px, state.py + 1)
+    newPy = state.py + 1
+    match checkCollision(state.board, state.piece, state.px, newPy)
         true -> state
-        false -> GameState.update(state, py = state.py + 1)
+        false -> GameState.update(state, py = newPy)
 
 verify moveDown
     moveDown(mkState(Board.emptyBoard(), Piece(kind = PieceKind.O, rotation = 0), 5, 5)).py => 6
@@ -92,6 +98,7 @@ fn placePoints(board: List<List<Option<PieceKind>>>, points: List<Point>, kind: 
         [p, ..rest] -> placePoints(Board.setCell(board, p.x, p.y, kind), rest, kind)
 
 verify placePoints
+    placePoints(Board.emptyBoard(), [], PieceKind.Z) => Board.emptyBoard()
     Board.getCell(placePoints(Board.emptyBoard(), [Board.pt(3, 3)], PieceKind.Z), 3, 3) => Option.Some(PieceKind.Z)
 
 fn placePiece(board: List<List<Option<PieceKind>>>, piece: Piece, px: Int, py: Int) -> List<List<Option<PieceKind>>>
@@ -105,21 +112,23 @@ verify placePiece
 
 fn hardDrop(state: GameState) -> GameState
     ? "Drop piece as far down as possible"
-    match checkCollision(state.board, state.piece, state.px, state.py + 1)
+    newPy = state.py + 1
+    match checkCollision(state.board, state.piece, state.px, newPy)
         true -> state
-        false -> hardDrop(GameState.update(state, py = state.py + 1))
+        false -> hardDrop(GameState.update(state, py = newPy))
 
 verify hardDrop
     hardDrop(mkState(Board.emptyBoard(), Piece(kind = PieceKind.O, rotation = 0), 4, 0)).py => 18
 
 fn computeScore(cleared: Int, level: Int) -> Int
     ? "Score based on lines cleared and level"
+    mult = level + 1
     match cleared
         0 -> 0
-        1 -> 100 * (level + 1)
-        2 -> 300 * (level + 1)
-        3 -> 500 * (level + 1)
-        _ -> 800 * (level + 1)
+        1 -> 100 * mult
+        2 -> 300 * mult
+        3 -> 500 * mult
+        _ -> 800 * mult
 
 verify computeScore
     computeScore(0, 0) => 0

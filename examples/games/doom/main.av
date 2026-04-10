@@ -63,9 +63,10 @@ verify spawnEnemies
 
 fn spawnSkipFirst(rooms: List<Level.Room>, seed: Int, i: Int, acc: List<Enemy>, room: Level.Room) -> List<Enemy>
     ? "Skip first room, spawn in rest"
+    next = i + 1
     match i == 0
-        true -> spawnEnemies(rooms, Rng.nextSeed(seed), i + 1, acc)
-        false -> spawnEnemies(rooms, Rng.nextSeed(seed), i + 1, List.concat(acc, [spawnInRoom(room, seed)]))
+        true -> spawnEnemies(rooms, Rng.nextSeed(seed), next, acc)
+        false -> spawnEnemies(rooms, Rng.nextSeed(seed), next, List.concat(acc, [spawnInRoom(room, seed)]))
 
 verify spawnSkipFirst
     spawnSkipFirst([Level.Room(x = 1, y = 1, w = 2, h = 2)], 42, 0, [], Level.Room(x = 1, y = 1, w = 2, h = 2)) => []
@@ -107,6 +108,8 @@ fn slideMove(player: Player, nx: Float, ny: Float, canX: Bool, canY: Bool) -> Pl
 
 verify slideMove
     slideMove(Player(x = 1.0, y = 1.0, angle = 0.0, hp = 100), 2.0, 3.0, false, true).y => 3.0
+    slideMove(Player(x = 1.0, y = 1.0, angle = 0.0, hp = 100), 2.0, 3.0, true, true).x => 2.0
+    slideMove(Player(x = 1.0, y = 1.0, angle = 0.0, hp = 100), 2.0, 3.0, true, false).x => 2.0
 
 fn moveForward(state: GameState) -> Player
     ? "Move player forward"
@@ -124,14 +127,16 @@ verify moveBackward
 
 fn strafeLeft(state: GameState) -> Player
     ? "Strafe left"
-    tryMove(state, Float.cos(state.player.angle - Float.pi() / 2.0) * moveSpeed(), Float.sin(state.player.angle - Float.pi() / 2.0) * moveSpeed())
+    sideAngle = state.player.angle - Float.pi() / 2.0
+    tryMove(state, Float.cos(sideAngle) * moveSpeed(), Float.sin(sideAngle) * moveSpeed())
 
 verify strafeLeft
     strafeLeft(GameState(levelMap = Level.buildMap(4, "####", []), wallMap = [], player = Player(x = 1.0, y = 1.0, angle = 0.0, hp = 100), enemies = [], seed = 0, messages = [], gameOver = false, turnCount = 0)).y => 1.0
 
 fn strafeRight(state: GameState) -> Player
     ? "Strafe right"
-    tryMove(state, Float.cos(state.player.angle + Float.pi() / 2.0) * moveSpeed(), Float.sin(state.player.angle + Float.pi() / 2.0) * moveSpeed())
+    sideAngle = state.player.angle + Float.pi() / 2.0
+    tryMove(state, Float.cos(sideAngle) * moveSpeed(), Float.sin(sideAngle) * moveSpeed())
 
 verify strafeRight
     strafeRight(GameState(levelMap = Level.buildMap(4, "####", []), wallMap = [], player = Player(x = 1.0, y = 1.0, angle = 0.0, hp = 100), enemies = [], seed = 0, messages = [], gameOver = false, turnCount = 0)).y => 1.0
@@ -211,6 +216,7 @@ fn trimMessages(msgs: List<String>) -> List<String>
 verify trimMessages
     List.len(trimMessages(["a", "b", "c", "d", "e"])) => 3
     trimMessages(["a", "b"]) => ["a", "b"]
+    trimMessages([]) => []
 
 fn dropFirst(xs: List<String>) -> List<String>
     ? "Remove first element of a string list"

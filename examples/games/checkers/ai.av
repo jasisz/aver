@@ -184,40 +184,39 @@ fn abSearch(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, i
         true -> best
         false -> match alpha > beta
             true -> best
-            false -> match Vector.get(Vector.fromList(moves), i)
-                Option.Some(move) -> abUpdateAndContinue(board, depth, alpha, beta, isMax, color, aiColor, moves, i, best, abEvalMove(board, depth, alpha, beta, isMax, color, aiColor, move))
-                Option.None -> best
+            false -> abSearchNext(board, depth, alpha, beta, isMax, color, aiColor, moves, i, best)
+
+fn abSearchNext(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, isMax: Bool, color: Color, aiColor: Color, moves: List<List<Point>>, i: Int, best: Int) -> Int
+    ? "Fetch move at index and score it"
+    nextI = i + 1
+    match Vector.get(Vector.fromList(moves), i)
+        Option.Some(move) -> abSearchScore(board, depth, alpha, beta, isMax, color, aiColor, moves, nextI, best, move)
+        Option.None -> best
+
+fn abSearchScore(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, isMax: Bool, color: Color, aiColor: Color, moves: List<List<Point>>, nextI: Int, best: Int, move: List<Point>) -> Int
+    ? "Score move via alpha-beta and continue"
+    score = alphaBeta(Rules.applyTurn(board, move), depth - 1, alpha, beta, Bool.not(isMax), Board.opponent(color), aiColor)
+    abSearchContinue(board, depth, alpha, beta, isMax, color, aiColor, moves, nextI, best, score)
+
+fn abSearchContinue(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, isMax: Bool, color: Color, aiColor: Color, moves: List<List<Point>>, nextI: Int, best: Int, score: Int) -> Int
+    ? "Update best/alpha/beta and tail-call abSearch"
+    match isMax
+        true -> abSearch(board, depth, Int.max(alpha, score), beta, true, color, aiColor, moves, nextI, Int.max(best, score))
+        false -> abSearch(board, depth, alpha, Int.min(beta, score), false, color, aiColor, moves, nextI, Int.min(best, score))
+
+verify abSearchContinue
+    abSearchContinue(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, true, Color.Black, Color.Black, [[]], 1, 0 - 9999, 5) => 5
+    abSearchContinue(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, false, Color.Black, Color.Black, [[]], 1, 9999, 5) => 5
+
+verify abSearchNext
+    abSearchNext(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, true, Color.Black, Color.Black, [[]], 0, 0 - 9999) => 0
+
+verify abSearchScore
+    abSearchScore(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, true, Color.Black, Color.Black, [[]], 1, 0 - 9999, []) => 0
 
 verify abSearch
     abSearch(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, true, Color.Black, Color.Black, [], 0, 0 - 9999) => 0 - 9999
 
-fn abEvalMove(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, isMax: Bool, color: Color, aiColor: Color, move: List<Point>) -> Int
-    ? "Evaluate one move"
-    alphaBeta(Rules.applyTurn(board, move), depth - 1, alpha, beta, Bool.not(isMax), Board.opponent(color), aiColor)
-
-verify abEvalMove
-    abEvalMove(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, true, Color.Black, Color.Black, []) => 0
-fn abUpdateAndContinue(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, isMax: Bool, color: Color, aiColor: Color, moves: List<List<Point>>, i: Int, best: Int, score: Int) -> Int
-    ? "Update best/alpha/beta and continue search"
-    match isMax
-        true -> abUpdateMax(board, depth, alpha, beta, color, aiColor, moves, i, Int.max(best, score), Int.max(alpha, score))
-        false -> abUpdateMin(board, depth, alpha, beta, color, aiColor, moves, i, Int.min(best, score), Int.min(beta, score))
-
-verify abUpdateAndContinue
-    abUpdateAndContinue(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, true, Color.Black, Color.Black, [[]], 0, 0 - 9999, 5) => 5
-    abUpdateAndContinue(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, false, Color.Black, Color.Black, [[]], 0, 9999, 5) => 5
-fn abUpdateMax(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, color: Color, aiColor: Color, moves: List<List<Point>>, i: Int, newBest: Int, newAlpha: Int) -> Int
-    ? "Continue maximizer search with updated alpha"
-    abSearch(board, depth, newAlpha, beta, true, color, aiColor, moves, i + 1, newBest)
-
-verify abUpdateMax
-    abUpdateMax(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, Color.Black, Color.Black, [[]], 0, 5, 5) => 5
-fn abUpdateMin(board: List<List<CellContent>>, depth: Int, alpha: Int, beta: Int, color: Color, aiColor: Color, moves: List<List<Point>>, i: Int, newBest: Int, newBeta: Int) -> Int
-    ? "Continue minimizer search with updated beta"
-    abSearch(board, depth, alpha, newBeta, false, color, aiColor, moves, i + 1, newBest)
-
-verify abUpdateMin
-    abUpdateMin(Board.buildEmptyBoard(8), 1, 0 - 9999, 9999, Color.Black, Color.Black, [[]], 0, 0 - 5, 0 - 5) => 0 - 5
 fn scoreRootMove(board: List<List<CellContent>>, color: Color, depth: Int, move: List<Point>) -> ScoredMove
     ? "Score one root candidate independently from sibling candidates"
     score = alphaBeta(Rules.applyTurn(board, move), depth - 1, 0 - 9999, 9999, false, Board.opponent(color), color)

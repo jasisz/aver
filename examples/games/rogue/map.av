@@ -93,26 +93,56 @@ verify getT
 
 fn setCol(row: List<Tile>, x: Int, tile: Tile, col: Int) -> List<Tile>
     ? "Rebuild a row replacing column x with tile"
+    setColAcc(row, x, tile, col, [])
+
+fn setColAcc(row: List<Tile>, x: Int, tile: Tile, col: Int, acc: List<Tile>) -> List<Tile>
+    ? "Accumulator helper for setCol"
     match col == mapW()
-        true -> []
-        false -> match Vector.get(Vector.fromList(row), col)
-            Option.Some(v) -> match col == x
-                true -> List.prepend(tile, setCol(row, x, tile, col + 1))
-                false -> List.prepend(v, setCol(row, x, tile, col + 1))
-            Option.None -> []
+        true -> List.reverse(acc)
+        false -> setColStep(row, x, tile, col, acc)
+
+fn setColStep(row: List<Tile>, x: Int, tile: Tile, col: Int, acc: List<Tile>) -> List<Tile>
+    ? "Process one column in setCol"
+    nextCol = col + 1
+    match Vector.get(Vector.fromList(row), col)
+        Option.Some(v) -> match col == x
+            true -> setColAcc(row, x, tile, nextCol, List.prepend(tile, acc))
+            false -> setColAcc(row, x, tile, nextCol, List.prepend(v, acc))
+        Option.None -> List.reverse(acc)
+
+verify setColAcc
+    List.len(setColAcc(buildRow(50), 3, Tile.Floor, 0, [])) => 50
+
+verify setColStep
+    List.len(setColStep(buildRow(50), 3, Tile.Floor, 0, [])) => 50
 
 verify setCol
     List.len(setCol(buildRow(50), 3, Tile.Floor, 0)) => 50
 
 fn setRow(map: List<List<Tile>>, x: Int, y: Int, tile: Tile, row: Int) -> List<List<Tile>>
     ? "Rebuild rows replacing cell at (x,y)"
+    setRowAcc(map, x, y, tile, row, [])
+
+fn setRowAcc(map: List<List<Tile>>, x: Int, y: Int, tile: Tile, row: Int, acc: List<List<Tile>>) -> List<List<Tile>>
+    ? "Accumulator helper for setRow"
     match row == mapH()
-        true -> []
-        false -> match Vector.get(Vector.fromList(map), row)
-            Option.Some(r) -> match row == y
-                true -> List.prepend(setCol(r, x, tile, 0), setRow(map, x, y, tile, row + 1))
-                false -> List.prepend(r, setRow(map, x, y, tile, row + 1))
-            Option.None -> []
+        true -> List.reverse(acc)
+        false -> setRowStep(map, x, y, tile, row, acc)
+
+fn setRowStep(map: List<List<Tile>>, x: Int, y: Int, tile: Tile, row: Int, acc: List<List<Tile>>) -> List<List<Tile>>
+    ? "Process one row in setRow"
+    nextRow = row + 1
+    match Vector.get(Vector.fromList(map), row)
+        Option.Some(r) -> match row == y
+            true -> setRowAcc(map, x, y, tile, nextRow, List.prepend(setCol(r, x, tile, 0), acc))
+            false -> setRowAcc(map, x, y, tile, nextRow, List.prepend(r, acc))
+        Option.None -> List.reverse(acc)
+
+verify setRowAcc
+    List.len(setRowAcc(emptyMap(), 3, 5, Tile.Floor, 0, [])) => 30
+
+verify setRowStep
+    List.len(setRowStep(emptyMap(), 3, 5, Tile.Floor, 0, [])) => 30
 
 verify setRow
     List.len(setRow(emptyMap(), 3, 5, Tile.Floor, 0)) => 30

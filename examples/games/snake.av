@@ -71,11 +71,27 @@ verify moveSnake
 
 fn dropLast(xs: List<Point>) -> List<Point>
     ? "Remove the last element"
+    dropLastAcc(xs, [])
+
+fn dropLastAcc(xs: List<Point>, acc: List<Point>) -> List<Point>
+    ? "Tail-recursive helper: accumulate all but last, then reverse"
     match xs
-        [] -> []
-        [head, ..rest] -> match rest
-            [] -> []
-            _ -> List.prepend(head, dropLast(rest))
+        [head, ..rest] -> dropLastNext(head, rest, acc)
+        _ -> List.reverse(acc)
+
+fn dropLastNext(head: Point, rest: List<Point>, acc: List<Point>) -> List<Point>
+    ? "If rest is empty, head is last — return reversed acc; otherwise continue"
+    match rest
+        [] -> List.reverse(acc)
+        _ -> dropLastAcc(rest, List.prepend(head, acc))
+
+verify dropLastAcc
+    dropLastAcc([pt(1, 1), pt(2, 2)], []) => [pt(1, 1)]
+    dropLastAcc([], [pt(3, 3)]) => [pt(3, 3)]
+
+verify dropLastNext
+    dropLastNext(pt(1, 1), [], []) => []
+    dropLastNext(pt(1, 1), [pt(2, 2)], []) => [pt(1, 1)]
 
 verify dropLast
     dropLast([pt(1, 1), pt(2, 2), pt(3, 3)]) => [pt(1, 1), pt(2, 2)]
@@ -131,6 +147,7 @@ fn bodyContains(snake: List<Point>, target: Point, i: Int) -> Bool
 verify bodyContains
     bodyContains([pt(5, 5), pt(6, 5), pt(5, 5)], pt(5, 5), 1) => true
     bodyContains([pt(5, 5), pt(6, 5), pt(7, 5)], pt(5, 5), 1) => false
+    bodyContains([], pt(5, 5), 0) => false
 
 fn didEatFood(state: GameState) -> Bool
     ? "True if the snake head is on the food"
@@ -146,9 +163,17 @@ verify didEatFood
 
 fn appendPoint(xs: List<Point>, point: Point) -> List<Point>
     ? "Append one point to the end of the snake body."
+    appendPointAcc(xs, point, [])
+
+fn appendPointAcc(xs: List<Point>, point: Point, acc: List<Point>) -> List<Point>
+    ? "Tail-recursive helper: accumulate reversed, append point, reverse back"
     match xs
-        [] -> [point]
-        [head, ..rest] -> List.prepend(head, appendPoint(rest, point))
+        [] -> List.reverse(List.prepend(point, acc))
+        [head, ..rest] -> appendPointAcc(rest, point, List.prepend(head, acc))
+
+verify appendPointAcc
+    appendPointAcc([pt(1, 1)], pt(2, 2), []) => [pt(1, 1), pt(2, 2)]
+    appendPointAcc([], pt(3, 3), [pt(1, 1)]) => [pt(1, 1), pt(3, 3)]
 
 verify appendPoint
     appendPoint([pt(1, 1), pt(2, 2)], pt(3, 3)) => [pt(1, 1), pt(2, 2), pt(3, 3)]
@@ -202,15 +227,17 @@ fn renderVNext(y: Int, maxY: Int, x: Int) -> Unit
 fn renderBorder(state: GameState) -> Unit
     ? "Draw border with solid blocks"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    maxX = state.width - 1
+    maxY = state.height - 1
     Terminal.setColor("white")
     drawAt(0, 0, "██")
-    drawAt(state.width - 1, 0, "██")
-    drawAt(0, state.height - 1, "██")
-    drawAt(state.width - 1, state.height - 1, "██")
-    renderHLine(1, state.width - 1, 0)
-    renderHLine(1, state.width - 1, state.height - 1)
-    renderVLine(1, state.height - 1, 0)
-    renderVLine(1, state.height - 1, state.width - 1)
+    drawAt(maxX, 0, "██")
+    drawAt(0, maxY, "██")
+    drawAt(maxX, maxY, "██")
+    renderHLine(1, maxX, 0)
+    renderHLine(1, maxX, maxY)
+    renderVLine(1, maxY, 0)
+    renderVLine(1, maxY, maxX)
     Terminal.resetColor()
 
 fn renderSegment(p: Point, i: Int) -> Unit
@@ -251,11 +278,10 @@ fn render(state: GameState) -> Unit
 
 fn handleKey(state: GameState, k: String) -> GameState
     ? "Handle a single key press"
-    match k == "q"
-        true -> GameState.update(state, gameOver = true)
-        false -> match k == "esc"
-            true -> GameState.update(state, gameOver = true)
-            false -> newDirection(state, k)
+    match k
+        "q" -> GameState.update(state, gameOver = true)
+        "esc" -> GameState.update(state, gameOver = true)
+        _ -> newDirection(state, k)
 
 verify handleKey
     handleKey(gs([pt(5, 5)], 1, 0, pt(0, 0)), "q").gameOver => true
