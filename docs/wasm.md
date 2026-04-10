@@ -59,6 +59,12 @@ The WASM backend uses a single bump-heap allocator (`$alloc`) with boundary comp
 
 **Exported `alloc`**: modules export `$alloc(size: i32) -> i32` so hosts can allocate guest memory safely for strings returned from host imports.
 
+## Limitations
+
+- **`aver.toml` policy** — the WASM binary does not embed runtime policy. Effect restrictions (`hosts`, `paths`, `keys`) are the host's responsibility. The built-in host does not yet read `aver.toml`. Independence mode (`cancel` vs `complete`) has no effect since WASM execution is single-threaded.
+- **Multi-module `depends`** — not supported yet in WASM codegen.
+- **Services** — the built-in host provides Console, Terminal, Random, Time, and math. Disk, Http, Tcp, Env, and Args are not available.
+
 ## Optimized Patterns
 
 - `Option.withDefault(Vector.get(v, i), literal)` → inline bounds check + direct `i64.load`, no Option wrapper allocation
