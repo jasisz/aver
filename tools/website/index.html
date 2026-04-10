@@ -71,7 +71,12 @@
 
 <span class="hl-keyword">verify</span> <span class="hl-fn">safeDivide</span>
     safeDivide(<span class="hl-number">10</span>, <span class="hl-number">2</span>) <span class="hl-operator">=></span> Result.Ok(<span class="hl-number">5</span>)
-    safeDivide(<span class="hl-number">7</span>, <span class="hl-number">0</span>)  <span class="hl-operator">=></span> Result.Err(<span class="hl-string">"Division by zero"</span>)</pre>
+    safeDivide(<span class="hl-number">7</span>, <span class="hl-number">0</span>)  <span class="hl-operator">=></span> Result.Err(<span class="hl-string">"Division by zero"</span>)
+
+<span class="hl-keyword">fn</span> <span class="hl-fn">reportDivide</span>(a: <span class="hl-type">Int</span>, b: <span class="hl-type">Int</span>) <span class="hl-operator">-></span> <span class="hl-type">Unit</span>
+    <span class="hl-effect">?</span> <span class="hl-desc">"Prints the result of safeDivide."</span>
+    <span class="hl-effect">!</span> <span class="hl-effect">[Console.print]</span>
+    Console.print(safeDivide(a, b))</pre>
         </div>
     </div>
 </section>

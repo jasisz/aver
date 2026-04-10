@@ -235,8 +235,10 @@ body {
 
 .terminal-surface {
     flex: 1;
+    padding: 0.5rem 0.75rem 0 1rem;
     outline: none;
     overflow: hidden;
+    box-sizing: border-box;
 }
 
 .terminal-canvas {
@@ -547,8 +549,8 @@ body {
 
 .touch-controls {
     display: flex;
-    gap: 0.5rem;
-    padding: 0.35rem 0.5rem;
+    gap: 0.9rem;
+    padding: 0.75rem 0.85rem 0.8rem;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
     justify-content: center;
@@ -560,16 +562,16 @@ body {
 .touch-group { text-align: center; }
 
 .touch-label {
-    font-size: 0.6rem;
+    font-size: 0.62rem;
     color: var(--muted);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 0.25rem;
+    letter-spacing: 0.08em;
+    margin-bottom: 0.4rem;
 }
 
 .touch-controls button {
-    width: 36px;
-    height: 36px;
+    width: 38px;
+    height: 38px;
     font-size: 0.8rem;
     border-radius: 8px;
     background: var(--bg);
@@ -592,7 +594,7 @@ body {
     display: grid;
     grid-template-columns: repeat(3, 40px);
     grid-template-rows: repeat(2, 40px);
-    gap: 3px;
+    gap: 5px;
 }
 
 /* QWE / ASD layout */
@@ -612,8 +614,8 @@ body {
 .touch-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 3px;
-    max-width: 130px;
+    gap: 5px;
+    max-width: 144px;
 }
 
 
