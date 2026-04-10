@@ -1403,10 +1403,10 @@ fn load_variant_names_from_instance(
                 let text = String::from_utf8_lossy(&data[ptr..ptr + len]).to_string();
                 let mut map = std::collections::HashMap::new();
                 for entry in text.split('|') {
-                    if let Some(colon) = entry.find(':') {
-                        if let Ok(tag) = entry[..colon].parse::<u32>() {
-                            map.insert(tag, entry[colon + 1..].to_string());
-                        }
+                    if let Some(colon) = entry.find(':')
+                        && let Ok(tag) = entry[..colon].parse::<u32>()
+                    {
+                        map.insert(tag, entry[colon + 1..].to_string());
                     }
                 }
                 VARIANT_NAMES.with(|names| *names.borrow_mut() = map);

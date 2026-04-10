@@ -77,8 +77,13 @@
 
     <!-- Right: output -->
     <section class="output-pane" data-output-pane>
+        <div class="source-viewer" data-source-viewer>
+            <div class="source-tabs" data-source-tabs></div>
+            <pre class="source-code" data-source-code></pre>
+        </div>
         <div class="back-bar">
-            <button data-back>← Back to editor</button>
+            <button data-back>← Back</button>
+            <button data-toggle-source class="btn-subtle">Source</button>
         </div>
         <!-- Terminal (hidden until Terminal.* is used) -->
         <div class="terminal-wrap" data-terminal-wrap style="display:none">

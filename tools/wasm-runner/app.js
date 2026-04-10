@@ -639,6 +639,8 @@ function setWorkspaceMode(mode) {
 function backToEditor() {
     stopRun();
     state.programArgs = [];
+    const ws = document.querySelector(".workspace");
+    if (ws) ws.dataset.showSource = "false";
     setWorkspaceMode("edit");
     setOutputMode("console");
     document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
@@ -835,6 +837,89 @@ if (checkBtn) {
         }
     });
 }
+
+// ---------------------------------------------------------------------------
+// Game source viewer
+// ---------------------------------------------------------------------------
+
+const GAME_SOURCES = {
+    life:     ["examples/games/life.av"],
+    snake:    ["examples/games/snake.av"],
+    wumpus:   ["examples/games/wumpus.av"],
+    tetris:   ["examples/games/tetris/pieces.av", "examples/games/tetris/board.av", "examples/games/tetris/logic.av", "examples/games/tetris/main.av"],
+    checkers: ["examples/games/checkers/board.av", "examples/games/checkers/rules.av", "examples/games/checkers/ai.av", "examples/games/checkers/render.av", "examples/games/checkers/main.av"],
+    rogue:    ["examples/games/rogue/types.av", "examples/games/rogue/map.av", "examples/games/rogue/fov.av", "examples/games/rogue/combat.av", "examples/games/rogue/pathfinding.av", "examples/games/rogue/render.av", "examples/games/rogue/main.av"],
+    doom:     ["examples/games/doom/types.av", "examples/games/doom/math.av", "examples/games/doom/rng.av", "examples/games/doom/level.av", "examples/games/doom/enemy.av", "examples/games/doom/render.av", "examples/games/doom/main.av"],
+};
+
+const GITHUB_RAW = "https://raw.githubusercontent.com/jasisz/aver/main/";
+const sourceCache = {};
+
+async function fetchSource(path) {
+    if (sourceCache[path]) return sourceCache[path];
+    try {
+        const resp = await fetch(GITHUB_RAW + path);
+        if (!resp.ok) return `// Failed to load ${path}`;
+        const text = await resp.text();
+        sourceCache[path] = text;
+        return text;
+    } catch (_) {
+        return `// Failed to load ${path}`;
+    }
+}
+
+async function showGameSource(gameName) {
+    const paths = GAME_SOURCES[gameName];
+    if (!paths) return;
+
+    const tabsEl = document.querySelector("[data-source-tabs]");
+    const codeEl = document.querySelector("[data-source-code]");
+    if (!tabsEl || !codeEl) return;
+
+    tabsEl.innerHTML = "";
+    codeEl.textContent = "Loading…";
+
+    const sources = await Promise.all(paths.map(fetchSource));
+
+    tabsEl.innerHTML = "";
+    paths.forEach((path, i) => {
+        const name = path.split("/").pop();
+        const btn = document.createElement("button");
+        btn.textContent = name;
+        if (i === 0) btn.classList.add("active");
+        btn.addEventListener("click", () => {
+            tabsEl.querySelectorAll("button").forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            import("./highlight.js").then(({ highlightAver }) => {
+                codeEl.innerHTML = highlightAver(sources[i]);
+            });
+        });
+        tabsEl.appendChild(btn);
+    });
+
+    // Show first file highlighted
+    import("./highlight.js").then(({ highlightAver }) => {
+        codeEl.innerHTML = highlightAver(sources[0]);
+    });
+}
+
+// Toggle source button
+document.querySelector("[data-toggle-source]")?.addEventListener("click", () => {
+    const ws = document.querySelector(".workspace");
+    if (!ws) return;
+    const showing = ws.dataset.showSource === "true";
+    ws.dataset.showSource = showing ? "false" : "true";
+});
+
+// Load source when game is selected
+const origGameClickHandlers = [];
+document.querySelectorAll("[data-game]").forEach(btn => {
+    btn.addEventListener("click", () => {
+        const ws = document.querySelector(".workspace");
+        if (ws) ws.dataset.showSource = "false";
+        showGameSource(btn.dataset.game);
+    });
+});
 
 // Preload compiler in background
 loadCompiler().then(() => {

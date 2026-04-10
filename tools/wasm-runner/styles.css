@@ -333,3 +333,88 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 /* Game mode: editor collapses, output takes full width */
 .workspace[data-mode="game"] .editor-pane { display: none; }
 .workspace[data-mode="game"] .output-pane { flex: 1; }
+
+/* ── Source viewer (game source code) ────────────────────────────── */
+
+.source-viewer {
+    display: none;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    min-width: 300px;
+    max-width: 50%;
+    flex: 1;
+}
+
+.workspace[data-mode="game"][data-show-source="true"] .source-viewer { display: flex; }
+
+.source-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    overflow-x: auto;
+}
+
+.source-tabs button {
+    font-size: 0.75rem;
+    padding: 0.35rem 0.75rem;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--muted);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.source-tabs button:hover { color: var(--text); }
+.source-tabs button.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+.source-code {
+    flex: 1;
+    margin: 0;
+    padding: 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text);
+    background: var(--bg);
+    overflow: auto;
+    white-space: pre;
+    word-wrap: normal;
+    tab-size: 4;
+    min-height: 0;
+}
+
+/* ── Responsive ──────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+    .top-bar {
+        flex-wrap: wrap;
+        gap: 0.4rem;
+    }
+    .intro { display: none; }
+    .game-nav { order: 3; width: 100%; }
+
+    .workspace {
+        flex-direction: column;
+    }
+    .editor-pane {
+        min-width: 0;
+        max-height: 40vh;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+    }
+    .output-pane {
+        min-width: 0;
+        min-height: 200px;
+    }
+    .source-viewer {
+        max-width: 100%;
+        max-height: 40vh;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+    }
+}
