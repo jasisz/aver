@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Aver Playground</title>
     <link rel="stylesheet" href="./styles.css">
 </head>
@@ -96,24 +96,35 @@
                         Arrow keys, esc, enter → Terminal.readKey()
                     </p>
                     <div class="touch-controls" data-touch-controls>
-                        <div class="touch-row">
-                            <button data-key="q">Q</button>
-                            <button data-key="w">W</button>
-                            <button data-key="e">E</button>
-                            <button data-key="up">↑</button>
-                            <button data-key=" " class="wide">Space</button>
-                            <button data-key="enter" class="wide">↵</button>
+                        <div class="touch-group">
+                            <div class="touch-label">Move</div>
+                            <div class="touch-grid wasd">
+                                <button data-key="w">W</button>
+                                <button data-key="a">A</button>
+                                <button data-key="s">S</button>
+                                <button data-key="d">D</button>
+                            </div>
                         </div>
-                        <div class="touch-row">
-                            <button data-key="a">A</button>
-                            <button data-key="s">S</button>
-                            <button data-key="d">D</button>
-                            <button data-key="left">←</button>
-                            <button data-key="down">↓</button>
-                            <button data-key="right">→</button>
-                            <button data-key=",">‹</button>
-                            <button data-key=".">›</button>
-                            <button data-key="escape">Esc</button>
+                        <div class="touch-group">
+                            <div class="touch-label">Cursor</div>
+                            <div class="touch-grid arrows">
+                                <button data-key="up">↑</button>
+                                <button data-key="left">←</button>
+                                <button data-key="down">↓</button>
+                                <button data-key="right">→</button>
+                            </div>
+                        </div>
+                        <div class="touch-group">
+                            <div class="touch-label">Action</div>
+                            <div class="touch-actions">
+                                <button data-key=" ">Spc</button>
+                                <button data-key="enter">↵</button>
+                                <button data-key="escape">Esc</button>
+                                <button data-key="q">Q</button>
+                                <button data-key="e">E</button>
+                                <button data-key=",">,</button>
+                                <button data-key=".">.</button>
+                            </div>
                         </div>
                     </div>
                 </div>
