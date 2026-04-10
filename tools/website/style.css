@@ -11,6 +11,9 @@
     --logo-text: #1e293b;
     --nav-bg: rgba(248, 250, 252, 0.92);
     --btn-primary-text: #ffffff;
+    --inline-code-bg: #eef2f7;
+    --inline-code-border: #dbe3ee;
+    --inline-code-text: #334155;
     /* Code blocks stay dark in both themes */
     --code-bg: #1e293b;
     --code-surface: #0f172a;
@@ -31,6 +34,9 @@
         --logo-text: #e2e8f0;
         --nav-bg: rgba(15, 23, 42, 0.92);
         --btn-primary-text: #0f172a;
+        --inline-code-bg: #1e293b;
+        --inline-code-border: #334155;
+        --inline-code-text: #e2e8f0;
     }
 }
 
@@ -386,11 +392,15 @@ body { overflow-x: hidden; }
 }
 
 .constraint-absent code {
-    background: var(--code-bg);
-    color: #e2e8f0;
-    padding: 0.1rem 0.35rem;
-    border-radius: 3px;
+    background: var(--inline-code-bg);
+    color: var(--inline-code-text);
+    border: 1px solid var(--inline-code-border);
+    padding: 0.08rem 0.4rem;
+    border-radius: 5px;
     font-size: 0.8rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
 }
 
 .constraint-instead {
@@ -400,11 +410,15 @@ body { overflow-x: hidden; }
 }
 
 .constraint-instead code {
-    background: var(--code-bg);
-    color: #e2e8f0;
-    padding: 0.1rem 0.35rem;
-    border-radius: 3px;
+    background: var(--inline-code-bg);
+    color: var(--inline-code-text);
+    border: 1px solid var(--inline-code-border);
+    padding: 0.08rem 0.4rem;
+    border-radius: 5px;
     font-size: 0.78rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
 }
 
 /* ── Games ──────────────────────────────────────────────────────────── */
