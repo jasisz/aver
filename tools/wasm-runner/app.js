@@ -753,10 +753,34 @@ if (checkBtn) {
         try {
             const comp = await loadCompiler();
             setStatus("Checking…", "info");
-            const result = comp.aver_check(source);
-            appendConsole(result.startsWith("error") ? "stderr" : "stdout", result);
-            setStatus(result.includes("error") ? "Check found errors" : "Check passed",
-                      result.includes("error") ? "error" : "success");
+            const json = comp.aver_check(source);
+            const diags = JSON.parse(json);
+            const lines = source.split("\n");
+            let hasError = false;
+
+            for (const d of diags) {
+                if (d.severity === "ok") {
+                    appendConsole("stdout", `✓ ${d.message}`);
+                    continue;
+                }
+                const isErr = d.severity === "error";
+                if (isErr) hasError = true;
+                const tag = isErr ? "error" : "warning";
+                const lineNum = d.line || 0;
+
+                appendConsole("stderr", `\n${tag}[${lineNum}:${d.col || 0}]: ${d.message}`);
+
+                if (lineNum > 0 && lineNum <= lines.length) {
+                    const snippet = lines[lineNum - 1];
+                    const pad = String(lineNum).length;
+                    appendConsole("stdout", `${" ".repeat(pad + 1)} |`);
+                    appendConsole("stdout", ` ${lineNum} | ${snippet}`);
+                    appendConsole("stdout", `${" ".repeat(pad + 1)} |`);
+                }
+            }
+
+            setStatus(hasError ? "Check found errors" : "Check passed",
+                      hasError ? "error" : "success");
         } catch (e) {
             appendConsole("stderr", e.message || String(e));
             setStatus("Check failed", "error");
