@@ -670,8 +670,10 @@ document.querySelectorAll("[data-game]").forEach(btn => {
             const bytes = await resp.arrayBuffer();
             state.wasmBytes = bytes;
             state.wasmName = `${name}.wasm`;
-            dom.fileMeta.textContent = `${name}.wasm — ${(bytes.byteLength / 1024).toFixed(1)} KB`;
+            const sizeKB = (bytes.byteLength / 1024).toFixed(1);
+            dom.fileMeta.textContent = `${name}.wasm — ${sizeKB} KB`;
             dom.runButton.disabled = false;
+            setStatus(`Native WASM · ${name}.wasm · ${sizeKB} KB`, "success");
             runSelectedModule(isConsoleGame ? undefined : { cols: 80, rows: 35 });
         } catch (e) {
             setStatus(`Failed to load ${name}: ${e.message}`, "error");

@@ -365,6 +365,13 @@ body { overflow-x: hidden; }
     line-height: 1;
 }
 
+.game-card small {
+    font-size: 0.7rem;
+    font-weight: 400;
+    color: var(--muted);
+    opacity: 0.7;
+}
+
 /* ── Getting started ────────────────────────────────────────────────── */
 
 .start-steps {

@@ -31,13 +31,13 @@
     </div>
     <a class="intro-link" href="#about" data-show-about>What is Aver?</a>
     <nav class="game-nav">
-        <button data-game="life">Life</button>
-        <button data-game="snake">Snake</button>
-        <button data-game="tetris">Tetris</button>
-        <button data-game="checkers" data-args="8">Checkers</button>
-        <button data-game="rogue">Rogue</button>
-        <button data-game="doom">Doom</button>
-        <button data-game="wumpus" data-console-game>Wumpus</button>
+        <button data-game="life">Life <small>20KB</small></button>
+        <button data-game="snake">Snake <small>6KB</small></button>
+        <button data-game="tetris">Tetris <small>10KB</small></button>
+        <button data-game="checkers" data-args="8">Checkers <small>21KB</small></button>
+        <button data-game="rogue">Rogue <small>28KB</small></button>
+        <button data-game="doom">Doom <small>23KB</small></button>
+        <button data-game="wumpus" data-console-game>Wumpus <small>7KB</small></button>
     </nav>
     <a class="intro-link" href="https://github.com/jasisz/aver" target="_blank">GitHub</a>
     <div class="top-meta">
@@ -181,6 +181,14 @@
 <span class="hl-keyword">verify</span> <span class="hl-fn">divide</span>
     divide(<span class="hl-number">10</span>, <span class="hl-number">2</span>) <span class="hl-operator">=></span> <span class="hl-builtin">Result</span>.Ok(<span class="hl-number">5</span>)
     divide(<span class="hl-number">10</span>, <span class="hl-number">0</span>) <span class="hl-operator">=></span> <span class="hl-builtin">Result</span>.Err(<span class="hl-string">"Division by zero"</span>)</pre>
+
+        <div class="about-feature" style="margin-top:1rem; padding:0.75rem; background:var(--bg); border-radius:8px; border:1px solid var(--border);">
+            <strong>Native WASM — no emscripten, no runtime</strong>
+            <span>Games run as standalone WASM modules compiled directly from Aver source. Snake is 5.8 KB. Tetris is 10 KB. A full roguelike is 28 KB. Drop your own <code>.wasm</code> file to run it here.</span>
+            <pre style="margin-top:0.5rem; font-size:0.7rem; color:var(--muted); white-space:pre-wrap;">cargo install aver-lang
+aver compile your_game.av --target wasm
+# drop the .wasm file into the playground</pre>
+        </div>
 
         <div class="about-links">
             <a href="https://github.com/jasisz/aver" target="_blank">GitHub</a>

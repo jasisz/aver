@@ -1,7 +1,8 @@
 module Main
     intent =
-        "Conway's Game of Life — real-time terminal visualization with FPS counter."
+        "Conway's Game of Life — terminal visualization with editor and speed control."
         "Grid uses (w+2)×(h+2) padding so neighbors need no bounds checks."
+        "Editor mode: place cells with cursor before starting the simulation."
         "aver run examples/games/life.av          — interpreter"
         "aver run --vm examples/games/life.av     — VM"
     depends []
@@ -10,6 +11,16 @@ record FpsState
     frames: Int
     lastMs: Int
     display: String
+
+record SimState
+    grid: Vector<Int>
+    stride: Int
+    width: Int
+    height: Int
+    fps: FpsState
+    gen: Int
+    delay: Int
+    paused: Int
 
 // ─── Helpers ────────────────────────────────────────────────
 
@@ -22,6 +33,24 @@ fn minInt(a: Int, b: Int) -> Int
 verify minInt
     minInt(3, 5) => 3
     minInt(9, 2) => 2
+
+fn maxInt(a: Int, b: Int) -> Int
+    ? "Return the larger of two integers."
+    match a > b
+        true -> a
+        false -> b
+
+verify maxInt
+    maxInt(3, 5) => 5
+
+fn clamp(v: Int, lo: Int, hi: Int) -> Int
+    ? "Clamp v between lo and hi inclusive."
+    minInt(maxInt(v, lo), hi)
+
+verify clamp
+    clamp(5, 0, 10) => 5
+    clamp(-1, 0, 10) => 0
+    clamp(15, 0, 10) => 10
 
 // ─── Grid (pure) ────────────────────────────────────────────
 // Grid is (w+2)×(h+2) with a zero border.  stride = w+2.
@@ -41,13 +70,31 @@ fn place(grid: Vector<Int>, stride: Int, x: Int, y: Int) -> Vector<Int>
 verify place
     cellAt(place(makeGrid(16), 4, 0, 0), 5) => 1
 
+fn unplace(grid: Vector<Int>, stride: Int, x: Int, y: Int) -> Vector<Int>
+    ? "Set interior cell (x,y) to dead. Maps to padded index."
+    Option.withDefault(Vector.set(grid, (y + 1) * stride + (x + 1), 0), grid)
+
+verify unplace
+    cellAt(unplace(place(makeGrid(16), 4, 0, 0), 4, 0, 0), 5) => 0
+
+fn toggle(grid: Vector<Int>, stride: Int, x: Int, y: Int) -> Vector<Int>
+    ? "Toggle interior cell (x,y) between alive and dead."
+    idx = (y + 1) * stride + (x + 1)
+    cur = Option.withDefault(Vector.get(grid, idx), 0)
+    match cur == 0
+        true -> Option.withDefault(Vector.set(grid, idx, 1), grid)
+        false -> Option.withDefault(Vector.set(grid, idx, 0), grid)
+
+verify toggle
+    cellAt(toggle(makeGrid(16), 4, 0, 0), 5) => 1
+    cellAt(toggle(place(makeGrid(16), 4, 0, 0), 4, 0, 0), 5) => 0
+
 fn cellAt(grid: Vector<Int>, idx: Int) -> Int
     ? "Cell value at padded index. Border is always 0."
     Option.withDefault(Vector.get(grid, idx), 0)
 
 verify cellAt
     cellAt(makeGrid(4), 2) => 0
-    cellAt(makeGrid(4), 9) => 0
 
 fn neighbors(grid: Vector<Int>, s: Int, idx: Int) -> Int
     ? "Count 8 neighbors. s = stride. No bounds checks needed."
@@ -68,9 +115,6 @@ fn evolve(alive: Int, n: Int) -> Int
             true -> 1
             false -> 0
 
-// Step walks the full padded grid linearly. Border cells emit 0.
-// Interior cells compute the next generation.
-
 verify evolve
     evolve(1, 1) => 0
     evolve(1, 2) => 1
@@ -78,6 +122,8 @@ verify evolve
     evolve(1, 4) => 0
     evolve(0, 2) => 0
     evolve(0, 3) => 1
+
+// Step walks the full padded grid linearly.
 
 fn stepLoop(old: Vector<Int>, s: Int, w: Int, h: Int, total: Int, idx: Int, acc: List<Int>) -> List<Int>
     ? "Walk the padded grid linearly and accumulate next cells in reverse."
@@ -100,28 +146,20 @@ fn stepOne(old: Vector<Int>, s: Int, w: Int, h: Int, total: Int, idx: Int, acc: 
                 true -> stepLoop(old, s, w, h, total, idx + 1, List.prepend(0, acc))
                 false -> match col > w
                     true -> stepLoop(old, s, w, h, total, idx + 1, List.prepend(0, acc))
-                    false -> stepInteriorInline(old, s, w, h, total, idx, acc)
+                    false -> stepInterior(old, s, w, h, total, idx, acc)
 
 verify stepOne
     List.len(stepOne(makeGrid(9), 3, 1, 1, 9, 0, [])) => 9
 
-fn stepInteriorInline(old: Vector<Int>, s: Int, w: Int, h: Int, total: Int, idx: Int, acc: List<Int>) -> List<Int>
-    ? "Compute the next state for one interior cell with inlined neighbor loads."
+fn stepInterior(old: Vector<Int>, s: Int, w: Int, h: Int, total: Int, idx: Int, acc: List<Int>) -> List<Int>
+    ? "Compute the next state for one interior cell."
     alive = Option.withDefault(Vector.get(old, idx), 0)
     n = Option.withDefault(Vector.get(old, idx - s - 1), 0) + Option.withDefault(Vector.get(old, idx - s), 0) + Option.withDefault(Vector.get(old, idx - s + 1), 0) + Option.withDefault(Vector.get(old, idx - 1), 0) + Option.withDefault(Vector.get(old, idx + 1), 0) + Option.withDefault(Vector.get(old, idx + s - 1), 0) + Option.withDefault(Vector.get(old, idx + s), 0) + Option.withDefault(Vector.get(old, idx + s + 1), 0)
-    next = match alive == 1
-        true -> match n == 2
-            true -> 1
-            false -> match n == 3
-                true -> 1
-                false -> 0
-        false -> match n == 3
-            true -> 1
-            false -> 0
+    next = evolve(alive, n)
     stepLoop(old, s, w, h, total, idx + 1, List.prepend(next, acc))
 
-verify stepInteriorInline
-    List.len(stepInteriorInline(place(makeGrid(25), 5, 1, 1), 5, 3, 3, 25, 12, [])) => 13
+verify stepInterior
+    List.len(stepInterior(place(makeGrid(25), 5, 1, 1), 5, 3, 3, 25, 12, [])) => 13
 
 fn step(grid: Vector<Int>, s: Int, w: Int, h: Int) -> Vector<Int>
     ? "Build new grid: prepend cells to List -> reverse -> fromList."
@@ -153,6 +191,48 @@ fn placeGlider(grid: Vector<Int>, s: Int, cx: Int, cy: Int) -> Vector<Int>
 
 verify placeGlider
     cellAt(placeGlider(makeGrid(49), 7, 1, 1), 17) => 1
+
+verify placeGliderGun
+    Vector.len(placeGliderGun(makeGrid(400), 20, 0, 0)) => 400
+
+fn placeGliderGun(grid: Vector<Int>, s: Int, cx: Int, cy: Int) -> Vector<Int>
+    ? "Stamp a Gosper glider gun at the given top-left offset."
+    g1 = place(grid, s, cx, cy + 4)
+    g2 = place(g1, s, cx + 1, cy + 4)
+    g3 = place(g2, s, cx, cy + 5)
+    g4 = place(g3, s, cx + 1, cy + 5)
+    g5 = place(g4, s, cx + 10, cy + 4)
+    g6 = place(g5, s, cx + 10, cy + 5)
+    g7 = place(g6, s, cx + 10, cy + 6)
+    g8 = place(g7, s, cx + 11, cy + 3)
+    g9 = place(g8, s, cx + 11, cy + 7)
+    g10 = place(g9, s, cx + 12, cy + 2)
+    g11 = place(g10, s, cx + 12, cy + 8)
+    g12 = place(g11, s, cx + 13, cy + 2)
+    g13 = place(g12, s, cx + 13, cy + 8)
+    g14 = place(g13, s, cx + 14, cy + 5)
+    g15 = place(g14, s, cx + 15, cy + 3)
+    g16 = place(g15, s, cx + 15, cy + 7)
+    g17 = place(g16, s, cx + 16, cy + 4)
+    g18 = place(g17, s, cx + 16, cy + 5)
+    g19 = place(g18, s, cx + 16, cy + 6)
+    g20 = place(g19, s, cx + 17, cy + 5)
+    g21 = place(g20, s, cx + 20, cy + 2)
+    g22 = place(g21, s, cx + 20, cy + 3)
+    g23 = place(g22, s, cx + 20, cy + 4)
+    g24 = place(g23, s, cx + 21, cy + 2)
+    g25 = place(g24, s, cx + 21, cy + 3)
+    g26 = place(g25, s, cx + 21, cy + 4)
+    g27 = place(g26, s, cx + 22, cy + 1)
+    g28 = place(g27, s, cx + 22, cy + 5)
+    g29 = place(g28, s, cx + 24, cy)
+    g30 = place(g29, s, cx + 24, cy + 1)
+    g31 = place(g30, s, cx + 24, cy + 5)
+    g32 = place(g31, s, cx + 24, cy + 6)
+    g33 = place(g32, s, cx + 34, cy + 2)
+    g34 = place(g33, s, cx + 34, cy + 3)
+    g35 = place(g34, s, cx + 35, cy + 2)
+    place(g35, s, cx + 35, cy + 3)
 
 fn seed(s: Int, w: Int, h: Int) -> Vector<Int>
     ? "Seed the initial world with one R-pentomino and three gliders."
@@ -200,18 +280,25 @@ fn drawOneRow(grid: Vector<Int>, s: Int, w: Int, h: Int, row: Int) -> Unit
     Terminal.print(buildRow(grid, s, row, 1, w, ""))
     drawRows(grid, s, w, h, row + 1)
 
-fn drawHud(fps: String, gen: Int) -> Unit
-    ? "Draw the HUD with FPS, generation, and key hints."
+fn drawHud(st: SimState, mode: String) -> Unit
+    ? "Draw the HUD bar at the top with mode, FPS, generation, delay, and controls."
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     Terminal.moveTo(0, 0)
     Terminal.setColor("green")
-    Terminal.print("  FPS: {fps}  Gen: {Int.toString(gen)}  [q]uit [r]estart          ")
+    hudText = match mode == "edit"
+        true -> "  EDITOR  Arrows:move  Space:toggle  1:glider 2:r-pentomino 3:gun  c:clear  Enter:start  q:quit"
+        false -> match st.paused == 1
+            true -> "  PAUSED  Gen:{Int.toString(st.gen)}  Delay:{Int.toString(st.delay)}ms  Space:resume  e:edit  +/-:speed  q:quit"
+            false -> match st.delay == 0
+                true -> "  FPS:{st.fps.display}  Gen:{Int.toString(st.gen)}  BENCHMARK  Space:pause  e:edit  -:slower  q:quit"
+                false -> "  FPS:{st.fps.display}  Gen:{Int.toString(st.gen)}  Delay:{Int.toString(st.delay)}ms  Space:pause  e:edit  +/-:speed  0:bench  q:quit"
+    Terminal.print(hudText)
     Terminal.resetColor()
 
 // ─── FPS tracking ───────────────────────────────────────────
 
 fn formatFps(frames: Int, elapsed: Int) -> String
-    ? "Format FPS with 1 decimal place, e.g. '2.3' or '0.5'."
+    ? "Format FPS with 1 decimal place."
     tenths = frames * 10000 / elapsed
     whole = tenths / 10
     frac = Result.withDefault(Int.mod(tenths, 10), 0)
@@ -231,52 +318,154 @@ verify tickFps
     tickFps(FpsState(frames = 10, lastMs = 0, display = "0.0"), 500).frames => 11
     tickFps(FpsState(frames = 10, lastMs = 0, display = "0.0"), 1000).display => "10.0"
 
-// ─── Game loop ──────────────────────────────────────────────
+// ─── Editor mode ────────────────────────────────────────────
 
-fn gameLoop(grid: Vector<Int>, s: Int, w: Int, h: Int, fps: FpsState, gen: Int) -> Result<String, String>
-    ? "Run one simulation frame, then continue with the next generation."
+fn drawEditorCursor(cx: Int, cy: Int, grid: Vector<Int>, s: Int) -> Unit
+    ? "Draw the cursor position with inverted colors."
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    Terminal.moveTo(cx, cy + 1)
+    cell = cellAt(grid, (cy + 1) * s + (cx + 1))
+    Terminal.setColor("yellow")
+    match cell == 1
+        true -> Terminal.print("▓")
+        false -> Terminal.print("·")
+    Terminal.resetColor()
+
+fn editorLoop(grid: Vector<Int>, s: Int, w: Int, h: Int, cx: Int, cy: Int) -> Result<Vector<Int>, String>
+    ? "Editor loop: cursor-based cell placement before simulation starts."
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
-        Time.unixMs,
     ]
     drawRows(grid, s, w, h, 1)
-    drawHud(fps.display, gen)
+    st = SimState(grid = grid, stride = s, width = w, height = h, fps = FpsState(frames = 0, lastMs = 0, display = "0.0"), gen = 0, delay = 50, paused = 0)
+    drawHud(st, "edit")
+    drawEditorCursor(cx, cy, grid, s)
     Terminal.flush()
-    now = Time.unixMs()
-    newFps = tickFps(fps, now)
-    nextGrid = step(grid, s, w, h)
     key = Terminal.readKey()
-    onKey(key, nextGrid, s, w, h, newFps, gen + 1)
+    editorOnKey(key, grid, s, w, h, cx, cy)
 
-fn onKey(key: Option<String>, grid: Vector<Int>, s: Int, w: Int, h: Int, fps: FpsState, gen: Int) -> Result<String, String>
-    ? "Dispatch an optional key press or continue the simulation."
+fn editorOnKey(key: Option<String>, grid: Vector<Int>, s: Int, w: Int, h: Int, cx: Int, cy: Int) -> Result<Vector<Int>, String>
+    ? "Handle key input in editor mode."
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
-        Time.unixMs,
     ]
     match key
-        Option.Some(k) -> onKeyChar(k, grid, s, w, h, fps, gen)
-        Option.None -> gameLoop(grid, s, w, h, fps, gen)
+        Option.None -> editorLoop(grid, s, w, h, cx, cy)
+        Option.Some(k) -> editorAction(k, grid, s, w, h, cx, cy)
 
-fn onKeyChar(k: String, grid: Vector<Int>, s: Int, w: Int, h: Int, fps: FpsState, gen: Int) -> Result<String, String>
-    ? "Handle a concrete key press inside the main simulation loop."
+fn editorAction(k: String, grid: Vector<Int>, s: Int, w: Int, h: Int, cx: Int, cy: Int) -> Result<Vector<Int>, String>
+    ? "Dispatch editor key action."
     ! [
         Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
-        Time.unixMs,
     ]
     match k == "q"
-        true -> Result.Ok("Stopped at generation {Int.toString(gen)}.")
-        false -> match k == "r"
-            true -> gameLoop(seed(s, w, h), s, w, h, fps, 0)
-            false -> gameLoop(grid, s, w, h, fps, gen)
+        true -> Result.Err("quit")
+        false -> match k == "enter"
+            true -> Result.Ok(grid)
+            false -> match k == "up"
+                true -> editorLoop(grid, s, w, h, cx, clamp(cy - 1, 0, h - 1))
+                false -> match k == "down"
+                    true -> editorLoop(grid, s, w, h, cx, clamp(cy + 1, 0, h - 1))
+                    false -> match k == "left"
+                        true -> editorLoop(grid, s, w, h, clamp(cx - 1, 0, w - 1), cy)
+                        false -> match k == "right"
+                            true -> editorLoop(grid, s, w, h, clamp(cx + 1, 0, w - 1), cy)
+                            false -> match k == " "
+                                true -> editorLoop(toggle(grid, s, cx, cy), s, w, h, cx, cy)
+                                false -> editorStamps(k, grid, s, w, h, cx, cy)
+
+fn editorStamps(k: String, grid: Vector<Int>, s: Int, w: Int, h: Int, cx: Int, cy: Int) -> Result<Vector<Int>, String>
+    ? "Handle stamp keys in editor: 1=glider 2=r-pentomino 3=gun c=clear."
+    ! [
+        Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
+    ]
+    match k == "1"
+        true -> editorLoop(placeGlider(grid, s, cx, cy), s, w, h, cx, cy)
+        false -> match k == "2"
+            true -> editorLoop(placeRPentomino(grid, s, cx, cy), s, w, h, cx, cy)
+            false -> match k == "3"
+                true -> editorLoop(placeGliderGun(grid, s, cx, cy), s, w, h, cx, cy)
+                false -> match k == "c"
+                    true -> editorLoop(makeGrid(s * (h + 2)), s, w, h, cx, cy)
+                    false -> editorLoop(grid, s, w, h, cx, cy)
+
+// ─── Simulation loop ────────────────────────────────────────
+
+fn gameLoop(st: SimState) -> Result<String, String>
+    ? "Run one simulation frame with frame-rate limiting."
+    ! [
+        Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
+    drawRows(st.grid, st.stride, st.width, st.height, 1)
+    drawHud(st, "sim")
+    Terminal.flush()
+    Time.sleep(st.delay)
+    now = Time.unixMs()
+    newFps = tickFps(st.fps, now)
+    nextGrid = match st.paused == 1
+        true -> st.grid
+        false -> step(st.grid, st.stride, st.width, st.height)
+    nextGen = match st.paused == 1
+        true -> st.gen
+        false -> st.gen + 1
+    key = Terminal.readKey()
+    next = SimState(grid = nextGrid, stride = st.stride, width = st.width, height = st.height, fps = newFps, gen = nextGen, delay = st.delay, paused = st.paused)
+    simOnKey(key, next)
+
+fn simOnKey(key: Option<String>, st: SimState) -> Result<String, String>
+    ? "Dispatch key input during simulation."
+    ! [
+        Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
+    match key
+        Option.None -> gameLoop(st)
+        Option.Some(k) -> simAction(k, st)
+
+fn simAction(k: String, st: SimState) -> Result<String, String>
+    ? "Handle a key press during simulation."
+    ! [
+        Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
+    newPaused = match st.paused == 1
+        true -> 0
+        false -> 1
+    match k == "q"
+        true -> Result.Ok("Stopped at generation {Int.toString(st.gen)}.")
+        false -> match k == " "
+            true -> gameLoop(SimState.update(st, paused = newPaused))
+            false -> match k == "e"
+                true -> simToEditor(st)
+                false -> match k == "+"
+                    true -> gameLoop(SimState.update(st, delay = maxInt(st.delay - 10, 0)))
+                    false -> match k == "-"
+                        true -> gameLoop(SimState.update(st, delay = st.delay + 10))
+                        false -> match k == "0"
+                            true -> gameLoop(SimState.update(st, delay = 0))
+                            false -> match k == "r"
+                                true -> gameLoop(SimState.update(st, grid = seed(st.stride, st.width, st.height), gen = 0))
+                                false -> gameLoop(st)
+
+fn simToEditor(st: SimState) -> Result<String, String>
+    ? "Switch from simulation to editor, then resume if Enter was pressed."
+    ! [
+        Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
+    result = editorLoop(st.grid, st.stride, st.width, st.height, st.width / 2, st.height / 2)
+    match result
+        Result.Ok(newGrid) -> gameLoop(SimState.update(st, grid = newGrid, gen = 0))
+        Result.Err(_) -> Result.Ok("Stopped at generation {Int.toString(st.gen)}.")
 
 // ─── Entry ──────────────────────────────────────────────────
 
 fn run() -> Result<String, String>
-    ? "Initialize terminal state, seed the world, and run the simulation."
+    ? "Initialize terminal, open editor, then run simulation."
     ! [
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size,
-        Time.unixMs,
+        Time.sleep, Time.unixMs,
     ]
     Terminal.enableRawMode()
     Terminal.hideCursor()
@@ -287,20 +476,35 @@ fn run() -> Result<String, String>
     s = w + 2
     now = Time.unixMs()
     grid = seed(s, w, h)
-    result = gameLoop(grid, s, w, h, FpsState(frames = 0, lastMs = now, display = "0.0"), 0)
+    editResult = editorLoop(grid, s, w, h, w / 2, h / 2)
+    match editResult
+        Result.Err(_) -> cleanup("Quit from editor.")
+        Result.Ok(finalGrid) -> runSim(finalGrid, s, w, h, now)
+
+fn runSim(grid: Vector<Int>, s: Int, w: Int, h: Int, now: Int) -> Result<String, String>
+    ? "Start the simulation loop with the given grid."
+    ! [
+        Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size,
+        Time.sleep, Time.unixMs,
+    ]
+    st = SimState(grid = grid, stride = s, width = w, height = h, fps = FpsState(frames = 0, lastMs = now, display = "0.0"), gen = 0, delay = 50, paused = 0)
+    result = gameLoop(st)
+    cleanup(Result.withDefault(result, "Done."))
+
+fn cleanup(msg: String) -> Result<String, String>
+    ? "Restore terminal and return."
+    ! [Terminal.clear, Terminal.disableRawMode, Terminal.showCursor]
     Terminal.showCursor()
     Terminal.disableRawMode()
     Terminal.clear()
-    result
+    Result.Ok(msg)
 
 fn main()
     ! [
         Console.print,
         Terminal.clear, Terminal.disableRawMode, Terminal.enableRawMode, Terminal.flush, Terminal.hideCursor, Terminal.moveTo, Terminal.print, Terminal.readKey, Terminal.resetColor, Terminal.setColor, Terminal.showCursor, Terminal.size,
-        Time.unixMs,
+        Time.sleep, Time.unixMs,
     ]
     match run()
         Result.Ok(msg) -> Console.print(msg)
         Result.Err(err) -> Console.print("Error: {err}")
-
-// ─── Verify ─────────────────────────────────────────────────
