@@ -135,8 +135,6 @@ pub(super) struct ExprEmitter<'a> {
     pub is_thin: bool,
     /// Parent-thin frame: borrow caller young lane; skip local boundary cleanup.
     pub is_parent_thin: bool,
-    /// Pre-allocated singleton addresses for nullary variants.
-    pub nullary_variant_addrs: &'a HashMap<(String, String), u32>,
 }
 
 impl<'a> ExprEmitter<'a> {
@@ -149,7 +147,6 @@ impl<'a> ExprEmitter<'a> {
         fn_sigs: &'a HashMap<String, (Vec<Type>, Type, Vec<String>)>,
         ctx: &'a CodegenContext,
         variant_registry: &'a HashMap<(String, String), VariantInfo>,
-        nullary_variant_addrs: &'a HashMap<(String, String), u32>,
     ) -> Self {
         ExprEmitter {
             locals: HashMap::new(),
@@ -178,7 +175,6 @@ impl<'a> ExprEmitter<'a> {
             fn_return_is_heap: false,
             is_thin: false,
             is_parent_thin: false,
-            nullary_variant_addrs,
         }
     }
 

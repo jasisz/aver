@@ -367,25 +367,6 @@ pub fn build_wasm_module(
     // Build variant registry early — needed for global section (name table)
     let variant_registry = build_variant_registry(ctx);
 
-    // Pre-allocate nullary variant singletons in data section.
-    // Each nullary variant gets a fixed 8-byte header in static memory,
-    // so every reference to the same variant yields the same pointer.
-    // This makes pointer equality (I32Eq / I64Eq) work correctly.
-    let mut nullary_variant_addrs: HashMap<(String, String), u32> = HashMap::new();
-    for ((type_name, variant_name), info) in &variant_registry {
-        if info.field_types.is_empty() {
-            let key = (type_name.clone(), variant_name.clone());
-            if nullary_variant_addrs.contains_key(&key) {
-                continue;
-            }
-            let header =
-                super::value::make_header(super::value::OBJ_VARIANT, info.tag as u64, 0, 0);
-            let offset = runtime::IO_SCRATCH_SIZE as usize + data_bytes.len();
-            data_bytes.extend_from_slice(&header.to_le_bytes());
-            nullary_variant_addrs.insert(key, offset as u32);
-        }
-    }
-
     // -----------------------------------------------------------------------
     // Global section
     // -----------------------------------------------------------------------
@@ -511,7 +492,6 @@ pub fn build_wasm_module(
             ctx,
             &variant_registry,
             &host_imports,
-            &nullary_variant_addrs,
         )?;
         code_section.function(&func);
     }
@@ -535,7 +515,6 @@ pub fn build_wasm_module(
             &variant_registry,
             &host_imports,
             tco_fns.contains(&entry.canonical_name),
-            &nullary_variant_addrs,
         )?;
         code_section.function(&func);
     }
@@ -624,7 +603,6 @@ fn emit_plain_user_function(
     variant_registry: &HashMap<(String, String), super::expr::VariantInfo>,
     host_imports: &HashMap<String, u32>,
     needs_tco: bool,
-    nullary_variant_addrs: &HashMap<(String, String), u32>,
 ) -> Result<wasm_encoder::Function, String> {
     let mut emitter = ExprEmitter::new(
         fn_indices,
@@ -634,7 +612,6 @@ fn emit_plain_user_function(
         &ctx.fn_sigs,
         ctx,
         variant_registry,
-        nullary_variant_addrs,
     );
 
     let param_types = param_types_for_entry(ctx, entry);
@@ -910,7 +887,6 @@ fn emit_mutual_tco_trampoline(
     ctx: &CodegenContext,
     variant_registry: &HashMap<(String, String), super::expr::VariantInfo>,
     host_imports: &HashMap<String, u32>,
-    nullary_variant_addrs: &HashMap<(String, String), u32>,
 ) -> Result<wasm_encoder::Function, String> {
     let mut emitter = ExprEmitter::new(
         fn_indices,
@@ -920,7 +896,6 @@ fn emit_mutual_tco_trampoline(
         &ctx.fn_sigs,
         ctx,
         variant_registry,
-        nullary_variant_addrs,
     );
     emitter.fn_return_type = layout.return_type;
     emitter.current_fn_name = layout.trampoline_name.clone();
