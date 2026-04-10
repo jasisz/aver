@@ -957,6 +957,43 @@ if (urlGame) {
     if (btn) btn.click();
 }
 
+// Draggable divider between source viewer and game output
+{
+    const divider = document.querySelector("[data-game-divider]");
+    const layout = document.querySelector(".game-layout");
+    const source = document.querySelector("[data-source-viewer]");
+    if (divider && layout && source) {
+        let dragging = false;
+        divider.addEventListener("mousedown", (e) => {
+            e.preventDefault();
+            dragging = true;
+            divider.classList.add("dragging");
+        });
+        divider.addEventListener("touchstart", (e) => {
+            dragging = true;
+            divider.classList.add("dragging");
+        });
+        const onMove = (clientX) => {
+            if (!dragging) return;
+            const rect = layout.getBoundingClientRect();
+            const pct = ((clientX - rect.left) / rect.width) * 100;
+            const clamped = Math.min(Math.max(pct, 10), 80);
+            source.style.flex = "none";
+            source.style.width = clamped + "%";
+        };
+        document.addEventListener("mousemove", (e) => onMove(e.clientX));
+        document.addEventListener("touchmove", (e) => {
+            if (dragging && e.touches[0]) onMove(e.touches[0].clientX);
+        });
+        const onEnd = () => {
+            dragging = false;
+            divider.classList.remove("dragging");
+        };
+        document.addEventListener("mouseup", onEnd);
+        document.addEventListener("touchend", onEnd);
+    }
+}
+
 // Preload compiler in background
 loadCompiler().then(() => {
     setStatus("Ready — pick a game or write code.", "success");

@@ -321,14 +321,25 @@ verify tickFps
 // ─── Editor mode ────────────────────────────────────────────
 
 fn drawEditorCursor(cx: Int, cy: Int, grid: Vector<Int>, s: Int) -> Unit
-    ? "Draw the cursor position with inverted colors."
+    ? "Draw a bright crosshair cursor at the editor position."
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
+    Terminal.setColor("cyan")
     Terminal.moveTo(cx, cy + 1)
-    cell = cellAt(grid, (cy + 1) * s + (cx + 1))
-    Terminal.setColor("yellow")
-    match cell == 1
-        true -> Terminal.print("▓")
-        false -> Terminal.print("·")
+    match cellAt(grid, (cy + 1) * s + (cx + 1)) == 1
+        true -> Terminal.print("╬")
+        false -> Terminal.print("+")
+    Terminal.moveTo(cx, cy)
+    Terminal.print("│")
+    Terminal.moveTo(cx, cy + 2)
+    Terminal.print("│")
+    match cx > 0
+        true -> Terminal.moveTo(cx - 1, cy + 1)
+        false -> Terminal.moveTo(0, cy + 1)
+    match cx > 0
+        true -> Terminal.print("─")
+        false -> Terminal.print("")
+    Terminal.moveTo(cx + 1, cy + 1)
+    Terminal.print("─")
     Terminal.resetColor()
 
 fn editorLoop(grid: Vector<Int>, s: Int, w: Int, h: Int, cx: Int, cy: Int) -> Result<Vector<Int>, String>

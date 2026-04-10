@@ -464,15 +464,27 @@ body {
 .source-viewer {
     display: none;
     flex-direction: column;
-    border-right: 1px solid var(--border);
-    min-width: 300px;
-    max-width: 50%;
+    border-right: none;
+    min-width: 200px;
+    max-width: 70%;
     flex: 1;
     min-height: 0;
     overflow: hidden;
 }
 
 .workspace[data-mode="game"] .source-viewer { display: flex; }
+
+/* Draggable divider between source and game */
+.game-divider {
+    display: none;
+    width: 6px;
+    cursor: col-resize;
+    background: var(--border);
+    flex-shrink: 0;
+    transition: background 0.15s;
+}
+.game-divider:hover, .game-divider.dragging { background: var(--accent); }
+.workspace[data-mode="game"] .game-divider { display: block; }
 
 .source-tabs {
     display: flex;

@@ -64,7 +64,7 @@
             <span class="toolbar-spacer"></span>
             <div class="dropzone-inline" data-dropzone data-drag="false">
                 <input type="file" accept=".wasm,application/wasm" data-file-input>
-                <span data-file-meta>or drop .wasm</span>
+                <span data-file-meta>drop .wasm · <code>aver compile --target wasm</code></span>
             </div>
         </div>
         <div class="editor-wrap">
@@ -83,6 +83,7 @@
                 <div class="source-tabs" data-source-tabs></div>
                 <pre class="source-code" data-source-code></pre>
             </div>
+            <div class="game-divider" data-game-divider></div>
             <div class="game-output">
                 <div class="touch-controls" data-touch-controls>
                     <div class="touch-group">
@@ -115,6 +116,18 @@
                             <button data-key=".">.</button>
                             <button data-key="x">X</button>
                             <button data-key=">">&gt;</button>
+                        </div>
+                    </div>
+                    <div class="touch-group">
+                        <div class="touch-label">Life</div>
+                        <div class="touch-actions">
+                            <button data-key="1">1</button>
+                            <button data-key="2">2</button>
+                            <button data-key="3">3</button>
+                            <button data-key="c">C</button>
+                            <button data-key="+">+</button>
+                            <button data-key="-">-</button>
+                            <button data-key="0">0</button>
                         </div>
                     </div>
                 </div>
