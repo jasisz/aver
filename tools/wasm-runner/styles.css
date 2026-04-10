@@ -404,9 +404,47 @@ body { display: flex; flex-direction: column; overflow: hidden; }
     min-height: 0;
 }
 
+/* ── Touch controls (mobile gamepad) ─────────────────────────────── */
+
+.touch-controls {
+    display: none;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.4rem;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+}
+
+.touch-row {
+    display: flex;
+    gap: 0.25rem;
+    justify-content: center;
+}
+
+.touch-controls button {
+    min-width: 38px;
+    height: 38px;
+    font-size: 0.85rem;
+    border-radius: 6px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.touch-controls button.wide { padding: 0 0.7rem; }
+.touch-controls button:active { background: var(--accent); color: var(--bg); }
+
+@media (max-width: 1024px) {
+    .touch-controls { display: flex; }
+}
+
 /* ── Responsive ──────────────────────────────────────────────────── */
 
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
     .top-bar {
         flex-wrap: wrap;
         gap: 0.4rem;

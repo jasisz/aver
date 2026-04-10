@@ -921,6 +921,19 @@ document.querySelectorAll("[data-game]").forEach(btn => {
     });
 });
 
+// Touch controls (mobile gamepad)
+document.querySelectorAll("[data-touch-controls] button").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        const key = btn.dataset.key;
+        if (key && state.worker) {
+            if (!enqueueSharedKey(key)) {
+                state.worker.postMessage({ type: "key", key });
+            }
+        }
+    });
+});
+
 // Preload compiler in background
 loadCompiler().then(() => {
     setStatus("Ready — pick a game or write code.", "success");
