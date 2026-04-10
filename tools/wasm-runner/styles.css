@@ -430,7 +430,14 @@ body { display: flex; flex-direction: column; overflow: hidden; }
     .source-viewer {
         max-width: 100%;
         max-height: 40vh;
+        min-width: 0;
         border-right: none;
         border-bottom: 1px solid var(--border);
+    }
+    .game-layout {
+        flex-direction: column;
+    }
+    .workspace[data-mode="game"] .source-viewer {
+        display: none;
     }
 }
