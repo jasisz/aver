@@ -73,6 +73,45 @@ impl<'a> ExprEmitter<'a> {
                     self.emit_expr(&lhs.node);
                     self.emit_expr(&rhs.node);
                     self.instructions.push(Instruction::Call(self.rt.str_eq));
+                } else if matches!(op, ir::BoolCompareOp::Eq)
+                    && cmp_type != WasmType::F64
+                    && !matches!(
+                        lhs_aver_type,
+                        Some(Type::Int) | Some(Type::Bool) | Some(Type::Float) | Some(Type::Str)
+                    )
+                {
+                    // Heap object equality: compare headers (ptr OR header match).
+                    let a_local = self.alloc_local(WasmType::I32);
+                    let b_local = self.alloc_local(WasmType::I32);
+                    self.emit_expr(&lhs.node);
+                    if lhs_type != WasmType::I32 {
+                        self.instructions.push(Instruction::I32WrapI64);
+                    }
+                    self.instructions.push(Instruction::LocalSet(a_local));
+                    self.emit_expr(&rhs.node);
+                    if rhs_type != WasmType::I32 {
+                        self.instructions.push(Instruction::I32WrapI64);
+                    }
+                    self.instructions.push(Instruction::LocalSet(b_local));
+                    self.instructions.push(Instruction::LocalGet(a_local));
+                    self.instructions.push(Instruction::LocalGet(b_local));
+                    self.instructions.push(Instruction::I32Eq);
+                    self.instructions.push(Instruction::LocalGet(a_local));
+                    self.instructions
+                        .push(Instruction::I64Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 3,
+                            memory_index: 0,
+                        }));
+                    self.instructions.push(Instruction::LocalGet(b_local));
+                    self.instructions
+                        .push(Instruction::I64Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 3,
+                            memory_index: 0,
+                        }));
+                    self.instructions.push(Instruction::I64Eq);
+                    self.instructions.push(Instruction::I32Or);
                 } else {
                     self.emit_expr(&lhs.node);
                     if cmp_type == WasmType::F64 && lhs_type == WasmType::I64 {
