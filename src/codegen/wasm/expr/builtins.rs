@@ -522,6 +522,15 @@ impl<'a> ExprEmitter<'a> {
             }
             "Console.readLine" if args.is_empty() => {
                 self.emit_host_string_import("console_readLine");
+                // Wrap string in Result.Ok — Console.readLine returns Result<String, String>
+                // Value on stack is I32 (string object pointer).
+                let tmp = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalSet(tmp));
+                self.instructions
+                    .push(Instruction::I32Const(super::super::value::WRAP_OK as i32));
+                self.instructions.push(Instruction::LocalGet(tmp));
+                self.instructions.push(Instruction::I32Const(1)); // is_ptr=true
+                self.instructions.push(Instruction::Call(self.rt.wrap_i32));
             }
             "Time.now" if args.is_empty() => {
                 self.emit_host_string_import("time_now");

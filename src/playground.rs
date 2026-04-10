@@ -55,7 +55,9 @@ pub fn check_source(source: &str) -> String {
     for e in &tc_result.errors {
         diags.push(format!(
             r#"{{"severity":"error","line":{},"col":{},"message":{}}}"#,
-            e.line, e.col, json_str(&e.message)
+            e.line,
+            e.col,
+            json_str(&e.message)
         ));
     }
 
@@ -63,12 +65,15 @@ pub fn check_source(source: &str) -> String {
     for w in &findings.warnings {
         diags.push(format!(
             r#"{{"severity":"warning","line":{},"col":0,"message":{}}}"#,
-            w.line, json_str(&w.message)
+            w.line,
+            json_str(&w.message)
         ));
     }
 
     if diags.is_empty() {
-        diags.push(r#"{"severity":"ok","line":0,"col":0,"message":"All checks passed."}"#.to_string());
+        diags.push(
+            r#"{"severity":"ok","line":0,"col":0,"message":"All checks passed."}"#.to_string(),
+        );
     }
 
     format!("[{}]", diags.join(","))
