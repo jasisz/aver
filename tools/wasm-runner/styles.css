@@ -11,17 +11,16 @@
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
-html { height: 100%; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; }
-body {
-    height: 100dvh;
-    height: 100vh; /* fallback */
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    padding-bottom: env(safe-area-inset-bottom, 0px);
+html, body {
+    height: 100%;
     background: var(--bg);
     color: var(--text);
     font-family: system-ui, -apple-system, sans-serif;
+}
+body {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
 /* ── Top bar ──────────────────────────────────────────────────────── */
@@ -419,8 +418,7 @@ body {
 .touch-controls {
     display: flex;
     gap: 0.75rem;
-    padding: 0.5rem 0.75rem;
-    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+    padding: 0.5rem 0.75rem 1.5rem;
     background: var(--surface);
     border-top: 1px solid var(--border);
     justify-content: center;
