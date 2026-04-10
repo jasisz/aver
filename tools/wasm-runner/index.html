@@ -37,11 +37,8 @@
         <button data-game="doom">Doom</button>
         <button data-game="wumpus" data-console-game>Wumpus</button>
     </nav>
-    <span class="intro">
-        A statically typed language for AI-assisted dev ·
-        <a href="https://github.com/jasisz/aver" target="_blank">GitHub</a> ·
-        <a href="https://github.com/jasisz/aver/blob/main/docs/language.md" target="_blank">Docs</a>
-    </span>
+    <a class="intro-link" href="https://github.com/jasisz/aver" target="_blank">GitHub</a>
+    <a class="intro-link" href="#about" data-show-about>What is Aver?</a>
     <div class="top-meta">
         <span data-status data-tone="idle">Loading…</span>
     </div>
@@ -148,6 +145,50 @@
 <span data-isolation-note style="display:none"><span data-isolation-copy></span></span>
 <button data-run style="display:none"></button>
 <button data-clear style="display:none"></button>
+
+<div class="about-overlay" data-about style="display:none">
+    <div class="about-card">
+        <button class="about-close" data-close-about>&times;</button>
+        <h2>Aver</h2>
+        <p class="about-tagline">A language designed for AI to write and humans to review.</p>
+
+        <div class="about-features">
+            <div class="about-feature">
+                <strong>Intent is explicit</strong>
+                <span>Every function can carry a prose description (<code>?</code>) explaining <em>what</em> and <em>why</em>.</span>
+            </div>
+            <div class="about-feature">
+                <strong>Effects are tracked</strong>
+                <span>I/O, network, disk — declared in the type system with <code>! [Console.print]</code>. No hidden side effects.</span>
+            </div>
+            <div class="about-feature">
+                <strong>Verify blocks are specs</strong>
+                <span><code>verify add</code> cases run as tests, act as documentation, guard against regressions.</span>
+            </div>
+            <div class="about-feature">
+                <strong>Multiple backends</strong>
+                <span>Bytecode VM for dev, Rust codegen for deploy, WASM for browsers. Same source, same semantics.</span>
+            </div>
+        </div>
+
+        <pre class="about-example"><span class="hl-keyword">fn</span> <span class="hl-fn">divide</span>(a: <span class="hl-builtin">Int</span>, b: <span class="hl-builtin">Int</span>) <span class="hl-operator">-></span> <span class="hl-builtin">Result</span>&lt;<span class="hl-builtin">Int</span>, <span class="hl-builtin">String</span>&gt;
+    <span class="hl-effect">?</span> <span class="hl-desc">"Safe division. Returns Err on zero."</span>
+    <span class="hl-keyword">match</span> b
+        <span class="hl-number">0</span> <span class="hl-operator">-></span> <span class="hl-builtin">Result</span>.Err(<span class="hl-string">"Division by zero"</span>)
+        _ <span class="hl-operator">-></span> <span class="hl-builtin">Result</span>.Ok(a / b)
+
+<span class="hl-keyword">verify</span> <span class="hl-fn">divide</span>
+    divide(<span class="hl-number">10</span>, <span class="hl-number">2</span>) <span class="hl-operator">=></span> <span class="hl-builtin">Result</span>.Ok(<span class="hl-number">5</span>)
+    divide(<span class="hl-number">10</span>, <span class="hl-number">0</span>) <span class="hl-operator">=></span> <span class="hl-builtin">Result</span>.Err(<span class="hl-string">"Division by zero"</span>)</pre>
+
+        <div class="about-links">
+            <a href="https://github.com/jasisz/aver" target="_blank">GitHub</a>
+            <a href="https://github.com/jasisz/aver/blob/main/README.md" target="_blank">README</a>
+            <a href="https://github.com/jasisz/aver/blob/main/docs/language.md" target="_blank">Language Guide</a>
+            <a href="https://crates.io/crates/aver-lang" target="_blank">crates.io</a>
+        </div>
+    </div>
+</div>
 
 <script type="module" src="./app.js"></script>
 </body>

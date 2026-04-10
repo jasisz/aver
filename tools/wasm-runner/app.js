@@ -934,6 +934,20 @@ document.querySelectorAll("[data-touch-controls] button").forEach(btn => {
     });
 });
 
+// About overlay
+document.querySelector("[data-show-about]")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    const about = document.querySelector("[data-about]");
+    if (about) about.style.display = "flex";
+});
+document.querySelector("[data-close-about]")?.addEventListener("click", () => {
+    const about = document.querySelector("[data-about]");
+    if (about) about.style.display = "none";
+});
+document.querySelector("[data-about]")?.addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) e.currentTarget.style.display = "none";
+});
+
 // Preload compiler in background
 loadCompiler().then(() => {
     setStatus("Ready — pick a game or write code.", "success");

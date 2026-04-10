@@ -319,16 +319,117 @@ body {
 
 .workspace[data-mode="game"] .back-bar { display: block; }
 
-/* ── Intro line ──────────────────────────────────────────────────── */
+/* ── Header links ────────────────────────────────────────────────── */
 
-.intro {
-    font-size: 0.7rem;
+.intro-link {
+    font-size: 0.75rem;
     color: var(--muted);
-    margin-left: 0.5rem;
+    text-decoration: none;
+    cursor: pointer;
+}
+.intro-link:hover { color: var(--accent); }
+
+/* ── About overlay ───────────────────────────────────────────────── */
+
+.about-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: rgba(0,0,0,0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
 }
 
-.intro a { color: var(--accent); text-decoration: none; }
-.intro a:hover { text-decoration: underline; }
+.about-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+    max-width: 600px;
+    width: 100%;
+    max-height: 90vh;
+    overflow: auto;
+    position: relative;
+}
+
+.about-close {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 1.5rem;
+    cursor: pointer;
+    line-height: 1;
+}
+.about-close:hover { color: var(--text); }
+
+.about-card h2 {
+    font-size: 1.5rem;
+    color: var(--accent);
+    margin-bottom: 0.25rem;
+}
+
+.about-tagline {
+    color: var(--muted);
+    margin-bottom: 1.5rem;
+    font-size: 0.95rem;
+}
+
+.about-features {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+}
+
+.about-feature strong {
+    color: var(--text);
+    display: block;
+    font-size: 0.85rem;
+    margin-bottom: 0.15rem;
+}
+
+.about-feature span {
+    color: var(--muted);
+    font-size: 0.8rem;
+    line-height: 1.4;
+}
+
+.about-feature code {
+    background: var(--bg);
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+    font-size: 0.75rem;
+}
+
+.about-example {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
+    overflow-x: auto;
+    margin-bottom: 1.5rem;
+}
+
+.about-links {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.about-links a {
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 0.85rem;
+}
+.about-links a:hover { text-decoration: underline; }
 
 /* ── Layout modes ─────────────────────────────────────────────────── */
 
