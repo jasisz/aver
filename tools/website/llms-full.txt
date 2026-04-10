@@ -1,0 +1,28 @@
+# Aver — Full Documentation Index
+
+> For a compact overview, see llms.txt. This file lists all documentation sources for deep context.
+
+## Primary docs (read these first)
+- [llms.txt](https://averlang.dev/llms.txt) — compact language overview with examples
+- [Language Guide](https://raw.githubusercontent.com/jasisz/aver/main/docs/language.md) — complete surface language reference
+- [Services (stdlib)](https://raw.githubusercontent.com/jasisz/aver/main/docs/services.md) — all namespaces and their APIs
+- [Common Pushback](https://raw.githubusercontent.com/jasisz/aver/main/docs/pushback.md) — questions, objections, honest answers
+
+## Advanced topics
+- [Independence (?!)](https://raw.githubusercontent.com/jasisz/aver/main/docs/independence.md) — parallel products
+- [Constructors](https://raw.githubusercontent.com/jasisz/aver/main/docs/constructors.md) — constructor routing rules
+- [Lean proof export](https://raw.githubusercontent.com/jasisz/aver/main/docs/lean.md) — verify blocks to Lean 4
+- [Dafny verification](https://raw.githubusercontent.com/jasisz/aver/main/docs/dafny.md) — verify laws to Dafny/Z3
+- [WASM backend](https://raw.githubusercontent.com/jasisz/aver/main/docs/wasm.md) — browser compilation
+
+## Examples (raw .av files)
+- [Calculator](https://raw.githubusercontent.com/jasisz/aver/main/examples/core/calculator.av) — Result types, verify blocks, decisions
+- [Temperature](https://raw.githubusercontent.com/jasisz/aver/main/examples/core/temperature.av) — pure functions, recursion, classification
+- [Order Total](https://raw.githubusercontent.com/jasisz/aver/main/examples/core/order_total.av) — records, verify laws, domain modeling
+- [Console Demo](https://raw.githubusercontent.com/jasisz/aver/main/examples/services/console_demo.av) — effectful code, Console namespace
+- [Snake](https://raw.githubusercontent.com/jasisz/aver/main/examples/games/snake.av) — single-file game with Terminal effects
+- [Game of Life](https://raw.githubusercontent.com/jasisz/aver/main/examples/games/life.av) — cellular automata, FPS counter
+
+## Project
+- [README](https://raw.githubusercontent.com/jasisz/aver/main/README.md) — project overview and quickstart
+- [AGENTS.md](https://raw.githubusercontent.com/jasisz/aver/main/AGENTS.md) — AI context file with architecture and implementation notes

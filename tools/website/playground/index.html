@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <title>Aver Playground</title>
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<header class="top-bar">
+    <div class="brand">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 100" class="logo">
+            <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+                <g stroke="#e2e8f0" stroke-width="5">
+                    <circle cx="45" cy="55" r="20"/>
+                    <line x1="65" y1="35" x2="65" y2="75"/>
+                    <polyline points="77 35, 96 75, 115 35"/>
+                    <path d="M 127 55 H 167 C 167 44 158 35 147 35 C 136 35 127 44 127 55 C 127 66 136 75 147 75 C 157 75 163 72 163 67"/>
+                    <line x1="179" y1="75" x2="179" y2="35"/>
+                    <path d="M 179 46 Q 179 35 199 35"/>
+                </g>
+                <g stroke="#d97706" stroke-width="6">
+                    <path d="M 215 42 C 215 22 239 22 239 42 C 239 53 229 56 229 66"/>
+                    <line x1="255" y1="24" x2="255" y2="66"/>
+                </g>
+            </g>
+            <circle cx="242" cy="84" r="4.5" fill="#d97706"/>
+        </svg>
+        <span>Playground</span>
+    </div>
+    <a class="intro-link" href="#about" data-show-about>What is Aver?</a>
+    <nav class="game-nav">
+        <button data-game="life">Life</button>
+        <button data-game="snake">Snake</button>
+        <button data-game="tetris">Tetris</button>
+        <button data-game="checkers" data-args="8">Checkers</button>
+        <button data-game="rogue">Rogue</button>
+        <button data-game="doom">Doom</button>
+        <button data-game="wumpus" data-console-game>Wumpus</button>
+    </nav>
+    <a class="intro-link" href="https://github.com/jasisz/aver" target="_blank">GitHub</a>
+    <div class="top-meta">
+        <span data-status data-tone="idle">Loading…</span>
+    </div>
+</header>
+
+<main class="workspace">
+    <!-- Left: editor -->
+    <section class="editor-pane">
+        <div class="editor-toolbar">
+            <button type="button" data-compile-run>▶ Run</button>
+            <button type="button" data-check class="btn-subtle">Check</button>
+            <select data-examples>
+                <option value="">— examples —</option>
+                <option value="hello">Hello World</option>
+                <option value="calculator">Calculator</option>
+                <option value="fibonacci">Fibonacci</option>
+                <option value="shapes">Shapes</option>
+                <option value="quicksort">Quicksort</option>
+                <option value="rle">RLE Encoding</option>
+            </select>
+            <button type="button" data-stop disabled class="btn-subtle">Stop</button>
+            <span class="toolbar-spacer"></span>
+            <div class="dropzone-inline" data-dropzone data-drag="false">
+                <input type="file" accept=".wasm,application/wasm" data-file-input>
+                <span data-file-meta>or drop .wasm</span>
+            </div>
+        </div>
+        <div class="editor-wrap">
+            <pre class="editor-highlight" data-highlight aria-hidden="true"></pre>
+            <textarea data-code-editor spellcheck="false" autocomplete="off" autocorrect="off" placeholder="Write Aver code here… (Ctrl+Enter to run)"></textarea>
+        </div>
+    </section>
+
+    <!-- Right: output -->
+    <section class="output-pane" data-output-pane>
+        <div class="back-bar">
+            <button data-back>← Back</button>
+        </div>
+        <div class="game-layout">
+            <div class="source-viewer" data-source-viewer>
+                <div class="source-tabs" data-source-tabs></div>
+                <pre class="source-code" data-source-code></pre>
+            </div>
+            <div class="game-output">
+                <div class="touch-controls" data-touch-controls>
+                    <div class="touch-group">
+                        <div class="touch-label">Move</div>
+                        <div class="touch-grid wasd">
+                            <button data-key="q">Q</button>
+                            <button data-key="w">W</button>
+                            <button data-key="e">E</button>
+                            <button data-key="a">A</button>
+                            <button data-key="s">S</button>
+                            <button data-key="d">D</button>
+                        </div>
+                    </div>
+                    <div class="touch-group">
+                        <div class="touch-label">Cursor</div>
+                        <div class="touch-grid arrows">
+                            <button data-key="up">↑</button>
+                            <button data-key="left">←</button>
+                            <button data-key="down">↓</button>
+                            <button data-key="right">→</button>
+                        </div>
+                    </div>
+                    <div class="touch-group">
+                        <div class="touch-label">Action</div>
+                        <div class="touch-actions">
+                            <button data-key=" ">Spc</button>
+                            <button data-key="enter">↵</button>
+                            <button data-key="escape">Esc</button>
+                            <button data-key=",">,</button>
+                            <button data-key=".">.</button>
+                            <button data-key="x">X</button>
+                            <button data-key=">">&gt;</button>
+                        </div>
+                    </div>
+                </div>
+                <!-- Terminal (hidden until Terminal.* is used) -->
+                <div class="terminal-wrap" data-terminal-wrap style="display:none">
+                    <div class="terminal-surface" tabindex="0" data-terminal>
+                        <canvas class="terminal-canvas" data-terminal-canvas></canvas>
+                        <div class="terminal-empty" data-terminal-empty></div>
+                    </div>
+                    <p class="terminal-hint" data-raw-mode data-active="false">
+                        Arrow keys, esc, enter → Terminal.readKey()
+                    </p>
+                </div>
+                <!-- Console -->
+                <div class="console-wrap" data-console-wrap>
+                    <div class="console-surface" data-console></div>
+                    <div class="readline-bar" data-readline-bar style="display:none">
+                        <input type="text" placeholder="Console.readLine()…" data-line-input>
+                        <button type="button" data-line-button>Send</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+</main>
+
+<!-- hidden helpers for wasm-runner internals -->
+<span data-line-queued style="display:none">0</span>
+<span data-isolation-note style="display:none"><span data-isolation-copy></span></span>
+<button data-run style="display:none"></button>
+<button data-clear style="display:none"></button>
+
+<div class="about-overlay" data-about style="display:none">
+    <div class="about-card">
+        <button class="about-close" data-close-about>&times;</button>
+        <h2>Aver</h2>
+        <p class="about-tagline">A language designed for AI to write and humans to review.</p>
+
+        <div class="about-features">
+            <div class="about-feature">
+                <strong>Intent is explicit</strong>
+                <span>Every function can carry a prose description (<code>?</code>) explaining <em>what</em> and <em>why</em>.</span>
+            </div>
+            <div class="about-feature">
+                <strong>Effects are tracked</strong>
+                <span>I/O, network, disk — declared in the type system with <code>! [Console.print]</code>. No hidden side effects.</span>
+            </div>
+            <div class="about-feature">
+                <strong>Verify blocks are specs</strong>
+                <span><code>verify add</code> cases run as tests, act as documentation, guard against regressions.</span>
+            </div>
+            <div class="about-feature">
+                <strong>Multiple backends</strong>
+                <span>Bytecode VM for dev, Rust codegen for deploy, WASM for browsers. Same source, same semantics.</span>
+            </div>
+        </div>
+
+        <pre class="about-example"><span class="hl-keyword">fn</span> <span class="hl-fn">divide</span>(a: <span class="hl-builtin">Int</span>, b: <span class="hl-builtin">Int</span>) <span class="hl-operator">-></span> <span class="hl-builtin">Result</span>&lt;<span class="hl-builtin">Int</span>, <span class="hl-builtin">String</span>&gt;
+    <span class="hl-effect">?</span> <span class="hl-desc">"Safe division. Returns Err on zero."</span>
+    <span class="hl-keyword">match</span> b
+        <span class="hl-number">0</span> <span class="hl-operator">-></span> <span class="hl-builtin">Result</span>.Err(<span class="hl-string">"Division by zero"</span>)
+        _ <span class="hl-operator">-></span> <span class="hl-builtin">Result</span>.Ok(a / b)
+
+<span class="hl-keyword">verify</span> <span class="hl-fn">divide</span>
+    divide(<span class="hl-number">10</span>, <span class="hl-number">2</span>) <span class="hl-operator">=></span> <span class="hl-builtin">Result</span>.Ok(<span class="hl-number">5</span>)
+    divide(<span class="hl-number">10</span>, <span class="hl-number">0</span>) <span class="hl-operator">=></span> <span class="hl-builtin">Result</span>.Err(<span class="hl-string">"Division by zero"</span>)</pre>
+
+        <div class="about-links">
+            <a href="https://github.com/jasisz/aver" target="_blank">GitHub</a>
+            <a href="https://github.com/jasisz/aver/blob/main/README.md" target="_blank">README</a>
+            <a href="https://github.com/jasisz/aver/blob/main/docs/language.md" target="_blank">Language Guide</a>
+            <a href="https://crates.io/crates/aver-lang" target="_blank">crates.io</a>
+        </div>
+    </div>
+</div>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <title>Aver — A language designed for AI to write and humans to review</title>
+    <meta name="description" content="Aver is an AI-native programming language where every function explains itself, side effects are visible in the type system, and tests are co-located specs. Designed for AI to generate and humans to trust.">
+    <meta name="keywords" content="AI-native language, AI-first programming, AI code review, programming language, formal verification, effect system, Rust, WASM">
+    <link rel="stylesheet" href="style.css">
+    <link rel="alternate" type="text/plain" href="/llms.txt" title="LLM context">
+</head>
+<body>
+
+<!-- ── Nav ──────────────────────────────────────────────────────────── -->
+<nav class="nav">
+    <div class="nav-inner">
+        <a href="/" class="nav-brand">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 100" class="nav-logo">
+                <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+                    <g stroke="var(--logo-text, #e2e8f0)" stroke-width="5">
+                        <circle cx="45" cy="55" r="20"/>
+                        <line x1="65" y1="35" x2="65" y2="75"/>
+                        <polyline points="77 35, 96 75, 115 35"/>
+                        <path d="M 127 55 H 167 C 167 44 158 35 147 35 C 136 35 127 44 127 55 C 127 66 136 75 147 75 C 157 75 163 72 163 67"/>
+                        <line x1="179" y1="75" x2="179" y2="35"/>
+                        <path d="M 179 46 Q 179 35 199 35"/>
+                    </g>
+                    <g stroke="#d97706" stroke-width="6">
+                        <path d="M 215 42 C 215 22 239 22 239 42 C 239 53 229 56 229 66"/>
+                        <line x1="255" y1="24" x2="255" y2="66"/>
+                    </g>
+                </g>
+                <circle cx="242" cy="84" r="4.5" fill="#d97706"/>
+            </svg>
+        </a>
+        <div class="nav-links">
+            <a href="#features">Features</a>
+            <a href="#constraints">Design</a>
+            <a href="#demo">Demo</a>
+            <a href="#start">Get started</a>
+            <a href="playground/">Playground</a>
+            <a href="https://github.com/jasisz/aver" target="_blank">GitHub</a>
+        </div>
+    </div>
+</nav>
+
+<!-- ── Hero ─────────────────────────────────────────────────────────── -->
+<section class="hero">
+    <div class="hero-text">
+        <p class="hero-thesis">Code is cheap to generate. Expensive to trust.</p>
+        <h1>The AI-native language where code <em>explains itself</em></h1>
+        <p class="hero-sub">Aver is a language where every function carries its intent, side effects are visible in the type system, and tests are executable specs next to the code. The optimization target is the reviewer, not the generator.</p>
+        <div class="hero-cta">
+            <a href="playground/" class="btn btn-primary">Try in browser</a>
+            <a href="#start" class="btn btn-secondary">Install</a>
+        </div>
+        <p class="hero-proof">MIT licensed &middot; Written in Rust &middot; v0.9 &middot; <a href="https://crates.io/crates/aver-lang" target="_blank">crates.io</a></p>
+    </div>
+    <div class="hero-code">
+        <pre class="code-block"><span class="hl-keyword">fn</span> <span class="hl-fn">safeDivide</span>(a: <span class="hl-type">Int</span>, b: <span class="hl-type">Int</span>) <span class="hl-operator">-></span> <span class="hl-type">Result</span>&lt;<span class="hl-type">Int</span>, <span class="hl-type">String</span>&gt;
+    <span class="hl-effect">?</span> <span class="hl-desc">"Safe integer division. Returns Err on zero."</span>
+    <span class="hl-keyword">match</span> b
+        <span class="hl-number">0</span> <span class="hl-operator">-></span> Result.Err(<span class="hl-string">"Division by zero"</span>)
+        _ <span class="hl-operator">-></span> Result.Ok(a / b)
+
+<span class="hl-keyword">verify</span> <span class="hl-fn">safeDivide</span>
+    safeDivide(<span class="hl-number">10</span>, <span class="hl-number">2</span>) <span class="hl-operator">=></span> Result.Ok(<span class="hl-number">5</span>)
+    safeDivide(<span class="hl-number">7</span>, <span class="hl-number">0</span>)  <span class="hl-operator">=></span> Result.Err(<span class="hl-string">"Division by zero"</span>)</pre>
+    </div>
+</section>
+
+<!-- ── Features ─────────────────────────────────────────────────────── -->
+<section class="features" id="features">
+    <h2>Why Aver?</h2>
+    <div class="features-grid">
+
+        <div class="feature-card">
+            <h3>Intent is explicit</h3>
+            <p>Every function carries a prose description. The <em>why</em> stays with the code.</p>
+            <pre class="code-block code-sm"><span class="hl-keyword">fn</span> <span class="hl-fn">classify</span>(c: <span class="hl-type">Float</span>) <span class="hl-operator">-></span> <span class="hl-type">String</span>
+    <span class="hl-effect">?</span> <span class="hl-desc">"Human-readable category."</span>
+    <span class="hl-keyword">match</span> c &lt;= <span class="hl-number">0.0</span>
+        <span class="hl-constant">true</span>  <span class="hl-operator">-></span> <span class="hl-string">"freezing"</span>
+        <span class="hl-constant">false</span> <span class="hl-operator">-></span> <span class="hl-string">"comfortable"</span></pre>
+        </div>
+
+        <div class="feature-card">
+            <h3>Effects are tracked</h3>
+            <p>I/O, network, disk — declared on every function. No hidden side effects.</p>
+            <pre class="code-block code-sm"><span class="hl-keyword">fn</span> <span class="hl-fn">greet</span>(name: <span class="hl-type">String</span>) <span class="hl-operator">-></span> <span class="hl-type">Unit</span>
+    <span class="hl-effect">?</span> <span class="hl-desc">"Greeting to stdout."</span>
+    <span class="hl-effect">!</span> <span class="hl-effect">[Console.print]</span>
+    Console.print(<span class="hl-string">"Hi, {name}!"</span>)</pre>
+        </div>
+
+        <div class="feature-card">
+            <h3>Verify blocks are specs</h3>
+            <p>Tests live next to the function. Checks, docs, and regression guards — in one place.</p>
+            <pre class="code-block code-sm"><span class="hl-keyword">verify</span> <span class="hl-fn">divide</span>
+    divide(<span class="hl-number">10</span>, <span class="hl-number">2</span>) <span class="hl-operator">=></span> Result.Ok(<span class="hl-number">5</span>)
+    divide(<span class="hl-number">7</span>, <span class="hl-number">0</span>)  <span class="hl-operator">=></span> Result.Err(<span class="hl-string">"zero"</span>)
+    divide(<span class="hl-number">9</span>, <span class="hl-number">3</span>)  <span class="hl-operator">=></span> Result.Ok(<span class="hl-number">3</span>)</pre>
+        </div>
+
+        <div class="feature-card">
+            <h3>Decisions are first-class</h3>
+            <p>Architectural choices live in the code, not a wiki. Searchable and exportable.</p>
+            <pre class="code-block code-sm"><span class="hl-keyword">decision</span> <span class="hl-fn">UseResult</span>
+    chosen = <span class="hl-string">"Result"</span>
+    rejected = [<span class="hl-string">"Exceptions"</span>]
+    reason =
+        <span class="hl-desc">"Exceptions hide in sigs.</span>
+        <span class="hl-desc"> Result forces handling."</span></pre>
+        </div>
+
+        <div class="feature-card">
+            <h3>Effect policies</h3>
+            <p><code>aver.toml</code> controls which hosts, paths, and env vars your code can touch. <em>Deployment guardrails.</em></p>
+            <pre class="code-block code-sm"><span class="hl-comment"># aver.toml</span>
+[effects.Http]
+hosts = [<span class="hl-string">"api.example.com"</span>]
+
+[effects.Disk]
+paths = [<span class="hl-string">"./data/**"</span>]</pre>
+        </div>
+
+        <div class="feature-card">
+            <h3>Errors that teach</h3>
+            <p>Diagnostics built for humans and LLMs — precise, actionable, with hints.</p>
+            <pre class="code-block code-sm"><span class="hl-red">Error [3:5]:</span> <span class="hl-fn">'greet'</span> calls
+  <span class="hl-fn">'Console.print'</span> but does
+  not declare the effect.
+
+<span class="hl-muted">Hint: add</span> <span class="hl-effect">! [Console.print]</span></pre>
+        </div>
+
+        <div class="feature-card">
+            <h3>AI-native navigation</h3>
+            <p><code>aver context</code> exports types, effects, intents — sized to fit an LLM window.</p>
+            <pre class="code-block code-sm"><span class="hl-muted">$</span> aver context app.av
+
+<span class="hl-comment"># Module: Main</span>
+<span class="hl-muted">></span> <span class="hl-desc">"Payment ops entry."</span>
+<span class="hl-muted">effects:</span> <span class="hl-effect">[Console, Disk]</span>
+
+<span class="hl-keyword">fn</span> <span class="hl-fn">run</span>(cmd) <span class="hl-operator">-></span> <span class="hl-type">Result</span>&lt;<span class="hl-type">Report</span>, <span class="hl-type">String</span>&gt;</pre>
+        </div>
+
+        <div class="feature-card">
+            <h3>Formal verification</h3>
+            <p>Verify blocks export to <em>Lean 4</em> proofs and <em>Dafny</em> lemmas. Specs become machine-checked.</p>
+            <pre class="code-block code-sm"><span class="hl-comment">-- Generated Lean 4:</span>
+<span class="hl-keyword">example</span> :
+  fromString <span class="hl-string">"[1,2]"</span> =
+    Except.ok (jsonList
+      [jsonInt <span class="hl-number">1</span>, jsonInt <span class="hl-number">2</span>])
+  := <span class="hl-keyword">by</span> native_decide</pre>
+        </div>
+
+        <div class="feature-card">
+            <h3>Multiple backends</h3>
+            <p>VM for dev, native Rust for production, WASM for browsers. Same source.</p>
+            <pre class="code-block code-sm"><span class="hl-muted">$</span> aver run hello.av
+<span class="hl-muted">$</span> aver compile hello.av --target rust
+<span class="hl-muted">$</span> aver compile hello.av --target wasm</pre>
+        </div>
+    </div>
+</section>
+
+<!-- ── Constraints ─────────────────────────────────────────────────── -->
+<section class="constraints" id="constraints">
+    <h2>What Aver deliberately omits</h2>
+    <p class="section-sub">The safest code is code that can't go wrong. Aver removes entire categories of bugs by not having the features that cause them.</p>
+    <div class="constraints-grid">
+        <div class="constraint">
+            <span class="constraint-absent">No <code>null</code></span>
+            <span class="constraint-instead"><code>Option&lt;T&gt;</code> with <code>Some</code> / <code>None</code> — the compiler forces you to handle both.</span>
+        </div>
+        <div class="constraint">
+            <span class="constraint-absent">No closures</span>
+            <span class="constraint-instead">All functions are top-level. No captured variables — what you see is what it uses.</span>
+        </div>
+        <div class="constraint">
+            <span class="constraint-absent">No exceptions</span>
+            <span class="constraint-instead"><code>Result&lt;T, E&gt;</code> only — errors are values, never invisible control flow.</span>
+        </div>
+        <div class="constraint">
+            <span class="constraint-absent">No <code>if</code>/<code>else</code></span>
+            <span class="constraint-instead"><code>match</code> is exhaustive — the compiler catches every missing case.</span>
+        </div>
+        <div class="constraint">
+            <span class="constraint-absent">No mutable state</span>
+            <span class="constraint-instead">All bindings are immutable. No hidden side channels, no spooky action at a distance.</span>
+        </div>
+        <div class="constraint">
+            <span class="constraint-absent">No async runtime</span>
+            <span class="constraint-instead">Independence (<code>?!</code>) for parallelism — explicit, not implicit.</span>
+        </div>
+        <div class="constraint">
+            <span class="constraint-absent">No loops</span>
+            <span class="constraint-instead">Recursion + <code>match</code> + TCO. Termination is visible in the structure.</span>
+        </div>
+        <div class="constraint">
+            <span class="constraint-absent">No magic</span>
+            <span class="constraint-instead">No decorators, no implicit behaviour, no runtime reflection. Code is what it says.</span>
+        </div>
+    </div>
+</section>
+
+<!-- ── Demo ─────────────────────────────────────────────────────────── -->
+<section class="games" id="demo">
+    <h2>Written in Aver, running in your browser</h2>
+    <p class="section-sub">Seven games — from cellular automata to a roguelike — compiled to WASM and playable right now.</p>
+    <div class="games-grid">
+        <a href="playground/?game=life" class="game-card">
+            <div class="game-icon">🧬</div>
+            <span>Game of Life</span>
+        </a>
+        <a href="playground/?game=snake" class="game-card">
+            <div class="game-icon">🐍</div>
+            <span>Snake</span>
+        </a>
+        <a href="playground/?game=tetris" class="game-card">
+            <div class="game-icon">🧱</div>
+            <span>Tetris</span>
+        </a>
+        <a href="playground/?game=checkers" class="game-card">
+            <div class="game-icon">🏁</div>
+            <span>Checkers</span>
+        </a>
+        <a href="playground/?game=rogue" class="game-card">
+            <div class="game-icon">🗡️</div>
+            <span>Roguelike</span>
+        </a>
+        <a href="playground/?game=doom" class="game-card">
+            <div class="game-icon">👹</div>
+            <span>Doom</span>
+        </a>
+        <a href="playground/?game=wumpus" class="game-card">
+            <div class="game-icon">🦇</div>
+            <span>Wumpus</span>
+        </a>
+    </div>
+</section>
+
+<!-- ── Getting started ─────────────────────────────────────────────── -->
+<section class="start" id="start">
+    <h2>Get started in 30 seconds</h2>
+    <div class="start-steps">
+        <div class="step">
+            <div class="step-num">1</div>
+            <div class="step-body">
+                <h3>Install</h3>
+                <pre class="code-block code-sm"><span class="hl-muted">$</span> cargo install aver-lang</pre>
+            </div>
+        </div>
+        <div class="step">
+            <div class="step-num">2</div>
+            <div class="step-body">
+                <h3>Write</h3>
+                <pre class="code-block code-sm"><span class="hl-comment"># hello.av</span>
+<span class="hl-keyword">fn</span> <span class="hl-fn">main</span>() <span class="hl-operator">-></span> <span class="hl-type">Unit</span>
+    <span class="hl-effect">!</span> <span class="hl-effect">[Console.print]</span>
+    Console.print(<span class="hl-string">"Hello, Aver!"</span>)</pre>
+            </div>
+        </div>
+        <div class="step">
+            <div class="step-num">3</div>
+            <div class="step-body">
+                <h3>Run</h3>
+                <pre class="code-block code-sm"><span class="hl-muted">$</span> aver run hello.av
+<span class="hl-string">Hello, Aver!</span></pre>
+            </div>
+        </div>
+        <div class="step">
+            <div class="step-num">4</div>
+            <div class="step-body">
+                <h3>Verify</h3>
+                <pre class="code-block code-sm"><span class="hl-muted">$</span> aver verify hello.av
+<span class="hl-green">All 3 cases passed.</span></pre>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ── Footer ──────────────────────────────────────────────────────── -->
+<footer class="footer">
+    <div class="footer-inner">
+        <div class="footer-brand">Aver</div>
+        <div class="footer-links">
+            <a href="https://github.com/jasisz/aver" target="_blank">GitHub</a>
+            <a href="https://crates.io/crates/aver-lang" target="_blank">crates.io</a>
+            <a href="https://github.com/jasisz/aver/blob/main/docs/language.md" target="_blank">Language Guide</a>
+            <a href="https://github.com/jasisz/aver/blob/main/docs/pushback.md" target="_blank">Common Pushback</a>
+            <a href="playground/">Playground</a>
+            <a href="llms.txt">llms.txt</a>
+        </div>
+    </div>
+</footer>
+
+</body>
+</html>
