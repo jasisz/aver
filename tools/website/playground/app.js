@@ -954,7 +954,7 @@ const GAME_TOUCH = {
             { key: "down", text: "↓" }, { key: "right", text: "→" },
         ]},
         { label: "", keys: [
-            { key: "q", text: "Quit" },
+            { key: "q", text: "Q" },
         ]},
     ],
     tetris: [
@@ -963,7 +963,7 @@ const GAME_TOUCH = {
             { key: "down", text: "↓" }, { key: "right", text: "→" },
         ]},
         { label: "", keys: [
-            { key: " ", text: "Drop" }, { key: "q", text: "Quit" },
+            { key: " ", text: "Spc" }, { key: "q", text: "Q" },
         ]},
     ],
     checkers: [
@@ -971,12 +971,12 @@ const GAME_TOUCH = {
             { key: "up", text: "↑" }, { key: "left", text: "←" },
             { key: "down", text: "↓" }, { key: "right", text: "→" },
         ]},
-        { label: "", keys: [
-            { key: "enter", text: "Select" }, { key: "escape", text: "Esc" },
+        { label: "Play", keys: [
+            { key: "enter", text: "↵" }, { key: "escape", text: "Esc" },
+            { key: "q", text: "Q" },
         ]},
-        { label: "AI depth", keys: [
+        { label: "AI", keys: [
             { key: "+", text: "+" }, { key: "-", text: "-" },
-            { key: "q", text: "Quit" },
         ]},
     ],
     rogue: [
@@ -997,7 +997,7 @@ const GAME_TOUCH = {
             { key: "left", text: "←" }, { key: "right", text: "→" },
         ]},
         { label: "", keys: [
-            { key: " ", text: "Shoot" }, { key: "escape", text: "Esc" },
+            { key: " ", text: "Spc" }, { key: "escape", text: "Esc" },
         ]},
     ],
     // wumpus: console game, no touch controls
