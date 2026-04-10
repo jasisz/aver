@@ -288,6 +288,8 @@ function stopRun() {
 function queueConsoleLine() {
     const line = dom.lineInput.value;
     dom.lineInput.value = "";
+    // Echo input to console
+    appendConsole("stdout", `> ${line}`);
     if (state.sharedLineBuffer) {
         sendLineToWorker(line);
     } else {
