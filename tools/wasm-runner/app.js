@@ -241,11 +241,23 @@ async function loadSelectedFile(file) {
     state.wasmName = file.name;
     dom.fileMeta.textContent = `${file.name} · ${(file.size / 1024).toFixed(1)} KB`;
     dom.runButton.disabled = false;
-    // Switch to game mode (hide editor, show terminal)
+    // Switch to game mode (hide editor)
     document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
     setWorkspaceMode("game");
-    setOutputMode("terminal");
     clearOutput();
+
+    // Check imports to decide terminal vs console
+    try {
+        const mod = await WebAssembly.compile(state.wasmBytes);
+        const imports = WebAssembly.Module.imports(mod);
+        const usesTerminal = imports.some(i => i.name && i.name.startsWith("terminal_"));
+        setOutputMode(usesTerminal ? "terminal" : "console");
+        const readlineBar = document.querySelector("[data-readline-bar]");
+        if (readlineBar) readlineBar.style.display = usesTerminal ? "none" : "flex";
+    } catch (_) {
+        setOutputMode("terminal");
+    }
+
     setStatus(`Running ${file.name}…`, "info");
     runSelectedModule({ cols: 80, rows: 35 });
 }
