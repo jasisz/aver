@@ -168,11 +168,25 @@ impl<'a> ExprEmitter<'a> {
                     self.instructions.push(Instruction::I32WrapI64);
                 }
                 self.instructions.push(Instruction::LocalSet(b_local));
-                // Fast path: same pointer
+                // Fast path: same pointer (or same sentinel) → equal
                 self.instructions.push(Instruction::LocalGet(a_local));
                 self.instructions.push(Instruction::LocalGet(b_local));
                 self.instructions.push(Instruction::I32Eq);
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
+                self.instructions.push(Instruction::I32Const(1));
+                self.emit_else();
                 // Slow path: compare headers (i64 at offset 0)
+                // Guard: if either pointer is negative (sentinel), not equal
+                self.instructions.push(Instruction::LocalGet(a_local));
+                self.instructions.push(Instruction::I32Const(0));
+                self.instructions.push(Instruction::I32LtS);
+                self.instructions.push(Instruction::LocalGet(b_local));
+                self.instructions.push(Instruction::I32Const(0));
+                self.instructions.push(Instruction::I32LtS);
+                self.instructions.push(Instruction::I32Or);
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
+                self.instructions.push(Instruction::I32Const(0));
+                self.emit_else();
                 self.instructions.push(Instruction::LocalGet(a_local));
                 self.instructions
                     .push(Instruction::I64Load(wasm_encoder::MemArg {
@@ -188,8 +202,8 @@ impl<'a> ExprEmitter<'a> {
                         memory_index: 0,
                     }));
                 self.instructions.push(Instruction::I64Eq);
-                // Either pointer match OR header match
-                self.instructions.push(Instruction::I32Or);
+                self.emit_end(); // end inner if/else (sentinel guard)
+                self.emit_end(); // end outer if/else (fast path)
                 if matches!(op, BinOp::Neq) {
                     self.instructions.push(Instruction::I32Eqz);
                 }
