@@ -77,8 +77,6 @@ body { display: flex; flex-direction: column; overflow: hidden; }
     flex: 1;
     display: flex;
     min-height: 0;
-    padding: 0 0.75rem;
-    gap: 1px;
 }
 
 /* ── Editor pane ──────────────────────────────────────────────────── */
