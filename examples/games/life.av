@@ -3,8 +3,6 @@ module Main
         "Conway's Game of Life — terminal visualization with editor and speed control."
         "Grid uses (w+2)×(h+2) padding so neighbors need no bounds checks."
         "Editor mode: place cells with cursor before starting the simulation."
-        "aver run examples/games/life.av          — interpreter"
-        "aver run --vm examples/games/life.av     — VM"
     depends []
 
 record FpsState

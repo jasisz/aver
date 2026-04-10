@@ -1063,6 +1063,20 @@ document.querySelector("[data-about]")?.addEventListener("click", (e) => {
     if (e.target === e.currentTarget) e.currentTarget.style.display = "none";
 });
 
+// WASM overlay
+document.querySelector("[data-show-wasm]")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    const el = document.querySelector("[data-wasm-overlay]");
+    if (el) el.style.display = "flex";
+});
+document.querySelector("[data-close-wasm]")?.addEventListener("click", () => {
+    const el = document.querySelector("[data-wasm-overlay]");
+    if (el) el.style.display = "none";
+});
+document.querySelector("[data-wasm-overlay]")?.addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) e.currentTarget.style.display = "none";
+});
+
 // Auto-launch game from ?game= URL parameter
 const urlGame = new URLSearchParams(window.location.search).get("game");
 if (urlGame) {
