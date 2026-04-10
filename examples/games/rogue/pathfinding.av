@@ -99,6 +99,9 @@ fn filterNewNeighbors(map: List<List<Tile>>, nbrs: List<Point>, to: Point, entit
         Option.None -> acc
         Option.Some(p) -> filterNeighborPoint(map, nbrs, to, entities, open, closed, parent, parentDist, i, acc, p)
 
+verify filterNewNeighbors
+    List.len(filterNewNeighbors(testMap3(), [Types.pt(5, 4), Types.pt(6, 5)], Types.pt(9, 9), emptyEnts(), emptyNodes(), emptyNodes(), Types.pt(5, 5), 0, 0, emptyNodes())) => 3
+
 fn filterNeighborPoint(map: List<List<Tile>>, nbrs: List<Point>, to: Point, entities: List<Entity>, open: List<BfsNode>, closed: List<BfsNode>, parent: Point, parentDist: Int, i: Int, acc: List<BfsNode>, p: Point) -> List<BfsNode>
     ? "Check one neighbor point and recurse"
     nextI = i + 1
@@ -116,9 +119,6 @@ fn filterNeighborPoint(map: List<List<Tile>>, nbrs: List<Point>, to: Point, enti
 
 verify filterNeighborPoint
     List.len(filterNeighborPoint(testMap3(), [Types.pt(6, 5)], Types.pt(9, 9), emptyEnts(), emptyNodes(), emptyNodes(), Types.pt(5, 5), 0, 0, [], Types.pt(6, 5))) => 1
-
-verify filterNewNeighbors
-    List.len(filterNewNeighbors(testMap3(), [Types.pt(5, 4), Types.pt(6, 5)], Types.pt(9, 9), emptyEnts(), emptyNodes(), emptyNodes(), Types.pt(5, 5), 0, 0, emptyNodes())) => 3
 
 fn expandNode(map: List<List<Tile>>, node: BfsNode, to: Point, entities: List<Entity>, open: List<BfsNode>, closed: List<BfsNode>) -> List<BfsNode>
     ? "Generate walkable neighbor BfsNodes not already visited"
@@ -181,6 +181,10 @@ fn bfsSearch(map: List<List<Tile>>, from: Point, to: Point, entities: List<Entit
         Option.None -> Option.None
         Option.Some(current) -> bfsProcessNode(map, from, to, entities, open, closed, maxDepth, current)
 
+verify bfsSearch
+    bfsSearch(testMap3(), Types.pt(5, 5), Types.pt(7, 5), emptyEnts(), [mkStart(5, 5)], emptyNodes(), 15) => Option.Some(Types.pt(6, 5))
+    bfsSearch(Map.emptyMap(), Types.pt(5, 5), Types.pt(7, 5), emptyEnts(), [mkStart(5, 5)], emptyNodes(), 15) => Option.None
+
 fn bfsProcessNode(map: List<List<Tile>>, from: Point, to: Point, entities: List<Entity>, open: List<BfsNode>, closed: List<BfsNode>, maxDepth: Int, current: BfsNode) -> Option<Point>
     ? "Process one BFS node"
     closedWithCurrent = List.concat(closed, [current])
@@ -193,10 +197,6 @@ fn bfsProcessNode(map: List<List<Tile>>, from: Point, to: Point, entities: List<
 verify bfsProcessNode
     bfsProcessNode(testMap3(), Types.pt(5, 5), Types.pt(7, 5), emptyEnts(), [mkStart(5, 5)], emptyNodes(), 15, mkStart(5, 5)) => Option.Some(Types.pt(6, 5))
     bfsProcessNode(Map.emptyMap(), Types.pt(5, 5), Types.pt(7, 5), emptyEnts(), [mkStart(5, 5)], emptyNodes(), 0, mkStart(5, 5)) => Option.None
-
-verify bfsSearch
-    bfsSearch(testMap3(), Types.pt(5, 5), Types.pt(7, 5), emptyEnts(), [mkStart(5, 5)], emptyNodes(), 15) => Option.Some(Types.pt(6, 5))
-    bfsSearch(Map.emptyMap(), Types.pt(5, 5), Types.pt(7, 5), emptyEnts(), [mkStart(5, 5)], emptyNodes(), 15) => Option.None
 
 fn nextStepAStar(map: List<List<Tile>>, from: Point, to: Point, entities: List<Entity>) -> Option<Point>
     ? "Return the next point to move toward target, or None if no path exists within 15 steps"

@@ -209,6 +209,10 @@ fn dedup(pts: List<Point>, i: Int, acc: List<Point>) -> List<Point>
         Option.None -> acc
         Option.Some(p) -> dedupStep(pts, i, acc, p)
 
+verify dedup
+    List.len(dedup([Types.pt(1, 1), Types.pt(1, 1), Types.pt(2, 2)], 0, [])) => 2
+    List.len(dedup([], 0, [])) => 0
+
 fn dedupStep(pts: List<Point>, i: Int, acc: List<Point>, p: Point) -> List<Point>
     ? "Process one point in dedup"
     nextI = i + 1
@@ -218,10 +222,6 @@ fn dedupStep(pts: List<Point>, i: Int, acc: List<Point>, p: Point) -> List<Point
 
 verify dedupStep
     List.len(dedupStep([Types.pt(1, 1), Types.pt(2, 2)], 0, [], Types.pt(1, 1))) => 2
-
-verify dedup
-    List.len(dedup([Types.pt(1, 1), Types.pt(1, 1), Types.pt(2, 2)], 0, [])) => 2
-    List.len(dedup([], 0, [])) => 0
 
 fn computeFov(map: List<List<Tile>>, origin: Point, radius: Int) -> List<Point>
     ? "Compute all visible points from origin within given radius using recursive shadowcasting"

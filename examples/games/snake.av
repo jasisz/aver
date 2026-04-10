@@ -73,11 +73,20 @@ fn dropLast(xs: List<Point>) -> List<Point>
     ? "Remove the last element"
     dropLastAcc(xs, [])
 
+verify dropLast
+    dropLast([pt(1, 1), pt(2, 2), pt(3, 3)]) => [pt(1, 1), pt(2, 2)]
+    dropLast([pt(1, 1)]) => []
+    dropLast([]) => []
+
 fn dropLastAcc(xs: List<Point>, acc: List<Point>) -> List<Point>
     ? "Tail-recursive helper: accumulate all but last, then reverse"
     match xs
         [head, ..rest] -> dropLastNext(head, rest, acc)
         _ -> List.reverse(acc)
+
+verify dropLastAcc
+    dropLastAcc([pt(1, 1), pt(2, 2)], []) => [pt(1, 1)]
+    dropLastAcc([], [pt(3, 3)]) => [pt(3, 3)]
 
 fn dropLastNext(head: Point, rest: List<Point>, acc: List<Point>) -> List<Point>
     ? "If rest is empty, head is last — return reversed acc; otherwise continue"
@@ -85,18 +94,9 @@ fn dropLastNext(head: Point, rest: List<Point>, acc: List<Point>) -> List<Point>
         [] -> List.reverse(acc)
         _ -> dropLastAcc(rest, List.prepend(head, acc))
 
-verify dropLastAcc
-    dropLastAcc([pt(1, 1), pt(2, 2)], []) => [pt(1, 1)]
-    dropLastAcc([], [pt(3, 3)]) => [pt(3, 3)]
-
 verify dropLastNext
     dropLastNext(pt(1, 1), [], []) => []
     dropLastNext(pt(1, 1), [pt(2, 2)], []) => [pt(1, 1)]
-
-verify dropLast
-    dropLast([pt(1, 1), pt(2, 2), pt(3, 3)]) => [pt(1, 1), pt(2, 2)]
-    dropLast([pt(1, 1)]) => []
-    dropLast([]) => []
 
 fn tail(xs: List<Point>) -> List<Point>
     ? "All elements except the first"
@@ -165,6 +165,10 @@ fn appendPoint(xs: List<Point>, point: Point) -> List<Point>
     ? "Append one point to the end of the snake body."
     appendPointAcc(xs, point, [])
 
+verify appendPoint
+    appendPoint([pt(1, 1), pt(2, 2)], pt(3, 3)) => [pt(1, 1), pt(2, 2), pt(3, 3)]
+    appendPoint([], pt(3, 3)) => [pt(3, 3)]
+
 fn appendPointAcc(xs: List<Point>, point: Point, acc: List<Point>) -> List<Point>
     ? "Tail-recursive helper: accumulate reversed, append point, reverse back"
     match xs
@@ -174,10 +178,6 @@ fn appendPointAcc(xs: List<Point>, point: Point, acc: List<Point>) -> List<Point
 verify appendPointAcc
     appendPointAcc([pt(1, 1)], pt(2, 2), []) => [pt(1, 1), pt(2, 2)]
     appendPointAcc([], pt(3, 3), [pt(1, 1)]) => [pt(1, 1), pt(3, 3)]
-
-verify appendPoint
-    appendPoint([pt(1, 1), pt(2, 2)], pt(3, 3)) => [pt(1, 1), pt(2, 2), pt(3, 3)]
-    appendPoint([], pt(3, 3)) => [pt(3, 3)]
 
 fn growSnake(state: GameState) -> GameState
     ? "Append food position to snake, increment score"

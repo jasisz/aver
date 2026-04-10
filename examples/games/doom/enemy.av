@@ -237,6 +237,9 @@ fn removeEnemy(enemies: List<Enemy>, idx: Int, i: Int, acc: List<Enemy>) -> List
             Option.Some(e) -> removeEnemyStep(enemies, idx, i, acc, e)
             Option.None -> acc
 
+verify removeEnemy
+    List.len(removeEnemy([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8)], 0, 0, [])) => 1
+
 fn removeEnemyStep(enemies: List<Enemy>, idx: Int, i: Int, acc: List<Enemy>, e: Enemy) -> List<Enemy>
     ? "Skip or keep enemy at index"
     next = i + 1
@@ -247,9 +250,6 @@ fn removeEnemyStep(enemies: List<Enemy>, idx: Int, i: Int, acc: List<Enemy>, e: 
 verify removeEnemyStep
     List.len(removeEnemyStep([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 0, 0, [], Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3))) => 0
 
-verify removeEnemy
-    List.len(removeEnemy([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8)], 0, 0, [])) => 1
-
 fn replaceEnemy(enemies: List<Enemy>, idx: Int, newE: Enemy, i: Int, acc: List<Enemy>) -> List<Enemy>
     ? "Replace enemy at index in list"
     match i == List.len(enemies)
@@ -257,6 +257,12 @@ fn replaceEnemy(enemies: List<Enemy>, idx: Int, newE: Enemy, i: Int, acc: List<E
         false -> match Vector.get(Vector.fromList(enemies), i)
             Option.Some(e) -> replaceEnemyStep(enemies, idx, newE, i, acc, e)
             Option.None -> acc
+
+verify replaceEnemy
+    match Vector.get(Vector.fromList(replaceEnemy([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 0, Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8), 0, [])), 0)
+        Option.Some(e) -> e.kind
+        Option.None -> EnemyKind.Imp
+    => EnemyKind.Demon
 
 fn replaceEnemyStep(enemies: List<Enemy>, idx: Int, newE: Enemy, i: Int, acc: List<Enemy>, e: Enemy) -> List<Enemy>
     ? "Replace or keep enemy at index"
@@ -267,12 +273,6 @@ fn replaceEnemyStep(enemies: List<Enemy>, idx: Int, newE: Enemy, i: Int, acc: Li
 
 verify replaceEnemyStep
     match Vector.get(Vector.fromList(replaceEnemyStep([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 0, Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8), 0, [], Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3))), 0)
-        Option.Some(e) -> e.kind
-        Option.None -> EnemyKind.Imp
-    => EnemyKind.Demon
-
-verify replaceEnemy
-    match Vector.get(Vector.fromList(replaceEnemy([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 0, Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8), 0, [])), 0)
         Option.Some(e) -> e.kind
         Option.None -> EnemyKind.Imp
     => EnemyKind.Demon

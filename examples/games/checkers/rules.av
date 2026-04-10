@@ -178,6 +178,9 @@ fn expandChains(board: List<List<CellContent>>, jumps: List<List<Point>>, color:
     ? "Expand each jump continuation into chains"
     expandChainsAcc(board, jumps, color, path, i, [])
 
+verify expandChains
+    expandChains(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.WhiteMan), [[Board.pt(3, 3), Board.pt(1, 1)]], Color.Black, [Board.pt(3, 3)], 0) => [[Board.pt(3, 3), Board.pt(1, 1)]]
+
 fn expandChainsAcc(board: List<List<CellContent>>, jumps: List<List<Point>>, color: Color, path: List<Point>, i: Int, acc: List<List<Point>>) -> List<List<Point>>
     ? "Tail-recursive chain expansion with accumulator"
     match i == List.len(jumps)
@@ -189,9 +192,6 @@ fn expandChainsAcc(board: List<List<CellContent>>, jumps: List<List<Point>>, col
 verify expandChainsAcc
     expandChainsAcc(Board.buildEmptyBoard(8), [], Color.Black, [], 0, []) => []
 
-verify expandChains
-    expandChains(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.WhiteMan), [[Board.pt(3, 3), Board.pt(1, 1)]], Color.Black, [Board.pt(3, 3)], 0) => [[Board.pt(3, 3), Board.pt(1, 1)]]
-
 fn expandOneChain(board: List<List<CellContent>>, jumps: List<List<Point>>, jump: List<Point>, color: Color, path: List<Point>, i: Int, acc: List<List<Point>>) -> List<List<Point>>
     ? "Expand one jump into chain and concat with rest"
     nextI = i + 1
@@ -199,15 +199,15 @@ fn expandOneChain(board: List<List<CellContent>>, jumps: List<List<Point>>, jump
         Option.Some(to) -> expandOneChainLand(board, jumps, jump, to, color, path, nextI, acc)
         Option.None -> expandChainsAcc(board, jumps, color, path, nextI, acc)
 
+verify expandOneChain
+    expandOneChain(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.WhiteMan), [[Board.pt(3, 3), Board.pt(1, 1)]], [Board.pt(3, 3), Board.pt(1, 1)], Color.Black, [Board.pt(3, 3)], 0, []) => [[Board.pt(3, 3), Board.pt(1, 1)]]
+
 fn expandOneChainLand(board: List<List<CellContent>>, jumps: List<List<Point>>, jump: List<Point>, to: Point, color: Color, path: List<Point>, nextI: Int, acc: List<List<Point>>) -> List<List<Point>>
     ? "Land after jump and continue expansion"
     expandChainsAcc(board, jumps, color, path, nextI, List.concat(acc, jumpAfterLand(board, jump, to, color, path)))
 
 verify expandOneChainLand
     expandOneChainLand(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.WhiteMan), [[Board.pt(3, 3), Board.pt(1, 1)]], [Board.pt(3, 3), Board.pt(1, 1)], Board.pt(1, 1), Color.Black, [Board.pt(3, 3)], 1, []) => [[Board.pt(3, 3), Board.pt(1, 1)]]
-
-verify expandOneChain
-    expandOneChain(Board.setCell(Board.setCell(Board.buildEmptyBoard(8), 3, 3, CellContent.BlackMan), 2, 2, CellContent.WhiteMan), [[Board.pt(3, 3), Board.pt(1, 1)]], [Board.pt(3, 3), Board.pt(1, 1)], Color.Black, [Board.pt(3, 3)], 0, []) => [[Board.pt(3, 3), Board.pt(1, 1)]]
 
 fn jumpAfterLand(board: List<List<CellContent>>, jump: List<Point>, to: Point, color: Color, path: List<Point>) -> List<List<Point>>
     ? "After landing, continue chain or return path"
@@ -229,6 +229,9 @@ fn collectMoves(board: List<List<CellContent>>, color: Color, x: Int, y: Int, ge
     ? "Collect moves for all pieces of color, scanning board from (x,y)"
     collectMovesAcc(board, color, x, y, getMovesForPiece, [])
 
+verify collectMoves
+    collectMoves(Board.buildEmptyBoard(8), Color.Black, 0, 0, "steps") => []
+
 fn collectMovesAcc(board: List<List<CellContent>>, color: Color, x: Int, y: Int, getMovesForPiece: String, acc: List<List<Point>>) -> List<List<Point>>
     ? "Tail-recursive move collection with accumulator"
     match y == 8
@@ -237,6 +240,9 @@ fn collectMovesAcc(board: List<List<CellContent>>, color: Color, x: Int, y: Int,
             true -> collectMovesAcc(board, color, 0, y + 1, getMovesForPiece, acc)
             false -> collectMovesCellAcc(board, color, x, y, getMovesForPiece, acc)
 
+verify collectMovesAcc
+    collectMovesAcc(Board.buildEmptyBoard(8), Color.Black, 0, 0, "steps", []) => []
+
 fn collectMovesCellAcc(board: List<List<CellContent>>, color: Color, x: Int, y: Int, getMovesForPiece: String, acc: List<List<Point>>) -> List<List<Point>>
     ? "Check one cell and continue scanning with accumulator"
     nextX = x + 1
@@ -244,14 +250,8 @@ fn collectMovesCellAcc(board: List<List<CellContent>>, color: Color, x: Int, y: 
         true -> collectMovesAcc(board, color, nextX, y, getMovesForPiece, List.concat(acc, movesForCell(board, x, y, color, getMovesForPiece)))
         false -> collectMovesAcc(board, color, nextX, y, getMovesForPiece, acc)
 
-verify collectMovesAcc
-    collectMovesAcc(Board.buildEmptyBoard(8), Color.Black, 0, 0, "steps", []) => []
-
 verify collectMovesCellAcc
     collectMovesCellAcc(Board.buildEmptyBoard(8), Color.Black, 0, 0, "steps", []) => []
-
-verify collectMoves
-    collectMoves(Board.buildEmptyBoard(8), Color.Black, 0, 0, "steps") => []
 
 fn collectMovesCell(board: List<List<CellContent>>, color: Color, x: Int, y: Int, getMovesForPiece: String) -> List<List<Point>>
     ? "Check one cell and continue scanning"
@@ -293,6 +293,9 @@ fn maxLen(turns: List<List<Point>>, i: Int, best: Int) -> Int
         true -> best
         false -> maxLenStep(turns, i, best)
 
+verify maxLen
+    maxLen([[Board.pt(0, 0), Board.pt(1, 1)], [Board.pt(0, 0), Board.pt(1, 1), Board.pt(2, 2)]], 0, 0) => 3
+
 fn maxLenStep(turns: List<List<Point>>, i: Int, best: Int) -> Int
     ? "One step of maxLen"
     nextI = i + 1
@@ -303,18 +306,22 @@ fn maxLenStep(turns: List<List<Point>>, i: Int, best: Int) -> Int
 verify maxLenStep
     maxLenStep([[Board.pt(0, 0), Board.pt(1, 1)]], 0, 0) => 2
 
-verify maxLen
-    maxLen([[Board.pt(0, 0), Board.pt(1, 1)], [Board.pt(0, 0), Board.pt(1, 1), Board.pt(2, 2)]], 0, 0) => 3
-
 fn filterByLen(turns: List<List<Point>>, targetLen: Int, i: Int) -> List<List<Point>>
     ? "Keep only turns with the given length"
     List.reverse(filterByLenAcc(turns, targetLen, i, []))
+
+verify filterByLen
+    List.len(filterByLen([[Board.pt(0, 0), Board.pt(1, 1)], [Board.pt(0, 0), Board.pt(1, 1), Board.pt(2, 2)]], 3, 0)) => 1
 
 fn filterByLenAcc(turns: List<List<Point>>, targetLen: Int, i: Int, acc: List<List<Point>>) -> List<List<Point>>
     ? "Tail-recursive filter by length"
     match i == List.len(turns)
         true -> acc
         false -> filterByLenStep(turns, targetLen, i, acc)
+
+verify filterByLenAcc
+    filterByLenAcc([], 2, 0, []) => []
+    List.len(filterByLenAcc([[Board.pt(0, 0), Board.pt(1, 1)]], 2, 0, [])) => 1
 
 fn filterByLenStep(turns: List<List<Point>>, targetLen: Int, i: Int, acc: List<List<Point>>) -> List<List<Point>>
     ? "One step of filterByLen"
@@ -325,15 +332,8 @@ fn filterByLenStep(turns: List<List<Point>>, targetLen: Int, i: Int, acc: List<L
             false -> filterByLenAcc(turns, targetLen, nextI, acc)
         Option.None -> filterByLenAcc(turns, targetLen, nextI, acc)
 
-verify filterByLenAcc
-    filterByLenAcc([], 2, 0, []) => []
-    List.len(filterByLenAcc([[Board.pt(0, 0), Board.pt(1, 1)]], 2, 0, [])) => 1
-
 verify filterByLenStep
     List.len(filterByLenStep([[Board.pt(0, 0), Board.pt(1, 1)]], 2, 0, [])) => 1
-
-verify filterByLen
-    List.len(filterByLen([[Board.pt(0, 0), Board.pt(1, 1)], [Board.pt(0, 0), Board.pt(1, 1), Board.pt(2, 2)]], 3, 0)) => 1
 
 fn longestJumps(jumps: List<List<Point>>) -> List<List<Point>>
     ? "Keep only jump chains with maximum captures (forced maximum capture rule)"
@@ -378,6 +378,9 @@ fn applyTurnMoves(board: List<List<CellContent>>, turn: List<Point>, i: Int) -> 
     ? "Apply consecutive moves in a turn path"
     applyTurnMovesVec(board, turn, Vector.fromList(turn), i)
 
+verify applyTurnMoves
+    applyTurnMoves(Board.startBoard(), [Board.pt(0, 5)], 0) => Board.startBoard()
+
 fn applyTurnMovesVec(board: List<List<CellContent>>, turn: List<Point>, turnVec: Vector<Point>, i: Int) -> List<List<CellContent>>
     ? "Apply consecutive moves using precomputed vector"
     match i + 1 == List.len(turn)
@@ -386,9 +389,6 @@ fn applyTurnMovesVec(board: List<List<CellContent>>, turn: List<Point>, turnVec:
 
 verify applyTurnMovesVec
     applyTurnMovesVec(Board.startBoard(), [Board.pt(0, 5)], Vector.fromList([Board.pt(0, 5)]), 0) => Board.startBoard()
-
-verify applyTurnMoves
-    applyTurnMoves(Board.startBoard(), [Board.pt(0, 5)], 0) => Board.startBoard()
 
 fn applyTurnMoveVec(board: List<List<CellContent>>, turn: List<Point>, turnVec: Vector<Point>, i: Int) -> List<List<CellContent>>
     ? "Apply one move in path and continue"

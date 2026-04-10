@@ -209,9 +209,6 @@ fn placeGlider(grid: Vector<Int>, s: Int, cx: Int, cy: Int) -> Vector<Int>
 verify placeGlider
     cellAt(placeGlider(makeGrid(49), 7, 1, 1), 17) => 1
 
-verify placeGliderGun
-    Vector.len(placeGliderGun(makeGrid(400), 20, 0, 0)) => 400
-
 fn placeGliderGun(grid: Vector<Int>, s: Int, cx: Int, cy: Int) -> Vector<Int>
     ? "Stamp a Gosper glider gun at the given top-left offset."
     cx1 = cx + 1
@@ -271,6 +268,9 @@ fn placeGliderGun(grid: Vector<Int>, s: Int, cx: Int, cy: Int) -> Vector<Int>
     g34 = place(g33, s, cx34, cy3)
     g35 = place(g34, s, cx35, cy2)
     place(g35, s, cx35, cy3)
+
+verify placeGliderGun
+    Vector.len(placeGliderGun(makeGrid(400), 20, 0, 0)) => 400
 
 fn seed(s: Int, w: Int, h: Int) -> Vector<Int>
     ? "Seed the initial world with one R-pentomino and three gliders."

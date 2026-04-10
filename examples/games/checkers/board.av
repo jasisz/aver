@@ -142,6 +142,11 @@ fn buildEmptyBoard(n: Int) -> List<List<CellContent>>
     ? "Build n empty rows"
     buildEmptyBoardAcc(n, [])
 
+verify buildEmptyBoard
+    buildEmptyBoard(0) => []
+    buildEmptyBoard(1) => [emptyRow()]
+    List.len(buildEmptyBoard(8)) => 8
+
 fn buildEmptyBoardAcc(n: Int, acc: List<List<CellContent>>) -> List<List<CellContent>>
     ? "Tail-recursive empty board builder"
     match n == 0
@@ -151,11 +156,6 @@ fn buildEmptyBoardAcc(n: Int, acc: List<List<CellContent>>) -> List<List<CellCon
 verify buildEmptyBoardAcc
     buildEmptyBoardAcc(0, []) => []
     List.len(buildEmptyBoardAcc(1, [])) => 1
-
-verify buildEmptyBoard
-    buildEmptyBoard(0) => []
-    buildEmptyBoard(1) => [emptyRow()]
-    List.len(buildEmptyBoard(8)) => 8
 
 fn getCell(board: List<List<CellContent>>, x: Int, y: Int) -> CellContent
     ? "Get cell at (x,y), Empty if out of bounds"
@@ -176,6 +176,9 @@ fn setCellCol(row: List<CellContent>, x: Int, val: CellContent, col: Int) -> Lis
     ? "Rebuild a row replacing column x"
     List.reverse(setCellColAcc(row, x, val, col, []))
 
+verify setCellCol
+    List.len(setCellCol(emptyRow(), 3, CellContent.BlackMan, 0)) => 8
+
 fn setCellColAcc(row: List<CellContent>, x: Int, val: CellContent, col: Int, acc: List<CellContent>) -> List<CellContent>
     ? "Tail-recursive column rebuild"
     match col == 8
@@ -184,6 +187,10 @@ fn setCellColAcc(row: List<CellContent>, x: Int, val: CellContent, col: Int, acc
             Option.Some(v) -> setCellColStep(row, x, val, col, acc, v)
             Option.None -> acc
 
+verify setCellColAcc
+    setCellColAcc(emptyRow(), 0, CellContent.BlackMan, 8, []) => []
+    List.len(setCellColAcc(emptyRow(), 0, CellContent.BlackMan, 0, [])) => 8
+
 fn setCellColStep(row: List<CellContent>, x: Int, val: CellContent, col: Int, acc: List<CellContent>, v: CellContent) -> List<CellContent>
     ? "One column step"
     nextCol = col + 1
@@ -191,19 +198,15 @@ fn setCellColStep(row: List<CellContent>, x: Int, val: CellContent, col: Int, ac
         true -> setCellColAcc(row, x, val, nextCol, List.prepend(val, acc))
         false -> setCellColAcc(row, x, val, nextCol, List.prepend(v, acc))
 
-verify setCellColAcc
-    setCellColAcc(emptyRow(), 0, CellContent.BlackMan, 8, []) => []
-    List.len(setCellColAcc(emptyRow(), 0, CellContent.BlackMan, 0, [])) => 8
-
 verify setCellColStep
     List.len(setCellColStep(emptyRow(), 0, CellContent.BlackMan, 0, [], CellContent.Empty)) => 8
-
-verify setCellCol
-    List.len(setCellCol(emptyRow(), 3, CellContent.BlackMan, 0)) => 8
 
 fn setCellRow(board: List<List<CellContent>>, x: Int, y: Int, val: CellContent, row: Int) -> List<List<CellContent>>
     ? "Rebuild rows replacing cell at (x,y)"
     List.reverse(setCellRowAcc(board, x, y, val, row, []))
+
+verify setCellRow
+    List.len(setCellRow(buildEmptyBoard(8), 3, 5, CellContent.BlackMan, 0)) => 8
 
 fn setCellRowAcc(board: List<List<CellContent>>, x: Int, y: Int, val: CellContent, row: Int, acc: List<List<CellContent>>) -> List<List<CellContent>>
     ? "Tail-recursive row rebuild"
@@ -213,6 +216,10 @@ fn setCellRowAcc(board: List<List<CellContent>>, x: Int, y: Int, val: CellConten
             Option.Some(r) -> setCellRowStep(board, x, y, val, row, acc, r)
             Option.None -> acc
 
+verify setCellRowAcc
+    setCellRowAcc(buildEmptyBoard(8), 0, 0, CellContent.BlackMan, 8, []) => []
+    List.len(setCellRowAcc(buildEmptyBoard(8), 0, 0, CellContent.BlackMan, 0, [])) => 8
+
 fn setCellRowStep(board: List<List<CellContent>>, x: Int, y: Int, val: CellContent, row: Int, acc: List<List<CellContent>>, r: List<CellContent>) -> List<List<CellContent>>
     ? "One row step"
     nextRow = row + 1
@@ -220,15 +227,8 @@ fn setCellRowStep(board: List<List<CellContent>>, x: Int, y: Int, val: CellConte
         true -> setCellRowAcc(board, x, y, val, nextRow, List.prepend(setCellCol(r, x, val, 0), acc))
         false -> setCellRowAcc(board, x, y, val, nextRow, List.prepend(r, acc))
 
-verify setCellRowAcc
-    setCellRowAcc(buildEmptyBoard(8), 0, 0, CellContent.BlackMan, 8, []) => []
-    List.len(setCellRowAcc(buildEmptyBoard(8), 0, 0, CellContent.BlackMan, 0, [])) => 8
-
 verify setCellRowStep
     List.len(setCellRowStep(buildEmptyBoard(8), 0, 0, CellContent.BlackMan, 0, [], emptyRow())) => 8
-
-verify setCellRow
-    List.len(setCellRow(buildEmptyBoard(8), 3, 5, CellContent.BlackMan, 0)) => 8
 
 fn setCell(board: List<List<CellContent>>, x: Int, y: Int, val: CellContent) -> List<List<CellContent>>
     ? "Return board with cell (x,y) set to val"
@@ -262,11 +262,18 @@ fn makeRow(y: Int, x: Int, cell: CellContent) -> List<CellContent>
     ? "Build one row of the starting board"
     List.reverse(makeRowAcc(y, x, cell, []))
 
+verify makeRow
+    List.len(makeRow(0, 0, CellContent.WhiteMan)) => 8
+
 fn makeRowAcc(y: Int, x: Int, cell: CellContent, acc: List<CellContent>) -> List<CellContent>
     ? "Tail-recursive row builder"
     match x == 8
         true -> acc
         false -> makeRowStep(y, x, cell, acc)
+
+verify makeRowAcc
+    makeRowAcc(0, 8, CellContent.WhiteMan, []) => []
+    List.len(makeRowAcc(0, 0, CellContent.WhiteMan, [])) => 8
 
 fn makeRowStep(y: Int, x: Int, cell: CellContent, acc: List<CellContent>) -> List<CellContent>
     ? "One cell in row"
@@ -275,15 +282,8 @@ fn makeRowStep(y: Int, x: Int, cell: CellContent, acc: List<CellContent>) -> Lis
         true -> makeRowAcc(y, nextX, cell, List.prepend(cell, acc))
         false -> makeRowAcc(y, nextX, cell, List.prepend(CellContent.Empty, acc))
 
-verify makeRowAcc
-    makeRowAcc(0, 8, CellContent.WhiteMan, []) => []
-    List.len(makeRowAcc(0, 0, CellContent.WhiteMan, [])) => 8
-
 verify makeRowStep
     List.len(makeRowStep(0, 0, CellContent.WhiteMan, [])) => 8
-
-verify makeRow
-    List.len(makeRow(0, 0, CellContent.WhiteMan)) => 8
 
 fn startRow(y: Int) -> List<CellContent>
     ? "Build a starting board row based on row number"
@@ -300,6 +300,9 @@ fn buildStartRows(y: Int) -> List<List<CellContent>>
     ? "Build starting board rows from y to 7"
     List.reverse(buildStartRowsAcc(y, []))
 
+verify buildStartRows
+    List.len(buildStartRows(0)) => 8
+
 fn buildStartRowsAcc(y: Int, acc: List<List<CellContent>>) -> List<List<CellContent>>
     ? "Tail-recursive starting rows builder"
     match y == 8
@@ -309,9 +312,6 @@ fn buildStartRowsAcc(y: Int, acc: List<List<CellContent>>) -> List<List<CellCont
 verify buildStartRowsAcc
     buildStartRowsAcc(8, []) => []
     List.len(buildStartRowsAcc(0, [])) => 8
-
-verify buildStartRows
-    List.len(buildStartRows(0)) => 8
 
 fn startBoard() -> List<List<CellContent>>
     ? "Standard 8x8 starting position: white rows 0-2, black rows 5-7"
@@ -328,6 +328,11 @@ fn countColor(board: List<List<CellContent>>, color: Color, x: Int, y: Int) -> I
     ? "Count pieces of given color starting from (x,y)"
     countColorAcc(board, color, x, y, 0)
 
+verify countColor
+    countColor(startBoard(), Color.White, 0, 0) => 12
+    countColor(startBoard(), Color.Black, 0, 0) => 12
+    countColor(buildEmptyBoard(8), Color.White, 0, 0) => 0
+
 fn countColorAcc(board: List<List<CellContent>>, color: Color, x: Int, y: Int, acc: Int) -> Int
     ? "Tail-recursive color counter"
     match y == 8
@@ -336,6 +341,10 @@ fn countColorAcc(board: List<List<CellContent>>, color: Color, x: Int, y: Int, a
             true -> countColorAcc(board, color, 0, y + 1, acc)
             false -> countColorCellAcc(board, color, x, y, acc)
 
+verify countColorAcc
+    countColorAcc(buildEmptyBoard(8), Color.White, 0, 0, 0) => 0
+    countColorAcc(startBoard(), Color.White, 0, 0, 0) => 12
+
 fn countColorCellAcc(board: List<List<CellContent>>, color: Color, x: Int, y: Int, acc: Int) -> Int
     ? "Count cell and continue with accumulator"
     nextX = x + 1
@@ -343,17 +352,8 @@ fn countColorCellAcc(board: List<List<CellContent>>, color: Color, x: Int, y: In
         true -> countColorAcc(board, color, nextX, y, acc + 1)
         false -> countColorAcc(board, color, nextX, y, acc)
 
-verify countColorAcc
-    countColorAcc(buildEmptyBoard(8), Color.White, 0, 0, 0) => 0
-    countColorAcc(startBoard(), Color.White, 0, 0, 0) => 12
-
 verify countColorCellAcc
     countColorCellAcc(buildEmptyBoard(8), Color.White, 0, 0, 0) => 0
-
-verify countColor
-    countColor(startBoard(), Color.White, 0, 0) => 12
-    countColor(startBoard(), Color.Black, 0, 0) => 12
-    countColor(buildEmptyBoard(8), Color.White, 0, 0) => 0
 
 fn countColorCell(board: List<List<CellContent>>, color: Color, x: Int, y: Int) -> Int
     ? "Count cell and continue"

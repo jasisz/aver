@@ -92,6 +92,9 @@ fn setTile(levelMap: List<String>, x: Int, y: Int, ch: String, row: Int, acc: Li
             Option.Some(r) -> setTileRow(levelMap, x, y, ch, row, acc, r)
             Option.None -> acc
 
+verify setTile
+    charAt(setTile(["####", "####"], 1, 0, ".", 0, []), 1, 0) => "."
+
 fn setTileRow(levelMap: List<String>, x: Int, y: Int, ch: String, row: Int, acc: List<String>, r: String) -> List<String>
     ? "Handle one row of setTile"
     nextRow = row + 1
@@ -101,9 +104,6 @@ fn setTileRow(levelMap: List<String>, x: Int, y: Int, ch: String, row: Int, acc:
 
 verify setTileRow
     charAt(setTileRow(["####", "####"], 1, 0, ".", 0, [], "####"), 1, 0) => "."
-
-verify setTile
-    charAt(setTile(["####", "####"], 1, 0, ".", 0, []), 1, 0) => "."
 
 fn charAt(levelMap: List<String>, x: Int, y: Int) -> String
     ? "Get character at (x, y) in the map"

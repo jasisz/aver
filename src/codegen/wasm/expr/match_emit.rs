@@ -932,7 +932,9 @@ impl<'a> ExprEmitter<'a> {
                             self.instructions.push(Instruction::LocalGet(subj_local));
                             self.instructions.push(Instruction::I32Const(sentinel));
                             self.instructions.push(Instruction::I32Eq);
-                            self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
+                            self.emit_if(wasm_encoder::BlockType::Result(
+                                wasm_encoder::ValType::I32,
+                            ));
                         } else {
                             self.instructions.push(Instruction::LocalGet(subj_local));
                             self.instructions.push(Instruction::I32Const(0));
@@ -949,7 +951,9 @@ impl<'a> ExprEmitter<'a> {
                                 .push(Instruction::I32Const(expected_tag as i32));
                             self.instructions.push(Instruction::I32Eq);
                             self.instructions.push(Instruction::I32And);
-                            self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
+                            self.emit_if(wasm_encoder::BlockType::Result(
+                                wasm_encoder::ValType::I32,
+                            ));
                         }
 
                         for (i, binding_name) in bindings.iter().enumerate() {

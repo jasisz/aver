@@ -43,6 +43,9 @@ fn emptyRemembered(y: Int) -> List<List<Bool>>
     ? "Build 30 rows of 50 false values"
     emptyRememberedAcc(y, [])
 
+verify emptyRemembered
+    List.len(emptyRemembered(0)) => 30
+
 fn emptyRememberedAcc(y: Int, acc: List<List<Bool>>) -> List<List<Bool>>
     ? "Accumulator helper for emptyRemembered"
     match y == 30
@@ -53,12 +56,13 @@ verify emptyRememberedAcc
     List.len(emptyRememberedAcc(0, [])) => 30
     List.len(emptyRememberedAcc(29, [])) => 1
 
-verify emptyRemembered
-    List.len(emptyRemembered(0)) => 30
-
 fn emptyRemRow(x: Int) -> List<Bool>
     ? "Build a row of 50 false values"
     emptyRemRowAcc(x, [])
+
+verify emptyRemRow
+    List.len(emptyRemRow(0)) => 50
+    List.len(emptyRemRow(49)) => 1
 
 fn emptyRemRowAcc(x: Int, acc: List<Bool>) -> List<Bool>
     ? "Accumulator helper for emptyRemRow"
@@ -69,10 +73,6 @@ fn emptyRemRowAcc(x: Int, acc: List<Bool>) -> List<Bool>
 verify emptyRemRowAcc
     List.len(emptyRemRowAcc(0, [])) => 50
     List.len(emptyRemRowAcc(49, [])) => 1
-
-verify emptyRemRow
-    List.len(emptyRemRow(0)) => 50
-    List.len(emptyRemRow(49)) => 1
 
 fn markRemembered(rem: List<List<Bool>>, visible: List<Point>, i: Int) -> List<List<Bool>>
     ? "Mark all visible points as remembered"
@@ -98,11 +98,17 @@ fn setRemCol(row: List<Bool>, x: Int, i: Int) -> List<Bool>
     ? "Rebuild row with position x set to true"
     setRemColAcc(row, x, i, [])
 
+verify setRemCol
+    List.len(setRemCol(emptyRemRow(0), 3, 0)) => 50
+
 fn setRemColAcc(row: List<Bool>, x: Int, i: Int, acc: List<Bool>) -> List<Bool>
     ? "Accumulator helper for setRemCol"
     match i == List.len(row)
         true -> List.reverse(acc)
         false -> setRemColStep(row, x, i, acc)
+
+verify setRemColAcc
+    List.len(setRemColAcc(emptyRemRow(0), 3, 0, [])) => 50
 
 fn setRemColStep(row: List<Bool>, x: Int, i: Int, acc: List<Bool>) -> List<Bool>
     ? "Process one cell in setRemCol"
@@ -113,24 +119,24 @@ fn setRemColStep(row: List<Bool>, x: Int, i: Int, acc: List<Bool>) -> List<Bool>
             false -> setRemColAcc(row, x, nextI, List.prepend(v, acc))
         Option.None -> List.reverse(acc)
 
-verify setRemColAcc
-    List.len(setRemColAcc(emptyRemRow(0), 3, 0, [])) => 50
-
 verify setRemColStep
     List.len(setRemColStep(emptyRemRow(0), 3, 0, [])) => 50
-
-verify setRemCol
-    List.len(setRemCol(emptyRemRow(0), 3, 0)) => 50
 
 fn setRemRow(rem: List<List<Bool>>, y: Int, newRow: List<Bool>, i: Int) -> List<List<Bool>>
     ? "Replace row y in remembered grid"
     setRemRowAcc(rem, y, newRow, i, [])
+
+verify setRemRow
+    List.len(setRemRow(emptyRemembered(0), 0, emptyRemRow(0), 0)) => 30
 
 fn setRemRowAcc(rem: List<List<Bool>>, y: Int, newRow: List<Bool>, i: Int, acc: List<List<Bool>>) -> List<List<Bool>>
     ? "Accumulator helper for setRemRow"
     match i == List.len(rem)
         true -> List.reverse(acc)
         false -> setRemRowStep(rem, y, newRow, i, acc)
+
+verify setRemRowAcc
+    List.len(setRemRowAcc(emptyRemembered(0), 0, emptyRemRow(0), 0, [])) => 30
 
 fn setRemRowStep(rem: List<List<Bool>>, y: Int, newRow: List<Bool>, i: Int, acc: List<List<Bool>>) -> List<List<Bool>>
     ? "Process one row in setRemRow"
@@ -141,14 +147,8 @@ fn setRemRowStep(rem: List<List<Bool>>, y: Int, newRow: List<Bool>, i: Int, acc:
             false -> setRemRowAcc(rem, y, newRow, nextI, List.prepend(row, acc))
         Option.None -> List.reverse(acc)
 
-verify setRemRowAcc
-    List.len(setRemRowAcc(emptyRemembered(0), 0, emptyRemRow(0), 0, [])) => 30
-
 verify setRemRowStep
     List.len(setRemRowStep(emptyRemembered(0), 0, emptyRemRow(0), 0, [])) => 30
-
-verify setRemRow
-    List.len(setRemRow(emptyRemembered(0), 0, emptyRemRow(0), 0)) => 30
 
 fn addMessage(state: GameState, msg: String) -> GameState
     ? "Add message to log, keep last 5"
@@ -161,11 +161,18 @@ fn takeMessages(msgs: List<String>, n: Int, i: Int) -> List<String>
     ? "Take first n messages"
     takeMessagesAcc(msgs, n, i, [])
 
+verify takeMessages
+    List.len(takeMessages(["a", "b", "c"], 2, 0)) => 2
+    List.len(takeMessages([], 3, 0)) => 0
+
 fn takeMessagesAcc(msgs: List<String>, n: Int, i: Int, acc: List<String>) -> List<String>
     ? "Accumulator helper for takeMessages"
     match i == n
         true -> List.reverse(acc)
         false -> takeMessagesStep(msgs, n, i, acc)
+
+verify takeMessagesAcc
+    List.len(takeMessagesAcc(["a", "b", "c"], 2, 0, [])) => 2
 
 fn takeMessagesStep(msgs: List<String>, n: Int, i: Int, acc: List<String>) -> List<String>
     ? "Process one message in takeMessages"
@@ -173,25 +180,25 @@ fn takeMessagesStep(msgs: List<String>, n: Int, i: Int, acc: List<String>) -> Li
         Option.Some(m) -> takeMessagesAcc(msgs, n, i + 1, List.prepend(m, acc))
         Option.None -> List.reverse(acc)
 
-verify takeMessagesAcc
-    List.len(takeMessagesAcc(["a", "b", "c"], 2, 0, [])) => 2
-
 verify takeMessagesStep
     List.len(takeMessagesStep(["a", "b"], 2, 0, [])) => 2
-
-verify takeMessages
-    List.len(takeMessages(["a", "b", "c"], 2, 0)) => 2
-    List.len(takeMessages([], 3, 0)) => 0
 
 fn spawnEntities(seed: Int, rooms: List<Room>, i: Int, floor: Int) -> List<Entity>
     ? "Spawn enemies in rooms, scaled by floor (skip first room)"
     List.reverse(spawnEntitiesAcc(seed, rooms, i, floor, []))
+
+verify spawnEntities
+    List.len(spawnEntities(42, [], 0, 1)) => 0
+    List.len(spawnEntities(42, [Room(x = 5, y = 5, w = 6, h = 4)], 0, 1)) => 0
 
 fn spawnEntitiesAcc(seed: Int, rooms: List<Room>, i: Int, floor: Int, acc: List<Entity>) -> List<Entity>
     ? "Accumulator helper for spawnEntities"
     match i == List.len(rooms)
         true -> acc
         false -> spawnEntitiesStep(seed, rooms, i, floor, acc)
+
+verify spawnEntitiesAcc
+    List.len(spawnEntitiesAcc(42, [], 0, 1, [])) => 0
 
 fn spawnEntitiesStep(seed: Int, rooms: List<Room>, i: Int, floor: Int, acc: List<Entity>) -> List<Entity>
     ? "Process one room in spawnEntities"
@@ -202,15 +209,8 @@ fn spawnEntitiesStep(seed: Int, rooms: List<Room>, i: Int, floor: Int, acc: List
             Option.Some(room) -> spawnEntitiesAcc(Map.nextSeed(seed), rooms, nextI, floor, List.prepend(spawnOneEntity(seed, room, i, floor), acc))
             Option.None -> spawnEntitiesAcc(seed, rooms, nextI, floor, acc)
 
-verify spawnEntitiesAcc
-    List.len(spawnEntitiesAcc(42, [], 0, 1, [])) => 0
-
 verify spawnEntitiesStep
     List.len(spawnEntitiesStep(42, [Room(x = 5, y = 5, w = 6, h = 4)], 0, 1, [])) => 0
-
-verify spawnEntities
-    List.len(spawnEntities(42, [], 0, 1)) => 0
-    List.len(spawnEntities(42, [Room(x = 5, y = 5, w = 6, h = 4)], 0, 1)) => 0
 
 fn spawnOneEntity(seed: Int, room: Room, idx: Int, floor: Int) -> Entity
     ? "Spawn entity scaled by floor — deeper = stronger"
@@ -465,6 +465,9 @@ fn alertNearby(state: GameState, combatPos: Point, radius: Int, i: Int) -> GameS
         true -> state
         false -> alertNearbyStep(state, combatPos, radius, i)
 
+verify alertNearby
+    alertNearby(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [Types.makeIfElse(2, 2)], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.pt(3, 3), 5, 0).entities => [Entity.update(Types.makeIfElse(2, 2), alertPos = Option.Some(Types.pt(3, 3)), alertTurns = 8)]
+
 fn alertNearbyStep(state: GameState, combatPos: Point, radius: Int, i: Int) -> GameState
     ? "Alert one entity and continue to next"
     nextI = i + 1
@@ -474,9 +477,6 @@ fn alertNearbyStep(state: GameState, combatPos: Point, radius: Int, i: Int) -> G
 
 verify alertNearbyStep
     alertNearbyStep(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [Types.makeIfElse(2, 2)], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.pt(3, 3), 5, 0).entities => [Entity.update(Types.makeIfElse(2, 2), alertPos = Option.Some(Types.pt(3, 3)), alertTurns = 8)]
-
-verify alertNearby
-    alertNearby(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [Types.makeIfElse(2, 2)], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.pt(3, 3), 5, 0).entities => [Entity.update(Types.makeIfElse(2, 2), alertPos = Option.Some(Types.pt(3, 3)), alertTurns = 8)]
 
 fn alertOneEntity(state: GameState, entity: Entity, combatPos: Point, radius: Int, i: Int) -> GameState
     ? "Alert one entity if within radius and not already visible"

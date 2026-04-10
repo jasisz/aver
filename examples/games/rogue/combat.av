@@ -107,11 +107,17 @@ fn removeAt(entities: List<Entity>, idx: Int, i: Int) -> List<Entity>
     ? "Remove entity at index"
     List.reverse(removeAtAcc(entities, idx, i, []))
 
+verify removeAt
+    List.len(removeAt([Types.makeIfElse(0, 0), Types.makeLoop(1, 1)], 0, 0)) => 1
+
 fn removeAtAcc(entities: List<Entity>, idx: Int, i: Int, acc: List<Entity>) -> List<Entity>
     ? "Accumulator helper for removeAt"
     match i == List.len(entities)
         true -> acc
         false -> removeAtStep(entities, idx, i, acc)
+
+verify removeAtAcc
+    List.len(removeAtAcc([Types.makeIfElse(0, 0), Types.makeLoop(1, 1)], 0, 0, [])) => 1
 
 fn removeAtStep(entities: List<Entity>, idx: Int, i: Int, acc: List<Entity>) -> List<Entity>
     ? "Process one entity in removeAt"
@@ -122,24 +128,24 @@ fn removeAtStep(entities: List<Entity>, idx: Int, i: Int, acc: List<Entity>) -> 
             false -> removeAtAcc(entities, idx, nextI, List.prepend(e, acc))
         Option.None -> acc
 
-verify removeAtAcc
-    List.len(removeAtAcc([Types.makeIfElse(0, 0), Types.makeLoop(1, 1)], 0, 0, [])) => 1
-
 verify removeAtStep
     List.len(removeAtStep([Types.makeIfElse(0, 0), Types.makeLoop(1, 1)], 0, 0, [])) => 1
-
-verify removeAt
-    List.len(removeAt([Types.makeIfElse(0, 0), Types.makeLoop(1, 1)], 0, 0)) => 1
 
 fn removeItemAt(items: List<Item>, idx: Int, i: Int) -> List<Item>
     ? "Remove item at index"
     List.reverse(removeItemAtAcc(items, idx, i, []))
+
+verify removeItemAt
+    List.len(removeItemAt([Types.makePurity(0, 0), Types.makeScroll(1, 1)], 0, 0)) => 1
 
 fn removeItemAtAcc(items: List<Item>, idx: Int, i: Int, acc: List<Item>) -> List<Item>
     ? "Accumulator helper for removeItemAt"
     match i == List.len(items)
         true -> acc
         false -> removeItemAtStep(items, idx, i, acc)
+
+verify removeItemAtAcc
+    List.len(removeItemAtAcc([Types.makePurity(0, 0), Types.makeScroll(1, 1)], 0, 0, [])) => 1
 
 fn removeItemAtStep(items: List<Item>, idx: Int, i: Int, acc: List<Item>) -> List<Item>
     ? "Process one item in removeItemAt"
@@ -150,24 +156,24 @@ fn removeItemAtStep(items: List<Item>, idx: Int, i: Int, acc: List<Item>) -> Lis
             false -> removeItemAtAcc(items, idx, nextI, List.prepend(item, acc))
         Option.None -> acc
 
-verify removeItemAtAcc
-    List.len(removeItemAtAcc([Types.makePurity(0, 0), Types.makeScroll(1, 1)], 0, 0, [])) => 1
-
 verify removeItemAtStep
     List.len(removeItemAtStep([Types.makePurity(0, 0), Types.makeScroll(1, 1)], 0, 0, [])) => 1
-
-verify removeItemAt
-    List.len(removeItemAt([Types.makePurity(0, 0), Types.makeScroll(1, 1)], 0, 0)) => 1
 
 fn replaceEntity(entities: List<Entity>, idx: Int, newEntity: Entity, i: Int) -> List<Entity>
     ? "Replace entity at index"
     List.reverse(replaceEntityAcc(entities, idx, newEntity, i, []))
+
+verify replaceEntity
+    Vector.get(Vector.fromList(replaceEntity([Types.makeIfElse(0, 0)], 0, Types.makeLoop(1, 1), 0)), 0) => Option.Some(Types.makeLoop(1, 1))
 
 fn replaceEntityAcc(entities: List<Entity>, idx: Int, newEntity: Entity, i: Int, acc: List<Entity>) -> List<Entity>
     ? "Accumulator helper for replaceEntity"
     match i == List.len(entities)
         true -> acc
         false -> replaceEntityStep(entities, idx, newEntity, i, acc)
+
+verify replaceEntityAcc
+    List.len(replaceEntityAcc([Types.makeIfElse(0, 0)], 0, Types.makeLoop(1, 1), 0, [])) => 1
 
 fn replaceEntityStep(entities: List<Entity>, idx: Int, newEntity: Entity, i: Int, acc: List<Entity>) -> List<Entity>
     ? "Process one entity in replaceEntity"
@@ -178,14 +184,8 @@ fn replaceEntityStep(entities: List<Entity>, idx: Int, newEntity: Entity, i: Int
             false -> replaceEntityAcc(entities, idx, newEntity, nextI, List.prepend(e, acc))
         Option.None -> acc
 
-verify replaceEntityAcc
-    List.len(replaceEntityAcc([Types.makeIfElse(0, 0)], 0, Types.makeLoop(1, 1), 0, [])) => 1
-
 verify replaceEntityStep
     List.len(replaceEntityStep([Types.makeIfElse(0, 0)], 0, Types.makeLoop(1, 1), 0, [])) => 1
-
-verify replaceEntity
-    Vector.get(Vector.fromList(replaceEntity([Types.makeIfElse(0, 0)], 0, Types.makeLoop(1, 1), 0)), 0) => Option.Some(Types.makeLoop(1, 1))
 
 fn signOf(n: Int) -> Int
     ? "Sign of integer: -1, 0, or 1"

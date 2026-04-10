@@ -210,9 +210,7 @@ fn renderMsgLine(msg: String, messages: List<String>, i: Int) -> Unit
 
 fn renderMap(map: List<List<Tile>>, visGrid: List<List<Bool>>, remembered: List<List<Bool>>, entities: List<Entity>, items: List<Item>, player: Player) -> Unit
     ? "Draw map tiles with FOV, items, entities, player (caller is responsible for clear/flush)"
-    ! [
-        Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
-    ]
+    ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     renderMapRows(map, visGrid, remembered, 0)
     renderItemsNext(items, visGrid, 0)
     renderEntitiesNext(entities, visGrid, 0)

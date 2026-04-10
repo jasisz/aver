@@ -121,6 +121,10 @@ fn offsetToAbs(offsets: List<Point>, px: Int, py: Int) -> List<Point>
     ? "Map offsets to absolute positions"
     offsetToAbsAcc(offsets, px, py, [])
 
+verify offsetToAbs
+    offsetToAbs([], 0, 0) => []
+    List.len(offsetToAbs([Board.pt(0, 0), Board.pt(1, 0)], 3, 5)) => 2
+
 fn offsetToAbsAcc(offsets: List<Point>, px: Int, py: Int, acc: List<Point>) -> List<Point>
     ? "Map offsets with accumulator"
     match offsets
@@ -130,10 +134,6 @@ fn offsetToAbsAcc(offsets: List<Point>, px: Int, py: Int, acc: List<Point>) -> L
 verify offsetToAbsAcc
     offsetToAbsAcc([], 0, 0, []) => []
     List.len(offsetToAbsAcc([Board.pt(0, 0)], 1, 2, [])) => 1
-
-verify offsetToAbs
-    offsetToAbs([], 0, 0) => []
-    List.len(offsetToAbs([Board.pt(0, 0), Board.pt(1, 0)], 3, 5)) => 2
 
 fn absolutePoints(piece: Piece, px: Int, py: Int) -> List<Point>
     ? "Convert piece offsets to board coordinates"

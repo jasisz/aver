@@ -32,42 +32,43 @@ pub(in crate::codegen::wasm) fn build_variant_registry(
     let mut registry = HashMap::new();
     // Sentinel counter: -1 is Option.None, user nullary variants start at -2.
     let mut next_sentinel: i32 = -2;
-    let mut process_td = |td: &crate::ast::TypeDef, prefix: Option<&str>, next_sentinel: &mut i32| {
-        if let crate::ast::TypeDef::Sum { name, variants, .. } = td {
-            for (tag, variant) in variants.iter().enumerate() {
-                let qualified_type = match prefix {
-                    Some(p) => format!("{}.{}", p, name),
-                    None => name.clone(),
-                };
-                let sentinel = if variant.fields.is_empty() {
-                    let s = *next_sentinel;
-                    *next_sentinel -= 1;
-                    Some(s)
-                } else {
-                    None
-                };
-                registry.insert(
-                    (qualified_type.clone(), variant.name.clone()),
-                    VariantInfo {
-                        tag: tag as u32,
-                        field_types: variant.fields.clone(),
-                        nullary_sentinel: sentinel,
-                    },
-                );
-                // Also register bare name
-                if prefix.is_some() {
+    let mut process_td =
+        |td: &crate::ast::TypeDef, prefix: Option<&str>, next_sentinel: &mut i32| {
+            if let crate::ast::TypeDef::Sum { name, variants, .. } = td {
+                for (tag, variant) in variants.iter().enumerate() {
+                    let qualified_type = match prefix {
+                        Some(p) => format!("{}.{}", p, name),
+                        None => name.clone(),
+                    };
+                    let sentinel = if variant.fields.is_empty() {
+                        let s = *next_sentinel;
+                        *next_sentinel -= 1;
+                        Some(s)
+                    } else {
+                        None
+                    };
                     registry.insert(
-                        (name.clone(), variant.name.clone()),
+                        (qualified_type.clone(), variant.name.clone()),
                         VariantInfo {
                             tag: tag as u32,
                             field_types: variant.fields.clone(),
                             nullary_sentinel: sentinel,
                         },
                     );
+                    // Also register bare name
+                    if prefix.is_some() {
+                        registry.insert(
+                            (name.clone(), variant.name.clone()),
+                            VariantInfo {
+                                tag: tag as u32,
+                                field_types: variant.fields.clone(),
+                                nullary_sentinel: sentinel,
+                            },
+                        );
+                    }
                 }
             }
-        }
-    };
+        };
 
     for td in &ctx.type_defs {
         process_td(td, None, &mut next_sentinel);
