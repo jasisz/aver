@@ -379,6 +379,15 @@ impl<'a> ExprEmitter<'a> {
         let tag = info.map(|i| i.tag).unwrap_or(0);
         let field_count = args.len();
 
+        // Nullary variants use pre-allocated singletons for pointer equality.
+        if field_count == 0 {
+            let key = (type_name.to_string(), variant_name.to_string());
+            if let Some(&addr) = self.nullary_variant_addrs.get(&key) {
+                self.instructions.push(Instruction::I32Const(addr as i32));
+                return;
+            }
+        }
+
         let size = 8 + field_count * 8;
 
         let ptr_local = self.alloc_local(WasmType::I32);
