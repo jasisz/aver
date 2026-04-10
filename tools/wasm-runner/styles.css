@@ -361,7 +361,7 @@ body { display: flex; flex-direction: column; overflow: hidden; }
     overflow: hidden;
 }
 
-.workspace[data-mode="game"][data-show-source="true"] .source-viewer { display: flex; }
+.workspace[data-mode="game"] .source-viewer { display: flex; }
 
 .source-tabs {
     display: flex;
