@@ -643,6 +643,7 @@ function backToEditor() {
     if (ws) ws.dataset.showSource = "false";
     setWorkspaceMode("edit");
     setOutputMode("console");
+    buildTouchControls(null);
     document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
     setStatus("Ready.", "success");
 }
@@ -659,6 +660,7 @@ document.querySelectorAll("[data-game]").forEach(btn => {
         const isConsoleGame = btn.hasAttribute("data-console-game");
         setWorkspaceMode("game");
         setOutputMode(isConsoleGame ? "console" : "terminal");
+        buildTouchControls(name);
         clearOutput();
         const readlineBar = document.querySelector("[data-readline-bar]");
         if (readlineBar) readlineBar.style.display = isConsoleGame ? "flex" : "none";
@@ -923,18 +925,130 @@ document.querySelectorAll("[data-game]").forEach(btn => {
     });
 });
 
-// Touch controls (mobile gamepad)
-document.querySelectorAll("[data-touch-controls] button").forEach(btn => {
-    btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        const key = btn.dataset.key;
-        if (key && state.worker) {
-            if (!enqueueSharedKey(key)) {
-                state.worker.postMessage({ type: "key", key });
-            }
+// ---------------------------------------------------------------------------
+// Per-game touch controls
+// ---------------------------------------------------------------------------
+// Each game declares its own button groups. "grid:arrows" and "grid:wasd"
+// are special layout types; everything else is a flow layout.
+
+const GAME_TOUCH = {
+    life: [
+        { label: "Cursor", layout: "grid:arrows", keys: [
+            { key: "up", text: "↑" }, { key: "left", text: "←" },
+            { key: "down", text: "↓" }, { key: "right", text: "→" },
+        ]},
+        { label: "Edit", keys: [
+            { key: " ", text: "Spc" }, { key: "enter", text: "↵" },
+            { key: "1", text: "1" }, { key: "2", text: "2" },
+            { key: "3", text: "3" }, { key: "c", text: "C" },
+        ]},
+        { label: "Sim", keys: [
+            { key: "+", text: "+" }, { key: "-", text: "-" },
+            { key: "0", text: "0" }, { key: "e", text: "E" },
+            { key: "r", text: "R" }, { key: "q", text: "Q" },
+        ]},
+    ],
+    snake: [
+        { label: "Direction", layout: "grid:arrows", keys: [
+            { key: "up", text: "↑" }, { key: "left", text: "←" },
+            { key: "down", text: "↓" }, { key: "right", text: "→" },
+        ]},
+        { label: "", keys: [
+            { key: "q", text: "Quit" },
+        ]},
+    ],
+    tetris: [
+        { label: "Move", layout: "grid:arrows", keys: [
+            { key: "up", text: "↑" }, { key: "left", text: "←" },
+            { key: "down", text: "↓" }, { key: "right", text: "→" },
+        ]},
+        { label: "", keys: [
+            { key: " ", text: "Drop" }, { key: "q", text: "Quit" },
+        ]},
+    ],
+    checkers: [
+        { label: "Cursor", layout: "grid:arrows", keys: [
+            { key: "up", text: "↑" }, { key: "left", text: "←" },
+            { key: "down", text: "↓" }, { key: "right", text: "→" },
+        ]},
+        { label: "", keys: [
+            { key: " ", text: "Select" }, { key: "enter", text: "↵" },
+            { key: "q", text: "Quit" },
+        ]},
+    ],
+    rogue: [
+        { label: "Move", layout: "grid:wasd", keys: [
+            { key: "q", text: "Q" }, { key: "w", text: "W" }, { key: "e", text: "E" },
+            { key: "a", text: "A" }, { key: "s", text: "S" }, { key: "d", text: "D" },
+        ]},
+        { label: "Action", keys: [
+            { key: " ", text: "Spc" }, { key: ">", text: ">" },
+            { key: ".", text: "." }, { key: ",", text: "," },
+            { key: "x", text: "X" },
+        ]},
+    ],
+    doom: [
+        { label: "Move", layout: "grid:wasd", keys: [
+            { key: "q", text: "Q" }, { key: "w", text: "W" }, { key: "e", text: "E" },
+            { key: "a", text: "A" }, { key: "s", text: "S" }, { key: "d", text: "D" },
+        ]},
+        { label: "Cursor", layout: "grid:arrows", keys: [
+            { key: "up", text: "↑" }, { key: "left", text: "←" },
+            { key: "down", text: "↓" }, { key: "right", text: "→" },
+        ]},
+        { label: "", keys: [
+            { key: " ", text: "Spc" }, { key: "enter", text: "↵" },
+            { key: "escape", text: "Esc" },
+        ]},
+    ],
+    // wumpus: console game, no touch controls
+};
+
+function buildTouchControls(gameName) {
+    const container = document.querySelector("[data-touch-controls]");
+    if (!container) return;
+    container.innerHTML = "";
+    const config = GAME_TOUCH[gameName];
+    if (!config) {
+        container.style.display = "none";
+        return;
+    }
+    container.style.display = "flex";
+    for (const group of config) {
+        const div = document.createElement("div");
+        div.className = "touch-group";
+        if (group.label) {
+            const lbl = document.createElement("div");
+            lbl.className = "touch-label";
+            lbl.textContent = group.label;
+            div.appendChild(lbl);
         }
-    });
-});
+        const wrap = document.createElement("div");
+        if (group.layout === "grid:arrows") {
+            wrap.className = "touch-grid arrows";
+        } else if (group.layout === "grid:wasd") {
+            wrap.className = "touch-grid wasd";
+        } else {
+            wrap.className = "touch-actions";
+        }
+        for (const k of group.keys) {
+            const btn = document.createElement("button");
+            btn.dataset.key = k.key;
+            btn.textContent = k.text;
+            btn.addEventListener("click", (e) => {
+                e.preventDefault();
+                if (state.worker) {
+                    if (!enqueueSharedKey(k.key)) {
+                        state.worker.postMessage({ type: "key", key: k.key });
+                    }
+                }
+            });
+            wrap.appendChild(btn);
+        }
+        div.appendChild(wrap);
+        container.appendChild(div);
+    }
+}
 
 // About overlay
 document.querySelector("[data-show-about]")?.addEventListener("click", (e) => {

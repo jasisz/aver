@@ -286,12 +286,12 @@ fn drawHud(st: SimState, mode: String) -> Unit
     Terminal.moveTo(0, 0)
     Terminal.setColor("green")
     hudText = match mode == "edit"
-        true -> "  EDITOR  Arrows:move  Space:toggle  1:glider 2:r-pentomino 3:gun  c:clear  Enter:start  q:quit"
+        true -> " EDIT  Arrows:move Spc:toggle 1:glider 2:pento 3:gun c:clear Enter:go q:quit"
         false -> match st.paused == 1
-            true -> "  PAUSED  Gen:{Int.toString(st.gen)}  Delay:{Int.toString(st.delay)}ms  Space:resume  e:edit  +/-:speed  q:quit"
+            true -> " PAUSED  Gen:{Int.toString(st.gen)}  Spc:go e:edit +/-:speed q:quit"
             false -> match st.delay == 0
-                true -> "  FPS:{st.fps.display}  Gen:{Int.toString(st.gen)}  BENCHMARK  Space:pause  e:edit  -:slower  q:quit"
-                false -> "  FPS:{st.fps.display}  Gen:{Int.toString(st.gen)}  Delay:{Int.toString(st.delay)}ms  Space:pause  e:edit  +/-:speed  0:bench  q:quit"
+                true -> " {st.fps.display}fps  Gen:{Int.toString(st.gen)}  BENCH  Spc:pause e:edit -:slow q:quit"
+                false -> " {st.fps.display}fps  Gen:{Int.toString(st.gen)}  {Int.toString(st.delay)}ms  Spc:pause +/-:speed 0:bench e:edit"
     Terminal.print(hudText)
     Terminal.resetColor()
 
