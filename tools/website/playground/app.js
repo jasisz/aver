@@ -938,7 +938,7 @@ const GAME_TOUCH = {
             { key: "down", text: "↓" }, { key: "right", text: "→" },
         ]},
         { label: "Edit", keys: [
-            { key: " ", text: "Spc" }, { key: "enter", text: "↵" },
+            { key: " ", text: "Spc" }, { key: "enter", text: "Go" },
             { key: "1", text: "1" }, { key: "2", text: "2" },
             { key: "3", text: "3" }, { key: "c", text: "C" },
         ]},
@@ -972,19 +972,16 @@ const GAME_TOUCH = {
             { key: "down", text: "↓" }, { key: "right", text: "→" },
         ]},
         { label: "", keys: [
-            { key: " ", text: "Select" }, { key: "enter", text: "↵" },
-            { key: "q", text: "Quit" },
+            { key: "enter", text: "Select" }, { key: "q", text: "Quit" },
         ]},
     ],
     rogue: [
-        { label: "Move", layout: "grid:wasd", keys: [
-            { key: "q", text: "Q" }, { key: "w", text: "W" }, { key: "e", text: "E" },
-            { key: "a", text: "A" }, { key: "s", text: "S" }, { key: "d", text: "D" },
+        { label: "Move", layout: "grid:arrows", keys: [
+            { key: "up", text: "↑" }, { key: "left", text: "←" },
+            { key: "down", text: "↓" }, { key: "right", text: "→" },
         ]},
-        { label: "Action", keys: [
-            { key: " ", text: "Spc" }, { key: ">", text: ">" },
-            { key: ".", text: "." }, { key: ",", text: "," },
-            { key: "x", text: "X" },
+        { label: "", keys: [
+            { key: "q", text: "Quit" },
         ]},
     ],
     doom: [
@@ -992,13 +989,11 @@ const GAME_TOUCH = {
             { key: "q", text: "Q" }, { key: "w", text: "W" }, { key: "e", text: "E" },
             { key: "a", text: "A" }, { key: "s", text: "S" }, { key: "d", text: "D" },
         ]},
-        { label: "Cursor", layout: "grid:arrows", keys: [
-            { key: "up", text: "↑" }, { key: "left", text: "←" },
-            { key: "down", text: "↓" }, { key: "right", text: "→" },
+        { label: "Turn", keys: [
+            { key: "left", text: "←" }, { key: "right", text: "→" },
         ]},
         { label: "", keys: [
-            { key: " ", text: "Spc" }, { key: "enter", text: "↵" },
-            { key: "escape", text: "Esc" },
+            { key: " ", text: "Shoot" }, { key: "escape", text: "Esc" },
         ]},
     ],
     // wumpus: console game, no touch controls

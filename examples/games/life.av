@@ -276,23 +276,29 @@ fn drawRows(grid: Vector<Int>, s: Int, w: Int, h: Int, row: Int) -> Unit
 fn drawOneRow(grid: Vector<Int>, s: Int, w: Int, h: Int, row: Int) -> Unit
     ? "Draw one rendered row and continue with the next."
     ! [Terminal.moveTo, Terminal.print]
-    Terminal.moveTo(0, row)
+    Terminal.moveTo(0, row + 1)
     Terminal.print(buildRow(grid, s, row, 1, w, ""))
     drawRows(grid, s, w, h, row + 1)
 
 fn drawHud(st: SimState, mode: String) -> Unit
-    ? "Draw the HUD bar at the top with mode, FPS, generation, delay, and controls."
+    ? "Draw two-line HUD: status on line 0, controls on line 1."
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.moveTo(0, 0)
     Terminal.setColor("green")
-    hudText = match mode == "edit"
-        true -> " EDIT  Arrows:move Spc:toggle 1:glider 2:pento 3:gun c:clear Enter:go q:quit"
+    Terminal.moveTo(0, 0)
+    line1 = match mode == "edit"
+        true -> " EDITOR                                                                        "
         false -> match st.paused == 1
-            true -> " PAUSED  Gen:{Int.toString(st.gen)}  Spc:go e:edit +/-:speed q:quit"
+            true -> " PAUSED  Gen:{Int.toString(st.gen)}                                               "
             false -> match st.delay == 0
-                true -> " {st.fps.display}fps  Gen:{Int.toString(st.gen)}  BENCH  Spc:pause e:edit -:slow q:quit"
-                false -> " {st.fps.display}fps  Gen:{Int.toString(st.gen)}  {Int.toString(st.delay)}ms  Spc:pause +/-:speed 0:bench e:edit"
-    Terminal.print(hudText)
+                true -> " {st.fps.display}fps  Gen:{Int.toString(st.gen)}  BENCHMARK                       "
+                false -> " {st.fps.display}fps  Gen:{Int.toString(st.gen)}  {Int.toString(st.delay)}ms                            "
+    Terminal.print(line1)
+    Terminal.moveTo(0, 1)
+    Terminal.setColor("cyan")
+    line2 = match mode == "edit"
+        true -> " Move:arrows  Spc:toggle  1:glider 2:pento 3:gun  c:clear  Enter:start  q:quit"
+        false -> " Spc:pause  e:edit  +/-:speed  0:bench  r:restart  q:quit                     "
+    Terminal.print(line2)
     Terminal.resetColor()
 
 // ─── FPS tracking ───────────────────────────────────────────
@@ -323,7 +329,7 @@ verify tickFps
 fn drawEditorCursor(cx: Int, cy: Int, grid: Vector<Int>, s: Int) -> Unit
     ? "Draw a bright cursor showing alive/dead state at the position."
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    Terminal.moveTo(cx, cy + 1)
+    Terminal.moveTo(cx, cy + 2)
     Terminal.setColor("cyan")
     match cellAt(grid, (cy + 1) * s + (cx + 1)) == 1
         true -> Terminal.print("▣")
@@ -471,7 +477,7 @@ fn run() -> Result<String, String>
     Terminal.clear()
     size = Terminal.size()
     w = minInt(size.width, 80)
-    h = minInt(size.height - 2, 40)
+    h = minInt(size.height - 3, 40)
     s = w + 2
     now = Time.unixMs()
     grid = seed(s, w, h)
