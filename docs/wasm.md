@@ -66,7 +66,7 @@ The WASM backend uses a single bump-heap allocator (`$alloc`) with boundary comp
 ## Limitations
 
 - **`aver.toml` policy** — the WASM binary does not embed runtime policy. Effect restrictions (`hosts`, `paths`, `keys`) are the host's responsibility. The built-in host does not yet read `aver.toml`. Independence mode (`cancel` vs `complete`) has no effect since WASM execution is single-threaded.
-- **Multi-module `depends`** — not supported yet in WASM codegen.
+- **Module graph is compile-time only** — regular multi-module `depends [...]` works when the full graph resolves under the chosen `--module-root`, but the backend emits one standalone module, not separately linked WASM modules.
 - **Services** — the built-in host provides Console, Terminal, Random, Time, and math. Disk, Http, Tcp, Env, and Args are not available.
 
 ## Optimized Patterns
@@ -141,11 +141,11 @@ instance.exports._start();
 
 The same shape works in Node via `WebAssembly.instantiate(...)` with a `Buffer`.
 
-There is also a real browser host in [tools/wasm-runner/README.md](../tools/wasm-runner/README.md) that lets you upload a compiled `.wasm` module and run it in-page. For interactive `Terminal.readKey()` workloads, serve it with `python3 serve.py 4173` so the page gets the isolation headers needed for shared-memory input.
+There is also a real browser host in [tools/website/playground/](../tools/website/playground/) that runs compiled Aver modules in-page. For interactive `Terminal.readKey()` workloads, serve the site with `python3 tools/website/serve.py 4173` so the page gets the isolation headers needed for shared-memory input.
 
 ## Terminal In Browsers
 
-`Terminal.*` is available in the built-in wasmtime host and in the static browser runner.
+`Terminal.*` is available in the built-in wasmtime host and in the static website playground host.
 
 For browsers, the rendering policy is still host-specific:
 
@@ -154,4 +154,14 @@ For browsers, the rendering policy is still host-specific:
 - `Terminal.readKey` should be driven from browser keyboard events into a small queue
 - `enableRawMode` / `disableRawMode` are usually "capture keyboard events" rather than literal TTY mode
 
-The runner in `tools/wasm-runner` is the reference host for that mapping.
+The host in `tools/website/playground/` is the reference implementation for that mapping.
+
+## Playground Maintenance
+
+From the repo root:
+
+```bash
+python3 tools/website/rebuild_playground.py
+```
+
+This syncs mirrored game sources under `tools/website/playground/sources/`, rebuilds the shipped `.wasm` files with `--wasm-opt oz`, and refreshes the size labels shown on the website.

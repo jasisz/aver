@@ -80,8 +80,8 @@ aver run main.av --module-root . -- ../../examples/core/hello.av .
 # Multi-module examples need correct module root
 aver run main.av --module-root . -- ../../examples/games/life.av ../../examples/games
 
-# Run on VM (~30x faster)
-aver run --vm main.av --module-root . -- ../../examples/core/hello.av .
+# Run on the default bytecode VM (~30x faster than self-host)
+aver run main.av --module-root . -- ../../examples/core/hello.av .
 
 # Compile to native binary (fastest)
 aver compile main.av \

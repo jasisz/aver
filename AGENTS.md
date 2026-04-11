@@ -145,7 +145,6 @@ src/
 aver run examples/core/hello.av
 aver run examples/core/calculator.av
 aver run examples/core/lists.av
-aver run examples/core/calculator.av --vm
 aver run examples/services/console_demo.av --record recordings/
 aver replay recordings/ --test --diff
 aver verify examples/core/calculator.av

@@ -3,7 +3,7 @@ module StatusBoard
         "Visual terminal demo for structured concurrency."
         "Simulates service probes in bounded windows."
         "Shows batch N on the left while batch N+1 is alive on the right."
-        "Best viewed with --vm or compiled Rust, where sibling branches overlap for real."
+        "Best viewed on the default bytecode VM or compiled Rust, where sibling branches overlap for real."
     exposes [main]
 
 decision PipelineStatusWall
@@ -226,7 +226,7 @@ fn drawHeader(batchIndex: Int, nextIndex: Int, hasNext: Bool, startMs: Int, nowM
     match hasNext
         true -> drawText(0, 2, "white", "{spinner(frame)} right = batch {String.fromInt(nextIndex)} is probing now")
         false -> drawText(0, 2, "white", "pipeline drained - final batch is on the screen")
-    drawText(0, 3, "white", "best viewed with --vm or compiled Rust")
+    drawText(0, 3, "white", "best viewed on the default VM or compiled Rust")
     drawText(0, 5, "green", "READY NOW")
     drawText(40, 5, "magenta", "PROBING NEXT")
     drawText(0, 6, "white", "------------------------------------")
@@ -258,7 +258,7 @@ fn renderWarmFrame(firstBatch: List<Service>, startMs: Int, frame: Int) -> Unit
     drawText(0, 0, "cyan", "===================== STATUS WALL =====================")
     drawText(0, 1, "white", "{elapsedPrefix(startMs, nowMs)} warming first batch")
     drawText(0, 2, "white", "{spinner(frame)} no data on the left yet - batch 1 is still probing")
-    drawText(0, 3, "white", "best viewed with --vm or compiled Rust")
+    drawText(0, 3, "white", "best viewed on the default VM or compiled Rust")
     drawText(0, 5, "green", "READY NOW")
     drawText(40, 5, "magenta", "PROBING NEXT")
     drawText(0, 6, "white", "------------------------------------")

@@ -23,6 +23,9 @@ It is built around one idea: the risky part of AI-written code is usually not sy
 
 This is not a language optimized for humans to type by hand all day. It is optimized for AI to generate code that humans can inspect, constrain, test, and ship.
 
+Website: [averlang.dev](https://averlang.dev)  
+Browser playground: [averlang.dev/playground](https://averlang.dev/playground/)
+
 Read the [Aver Manifesto](https://jasisz.github.io/aver-language/) for the longer argument, or [Common Pushback](docs/pushback.md) for questions, objections, and honest answers.
 
 ---
@@ -63,10 +66,8 @@ fn main() -> Unit
 EOF
 
 aver run      hello.av
-aver run      hello.av --vm
 aver run      hello.av --self-host
 aver verify   hello.av
-aver verify   hello.av --vm
 aver verify   hello.av --json
 aver check    hello.av
 aver check    hello.av --json
@@ -75,6 +76,9 @@ aver context  hello.av
 aver compile  hello.av -o out/
 (cd out && cargo run)
 ```
+
+`aver run`, `verify`, `check`, and `replay` use the bytecode VM by default. The old
+`--vm` flag is gone.
 
 `Unit` is Aver's "no meaningful value" type, roughly like `void` and rendered as `()` in diagnostics. `main` often returns `Unit`, but it can also return `Result<Unit, String>`; `aver run` treats `Result.Err(...)` from `main` as a process failure.
 
@@ -86,10 +90,8 @@ cd aver
 cargo install --path . --force
 
 aver run      examples/core/calculator.av
-aver run      examples/core/calculator.av --vm
 aver run      examples/core/calculator.av --self-host
 aver verify   examples/core/calculator.av
-aver verify   examples/core/calculator.av --vm
 aver check    examples/core/calculator.av
 aver why      examples/core/calculator.av
 aver context  examples/core/calculator.av
@@ -247,10 +249,12 @@ fn fetchExchangeRate(currency: String) -> Result<HttpResponse, String>
 
 Effects such as `Http.get`, `Disk.readText`, and `Console.print` are part of the signature. Missing declarations are type errors. The runtime enforces the same boundary as a backstop.
 
-Effects are exact:
+Effects can be granular or namespace-wide:
 
 - `! [Http.get]` allows only `Http.get`
-- `! [Http]` does not cover `Http.get`
+- `! [Http]` covers all `Http.*` effects
+
+`aver check` suggests narrowing a broad namespace effect when a function only needs a smaller subset.
 
 Runtime policy can narrow the allowed destinations further via `aver.toml`:
 
