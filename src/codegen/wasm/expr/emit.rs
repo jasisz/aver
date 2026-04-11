@@ -148,9 +148,10 @@ impl<'a> ExprEmitter<'a> {
                 return;
             }
 
-            // Heap object equality with sentinel support.
-            // Sentinels (i32 < 0) are equal iff they have the same i32 value.
-            // Heap pointers (i32 > 0) are equal iff same pointer or same header.
+            // Heap object equality: compare headers instead of pointers.
+            // Works for Named types, variants, records — any I32 heap pointer.
+            // Also handles I64 operands (function parameters of Named types
+            // are stored as I64 in the WASM calling convention).
             if !matches!(
                 lhs_aver,
                 Some(Type::Int) | Some(Type::Bool) | Some(Type::Float)
@@ -167,25 +168,11 @@ impl<'a> ExprEmitter<'a> {
                     self.instructions.push(Instruction::I32WrapI64);
                 }
                 self.instructions.push(Instruction::LocalSet(b_local));
-                // Fast path: same i32 value (same sentinel OR same heap ptr)
+                // Fast path: same pointer
                 self.instructions.push(Instruction::LocalGet(a_local));
                 self.instructions.push(Instruction::LocalGet(b_local));
                 self.instructions.push(Instruction::I32Eq);
-                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
-                self.instructions.push(Instruction::I32Const(1));
-                self.emit_else();
-                // If either is sentinel/empty (≤ 0), not equal (since values differ)
-                self.instructions.push(Instruction::LocalGet(a_local));
-                self.instructions.push(Instruction::I32Const(0));
-                self.instructions.push(Instruction::I32LeS);
-                self.instructions.push(Instruction::LocalGet(b_local));
-                self.instructions.push(Instruction::I32Const(0));
-                self.instructions.push(Instruction::I32LeS);
-                self.instructions.push(Instruction::I32Or);
-                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
-                self.instructions.push(Instruction::I32Const(0));
-                self.emit_else();
-                // Both are heap pointers: compare headers
+                // Slow path: compare headers (i64 at offset 0)
                 self.instructions.push(Instruction::LocalGet(a_local));
                 self.instructions
                     .push(Instruction::I64Load(wasm_encoder::MemArg {
@@ -201,8 +188,8 @@ impl<'a> ExprEmitter<'a> {
                         memory_index: 0,
                     }));
                 self.instructions.push(Instruction::I64Eq);
-                self.emit_end(); // inner if
-                self.emit_end(); // outer if
+                // Either pointer match OR header match
+                self.instructions.push(Instruction::I32Or);
                 if matches!(op, BinOp::Neq) {
                     self.instructions.push(Instruction::I32Eqz);
                 }
@@ -352,9 +339,6 @@ impl<'a> ExprEmitter<'a> {
 
     /// Emit a wrapper constructor. Value is already on the stack.
     fn emit_wrap(&mut self, kind: WrapperKind, arg: &Spanned<Expr>) {
-        // TODO: wrapper sentinels (Result.Ok(true) etc.) — dispatch table nesting
-        // issue needs fixing in emit_dispatch_check + binding paths. Constants ready in value.rs.
-        let _ = self.wrapper_literal_sentinel(kind, &arg.node);
         let inner_type = self.infer_expr_type(&arg.node);
         let inner_is_ptr = self.expr_is_heap_ptr(&arg.node);
         let wrap_tag = match kind {
@@ -383,22 +367,12 @@ impl<'a> ExprEmitter<'a> {
     }
 
     /// Emit user-defined variant constructor: Shape.Circle(5.0)
-    /// Nullary variants emit an i32 sentinel constant (zero heap alloc).
     pub(super) fn emit_variant_constructor(
         &mut self,
         type_name: &str,
         variant_name: &str,
         args: &[Spanned<Expr>],
     ) {
-        // Check for sentinel: nullary variants use i32 constants.
-        if args.is_empty() {
-            let key = (type_name.to_string(), variant_name.to_string());
-            if let Some(&sentinel) = self.symbol_table.nullary_sentinels.get(&key) {
-                self.instructions.push(Instruction::I32Const(sentinel));
-                return;
-            }
-        }
-
         let info = self
             .variant_registry
             .get(&(type_name.to_string(), variant_name.to_string()));
@@ -1422,29 +1396,6 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions
                     .push(Instruction::LocalSet(tmp_base + arg_idx as u32));
             }
-        }
-    }
-
-    /// Check if a wrapper(literal) can be represented as a sentinel.
-    /// Returns Some(sentinel) for Ok/Err/Some wrapping true, false, or Unit.
-    fn wrapper_literal_sentinel(&self, kind: WrapperKind, arg: &Expr) -> Option<i32> {
-        match arg {
-            Expr::Literal(Literal::Bool(true)) => match kind {
-                WrapperKind::ResultOk => Some(value::SENTINEL_OK_TRUE),
-                WrapperKind::ResultErr => Some(value::SENTINEL_ERR_TRUE),
-                WrapperKind::OptionSome => Some(value::SENTINEL_SOME_TRUE),
-            },
-            Expr::Literal(Literal::Bool(false)) => match kind {
-                WrapperKind::ResultOk => Some(value::SENTINEL_OK_FALSE),
-                WrapperKind::ResultErr => Some(value::SENTINEL_ERR_FALSE),
-                WrapperKind::OptionSome => Some(value::SENTINEL_SOME_FALSE),
-            },
-            Expr::Literal(Literal::Unit) => match kind {
-                WrapperKind::ResultOk => Some(value::SENTINEL_OK_UNIT),
-                WrapperKind::ResultErr => Some(value::SENTINEL_ERR_UNIT),
-                WrapperKind::OptionSome => Some(value::SENTINEL_SOME_UNIT),
-            },
-            _ => None,
         }
     }
 }

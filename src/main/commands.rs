@@ -1416,48 +1416,6 @@ fn load_variant_names_from_instance(
 }
 
 #[cfg(feature = "wasm")]
-thread_local! {
-    static SENTINEL_NAMES: std::cell::RefCell<std::collections::HashMap<i32, String>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
-#[cfg(feature = "wasm")]
-fn load_sentinel_names_from_instance(
-    instance: &wasmtime::Instance,
-    store: &mut wasmtime::Store<()>,
-) {
-    let ptr_global = instance.get_global(&mut *store, "$sentinel_names_ptr");
-    let len_global = instance.get_global(&mut *store, "$sentinel_names_len");
-    if let (Some(pg), Some(lg)) = (ptr_global, len_global) {
-        let ptr = pg.get(&mut *store).i32().unwrap_or(0) as usize;
-        let len = lg.get(&mut *store).i32().unwrap_or(0) as usize;
-        if len > 0 {
-            let mem = instance
-                .get_memory(&mut *store, "memory")
-                .expect("memory export");
-            let data = mem.data(&*store);
-            if ptr + len <= data.len() {
-                let text = String::from_utf8_lossy(&data[ptr..ptr + len]).to_string();
-                let mut map = std::collections::HashMap::new();
-                for entry in text.split('|') {
-                    if let Some(colon) = entry.find(':')
-                        && let Ok(id) = entry[..colon].parse::<i32>()
-                    {
-                        map.insert(id, entry[colon + 1..].to_string());
-                    }
-                }
-                SENTINEL_NAMES.with(|names| *names.borrow_mut() = map);
-            }
-        }
-    }
-}
-
-#[cfg(feature = "wasm")]
-fn sentinel_name(sentinel: i32) -> Option<String> {
-    SENTINEL_NAMES.with(|names| names.borrow().get(&sentinel).cloned())
-}
-
-#[cfg(feature = "wasm")]
 fn variant_name(tag: u64) -> String {
     VARIANT_NAMES.with(|names| {
         names
@@ -1677,14 +1635,6 @@ fn format_tagged_value(tag: i32, val: i64, mem: &[u8]) -> String {
             }
             if val == -1 {
                 return "Option.None".to_string();
-            }
-            // Check symbol table for sentinel values (< -1)
-            let val_i32 = val as i32;
-            if val_i32 < -1 {
-                if let Some(name) = sentinel_name(val_i32) {
-                    return name;
-                }
-                return format!("Sentinel#{}", val_i32);
             }
             format_wasm_value(val, mem)
         }
@@ -2084,9 +2034,8 @@ fn run_wasm_with_host(wasm_bytes: &[u8], program_args: &[String]) -> Result<(), 
         .instantiate(&mut store, &module)
         .map_err(|e| format!("Instantiation error: {e:#}"))?;
 
-    // Load name tables from globals before execution starts.
+    // Load variant name table from globals before execution starts.
     load_variant_names_from_instance(&instance, &mut store);
-    load_sentinel_names_from_instance(&instance, &mut store);
 
     // Try _start — check its actual return type and provide matching results buffer
     if let Some(start) = instance.get_func(&mut store, "_start") {

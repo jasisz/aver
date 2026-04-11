@@ -1087,15 +1087,8 @@ pub(super) fn emit_unwrap_i32() -> Function {
 }
 
 /// $obj_kind(ptr: i32) -> i32
-/// Guard: if ptr < 0 (sentinel), return OBJ_VARIANT without dereference.
 pub(super) fn emit_obj_kind() -> Function {
     let mut f = Function::new(vec![]);
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::I32LtS);
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(ValType::I32)));
-    f.instruction(&Instruction::I32Const(OBJ_VARIANT as i32));
-    f.instruction(&Instruction::Else);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
         offset: 0,
@@ -1108,20 +1101,12 @@ pub(super) fn emit_obj_kind() -> Function {
     f.instruction(&Instruction::I32Const(0xFF));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::End);
-    f.instruction(&Instruction::End);
     f
 }
 
 /// $obj_tag(ptr: i32) -> i32
-/// Guard: if ptr < 0 (sentinel), return 0 without dereference.
 pub(super) fn emit_obj_tag() -> Function {
     let mut f = Function::new(vec![]);
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::I32LtS);
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(ValType::I32)));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::Else);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
         offset: 0,
@@ -1133,7 +1118,6 @@ pub(super) fn emit_obj_tag() -> Function {
     f.instruction(&Instruction::I32WrapI64);
     f.instruction(&Instruction::I32Const(0xFF));
     f.instruction(&Instruction::I32And);
-    f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     f
 }
