@@ -67,6 +67,7 @@ body { overflow-x: hidden; }
     display: flex;
     align-items: center;
     justify-content: space-between;
+    min-width: 0;
 }
 
 .nav-brand { display: flex; align-items: center; text-decoration: none; }
@@ -76,6 +77,7 @@ body { overflow-x: hidden; }
     display: flex;
     gap: 1.5rem;
     align-items: center;
+    min-width: 0;
 }
 
 .nav-links a {
@@ -100,6 +102,7 @@ body { overflow-x: hidden; }
 
 .hero-text {
     padding-top: 0;
+    min-width: 0;
 }
 
 .hero h1 {
@@ -221,11 +224,13 @@ body { overflow-x: hidden; }
     display: flex;
     justify-content: flex-end;
     padding-top: 0.6rem;
+    min-width: 0;
 }
 
 .hero-window {
     position: relative;
     width: min(100%, 600px);
+    max-width: 100%;
     border: 1px solid rgba(71, 85, 105, 0.72);
     border-radius: 14px;
     overflow: hidden;
@@ -545,6 +550,17 @@ body { overflow-x: hidden; }
 }
 
 @media (max-width: 768px) {
+    .nav-inner {
+        flex-wrap: wrap;
+        row-gap: 0.7rem;
+        align-items: flex-start;
+    }
+    .nav-links {
+        width: 100%;
+        justify-content: space-between;
+        gap: 0.85rem;
+        flex-wrap: wrap;
+    }
     .hero {
         grid-template-columns: 1fr;
         padding: 2.4rem 1.25rem 1rem;
@@ -565,13 +581,21 @@ body { overflow-x: hidden; }
     }
     .hero-code {
         padding-top: 0;
+        justify-content: stretch;
+    }
+    .hero-window {
+        width: 100%;
+    }
+    .hero-window .hero-code-block {
+        padding: 1rem 1rem 1.05rem;
+        font-size: 13px;
+        line-height: 1.68;
     }
 
     .features-grid { grid-template-columns: 1fr; }
     .constraints-grid { grid-template-columns: 1fr; }
     .start-steps { grid-template-columns: 1fr; }
 
-    .nav-links { gap: 1rem; }
     .nav-links a { font-size: 0.8rem; }
 
     .footer-inner {
@@ -588,7 +612,16 @@ body { overflow-x: hidden; }
     .hero-meta-link, .hero-meta-item { font-size: 0.8rem; }
     .hero-cta { flex-direction: column; }
     .hero-cta .btn { justify-content: center; }
+    .nav-links {
+        gap: 0.5rem 0.9rem;
+        justify-content: flex-start;
+    }
     .nav-links a:not(:last-child):not(:nth-last-child(2)) { display: none; }
+    .hero-window .hero-code-block {
+        padding: 0.92rem 0.9rem 1rem;
+        font-size: 12px;
+        line-height: 1.6;
+    }
     .games-grid { gap: 0.6rem; }
     .game-card { min-width: 90px; padding: 1rem; }
 }
