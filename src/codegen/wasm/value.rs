@@ -51,6 +51,24 @@ pub const EMPTY_LIST: i32 = 0;
 /// Option.None sentinel (i32 = -1, distinguishable from null pointer).
 pub const NONE_SENTINEL: i32 = -1;
 
+/// First dynamic sentinel for the symbol table.
+/// Nullary variants, wrapper(bool/unit) combos start here and go more negative.
+pub const SYMBOL_SENTINEL_BASE: i32 = -2;
+
+// Fixed wrapper+literal sentinels (assigned before user variants).
+pub const SENTINEL_OK_TRUE: i32 = -2;
+pub const SENTINEL_OK_FALSE: i32 = -3;
+pub const SENTINEL_OK_UNIT: i32 = -4;
+pub const SENTINEL_ERR_TRUE: i32 = -5;
+pub const SENTINEL_ERR_FALSE: i32 = -6;
+pub const SENTINEL_ERR_UNIT: i32 = -7;
+pub const SENTINEL_SOME_TRUE: i32 = -8;
+pub const SENTINEL_SOME_FALSE: i32 = -9;
+pub const SENTINEL_SOME_UNIT: i32 = -10;
+
+/// First sentinel ID available for user-defined nullary variants.
+pub const USER_SENTINEL_BASE: i32 = -11;
+
 // ---------------------------------------------------------------------------
 // Heap object header layout
 // ---------------------------------------------------------------------------

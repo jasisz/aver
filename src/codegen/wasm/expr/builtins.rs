@@ -617,6 +617,8 @@ impl<'a> ExprEmitter<'a> {
                 Some(Type::Bool) => (2, false), // will extend i32 to i64
                 Some(Type::Str) => (3, false),
                 Some(Type::Unit) => (5, false),
+                // Named types use tag=4 (heap/sentinel pointer).
+                Some(Type::Named(_)) => (4, false),
                 _ => match wt {
                     WasmType::I64 => (0, false),
                     WasmType::F64 => (1, true),

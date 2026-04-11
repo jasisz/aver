@@ -19,7 +19,7 @@ use crate::ast::{Expr, FnBody, FnDef, Literal, Pattern, Stmt, StrPart, TopLevel}
 use crate::codegen::CodegenContext;
 use crate::ir::{ThinKind, classify_thin_fn_def, thin_body_plan_is_parent_thin_candidate};
 
-use super::expr::{ExprEmitter, StringLiteral, build_variant_registry};
+use super::expr::{ExprEmitter, StringLiteral, build_symbol_table, build_variant_registry};
 use super::runtime::{self, RuntimeFuncIndices};
 use super::types::{WasmType, aver_type_to_wasm};
 use super::value;
@@ -364,8 +364,9 @@ pub fn build_wasm_module(
     });
     module.section(&memory_section);
 
-    // Build variant registry early — needed for global section (name table)
+    // Build variant registry and symbol table for sentinel optimization.
     let variant_registry = build_variant_registry(ctx);
+    let symbol_table = build_symbol_table(&variant_registry);
 
     // -----------------------------------------------------------------------
     // Global section
@@ -428,6 +429,38 @@ pub fn build_wasm_module(
         &ConstExpr::i32_const(variant_name_bytes.len() as i32),
     );
 
+    // Sentinel name table: sentinel_value→name for host display.
+    let sentinel_name_json = {
+        let mut entries = symbol_table.sentinel_names.clone();
+        entries.sort_by_key(|(id, _)| *id);
+        entries
+            .iter()
+            .map(|(id, name)| format!("{}:{}", id, name))
+            .collect::<Vec<_>>()
+            .join("|")
+    };
+    let sentinel_name_offset = runtime::IO_SCRATCH_SIZE as usize + data_bytes.len();
+    let sentinel_name_bytes = sentinel_name_json.as_bytes();
+    data_bytes.extend_from_slice(sentinel_name_bytes);
+
+    // Global 6: sentinel_names_ptr, Global 7: sentinel_names_len
+    global_section.global(
+        GlobalType {
+            val_type: ValType::I32,
+            mutable: false,
+            shared: false,
+        },
+        &ConstExpr::i32_const(sentinel_name_offset as i32),
+    );
+    global_section.global(
+        GlobalType {
+            val_type: ValType::I32,
+            mutable: false,
+            shared: false,
+        },
+        &ConstExpr::i32_const(sentinel_name_bytes.len() as i32),
+    );
+
     module.section(&global_section);
 
     // -----------------------------------------------------------------------
@@ -447,6 +480,8 @@ pub fn build_wasm_module(
     export_section.export("alloc", ExportKind::Func, rt.alloc);
     export_section.export("$variant_names_ptr", ExportKind::Global, 4);
     export_section.export("$variant_names_len", ExportKind::Global, 5);
+    export_section.export("$sentinel_names_ptr", ExportKind::Global, 6);
+    export_section.export("$sentinel_names_len", ExportKind::Global, 7);
 
     module.section(&export_section);
 
@@ -491,6 +526,7 @@ pub fn build_wasm_module(
             &type_fields,
             ctx,
             &variant_registry,
+            &symbol_table,
             &host_imports,
         )?;
         code_section.function(&func);
@@ -513,6 +549,7 @@ pub fn build_wasm_module(
             &type_fields,
             ctx,
             &variant_registry,
+            &symbol_table,
             &host_imports,
             tco_fns.contains(&entry.canonical_name),
         )?;
@@ -601,6 +638,7 @@ fn emit_plain_user_function(
     type_fields: &HashMap<(String, String), u32>,
     ctx: &CodegenContext,
     variant_registry: &HashMap<(String, String), super::expr::VariantInfo>,
+    symbol_table: &super::expr::SymbolTable,
     host_imports: &HashMap<String, u32>,
     needs_tco: bool,
 ) -> Result<wasm_encoder::Function, String> {
@@ -612,6 +650,7 @@ fn emit_plain_user_function(
         &ctx.fn_sigs,
         ctx,
         variant_registry,
+        symbol_table,
     );
 
     let param_types = param_types_for_entry(ctx, entry);
@@ -886,6 +925,7 @@ fn emit_mutual_tco_trampoline(
     type_fields: &HashMap<(String, String), u32>,
     ctx: &CodegenContext,
     variant_registry: &HashMap<(String, String), super::expr::VariantInfo>,
+    symbol_table: &super::expr::SymbolTable,
     host_imports: &HashMap<String, u32>,
 ) -> Result<wasm_encoder::Function, String> {
     let mut emitter = ExprEmitter::new(
@@ -896,6 +936,7 @@ fn emit_mutual_tco_trampoline(
         &ctx.fn_sigs,
         ctx,
         variant_registry,
+        symbol_table,
     );
     emitter.fn_return_type = layout.return_type;
     emitter.current_fn_name = layout.trampoline_name.clone();

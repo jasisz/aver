@@ -22,7 +22,7 @@ mod emit;
 mod infer;
 mod match_emit;
 
-pub(super) use infer::{VariantInfo, build_variant_registry};
+pub(super) use infer::{SymbolTable, VariantInfo, build_symbol_table, build_variant_registry};
 
 /// Interned string literal: (data_offset_in_memory, byte_length).
 pub(super) type StringLiteral = (u32, u32);
@@ -108,6 +108,8 @@ pub(super) struct ExprEmitter<'a> {
     pub local_aver_types: HashMap<u32, Type>,
     pub ctx: &'a CodegenContext,
     pub variant_registry: &'a HashMap<(String, String), VariantInfo>,
+    /// Symbol table: sentinel values for nullary variants and wrapper+literal combos.
+    pub symbol_table: &'a SymbolTable,
     /// Current function's return type (set by emitter before body emission).
     pub fn_return_type: WasmType,
     /// ABI host import indices: import_name -> function index.
@@ -147,6 +149,7 @@ impl<'a> ExprEmitter<'a> {
         fn_sigs: &'a HashMap<String, (Vec<Type>, Type, Vec<String>)>,
         ctx: &'a CodegenContext,
         variant_registry: &'a HashMap<(String, String), VariantInfo>,
+        symbol_table: &'a SymbolTable,
     ) -> Self {
         ExprEmitter {
             locals: HashMap::new(),
@@ -163,6 +166,7 @@ impl<'a> ExprEmitter<'a> {
             local_aver_types: HashMap::new(),
             ctx,
             variant_registry,
+            symbol_table,
             fn_return_type: WasmType::I32,
             current_fn_name: String::new(),
             current_module_prefix: None,

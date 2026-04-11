@@ -927,21 +927,33 @@ impl<'a> ExprEmitter<'a> {
                         let field_type_names =
                             info.map(|i| i.field_types.clone()).unwrap_or_default();
 
-                        self.instructions.push(Instruction::LocalGet(subj_local));
-                        self.instructions.push(Instruction::I32Const(0));
-                        self.instructions.push(Instruction::I32GtS);
-                        self.instructions.push(Instruction::LocalGet(subj_local));
-                        self.instructions.push(Instruction::Call(self.rt.obj_kind));
-                        self.instructions
-                            .push(Instruction::I32Const(value::OBJ_VARIANT as i32));
-                        self.instructions.push(Instruction::I32Eq);
-                        self.instructions.push(Instruction::I32And);
-                        self.instructions.push(Instruction::LocalGet(subj_local));
-                        self.instructions.push(Instruction::Call(self.rt.obj_tag));
-                        self.instructions
-                            .push(Instruction::I32Const(expected_tag as i32));
-                        self.instructions.push(Instruction::I32Eq);
-                        self.instructions.push(Instruction::I32And);
+                        let sentinel_key =
+                            (qualified_type_name.clone(), variant_name.clone());
+                        if let Some(&sentinel) = field_type_names.is_empty().then(|| {
+                            self.symbol_table.nullary_sentinels.get(&sentinel_key)
+                        }).flatten() {
+                            // Nullary sentinel: single i32 comparison.
+                            self.instructions.push(Instruction::LocalGet(subj_local));
+                            self.instructions.push(Instruction::I32Const(sentinel));
+                            self.instructions.push(Instruction::I32Eq);
+                        } else {
+                            // Non-nullary: heap path.
+                            self.instructions.push(Instruction::LocalGet(subj_local));
+                            self.instructions.push(Instruction::I32Const(0));
+                            self.instructions.push(Instruction::I32GtS);
+                            self.instructions.push(Instruction::LocalGet(subj_local));
+                            self.instructions.push(Instruction::Call(self.rt.obj_kind));
+                            self.instructions
+                                .push(Instruction::I32Const(value::OBJ_VARIANT as i32));
+                            self.instructions.push(Instruction::I32Eq);
+                            self.instructions.push(Instruction::I32And);
+                            self.instructions.push(Instruction::LocalGet(subj_local));
+                            self.instructions.push(Instruction::Call(self.rt.obj_tag));
+                            self.instructions
+                                .push(Instruction::I32Const(expected_tag as i32));
+                            self.instructions.push(Instruction::I32Eq);
+                            self.instructions.push(Instruction::I32And);
+                        }
                         self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
 
                         for (i, binding_name) in bindings.iter().enumerate() {
@@ -1187,22 +1199,31 @@ impl<'a> ExprEmitter<'a> {
         let expected_tag = info.map(|i| i.tag).unwrap_or(0);
         let field_type_names: Vec<String> = info.map(|i| i.field_types.clone()).unwrap_or_default();
 
-        // Variant match must agree on both kind and tag.
-        self.instructions.push(Instruction::LocalGet(subj_local));
-        self.instructions.push(Instruction::I32Const(0));
-        self.instructions.push(Instruction::I32GtS);
-        self.instructions.push(Instruction::LocalGet(subj_local));
-        self.instructions.push(Instruction::Call(self.rt.obj_kind));
-        self.instructions
-            .push(Instruction::I32Const(value::OBJ_VARIANT as i32));
-        self.instructions.push(Instruction::I32Eq);
-        self.instructions.push(Instruction::I32And);
-        self.instructions.push(Instruction::LocalGet(subj_local));
-        self.instructions.push(Instruction::Call(self.rt.obj_tag));
-        self.instructions
-            .push(Instruction::I32Const(expected_tag as i32));
-        self.instructions.push(Instruction::I32Eq);
-        self.instructions.push(Instruction::I32And);
+        // Variant match: sentinel for nullary, heap check for non-nullary.
+        let sentinel_key = (type_name.to_string(), variant_name.to_string());
+        if let Some(&sentinel) = field_type_names.is_empty().then(|| {
+            self.symbol_table.nullary_sentinels.get(&sentinel_key)
+        }).flatten() {
+            self.instructions.push(Instruction::LocalGet(subj_local));
+            self.instructions.push(Instruction::I32Const(sentinel));
+            self.instructions.push(Instruction::I32Eq);
+        } else {
+            self.instructions.push(Instruction::LocalGet(subj_local));
+            self.instructions.push(Instruction::I32Const(0));
+            self.instructions.push(Instruction::I32GtS);
+            self.instructions.push(Instruction::LocalGet(subj_local));
+            self.instructions.push(Instruction::Call(self.rt.obj_kind));
+            self.instructions
+                .push(Instruction::I32Const(value::OBJ_VARIANT as i32));
+            self.instructions.push(Instruction::I32Eq);
+            self.instructions.push(Instruction::I32And);
+            self.instructions.push(Instruction::LocalGet(subj_local));
+            self.instructions.push(Instruction::Call(self.rt.obj_tag));
+            self.instructions
+                .push(Instruction::I32Const(expected_tag as i32));
+            self.instructions.push(Instruction::I32Eq);
+            self.instructions.push(Instruction::I32And);
+        }
         self.emit_if(wasm_encoder::BlockType::Empty);
 
         // Bind fields
@@ -1251,6 +1272,114 @@ impl<'a> ExprEmitter<'a> {
             self.emit_else();
             self.emit_generic_arms(subj_local, subj_type, result_local, arms, idx + 1);
         }
+        self.emit_end();
+    }
+
+    /// Emit: (subj in sentinel range) OR (heap wrapper check).
+    /// Pushes i32 boolean onto stack.
+    fn emit_wrapper_sentinel_or_heap_check(
+        &mut self,
+        subj_local: u32,
+        sentinel_lo: i32,
+        sentinel_hi: i32,
+        expected_tag: u64,
+    ) {
+        // Sentinel range check
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        self.instructions.push(Instruction::I32Const(sentinel_lo));
+        self.instructions.push(Instruction::I32GeS);
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        self.instructions.push(Instruction::I32Const(sentinel_hi));
+        self.instructions.push(Instruction::I32LeS);
+        self.instructions.push(Instruction::I32And);
+        // OR heap check (guarded by ptr > 0 to avoid calling obj_kind on sentinels)
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        self.instructions.push(Instruction::I32Const(0));
+        self.instructions.push(Instruction::I32GtS);
+        self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        self.instructions.push(Instruction::Call(self.rt.obj_kind));
+        self.instructions
+            .push(Instruction::I32Const(value::OBJ_WRAPPER as i32));
+        self.instructions.push(Instruction::I32Eq);
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        self.instructions.push(Instruction::Call(self.rt.obj_kind));
+        self.instructions
+            .push(Instruction::I32Const(value::OBJ_WRAPPER_F64 as i32));
+        self.instructions.push(Instruction::I32Eq);
+        self.instructions.push(Instruction::I32Or);
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        self.instructions.push(Instruction::Call(self.rt.obj_kind));
+        self.instructions
+            .push(Instruction::I32Const(value::OBJ_WRAPPER_I32 as i32));
+        self.instructions.push(Instruction::I32Eq);
+        self.instructions.push(Instruction::I32Or);
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        self.instructions.push(Instruction::Call(self.rt.obj_tag));
+        self.instructions
+            .push(Instruction::I32Const(expected_tag as i32));
+        self.instructions.push(Instruction::I32Eq);
+        self.instructions.push(Instruction::I32And);
+        self.instructions.push(Instruction::I32And);
+        self.emit_else();
+        self.instructions.push(Instruction::I32Const(0));
+        self.emit_end();
+        self.instructions.push(Instruction::I32Or);
+    }
+
+    /// Bind wrapper inner value, handling both sentinel and heap paths.
+    fn emit_wrapper_sentinel_or_heap_binding(
+        &mut self,
+        subj_local: u32,
+        kind: WrapperKind,
+        sentinel_true: i32,
+        binding_name: &str,
+    ) {
+        let subj_aver_type = self.local_aver_types.get(&subj_local).cloned();
+        let inner_wasm = match (&subj_aver_type, kind) {
+            (Some(Type::Result(ok, _)), WrapperKind::ResultOk) => aver_type_to_wasm(ok),
+            (Some(Type::Result(_, err)), WrapperKind::ResultErr) => aver_type_to_wasm(err),
+            (Some(Type::Option(inner)), WrapperKind::OptionSome) => aver_type_to_wasm(inner),
+            _ => WasmType::I64,
+        };
+        let inner_aver = match (&subj_aver_type, kind) {
+            (Some(Type::Result(ok, _)), WrapperKind::ResultOk) => Some(ok.as_ref().clone()),
+            (Some(Type::Result(_, err)), WrapperKind::ResultErr) => Some(err.as_ref().clone()),
+            (Some(Type::Option(inner)), WrapperKind::OptionSome) => Some(inner.as_ref().clone()),
+            _ => None,
+        };
+        let bind_local = self.alloc_local(inner_wasm);
+        self.locals.insert(binding_name.to_string(), bind_local);
+        if let Some(at) = inner_aver {
+            self.local_aver_types.insert(bind_local, at);
+        }
+
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        self.instructions.push(Instruction::I32Const(0));
+        self.instructions.push(Instruction::I32LtS);
+        self.emit_if(wasm_encoder::BlockType::Empty);
+        // Sentinel: binding = (subj == sentinel_true) ? 1 : 0
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        self.instructions.push(Instruction::I32Const(sentinel_true));
+        self.instructions.push(Instruction::I32Eq);
+        match inner_wasm {
+            WasmType::I32 => {}
+            WasmType::I64 => self.instructions.push(Instruction::I64ExtendI32S),
+            WasmType::F64 => {
+                self.instructions.push(Instruction::I64ExtendI32S);
+                self.instructions.push(Instruction::F64ConvertI64S);
+            }
+        }
+        self.instructions.push(Instruction::LocalSet(bind_local));
+        self.emit_else();
+        // Heap: unwrap
+        self.instructions.push(Instruction::LocalGet(subj_local));
+        match inner_wasm {
+            WasmType::F64 => self.instructions.push(Instruction::Call(self.rt.unwrap_f64)),
+            WasmType::I32 => self.instructions.push(Instruction::Call(self.rt.unwrap_i32)),
+            WasmType::I64 => self.instructions.push(Instruction::Call(self.rt.unwrap)),
+        }
+        self.instructions.push(Instruction::LocalSet(bind_local));
         self.emit_end();
     }
 }

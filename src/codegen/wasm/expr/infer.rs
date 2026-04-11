@@ -22,6 +22,76 @@ pub(in crate::codegen::wasm) struct VariantInfo {
     pub field_types: Vec<String>, // type annotation strings from AST
 }
 
+/// Symbol table: maps symbolic values to i32 sentinel constants.
+/// Covers nullary user variants and wrapper+literal combos.
+pub(in crate::codegen::wasm) struct SymbolTable {
+    /// (type_name, variant_name) → sentinel value for nullary user variants.
+    pub nullary_sentinels: HashMap<(String, String), i32>,
+    /// sentinel → display name for all symbols (used by host display).
+    pub sentinel_names: Vec<(i32, String)>,
+}
+
+/// Build symbol table: assign i32 sentinels to nullary variants.
+pub(in crate::codegen::wasm) fn build_symbol_table(
+    variant_registry: &HashMap<(String, String), VariantInfo>,
+) -> SymbolTable {
+    use super::super::value;
+
+    let mut sentinel_names = vec![
+        (value::SENTINEL_OK_TRUE, "Result.Ok(true)".into()),
+        (value::SENTINEL_OK_FALSE, "Result.Ok(false)".into()),
+        (value::SENTINEL_OK_UNIT, "Result.Ok(Unit)".into()),
+        (value::SENTINEL_ERR_TRUE, "Result.Err(true)".into()),
+        (value::SENTINEL_ERR_FALSE, "Result.Err(false)".into()),
+        (value::SENTINEL_ERR_UNIT, "Result.Err(Unit)".into()),
+        (value::SENTINEL_SOME_TRUE, "Option.Some(true)".into()),
+        (value::SENTINEL_SOME_FALSE, "Option.Some(false)".into()),
+        (value::SENTINEL_SOME_UNIT, "Option.Some(Unit)".into()),
+    ];
+
+    // Collect nullary variants, sorted for deterministic assignment.
+    let mut nullary_keys: Vec<(String, String)> = variant_registry
+        .iter()
+        .filter(|(_, info)| info.field_types.is_empty())
+        .map(|(key, _)| key.clone())
+        .collect();
+    nullary_keys.sort();
+    nullary_keys.dedup();
+
+    let mut nullary_sentinels = HashMap::new();
+    let mut next = value::USER_SENTINEL_BASE;
+
+    for key in &nullary_keys {
+        if nullary_sentinels.contains_key(key) {
+            continue;
+        }
+        let sentinel = next;
+        next -= 1;
+        nullary_sentinels.insert(key.clone(), sentinel);
+        sentinel_names.push((sentinel, format!("{}.{}", key.0, key.1)));
+
+        // Share sentinel between qualified and bare names.
+        for other in &nullary_keys {
+            if other == key || nullary_sentinels.contains_key(other) {
+                continue;
+            }
+            if other.1 == key.1 {
+                if let (Some(a), Some(b)) = (variant_registry.get(key), variant_registry.get(other))
+                {
+                    if a.tag == b.tag && a.field_types == b.field_types {
+                        nullary_sentinels.insert(other.clone(), sentinel);
+                    }
+                }
+            }
+        }
+    }
+
+    SymbolTable {
+        nullary_sentinels,
+        sentinel_names,
+    }
+}
+
 /// Build variant registry from type_defs.
 pub(in crate::codegen::wasm) fn build_variant_registry(
     ctx: &CodegenContext,
