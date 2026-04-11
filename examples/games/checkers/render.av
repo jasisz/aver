@@ -10,28 +10,6 @@ fn drawAt(x: Int, y: Int, ch: String) -> Unit
     Terminal.moveTo(x * 2, y)
     Terminal.print(ch)
 
-fn pointEq(a: Point, b: Point) -> Bool
-    ? "True if two points have the same coordinates"
-    Bool.and(a.x == b.x, a.y == b.y)
-
-verify pointEq
-    pointEq(Board.pt(1, 2), Board.pt(1, 2)) => true
-    pointEq(Board.pt(1, 2), Board.pt(3, 4)) => false
-
-fn containsPoint(pts: List<Point>, target: Point, i: Int) -> Bool
-    ? "True if target exists in pts"
-    match i == List.len(pts)
-        true -> false
-        false -> match Vector.get(Vector.fromList(pts), i)
-            Option.Some(p) -> match pointEq(p, target)
-                true -> true
-                false -> containsPoint(pts, target, i + 1)
-            Option.None -> false
-
-verify containsPoint
-    containsPoint([Board.pt(1, 1), Board.pt(2, 3)], Board.pt(2, 3), 0) => true
-    containsPoint([], Board.pt(1, 1), 0) => false
-
 fn isSelected(x: Int, y: Int, selected: Option<Point>) -> Bool
     ? "True if this cell is the selected piece"
     match selected
@@ -107,7 +85,7 @@ fn renderNonCursorCell(x: Int, y: Int, cell: CellContent, selected: Option<Point
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     match isSelected(x, y, selected)
         true -> renderSelectedCell(x, y, cell)
-        false -> match containsPoint(highlights, Board.pt(x, y), 0)
+        false -> match List.contains(highlights, Board.pt(x, y))
             true -> renderHighlightCell(x, y)
             false -> renderPieceCell(x, y, cell)
 

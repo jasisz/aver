@@ -455,48 +455,12 @@ fn insertSorted(sorted: List<ScoredMove>, item: ScoredMove, i: Int) -> List<Scor
         true -> appended
         false -> match Vector.get(Vector.fromList(sorted), i)
             Option.Some(cur) -> match item.score > cur.score
-                true -> List.concat(List.concat(takeN(sorted, i), [item]), dropN(sorted, i))
+                true -> List.concat(List.concat(List.take(sorted, i), [item]), List.drop(sorted, i))
                 false -> insertSorted(sorted, item, i + 1)
             Option.None -> appended
 
 verify insertSorted
     insertSorted([], ScoredMove(move = [Board.pt(0, 0)], score = 7), 0) => [ScoredMove(move = [Board.pt(0, 0)], score = 7)]
-
-fn takeN(xs: List<ScoredMove>, n: Int) -> List<ScoredMove>
-    ? "Take first n elements"
-    List.reverse(takeNAcc(xs, n, []))
-
-verify takeN
-    takeN([ScoredMove(move = [Board.pt(0, 0)], score = 1), ScoredMove(move = [Board.pt(1, 1)], score = 2)], 1) => [ScoredMove(move = [Board.pt(0, 0)], score = 1)]
-
-fn takeNAcc(xs: List<ScoredMove>, n: Int, acc: List<ScoredMove>) -> List<ScoredMove>
-    ? "Tail-recursive take helper"
-    match n == 0
-        true -> acc
-        false -> match xs
-            [] -> acc
-            [x, ..rest] -> takeNAcc(rest, n - 1, List.prepend(x, acc))
-
-verify takeNAcc
-    takeNAcc([ScoredMove(move = [Board.pt(0, 0)], score = 1), ScoredMove(move = [Board.pt(1, 1)], score = 2)], 1, []) => [ScoredMove(move = [Board.pt(0, 0)], score = 1)]
-
-fn dropN(xs: List<ScoredMove>, n: Int) -> List<ScoredMove>
-    ? "Drop first n elements"
-    dropNAcc(xs, n)
-
-verify dropN
-    dropN([ScoredMove(move = [Board.pt(0, 0)], score = 1), ScoredMove(move = [Board.pt(1, 1)], score = 2)], 1) => [ScoredMove(move = [Board.pt(1, 1)], score = 2)]
-
-fn dropNAcc(xs: List<ScoredMove>, n: Int) -> List<ScoredMove>
-    ? "Tail-recursive drop helper"
-    match n == 0
-        true -> xs
-        false -> match xs
-            [] -> []
-            [_x, ..rest] -> dropNAcc(rest, n - 1)
-
-verify dropNAcc
-    dropNAcc([ScoredMove(move = [Board.pt(0, 0)], score = 1), ScoredMove(move = [Board.pt(1, 1)], score = 2)], 1) => [ScoredMove(move = [Board.pt(1, 1)], score = 2)]
 
 fn bestMoveResult(board: List<List<CellContent>>, color: Color, depth: Int) -> Option<AiResult>
     ? "Full AI result with all scored candidates sorted"

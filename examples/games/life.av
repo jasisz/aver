@@ -22,31 +22,9 @@ record SimState
 
 // ─── Helpers ────────────────────────────────────────────────
 
-fn minInt(a: Int, b: Int) -> Int
-    ? "Return the smaller of two integers."
-    match a < b
-        true -> a
-        false -> b
-
-verify minInt
-    minInt(3, 5) => 3
-    minInt(9, 2) => 2
-    minInt(5, 5) => 5
-
-fn maxInt(a: Int, b: Int) -> Int
-    ? "Return the larger of two integers."
-    match a > b
-        true -> a
-        false -> b
-
-verify maxInt
-    maxInt(3, 5) => 5
-    maxInt(9, 2) => 9
-    maxInt(4, 4) => 4
-
 fn clamp(v: Int, lo: Int, hi: Int) -> Int
     ? "Clamp v between lo and hi inclusive."
-    minInt(maxInt(v, lo), hi)
+    Int.min(Int.max(v, lo), hi)
 
 verify clamp
     clamp(5, 0, 10) => 5
@@ -476,7 +454,7 @@ fn simAction(k: String, st: SimState) -> Result<String, String>
         "q" -> Result.Ok("Stopped at generation {Int.toString(st.gen)}.")
         " " -> gameLoop(SimState.update(st, paused = newPaused))
         "e" -> simToEditor(st)
-        "+" -> gameLoop(SimState.update(st, delay = maxInt(st.delay - 10, 0)))
+        "+" -> gameLoop(SimState.update(st, delay = Int.max(st.delay - 10, 0)))
         "-" -> gameLoop(SimState.update(st, delay = st.delay + 10))
         "0" -> gameLoop(SimState.update(st, delay = 0))
         "r" -> gameLoop(SimState.update(st, grid = seed(st.stride, st.width, st.height), gen = 0))
@@ -505,8 +483,8 @@ fn run() -> Result<String, String>
     Terminal.hideCursor()
     Terminal.clear()
     size = Terminal.size()
-    w = minInt(size.width, 80)
-    h = minInt(size.height - 3, 40)
+    w = Int.min(size.width, 80)
+    h = Int.min(size.height - 3, 40)
     s = w + 2
     now = Time.unixMs()
     grid = seed(s, w, h)

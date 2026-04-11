@@ -52,10 +52,14 @@ verify pickKind
 
 fn spawnEnemies(rooms: List<Level.Room>, seed: Int, i: Int, acc: List<Enemy>) -> List<Enemy>
     ? "Spawn one enemy per room, skipping room 0 (player start)"
-    match i == List.len(rooms)
+    spawnEnemiesVec(Vector.fromList(rooms), seed, i, acc)
+
+fn spawnEnemiesVec(rooms: Vector<Level.Room>, seed: Int, i: Int, acc: List<Enemy>) -> List<Enemy>
+    ? "Spawn one enemy per room using indexed room vector access"
+    match i == Vector.len(rooms)
         true -> acc
-        false -> match Vector.get(Vector.fromList(rooms), i)
-            Option.Some(room) -> spawnSkipFirst(rooms, seed, i, acc, room)
+        false -> match Vector.get(rooms, i)
+            Option.Some(room) -> spawnSkipFirstVec(rooms, seed, i, acc, room)
             Option.None -> acc
 
 verify spawnEnemies
@@ -63,10 +67,14 @@ verify spawnEnemies
 
 fn spawnSkipFirst(rooms: List<Level.Room>, seed: Int, i: Int, acc: List<Enemy>, room: Level.Room) -> List<Enemy>
     ? "Skip first room, spawn in rest"
+    spawnSkipFirstVec(Vector.fromList(rooms), seed, i, acc, room)
+
+fn spawnSkipFirstVec(rooms: Vector<Level.Room>, seed: Int, i: Int, acc: List<Enemy>, room: Level.Room) -> List<Enemy>
+    ? "Skip first room while reusing shared room vector"
     next = i + 1
     match i == 0
-        true -> spawnEnemies(rooms, Rng.nextSeed(seed), next, acc)
-        false -> spawnEnemies(rooms, Rng.nextSeed(seed), next, List.concat(acc, [spawnInRoom(room, seed)]))
+        true -> spawnEnemiesVec(rooms, Rng.nextSeed(seed), next, acc)
+        false -> spawnEnemiesVec(rooms, Rng.nextSeed(seed), next, List.concat(acc, [spawnInRoom(room, seed)]))
 
 verify spawnSkipFirst
     spawnSkipFirst([Level.Room(x = 1, y = 1, w = 2, h = 2)], 42, 0, [], Level.Room(x = 1, y = 1, w = 2, h = 2)) => []
@@ -209,24 +217,12 @@ verify updateTurn
 
 fn trimMessages(msgs: List<String>) -> List<String>
     ? "Keep only the last 3 messages"
-    match List.len(msgs) > 3
-        true -> trimMessages(dropFirst(msgs))
-        false -> msgs
+    List.drop(msgs, List.len(msgs) - 3)
 
 verify trimMessages
     List.len(trimMessages(["a", "b", "c", "d", "e"])) => 3
     trimMessages(["a", "b"]) => ["a", "b"]
     trimMessages([]) => []
-
-fn dropFirst(xs: List<String>) -> List<String>
-    ? "Remove first element of a string list"
-    match xs
-        [_, ..rest] -> rest
-        _ -> []
-
-verify dropFirst
-    dropFirst(["a", "b", "c"]) => ["b", "c"]
-    dropFirst([]) => []
 
 fn gameLoop(state: GameState) -> Unit
     ? "Main game loop: render, read input, update state, repeat"

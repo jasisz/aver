@@ -63,11 +63,3 @@ fn dist(x1: Float, y1: Float, x2: Float, y2: Float) -> Float
 verify dist
     dist(0.0, 0.0, 3.0, 4.0) => 5.0
     dist(1.0, 1.0, 1.0, 1.0) => 0.0
-
-fn absInt(n: Int) -> Int
-    ? "Absolute value of integer"
-    Int.abs(n)
-
-verify absInt
-    absInt(5) => 5
-    absInt(0 - 3) => 3

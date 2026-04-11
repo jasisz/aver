@@ -25,22 +25,9 @@ verify neighbors
     neighbors(1) => [2, 5, 8]
     neighbors(20) => [13, 16, 19]
 
-fn containsInt(xs: List<Int>, n: Int) -> Bool
-    ? "True when n appears in xs."
-    match xs
-        [] -> false
-        [x, ..rest] -> match x == n
-            true -> true
-            false -> containsInt(rest, n)
-
-verify containsInt
-    containsInt([1, 2, 3], 2) => true
-    containsInt([1, 2, 3], 4) => false
-    containsInt([], 1) => false
-
 fn isAdjacent(from: Int, to: Int) -> Bool
     ? "True when two rooms are directly connected."
-    containsInt(neighbors(from), to)
+    List.contains(neighbors(from), to)
 
 verify isAdjacent
     isAdjacent(1, 2) => true
@@ -96,7 +83,7 @@ fn pickDistinct(n: Int, taken: List<Int>) -> List<Int>
     ? "Pick one room, reject if duplicate, recurse."
     ! [Random.int]
     r = randRoom()
-    match containsInt(taken, r)
+    match List.contains(taken, r)
         true -> pickDistinct(n, taken)
         false -> distinctRooms(n - 1, List.concat(taken, [r]))
 
@@ -211,7 +198,7 @@ verify arrowMissed
 
 fn wumpusNearby(game: Game) -> Bool
     ? "True when the Wumpus is in an adjacent room."
-    containsInt(neighbors(game.player), game.wumpus)
+    List.contains(neighbors(game.player), game.wumpus)
 
 verify wumpusNearby
     wumpusNearby(Game(player = 1, wumpus = 2, pit1 = 10, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5)) => true
@@ -219,9 +206,9 @@ verify wumpusNearby
 
 fn pitNearby(game: Game) -> Bool
     ? "True when a bottomless pit is in an adjacent room."
-    match containsInt(neighbors(game.player), game.pit1)
+    match List.contains(neighbors(game.player), game.pit1)
         true -> true
-        false -> containsInt(neighbors(game.player), game.pit2)
+        false -> List.contains(neighbors(game.player), game.pit2)
 
 verify pitNearby
     pitNearby(Game(player = 1, wumpus = 10, pit1 = 5, pit2 = 11, bat1 = 12, bat2 = 13, arrows = 5)) => true
@@ -229,9 +216,9 @@ verify pitNearby
 
 fn batsNearby(game: Game) -> Bool
     ? "True when super bats are in an adjacent room."
-    match containsInt(neighbors(game.player), game.bat1)
+    match List.contains(neighbors(game.player), game.bat1)
         true -> true
-        false -> containsInt(neighbors(game.player), game.bat2)
+        false -> List.contains(neighbors(game.player), game.bat2)
 
 verify batsNearby
     batsNearby(Game(player = 1, wumpus = 10, pit1 = 11, pit2 = 12, bat1 = 2, bat2 = 13, arrows = 5)) => true
