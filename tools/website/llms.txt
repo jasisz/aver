@@ -101,9 +101,9 @@ fn fetchUser(id: String) -> Result<String, String>
 
 Rules:
 
-- `? "..."` is the prose description
-- `! [...]` declares effects
-- indentation defines the body
+- `? "..."` is the prose description — must be indented on the line directly after the function signature, no blank line between
+- `! [...]` declares effects — also indented, directly after `?` (or after signature if no `?`)
+- indentation defines the body — the first expression must follow immediately, no blank lines after signature/`?`/`!`
 - the last expression is the return value
 - there is no `return` keyword
 - `main` returns `Unit` or `Result<Unit, String>`
@@ -202,7 +202,7 @@ Rules:
 
 ### Effects
 
-Effects are method-level and exact.
+Effects can be granular or namespace-wide.
 
 ```aver
 fn save(data: String) -> Unit
@@ -212,6 +212,9 @@ fn save(data: String) -> Unit
 ```
 
 If a function calls `Console.print`, `Http.get`, or another effectful capability without declaring it, the compiler errors. Effects also propagate through calls, so callers must declare the effects required by their callees.
+
+- `! [Http.get]` allows only `Http.get`
+- `! [Http]` covers all `Http.*` effects
 
 Example with input parsing:
 
@@ -227,7 +230,7 @@ fn askName() -> String
 
 ### Verify and replay
 
-Regular verify:
+Regular verify — each line is `expression => expected_value` (note: `=>`, not `=`):
 
 ```aver
 fn add(a: Int, b: Int) -> Int
@@ -238,7 +241,9 @@ verify add
     add(0, 0) => 0
 ```
 
-Law verify:
+**Important:** the separator is `=>` (fat arrow), never `=`. Writing `=` is a parse error.
+
+Law verify (generative testing over value ranges):
 
 ```aver
 verify add law commutative
@@ -246,6 +251,11 @@ verify add law commutative
     given b: Int = [-1, 0, 1]
     add(a, b) => add(b, a)
 ```
+
+Law verify rules:
+- `given` lines define value ranges
+- exactly one assertion line (`lhs => rhs`)
+- the assertion must be a single expression, not a boolean chain — if you need multiple conditions, extract a helper function
 
 Use `verify` for pure logic. Use replay for effectful flows.
 
@@ -271,10 +281,18 @@ decision UseResultNotExceptions
 
 ### Operators
 
-- arithmetic: `+`, `-`, `*`, `/`
+- arithmetic: `+`, `-`, `*`, `/` (integer division truncates)
 - comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
 - error propagation: `expr?`
 - independence: `(a, b)!`, `(a, b)?!`
+
+**These operators do NOT exist** — do not use them:
+
+- no `%` (modulo) — compute as `a - (a / b) * b`
+- no `&&`, `||` (boolean and/or) — use `Bool.and(a, b)`, `Bool.or(a, b)`, or nested `match`
+- no `!` (boolean not) as prefix — use `Bool.not(x)`
+- no `+=`, `-=`, `++`, `--` (mutation operators)
+- no bitwise operators
 
 ### Recursion
 
@@ -295,13 +313,27 @@ Useful pure functions:
 
 - `Int.fromString : String -> Result<Int, String>`
 - `Int.toString : Int -> String`
+- `Int.abs : Int -> Int`
 - `Float.fromString : String -> Result<Float, String>`
+- `String.len : String -> Int`
+- `String.contains : (String, String) -> Bool`
+- `String.toUpper : String -> String`
+- `String.toLower : String -> String`
 - `String.trim : String -> String`
+- `String.join : (List<String>, String) -> String`
+- `String.concat : (String, String) -> String`
 - `List.len : List<T> -> Int`
-- `Map.get : Map<K, V> -> Option<V>`
-- `Vector.get : Vector<T> -> Option<T>`
-- `Result.withDefault`
-- `Option.withDefault`
+- `List.prepend : (T, List<T>) -> List<T>`
+- `List.concat : (List<T>, List<T>) -> List<T>`
+- `List.reverse : List<T> -> List<T>`
+- `List.contains : (List<T>, T) -> Bool`
+- `Map.get : (Map<K, V>, K) -> Option<V>`
+- `Vector.get : (Vector<T>, Int) -> Option<T>`
+- `Result.withDefault : (Result<T, E>, T) -> T`
+- `Option.withDefault : (Option<T>, T) -> T`
+- `Bool.and : (Bool, Bool) -> Bool`
+- `Bool.or : (Bool, Bool) -> Bool`
+- `Bool.not : Bool -> Bool`
 
 Useful effectful namespaces:
 
@@ -327,7 +359,6 @@ Write these with recursion.
 
 ```text
 aver run file.av
-aver run file.av --vm
 aver run file.av --self-host
 aver verify file.av
 aver check file.av
@@ -363,6 +394,10 @@ Then zoom in with `--focus <symbol>` or a larger budget.
 9. Expecting closures or lambdas — not supported
 10. Expecting mutable variables — not supported
 11. Expecting `List.map`, `List.filter`, or `List.fold` to exist
+12. Using `%` for modulo — not an operator; use `a - (a / b) * b`
+13. Using `&&`, `||` for boolean logic — use `Bool.and`, `Bool.or`, or nested `match`
+14. Writing `=` instead of `=>` in verify blocks — the separator is always `=>`
+15. Using `..` without a name in list patterns — write `[h, ..t]`, not `[h, ..]`
 
 ## Further reading
 
