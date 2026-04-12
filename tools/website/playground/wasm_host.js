@@ -304,9 +304,10 @@ export class AverBrowserHost {
         this.lastFlushMs = now;
 
         const snapshot = this.terminal.toSnapshot();
-        const memBytes = this.instance
-            ? this.instance.exports.memory.buffer.byteLength
-            : 0;
+        const heapPtr = this.instance?.exports?.$heap_ptr?.value;
+        const memBytes = heapPtr != null
+            ? heapPtr
+            : (this.instance ? this.instance.exports.memory.buffer.byteLength : 0);
         this.post({
             type: "terminal",
             cols: this.terminal.cols,

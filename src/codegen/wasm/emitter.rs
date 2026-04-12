@@ -445,6 +445,7 @@ pub fn build_wasm_module(
     // Export $alloc so hosts can allocate guest memory for strings
     // returned by host imports (readLine, readKey, format_value, etc.)
     export_section.export("alloc", ExportKind::Func, rt.alloc);
+    export_section.export("$heap_ptr", ExportKind::Global, 0);
     export_section.export("$variant_names_ptr", ExportKind::Global, 4);
     export_section.export("$variant_names_len", ExportKind::Global, 5);
 
@@ -480,6 +481,14 @@ pub fn build_wasm_module(
         }
     }
 
+    eprintln!("[wasm-tco] {} mutual groups, {} self-tco fns", mutual_tco_groups.len(), tco_fns.len());
+    for (group_idx, group) in mutual_tco_groups.iter().enumerate() {
+        let names: Vec<_> = group.member_indices.iter().map(|i| &user_fns[*i].canonical_name).collect();
+        eprintln!("[wasm-tco] mutual group {}: {:?}", group_idx, names);
+    }
+    for name in &tco_fns {
+        eprintln!("[wasm-tco] self-tco: {}", name);
+    }
     for (group, layout) in mutual_tco_groups.iter().zip(&mutual_tco_layouts) {
         let func = emit_mutual_tco_trampoline(
             group,
