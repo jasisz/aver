@@ -304,6 +304,9 @@ export class AverBrowserHost {
         this.lastFlushMs = now;
 
         const snapshot = this.terminal.toSnapshot();
+        const memBytes = this.instance
+            ? this.instance.exports.memory.buffer.byteLength
+            : 0;
         this.post({
             type: "terminal",
             cols: this.terminal.cols,
@@ -311,6 +314,7 @@ export class AverBrowserHost {
             snapshot,
             blank: this.terminal.isBlank(),
             rawMode: this.rawMode,
+            memoryBytes: memBytes,
         }, [snapshot.chars.buffer, snapshot.colors.buffer]);
     }
 

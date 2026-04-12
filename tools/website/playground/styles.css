@@ -75,6 +75,13 @@ body {
     margin-left: auto;
     font-size: 0.75rem;
     color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+.memory-label {
+    font-family: var(--mono, monospace);
+    opacity: 0.7;
 }
 
 .isolation-note {

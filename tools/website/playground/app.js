@@ -16,6 +16,7 @@ const dom = {
     console: document.querySelector("[data-console]"),
     lineInput: document.querySelector("[data-line-input]"),
     lineButton: document.querySelector("[data-line-button]"),
+    memory: document.querySelector("[data-memory]"),
     isolationNote: document.querySelector("[data-isolation-note]"),
     isolationCopy: document.querySelector("[data-isolation-copy]"),
 };
@@ -81,6 +82,17 @@ function codePointsToString(chars, start, end) {
 function setStatus(text, tone = "idle") {
     dom.status.textContent = text;
     dom.status.dataset.tone = tone;
+}
+
+function updateMemoryDisplay(bytes) {
+    if (!dom.memory) return;
+    if (bytes < 1024) {
+        dom.memory.textContent = bytes + " B";
+    } else if (bytes < 1024 * 1024) {
+        dom.memory.textContent = (bytes / 1024).toFixed(1) + " KB";
+    } else {
+        dom.memory.textContent = (bytes / (1024 * 1024)).toFixed(1) + " MB";
+    }
 }
 
 function setRawMode(enabled) {
@@ -177,6 +189,9 @@ function handleWorkerMessage(event) {
             break;
         case "terminal":
             queueTerminalFrame(message);
+            if (message.memoryBytes != null) {
+                updateMemoryDisplay(message.memoryBytes);
+            }
             break;
         case "status":
             setStatus(message.text, message.level);
@@ -268,6 +283,7 @@ async function runSelectedModule(fixedSize) {
 
     clearOutput();
     setRawMode(false);
+    if (dom.memory) dom.memory.textContent = "";
     dom.runButton.disabled = true;
     dom.stopButton.disabled = false;
     dom.terminal.dataset.empty = "false";
