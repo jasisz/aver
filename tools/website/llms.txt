@@ -151,7 +151,7 @@ match x > 0
 
 ### Constructors and user-defined types
 
-UpperCamel callees are constructors. They are always qualified when namespaced.
+UpperCamel callees are constructors. They are **always qualified** — both built-in and user-defined:
 
 ```aver
 Result.Ok(42)
@@ -160,14 +160,34 @@ Option.Some("hello")
 Option.None
 ```
 
-Sum types:
+Sum types (no type parameters — use concrete types):
 
 ```aver
 type Shape
     Circle(Float)
     Rect(Float, Float)
     Point
+
+type MyList
+    Nil
+    Cons(Int, MyList)
 ```
+
+**Note:** user-defined types do not support generics. Write `type MyList` with `Cons(Int, MyList)`, not `type MyList<T>` with `Cons(T, MyList<T>)`.
+
+Constructing and matching user-defined types — always use `TypeName.Variant`:
+
+```aver
+Shape.Circle(5.0)
+Shape.Point
+
+match s
+    Shape.Circle(r) -> r * r
+    Shape.Rect(w, h) -> w * h
+    Shape.Point -> 0.0
+```
+
+**Never** write bare `Circle(r)` or `Cons(h, t)` — always qualify: `Shape.Circle(r)`, `MyList.Cons(h, t)`.
 
 Records:
 
@@ -241,7 +261,9 @@ verify add
     add(0, 0) => 0
 ```
 
-**Important:** the separator is `=>` (fat arrow), never `=`. Writing `=` is a parse error.
+**Important:**
+- The separator is `=>` (fat arrow), never `=`. Writing `=` is a parse error.
+- Every pure function must have a `verify` block. `aver check` will warn if a pure function is missing one. If you write helper functions, add a verify block for each.
 
 Law verify (generative testing over value ranges):
 
