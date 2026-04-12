@@ -309,9 +309,6 @@ export class AverBrowserHost {
             ? this.instance.exports.memory.buffer.byteLength
             : 0;
         const memBytes = heapPtr != null ? heapPtr : pageBytes;
-        if (heapPtr != null && pageBytes > 0) {
-            console.log(`[mem] heap=${heapPtr} pages=${pageBytes} (${(pageBytes/1024).toFixed(0)}KB)`);
-        }
         this.post({
             type: "terminal",
             cols: this.terminal.cols,
@@ -320,6 +317,7 @@ export class AverBrowserHost {
             blank: this.terminal.isBlank(),
             rawMode: this.rawMode,
             memoryBytes: memBytes,
+            memoryPages: pageBytes,
         }, [snapshot.chars.buffer, snapshot.colors.buffer]);
     }
 

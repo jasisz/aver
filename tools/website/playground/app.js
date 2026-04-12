@@ -84,17 +84,19 @@ function setStatus(text, tone = "idle") {
     dom.status.dataset.tone = tone;
 }
 
-function updateMemoryDisplay(bytes) {
+function formatBytes(bytes) {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+function updateMemoryDisplay(heapBytes, pageBytes) {
     if (!dom.memory) return;
-    let size;
-    if (bytes < 1024) {
-        size = bytes + " B";
-    } else if (bytes < 1024 * 1024) {
-        size = (bytes / 1024).toFixed(1) + " KB";
+    if (pageBytes) {
+        dom.memory.textContent = "heap " + formatBytes(heapBytes) + " / " + formatBytes(pageBytes);
     } else {
-        size = (bytes / (1024 * 1024)).toFixed(1) + " MB";
+        dom.memory.textContent = "mem " + formatBytes(heapBytes);
     }
-    dom.memory.textContent = "mem " + size;
 }
 
 function setRawMode(enabled) {
@@ -192,7 +194,7 @@ function handleWorkerMessage(event) {
         case "terminal":
             queueTerminalFrame(message);
             if (message.memoryBytes != null) {
-                updateMemoryDisplay(message.memoryBytes);
+                updateMemoryDisplay(message.memoryBytes, message.memoryPages);
             }
             break;
         case "status":
@@ -1028,7 +1030,7 @@ const GAME_TOUCH = {
             { key: "down", text: "↓" }, { key: "right", text: "→" },
         ]},
         { label: "", keys: [
-            { key: "q", text: "Quit" },
+            { key: ">", text: ">" }, { key: "q", text: "Quit" },
         ]},
     ],
     doom: [
