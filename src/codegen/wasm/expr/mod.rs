@@ -129,6 +129,8 @@ pub(super) struct ExprEmitter<'a> {
     /// Per-iteration mark for TCO loops (yard semantics): only compact
     /// allocations from the current iteration, not the entire frame.
     pub iter_mark_local: Option<u32>,
+    /// Heap pointer after last compaction — compact when garbage exceeds threshold.
+    pub gc_watermark_local: Option<u32>,
     /// Whether the current function result is a heap pointer in the typed ABI.
     pub fn_return_is_heap: bool,
     /// Thin frame: no boundary compaction or truncate needed on return.
@@ -172,6 +174,7 @@ impl<'a> ExprEmitter<'a> {
             errors: Vec::new(),
             boundary_mark_local: None,
             iter_mark_local: None,
+            gc_watermark_local: None,
             fn_return_is_heap: false,
             is_thin: false,
             is_parent_thin: false,

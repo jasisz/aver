@@ -481,14 +481,6 @@ pub fn build_wasm_module(
         }
     }
 
-    eprintln!("[wasm-tco] {} mutual groups, {} self-tco fns", mutual_tco_groups.len(), tco_fns.len());
-    for (group_idx, group) in mutual_tco_groups.iter().enumerate() {
-        let names: Vec<_> = group.member_indices.iter().map(|i| &user_fns[*i].canonical_name).collect();
-        eprintln!("[wasm-tco] mutual group {}: {:?}", group_idx, names);
-    }
-    for name in &tco_fns {
-        eprintln!("[wasm-tco] self-tco: {}", name);
-    }
     for (group, layout) in mutual_tco_groups.iter().zip(&mutual_tco_layouts) {
         let func = emit_mutual_tco_trampoline(
             group,
@@ -950,6 +942,16 @@ fn emit_mutual_tco_trampoline(
     // Yard semantics: per-iteration mark for mutual TCO trampoline.
     let iter_mark = emitter.alloc_local(WasmType::I32);
     emitter.iter_mark_local = Some(iter_mark);
+
+    // Watermark: heap_ptr after last compaction. Compact when garbage
+    // (heap_ptr - watermark) exceeds threshold. Adaptive — compacts
+    // only when actual garbage warrants it, not on a fixed schedule.
+    let gc_watermark = emitter.alloc_local(WasmType::I32);
+    emitter.gc_watermark_local = Some(gc_watermark);
+    emitter.instructions.push(Instruction::GlobalGet(0));
+    emitter
+        .instructions
+        .push(Instruction::LocalSet(gc_watermark));
 
     emitter
         .instructions

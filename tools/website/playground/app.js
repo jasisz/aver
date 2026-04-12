@@ -90,8 +90,12 @@ function formatBytes(bytes) {
     return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
 
+let lastMemUpdate = 0;
 function updateMemoryDisplay(heapBytes, pageBytes) {
     if (!dom.memory) return;
+    const now = performance.now();
+    if (now - lastMemUpdate < 500) return;
+    lastMemUpdate = now;
     if (pageBytes) {
         dom.memory.textContent = "heap " + formatBytes(heapBytes) + " / " + formatBytes(pageBytes);
     } else {
