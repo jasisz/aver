@@ -86,13 +86,15 @@ function setStatus(text, tone = "idle") {
 
 function updateMemoryDisplay(bytes) {
     if (!dom.memory) return;
+    let size;
     if (bytes < 1024) {
-        dom.memory.textContent = bytes + " B";
+        size = bytes + " B";
     } else if (bytes < 1024 * 1024) {
-        dom.memory.textContent = (bytes / 1024).toFixed(1) + " KB";
+        size = (bytes / 1024).toFixed(1) + " KB";
     } else {
-        dom.memory.textContent = (bytes / (1024 * 1024)).toFixed(1) + " MB";
+        size = (bytes / (1024 * 1024)).toFixed(1) + " MB";
     }
+    dom.memory.textContent = "mem " + size;
 }
 
 function setRawMode(enabled) {
