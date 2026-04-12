@@ -1154,28 +1154,21 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions
                     .push(Instruction::LocalSet(tmp_base + i as u32));
             }
-            // Yard semantics for mutual TCO: skip full compaction when this
-            // iteration barely allocated (heap_ptr - iter_mark <= 256), but
-            // still truncate to iter_mark to prevent dead objects accumulating.
-            // Full compaction copies survivors and is expensive; truncation is
-            // a single global.set and catches the common case (small dead
-            // strings from HUD rendering, interpolation temporaries).
+            // Yard semantics for mutual TCO: compact when this iteration
+            // allocated anything significant. Threshold lowered from 256 to 32
+            // because nested calls (drawRows) can truncate back, masking
+            // accumulation of small temporaries (HUD strings, record updates).
             if let Some(iter_mark) = self.iter_mark_local {
                 let fn_mark = self.boundary_mark_local.unwrap_or(iter_mark);
-                // if (heap_ptr - iter_mark > 256) → full GC from fn_mark
+                // if (heap_ptr - iter_mark > 32) → full GC from fn_mark, else skip
                 self.instructions.push(Instruction::GlobalGet(0));
                 self.instructions.push(Instruction::LocalGet(iter_mark));
                 self.instructions.push(Instruction::I32Sub);
-                self.instructions.push(Instruction::I32Const(256));
+                self.instructions.push(Instruction::I32Const(4096));
                 self.instructions.push(Instruction::I32GtU);
                 self.emit_if(wasm_encoder::BlockType::Empty);
                 self.instructions.push(Instruction::LocalGet(fn_mark));
                 self.emit_tco_compaction(args, tmp_base);
-                self.instructions.push(Instruction::Else);
-                // else → truncate to iter_mark (drop dead temporaries cheaply)
-                self.instructions.push(Instruction::LocalGet(iter_mark));
-                self.instructions
-                    .push(Instruction::Call(self.rt.truncate));
                 self.emit_end();
             } else if let Some(mark_local) = self.boundary_mark_local {
                 self.instructions.push(Instruction::LocalGet(mark_local));
