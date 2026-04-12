@@ -305,9 +305,13 @@ export class AverBrowserHost {
 
         const snapshot = this.terminal.toSnapshot();
         const heapPtr = this.instance?.exports?.$heap_ptr?.value;
-        const memBytes = heapPtr != null
-            ? heapPtr
-            : (this.instance ? this.instance.exports.memory.buffer.byteLength : 0);
+        const pageBytes = this.instance
+            ? this.instance.exports.memory.buffer.byteLength
+            : 0;
+        const memBytes = heapPtr != null ? heapPtr : pageBytes;
+        if (heapPtr != null && pageBytes > 0) {
+            console.log(`[mem] heap=${heapPtr} pages=${pageBytes} (${(pageBytes/1024).toFixed(0)}KB)`);
+        }
         this.post({
             type: "terminal",
             cols: this.terminal.cols,
