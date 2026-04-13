@@ -2,6 +2,17 @@
 
 All notable changes to Aver are documented here.
 
+## 0.9.2 (2026-04-13)
+
+### Fixed
+- **WASM mutual TCO memory leak** — dead temporaries (HUD strings, record updates) accumulated across iterations in mutual tail-call loops because nested function calls masked garbage from the yard heuristic. Replaced per-iteration skip threshold with watermark-based adaptive compaction (triggers when garbage exceeds 16KB since last collection). Game of Life editor loop now stable at ~15KB instead of growing to 10+ MB.
+
+### Added
+- **`$heap_ptr` WASM export** — modules export the bump allocator position for host-side memory inspection.
+- **Playground memory display** — live heap usage shown in status bar, throttled to 500ms updates.
+- **Playground rogue touch controls** — added descend stairs (>) button.
+- **`llms.txt` improvements** — expanded namespace signatures, explicit "do NOT exist" operator section, verify block rules, qualified constructor examples. Driven by vera-bench LLM evaluation data.
+
 ## 0.9.1 (2026-04-10)
 
 ### Added
