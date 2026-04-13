@@ -57,11 +57,13 @@ The WASM backend uses a single bump-heap allocator (`$alloc`) with boundary comp
 
 **Function return**: `collect_begin(mark)` → `retain_i32(result)` deep-copies reachable objects to a temp area → `collect_end()` rebases internal pointers and copies back → `rebase_i32(result)`. Dead objects between mark and heap_ptr are reclaimed.
 
-**TCO iterations (yard semantics)**: an `iter_mark` is saved at each loop iteration. If the iteration allocated very little (≤256 bytes), compaction is skipped entirely (O(1) — accumulator pattern like list building). Otherwise, full compaction from the function's `fn_mark` reclaims dead objects from previous iterations (replacement pattern like game loops).
+**Self-call TCO (yard semantics)**: an `iter_mark` is saved at each loop iteration. If the iteration allocated very little (≤256 bytes), compaction is skipped entirely (O(1) — accumulator pattern like list building). Otherwise, full compaction from the function's `fn_mark` reclaims dead objects from previous iterations (replacement pattern like game loops).
+
+**Mutual TCO (watermark)**: mutual tail-call trampolines use a `gc_watermark` instead of per-iteration skip heuristics. Compaction triggers when accumulated garbage (`heap_ptr - watermark`) exceeds 16KB since the last collection, then resets the watermark. This handles nested calls that truncate back to their own boundary (which would mask per-iteration growth from `iter_mark`).
 
 **Thin/parent-thin frames**: small pure functions (leaf computations, dispatch) skip boundary work entirely — no mark saved, no compaction on return.
 
-**Exported `alloc`**: modules export `$alloc(size: i32) -> i32` so hosts can allocate guest memory safely for strings returned from host imports.
+**Exported globals**: modules export `$heap_ptr` (bump allocator position) for host-side memory inspection, and `$alloc(size: i32) -> i32` so hosts can allocate guest memory safely for strings returned from host imports.
 
 ## Limitations
 
