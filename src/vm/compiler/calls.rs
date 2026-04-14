@@ -186,18 +186,18 @@ impl<'a> FnCompiler<'a> {
         // Skip forward-call optimization when in owned context — the
         // forward path doesn't propagate owned_mask to CALL_BUILTIN_OWNED.
         // Fall through to compile_resolved_call which does.
-        if self.owned_params.is_empty() {
-            if let Some(plan) = classify_forward_call_parts(&fn_expr.node, args, &call_ctx) {
-                let Some(target) = self.call_plan_to_target(plan.target.clone()) else {
-                    return Err(CompileError {
-                        msg: "dynamic call cannot lower through ForwardCallPlan".to_string(),
-                    });
-                };
-                for arg in plan.args {
-                    self.compile_forward_arg(arg)?;
-                }
-                return self.emit_resolved_call_after_loaded_args(target, args.len());
+        if self.owned_params.is_empty()
+            && let Some(plan) = classify_forward_call_parts(&fn_expr.node, args, &call_ctx)
+        {
+            let Some(target) = self.call_plan_to_target(plan.target.clone()) else {
+                return Err(CompileError {
+                    msg: "dynamic call cannot lower through ForwardCallPlan".to_string(),
+                });
+            };
+            for arg in plan.args {
+                self.compile_forward_arg(arg)?;
             }
+            return self.emit_resolved_call_after_loaded_args(target, args.len());
         }
 
         if let Some(target) = self.resolve_call_target(&fn_expr.node) {
