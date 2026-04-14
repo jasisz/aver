@@ -257,14 +257,18 @@ impl<'a> FnCompiler<'a> {
         args: &[Spanned<Expr>],
     ) -> Result<(), CompileError> {
         // Compute owned mask before compiling args (we need the AST).
-        // This is consumed by emit_builtin_after_args below.
-        if !self.owned_params.is_empty() {
+        // Save to a local — nested compile_expr calls may clobber
+        // pending_owned_mask via recursive compile_resolved_call.
+        let saved_mask = if !self.owned_params.is_empty() {
             let arg_refs: Vec<&Spanned<Expr>> = args.iter().collect();
-            self.pending_owned_mask = self.compute_builtin_owned_mask(&arg_refs);
-        }
+            self.compute_builtin_owned_mask(&arg_refs)
+        } else {
+            0
+        };
         for arg in args {
             self.compile_expr(arg)?;
         }
+        self.pending_owned_mask = saved_mask;
         self.emit_resolved_call_after_loaded_args(target, args.len())
     }
 
@@ -410,11 +414,14 @@ impl<'a> FnCompiler<'a> {
                 Ok(())
             }
             LeafOp::MapSet { map, key, value } => {
-                // Compute owned mask before compiling — arg 0 is the map
-                self.pending_owned_mask = self.compute_builtin_owned_mask(&[map, key, value]);
+                // Save owned mask to a local BEFORE compiling args — nested
+                // calls (e.g. Int.toString) go through compile_resolved_call
+                // which overwrites pending_owned_mask, losing the map's bit.
+                let owned_mask = self.compute_builtin_owned_mask(&[map, key, value]);
                 self.compile_expr(map)?;
                 self.compile_expr(key)?;
                 self.compile_expr(value)?;
+                self.pending_owned_mask = owned_mask;
                 self.emit_builtin_after_args(VmBuiltin::MapSet, 3);
                 Ok(())
             }
@@ -442,22 +449,14 @@ impl<'a> FnCompiler<'a> {
                 index,
                 value,
             } => {
-                self.pending_owned_mask = self.compute_builtin_owned_mask(&[vector, index, value]);
+                // Note: owned path cannot use CALL_BUILTIN_OWNED here because
+                // vec_set_nv_owned returns Option<Vector> while the fused
+                // VECTOR_SET_OR_KEEP unwraps to raw Vector. Direct Vector.set
+                // calls still get the owned path via emit_builtin_after_args.
                 self.compile_expr(vector)?;
                 self.compile_expr(index)?;
                 self.compile_expr(value)?;
-                if self.pending_owned_mask != 0 {
-                    // Owned path: use CALL_BUILTIN_OWNED for take optimization
-                    let mask = self.pending_owned_mask;
-                    self.pending_owned_mask = 0;
-                    let symbol_id = self.symbols.intern_builtin(VmBuiltin::VectorSet);
-                    self.emit_op(CALL_BUILTIN_OWNED);
-                    self.emit_u32(symbol_id);
-                    self.emit_u8(3);
-                    self.emit_u8(mask);
-                } else {
-                    self.emit_op(VECTOR_SET_OR_KEEP);
-                }
+                self.emit_op(VECTOR_SET_OR_KEEP);
                 Ok(())
             }
             LeafOp::ListIndexGet { list, index } => {
