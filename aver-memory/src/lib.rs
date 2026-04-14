@@ -73,6 +73,10 @@ pub trait MapLike: Sized {
     fn new() -> Self;
     fn get(&self, key: &u64) -> Option<&(NanValue, NanValue)>;
     fn insert(&self, key: u64, value: (NanValue, NanValue)) -> Self;
+    /// Insert with owned self — avoids clone when sole owner.
+    fn insert_owned(self, key: u64, value: (NanValue, NanValue)) -> Self {
+        self.insert(key, value) // default: fall back to &self version
+    }
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool {
         self.len() == 0
@@ -1291,6 +1295,10 @@ impl MapLike for aver_rt::AverMap<u64, (NanValue, NanValue)> {
 
     fn insert(&self, key: u64, value: (NanValue, NanValue)) -> Self {
         aver_rt::AverMap::insert(self, key, value)
+    }
+
+    fn insert_owned(self, key: u64, value: (NanValue, NanValue)) -> Self {
+        aver_rt::AverMap::insert_owned(self, key, value)
     }
 
     fn len(&self) -> usize {
