@@ -251,6 +251,12 @@ impl<'a> FnCompiler<'a> {
         target: CallTarget,
         args: &[Spanned<Expr>],
     ) -> Result<(), CompileError> {
+        // Compute owned mask before compiling args (we need the AST).
+        // This is consumed by emit_builtin_after_args below.
+        if !self.owned_params.is_empty() {
+            let arg_refs: Vec<&Spanned<Expr>> = args.iter().collect();
+            self.pending_owned_mask = self.compute_builtin_owned_mask(&arg_refs);
+        }
         for arg in args {
             self.compile_expr(arg)?;
         }
@@ -261,22 +267,50 @@ impl<'a> FnCompiler<'a> {
         &mut self,
         target: &str,
         args: &[Spanned<Expr>],
+        owned: &[bool],
     ) -> Result<(), CompileError> {
+        // Set owned_params context so compile_call can emit CALL_BUILTIN_OWNED
+        // for builtins whose arguments reference sole-owned parameters.
+        self.owned_params.clear();
+        for (i, &is_owned) in owned.iter().enumerate() {
+            if is_owned {
+                self.owned_params.insert(i as u16);
+            }
+        }
+
         for arg in args {
             self.compile_expr(arg)?;
         }
+
+        // Clear owned context after compiling args
+        self.owned_params.clear();
+
+        // Pack owned flags into a bitmask (up to 8 args).
+        // Bit i is set if arg i is sole-owned and can be reused in-place.
+        let owned_mask: u8 = owned
+            .iter()
+            .enumerate()
+            .take(8)
+            .fold(
+                0u8,
+                |mask, (i, &is_owned)| {
+                    if is_owned { mask | (1 << i) } else { mask }
+                },
+            );
 
         let call_ctx = VmCallCtx { compiler: self };
         match classify_tail_call_plan(target, &self.name, &call_ctx) {
             TailCallPlan::SelfCall => {
                 self.emit_op(TAIL_CALL_SELF);
                 self.emit_u8(args.len() as u8);
+                self.emit_u8(owned_mask);
             }
             TailCallPlan::KnownFunction(name) => {
                 if let Some(fn_id) = self.resolve_fn_id(&name) {
                     self.emit_op(TAIL_CALL_KNOWN);
                     self.emit_u16(fn_id as u16);
                     self.emit_u8(args.len() as u8);
+                    self.emit_u8(owned_mask);
                 } else {
                     return Err(CompileError {
                         msg: format!("unknown tail call target: {}", name),
@@ -371,6 +405,8 @@ impl<'a> FnCompiler<'a> {
                 Ok(())
             }
             LeafOp::MapSet { map, key, value } => {
+                // Compute owned mask before compiling — arg 0 is the map
+                self.pending_owned_mask = self.compute_builtin_owned_mask(&[map, key, value]);
                 self.compile_expr(map)?;
                 self.compile_expr(key)?;
                 self.compile_expr(value)?;
@@ -401,10 +437,22 @@ impl<'a> FnCompiler<'a> {
                 index,
                 value,
             } => {
+                self.pending_owned_mask = self.compute_builtin_owned_mask(&[vector, index, value]);
                 self.compile_expr(vector)?;
                 self.compile_expr(index)?;
                 self.compile_expr(value)?;
-                self.emit_op(VECTOR_SET_OR_KEEP);
+                if self.pending_owned_mask != 0 {
+                    // Owned path: use CALL_BUILTIN_OWNED for take optimization
+                    let mask = self.pending_owned_mask;
+                    self.pending_owned_mask = 0;
+                    let symbol_id = self.symbols.intern_builtin(VmBuiltin::VectorSet);
+                    self.emit_op(CALL_BUILTIN_OWNED);
+                    self.emit_u32(symbol_id);
+                    self.emit_u8(3);
+                    self.emit_u8(mask);
+                } else {
+                    self.emit_op(VECTOR_SET_OR_KEEP);
+                }
                 Ok(())
             }
             LeafOp::ListIndexGet { list, index } => {
@@ -434,20 +482,65 @@ impl<'a> FnCompiler<'a> {
     }
 
     fn emit_builtin_after_args(&mut self, builtin: VmBuiltin, argc: usize) {
+        let owned_mask = self.pending_owned_mask;
+        self.pending_owned_mask = 0;
+
         match builtin {
             VmBuiltin::ListLen => self.emit_op(LIST_LEN),
             VmBuiltin::ListPrepend => self.emit_op(LIST_PREPEND),
             VmBuiltin::VectorGet => self.emit_op(VECTOR_GET),
+            VmBuiltin::VectorSet if owned_mask != 0 => {
+                // Owned path: go through CALL_BUILTIN_OWNED for take optimization
+                let symbol_id = self.symbols.intern_builtin(builtin);
+                self.emit_op(CALL_BUILTIN_OWNED);
+                self.emit_u32(symbol_id);
+                self.emit_u8(argc as u8);
+                self.emit_u8(owned_mask);
+            }
             VmBuiltin::VectorSet => self.emit_op(VECTOR_SET),
             VmBuiltin::OptionWithDefault => self.emit_op(UNWRAP_OR),
             VmBuiltin::ResultWithDefault => self.emit_op(UNWRAP_RESULT_OR),
             _ => {
                 let symbol_id = self.symbols.intern_builtin(builtin);
-                self.emit_op(CALL_BUILTIN);
-                self.emit_u32(symbol_id);
-                self.emit_u8(argc as u8);
+                if owned_mask != 0 {
+                    self.emit_op(CALL_BUILTIN_OWNED);
+                    self.emit_u32(symbol_id);
+                    self.emit_u8(argc as u8);
+                    self.emit_u8(owned_mask);
+                } else {
+                    self.emit_op(CALL_BUILTIN);
+                    self.emit_u32(symbol_id);
+                    self.emit_u8(argc as u8);
+                }
             }
         }
+    }
+
+    /// Compute owned bitmask for builtin args by checking if any arg
+    /// is a simple local reference to an owned parameter.
+    fn compute_builtin_owned_mask(&self, arg_exprs: &[&Spanned<Expr>]) -> u8 {
+        if self.owned_params.is_empty() {
+            return 0;
+        }
+        let mut mask = 0u8;
+        for (i, arg) in arg_exprs.iter().enumerate().take(8) {
+            match &arg.node {
+                Expr::Ident(name) => {
+                    if let Some(&slot) = self.local_slots.get(name)
+                        && self.owned_params.contains(&slot)
+                    {
+                        mask |= 1 << i;
+                    }
+                }
+                Expr::Resolved(slot) => {
+                    if self.owned_params.contains(slot) {
+                        mask |= 1 << i;
+                    }
+                }
+                _ => {}
+            }
+        }
+        mask
     }
 
     fn nan_literal(&mut self, lit: &Literal) -> NanValue {

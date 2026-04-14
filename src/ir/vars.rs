@@ -87,9 +87,7 @@ fn collect_vars_inner(expr: &Expr, vars: &mut HashSet<String>) {
         }
         Expr::TailCall(boxed) => {
             let TailCallData {
-                target: _,
-                args: args,
-                ..
+                target: _, args, ..
             } = boxed.as_ref();
             for a in args {
                 collect_vars_inner(&a.node, vars);

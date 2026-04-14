@@ -631,11 +631,7 @@ impl TypeChecker {
             } => self.infer_record_update_expr(type_name, base, updates),
 
             Expr::TailCall(boxed) => {
-                let TailCallData {
-                    target: target,
-                    args: args,
-                    ..
-                } = boxed.as_ref();
+                let TailCallData { target, args, .. } = boxed.as_ref();
                 for arg in args {
                     let _ = self.infer_type(arg);
                 }

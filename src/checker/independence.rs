@@ -61,9 +61,7 @@ fn collect_independence_warnings_in_expr(
         }
         Expr::TailCall(boxed) => {
             let TailCallData {
-                target: _,
-                args: args,
-                ..
+                target: _, args, ..
             } = boxed.as_ref();
             for arg in args {
                 collect_independence_warnings_in_expr(arg, fd, fn_sigs, warnings);
@@ -239,11 +237,7 @@ fn collect_used_effects_expr(expr: &Spanned<Expr>, fn_sigs: &FnSigMap, out: &mut
             }
         }
         Expr::TailCall(boxed) => {
-            let TailCallData {
-                target: target,
-                args: args,
-                ..
-            } = boxed.as_ref();
+            let TailCallData { target, args, .. } = boxed.as_ref();
             if let Some((_, _, effects)) = fn_sigs.get(target) {
                 for effect in effects {
                     out.insert(effect.clone());

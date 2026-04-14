@@ -254,6 +254,41 @@ fn vec_get_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
     }
 }
 
+/// Vector.set with sole-owned first argument — takes instead of cloning.
+pub fn vec_set_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 3 {
+        return Err(RuntimeError::Error(format!(
+            "Vector.set() takes 3 arguments, got {}",
+            args.len()
+        )));
+    }
+    if !args[0].is_vector() {
+        return Err(RuntimeError::Error(
+            "Vector.set: first argument must be a Vector".to_string(),
+        ));
+    }
+    if !args[1].is_int() {
+        return Err(RuntimeError::Error(
+            "Vector.set: index must be an Int".to_string(),
+        ));
+    }
+    let idx = args[1].as_int(arena);
+    if idx < 0 {
+        return Ok(NanValue::NONE);
+    }
+    let mut items = arena.take_vector_value(args[0]);
+    let uidx = idx as usize;
+    if uidx >= items.len() {
+        return Ok(NanValue::NONE);
+    }
+    items[uidx] = args[2];
+    let new_vec_idx = arena.push_vector(items);
+    Ok(NanValue::new_some_value(
+        NanValue::new_vector(new_vec_idx),
+        arena,
+    ))
+}
+
 fn vec_set_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
     if args.len() != 3 {
         return Err(RuntimeError::Error(format!(

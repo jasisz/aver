@@ -171,6 +171,33 @@ impl VmRuntime {
             })
     }
 
+    pub(super) fn invoke_builtin_with_owned(
+        &mut self,
+        symbols: &VmSymbolTable,
+        builtin: VmBuiltin,
+        args: &[NanValue],
+        arena: &mut Arena,
+        owned_mask: u8,
+    ) -> Result<NanValue, VmError> {
+        // Fast path: if arg 0 is owned and this is a collection mutator,
+        // call the owned variant that takes instead of cloning.
+        if owned_mask & 1 != 0 {
+            let owned_result = match builtin {
+                VmBuiltin::MapSet => Some(crate::types::map::set_nv_owned(args, arena)),
+                VmBuiltin::VectorSet => Some(crate::types::vector::vec_set_nv_owned(args, arena)),
+                _ => None,
+            };
+            if let Some(result) = owned_result {
+                return result.map_err(|err| match err {
+                    crate::value::RuntimeError::Error(msg)
+                    | crate::value::RuntimeError::ErrorAt { msg, .. } => VmError::runtime(msg),
+                    other => VmError::runtime(format!("{:?}", other)),
+                });
+            }
+        }
+        self.invoke_builtin(symbols, builtin, args, arena)
+    }
+
     pub(super) fn invoke_builtin(
         &mut self,
         symbols: &VmSymbolTable,

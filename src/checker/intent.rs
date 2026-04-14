@@ -120,11 +120,7 @@ fn collect_used_effects_expr(expr: &Spanned<Expr>, fn_sigs: &FnSigMap, out: &mut
             }
         }
         Expr::TailCall(boxed) => {
-            let TailCallData {
-                target: target,
-                args: args,
-                ..
-            } = boxed.as_ref();
+            let TailCallData { target, args, .. } = boxed.as_ref();
             if let Some((_, _, effects)) = fn_sigs.get(target) {
                 for effect in effects {
                     out.insert(effect.clone());

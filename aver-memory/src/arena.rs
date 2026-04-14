@@ -199,6 +199,17 @@ impl<T: ArenaTypes> Arena<T> {
     }
 
     #[inline]
+    pub fn get_mut(&mut self, index: u32) -> &mut ArenaEntry<T> {
+        let (space, raw_index) = Self::decode_index(index);
+        match space {
+            HeapSpace::Young => &mut self.young_entries[raw_index as usize],
+            HeapSpace::Yard => &mut self.yard_entries[raw_index as usize],
+            HeapSpace::Handoff => &mut self.handoff_entries[raw_index as usize],
+            HeapSpace::Stable => &mut self.stable_entries[raw_index as usize],
+        }
+    }
+
+    #[inline]
     pub(crate) fn encode_index(space: HeapSpace, index: u32) -> u32 {
         ((space as u32) << HEAP_SPACE_SHIFT) | index
     }
@@ -449,6 +460,12 @@ impl<T: ArenaTypes> Arena<T> {
             _ => panic!("Arena: expected Vector at {}", index),
         }
     }
+    pub fn get_vector_mut(&mut self, index: u32) -> &mut Vec<NanValue> {
+        match self.get_mut(index) {
+            ArenaEntry::Vector(items) => items,
+            _ => panic!("Arena: expected Vector at {}", index),
+        }
+    }
     pub fn vector_ref_value(&self, value: NanValue) -> &[NanValue] {
         if value.is_empty_vector_immediate() {
             return &[];
@@ -462,8 +479,23 @@ impl<T: ArenaTypes> Arena<T> {
             self.get_vector(value.arena_index()).to_vec()
         }
     }
+    /// Take ownership of a vector, replacing the arena slot with an empty vec.
+    pub fn take_vector_value(&mut self, value: NanValue) -> Vec<NanValue> {
+        if value.is_empty_vector_immediate() {
+            Vec::new()
+        } else {
+            let index = value.arena_index();
+            std::mem::take(self.get_vector_mut(index))
+        }
+    }
     pub fn get_map(&self, index: u32) -> &T::Map {
         match self.get(index) {
+            ArenaEntry::Map(map) => map,
+            _ => panic!("Arena: expected Map at {}", index),
+        }
+    }
+    pub fn get_map_mut(&mut self, index: u32) -> &mut T::Map {
+        match self.get_mut(index) {
             ArenaEntry::Map(map) => map,
             _ => panic!("Arena: expected Map at {}", index),
         }
@@ -495,6 +527,17 @@ impl<T: ArenaTypes> Arena<T> {
             T::Map::new()
         } else {
             self.get_map(map.arena_index()).clone()
+        }
+    }
+    /// Take ownership of a map value, replacing it with an empty map in the arena.
+    /// Use when the caller is the sole owner (reuse analysis says `owned = true`).
+    /// Avoids the O(n) clone — the original slot becomes empty.
+    pub fn take_map_value(&mut self, map: NanValue) -> T::Map {
+        if map.is_empty_map_immediate() {
+            T::Map::new()
+        } else {
+            let index = map.arena_index();
+            std::mem::replace(self.get_map_mut(index), T::Map::new())
         }
     }
     pub fn get_fn(&self, index: u32) -> &T::Fn {

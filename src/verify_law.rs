@@ -422,11 +422,7 @@ fn collect_direct_pure_user_calls(
             }
         }
         Expr::TailCall(boxed) => {
-            let TailCallData {
-                target: target,
-                args: args,
-                ..
-            } = boxed.as_ref();
+            let TailCallData { target, args, .. } = boxed.as_ref();
             if fn_defs.contains_key(target)
                 && fn_sigs
                     .get(target)

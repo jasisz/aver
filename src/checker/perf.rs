@@ -217,9 +217,7 @@ fn walk_expr_inner<F: FnMut(&Spanned<Expr>)>(expr: &Expr, f: &mut F) {
         }
         Expr::TailCall(boxed) => {
             let TailCallData {
-                target: _,
-                args: args,
-                ..
+                target: _, args, ..
             } = boxed.as_ref();
             for arg in args {
                 walk_expr(arg, f);
@@ -391,9 +389,7 @@ fn collect_tailcall_args_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Vec<Spanned<
     match expr {
         Expr::TailCall(boxed) => {
             let TailCallData {
-                target: _,
-                args: args,
-                ..
+                target: _, args, ..
             } = boxed.as_ref();
             out.push(args);
         }

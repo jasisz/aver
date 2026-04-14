@@ -833,9 +833,7 @@ fn collect_calls_from_expr<'a>(
         }
         Expr::TailCall(boxed) => {
             let TailCallData {
-                target: name,
-                args: args,
-                ..
+                target: name, args, ..
             } = boxed.as_ref();
             out.push((name.clone(), args.iter().collect()));
             for arg in args {
@@ -929,9 +927,7 @@ fn collect_list_tail_binders_from_expr(
         }
         Expr::TailCall(boxed) => {
             let TailCallData {
-                target: _,
-                args: args,
-                ..
+                target: _, args, ..
             } = boxed.as_ref();
             for arg in args {
                 collect_list_tail_binders_from_expr(arg, list_param_name, tails);

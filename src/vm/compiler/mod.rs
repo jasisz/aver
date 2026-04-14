@@ -656,6 +656,13 @@ struct FnCompiler<'a> {
     line_table: Vec<(u16, u16)>,
     /// Last emitted line (for RLE dedup).
     last_noted_line: u16,
+    /// Parameter slots that are sole-owned in the current tail-call context.
+    /// Set during `compile_tail_call`, cleared after. Enables `compile_call`
+    /// to emit `CALL_BUILTIN_OWNED` when a builtin arg is an owned local.
+    owned_params: HashSet<u16>,
+    /// Pending owned mask for the next builtin call. Computed before compiling
+    /// args (when we still have the AST), consumed by `emit_builtin_after_args`.
+    pending_owned_mask: u8,
 }
 
 impl<'a> FnCompiler<'a> {
@@ -689,6 +696,8 @@ impl<'a> FnCompiler<'a> {
             source_file: String::new(),
             line_table: Vec::new(),
             last_noted_line: 0,
+            owned_params: HashSet::new(),
+            pending_owned_mask: 0,
         }
     }
 

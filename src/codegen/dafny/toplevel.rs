@@ -214,9 +214,7 @@ fn expr_has_call(expr: &Spanned<Expr>, fn_name: &str) -> bool {
         }
         Expr::TailCall(inner) => {
             let TailCallData {
-                target: name,
-                args: args,
-                ..
+                target: name, args, ..
             } = inner.as_ref();
             name == fn_name || args.iter().any(|a| expr_has_call(a, fn_name))
         }
@@ -377,9 +375,7 @@ fn count_recursive_calls(expr: &Spanned<Expr>, fn_name: &str) -> usize {
         }
         Expr::TailCall(inner) => {
             let TailCallData {
-                target: name,
-                args: args,
-                ..
+                target: name, args, ..
             } = inner.as_ref();
             let self_call = if name == fn_name { 1 } else { 0 };
             self_call

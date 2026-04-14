@@ -57,11 +57,7 @@ pub(super) fn collect_target_call_args<'a>(
             }
         }
         Expr::TailCall(boxed) => {
-            let TailCallData {
-                target: target,
-                args: args,
-                ..
-            } = boxed.as_ref();
+            let TailCallData { target, args, .. } = boxed.as_ref();
             if target == fn_name
                 && let Some(arg) = args.get(arg_index)
             {
@@ -255,11 +251,7 @@ pub fn expr_to_str(expr: &Spanned<Expr>) -> String {
             )
         }
         Expr::TailCall(boxed) => {
-            let TailCallData {
-                target: target,
-                args: args,
-                ..
-            } = boxed.as_ref();
+            let TailCallData { target, args, .. } = boxed.as_ref();
             let a = args.iter().map(expr_to_str).collect::<Vec<_>>().join(", ");
             format!("<tail-call:{}>({})", target, a)
         }

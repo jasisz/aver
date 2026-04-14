@@ -341,6 +341,27 @@ fn empty_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErr
     Ok(NanValue::EMPTY_MAP)
 }
 
+/// Map.set with sole-owned first argument — takes instead of cloning.
+pub fn set_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    if args.len() != 3 {
+        return Err(RuntimeError::Error(format!(
+            "Map.set() takes 3 arguments, got {}",
+            args.len()
+        )));
+    }
+    if !args[0].is_map() {
+        return Err(RuntimeError::Error(
+            "Map.set() first argument must be a Map".to_string(),
+        ));
+    }
+    ensure_hashable_nv("Map.set", args[1])?;
+    let old_map = arena.take_map_value(args[0]);
+    let key_hash = nv_key_bits(args[1], arena);
+    let new_map = old_map.insert(key_hash, (args[1], args[2]));
+    let map_idx = arena.push_map(new_map);
+    Ok(NanValue::new_map(map_idx))
+}
+
 fn set_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
     if args.len() != 3 {
         return Err(RuntimeError::Error(format!(

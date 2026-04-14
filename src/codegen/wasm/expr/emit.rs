@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use wasm_encoder::Instruction;
 
-use crate::ast::{BinOp, Expr, Literal, Spanned, Stmt, StrPart};
+use crate::ast::{BinOp, Expr, Literal, Spanned, Stmt, StrPart, TailCallData};
 use crate::ir::{
     CallPlan, SemanticConstructor, WrapperKind, classify_call_plan, classify_constructor_name,
 };
@@ -1133,8 +1133,9 @@ impl<'a> ExprEmitter<'a> {
         }
     }
 
-    fn emit_tailcall(&mut self, tc: &(String, Vec<Spanned<Expr>>)) {
-        let (fn_name, args) = tc;
+    fn emit_tailcall(&mut self, tc: &TailCallData) {
+        let fn_name = &tc.target;
+        let args = tc.args.as_slice();
         let resolved_name = self.resolve_user_fn_name(fn_name);
         if let (Some(loop_depth), Some(dispatch_local), Some((member_id, param_slots))) = (
             self.tco_loop_depth,

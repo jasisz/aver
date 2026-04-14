@@ -670,9 +670,7 @@ fn expr_has_self_tailcall(expr: &Expr, fn_name: &str) -> bool {
     match expr {
         Expr::TailCall(boxed) => {
             let TailCallData {
-                target: target,
-                args: _,
-                ..
+                target, args: _, ..
             } = boxed.as_ref();
             target == fn_name
         }
@@ -835,11 +833,7 @@ fn check_expr_passthrough_by_name(
 ) -> bool {
     match expr {
         Expr::TailCall(boxed) => {
-            let TailCallData {
-                target: target,
-                args: args,
-                ..
-            } = boxed.as_ref();
+            let TailCallData { target, args, .. } = boxed.as_ref();
             if !member_names.contains(target.as_str()) {
                 return true; // call to non-member, irrelevant
             }
@@ -890,11 +884,7 @@ fn check_expr_tailcalls_for_rc(
     }
     match expr {
         Expr::TailCall(boxed) => {
-            let TailCallData {
-                target: target,
-                args: args,
-                ..
-            } = boxed.as_ref();
+            let TailCallData { target, args, .. } = boxed.as_ref();
             if member_names.contains(target.as_str()) && args.len() == params.len() {
                 // For each candidate index, check if arg[i] == Ident(param_name[i])
                 let to_remove: Vec<usize> = candidates
@@ -1280,11 +1270,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
 ) {
     match expr {
         Expr::TailCall(boxed) => {
-            let TailCallData {
-                target: target,
-                args: args,
-                ..
-            } = boxed.as_ref();
+            let TailCallData { target, args, .. } = boxed.as_ref();
             if target == self_name {
                 for arg in args {
                     collect_hoistable_invariant_subexprs(
@@ -1642,11 +1628,7 @@ fn rewrite_expr_with_hoists(expr: &Expr, hoisted_exprs: &HashMap<usize, String>)
                 .collect(),
         },
         Expr::TailCall(boxed) => {
-            let TailCallData {
-                target: target,
-                args: args,
-                ..
-            } = boxed.as_ref();
+            let TailCallData { target, args, .. } = boxed.as_ref();
             Expr::TailCall(Box::new(TailCallData::new(
                 target.clone(),
                 args.iter()
@@ -1851,11 +1833,7 @@ fn emit_tco_expr(
 ) -> String {
     match expr {
         Expr::TailCall(boxed) => {
-            let TailCallData {
-                target: target,
-                args: args,
-                ..
-            } = boxed.as_ref();
+            let TailCallData { target, args, .. } = boxed.as_ref();
             if target != self_name || args.len() != params.len() {
                 return emit_expr(expr, ctx, ectx);
             }
@@ -2396,11 +2374,7 @@ fn emit_trampoline_expr(
 ) -> String {
     match expr {
         Expr::TailCall(boxed) => {
-            let TailCallData {
-                target: target,
-                args: args,
-                ..
-            } = boxed.as_ref();
+            let TailCallData { target, args, .. } = boxed.as_ref();
             if member_names.contains(target) {
                 // Bounce → produce enum variant (excluding Rc-wrapped args)
                 let variant = fn_name_to_variant(target);

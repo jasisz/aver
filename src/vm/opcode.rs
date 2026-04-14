@@ -96,6 +96,13 @@ pub const CALL_VALUE: u8 = 0x41; // argc:u8
 /// Call a builtin service function.
 pub const CALL_BUILTIN: u8 = 0x42; // symbol_id:u32, argc:u8
 
+/// Like CALL_BUILTIN but with owned-argument bitmask from reuse analysis.
+/// Builtins receiving owned args can mutate in-place instead of cloning.
+pub const CALL_BUILTIN_OWNED: u8 = 0x46; // symbol_id:u32, argc:u8, owned:u8
+
+/// Like CALL_KNOWN but with owned-argument bitmask from reuse analysis.
+pub const CALL_KNOWN_OWNED: u8 = 0x47; // fn_id:u16, argc:u8, owned:u8
+
 /// Self tail-call: reuse current frame with new args.
 pub const TAIL_CALL_SELF: u8 = 0x43; // argc:u8
 
@@ -303,6 +310,8 @@ pub fn opcode_name(op: u8) -> &'static str {
         CALL_KNOWN => "CALL_KNOWN",
         CALL_VALUE => "CALL_VALUE",
         CALL_BUILTIN => "CALL_BUILTIN",
+        CALL_BUILTIN_OWNED => "CALL_BUILTIN_OWNED",
+        CALL_KNOWN_OWNED => "CALL_KNOWN_OWNED",
         TAIL_CALL_SELF => "TAIL_CALL_SELF",
         TAIL_CALL_KNOWN => "TAIL_CALL_KNOWN",
         RETURN => "RETURN",
@@ -371,10 +380,16 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | LOAD_LOCAL_CONST => 3,
 
         // 4-byte
+        CALL_KNOWN_OWNED => 4, // fn_id:u16 + argc:u8 + owned:u8
+
+        // 4-byte
         MATCH_VARIANT | RECORD_GET_NAMED => 4,
 
         // 5-byte
         CALL_BUILTIN | VARIANT_NEW => 5,
+
+        // 6-byte
+        CALL_BUILTIN_OWNED => 6, // symbol_id:u32 + argc:u8 + owned:u8
 
         // Variable-length
         MATCH_DISPATCH | MATCH_DISPATCH_CONST => {

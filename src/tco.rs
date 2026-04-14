@@ -120,9 +120,7 @@ fn factorial(n: Int, acc: Int) -> Int
         match &arms[1].body.node {
             Expr::TailCall(boxed) => {
                 let TailCallData {
-                    target: name,
-                    args: args,
-                    ..
+                    target: name, args, ..
                 } = boxed.as_ref();
                 assert_eq!(name, "factorial");
                 assert_eq!(args.len(), 2);

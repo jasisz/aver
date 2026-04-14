@@ -47,10 +47,10 @@ pub fn analyze_fn_reuse(params: &[String], body: &FnBody) -> Vec<Vec<bool>> {
     // So we analyse per-arm: in the specific match arm that contains the
     // tail call, is the parameter's last use within the tail-call expression?
 
-    if let Some(tail_stmt) = body.stmts().last() {
-        if let Stmt::Expr(expr) = tail_stmt {
-            analyze_tail_expr(params, &expr.node, &mut results);
-        }
+    if let Some(tail_stmt) = body.stmts().last()
+        && let Stmt::Expr(expr) = tail_stmt
+    {
+        analyze_tail_expr(params, &expr.node, &mut results);
     }
 
     results
@@ -60,11 +60,7 @@ pub fn analyze_fn_reuse(params: &[String], body: &FnBody) -> Vec<Vec<bool>> {
 fn analyze_tail_expr(params: &[String], expr: &Expr, results: &mut Vec<Vec<bool>>) {
     match expr {
         Expr::TailCall(boxed) => {
-            let TailCallData {
-                target: _target,
-                args: args,
-                ..
-            } = boxed.as_ref();
+            let TailCallData { args, .. } = boxed.as_ref();
             let reuse = compute_reuse_for_tail_call(params, args);
             results.push(reuse);
         }
@@ -93,11 +89,7 @@ fn analyze_tail_in_arm(params: &[String], arm: &MatchArm, results: &mut Vec<Vec<
 
     match body_expr {
         Expr::TailCall(boxed) => {
-            let TailCallData {
-                target: _target,
-                args: args,
-                ..
-            } = boxed.as_ref();
+            let TailCallData { args, .. } = boxed.as_ref();
             let mut reuse = compute_reuse_for_tail_call(params, args);
             // If any param is shadowed by a pattern binding, it can't be reused
             for (i, param) in params.iter().enumerate() {
@@ -173,10 +165,10 @@ pub fn annotate_program_reuse(items: &mut [TopLevel]) {
 
 /// Annotate TailCall nodes in a function body. Returns true if any were annotated.
 fn annotate_body_reuse(params: &[String], body: &mut FnBody) -> bool {
-    if let Some(tail_stmt) = body.stmts_mut().last_mut() {
-        if let Stmt::Expr(expr) = tail_stmt {
-            return annotate_expr_reuse(params, &mut expr.node);
-        }
+    if let Some(tail_stmt) = body.stmts_mut().last_mut()
+        && let Stmt::Expr(expr) = tail_stmt
+    {
+        return annotate_expr_reuse(params, &mut expr.node);
     }
     false
 }
@@ -448,10 +440,10 @@ fn main() -> Int
         let fd = items
             .iter()
             .find_map(|item| {
-                if let TopLevel::FnDef(fd) = item {
-                    if fd.name == "buildMap" {
-                        return Some(fd);
-                    }
+                if let TopLevel::FnDef(fd) = item
+                    && fd.name == "buildMap"
+                {
+                    return Some(fd);
                 }
                 None
             })

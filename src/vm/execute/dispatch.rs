@@ -435,9 +435,14 @@ impl VM {
                     bp = new_bp;
                 }
 
-                CALL_BUILTIN => {
+                CALL_BUILTIN | CALL_BUILTIN_OWNED => {
                     let symbol_id = read_u32!(code, ip);
                     let argc = read_u8!(code, ip) as usize;
+                    let owned_mask = if op == CALL_BUILTIN_OWNED {
+                        read_u8!(code, ip)
+                    } else {
+                        0
+                    };
                     let builtin =
                         self.code
                             .symbols
@@ -474,14 +479,20 @@ impl VM {
                     }
 
                     let result = self.arena.with_alloc_space(alloc_space, |arena| {
-                        self.runtime
-                            .invoke_builtin(&self.code.symbols, builtin, &args, arena)
+                        self.runtime.invoke_builtin_with_owned(
+                            &self.code.symbols,
+                            builtin,
+                            &args,
+                            arena,
+                            owned_mask,
+                        )
                     })?;
                     self.stack.push(result);
                 }
 
                 TAIL_CALL_SELF => {
                     let argc = read_u8!(code, ip) as usize;
+                    let _owned_mask = read_u8!(code, ip);
                     let args_start = self.stack.len() - argc;
                     let frame_mark = self.frames.last().unwrap().arena_mark;
                     let yard_mark = self.frames.last().unwrap().yard_mark;
@@ -517,6 +528,7 @@ impl VM {
 
                 TAIL_CALL_SELF_THIN => {
                     let argc = read_u8!(code, ip) as usize;
+                    let _owned_mask = read_u8!(code, ip);
                     let args_start = self.stack.len() - argc;
                     // Thin frame: no heap alloc, no arena work.
                     // Just copy args in-place and reset ip.
@@ -538,6 +550,7 @@ impl VM {
                 TAIL_CALL_KNOWN => {
                     let target_fn_id = read_u16!(code, ip) as u32;
                     let argc = read_u8!(code, ip) as usize;
+                    let _owned_mask = read_u8!(code, ip);
                     let target_local_count = self.code.get(target_fn_id).local_count;
 
                     let args_start = self.stack.len() - argc;

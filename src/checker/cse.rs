@@ -242,9 +242,7 @@ fn collect_all_nontrivial_from_spanned<'a>(
         }
         Expr::TailCall(boxed) => {
             let TailCallData {
-                target: _,
-                args: args,
-                ..
+                target: _, args, ..
             } = boxed.as_ref();
             for a in args {
                 collect_all_nontrivial_from_spanned(a, out);
@@ -376,9 +374,7 @@ fn spanned_contains_subtree(haystack: &Spanned<Expr>, needle: &Expr) -> bool {
         }
         Expr::TailCall(boxed) => {
             let TailCallData {
-                target: _,
-                args: args,
-                ..
+                target: _, args, ..
             } = boxed.as_ref();
             args.iter().any(|a| spanned_contains_subtree(a, needle))
         }

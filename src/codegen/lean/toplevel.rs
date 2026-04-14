@@ -746,11 +746,7 @@ fn rewrite_recursive_calls_expr(
                 .collect(),
         },
         Expr::TailCall(boxed) => {
-            let TailCallData {
-                target: target,
-                args: args,
-                ..
-            } = boxed.as_ref();
+            let TailCallData { target, args, .. } = boxed.as_ref();
             let rewritten_args: Vec<Spanned<Expr>> = args
                 .iter()
                 .map(|arg| rewrite_recursive_calls_expr(arg, targets, fuel_var))

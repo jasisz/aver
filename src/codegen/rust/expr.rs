@@ -546,11 +546,7 @@ fn emit_expr_with_options(
         }
         Expr::TailCall(boxed) => {
             // TailCall outside of a TCO loop → emit as regular function call
-            let TailCallData {
-                target: target,
-                args: args,
-                ..
-            } = boxed.as_ref();
+            let TailCallData { target, args, .. } = boxed.as_ref();
             let bare_args: Vec<Expr> = args.iter().map(|a| a.node.clone()).collect();
             let call_ctx = RustCallCtx { ctx, ectx };
             match classify_tail_call_plan(target, "", &call_ctx) {
