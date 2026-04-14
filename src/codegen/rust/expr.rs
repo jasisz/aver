@@ -200,7 +200,7 @@ fn emit_expr_with_options(
     match expr {
         Expr::Literal(lit) => emit_literal(lit),
         Expr::Ident(name) => aver_name_to_rust(name),
-        Expr::Resolved(slot) => emit_codegen_error_expr(format!(
+        Expr::Resolved { slot, .. } => emit_codegen_error_expr(format!(
             "Rust codegen: encountered resolver-only Expr::Resolved({slot}). \
              Compile pipeline should emit source-level AST (Ident), not slot-indexed AST."
         )),
@@ -1208,7 +1208,7 @@ pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
             }
         }
         // `emit_expr` already encodes this as a compile_error! expression.
-        Expr::Resolved(_) => code,
+        Expr::Resolved { .. } => code,
         // Field access on records: emit_expr produces `obj.field` without clone.
         // Clone here when ownership is needed (constructors, return, etc.).
         // When passed to a function expecting `&T`, `borrow_arg` handles it.

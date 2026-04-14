@@ -645,7 +645,7 @@ impl TypeChecker {
 
             // Resolved nodes are produced after type-checking, so should not appear here.
             // If they do (e.g. in a test), treat as Unknown.
-            Expr::Resolved(_) => Type::Unknown,
+            Expr::Resolved { .. } => Type::Unknown,
         }
     }
 }

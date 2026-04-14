@@ -144,7 +144,13 @@ pub enum Expr {
     IndependentProduct(Vec<Spanned<Expr>>, bool),
     /// Compiled variable lookup: `env[last][slot]` — O(1) instead of HashMap scan.
     /// Produced by the resolver pass for locals inside function bodies.
-    Resolved(u16),
+    /// `last_use` is set by `ir::last_use` — when true, this is the final
+    /// reference to this slot and backends can move instead of copy.
+    Resolved {
+        slot: u16,
+        name: String,
+        last_use: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

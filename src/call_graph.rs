@@ -258,7 +258,7 @@ fn walk_expr(expr: &Spanned<Expr>, visit: &mut impl FnMut(&Expr)) {
                 walk_expr(e, visit);
             }
         }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => {}
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
     }
 }
 
@@ -380,7 +380,7 @@ fn count_recursive_calls_expr(expr: &Spanned<Expr>, recursive: &HashSet<String>,
                 count_recursive_calls_expr(arg, recursive, out);
             }
         }
-        Expr::Literal(_) | Expr::Resolved(_) | Expr::Ident(_) => {}
+        Expr::Literal(_) | Expr::Resolved { .. } | Expr::Ident(_) => {}
         Expr::Attr(obj, _) => count_recursive_calls_expr(obj, recursive, out),
         Expr::BinOp(_, l, r) => {
             count_recursive_calls_expr(l, recursive, out);

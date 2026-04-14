@@ -98,7 +98,7 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
     match &expr.node {
         Expr::Literal(lit) => emit_literal(lit),
         Expr::Ident(name) => aver_name_to_dafny(name),
-        Expr::Resolved(slot) => {
+        Expr::Resolved { slot, .. } => {
             panic!(
                 "Dafny codegen: encountered resolver-only Expr::Resolved({slot}). \
                  Compile pipeline should emit source-level AST."

@@ -978,7 +978,7 @@ fn expr_is_loop_invariant(
     match expr {
         Expr::Literal(_) => true,
         Expr::Ident(name) => stable_names.contains(name),
-        Expr::Resolved(_) | Expr::ErrorProp(_) | Expr::TailCall(_) => false,
+        Expr::Resolved { .. } | Expr::ErrorProp(_) | Expr::TailCall(_) => false,
         Expr::Attr(obj, _) => {
             crate::ir::expr_to_dotted_name(expr)
                 .is_some_and(|dotted| dotted.chars().next().is_some_and(|c| c.is_uppercase()))
@@ -1251,7 +1251,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
         }
         Expr::Literal(_)
         | Expr::Ident(_)
-        | Expr::Resolved(_)
+        | Expr::Resolved { .. }
         | Expr::Constructor(_, None)
         | Expr::TailCall(_) => {}
     }
@@ -1482,7 +1482,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
                 );
             }
         }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) | Expr::Constructor(_, None) => {}
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {}
     }
 }
 
@@ -1535,7 +1535,7 @@ fn rewrite_expr_with_hoists(expr: &Expr, hoisted_exprs: &HashMap<usize, String>)
     match expr {
         Expr::Literal(lit) => Expr::Literal(lit.clone()),
         Expr::Ident(name) => Expr::Ident(name.clone()),
-        Expr::Resolved(slot) => Expr::Resolved(*slot),
+        Expr::Resolved { slot, name, last_use } => Expr::Resolved { slot: *slot, name: name.clone(), last_use: *last_use },
         Expr::Attr(obj, field) => {
             Expr::Attr(Box::new(rewrite_spanned(obj, hoisted_exprs)), field.clone())
         }

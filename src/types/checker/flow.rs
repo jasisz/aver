@@ -76,7 +76,7 @@ impl TypeChecker {
             Expr::Literal(_)
             | Expr::Ident(_)
             | Expr::InterpolatedStr(_)
-            | Expr::Resolved(_)
+            | Expr::Resolved { .. }
             | Expr::Constructor(_, None) => false,
         }
     }

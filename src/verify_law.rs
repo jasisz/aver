@@ -434,7 +434,7 @@ fn collect_direct_pure_user_calls(
                 collect_direct_pure_user_calls(arg, fn_defs, fn_sigs, out);
             }
         }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) | Expr::Constructor(_, None) => {}
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {}
     }
 }
 
@@ -630,7 +630,7 @@ fn collect_roundtrip_serializer_calls<'a>(
                 collect_roundtrip_serializer_calls(arg, given_name, out);
             }
         }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => {}
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
     }
 }
 
@@ -677,7 +677,7 @@ fn expr_mentions_ident(expr: &Spanned<Expr>, name: &str) -> bool {
                     .any(|(_, value)| expr_mentions_ident(value, name))
         }
         Expr::TailCall(call) => call.args.iter().any(|arg| expr_mentions_ident(arg, name)),
-        Expr::Literal(_) | Expr::Resolved(_) => false,
+        Expr::Literal(_) | Expr::Resolved { .. } => false,
     }
 }
 
@@ -726,7 +726,7 @@ fn expr_calls_function(expr: &Spanned<Expr>, fn_name: &str) -> bool {
                     .iter()
                     .any(|arg| expr_calls_function(arg, fn_name))
         }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) | Expr::Constructor(_, None) => false,
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => false,
     }
 }
 

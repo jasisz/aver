@@ -886,7 +886,7 @@ fn collect_calls_from_expr<'a>(
                 collect_calls_from_expr(v, out);
             }
         }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => {}
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
     }
 }
 
@@ -975,7 +975,7 @@ fn collect_list_tail_binders_from_expr(
                 collect_list_tail_binders_from_expr(v, list_param_name, tails);
             }
         }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => {}
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
     }
 }
 
@@ -1094,7 +1094,7 @@ fn grow_recursive_subterm_binders_from_expr(
                 grow_recursive_subterm_binders_from_expr(arg, tracked, td, out);
             }
         }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) | Expr::Constructor(_, None) => {}
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {}
     }
 }
 

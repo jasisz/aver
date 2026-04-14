@@ -625,7 +625,7 @@ fn rewrite_recursive_calls_expr(
 ) -> Spanned<Expr> {
     let line = expr.line;
     let new_node = match &expr.node {
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => return expr.clone(),
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => return expr.clone(),
         Expr::Attr(obj, field) => Expr::Attr(
             Box::new(rewrite_recursive_calls_expr(obj, targets, fuel_var)),
             field.clone(),
@@ -1294,7 +1294,7 @@ fn expr_uses_error_prop(expr: &Spanned<Expr>) -> bool {
                 || updates.iter().any(|(_, value)| expr_uses_error_prop(value))
         }
         Expr::TailCall(boxed) => boxed.args.iter().any(expr_uses_error_prop),
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) | Expr::Constructor(_, None) => false,
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => false,
     }
 }
 

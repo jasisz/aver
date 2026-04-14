@@ -255,7 +255,7 @@ fn expr_has_tail_call(expr: &aver::ast::Spanned<aver::ast::Expr>) -> bool {
     use aver::ast::Expr;
     match &expr.node {
         Expr::TailCall(_) => true,
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => false,
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => false,
         Expr::Attr(obj, _) => expr_has_tail_call(obj),
         Expr::FnCall(f, args) => expr_has_tail_call(f) || args.iter().any(expr_has_tail_call),
         Expr::BinOp(_, l, r) => expr_has_tail_call(l) || expr_has_tail_call(r),

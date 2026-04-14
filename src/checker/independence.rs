@@ -112,7 +112,7 @@ fn collect_independence_warnings_in_expr(
                 collect_independence_warnings_in_expr(value, fd, fn_sigs, warnings);
             }
         }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) | Expr::Constructor(_, None) => {}
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {}
     }
 }
 
@@ -290,7 +290,7 @@ fn collect_used_effects_expr(expr: &Spanned<Expr>, fn_sigs: &FnSigMap, out: &mut
                 collect_used_effects_expr(value, fn_sigs, out);
             }
         }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) | Expr::Constructor(_, None) => {}
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {}
     }
 }
 

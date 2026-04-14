@@ -124,7 +124,7 @@ pub(super) fn substitute_expr(
                 .map(|arg| substitute_expr(arg, bindings))
                 .collect(),
         ))),
-        Expr::Resolved(slot) => Expr::Resolved(*slot),
+        Expr::Resolved { slot, name, last_use } => Expr::Resolved { slot: *slot, name: name.clone(), last_use: *last_use },
     };
     Spanned::new(new_node, line)
 }
@@ -260,7 +260,7 @@ fn collect_user_fn_simp_names(
                 collect_user_fn_simp_names(arg, ctx, skip_fn, out);
             }
         }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => {}
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
     }
 }
 

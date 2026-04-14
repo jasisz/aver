@@ -527,7 +527,7 @@ impl<'a> FnCompiler<'a> {
                         mask |= 1 << i;
                     }
                 }
-                Expr::Resolved(slot) => {
+                Expr::Resolved { slot, .. } => {
                     if self.owned_params.contains(slot) {
                         mask |= 1 << i;
                     }

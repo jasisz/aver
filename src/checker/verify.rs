@@ -70,7 +70,7 @@ pub(super) fn collect_target_call_args<'a>(
         Expr::Literal(_)
         | Expr::Ident(_)
         | Expr::InterpolatedStr(_)
-        | Expr::Resolved(_)
+        | Expr::Resolved { .. }
         | Expr::Constructor(_, None) => {}
     }
 }
@@ -122,7 +122,7 @@ pub(super) fn verify_case_calls_target(left: &Spanned<Expr>, fn_name: &str) -> b
                     .iter()
                     .any(|arg| verify_case_calls_target(arg, fn_name))
         }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::InterpolatedStr(_) | Expr::Resolved(_) => false,
+        Expr::Literal(_) | Expr::Ident(_) | Expr::InterpolatedStr(_) | Expr::Resolved { .. } => false,
         Expr::Constructor(_, None) => false,
     }
 }
@@ -255,7 +255,7 @@ pub fn expr_to_str(expr: &Spanned<Expr>) -> String {
             let a = args.iter().map(expr_to_str).collect::<Vec<_>>().join(", ");
             format!("<tail-call:{}>({})", target, a)
         }
-        Expr::Resolved(_) => "<resolved>".to_string(),
+        Expr::Resolved { .. } => "<resolved>".to_string(),
         Expr::Match { subject, arms, .. } => {
             let s = expr_to_str(subject);
             let arms_str: Vec<String> = arms

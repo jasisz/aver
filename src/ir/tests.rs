@@ -285,7 +285,7 @@ fn classify_forward_call_for_known_target_and_forwarded_locals() {
             )),
             "fib".to_string(),
         )),
-        vec![sb(Expr::Resolved(1)), sb(Expr::Ident("slot0".to_string()))],
+        vec![sb(Expr::Resolved { slot: 1, name: "slot1".to_string(), last_use: false }), sb(Expr::Ident("slot0".to_string()))],
     );
 
     struct ForwardCtx;

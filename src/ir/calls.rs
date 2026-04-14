@@ -117,7 +117,7 @@ pub fn is_builtin_namespace(name: &str) -> bool {
 
 pub fn classify_call_plan(expr: &Expr, ctx: &impl CallLowerCtx) -> CallPlan {
     match expr {
-        Expr::Resolved(_) => CallPlan::Dynamic,
+        Expr::Resolved { .. } => CallPlan::Dynamic,
         Expr::Ident(name) => match ctx.is_local_value(name) {
             true => CallPlan::Dynamic,
             false => classify_named_callee(name, None, ctx),
@@ -241,7 +241,7 @@ pub fn classify_constructor_name(name: &str, ctx: &impl CallLowerCtx) -> Semanti
 
 fn classify_forward_arg(expr: &Expr, ctx: &impl CallLowerCtx) -> Option<ForwardArg> {
     match expr {
-        Expr::Resolved(slot) => Some(ForwardArg::Slot(*slot)),
+        Expr::Resolved { slot, .. } => Some(ForwardArg::Slot(*slot)),
         Expr::Ident(name) if ctx.is_local_value(name) => Some(ForwardArg::Local(name.clone())),
         _ => None,
     }

@@ -196,7 +196,7 @@ impl Parser {
                     .collect(),
             ))),
             Expr::Literal(lit) => Expr::Literal(lit.clone()),
-            Expr::Resolved(slot) => Expr::Resolved(*slot),
+            Expr::Resolved { slot, name, last_use } => Expr::Resolved { slot: *slot, name: name.clone(), last_use: *last_use },
         };
         Spanned::new(node, line)
     }

@@ -168,7 +168,7 @@ fn collect_used_effects_expr(expr: &Spanned<Expr>, fn_sigs: &FnSigMap, out: &mut
         Expr::Literal(_)
         | Expr::Ident(_)
         | Expr::InterpolatedStr(_)
-        | Expr::Resolved(_)
+        | Expr::Resolved { .. }
         | Expr::Constructor(_, None) => {}
     }
 }

@@ -67,7 +67,7 @@ impl<'a> ExprEmitter<'a> {
                     self.emit_default_value(self.infer_expr_type(expr));
                 }
             }
-            Expr::Resolved(slot) => {
+            Expr::Resolved { slot, .. } => {
                 self.instructions.push(Instruction::LocalGet(*slot as u32));
             }
             Expr::BinOp(op, lhs, rhs) => self.emit_binop(op, lhs, rhs),

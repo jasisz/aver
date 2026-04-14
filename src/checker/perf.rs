@@ -224,7 +224,7 @@ fn walk_expr_inner<F: FnMut(&Spanned<Expr>)>(expr: &Expr, f: &mut F) {
             }
         }
         Expr::Attr(obj, _) => walk_expr(obj, f),
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) | Expr::Constructor(_, None) => {}
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {}
     }
 }
 
@@ -441,7 +441,7 @@ fn collect_tailcall_args_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Vec<Spanned<
                 collect_tailcall_args_expr(&v.node, out);
             }
         }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) | Expr::Constructor(_, None) => {}
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {}
     }
 }
 

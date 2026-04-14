@@ -144,7 +144,7 @@ fn collect_expr_bindings(
             }
         }
         // Leaves — no bindings to collect
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) | Expr::Constructor(_, None) => {}
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {}
     }
 }
 
@@ -191,11 +191,11 @@ fn resolve_expr(expr: &mut Spanned<Expr>, local_slots: &HashMap<String, u16>) {
     match &mut expr.node {
         Expr::Ident(name) => {
             if let Some(&slot) = local_slots.get(name) {
-                expr.node = Expr::Resolved(slot);
+                expr.node = Expr::Resolved { slot, name: name.clone(), last_use: false };
             }
             // else: global/namespace — leave as Ident for HashMap fallback
         }
-        Expr::Resolved(_) | Expr::Literal(_) => {}
+        Expr::Resolved { .. } | Expr::Literal(_) => {}
         Expr::Attr(obj, _) => {
             resolve_expr(obj, local_slots);
         }
@@ -309,8 +309,8 @@ mod tests {
                 node: Expr::BinOp(_, left, right),
                 ..
             }) => {
-                assert_eq!(left.node, Expr::Resolved(0));
-                assert_eq!(right.node, Expr::Resolved(1));
+                assert_eq!(left.node, Expr::Resolved { slot: 0, name: "a".to_string(), last_use: false });
+                assert_eq!(right.node, Expr::Resolved { slot: 1, name: "b".to_string(), last_use: false });
             }
             other => panic!("unexpected body: {:?}", other),
         }
@@ -338,7 +338,7 @@ mod tests {
                 ..
             }) => {
                 assert_eq!(func.node, Expr::Ident("Console".to_string()));
-                assert_eq!(args[0].node, Expr::Resolved(0));
+                assert_eq!(args[0].node, Expr::Resolved { slot: 0, name: "x".to_string(), last_use: false });
             }
             other => panic!("unexpected body: {:?}", other),
         }
@@ -384,14 +384,14 @@ mod tests {
                     ..
                 },
             ) => {
-                assert_eq!(left.node, Expr::Resolved(0));
+                assert_eq!(left.node, Expr::Resolved { slot: 0, name: "x".to_string(), last_use: false });
             }
             other => panic!("unexpected stmt: {:?}", other),
         }
         // y  →  Resolved(0,1)
         match &stmts[1] {
             Stmt::Expr(Spanned {
-                node: Expr::Resolved(1),
+                node: Expr::Resolved { slot: 1, .. },
                 ..
             }) => {}
             other => panic!("unexpected stmt: {:?}", other),
@@ -439,7 +439,7 @@ mod tests {
                 node: Expr::Match { arms, .. },
                 ..
             }) => {
-                assert_eq!(arms[0].body.node, Expr::Resolved(1));
+                assert_eq!(arms[0].body.node, Expr::Resolved { slot: 1, name: "v".to_string(), last_use: false });
             }
             other => panic!("unexpected body: {:?}", other),
         }
@@ -496,14 +496,14 @@ mod tests {
                     ..
                 },
             ) => {
-                assert_eq!(arms[0].body.node, Expr::Resolved(2));
+                assert_eq!(arms[0].body.node, Expr::Resolved { slot: 2, name: "v".to_string(), last_use: false });
             }
             other => panic!("unexpected stmt: {:?}", other),
         }
 
         match &stmts[1] {
             Stmt::Expr(Spanned {
-                node: Expr::Resolved(1),
+                node: Expr::Resolved { slot: 1, .. },
                 ..
             }) => {}
             other => panic!("unexpected stmt: {:?}", other),

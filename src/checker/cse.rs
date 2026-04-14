@@ -379,7 +379,7 @@ fn spanned_contains_subtree(haystack: &Spanned<Expr>, needle: &Expr) -> bool {
             args.iter().any(|a| spanned_contains_subtree(a, needle))
         }
         Expr::Attr(obj, _) => spanned_contains_subtree(obj, needle),
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) | Expr::MapLiteral(_) => false,
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::MapLiteral(_) => false,
         Expr::Constructor(_, None) => false,
     }
 }

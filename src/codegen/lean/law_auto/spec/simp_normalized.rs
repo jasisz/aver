@@ -122,7 +122,7 @@ fn simplify_identity_expr(expr: &Spanned<Expr>) -> Spanned<Expr> {
             call.target.clone(),
             call.args.iter().map(simplify_identity_expr).collect(),
         ))),
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => return expr.clone(),
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => return expr.clone(),
     };
     Spanned::new(new_node, line)
 }

@@ -86,7 +86,7 @@ impl<'a> ExprEmitter<'a> {
                     WasmType::I64
                 }
             }
-            Expr::Resolved(slot) => self
+            Expr::Resolved { slot, .. } => self
                 .local_types
                 .get(&(*slot as u32))
                 .copied()
@@ -165,7 +165,7 @@ impl<'a> ExprEmitter<'a> {
                     None
                 }
             }
-            Expr::Resolved(slot) => self.local_aver_types.get(&(*slot as u32)).cloned(),
+            Expr::Resolved { slot, .. } => self.local_aver_types.get(&(*slot as u32)).cloned(),
             Expr::BinOp(op, lhs, _) => match op {
                 BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => {
                     Some(Type::Bool)

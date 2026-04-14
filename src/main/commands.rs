@@ -556,7 +556,7 @@ fn expr_uses_self_host_runtime(expr: &Spanned<Expr>) -> bool {
                     .any(|(_, value)| expr_uses_self_host_runtime(value))
         }
         Expr::TailCall(inner) => inner.args.iter().any(expr_uses_self_host_runtime),
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, None) | Expr::Resolved(_) => false,
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, None) | Expr::Resolved { .. } => false,
     }
 }
 
@@ -783,7 +783,7 @@ fn walk_expr_for_exposes(
                 walk_expr_for_exposes(arg, dep_targets, unique_type_owner, used_by_target);
             }
         }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, None) | Expr::Resolved(_) => {}
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, None) | Expr::Resolved { .. } => {}
     }
 }
 
