@@ -16,12 +16,12 @@ use crate::ast::*;
 /// Annotate the entire program — walk all FnDefs after resolution.
 pub fn annotate_program_last_use(items: &mut [TopLevel]) {
     for item in items.iter_mut() {
-        if let TopLevel::FnDef(fd) = item {
-            if fd.resolution.is_some() {
-                let mut body = fd.body.as_ref().clone();
-                annotate_body(&mut body);
-                fd.body = std::sync::Arc::new(body);
-            }
+        if let TopLevel::FnDef(fd) = item
+            && fd.resolution.is_some()
+        {
+            let mut body = fd.body.as_ref().clone();
+            annotate_body(&mut body);
+            fd.body = std::sync::Arc::new(body);
         }
     }
 }
@@ -112,11 +112,9 @@ fn find_slot_for_name(expr: &Expr, target_name: &str) -> Option<u16> {
             StrPart::Parsed(e) => find_slot_for_name(&e.node, target_name),
             _ => None,
         }),
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            items
-                .iter()
-                .find_map(|e| find_slot_for_name(&e.node, target_name))
-        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => items
+            .iter()
+            .find_map(|e| find_slot_for_name(&e.node, target_name)),
         Expr::TailCall(boxed) => boxed
             .args
             .iter()
@@ -128,13 +126,12 @@ fn find_slot_for_name(expr: &Expr, target_name: &str) -> Option<u16> {
         Expr::RecordCreate { fields, .. } => fields
             .iter()
             .find_map(|(_, e)| find_slot_for_name(&e.node, target_name)),
-        Expr::RecordUpdate { base, updates, .. } => {
-            find_slot_for_name(&base.node, target_name).or_else(|| {
+        Expr::RecordUpdate { base, updates, .. } => find_slot_for_name(&base.node, target_name)
+            .or_else(|| {
                 updates
                     .iter()
                     .find_map(|(_, e)| find_slot_for_name(&e.node, target_name))
-            })
-        }
+            }),
         _ => None,
     }
 }
@@ -230,9 +227,7 @@ fn collect_slots_stmt(stmt: &Stmt) -> HashSet<u16> {
 /// non-last-use if they share a slot.
 fn annotate_expr(expr: &mut Expr, live_after: &HashSet<u16>) {
     match expr {
-        Expr::Resolved {
-            slot, last_use, ..
-        } => {
+        Expr::Resolved { slot, last_use, .. } => {
             *last_use = AnnotBool(!live_after.contains(slot));
         }
         Expr::Ident(_) | Expr::Literal(_) => {}

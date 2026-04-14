@@ -556,7 +556,9 @@ fn expr_uses_self_host_runtime(expr: &Spanned<Expr>) -> bool {
                     .any(|(_, value)| expr_uses_self_host_runtime(value))
         }
         Expr::TailCall(inner) => inner.args.iter().any(expr_uses_self_host_runtime),
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, None) | Expr::Resolved { .. } => false,
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, None) | Expr::Resolved { .. } => {
+            false
+        }
     }
 }
 

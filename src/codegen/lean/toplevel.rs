@@ -1294,7 +1294,9 @@ fn expr_uses_error_prop(expr: &Spanned<Expr>) -> bool {
                 || updates.iter().any(|(_, value)| expr_uses_error_prop(value))
         }
         Expr::TailCall(boxed) => boxed.args.iter().any(expr_uses_error_prop),
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => false,
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {
+            false
+        }
     }
 }
 

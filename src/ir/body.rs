@@ -189,5 +189,8 @@ fn body_expr_is_thin_binding(plan: &BodyExprPlan<'_>) -> bool {
 }
 
 fn is_simple_operand(expr: &Expr) -> bool {
-    matches!(expr, Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. })
+    matches!(
+        expr,
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. }
+    )
 }

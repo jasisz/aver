@@ -1535,7 +1535,15 @@ fn rewrite_expr_with_hoists(expr: &Expr, hoisted_exprs: &HashMap<usize, String>)
     match expr {
         Expr::Literal(lit) => Expr::Literal(lit.clone()),
         Expr::Ident(name) => Expr::Ident(name.clone()),
-        Expr::Resolved { slot, name, last_use } => Expr::Resolved { slot: *slot, name: name.clone(), last_use: *last_use },
+        Expr::Resolved {
+            slot,
+            name,
+            last_use,
+        } => Expr::Resolved {
+            slot: *slot,
+            name: name.clone(),
+            last_use: *last_use,
+        },
         Expr::Attr(obj, field) => {
             Expr::Attr(Box::new(rewrite_spanned(obj, hoisted_exprs)), field.clone())
         }

@@ -11,6 +11,11 @@ pub const NOP: u8 = 0x00;
 /// Push `stack[bp + slot]` onto the operand stack.
 pub const LOAD_LOCAL: u8 = 0x01; // slot:u8
 
+/// Push `stack[bp + slot]` and clear the slot (move semantics).
+/// Used for last-use variables: caller releases sole ownership so
+/// callees and builtins see refcount=1 and can mutate in-place.
+pub const MOVE_LOCAL: u8 = 0x48; // slot:u8
+
 /// Pop top and store into `stack[bp + slot]`.
 pub const STORE_LOCAL: u8 = 0x02; // slot:u8
 
@@ -286,6 +291,7 @@ pub const VECTOR_SET_OR_KEEP: u8 = 0x85;
 pub fn opcode_name(op: u8) -> &'static str {
     match op {
         LOAD_LOCAL => "LOAD_LOCAL",
+        MOVE_LOCAL => "MOVE_LOCAL",
         STORE_LOCAL => "STORE_LOCAL",
         LOAD_CONST => "LOAD_CONST",
         LOAD_GLOBAL => "LOAD_GLOBAL",
@@ -368,8 +374,9 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | VECTOR_SET | VECTOR_SET_OR_KEEP | NOP => 0,
 
         // 1-byte
-        LOAD_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD | EXTRACT_TUPLE_ITEM
-        | LIST_NEW | WRAP | TUPLE_NEW | TAIL_CALL_SELF | TAIL_CALL_SELF_THIN => 1,
+        LOAD_LOCAL | MOVE_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD
+        | EXTRACT_TUPLE_ITEM | LIST_NEW | WRAP | TUPLE_NEW | TAIL_CALL_SELF
+        | TAIL_CALL_SELF_THIN => 1,
 
         // 2-byte (u16 or u8+u8)
         LOAD_CONST | LOAD_GLOBAL | STORE_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL | MATCH_NIL

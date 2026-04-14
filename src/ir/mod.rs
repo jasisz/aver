@@ -1,7 +1,7 @@
 mod body;
 mod calls;
-mod leaf;
 pub mod last_use;
+mod leaf;
 pub mod liveness;
 mod matches;
 pub mod reuse;

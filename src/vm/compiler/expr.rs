@@ -50,8 +50,8 @@ impl<'a> FnCompiler<'a> {
 
         match &expr.node {
             Expr::Literal(lit) => self.compile_literal(lit),
-            Expr::Resolved { slot, .. } => {
-                self.emit_op(LOAD_LOCAL);
+            Expr::Resolved { slot, last_use, .. } => {
+                self.emit_op(if last_use.0 { MOVE_LOCAL } else { LOAD_LOCAL });
                 self.emit_u8(*slot as u8);
                 Ok(())
             }

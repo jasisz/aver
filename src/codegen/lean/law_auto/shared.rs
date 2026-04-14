@@ -124,7 +124,15 @@ pub(super) fn substitute_expr(
                 .map(|arg| substitute_expr(arg, bindings))
                 .collect(),
         ))),
-        Expr::Resolved { slot, name, last_use } => Expr::Resolved { slot: *slot, name: name.clone(), last_use: *last_use },
+        Expr::Resolved {
+            slot,
+            name,
+            last_use,
+        } => Expr::Resolved {
+            slot: *slot,
+            name: name.clone(),
+            last_use: *last_use,
+        },
     };
     Spanned::new(new_node, line)
 }

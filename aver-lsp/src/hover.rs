@@ -313,7 +313,7 @@ fn fn_has_tail_call(fd: &FnDef) -> bool {
 fn expr_has_tail_call(expr: &aver::ast::Spanned<Expr>) -> bool {
     match &expr.node {
         Expr::TailCall(_) => true,
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => false,
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => false,
         Expr::Attr(obj, _) => expr_has_tail_call(obj),
         Expr::FnCall(callee, args) => {
             expr_has_tail_call(callee) || args.iter().any(expr_has_tail_call)

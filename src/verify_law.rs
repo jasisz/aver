@@ -726,7 +726,9 @@ fn expr_calls_function(expr: &Spanned<Expr>, fn_name: &str) -> bool {
                     .iter()
                     .any(|arg| expr_calls_function(arg, fn_name))
         }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => false,
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {
+            false
+        }
     }
 }
 

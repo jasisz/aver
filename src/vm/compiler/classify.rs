@@ -159,7 +159,7 @@ fn base_parent_thin_chunk(code_store: &CodeStore, chunk: &FnChunk) -> Result<boo
                 return Ok(false);
             }
 
-            CALL_BUILTIN => {
+            CALL_BUILTIN | CALL_BUILTIN_OWNED => {
                 if !parent_thin_builtin_is_allowed(code_store, chunk, ip)? {
                     return Ok(false);
                 }

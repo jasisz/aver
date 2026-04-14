@@ -122,7 +122,9 @@ pub(super) fn verify_case_calls_target(left: &Spanned<Expr>, fn_name: &str) -> b
                     .iter()
                     .any(|arg| verify_case_calls_target(arg, fn_name))
         }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::InterpolatedStr(_) | Expr::Resolved { .. } => false,
+        Expr::Literal(_) | Expr::Ident(_) | Expr::InterpolatedStr(_) | Expr::Resolved { .. } => {
+            false
+        }
         Expr::Constructor(_, None) => false,
     }
 }

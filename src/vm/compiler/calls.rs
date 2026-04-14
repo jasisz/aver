@@ -183,12 +183,7 @@ impl<'a> FnCompiler<'a> {
         args: &[Spanned<Expr>],
     ) -> Result<(), CompileError> {
         let call_ctx = VmCallCtx { compiler: self };
-        // Skip forward-call optimization when in owned context — the
-        // forward path doesn't propagate owned_mask to CALL_BUILTIN_OWNED.
-        // Fall through to compile_resolved_call which does.
-        if self.owned_params.is_empty()
-            && let Some(plan) = classify_forward_call_parts(&fn_expr.node, args, &call_ctx)
-        {
+        if let Some(plan) = classify_forward_call_parts(&fn_expr.node, args, &call_ctx) {
             let Some(target) = self.call_plan_to_target(plan.target.clone()) else {
                 return Err(CompileError {
                     msg: "dynamic call cannot lower through ForwardCallPlan".to_string(),
@@ -258,12 +253,8 @@ impl<'a> FnCompiler<'a> {
         args: &[Spanned<Expr>],
     ) -> Result<(), CompileError> {
         // Compute owned mask before compiling args (we need the AST).
-        let owned_mask = if !self.owned_params.is_empty() {
-            let arg_refs: Vec<&Spanned<Expr>> = args.iter().collect();
-            self.compute_builtin_owned_mask(&arg_refs)
-        } else {
-            0
-        };
+        let arg_refs: Vec<&Spanned<Expr>> = args.iter().collect();
+        let owned_mask = Self::compute_builtin_owned_mask(&arg_refs);
         for arg in args {
             self.compile_expr(arg)?;
         }
@@ -274,36 +265,21 @@ impl<'a> FnCompiler<'a> {
         &mut self,
         target: &str,
         args: &[Spanned<Expr>],
-        owned: &[bool],
+        _owned: &[bool],
     ) -> Result<(), CompileError> {
-        // Set owned_params context so compile_call can emit CALL_BUILTIN_OWNED
-        // for builtins whose arguments reference sole-owned parameters.
-        self.owned_params.clear();
-        for (i, &is_owned) in owned.iter().enumerate() {
-            if is_owned {
-                self.owned_params.insert(i as u16);
-            }
-        }
-
         for arg in args {
             self.compile_expr(arg)?;
         }
 
-        // Clear owned context after compiling args
-        self.owned_params.clear();
-
-        // Pack owned flags into a bitmask (up to 8 args).
-        // Bit i is set if arg i is sole-owned and can be reused in-place.
-        let owned_mask: u8 = owned
-            .iter()
-            .enumerate()
-            .take(8)
-            .fold(
-                0u8,
-                |mask, (i, &is_owned)| {
-                    if is_owned { mask | (1 << i) } else { mask }
-                },
-            );
+        // Derive owned mask from last_use annotations on the tail call args.
+        // Bit i set = arg i contains a last-use reference to param i.
+        let owned_mask: u8 = args.iter().enumerate().take(8).fold(0u8, |mask, (i, arg)| {
+            if contains_last_use_slot(&arg.node, i as u16) {
+                mask | (1 << i)
+            } else {
+                mask
+            }
+        });
 
         let call_ctx = VmCallCtx { compiler: self };
         match classify_tail_call_plan(target, &self.name, &call_ctx) {
@@ -412,7 +388,7 @@ impl<'a> FnCompiler<'a> {
                 Ok(())
             }
             LeafOp::MapSet { map, key, value } => {
-                let owned_mask = self.compute_builtin_owned_mask(&[map, key, value]);
+                let owned_mask = Self::compute_builtin_owned_mask(&[map, key, value]);
                 self.compile_expr(map)?;
                 self.compile_expr(key)?;
                 self.compile_expr(value)?;
@@ -512,27 +488,14 @@ impl<'a> FnCompiler<'a> {
     }
 
     /// Compute owned bitmask for builtin args by checking if any arg
-    /// is a simple local reference to an owned parameter.
-    fn compute_builtin_owned_mask(&self, arg_exprs: &[&Spanned<Expr>]) -> u8 {
-        if self.owned_params.is_empty() {
-            return 0;
-        }
+    /// is a last-use local reference (annotated by ir::last_use pass).
+    fn compute_builtin_owned_mask(arg_exprs: &[&Spanned<Expr>]) -> u8 {
         let mut mask = 0u8;
         for (i, arg) in arg_exprs.iter().enumerate().take(8) {
-            match &arg.node {
-                Expr::Ident(name) => {
-                    if let Some(&slot) = self.local_slots.get(name)
-                        && self.owned_params.contains(&slot)
-                    {
-                        mask |= 1 << i;
-                    }
-                }
-                Expr::Resolved { slot, .. } => {
-                    if self.owned_params.contains(slot) {
-                        mask |= 1 << i;
-                    }
-                }
-                _ => {}
+            if let Expr::Resolved { last_use, .. } = &arg.node
+                && last_use.0
+            {
+                mask |= 1 << i;
             }
         }
         mask
@@ -612,5 +575,36 @@ impl<'a> FnCompiler<'a> {
             }
             _ => None,
         }
+    }
+}
+
+/// Check if an expression tree contains a `Resolved { slot, last_use: true }`
+/// for a specific slot. Used to derive tail-call owned_mask from last_use
+/// annotations instead of the old `TailCallData.owned` mechanism.
+fn contains_last_use_slot(expr: &Expr, target_slot: u16) -> bool {
+    match expr {
+        Expr::Resolved { slot, last_use, .. } => *slot == target_slot && last_use.0,
+        Expr::FnCall(fn_expr, args) => {
+            contains_last_use_slot(&fn_expr.node, target_slot)
+                || args
+                    .iter()
+                    .any(|a| contains_last_use_slot(&a.node, target_slot))
+        }
+        Expr::BinOp(_, left, right) => {
+            contains_last_use_slot(&left.node, target_slot)
+                || contains_last_use_slot(&right.node, target_slot)
+        }
+        Expr::Attr(obj, _) => contains_last_use_slot(&obj.node, target_slot),
+        Expr::ErrorProp(inner) | Expr::Constructor(_, Some(inner)) => {
+            contains_last_use_slot(&inner.node, target_slot)
+        }
+        Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
+            crate::ast::StrPart::Parsed(e) => contains_last_use_slot(&e.node, target_slot),
+            _ => false,
+        }),
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => items
+            .iter()
+            .any(|e| contains_last_use_slot(&e.node, target_slot)),
+        _ => false,
     }
 }

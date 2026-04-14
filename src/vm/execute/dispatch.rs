@@ -79,6 +79,13 @@ impl VM {
                     self.stack.push(self.stack[bp + slot]);
                 }
 
+                MOVE_LOCAL => {
+                    let slot = read_u8!(code, ip) as usize;
+                    let val = self.stack[bp + slot];
+                    self.stack[bp + slot] = NanValue::UNIT;
+                    self.stack.push(val);
+                }
+
                 LOAD_LOCAL_2 => {
                     let slot_a = read_u8!(code, ip) as usize;
                     let slot_b = read_u8!(code, ip) as usize;
