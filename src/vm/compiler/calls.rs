@@ -197,7 +197,7 @@ impl<'a> FnCompiler<'a> {
             for arg in plan.args {
                 self.compile_forward_arg(arg)?;
             }
-            return self.emit_resolved_call_after_loaded_args(target, args.len());
+            return self.emit_resolved_call_after_loaded_args(target, args.len(), 0);
         }
 
         if let Some(target) = self.resolve_call_target(&fn_expr.node) {
@@ -216,6 +216,7 @@ impl<'a> FnCompiler<'a> {
         &mut self,
         target: CallTarget,
         argc: usize,
+        owned_mask: u8,
     ) -> Result<(), CompileError> {
         match target {
             CallTarget::KnownFn(fn_id) => {
@@ -241,7 +242,7 @@ impl<'a> FnCompiler<'a> {
                 self.emit_u16(variant_id);
                 self.emit_u8(argc as u8);
             }
-            CallTarget::Builtin(builtin) => self.emit_builtin_after_args(builtin, argc),
+            CallTarget::Builtin(builtin) => self.emit_builtin_after_args(builtin, argc, owned_mask),
             CallTarget::UnknownQualified(qualified) => {
                 return Err(CompileError {
                     msg: format!("unknown builtin or namespace member: {}", qualified),
@@ -257,9 +258,7 @@ impl<'a> FnCompiler<'a> {
         args: &[Spanned<Expr>],
     ) -> Result<(), CompileError> {
         // Compute owned mask before compiling args (we need the AST).
-        // Save to a local — nested compile_expr calls may clobber
-        // pending_owned_mask via recursive compile_resolved_call.
-        let saved_mask = if !self.owned_params.is_empty() {
+        let owned_mask = if !self.owned_params.is_empty() {
             let arg_refs: Vec<&Spanned<Expr>> = args.iter().collect();
             self.compute_builtin_owned_mask(&arg_refs)
         } else {
@@ -268,8 +267,7 @@ impl<'a> FnCompiler<'a> {
         for arg in args {
             self.compile_expr(arg)?;
         }
-        self.pending_owned_mask = saved_mask;
-        self.emit_resolved_call_after_loaded_args(target, args.len())
+        self.emit_resolved_call_after_loaded_args(target, args.len(), owned_mask)
     }
 
     pub(super) fn compile_tail_call(
@@ -410,25 +408,21 @@ impl<'a> FnCompiler<'a> {
             LeafOp::MapGet { map, key } => {
                 self.compile_expr(map)?;
                 self.compile_expr(key)?;
-                self.emit_builtin_after_args(VmBuiltin::MapGet, 2);
+                self.emit_builtin_after_args(VmBuiltin::MapGet, 2, 0);
                 Ok(())
             }
             LeafOp::MapSet { map, key, value } => {
-                // Save owned mask to a local BEFORE compiling args — nested
-                // calls (e.g. Int.toString) go through compile_resolved_call
-                // which overwrites pending_owned_mask, losing the map's bit.
                 let owned_mask = self.compute_builtin_owned_mask(&[map, key, value]);
                 self.compile_expr(map)?;
                 self.compile_expr(key)?;
                 self.compile_expr(value)?;
-                self.pending_owned_mask = owned_mask;
-                self.emit_builtin_after_args(VmBuiltin::MapSet, 3);
+                self.emit_builtin_after_args(VmBuiltin::MapSet, 3, owned_mask);
                 Ok(())
             }
             LeafOp::VectorNew { size, fill } => {
                 self.compile_expr(size)?;
                 self.compile_expr(fill)?;
-                self.emit_builtin_after_args(VmBuiltin::VectorNew, 2);
+                self.emit_builtin_after_args(VmBuiltin::VectorNew, 2, 0);
                 Ok(())
             }
             LeafOp::VectorGetOrDefaultLiteral {
@@ -462,7 +456,7 @@ impl<'a> FnCompiler<'a> {
             LeafOp::ListIndexGet { list, index } => {
                 // Decompose: Vector.fromList(list) then Vector.get(_, index)
                 self.compile_expr(list)?;
-                self.emit_builtin_after_args(VmBuiltin::VectorFromList, 1);
+                self.emit_builtin_after_args(VmBuiltin::VectorFromList, 1, 0);
                 self.compile_expr(index)?;
                 self.emit_op(VECTOR_GET);
                 Ok(())
@@ -474,7 +468,7 @@ impl<'a> FnCompiler<'a> {
             } => {
                 self.compile_expr(a)?;
                 self.compile_expr(b)?;
-                self.emit_builtin_after_args(VmBuiltin::IntMod, 2);
+                self.emit_builtin_after_args(VmBuiltin::IntMod, 2, 0);
                 let default_value = self.nan_literal(default_literal);
                 let const_idx = self.add_constant(default_value);
                 self.emit_op(LOAD_CONST);
@@ -485,10 +479,7 @@ impl<'a> FnCompiler<'a> {
         }
     }
 
-    fn emit_builtin_after_args(&mut self, builtin: VmBuiltin, argc: usize) {
-        let owned_mask = self.pending_owned_mask;
-        self.pending_owned_mask = 0;
-
+    fn emit_builtin_after_args(&mut self, builtin: VmBuiltin, argc: usize, owned_mask: u8) {
         match builtin {
             VmBuiltin::ListLen => self.emit_op(LIST_LEN),
             VmBuiltin::ListPrepend => self.emit_op(LIST_PREPEND),
