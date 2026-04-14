@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ast::{BinOp, Expr, Literal, Spanned, VerifyBlock, VerifyLaw};
+use crate::ast::{BinOp, Expr, Literal, Spanned, TailCallData, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 use crate::verify_law::canonical_spec_ref;
 
@@ -118,9 +118,9 @@ fn simplify_identity_expr(expr: &Spanned<Expr>) -> Spanned<Expr> {
                 .map(|(name, value)| (name.clone(), simplify_identity_expr(value)))
                 .collect(),
         },
-        Expr::TailCall(call) => Expr::TailCall(Box::new((
-            call.0.clone(),
-            call.1.iter().map(simplify_identity_expr).collect(),
+        Expr::TailCall(call) => Expr::TailCall(Box::new(TailCallData::new(
+            call.target.clone(),
+            call.args.iter().map(simplify_identity_expr).collect(),
         ))),
         Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) => return expr.clone(),
     };

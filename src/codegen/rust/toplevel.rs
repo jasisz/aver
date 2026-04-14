@@ -1,16 +1,16 @@
+use super::emit_ctx::{
+    EmitCtx, compute_args_used_after_full, compute_block_used_after, compute_block_used_after_full,
+    compute_block_used_after_with_rc, is_copy_type, should_borrow_param,
+};
 use super::expr::{
     aver_name_to_rust, classify_body_expr_plan_for_rust, classify_body_plan_for_rust,
     classify_dispatch_plan_for_rust, classify_thin_fn_def_for_rust, clone_arg,
     emit_body_plan_for_rust, emit_dispatch_table_match, emit_expr, emit_stmt,
 };
-use super::liveness::{
-    EmitCtx, collect_vars, compute_args_used_after_full, compute_block_used_after,
-    compute_block_used_after_full, compute_block_used_after_with_rc, is_copy_type,
-    should_borrow_param,
-};
 use super::types::type_annotation_to_rust;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
+use crate::ir::vars::{collect_vars, pattern_bindings};
 use crate::ir::{BodyExprPlan, CallPlan, thin_kind_is_parent_thin_candidate};
 use crate::types::{Type, parse_type_str};
 /// Top-level Aver items → Rust items (structs, enums, functions, tests).
@@ -669,7 +669,11 @@ pub(super) fn body_has_self_tailcall(body: &FnBody, fn_name: &str) -> bool {
 fn expr_has_self_tailcall(expr: &Expr, fn_name: &str) -> bool {
     match expr {
         Expr::TailCall(boxed) => {
-            let (target, _) = boxed.as_ref();
+            let TailCallData {
+                target: target,
+                args: _,
+                ..
+            } = boxed.as_ref();
             target == fn_name
         }
         Expr::Match { arms, .. } => arms
@@ -831,7 +835,11 @@ fn check_expr_passthrough_by_name(
 ) -> bool {
     match expr {
         Expr::TailCall(boxed) => {
-            let (target, args) = boxed.as_ref();
+            let TailCallData {
+                target: target,
+                args: args,
+                ..
+            } = boxed.as_ref();
             if !member_names.contains(target.as_str()) {
                 return true; // call to non-member, irrelevant
             }
@@ -882,7 +890,11 @@ fn check_expr_tailcalls_for_rc(
     }
     match expr {
         Expr::TailCall(boxed) => {
-            let (target, args) = boxed.as_ref();
+            let TailCallData {
+                target: target,
+                args: args,
+                ..
+            } = boxed.as_ref();
             if member_names.contains(target.as_str()) && args.len() == params.len() {
                 // For each candidate index, check if arg[i] == Ident(param_name[i])
                 let to_remove: Vec<usize> = candidates
@@ -1268,7 +1280,11 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
 ) {
     match expr {
         Expr::TailCall(boxed) => {
-            let (target, args) = boxed.as_ref();
+            let TailCallData {
+                target: target,
+                args: args,
+                ..
+            } = boxed.as_ref();
             if target == self_name {
                 for arg in args {
                     collect_hoistable_invariant_subexprs(
@@ -1626,8 +1642,12 @@ fn rewrite_expr_with_hoists(expr: &Expr, hoisted_exprs: &HashMap<usize, String>)
                 .collect(),
         },
         Expr::TailCall(boxed) => {
-            let (target, args) = boxed.as_ref();
-            Expr::TailCall(Box::new((
+            let TailCallData {
+                target: target,
+                args: args,
+                ..
+            } = boxed.as_ref();
+            Expr::TailCall(Box::new(TailCallData::new(
                 target.clone(),
                 args.iter()
                     .map(|arg| rewrite_spanned(arg, hoisted_exprs))
@@ -1831,7 +1851,11 @@ fn emit_tco_expr(
 ) -> String {
     match expr {
         Expr::TailCall(boxed) => {
-            let (target, args) = boxed.as_ref();
+            let TailCallData {
+                target: target,
+                args: args,
+                ..
+            } = boxed.as_ref();
             if target != self_name || args.len() != params.len() {
                 return emit_expr(expr, ctx, ectx);
             }
@@ -1869,6 +1893,17 @@ fn emit_tco_expr(
                 for ac in &mut arg_ctxs {
                     for pn in &passthrough_param_names {
                         ac.used_after.insert(pn.clone());
+                    }
+                }
+            }
+
+            // Apply IR reuse analysis: if owned[i] is true, the parameter
+            // is sole-owned at this tail-call site — safe to move, no clone.
+            if !boxed.owned.is_empty() {
+                for (i, ac) in arg_ctxs.iter_mut().enumerate() {
+                    if i < boxed.owned.len() && boxed.owned[i] && i < params.len() {
+                        let param_rust = aver_name_to_rust(&params[i].0);
+                        ac.used_after.remove(&param_rust);
                     }
                 }
             }
@@ -1950,7 +1985,7 @@ fn emit_tco_expr(
             let mut arms_vars = std::collections::HashSet::new();
             for arm in arms {
                 let mut arm_vars = collect_vars(&arm.body.node);
-                let bindings = super::liveness::pattern_bindings(&arm.pattern);
+                let bindings = pattern_bindings(&arm.pattern);
                 for b in &bindings {
                     arm_vars.remove(b);
                 }
@@ -2361,7 +2396,11 @@ fn emit_trampoline_expr(
 ) -> String {
     match expr {
         Expr::TailCall(boxed) => {
-            let (target, args) = boxed.as_ref();
+            let TailCallData {
+                target: target,
+                args: args,
+                ..
+            } = boxed.as_ref();
             if member_names.contains(target) {
                 // Bounce → produce enum variant (excluding Rc-wrapped args)
                 let variant = fn_name_to_variant(target);
@@ -2397,7 +2436,7 @@ fn emit_trampoline_expr(
             let mut arms_vars = HashSet::new();
             for arm in arms {
                 let mut arm_vars = collect_vars(&arm.body.node);
-                let bindings = super::liveness::pattern_bindings(&arm.pattern);
+                let bindings = pattern_bindings(&arm.pattern);
                 for b in &bindings {
                     arm_vars.remove(b);
                 }
@@ -2863,7 +2902,7 @@ mod tests {
             vec![("xs", "List<Int>"), ("remaining", "Int"), ("sink", "Int")],
         );
         let ectx = build_fn_ectx(&fd, &ctx);
-        let expr = Expr::TailCall(Box::new((
+        let expr = Expr::TailCall(Box::new(TailCallData::new(
             "repeatSum".to_string(),
             vec![
                 Spanned::bare(Expr::Ident("xs".to_string())),
@@ -2916,7 +2955,7 @@ mod tests {
             ],
         );
         let ectx = build_fn_ectx(&fd, &ctx);
-        let expr = Expr::TailCall(Box::new((
+        let expr = Expr::TailCall(Box::new(TailCallData::new(
             "repeatAppend".to_string(),
             vec![
                 Spanned::bare(Expr::Ident("a".to_string())),
@@ -2969,7 +3008,7 @@ mod tests {
         let ctx = empty_ctx();
         let fd = list_param_fn("validSymbolNames", vec![("e", "Sexpr")]);
         let ectx = build_fn_ectx(&fd, &ctx);
-        let expr = Expr::TailCall(Box::new((
+        let expr = Expr::TailCall(Box::new(TailCallData::new(
             "validSymbolList".to_string(),
             vec![Spanned::bare(Expr::Ident("e".to_string()))],
         )));
@@ -2998,7 +3037,7 @@ mod tests {
             vec![("n", "Int"), ("acc", "Int"), ("pick", "Int")],
         );
         let ectx = build_fn_ectx(&fd, &ctx);
-        let expr = Expr::TailCall(Box::new((
+        let expr = Expr::TailCall(Box::new(TailCallData::new(
             "sumAreas".to_string(),
             vec![
                 Spanned::bare(Expr::BinOp(
@@ -3089,7 +3128,7 @@ mod tests {
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: Box::new(Spanned::bare(Expr::TailCall(Box::new((
+                        body: Box::new(Spanned::bare(Expr::TailCall(Box::new(TailCallData::new(
                             "sumAreas".to_string(),
                             vec![
                                 Spanned::bare(Expr::BinOp(
@@ -3254,7 +3293,7 @@ mod tests {
                     },
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(false)),
-                        body: Box::new(Spanned::bare(Expr::TailCall(Box::new((
+                        body: Box::new(Spanned::bare(Expr::TailCall(Box::new(TailCallData::new(
                             "isOdd".to_string(),
                             vec![Spanned::bare(Expr::BinOp(
                                 BinOp::Sub,
@@ -3288,7 +3327,7 @@ mod tests {
                     },
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(false)),
-                        body: Box::new(Spanned::bare(Expr::TailCall(Box::new((
+                        body: Box::new(Spanned::bare(Expr::TailCall(Box::new(TailCallData::new(
                             "isEven".to_string(),
                             vec![Spanned::bare(Expr::BinOp(
                                 BinOp::Sub,
@@ -3345,7 +3384,7 @@ mod tests {
             effects: vec![],
             desc: None,
             body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::TailCall(Box::new(
-                (
+                TailCallData::new(
                     target.to_string(),
                     vec![Spanned::bare(Expr::Ident("n".to_string()))],
                 ),
@@ -3379,7 +3418,7 @@ mod tests {
             effects: vec![],
             desc: None,
             body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::TailCall(Box::new(
-                (
+                TailCallData::new(
                     target.to_string(),
                     vec![Spanned::bare(Expr::Ident("n".to_string()))],
                 ),
@@ -3420,7 +3459,7 @@ mod tests {
             effects: vec![],
             desc: None,
             body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::TailCall(Box::new(
-                (
+                TailCallData::new(
                     "factorial".to_string(),
                     vec![Spanned::bare(Expr::Ident("n".to_string()))],
                 ),

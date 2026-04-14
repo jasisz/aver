@@ -135,7 +135,11 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
         }
         Expr::TailCall(boxed) => {
             // TailCall is an internal optimization — emit as regular call
-            let (target, args) = boxed.as_ref();
+            let TailCallData {
+                target: target,
+                args: args,
+                ..
+            } = boxed.as_ref();
             let parts: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
             if parts.is_empty() {
                 aver_name_to_lean(target)

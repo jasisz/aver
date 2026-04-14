@@ -139,7 +139,7 @@ fn collect_expr_bindings(
             collect_expr_bindings(obj, local_slots, next_slot);
         }
         Expr::TailCall(boxed) => {
-            for arg in &boxed.1 {
+            for arg in &boxed.args {
                 collect_expr_bindings(arg, local_slots, next_slot);
             }
         }
@@ -257,7 +257,7 @@ fn resolve_expr(expr: &mut Spanned<Expr>, local_slots: &HashMap<String, u16>) {
             }
         }
         Expr::TailCall(boxed) => {
-            for arg in &mut boxed.1 {
+            for arg in &mut boxed.args {
                 resolve_expr(arg, local_slots);
             }
         }

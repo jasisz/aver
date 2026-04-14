@@ -1,5 +1,5 @@
 use super::{CompileError, FnCompiler};
-use crate::ast::{BinOp, Expr, Literal, Spanned, Stmt, StrPart};
+use crate::ast::{BinOp, Expr, Literal, Spanned, Stmt, StrPart, TailCallData};
 use crate::nan_value::NanValue;
 use crate::vm::builtin::VmBuiltin;
 use crate::vm::opcode::*;
@@ -64,7 +64,11 @@ impl<'a> FnCompiler<'a> {
             }
             Expr::FnCall(fn_expr, args) => self.compile_call(fn_expr, args),
             Expr::TailCall(boxed) => {
-                let (target, args) = boxed.as_ref();
+                let TailCallData {
+                    target: target,
+                    args: args,
+                    ..
+                } = boxed.as_ref();
                 self.compile_tail_call(target, args)
             }
             Expr::Match { subject, arms } => self.compile_match(subject, arms),

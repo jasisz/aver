@@ -67,9 +67,9 @@ impl TypeChecker {
                         .any(|(_, expr)| Self::verify_case_calls_target(expr, fn_name))
             }
             Expr::TailCall(boxed) => {
-                boxed.0 == fn_name
+                boxed.target == fn_name
                     || boxed
-                        .1
+                        .args
                         .iter()
                         .any(|arg| Self::verify_case_calls_target(arg, fn_name))
             }
@@ -469,7 +469,7 @@ impl TypeChecker {
                 }
             }
             Expr::TailCall(boxed) => {
-                for arg in &boxed.1 {
+                for arg in &boxed.args {
                     self.check_effects_in_expr(arg, caller_name, caller_effects);
                 }
             }

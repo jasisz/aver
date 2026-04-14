@@ -15,7 +15,8 @@ mod types;
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
-    BinOp, Expr, FnBody, FnDef, MatchArm, Pattern, Spanned, Stmt, TopLevel, TypeDef, VerifyKind,
+    BinOp, Expr, FnBody, FnDef, MatchArm, Pattern, Spanned, Stmt, TailCallData, TopLevel, TypeDef,
+    VerifyKind,
 };
 use crate::call_graph;
 use crate::codegen::{CodegenContext, ProjectOutput};
@@ -831,7 +832,11 @@ fn collect_calls_from_expr<'a>(
             }
         }
         Expr::TailCall(boxed) => {
-            let (name, args) = boxed.as_ref();
+            let TailCallData {
+                target: name,
+                args: args,
+                ..
+            } = boxed.as_ref();
             out.push((name.clone(), args.iter().collect()));
             for arg in args {
                 collect_calls_from_expr(arg, out);
@@ -923,7 +928,11 @@ fn collect_list_tail_binders_from_expr(
             }
         }
         Expr::TailCall(boxed) => {
-            let (_, args) = boxed.as_ref();
+            let TailCallData {
+                target: _,
+                args: args,
+                ..
+            } = boxed.as_ref();
             for arg in args {
                 collect_list_tail_binders_from_expr(arg, list_param_name, tails);
             }
@@ -1085,7 +1094,7 @@ fn grow_recursive_subterm_binders_from_expr(
             }
         }
         Expr::TailCall(boxed) => {
-            for arg in &boxed.1 {
+            for arg in &boxed.args {
                 grow_recursive_subterm_binders_from_expr(arg, tracked, td, out);
             }
         }
@@ -2216,8 +2225,9 @@ mod tests {
         transpile_for_proof_mode, transpile_with_verify_mode,
     };
     use crate::ast::{
-        BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, TopLevel, TypeDef,
-        TypeVariant, VerifyBlock, VerifyGiven, VerifyGivenDomain, VerifyKind, VerifyLaw,
+        BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, TailCallData,
+        TopLevel, TypeDef, TypeVariant, VerifyBlock, VerifyGiven, VerifyGivenDomain, VerifyKind,
+        VerifyLaw,
     };
 
     /// Shorthand: wrap an Expr in Spanned with line=0.
@@ -3836,7 +3846,7 @@ verify mirror law involutive
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: sbb(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new(TailCallData::new(
                             "down".to_string(),
                             vec![sb(Expr::BinOp(
                                 BinOp::Sub,
@@ -3896,7 +3906,7 @@ verify mirror law involutive
                     },
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(false)),
-                        body: sbb(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new(TailCallData::new(
                             "repeatLike".to_string(),
                             vec![
                                 sb(Expr::Ident("char".to_string())),
@@ -3952,7 +3962,7 @@ verify mirror law involutive
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(true)),
-                        body: sbb(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new(TailCallData::new(
                             "normalize".to_string(),
                             vec![sb(Expr::BinOp(
                                 BinOp::Add,
@@ -4008,7 +4018,7 @@ verify mirror law involutive
                     },
                     MatchArm {
                         pattern: Pattern::Cons("h".to_string(), "t".to_string()),
-                        body: sbb(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new(TailCallData::new(
                             "len".to_string(),
                             vec![sb(Expr::Ident("t".to_string()))],
                         )))),
@@ -4050,7 +4060,7 @@ verify mirror law involutive
                     },
                     MatchArm {
                         pattern: Pattern::Cons("h".to_string(), "t".to_string()),
-                        body: sbb(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new(TailCallData::new(
                             "lenFrom".to_string(),
                             vec![
                                 sb(Expr::BinOp(
@@ -4113,7 +4123,7 @@ verify mirror law involutive
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: sbb(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new(TailCallData::new(
                             "skipWs".to_string(),
                             vec![
                                 sb(Expr::Ident("s".to_string())),
@@ -4164,7 +4174,7 @@ verify mirror law involutive
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: sbb(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new(TailCallData::new(
                             "odd".to_string(),
                             vec![sb(Expr::BinOp(
                                 BinOp::Sub,
@@ -4193,7 +4203,7 @@ verify mirror law involutive
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: sbb(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new(TailCallData::new(
                             "even".to_string(),
                             vec![sb(Expr::BinOp(
                                 BinOp::Sub,
@@ -4252,7 +4262,7 @@ verify mirror law involutive
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: sbb(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new(TailCallData::new(
                             "g".to_string(),
                             vec![
                                 sb(Expr::Ident("s".to_string())),
@@ -4287,7 +4297,7 @@ verify mirror law involutive
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: sbb(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new(TailCallData::new(
                             "f".to_string(),
                             vec![
                                 sb(Expr::Ident("s".to_string())),
@@ -4332,13 +4342,15 @@ verify mirror law involutive
             return_type: "Int".to_string(),
             effects: vec![],
             desc: None,
-            body: Rc::new(FnBody::from_expr(sb(Expr::TailCall(Box::new((
-                "g".to_string(),
-                vec![
-                    sb(Expr::Literal(Literal::Str("acc".to_string()))),
-                    sb(Expr::Ident("xs".to_string())),
-                ],
-            )))))),
+            body: Rc::new(FnBody::from_expr(sb(Expr::TailCall(Box::new(
+                TailCallData::new(
+                    "g".to_string(),
+                    vec![
+                        sb(Expr::Literal(Literal::Str("acc".to_string()))),
+                        sb(Expr::Ident("xs".to_string())),
+                    ],
+                ),
+            ))))),
             resolution: None,
         };
         let g = FnDef {
@@ -4360,7 +4372,7 @@ verify mirror law involutive
                     },
                     MatchArm {
                         pattern: Pattern::Cons("h".to_string(), "t".to_string()),
-                        body: sbb(Expr::TailCall(Box::new((
+                        body: sbb(Expr::TailCall(Box::new(TailCallData::new(
                             "f".to_string(),
                             vec![sb(Expr::Ident("t".to_string()))],
                         )))),

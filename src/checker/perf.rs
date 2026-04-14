@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::ast::{BinOp, Expr, FnDef, Literal, Pattern, Spanned, Stmt, TopLevel};
+use crate::ast::{BinOp, Expr, FnDef, Literal, Pattern, Spanned, Stmt, TailCallData, TopLevel};
 
 use super::CheckFinding;
 
@@ -216,7 +216,11 @@ fn walk_expr_inner<F: FnMut(&Spanned<Expr>)>(expr: &Expr, f: &mut F) {
             }
         }
         Expr::TailCall(boxed) => {
-            let (_, args) = boxed.as_ref();
+            let TailCallData {
+                target: _,
+                args: args,
+                ..
+            } = boxed.as_ref();
             for arg in args {
                 walk_expr(arg, f);
             }
@@ -386,7 +390,11 @@ fn collect_tailcall_args(stmts: &[Stmt]) -> Vec<&Vec<Spanned<Expr>>> {
 fn collect_tailcall_args_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Vec<Spanned<Expr>>>) {
     match expr {
         Expr::TailCall(boxed) => {
-            let (_, args) = boxed.as_ref();
+            let TailCallData {
+                target: _,
+                args: args,
+                ..
+            } = boxed.as_ref();
             out.push(args);
         }
         Expr::BinOp(_, left, right) => {
@@ -534,7 +542,7 @@ fn first_ident_in(expr: &Expr, set: &HashSet<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{FnBody, Literal, MatchArm, SourceLine, Spanned};
+    use crate::ast::{FnBody, Literal, MatchArm, SourceLine, Spanned, TailCallData};
 
     fn spanned(node: Expr) -> Spanned<Expr> {
         Spanned {
@@ -910,7 +918,7 @@ mod tests {
             ))),
             vec![spanned(ident("width"))],
         );
-        let tailcall = Expr::TailCall(Box::new((
+        let tailcall = Expr::TailCall(Box::new(TailCallData::new(
             "draw".to_string(),
             vec![
                 spanned(binop(BinOp::Add, ident("x"), int(1))),
@@ -951,7 +959,7 @@ mod tests {
             ))),
             vec![spanned(ident("width"))],
         );
-        let tailcall = Expr::TailCall(Box::new((
+        let tailcall = Expr::TailCall(Box::new(TailCallData::new(
             "draw".to_string(),
             vec![
                 spanned(binop(BinOp::Add, ident("x"), int(1))),
@@ -981,7 +989,7 @@ mod tests {
         // fn f(x: Int, y: Int) -> Int
         //   z = y          ← trivial (single ident)
         //   TailCall("f", [x + 1, y])
-        let tailcall = Expr::TailCall(Box::new((
+        let tailcall = Expr::TailCall(Box::new(TailCallData::new(
             "f".to_string(),
             vec![
                 spanned(binop(BinOp::Add, ident("x"), int(1))),
@@ -1012,7 +1020,7 @@ mod tests {
         //   w = y * z      ← nontrivial arithmetic, both y and z are invariant
         //   TailCall("f", [x + 1, y, z])
         let arith = binop(BinOp::Mul, ident("y"), ident("z"));
-        let tailcall = Expr::TailCall(Box::new((
+        let tailcall = Expr::TailCall(Box::new(TailCallData::new(
             "f".to_string(),
             vec![
                 spanned(binop(BinOp::Add, ident("x"), int(1))),

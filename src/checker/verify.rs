@@ -1,4 +1,4 @@
-use crate::ast::{Expr, Spanned, TopLevel, VerifyBlock, VerifyKind};
+use crate::ast::{Expr, Spanned, TailCallData, TopLevel, VerifyBlock, VerifyKind};
 
 use super::callee_is_target;
 
@@ -57,7 +57,11 @@ pub(super) fn collect_target_call_args<'a>(
             }
         }
         Expr::TailCall(boxed) => {
-            let (target, args) = boxed.as_ref();
+            let TailCallData {
+                target: target,
+                args: args,
+                ..
+            } = boxed.as_ref();
             if target == fn_name
                 && let Some(arg) = args.get(arg_index)
             {
@@ -116,9 +120,9 @@ pub(super) fn verify_case_calls_target(left: &Spanned<Expr>, fn_name: &str) -> b
                     .any(|(_, expr)| verify_case_calls_target(expr, fn_name))
         }
         Expr::TailCall(boxed) => {
-            boxed.0 == fn_name
+            boxed.target == fn_name
                 || boxed
-                    .1
+                    .args
                     .iter()
                     .any(|arg| verify_case_calls_target(arg, fn_name))
         }
@@ -251,7 +255,11 @@ pub fn expr_to_str(expr: &Spanned<Expr>) -> String {
             )
         }
         Expr::TailCall(boxed) => {
-            let (target, args) = boxed.as_ref();
+            let TailCallData {
+                target: target,
+                args: args,
+                ..
+            } = boxed.as_ref();
             let a = args.iter().map(expr_to_str).collect::<Vec<_>>().join(", ");
             format!("<tail-call:{}>({})", target, a)
         }

@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use crate::ast::{
-    DecisionBlock, DecisionImpact, Expr, FnDef, Spanned, Stmt, StrPart, TopLevel, TypeDef,
-    VerifyKind,
+    DecisionBlock, DecisionImpact, Expr, FnDef, Spanned, Stmt, StrPart, TailCallData, TopLevel,
+    TypeDef, VerifyKind,
 };
 use crate::verify_law::{canonical_spec_ref, named_law_function};
 
@@ -120,7 +120,11 @@ fn collect_used_effects_expr(expr: &Spanned<Expr>, fn_sigs: &FnSigMap, out: &mut
             }
         }
         Expr::TailCall(boxed) => {
-            let (target, args) = boxed.as_ref();
+            let TailCallData {
+                target: target,
+                args: args,
+                ..
+            } = boxed.as_ref();
             if let Some((_, _, effects)) = fn_sigs.get(target) {
                 for effect in effects {
                     out.insert(effect.clone());

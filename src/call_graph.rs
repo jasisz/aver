@@ -179,8 +179,8 @@ fn collect_codegen_deps_expr(
             }
         }
         Expr::TailCall(boxed) => {
-            if fn_names.contains(&boxed.0) {
-                out.insert(boxed.0.clone());
+            if fn_names.contains(&boxed.target) {
+                out.insert(boxed.target.clone());
             }
         }
         _ => {}
@@ -208,7 +208,7 @@ fn walk_expr(expr: &Spanned<Expr>, visit: &mut impl FnMut(&Expr)) {
             }
         }
         Expr::TailCall(boxed) => {
-            for arg in &boxed.1 {
+            for arg in &boxed.args {
                 walk_expr(arg, visit);
             }
         }
@@ -373,10 +373,10 @@ fn count_recursive_calls_expr(expr: &Spanned<Expr>, recursive: &HashSet<String>,
             }
         }
         Expr::TailCall(boxed) => {
-            if recursive.contains(&boxed.0) {
+            if recursive.contains(&boxed.target) {
                 *out += 1;
             }
-            for arg in &boxed.1 {
+            for arg in &boxed.args {
                 count_recursive_calls_expr(arg, recursive, out);
             }
         }
@@ -450,7 +450,7 @@ fn collect_callees_expr(expr: &Spanned<Expr>, callees: &mut HashSet<String>) {
             }
         }
         Expr::TailCall(boxed) => {
-            callees.insert(boxed.0.clone());
+            callees.insert(boxed.target.clone());
         }
         _ => {}
     });

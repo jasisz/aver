@@ -1,8 +1,8 @@
 use crate::ast::{Literal, MatchArm, Pattern, Stmt};
 use crate::codegen::CodegenContext;
 
+use super::emit_ctx::EmitCtx;
 use super::expr::emit_expr;
-use super::liveness::EmitCtx;
 
 pub(super) fn has_string_literal_patterns(arms: &[MatchArm]) -> bool {
     arms.iter()

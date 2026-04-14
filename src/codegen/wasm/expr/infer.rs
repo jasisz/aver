@@ -138,7 +138,7 @@ impl<'a> ExprEmitter<'a> {
                 self.infer_record_field_type(base, field)
             }
             Expr::TailCall(tc) => {
-                let resolved_name = self.resolve_user_fn_name(tc.0.as_str());
+                let resolved_name = self.resolve_user_fn_name(tc.target.as_str());
                 if let Some((_, ret, _)) = self.fn_sigs.get(resolved_name.as_str()) {
                     aver_type_to_wasm(ret)
                 } else {

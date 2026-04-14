@@ -172,7 +172,7 @@ fn collect_non_tail_recursive_call_lines_expr(
             }
         }
         Expr::TailCall(boxed) => {
-            for arg in &boxed.1 {
+            for arg in &boxed.args {
                 collect_non_tail_recursive_call_lines_expr(arg, recursive, out);
             }
         }

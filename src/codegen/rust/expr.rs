@@ -1,11 +1,12 @@
 use super::builtins;
-use super::liveness::{EmitCtx, collect_vars, compute_args_used_after_full, should_borrow_param};
+use super::emit_ctx::{EmitCtx, compute_args_used_after_full, should_borrow_param};
 use super::pattern::emit_pattern;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
 use crate::codegen::common::{
     expr_to_dotted_name, is_user_type, module_prefix_to_rust_path, resolve_module_call,
 };
+use crate::ir::vars::{collect_vars, pattern_bindings};
 use crate::ir::{
     BodyExprPlan, BodyPlan, BoolCompareOp, BoolSubjectPlan, CallLowerCtx, CallPlan,
     DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral, DispatchTableShape,
@@ -545,7 +546,11 @@ fn emit_expr_with_options(
         }
         Expr::TailCall(boxed) => {
             // TailCall outside of a TCO loop → emit as regular function call
-            let (target, args) = boxed.as_ref();
+            let TailCallData {
+                target: target,
+                args: args,
+                ..
+            } = boxed.as_ref();
             let bare_args: Vec<Expr> = args.iter().map(|a| a.node.clone()).collect();
             let call_ctx = RustCallCtx { ctx, ectx };
             match classify_tail_call_plan(target, "", &call_ctx) {
@@ -584,7 +589,7 @@ fn emit_body_plan_for_rust_with_options(
             bindings,
             tail,
         } => {
-            let stmt_ctxs = super::liveness::compute_block_used_after_full(
+            let stmt_ctxs = super::emit_ctx::compute_block_used_after_full(
                 stmts,
                 &ectx.used_after,
                 &ectx.local_types,
@@ -966,7 +971,7 @@ fn fn_def_has_only_self_tco(fd: &FnDef) -> bool {
 fn fn_def_has_mutual_tco(fd: &FnDef) -> bool {
     fn expr_has_other_tailcall(expr: &Expr, fn_name: &str) -> bool {
         match expr {
-            Expr::TailCall(boxed) => boxed.as_ref().0 != fn_name,
+            Expr::TailCall(boxed) => boxed.target != fn_name,
             Expr::Match { arms, .. } => arms
                 .iter()
                 .any(|arm| expr_has_other_tailcall(&arm.body.node, fn_name)),
@@ -983,7 +988,7 @@ fn fn_def_has_mutual_tco(fd: &FnDef) -> bool {
 fn fn_def_has_tco(fd: &FnDef) -> bool {
     fn expr_has_self_tailcall(expr: &Expr, fn_name: &str) -> bool {
         match expr {
-            Expr::TailCall(boxed) => boxed.as_ref().0 == fn_name,
+            Expr::TailCall(boxed) => boxed.target == fn_name,
             Expr::Match { arms, .. } => arms
                 .iter()
                 .any(|arm| expr_has_self_tailcall(&arm.body.node, fn_name)),
@@ -1292,7 +1297,7 @@ fn attr_result_is_copy(obj: &Expr, field: &str, ctx: &CodegenContext, ectx: &Emi
             && let Some((_, type_ann)) = fields.iter().find(|(n, _)| n == field)
         {
             let ty = types::parse_type_str(type_ann);
-            return super::liveness::is_copy_type(&ty);
+            return super::emit_ctx::is_copy_type(&ty);
         }
     }
     false
@@ -1503,7 +1508,7 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
     let mut arms_vars = HashSet::new();
     for arm in arms {
         let mut arm_vars = collect_vars(&arm.body.node);
-        let bindings = super::liveness::pattern_bindings(&arm.pattern);
+        let bindings = pattern_bindings(&arm.pattern);
         for b in &bindings {
             arm_vars.remove(b);
         }
@@ -1533,7 +1538,7 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
     // that would need clone rebindings across all match emission paths).
     let no_bindings = arms
         .iter()
-        .all(|arm| super::liveness::pattern_bindings(&arm.pattern).is_empty());
+        .all(|arm| pattern_bindings(&arm.pattern).is_empty());
     let match_on_ref =
         no_bindings && matches!(subject, Expr::Ident(name) if subj_ectx.is_borrowed_param(name));
     let subj = if match_on_ref {
@@ -2034,7 +2039,7 @@ pub(super) fn constructor_boxed_bindings(
 /// When matching on a reference (`&T`), pattern bindings are `&Inner`.
 /// Emit `let b = b.clone();` for each binding to produce owned values.
 fn emit_ref_match_rebindings(pattern: &Pattern) -> String {
-    let bindings = super::liveness::pattern_bindings(pattern);
+    let bindings = pattern_bindings(pattern);
     if bindings.is_empty() {
         return String::new();
     }

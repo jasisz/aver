@@ -43,7 +43,7 @@ fn expr_uses_error_prop(expr: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
             _ => false,
         }),
         Expr::Attr(obj, _) => expr_uses_error_prop(obj),
-        Expr::TailCall(inner) => inner.1.iter().any(expr_uses_error_prop),
+        Expr::TailCall(inner) => inner.args.iter().any(expr_uses_error_prop),
         _ => false,
     }
 }

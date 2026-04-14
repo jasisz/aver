@@ -78,6 +78,31 @@ pub enum StrPart {
     Parsed(Box<Spanned<Expr>>),
 }
 
+/// Data for a tail-call expression.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TailCallData {
+    /// Target function name (self or mutual-recursive peer).
+    pub target: String,
+    /// Arguments to pass.
+    pub args: Vec<Spanned<Expr>>,
+    /// Per-argument reuse flags. `owned[i] == true` means the i-th argument
+    /// reuses the corresponding parameter's allocation and backends can
+    /// mutate in-place instead of cloning.
+    /// Populated by `ir::reuse`; empty until then.
+    pub owned: Vec<bool>,
+}
+
+impl TailCallData {
+    /// Create with no reuse info (default before analysis).
+    pub fn new(target: String, args: Vec<Spanned<Expr>>) -> Self {
+        Self {
+            target,
+            args,
+            owned: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Literal(Literal),
@@ -109,7 +134,8 @@ pub enum Expr {
     },
     /// Tail-position call to a function in the same SCC (self or mutual recursion).
     /// Produced by the TCO transform pass before type-checking.
-    TailCall(Box<(String, Vec<Spanned<Expr>>)>),
+    /// Reuse info is populated by `ir::reuse::annotate_program_reuse`.
+    TailCall(Box<TailCallData>),
     /// Independent product: `(a, b, c)!` or `(a, b, c)?!`.
     /// Elements are independent effectful expressions evaluated with no guaranteed order.
     /// `unwrap=true` (`?!`): all elements must be Result; unwraps Ok values, propagates first Err.

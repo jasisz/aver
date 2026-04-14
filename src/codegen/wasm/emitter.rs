@@ -1058,7 +1058,7 @@ fn collect_strings_from_expr(expr: &Expr, strings: &mut HashSet<String>) {
         }
         Expr::Attr(base, _) => collect_strings_from_expr(&base.node, strings),
         Expr::TailCall(tc) => {
-            for arg in &tc.1 {
+            for arg in &tc.args {
                 collect_strings_from_expr(&arg.node, strings);
             }
         }
@@ -1143,7 +1143,7 @@ fn collect_host_calls_from_expr(expr: &Expr, imports: &mut HashSet<String>) {
         }
         Expr::Attr(base, _) => collect_host_calls_from_expr(&base.node, imports),
         Expr::TailCall(tc) => {
-            for arg in &tc.1 {
+            for arg in &tc.args {
                 collect_host_calls_from_expr(&arg.node, imports);
             }
         }
@@ -1193,7 +1193,7 @@ fn body_has_self_tailcall(body: &FnBody, local_name: &str, canonical_name: &str)
 
 fn expr_has_self_tailcall(expr: &Expr, local_name: &str, canonical_name: &str) -> bool {
     match expr {
-        Expr::TailCall(boxed) => boxed.0 == local_name || boxed.0 == canonical_name,
+        Expr::TailCall(boxed) => boxed.target == local_name || boxed.target == canonical_name,
         Expr::Match { arms, .. } => arms
             .iter()
             .any(|arm| expr_has_self_tailcall(&arm.body.node, local_name, canonical_name)),

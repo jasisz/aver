@@ -1,7 +1,10 @@
 mod body;
 mod calls;
 mod leaf;
+pub mod liveness;
 mod matches;
+pub mod reuse;
+pub mod vars;
 
 pub use body::{
     BodyBindingPlan, BodyExprPlan, BodyPlan, ThinBodyCtx, ThinBodyPlan, ThinKind,

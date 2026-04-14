@@ -213,7 +213,11 @@ fn expr_has_call(expr: &Spanned<Expr>, fn_name: &str) -> bool {
             expr_has_call(fn_expr, fn_name) || args.iter().any(|a| expr_has_call(a, fn_name))
         }
         Expr::TailCall(inner) => {
-            let (name, args) = inner.as_ref();
+            let TailCallData {
+                target: name,
+                args: args,
+                ..
+            } = inner.as_ref();
             name == fn_name || args.iter().any(|a| expr_has_call(a, fn_name))
         }
         Expr::BinOp(_, l, r) => expr_has_call(l, fn_name) || expr_has_call(r, fn_name),
@@ -372,7 +376,11 @@ fn count_recursive_calls(expr: &Spanned<Expr>, fn_name: &str) -> usize {
                     .sum::<usize>()
         }
         Expr::TailCall(inner) => {
-            let (name, args) = inner.as_ref();
+            let TailCallData {
+                target: name,
+                args: args,
+                ..
+            } = inner.as_ref();
             let self_call = if name == fn_name { 1 } else { 0 };
             self_call
                 + args

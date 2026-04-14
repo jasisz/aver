@@ -181,7 +181,7 @@ pub(crate) fn detect_tailrec_int_linear_pair_worker(
         Expr::FnCall(callee, args) if matches!(&callee.node, Expr::Ident(name) if name == &fd.name) => {
             args.as_slice()
         }
-        Expr::TailCall(call) if call.0 == fd.name => call.1.as_slice(),
+        Expr::TailCall(call) if call.target == fd.name => call.args.as_slice(),
         _ => return None,
     };
     if args.len() != 3 {

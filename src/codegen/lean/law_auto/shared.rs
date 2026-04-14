@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
 
 use super::super::expr::aver_name_to_lean;
-use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, Spanned, Stmt, VerifyBlock, VerifyLaw};
+use crate::ast::{
+    BinOp, Expr, FnBody, FnDef, Literal, Spanned, Stmt, TailCallData, VerifyBlock, VerifyLaw,
+};
 use crate::codegen::CodegenContext;
 
 pub(super) fn body_terminal_expr(body: &FnBody) -> Option<&Spanned<Expr>> {
@@ -115,9 +117,9 @@ pub(super) fn substitute_expr(
                 .map(|(name, value)| (name.clone(), substitute_expr(value, bindings)))
                 .collect(),
         },
-        Expr::TailCall(call) => Expr::TailCall(Box::new((
-            call.0.clone(),
-            call.1
+        Expr::TailCall(call) => Expr::TailCall(Box::new(TailCallData::new(
+            call.target.clone(),
+            call.args
                 .iter()
                 .map(|arg| substitute_expr(arg, bindings))
                 .collect(),
@@ -247,14 +249,14 @@ fn collect_user_fn_simp_names(
             }
         }
         Expr::TailCall(call) => {
-            if let Some(fd) = find_fn_def_by_call_name(ctx, &call.0)
+            if let Some(fd) = find_fn_def_by_call_name(ctx, &call.target)
                 && fd.effects.is_empty()
                 && fd.name != "main"
                 && fd.name != skip_fn
             {
                 out.insert(fd.name.clone());
             }
-            for arg in &call.1 {
+            for arg in &call.args {
                 collect_user_fn_simp_names(arg, ctx, skip_fn, out);
             }
         }

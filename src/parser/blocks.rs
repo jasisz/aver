@@ -187,10 +187,10 @@ impl Parser {
                     .map(|(name, value)| (name.clone(), Self::substitute_expr(value, bindings)))
                     .collect(),
             },
-            Expr::TailCall(boxed) => Expr::TailCall(Box::new((
-                boxed.0.clone(),
+            Expr::TailCall(boxed) => Expr::TailCall(Box::new(TailCallData::new(
+                boxed.target.clone(),
                 boxed
-                    .1
+                    .args
                     .iter()
                     .map(|arg| Self::substitute_expr(arg, bindings))
                     .collect(),

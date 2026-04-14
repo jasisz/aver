@@ -36,6 +36,9 @@ pub fn transform_program(items: &mut [TopLevel]) {
             transform_fn(fd, scc_members);
         }
     }
+
+    // Annotate reuse info on TailCall nodes after all transforms.
+    crate::ir::reuse::annotate_program_reuse(items);
 }
 
 fn transform_fn(fd: &mut FnDef, scc_members: &HashSet<String>) {
@@ -57,7 +60,7 @@ fn transform_tail_expr(spanned: &mut Spanned<Expr>, scc_members: &HashSet<String
             {
                 let name = name.clone();
                 let args = std::mem::take(args);
-                spanned.node = Expr::TailCall(Box::new((name, args)));
+                spanned.node = Expr::TailCall(Box::new(TailCallData::new(name, args)));
             }
         }
         // Match: each arm body is in tail position
@@ -116,7 +119,11 @@ fn factorial(n: Int, acc: Int) -> Int
         // arm 1: _ -> TailCall("factorial", ...)
         match &arms[1].body.node {
             Expr::TailCall(boxed) => {
-                let (name, args) = boxed.as_ref();
+                let TailCallData {
+                    target: name,
+                    args: args,
+                    ..
+                } = boxed.as_ref();
                 assert_eq!(name, "factorial");
                 assert_eq!(args.len(), 2);
             }
@@ -172,7 +179,7 @@ fn isOdd(n: Int) -> Bool
         };
         let arms_even = extract_match_arms(fd_even);
         match &arms_even[1].body.node {
-            Expr::TailCall(boxed) => assert_eq!(boxed.0, "isOdd"),
+            Expr::TailCall(boxed) => assert_eq!(boxed.target, "isOdd"),
             other => panic!("expected TailCall to isOdd, got {:?}", other),
         }
 
@@ -183,7 +190,7 @@ fn isOdd(n: Int) -> Bool
         };
         let arms_odd = extract_match_arms(fd_odd);
         match &arms_odd[1].body.node {
-            Expr::TailCall(boxed) => assert_eq!(boxed.0, "isEven"),
+            Expr::TailCall(boxed) => assert_eq!(boxed.target, "isEven"),
             other => panic!("expected TailCall to isEven, got {:?}", other),
         }
     }

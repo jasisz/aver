@@ -2,8 +2,8 @@
 ///
 /// Transforms Aver AST -> valid Rust source code.
 mod builtins;
+pub mod emit_ctx;
 mod expr;
-mod liveness;
 mod pattern;
 mod policy;
 mod project;

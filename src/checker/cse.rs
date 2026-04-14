@@ -1,4 +1,4 @@
-use crate::ast::{BinOp, Expr, FnDef, MatchArm, Spanned, Stmt, TopLevel};
+use crate::ast::{BinOp, Expr, FnDef, MatchArm, Spanned, Stmt, TailCallData, TopLevel};
 
 use super::CheckFinding;
 
@@ -241,7 +241,11 @@ fn collect_all_nontrivial_from_spanned<'a>(
             }
         }
         Expr::TailCall(boxed) => {
-            let (_, args) = boxed.as_ref();
+            let TailCallData {
+                target: _,
+                args: args,
+                ..
+            } = boxed.as_ref();
             for a in args {
                 collect_all_nontrivial_from_spanned(a, out);
             }
@@ -371,7 +375,11 @@ fn spanned_contains_subtree(haystack: &Spanned<Expr>, needle: &Expr) -> bool {
                     .any(|(_, e)| spanned_contains_subtree(e, needle))
         }
         Expr::TailCall(boxed) => {
-            let (_, args) = boxed.as_ref();
+            let TailCallData {
+                target: _,
+                args: args,
+                ..
+            } = boxed.as_ref();
             args.iter().any(|a| spanned_contains_subtree(a, needle))
         }
         Expr::Attr(obj, _) => spanned_contains_subtree(obj, needle),

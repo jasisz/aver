@@ -1,5 +1,5 @@
+use super::emit_ctx::{EmitCtx, compute_args_used_after_full};
 use super::expr::{clone_arg, emit_expr};
-use super::liveness::{EmitCtx, compute_args_used_after_full};
 /// Mapping of Aver builtin/namespace functions to Rust equivalents.
 use crate::ast::Expr;
 use crate::codegen::CodegenContext;
@@ -1010,7 +1010,7 @@ mod tests {
     use super::emit_builtin_call;
     use crate::ast::{Expr, Literal, Spanned};
     use crate::codegen::CodegenContext;
-    use crate::codegen::rust::liveness::EmitCtx;
+    use crate::codegen::rust::emit_ctx::EmitCtx;
     use crate::types::Type;
     use std::collections::{HashMap, HashSet};
 

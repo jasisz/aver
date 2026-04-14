@@ -1,13 +1,14 @@
+/// Rust-specific emission context wrapping backend-agnostic liveness from `ir::liveness`.
+///
+/// `EmitCtx` adds Rust codegen policy (Copy types, borrow semantics, Rc wrapping)
+/// on top of the generic `used_after` sets computed by `ir::liveness`.
 use crate::ast::*;
 use crate::types::Type;
-/// Last-use analysis and copy-type elision for Aver→Rust codegen.
-///
-/// Provides `EmitCtx` — a context threaded through expression emission
-/// that tracks which variables are used after the current point, enabling
-/// move-instead-of-clone when a variable is at its last use.
 use std::collections::{HashMap, HashSet};
 
-/// Emission context carrying liveness info for clone elision.
+use crate::ir::vars::collect_vars;
+
+/// Emission context carrying liveness info + Rust-specific policy.
 #[derive(Clone)]
 pub struct EmitCtx {
     /// Variables known to be used after the current emission point.
@@ -69,10 +70,6 @@ impl EmitCtx {
     }
 
     /// Should `.clone()` be skipped for this variable?
-    /// True if it's Copy OR if it's last-use (can move).
-    /// Pass-through params (Rc-wrapped in self-TCO, or `&T` in mutual-TCO trampoline)
-    /// always need `(*param).clone()` to produce owned T, never skip.
-    /// Borrowed params (`&T`) also never skip — they always need explicit handling.
     pub fn skip_clone(&self, name: &str) -> bool {
         if self.rc_wrapped.contains(name) {
             return false;
@@ -116,18 +113,14 @@ impl EmitCtx {
     }
 }
 
+// ── Rust-specific policy ──────────────────────────────────────────────
+
 /// Is a Type Copy in Rust? (Int, Float, Bool, Unit)
 pub fn is_copy_type(ty: &Type) -> bool {
     matches!(ty, Type::Int | Type::Float | Type::Bool | Type::Unit)
 }
 
-/// Should this type be passed by borrow (`&T`) in user function parameters?
 /// Should this param be borrowed (`&T`) instead of owned?
-/// Copy types pass by value. Str (AverStr = Rc<str>) is cheap to clone.
-/// Named types stay owned — their fields are mostly Rc-wrapped containers
-/// (AverMap, AverList, AverVector, AverStr), so clone is refcount bumps,
-/// not deep copies. Borrow still eliminates the clone calls entirely,
-/// which reduces refcount churn and can improve optimizer output.
 pub fn should_borrow_param(ty: &Type) -> bool {
     matches!(
         ty,
@@ -141,137 +134,9 @@ pub fn should_borrow_param(ty: &Type) -> bool {
     )
 }
 
-/// Collect all variable names referenced in an expression.
-/// Does NOT descend into match pattern bindings (they introduce new names).
-pub fn collect_vars(expr: &Expr) -> HashSet<String> {
-    let mut vars = HashSet::new();
-    collect_vars_inner(expr, &mut vars);
-    vars
-}
+// ── EmitCtx builders delegating to ir::liveness ───────────────────────
 
-fn collect_vars_inner(expr: &Expr, vars: &mut HashSet<String>) {
-    match expr {
-        Expr::Ident(name) => {
-            vars.insert(name.clone());
-        }
-        Expr::Resolved(_) => {}
-        Expr::Literal(_) => {}
-        Expr::Attr(obj, _) => collect_vars_inner(&obj.node, vars),
-        Expr::FnCall(fn_expr, args) => {
-            collect_vars_inner(&fn_expr.node, vars);
-            for a in args {
-                collect_vars_inner(&a.node, vars);
-            }
-        }
-        Expr::BinOp(_, left, right) => {
-            collect_vars_inner(&left.node, vars);
-            collect_vars_inner(&right.node, vars);
-        }
-        Expr::Match { subject, arms, .. } => {
-            collect_vars_inner(&subject.node, vars);
-            for arm in arms {
-                // Collect vars from arm body, minus pattern-bound names
-                let mut arm_vars = HashSet::new();
-                collect_vars_inner(&arm.body.node, &mut arm_vars);
-                let bindings = pattern_bindings(&arm.pattern);
-                for v in arm_vars {
-                    if !bindings.contains(&v) {
-                        vars.insert(v);
-                    }
-                }
-            }
-        }
-        Expr::Constructor(_, Some(inner)) => collect_vars_inner(&inner.node, vars),
-        Expr::Constructor(_, None) => {}
-        Expr::ErrorProp(inner) => collect_vars_inner(&inner.node, vars),
-        Expr::InterpolatedStr(parts) => {
-            for part in parts {
-                if let StrPart::Parsed(expr) = part {
-                    collect_vars_inner(&expr.node, vars);
-                }
-            }
-        }
-        Expr::List(elements) => {
-            for e in elements {
-                collect_vars_inner(&e.node, vars);
-            }
-        }
-        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            for e in items {
-                collect_vars_inner(&e.node, vars);
-            }
-        }
-        Expr::MapLiteral(entries) => {
-            for (k, v) in entries {
-                collect_vars_inner(&k.node, vars);
-                collect_vars_inner(&v.node, vars);
-            }
-        }
-        Expr::RecordCreate { fields, .. } => {
-            for (_, expr) in fields {
-                collect_vars_inner(&expr.node, vars);
-            }
-        }
-        Expr::RecordUpdate { base, updates, .. } => {
-            collect_vars_inner(&base.node, vars);
-            for (_, expr) in updates {
-                collect_vars_inner(&expr.node, vars);
-            }
-        }
-        Expr::TailCall(boxed) => {
-            let (_, args) = boxed.as_ref();
-            for a in args {
-                collect_vars_inner(&a.node, vars);
-            }
-        }
-    }
-}
-
-/// Collect variables in a statement.
-pub fn collect_vars_stmt(stmt: &Stmt) -> HashSet<String> {
-    match stmt {
-        Stmt::Binding(_, _, expr) => collect_vars(&expr.node),
-        Stmt::Expr(expr) => collect_vars(&expr.node),
-    }
-}
-
-/// Get names bound by a pattern (for excluding from parent scope liveness).
-pub fn pattern_bindings(pat: &Pattern) -> HashSet<String> {
-    let mut bindings = HashSet::new();
-    match pat {
-        Pattern::Ident(name) => {
-            if name != "_" {
-                bindings.insert(name.clone());
-            }
-        }
-        Pattern::Cons(head, tail) => {
-            if head != "_" {
-                bindings.insert(head.clone());
-            }
-            if tail != "_" {
-                bindings.insert(tail.clone());
-            }
-        }
-        Pattern::Constructor(_, fields) => {
-            for f in fields {
-                if f != "_" {
-                    bindings.insert(f.clone());
-                }
-            }
-        }
-        Pattern::Tuple(pats) => {
-            for p in pats {
-                bindings.extend(pattern_bindings(p));
-            }
-        }
-        Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => {}
-    }
-    bindings
-}
-
-/// Compute `used_after` sets for a sequence of statements.
-/// Returns a Vec of EmitCtx, one per statement, where each ctx
-/// has `used_after = vars_in(stmt[i+1..]) ∪ parent_used_after`.
+/// Compute `used_after` sets for statements, wrapped in EmitCtx.
 pub fn compute_block_used_after(
     stmts: &[Stmt],
     parent_used_after: &HashSet<String>,
@@ -286,7 +151,7 @@ pub fn compute_block_used_after(
     )
 }
 
-/// Like `compute_block_used_after` but propagates `rc_wrapped` and `borrowed_params` to child contexts.
+/// Like `compute_block_used_after` but propagates `rc_wrapped`.
 pub fn compute_block_used_after_with_rc(
     stmts: &[Stmt],
     parent_used_after: &HashSet<String>,
@@ -302,7 +167,7 @@ pub fn compute_block_used_after_with_rc(
     )
 }
 
-/// Full version that propagates all context fields including `borrowed_params`.
+/// Full version — delegates liveness to `ir::liveness`, wraps in EmitCtx.
 pub fn compute_block_used_after_full(
     stmts: &[Stmt],
     parent_used_after: &HashSet<String>,
@@ -310,10 +175,51 @@ pub fn compute_block_used_after_full(
     rc_wrapped: &HashSet<String>,
     borrowed_params: &HashSet<String>,
 ) -> Vec<EmitCtx> {
-    let n = stmts.len();
-    let mut result = vec![EmitCtx::empty(); n];
+    let ir_results = crate::ir::liveness::compute_block_used_after(stmts, parent_used_after);
+    ir_results
+        .into_iter()
+        .map(|ua| EmitCtx {
+            used_after: ua.vars,
+            local_types: local_types.clone(),
+            rc_wrapped: rc_wrapped.clone(),
+            borrowed_params: borrowed_params.clone(),
+        })
+        .collect()
+}
 
-    // Accumulate from the end: for each stmt[i], used_after = vars_in(stmts[i+1..]) ∪ parent
+/// Compute `used_after` for argument expressions, wrapped in EmitCtx.
+pub fn compute_args_used_after_full(
+    args: &[Expr],
+    parent_used_after: &HashSet<String>,
+    local_types: &HashMap<String, Type>,
+    rc_wrapped: &HashSet<String>,
+    borrowed_params: &HashSet<String>,
+) -> Vec<EmitCtx> {
+    // ir::liveness works on Spanned<Expr>, we have bare Expr.
+    let ir_results = crate::ir::liveness::compute_args_used_after_bare(args, parent_used_after);
+    ir_results
+        .into_iter()
+        .map(|ua| EmitCtx {
+            used_after: ua.vars,
+            local_types: local_types.clone(),
+            rc_wrapped: rc_wrapped.clone(),
+            borrowed_params: borrowed_params.clone(),
+        })
+        .collect()
+}
+
+/// Like `compute_args_used_after_full` but for `&[&Expr]` references.
+#[allow(dead_code)]
+pub fn compute_args_used_after_full_refs(
+    args: &[&Expr],
+    parent_used_after: &HashSet<String>,
+    local_types: &HashMap<String, Type>,
+    rc_wrapped: &HashSet<String>,
+    borrowed_params: &HashSet<String>,
+) -> Vec<EmitCtx> {
+    // Compute inline since ir::liveness doesn't have a &[&Expr] variant
+    let n = args.len();
+    let mut result = vec![EmitCtx::empty(); n];
     let mut suffix_vars = parent_used_after.clone();
     for i in (0..n).rev() {
         result[i] = EmitCtx {
@@ -322,20 +228,13 @@ pub fn compute_block_used_after_full(
             rc_wrapped: rc_wrapped.clone(),
             borrowed_params: borrowed_params.clone(),
         };
-        // Add vars from this statement to suffix for the next one (going backwards)
-        let stmt_vars = collect_vars_stmt(&stmts[i]);
-        suffix_vars.extend(stmt_vars);
-        // If this is a binding, remove the bound name from suffix_vars
-        // (it's defined here, not a use from outer scope)
-        if let Stmt::Binding(name, _, _) = &stmts[i] {
-            suffix_vars.remove(name);
-        }
+        let arg_vars = collect_vars(args[i]);
+        suffix_vars.extend(arg_vars);
     }
-
     result
 }
 
-/// Like `compute_args_used_after` but propagates `rc_wrapped` and `borrowed_params` to child contexts.
+/// Like `compute_args_used_after` but propagates `rc_wrapped`.
 #[cfg(test)]
 pub fn compute_args_used_after_with_rc(
     args: &[Spanned<Expr>],
@@ -351,59 +250,6 @@ pub fn compute_args_used_after_with_rc(
         rc_wrapped,
         &HashSet::new(),
     )
-}
-
-/// Full version that propagates all context fields including `borrowed_params`.
-pub fn compute_args_used_after_full(
-    args: &[Expr],
-    parent_used_after: &HashSet<String>,
-    local_types: &HashMap<String, Type>,
-    rc_wrapped: &HashSet<String>,
-    borrowed_params: &HashSet<String>,
-) -> Vec<EmitCtx> {
-    let n = args.len();
-    let mut result = vec![EmitCtx::empty(); n];
-
-    let mut suffix_vars = parent_used_after.clone();
-    for i in (0..n).rev() {
-        result[i] = EmitCtx {
-            used_after: suffix_vars.clone(),
-            local_types: local_types.clone(),
-            rc_wrapped: rc_wrapped.clone(),
-            borrowed_params: borrowed_params.clone(),
-        };
-        let arg_vars = collect_vars(&args[i]);
-        suffix_vars.extend(arg_vars);
-    }
-
-    result
-}
-
-/// Like `compute_args_used_after_full` but accepts `&[&Expr]` references.
-#[allow(dead_code)]
-pub fn compute_args_used_after_full_refs(
-    args: &[&Expr],
-    parent_used_after: &HashSet<String>,
-    local_types: &HashMap<String, Type>,
-    rc_wrapped: &HashSet<String>,
-    borrowed_params: &HashSet<String>,
-) -> Vec<EmitCtx> {
-    let n = args.len();
-    let mut result = vec![EmitCtx::empty(); n];
-
-    let mut suffix_vars = parent_used_after.clone();
-    for i in (0..n).rev() {
-        result[i] = EmitCtx {
-            used_after: suffix_vars.clone(),
-            local_types: local_types.clone(),
-            rc_wrapped: rc_wrapped.clone(),
-            borrowed_params: borrowed_params.clone(),
-        };
-        let arg_vars = collect_vars(args[i]);
-        suffix_vars.extend(arg_vars);
-    }
-
-    result
 }
 
 #[cfg(test)]
@@ -440,42 +286,6 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_vars_fn_call() {
-        let expr = Expr::FnCall(
-            Box::new(Spanned::bare(Expr::Ident("f".to_string()))),
-            vec![
-                Spanned::bare(Expr::Ident("a".to_string())),
-                Spanned::bare(Expr::Ident("b".to_string())),
-            ],
-        );
-        let vars = collect_vars(&expr);
-        assert_eq!(
-            vars,
-            HashSet::from(["f".to_string(), "a".to_string(), "b".to_string()])
-        );
-    }
-
-    #[test]
-    fn test_collect_vars_match_excludes_pattern_bindings() {
-        let expr = Expr::Match {
-            subject: Box::new(Spanned::bare(Expr::Ident("val".to_string()))),
-            arms: vec![MatchArm {
-                pattern: Pattern::Ident("x".to_string()),
-                body: Box::new(Spanned::bare(Expr::BinOp(
-                    BinOp::Add,
-                    Box::new(Spanned::bare(Expr::Ident("x".to_string()))),
-                    Box::new(Spanned::bare(Expr::Ident("y".to_string()))),
-                ))),
-            }],
-        };
-        let vars = collect_vars(&expr);
-        // "val" from subject, "y" from arm body; "x" is pattern-bound so excluded
-        assert!(vars.contains("val"));
-        assert!(vars.contains("y"));
-        assert!(!vars.contains("x"));
-    }
-
-    #[test]
     fn test_skip_clone_copy_type() {
         let mut lt = HashMap::new();
         lt.insert("n".to_string(), Type::Int);
@@ -486,9 +296,7 @@ mod tests {
             rc_wrapped: HashSet::new(),
             borrowed_params: HashSet::new(),
         };
-        // n is i64 (Copy) — skip clone even though it's used after
         assert!(ectx.skip_clone("n"));
-        // s is String (not Copy) and used after — must clone
         assert!(!ectx.skip_clone("s"));
     }
 
@@ -497,12 +305,11 @@ mod tests {
         let mut lt = HashMap::new();
         lt.insert("s".to_string(), Type::Str);
         let ectx = EmitCtx {
-            used_after: HashSet::new(), // s NOT in used_after
+            used_after: HashSet::new(),
             local_types: lt,
             rc_wrapped: HashSet::new(),
             borrowed_params: HashSet::new(),
         };
-        // s is last use — skip clone
         assert!(ectx.skip_clone("s"));
     }
 
@@ -523,10 +330,8 @@ mod tests {
         let parent = HashSet::new();
         let lt = HashMap::new();
         let ctxs = compute_block_used_after(&stmts, &parent, &lt);
-        // stmt[0]: used_after = vars_in(stmt[1]) ∪ parent = {a, b}
         assert!(ctxs[0].used_after.contains("a"));
         assert!(ctxs[0].used_after.contains("b"));
-        // stmt[1]: used_after = parent = {}
         assert!(ctxs[1].used_after.is_empty());
     }
 
@@ -540,13 +345,10 @@ mod tests {
         let parent = HashSet::new();
         let lt = HashMap::new();
         let ctxs = compute_args_used_after_with_rc(&args, &parent, &lt, &HashSet::new());
-        // arg[0]: used_after = vars_in(arg[1..]) = {y, x}
         assert!(ctxs[0].used_after.contains("x"));
         assert!(ctxs[0].used_after.contains("y"));
-        // arg[1]: used_after = vars_in(arg[2]) = {x}
         assert!(ctxs[1].used_after.contains("x"));
         assert!(!ctxs[1].used_after.contains("y"));
-        // arg[2]: used_after = parent = {}
         assert!(ctxs[2].used_after.is_empty());
     }
 }

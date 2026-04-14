@@ -207,7 +207,11 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             format!("{}.({})", base_str, update_strs.join(", "))
         }
         Expr::TailCall(inner) => {
-            let (name, args) = inner.as_ref();
+            let TailCallData {
+                target: name,
+                args: args,
+                ..
+            } = inner.as_ref();
             let arg_strs: Vec<String> = args.iter().map(|a| emit_expr(a, ctx)).collect();
             format!("{}({})", aver_name_to_dafny(name), arg_strs.join(", "))
         }

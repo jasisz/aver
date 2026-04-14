@@ -210,8 +210,8 @@ fn collect_fn_calls(expr: &Spanned<Expr>, out: &mut std::collections::BTreeSet<S
             }
         }
         Expr::TailCall(boxed) => {
-            out.insert(boxed.0.clone());
-            for arg in &boxed.1 {
+            out.insert(boxed.target.clone());
+            for arg in &boxed.args {
                 collect_fn_calls(arg, out);
             }
         }

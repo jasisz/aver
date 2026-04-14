@@ -9,7 +9,7 @@ use super::recurrence::{
 use super::shared::to_lower_first;
 use super::types::type_annotation_to_lean;
 use super::{RecursionPlan, VerifyEmitMode, sizeof_measure_param_indices};
-use crate::ast::{self, *};
+use crate::ast::{self, TailCallData, *};
 use crate::codegen::CodegenContext;
 use crate::codegen::common::expr_to_dotted_name;
 use crate::verify_law::canonical_spec_ref;
@@ -746,7 +746,11 @@ fn rewrite_recursive_calls_expr(
                 .collect(),
         },
         Expr::TailCall(boxed) => {
-            let (target, args) = boxed.as_ref();
+            let TailCallData {
+                target: target,
+                args: args,
+                ..
+            } = boxed.as_ref();
             let rewritten_args: Vec<Spanned<Expr>> = args
                 .iter()
                 .map(|arg| rewrite_recursive_calls_expr(arg, targets, fuel_var))
@@ -760,7 +764,7 @@ fn rewrite_recursive_calls_expr(
                     call_args,
                 )
             } else {
-                Expr::TailCall(Box::new((target.clone(), rewritten_args)))
+                Expr::TailCall(Box::new(TailCallData::new(target.clone(), rewritten_args)))
             }
         }
     };
@@ -1293,7 +1297,7 @@ fn expr_uses_error_prop(expr: &Spanned<Expr>) -> bool {
             expr_uses_error_prop(base)
                 || updates.iter().any(|(_, value)| expr_uses_error_prop(value))
         }
-        Expr::TailCall(boxed) => boxed.1.iter().any(expr_uses_error_prop),
+        Expr::TailCall(boxed) => boxed.args.iter().any(expr_uses_error_prop),
         Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) | Expr::Constructor(_, None) => false,
     }
 }

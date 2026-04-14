@@ -1,7 +1,8 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::ast::{
-    Expr, FnDef, MatchArm, Spanned, Stmt, StrPart, TopLevel, VerifyBlock, VerifyKind, VerifyLaw,
+    Expr, FnDef, MatchArm, Spanned, Stmt, StrPart, TailCallData, TopLevel, VerifyBlock, VerifyKind,
+    VerifyLaw,
 };
 use crate::types::Type;
 
@@ -421,7 +422,11 @@ fn collect_direct_pure_user_calls(
             }
         }
         Expr::TailCall(boxed) => {
-            let (target, args) = boxed.as_ref();
+            let TailCallData {
+                target: target,
+                args: args,
+                ..
+            } = boxed.as_ref();
             if fn_defs.contains_key(target)
                 && fn_sigs
                     .get(target)
@@ -625,7 +630,7 @@ fn collect_roundtrip_serializer_calls<'a>(
             }
         }
         Expr::TailCall(call) => {
-            for arg in &call.1 {
+            for arg in &call.args {
                 collect_roundtrip_serializer_calls(arg, given_name, out);
             }
         }
@@ -675,7 +680,7 @@ fn expr_mentions_ident(expr: &Spanned<Expr>, name: &str) -> bool {
                     .iter()
                     .any(|(_, value)| expr_mentions_ident(value, name))
         }
-        Expr::TailCall(call) => call.1.iter().any(|arg| expr_mentions_ident(arg, name)),
+        Expr::TailCall(call) => call.args.iter().any(|arg| expr_mentions_ident(arg, name)),
         Expr::Literal(_) | Expr::Resolved(_) => false,
     }
 }
@@ -719,7 +724,11 @@ fn expr_calls_function(expr: &Spanned<Expr>, fn_name: &str) -> bool {
                     .any(|(_, expr)| expr_calls_function(expr, fn_name))
         }
         Expr::TailCall(boxed) => {
-            boxed.0 == fn_name || boxed.1.iter().any(|arg| expr_calls_function(arg, fn_name))
+            boxed.target == fn_name
+                || boxed
+                    .args
+                    .iter()
+                    .any(|arg| expr_calls_function(arg, fn_name))
         }
         Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved(_) | Expr::Constructor(_, None) => false,
     }
