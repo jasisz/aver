@@ -3216,12 +3216,13 @@ fn build_codegen_context(
     // TCO transform
     tco::transform_program(&mut items);
 
-    // Static type check
+    // Static type check (runs before resolution — works on Ident nodes)
     let tc_result = run_type_check_full(&items, Some(&module_root));
     if !tc_result.errors.is_empty() {
         print_type_errors(&tc_result.errors);
         process::exit(1);
     }
+
 
     // Compute memo-eligible functions
     let memo_fns = compute_memo_fns(&items, &tc_result);

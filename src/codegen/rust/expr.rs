@@ -201,8 +201,7 @@ fn emit_expr_with_options(
         Expr::Literal(lit) => emit_literal(lit),
         Expr::Ident(name) => aver_name_to_rust(name),
         Expr::Resolved { slot, .. } => emit_codegen_error_expr(format!(
-            "Rust codegen: encountered resolver-only Expr::Resolved({slot}). \
-             Compile pipeline should emit source-level AST (Ident), not slot-indexed AST."
+            "Rust codegen: encountered Expr::Resolved({slot}). Pipeline should emit Ident."
         )),
         Expr::Attr(obj, field) => {
             if let Expr::Ident(type_name) = &obj.node {

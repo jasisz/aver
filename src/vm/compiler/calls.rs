@@ -265,7 +265,6 @@ impl<'a> FnCompiler<'a> {
         &mut self,
         target: &str,
         args: &[Spanned<Expr>],
-        _owned: &[bool],
     ) -> Result<(), CompileError> {
         for arg in args {
             self.compile_expr(arg)?;
