@@ -20,7 +20,8 @@ If you only remember one section, make it this one:
 - Bindings are `name = expr` or `name: Type = expr` — no `let`, `val`, or `var`
 - Constructors are always qualified: `Result.Ok`, `Result.Err`, `Option.Some`, `Option.None`
 - There is no `if` / `else`; use `match`
-- Match arm bodies must start on the same line as `->`; for complex logic, extract a helper function
+- **Match arm bodies must start on the same line as `->` — this is the most common error.** For complex logic, extract a helper function
+- Functions do not have type parameters — write `fn sum(xs: List<Int>) -> Int`, not `fn sum<T>(xs: List<T>) -> T`
 - Effects are explicit: `! [Console.print]`, `! [Http.get]`
 - Pure functions get colocated `verify` blocks
 - Effectful flows should usually be tested through record/replay, not `verify`
@@ -131,22 +132,36 @@ match x > 0
     false -> "non-positive"
 ```
 
-Important: the expression for an arm must begin on the same line as `->`.
+**Critical rule:** the expression for an arm must begin on the same line as `->`. Multi-line match arms are a parse error. Extract a helper function instead.
 
-Good:
+Wrong — parse error:
+
+```aver
+match xs
+    [] -> 0
+    [h, ..t] ->
+        result = h + sum(t)
+        result
+```
+
+Right — extract a helper:
+
+```aver
+fn addHead(h: Int, t: List<Int>) -> Int
+    h + sum(t)
+
+fn sum(xs: List<Int>) -> Int
+    match xs
+        [] -> 0
+        [h, ..t] -> addHead(h, t)
+```
+
+Right — simple expressions are fine inline:
 
 ```aver
 match x > 0
     true -> "positive"
     false -> helper(x)
-```
-
-Avoid:
-
-```aver
-match x > 0
-    true ->
-        "positive"
 ```
 
 ### Constructors and user-defined types
@@ -310,7 +325,7 @@ decision UseResultNotExceptions
 
 **These operators do NOT exist** — do not use them:
 
-- no `%` (modulo) — compute as `a - (a / b) * b`
+- no `%` (modulo) — use `Int.mod(a, b)` which returns `Result<Int, String>`
 - no `&&`, `||` (boolean and/or) — use `Bool.and(a, b)`, `Bool.or(a, b)`, or nested `match`
 - no `!` (boolean not) as prefix — use `Bool.not(x)`
 - no `+=`, `-=`, `++`, `--` (mutation operators)
@@ -336,6 +351,7 @@ Useful pure functions:
 - `Int.fromString : String -> Result<Int, String>`
 - `Int.toString : Int -> String`
 - `Int.abs : Int -> Int`
+- `Int.mod : (Int, Int) -> Result<Int, String>` (use instead of `%`)
 - `Float.fromString : String -> Result<Float, String>`
 - `String.len : String -> Int`
 - `String.contains : (String, String) -> Bool`
@@ -416,7 +432,7 @@ Then zoom in with `--focus <symbol>` or a larger budget.
 9. Expecting closures or lambdas — not supported
 10. Expecting mutable variables — not supported
 11. Expecting `List.map`, `List.filter`, or `List.fold` to exist
-12. Using `%` for modulo — not an operator; use `a - (a / b) * b`
+12. Using `%` for modulo — see Operators section
 13. Using `&&`, `||` for boolean logic — use `Bool.and`, `Bool.or`, or nested `match`
 14. Writing `=` instead of `=>` in verify blocks — the separator is always `=>`
 15. Using `..` without a name in list patterns — write `[h, ..t]`, not `[h, ..]`
