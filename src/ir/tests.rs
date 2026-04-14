@@ -9,7 +9,7 @@ use super::{
     classify_leaf_op, classify_list_match_shape, classify_match_dispatch_plan,
     classify_tail_call_plan, classify_thin_body_plan, expr_to_dotted_name,
 };
-use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt};
+use crate::ast::{AnnotBool, BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt};
 
 /// Shorthand: wrap an Expr in Spanned::bare (line=0).
 fn sb(expr: Expr) -> Spanned<Expr> {
@@ -285,7 +285,7 @@ fn classify_forward_call_for_known_target_and_forwarded_locals() {
             )),
             "fib".to_string(),
         )),
-        vec![sb(Expr::Resolved { slot: 1, name: "slot1".to_string(), last_use: false }), sb(Expr::Ident("slot0".to_string()))],
+        vec![sb(Expr::Resolved { slot: 1, name: "slot1".to_string(), last_use: AnnotBool(false) }), sb(Expr::Ident("slot0".to_string()))],
     );
 
     struct ForwardCtx;

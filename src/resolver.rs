@@ -14,13 +14,15 @@ use std::sync::Arc as Rc;
 
 use crate::ast::*;
 
-/// Run the resolver on all top-level function definitions.
+/// Run the resolver on all top-level function definitions,
+/// then annotate last-use information on all `Resolved` nodes.
 pub fn resolve_program(items: &mut [TopLevel]) {
     for item in items.iter_mut() {
         if let TopLevel::FnDef(fd) = item {
             resolve_fn(fd);
         }
     }
+    crate::ir::last_use::annotate_program_last_use(items);
 }
 
 /// Resolve a single function definition.
@@ -191,7 +193,7 @@ fn resolve_expr(expr: &mut Spanned<Expr>, local_slots: &HashMap<String, u16>) {
     match &mut expr.node {
         Expr::Ident(name) => {
             if let Some(&slot) = local_slots.get(name) {
-                expr.node = Expr::Resolved { slot, name: name.clone(), last_use: false };
+                expr.node = Expr::Resolved { slot, name: name.clone(), last_use: AnnotBool(false) };
             }
             // else: global/namespace — leave as Ident for HashMap fallback
         }
@@ -309,8 +311,8 @@ mod tests {
                 node: Expr::BinOp(_, left, right),
                 ..
             }) => {
-                assert_eq!(left.node, Expr::Resolved { slot: 0, name: "a".to_string(), last_use: false });
-                assert_eq!(right.node, Expr::Resolved { slot: 1, name: "b".to_string(), last_use: false });
+                assert_eq!(left.node, Expr::Resolved { slot: 0, name: "a".to_string(), last_use: AnnotBool(false) });
+                assert_eq!(right.node, Expr::Resolved { slot: 1, name: "b".to_string(), last_use: AnnotBool(false) });
             }
             other => panic!("unexpected body: {:?}", other),
         }
@@ -338,7 +340,7 @@ mod tests {
                 ..
             }) => {
                 assert_eq!(func.node, Expr::Ident("Console".to_string()));
-                assert_eq!(args[0].node, Expr::Resolved { slot: 0, name: "x".to_string(), last_use: false });
+                assert_eq!(args[0].node, Expr::Resolved { slot: 0, name: "x".to_string(), last_use: AnnotBool(false) });
             }
             other => panic!("unexpected body: {:?}", other),
         }
@@ -384,7 +386,7 @@ mod tests {
                     ..
                 },
             ) => {
-                assert_eq!(left.node, Expr::Resolved { slot: 0, name: "x".to_string(), last_use: false });
+                assert_eq!(left.node, Expr::Resolved { slot: 0, name: "x".to_string(), last_use: AnnotBool(false) });
             }
             other => panic!("unexpected stmt: {:?}", other),
         }
@@ -439,7 +441,7 @@ mod tests {
                 node: Expr::Match { arms, .. },
                 ..
             }) => {
-                assert_eq!(arms[0].body.node, Expr::Resolved { slot: 1, name: "v".to_string(), last_use: false });
+                assert_eq!(arms[0].body.node, Expr::Resolved { slot: 1, name: "v".to_string(), last_use: AnnotBool(false) });
             }
             other => panic!("unexpected body: {:?}", other),
         }
@@ -496,7 +498,7 @@ mod tests {
                     ..
                 },
             ) => {
-                assert_eq!(arms[0].body.node, Expr::Resolved { slot: 2, name: "v".to_string(), last_use: false });
+                assert_eq!(arms[0].body.node, Expr::Resolved { slot: 2, name: "v".to_string(), last_use: AnnotBool(false) });
             }
             other => panic!("unexpected stmt: {:?}", other),
         }

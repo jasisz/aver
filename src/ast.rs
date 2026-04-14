@@ -1,6 +1,24 @@
 /// Source line number (1-based). 0 = synthetic/unknown.
 pub type SourceLine = usize;
 
+/// A `bool` that compares as always-equal. Used for `last_use` annotations
+/// on `Expr::Resolved` — metadata that should not affect AST equality
+/// (same pattern as `Spanned` ignoring `line` in its `PartialEq`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AnnotBool(pub bool);
+
+impl PartialEq for AnnotBool {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl From<bool> for AnnotBool {
+    fn from(b: bool) -> Self {
+        Self(b)
+    }
+}
+
 /// AST node with source location. Line-agnostic equality: two `Spanned` values
 /// are equal iff their inner nodes are equal, regardless of line.
 #[derive(Debug, Clone)]
@@ -149,7 +167,7 @@ pub enum Expr {
     Resolved {
         slot: u16,
         name: String,
-        last_use: bool,
+        last_use: AnnotBool,
     },
 }
 
