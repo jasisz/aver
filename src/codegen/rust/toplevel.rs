@@ -1,7 +1,4 @@
-use super::emit_ctx::{
-    EmitCtx, compute_args_used_after_full, compute_block_used_after, compute_block_used_after_full,
-    compute_block_used_after_with_rc, is_copy_type, should_borrow_param,
-};
+use super::emit_ctx::{EmitCtx, is_copy_type, should_borrow_param};
 use super::expr::{
     aver_name_to_rust, classify_body_expr_plan_for_rust, classify_body_plan_for_rust,
     classify_dispatch_plan_for_rust, classify_thin_fn_def_for_rust, clone_arg,
@@ -10,7 +7,6 @@ use super::expr::{
 use super::types::type_annotation_to_rust;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
-use crate::ir::vars::{collect_vars, pattern_bindings};
 use crate::ir::{BodyExprPlan, CallPlan, thin_kind_is_parent_thin_candidate};
 use crate::types::{Type, parse_type_str};
 /// Top-level Aver items → Rust items (structs, enums, functions, tests).
@@ -596,29 +592,20 @@ fn emit_fn_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     }
 
     let stmts = body.stmts();
-    // Compute per-statement used_after sets, propagating borrowed_params
-    let stmt_ctxs = compute_block_used_after_full(
-        stmts,
-        &ectx.used_after,
-        &ectx.local_types,
-        &ectx.rc_wrapped,
-        &ectx.borrowed_params,
-    );
     let mut lines = Vec::new();
     lines.push("    crate::cancel_checkpoint();".to_string());
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last = i == stmts.len() - 1;
-        let sctx = &stmt_ctxs[i];
         match stmt {
             Stmt::Binding(name, type_ann, _) => {
-                lines.push(format!("    {}", emit_stmt(stmt, ctx, sctx)));
+                lines.push(format!("    {}", emit_stmt(stmt, ctx, ectx)));
                 let _ = (name, type_ann);
             }
             Stmt::Expr(expr) => {
                 if is_last {
-                    lines.push(format!("    {}", emit_expr(&expr.node, ctx, sctx)));
+                    lines.push(format!("    {}", emit_expr(&expr.node, ctx, ectx)));
                 } else {
-                    lines.push(format!("    {};", emit_expr(&expr.node, ctx, sctx)));
+                    lines.push(format!("    {};", emit_expr(&expr.node, ctx, ectx)));
                 }
             }
         }
@@ -1738,23 +1725,16 @@ fn emit_tco_body(
     hoisted_exprs: &HashMap<usize, String>,
 ) -> String {
     let stmts = body.stmts();
-    let stmt_ctxs = compute_block_used_after_with_rc(
-        stmts,
-        &ectx.used_after,
-        &ectx.local_types,
-        &ectx.rc_wrapped,
-    );
     let mut lines = Vec::new();
     lines.push("        crate::cancel_checkpoint();".to_string());
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last = i == stmts.len() - 1;
-        let sctx = &stmt_ctxs[i];
         match stmt {
             Stmt::Binding(name, _, expr) => {
                 lines.push(format!(
                     "        let {} = {};",
                     aver_name_to_rust(name),
-                    emit_expr(&expr.node, ctx, sctx)
+                    emit_expr(&expr.node, ctx, ectx)
                 ));
             }
             Stmt::Expr(expr) => {
@@ -1766,14 +1746,14 @@ fn emit_tco_body(
                             self_name,
                             params,
                             ctx,
-                            sctx,
+                            ectx,
                             rc_indices,
                             passthrough_indices,
                             hoisted_exprs,
                         )
                     ));
                 } else {
-                    lines.push(format!("        {};", emit_expr(&expr.node, ctx, sctx)));
+                    lines.push(format!("        {};", emit_expr(&expr.node, ctx, ectx)));
                 }
             }
         }
@@ -1852,53 +1832,12 @@ fn emit_tco_expr(
                 .iter()
                 .map(|arg| rewrite_expr_with_hoists(&arg.node, hoisted_exprs))
                 .collect::<Vec<_>>();
-            let hoisted_names = hoisted_exprs.values().cloned().collect::<HashSet<_>>();
-            let mut arg_ctxs = compute_args_used_after_full(
-                &rewritten_args,
-                &hoisted_names,
-                &ectx.local_types,
-                &ectx.rc_wrapped,
-                &ectx.borrowed_params,
-            );
-            // In a TCO loop, passthrough (non-rebound) params are implicitly
-            // live across iterations. Mark non-Copy passthrough params as
-            // used_after so that arg expressions clone them instead of moving.
-            let passthrough_param_names: Vec<String> = passthrough_indices
-                .iter()
-                .filter_map(|&i| {
-                    let (name, type_ann) = &params[i];
-                    let ty = crate::types::parse_type_str(type_ann);
-                    if !is_copy_type(&ty) {
-                        Some(aver_name_to_rust(name))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            if !passthrough_param_names.is_empty() {
-                for ac in &mut arg_ctxs {
-                    for pn in &passthrough_param_names {
-                        ac.used_after.insert(pn.clone());
-                    }
-                }
-            }
 
-            // Use last_use annotations from ir::last_use — if a tail call arg
-            // contains a Resolved reference to the param with last_use=true,
-            // the param is sole-owned and can be moved instead of cloned.
-            for (i, ac) in arg_ctxs.iter_mut().enumerate() {
-                if i < params.len()
-                    && i < boxed.args.len()
-                    && arg_contains_last_use_name(&boxed.args[i].node, &params[i].0)
-                {
-                    ac.used_after.remove(&aver_name_to_rust(&params[i].0));
-                }
-            }
-
+            // Clone/move decisions now come from last_use on Resolved nodes.
+            // Just use the parent ectx directly.
             let arg_strs: Vec<String> = rewritten_args
                 .iter()
-                .zip(arg_ctxs.iter())
-                .map(|(a, ac)| clone_arg(a, ctx, ac))
+                .map(|a| clone_arg(a, ctx, ectx))
                 .collect();
 
             // Collect which params are being rebound (non-passthrough, non-identity).
@@ -1969,18 +1908,7 @@ fn emit_tco_expr(
             lines.join("\n")
         }
         Expr::Match { subject, arms, .. } => {
-            // Subject's used_after: all vars in arms + parent used_after
-            let mut arms_vars = std::collections::HashSet::new();
-            for arm in arms {
-                let mut arm_vars = collect_vars(&arm.body.node);
-                let bindings = pattern_bindings(&arm.pattern);
-                for b in &bindings {
-                    arm_vars.remove(b);
-                }
-                arms_vars.extend(arm_vars);
-            }
-            let subj_ectx = ectx.with_used_after(&arms_vars);
-            let subj = clone_arg(&subject.node, ctx, &subj_ectx);
+            let subj = clone_arg(&subject.node, ctx, ectx);
             let dispatch_plan = classify_dispatch_plan_for_rust(arms, ctx, ectx);
 
             // Bool match → if/else in TCO context
@@ -2325,23 +2253,16 @@ fn emit_trampoline_arm_body(
     rc_indices: &HashSet<usize>,
 ) -> String {
     let stmts = fd.body.stmts();
-    let stmt_ctxs = compute_block_used_after_with_rc(
-        stmts,
-        &ectx.used_after,
-        &ectx.local_types,
-        &ectx.rc_wrapped,
-    );
     let mut lines = Vec::new();
     lines.push("                crate::cancel_checkpoint();".to_string());
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last = i == stmts.len() - 1;
-        let sctx = &stmt_ctxs[i];
         match stmt {
             Stmt::Binding(name, _, expr) => {
                 lines.push(format!(
                     "                let {} = {};",
                     aver_name_to_rust(name),
-                    emit_expr(&expr.node, ctx, sctx)
+                    emit_expr(&expr.node, ctx, ectx)
                 ));
             }
             Stmt::Expr(expr) => {
@@ -2353,14 +2274,14 @@ fn emit_trampoline_arm_body(
                             enum_name,
                             member_names,
                             ctx,
-                            sctx,
+                            ectx,
                             rc_indices,
                         )
                     ));
                 } else {
                     lines.push(format!(
                         "                {};",
-                        emit_expr(&expr.node, ctx, sctx)
+                        emit_expr(&expr.node, ctx, ectx)
                     ));
                 }
             }
@@ -2389,21 +2310,13 @@ fn emit_trampoline_expr(
                 // Bounce → produce enum variant (excluding Rc-wrapped args)
                 let variant = fn_name_to_variant(target);
                 let bare_args: Vec<Expr> = args.iter().map(|a| a.node.clone()).collect();
-                let arg_ctxs = compute_args_used_after_full(
-                    &bare_args,
-                    &ectx.used_after,
-                    &ectx.local_types,
-                    &ectx.rc_wrapped,
-                    &ectx.borrowed_params,
-                );
                 let arg_strs: Vec<String> = bare_args
                     .iter()
-                    .zip(arg_ctxs.iter())
-                    .filter(|(a, _)| {
+                    .filter(|a| {
                         // Skip args that are pass-through Rc params (Ident matching an rc_wrapped name)
                         !matches!(a, Expr::Ident(name) if ectx.is_rc_wrapped(name))
                     })
-                    .map(|(a, ac)| clone_arg(a, ctx, ac))
+                    .map(|a| clone_arg(a, ctx, ectx))
                     .collect();
                 if arg_strs.is_empty() {
                     format!("{}::{}", enum_name, variant)
@@ -2416,18 +2329,7 @@ fn emit_trampoline_expr(
             }
         }
         Expr::Match { subject, arms, .. } => {
-            // Compute used_after for subject
-            let mut arms_vars = HashSet::new();
-            for arm in arms {
-                let mut arm_vars = collect_vars(&arm.body.node);
-                let bindings = pattern_bindings(&arm.pattern);
-                for b in &bindings {
-                    arm_vars.remove(b);
-                }
-                arms_vars.extend(arm_vars);
-            }
-            let subj_ectx = ectx.with_used_after(&arms_vars);
-            let subj = clone_arg(&subject.node, ctx, &subj_ectx);
+            let subj = clone_arg(&subject.node, ctx, ectx);
             let dispatch_plan = classify_dispatch_plan_for_rust(arms, ctx, ectx);
 
             // Bool match → if/else
@@ -2666,25 +2568,17 @@ fn emit_memo_fn(
 
 fn emit_memo_inner_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     let stmts = body.stmts();
-    let stmt_ctxs = compute_block_used_after_full(
-        stmts,
-        &ectx.used_after,
-        &ectx.local_types,
-        &ectx.rc_wrapped,
-        &ectx.borrowed_params,
-    );
     let mut parts = Vec::new();
     parts.push("crate::cancel_checkpoint();".to_string());
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last = i == stmts.len() - 1;
-        let sctx = &stmt_ctxs[i];
         match stmt {
-            Stmt::Binding(_, _, _) => parts.push(emit_stmt(stmt, ctx, sctx)),
+            Stmt::Binding(_, _, _) => parts.push(emit_stmt(stmt, ctx, ectx)),
             Stmt::Expr(expr) => {
                 if is_last {
-                    parts.push(emit_expr(&expr.node, ctx, sctx));
+                    parts.push(emit_expr(&expr.node, ctx, ectx));
                 } else {
-                    parts.push(format!("{};", emit_expr(&expr.node, ctx, sctx)));
+                    parts.push(format!("{};", emit_expr(&expr.node, ctx, ectx)));
                 }
             }
         }
@@ -2753,25 +2647,23 @@ fn emit_main_with_visibility(
     if let Some(fd) = main_fn {
         let main_ectx = build_fn_ectx(fd, ctx);
         let stmts = fd.body.stmts();
-        let stmt_ctxs =
-            compute_block_used_after(stmts, &main_ectx.used_after, &main_ectx.local_types);
         for (i, stmt) in stmts.iter().enumerate() {
             let is_last = i == stmts.len() - 1;
-            let sctx = &stmt_ctxs[i];
             if is_last && returns_result {
                 match stmt {
                     Stmt::Binding(_, _, _) => {
                         let indent = if guest_wrap_main { "        " } else { "    " };
-                        writeln!(out, "{}{}", indent, emit_stmt(stmt, ctx, sctx)).unwrap();
+                        writeln!(out, "{}{}", indent, emit_stmt(stmt, ctx, &main_ectx)).unwrap();
                     }
                     Stmt::Expr(expr) => {
                         let indent = if guest_wrap_main { "        " } else { "    " };
-                        writeln!(out, "{}{}", indent, emit_expr(&expr.node, ctx, sctx)).unwrap();
+                        writeln!(out, "{}{}", indent, emit_expr(&expr.node, ctx, &main_ectx))
+                            .unwrap();
                     }
                 }
             } else {
                 let indent = if guest_wrap_main { "        " } else { "    " };
-                writeln!(out, "{}{}", indent, emit_stmt(stmt, ctx, sctx)).unwrap();
+                writeln!(out, "{}{}", indent, emit_stmt(stmt, ctx, &main_ectx)).unwrap();
             }
         }
     }
@@ -2826,33 +2718,6 @@ pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) 
 
     writeln!(out, "}}").unwrap();
     out.trim_end().to_string()
-}
-
-/// Check if an expression tree contains a `Resolved { name, last_use: true }` for a given name.
-fn arg_contains_last_use_name(expr: &Expr, target: &str) -> bool {
-    match expr {
-        Expr::Resolved { name, last_use, .. } => name == target && last_use.0,
-        Expr::FnCall(fn_expr, args) => {
-            arg_contains_last_use_name(&fn_expr.node, target)
-                || args
-                    .iter()
-                    .any(|a| arg_contains_last_use_name(&a.node, target))
-        }
-        Expr::BinOp(_, left, right) => {
-            arg_contains_last_use_name(&left.node, target)
-                || arg_contains_last_use_name(&right.node, target)
-        }
-        Expr::Attr(obj, _) | Expr::ErrorProp(obj) => arg_contains_last_use_name(&obj.node, target),
-        Expr::Constructor(_, Some(inner)) => arg_contains_last_use_name(&inner.node, target),
-        Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
-            StrPart::Parsed(e) => arg_contains_last_use_name(&e.node, target),
-            _ => false,
-        }),
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => items
-            .iter()
-            .any(|e| arg_contains_last_use_name(&e.node, target)),
-        _ => false,
-    }
 }
 
 #[cfg(test)]

@@ -1,12 +1,12 @@
 use super::builtins;
-use super::emit_ctx::{EmitCtx, compute_args_used_after_full, should_borrow_param};
+use super::emit_ctx::{EmitCtx, expr_can_move, expr_skip_clone, should_borrow_param};
 use super::pattern::emit_pattern;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
 use crate::codegen::common::{
     expr_to_dotted_name, is_user_type, module_prefix_to_rust_path, resolve_module_call,
 };
-use crate::ir::vars::{collect_vars, pattern_bindings};
+use crate::ir::vars::pattern_bindings;
 use crate::ir::{
     BodyExprPlan, BodyPlan, BoolCompareOp, BoolSubjectPlan, CallLowerCtx, CallPlan,
     DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral, DispatchTableShape,
@@ -247,20 +247,17 @@ fn emit_expr_with_options(
                 let r = emit_expr(&right.node, ctx, ectx);
                 return format!("(-{})", r);
             }
-            // BinOp: left's used_after includes vars from right
-            let right_vars = collect_vars(&right.node);
-            let left_ectx = ectx.with_used_after(&right_vars);
-            let l = emit_expr(&left.node, ctx, &left_ectx);
+            // BinOp: left and right use parent ectx (last_use on Resolved handles liveness)
+            let l = emit_expr(&left.node, ctx, ectx);
             let r = emit_expr(&right.node, ctx, ectx);
             match op {
                 BinOp::Add => {
-                    if expr_is_numeric(&left.node, &left_ectx) || expr_is_numeric(&right.node, ectx)
-                    {
+                    if expr_is_numeric(&left.node, ectx) || expr_is_numeric(&right.node, ectx) {
                         // Both sides are numeric (Int/Float) — plain value add.
                         format!("({} + {})", l, r)
                     } else {
                         // Might be AverStr concatenation: Add<&AverStr>.
-                        let l = maybe_clone(l, &left.node, &left_ectx);
+                        let l = maybe_clone(l, &left.node, ectx);
                         format!("({} + &{})", l, r)
                     }
                 }
@@ -306,51 +303,19 @@ fn emit_expr_with_options(
                 "aver_rt::AverList::empty()".to_string()
             } else {
                 let bare_elems: Vec<Expr> = elements.iter().map(|e| e.node.clone()).collect();
-                let elem_ctxs = compute_args_used_after_full(
-                    &bare_elems,
-                    &ectx.used_after,
-                    &ectx.local_types,
-                    &ectx.rc_wrapped,
-                    &ectx.borrowed_params,
-                );
-                let parts: Vec<String> = bare_elems
-                    .iter()
-                    .zip(elem_ctxs.iter())
-                    .map(|(e, elem_ctx)| clone_arg(e, ctx, elem_ctx))
-                    .collect();
+                let parts: Vec<String> =
+                    bare_elems.iter().map(|e| clone_arg(e, ctx, ectx)).collect();
                 format!("aver_rt::AverList::from_vec(vec![{}])", parts.join(", "))
             }
         }
         Expr::Tuple(items) => {
             let bare_items: Vec<Expr> = items.iter().map(|e| e.node.clone()).collect();
-            let item_ctxs = compute_args_used_after_full(
-                &bare_items,
-                &ectx.used_after,
-                &ectx.local_types,
-                &ectx.rc_wrapped,
-                &ectx.borrowed_params,
-            );
-            let parts: Vec<String> = bare_items
-                .iter()
-                .zip(item_ctxs.iter())
-                .map(|(e, item_ctx)| clone_arg(e, ctx, item_ctx))
-                .collect();
+            let parts: Vec<String> = bare_items.iter().map(|e| clone_arg(e, ctx, ectx)).collect();
             format!("({})", parts.join(", "))
         }
         Expr::IndependentProduct(items, unwrap) => {
             let bare_items: Vec<Expr> = items.iter().map(|e| e.node.clone()).collect();
-            let item_ctxs = compute_args_used_after_full(
-                &bare_items,
-                &ectx.used_after,
-                &ectx.local_types,
-                &ectx.rc_wrapped,
-                &ectx.borrowed_params,
-            );
-            let parts: Vec<String> = bare_items
-                .iter()
-                .zip(item_ctxs.iter())
-                .map(|(e, item_ctx)| clone_arg(e, ctx, item_ctx))
-                .collect();
+            let parts: Vec<String> = bare_items.iter().map(|e| clone_arg(e, ctx, ectx)).collect();
 
             let n = parts.len();
             let has_replay = ctx.emit_replay_runtime;
@@ -454,25 +419,12 @@ fn emit_expr_with_options(
             if entries.is_empty() {
                 "HashMap::new()".to_string()
             } else {
-                let flat_exprs: Vec<Expr> = entries
-                    .iter()
-                    .flat_map(|(k, v)| [k.node.clone(), v.node.clone()])
-                    .collect();
-                let flat_ctxs = compute_args_used_after_full(
-                    &flat_exprs,
-                    &ectx.used_after,
-                    &ectx.local_types,
-                    &ectx.rc_wrapped,
-                    &ectx.borrowed_params,
-                );
                 let mut parts = Vec::new();
-                for (idx, (k, v)) in entries.iter().enumerate() {
-                    let key_ctx = &flat_ctxs[idx * 2];
-                    let value_ctx = &flat_ctxs[idx * 2 + 1];
+                for (k, v) in entries.iter() {
                     parts.push(format!(
                         "({}, {})",
-                        clone_arg(&k.node, ctx, key_ctx),
-                        clone_arg(&v.node, ctx, value_ctx)
+                        clone_arg(&k.node, ctx, ectx),
+                        clone_arg(&v.node, ctx, ectx)
                     ));
                 }
                 format!(
@@ -487,22 +439,13 @@ fn emit_expr_with_options(
             } else {
                 type_name
             };
-            let field_exprs: Vec<Expr> = fields.iter().map(|(_, e)| e.node.clone()).collect();
-            let field_ctxs = compute_args_used_after_full(
-                &field_exprs,
-                &ectx.used_after,
-                &ectx.local_types,
-                &ectx.rc_wrapped,
-                &ectx.borrowed_params,
-            );
             let parts: Vec<String> = fields
                 .iter()
-                .enumerate()
-                .map(|(i, (name, expr))| {
+                .map(|(name, expr)| {
                     format!(
                         "{}: {}",
                         aver_name_to_rust(name),
-                        clone_arg(&expr.node, ctx, &field_ctxs[i])
+                        clone_arg(&expr.node, ctx, ectx)
                     )
                 })
                 .collect();
@@ -519,22 +462,13 @@ fn emit_expr_with_options(
                 type_name
             };
             let base_str = clone_arg(&base.node, ctx, ectx);
-            let update_exprs: Vec<Expr> = updates.iter().map(|(_, e)| e.node.clone()).collect();
-            let update_ctxs = compute_args_used_after_full(
-                &update_exprs,
-                &ectx.used_after,
-                &ectx.local_types,
-                &ectx.rc_wrapped,
-                &ectx.borrowed_params,
-            );
             let parts: Vec<String> = updates
                 .iter()
-                .zip(update_ctxs.iter())
-                .map(|((name, expr), uctx)| {
+                .map(|(name, expr)| {
                     format!(
                         "{}: {}",
                         aver_name_to_rust(name),
-                        clone_arg(&expr.node, ctx, uctx)
+                        clone_arg(&expr.node, ctx, ectx)
                     )
                 })
                 .collect();
@@ -577,35 +511,27 @@ fn emit_body_plan_for_rust_with_options(
             emit_body_expr_plan_with_options(body_expr, ctx, ectx, allow_callsite_inlining)
         }
         BodyPlan::Block {
-            stmts,
+            stmts: _,
             bindings,
             tail,
         } => {
-            let stmt_ctxs = super::emit_ctx::compute_block_used_after_full(
-                stmts,
-                &ectx.used_after,
-                &ectx.local_types,
-                &ectx.rc_wrapped,
-                &ectx.borrowed_params,
-            );
-            let mut lines = Vec::with_capacity(stmts.len());
-            for (binding, sctx) in bindings.iter().zip(stmt_ctxs.iter()) {
+            let mut lines = Vec::with_capacity(bindings.len() + 1);
+            for binding in bindings.iter() {
                 lines.push(format!(
                     "let {} = {};",
                     aver_name_to_rust(binding.name),
                     emit_body_expr_plan_with_options(
                         &binding.expr,
                         ctx,
-                        sctx,
+                        ectx,
                         allow_callsite_inlining,
                     )
                 ));
             }
-            let tail_ctx = stmt_ctxs.last().unwrap_or(ectx);
             lines.push(emit_body_expr_plan_with_options(
                 tail,
                 ctx,
-                tail_ctx,
+                ectx,
                 allow_callsite_inlining,
             ));
             lines.join("\n    ")
@@ -697,18 +623,7 @@ fn emit_fn_call_with_options(
     match plan {
         CallPlan::Dynamic => {
             let func = emit_expr_with_options(fn_expr, ctx, ectx, allow_callsite_inlining);
-            let arg_ctxs = compute_args_used_after_full(
-                args,
-                &ectx.used_after,
-                &ectx.local_types,
-                &ectx.rc_wrapped,
-                &ectx.borrowed_params,
-            );
-            let arg_strs: Vec<String> = args
-                .iter()
-                .zip(arg_ctxs.iter())
-                .map(|(a, ac)| clone_arg(a, ctx, ac))
-                .collect();
+            let arg_strs: Vec<String> = args.iter().map(|a| clone_arg(a, ctx, ectx)).collect();
             format!("{}({})", func, arg_strs.join(", "))
         }
         _ => emit_call_plan_with_args_with_options(&plan, args, ctx, ectx, allow_callsite_inlining),
@@ -832,20 +747,9 @@ fn emit_leaf_op_with_options(
             index,
             value,
         } => {
-            let inner_args = vec![vector.node.clone(), index.node.clone(), value.node.clone()];
-            let arg_ctxs = compute_args_used_after_full(
-                &inner_args,
-                &ectx.used_after,
-                &ectx.local_types,
-                &ectx.rc_wrapped,
-                &ectx.borrowed_params,
-            );
-            let vector =
-                clone_arg_with_options(&vector.node, ctx, &arg_ctxs[0], allow_callsite_inlining);
-            let index =
-                emit_expr_with_options(&index.node, ctx, &arg_ctxs[1], allow_callsite_inlining);
-            let value =
-                clone_arg_with_options(&value.node, ctx, &arg_ctxs[2], allow_callsite_inlining);
+            let vector = clone_arg_with_options(&vector.node, ctx, ectx, allow_callsite_inlining);
+            let index = emit_expr_with_options(&index.node, ctx, ectx, allow_callsite_inlining);
+            let value = clone_arg_with_options(&value.node, ctx, ectx, allow_callsite_inlining);
             format!(
                 "{{ let __vec = {}; let __idx = {} as usize; if __idx < __vec.len() {{ __vec.set_unchecked(__idx, {}) }} else {{ __vec }} }}",
                 vector, index, value
@@ -856,18 +760,8 @@ fn emit_leaf_op_with_options(
             index,
             default_literal,
         } => {
-            let inner_args = vec![vector.node.clone(), index.node.clone()];
-            let arg_ctxs = compute_args_used_after_full(
-                &inner_args,
-                &ectx.used_after,
-                &ectx.local_types,
-                &ectx.rc_wrapped,
-                &ectx.borrowed_params,
-            );
-            let vector =
-                emit_expr_with_options(&vector.node, ctx, &arg_ctxs[0], allow_callsite_inlining);
-            let index =
-                emit_expr_with_options(&index.node, ctx, &arg_ctxs[1], allow_callsite_inlining);
+            let vector = emit_expr_with_options(&vector.node, ctx, ectx, allow_callsite_inlining);
+            let index = emit_expr_with_options(&index.node, ctx, ectx, allow_callsite_inlining);
             let default = emit_literal(default_literal);
             format!(
                 "{}.get({} as usize).cloned().unwrap_or({})",
@@ -883,28 +777,12 @@ fn emit_leaf_op_with_options(
             if let Expr::Literal(Literal::Int(n)) = &b.node
                 && *n != 0
             {
-                let inner_args = vec![a.node.clone(), b.node.clone()];
-                let arg_ctxs = compute_args_used_after_full(
-                    &inner_args,
-                    &ectx.used_after,
-                    &ectx.local_types,
-                    &ectx.rc_wrapped,
-                    &ectx.borrowed_params,
-                );
-                let a = emit_expr_with_options(&a.node, ctx, &arg_ctxs[0], allow_callsite_inlining);
+                let a = emit_expr_with_options(&a.node, ctx, ectx, allow_callsite_inlining);
                 let b_str = emit_literal(&Literal::Int(*n));
                 format!("({}).rem_euclid({})", a, b_str)
             } else {
-                let inner_args = vec![a.node.clone(), b.node.clone()];
-                let arg_ctxs = compute_args_used_after_full(
-                    &inner_args,
-                    &ectx.used_after,
-                    &ectx.local_types,
-                    &ectx.rc_wrapped,
-                    &ectx.borrowed_params,
-                );
-                let a = emit_expr_with_options(&a.node, ctx, &arg_ctxs[0], allow_callsite_inlining);
-                let b = emit_expr_with_options(&b.node, ctx, &arg_ctxs[1], allow_callsite_inlining);
+                let a = emit_expr_with_options(&a.node, ctx, ectx, allow_callsite_inlining);
+                let b = emit_expr_with_options(&b.node, ctx, ectx, allow_callsite_inlining);
                 let default = emit_literal(default_literal);
                 format!(
                     "{{ let __b = {}; if __b == 0i64 {{ {} }} else {{ ({}).rem_euclid(__b) }} }}",
@@ -913,18 +791,8 @@ fn emit_leaf_op_with_options(
             }
         }
         LeafOp::ListIndexGet { list, index } => {
-            let inner_args = vec![list.node.clone(), index.node.clone()];
-            let arg_ctxs = compute_args_used_after_full(
-                &inner_args,
-                &ectx.used_after,
-                &ectx.local_types,
-                &ectx.rc_wrapped,
-                &ectx.borrowed_params,
-            );
-            let list =
-                emit_expr_with_options(&list.node, ctx, &arg_ctxs[0], allow_callsite_inlining);
-            let index =
-                emit_expr_with_options(&index.node, ctx, &arg_ctxs[1], allow_callsite_inlining);
+            let list = emit_expr_with_options(&list.node, ctx, ectx, allow_callsite_inlining);
+            let index = emit_expr_with_options(&index.node, ctx, ectx, allow_callsite_inlining);
             format!("{}.to_vec().get({} as usize).cloned()", list, index)
         }
     }
@@ -1096,23 +964,15 @@ fn emit_named_function_call(
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> String {
-    let arg_ctxs = compute_args_used_after_full(
-        args,
-        &ectx.used_after,
-        &ectx.local_types,
-        &ectx.rc_wrapped,
-        &ectx.borrowed_params,
-    );
     let borrow_mask = callee_borrow_mask(name, args.len(), ctx);
     let arg_strs: Vec<String> = args
         .iter()
         .enumerate()
-        .zip(arg_ctxs.iter())
-        .map(|((i, a), ac)| {
+        .map(|(i, a)| {
             if borrow_mask.get(i).copied().unwrap_or(false) {
-                borrow_arg(a, ctx, ac)
+                borrow_arg(a, ctx, ectx)
             } else {
-                clone_arg(a, ctx, ac)
+                clone_arg(a, ctx, ectx)
             }
         })
         .collect();
@@ -1137,21 +997,13 @@ fn emit_type_constructor_call(
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> String {
-    let arg_ctxs = compute_args_used_after_full(
-        args,
-        &ectx.used_after,
-        &ectx.local_types,
-        &ectx.rc_wrapped,
-        &ectx.borrowed_params,
-    );
     let ctor_name = format!("{}.{}", qualified_type_name, variant_name);
     let boxed_positions = constructor_boxed_positions(&ctor_name, ctx);
     let arg_strs: Vec<String> = args
         .iter()
         .enumerate()
-        .zip(arg_ctxs.iter())
-        .map(|((idx, a), ac)| {
-            let arg = clone_arg(a, ctx, ac);
+        .map(|(idx, a)| {
+            let arg = clone_arg(a, ctx, ectx);
             if boxed_positions.contains(&idx) {
                 format!("std::sync::Arc::new({})", arg)
             } else {
@@ -1187,7 +1039,7 @@ fn emit_type_constructor_call(
 pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
     match expr {
         Expr::Ident(name) | Expr::Resolved { name, .. } => {
-            if ectx.skip_clone(name) {
+            if expr_skip_clone(expr, ectx) {
                 code
             } else if ectx.is_rc_wrapped(name) {
                 // Pass-through param (Rc<T> in self-TCO, &T in mutual-TCO trampoline).
@@ -1311,15 +1163,11 @@ pub(super) fn borrow_arg(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> S
                 .is_some_and(|ty| matches!(ty, Type::Str))
             {
                 // AverStr (Rc<str>): pass by value (cheap clone if needed)
-                if ectx.can_move(name) || ectx.is_rc_wrapped(name) {
-                    // If it's rc_wrapped, the outer code already handles deref
-                    if ectx.is_rc_wrapped(name) {
-                        format!("(*{}).clone()", code)
-                    } else {
-                        code
-                    }
+                // Ident (globals) are always moveable
+                if ectx.is_rc_wrapped(name) {
+                    format!("(*{}).clone()", code)
                 } else {
-                    format!("{}.clone()", code)
+                    code
                 }
             } else if ectx.is_borrowed_param(name) {
                 // Already `&T` — pass directly
@@ -1329,6 +1177,34 @@ pub(super) fn borrow_arg(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> S
                 format!("&*{}", code)
             } else {
                 // Owned local: borrow it
+                format!("&{}", code)
+            }
+        }
+        Expr::Resolved { name, .. } => {
+            if ectx.is_copy(name) {
+                code
+            } else if ectx
+                .local_types
+                .get(name)
+                .is_some_and(|ty| matches!(ty, Type::Str))
+            {
+                // AverStr: check last_use for move eligibility
+                if expr_can_move(expr) {
+                    code
+                } else if ectx.is_rc_wrapped(name) {
+                    format!("(*{}).clone()", code)
+                } else {
+                    format!("{}.clone()", code)
+                }
+            } else if ectx.is_borrowed_param(name) {
+                code
+            } else if ectx.is_rc_wrapped(name) {
+                format!("&*{}", code)
+            } else if expr_can_move(expr) {
+                // Last use: can move, borrow the owned value
+                format!("&{}", code)
+            } else {
+                // Not last use: clone then borrow
                 format!("&{}", code)
             }
         }
@@ -1494,23 +1370,11 @@ fn is_irrefutable_pattern(pat: &Pattern) -> bool {
 }
 
 fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &EmitCtx) -> String {
-    // Subject's used_after: all vars in arms + parent used_after
-    let mut arms_vars = HashSet::new();
-    for arm in arms {
-        let mut arm_vars = collect_vars(&arm.body.node);
-        let bindings = pattern_bindings(&arm.pattern);
-        for b in &bindings {
-            arm_vars.remove(b);
-        }
-        arms_vars.extend(arm_vars);
-    }
-    let subj_ectx = ectx.with_used_after(&arms_vars);
-
     // Single-arm irrefutable match → `let` destructuring instead of `match`.
     // e.g. `match x: (a, b) -> expr` → `{ let (a, b) = x; expr }`
     if arms.len() == 1 && is_irrefutable_pattern(&arms[0].pattern) {
         let arm = &arms[0];
-        let subj = clone_arg(subject, ctx, &subj_ectx);
+        let subj = clone_arg(subject, ctx, ectx);
         let pat = emit_pattern(&arm.pattern, false, ctx);
         let body = maybe_clone(emit_expr(&arm.body.node, ctx, ectx), &arm.body.node, ectx);
         return match &arm.pattern {
@@ -1530,19 +1394,18 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
         .iter()
         .all(|arm| pattern_bindings(&arm.pattern).is_empty());
     let match_on_ref =
-        no_bindings && matches!(subject, Expr::Ident(name) if subj_ectx.is_borrowed_param(name));
+        no_bindings && matches!(subject, Expr::Ident(name) if ectx.is_borrowed_param(name));
     let subj = if match_on_ref {
-        emit_expr(subject, ctx, &subj_ectx)
+        emit_expr(subject, ctx, ectx)
     } else {
-        clone_arg(subject, ctx, &subj_ectx)
+        clone_arg(subject, ctx, ectx)
     };
     let dispatch_plan = classify_dispatch_plan_for_rust(arms, ctx, ectx);
 
     // Bool match → if/else: match expr { true => A, false => B } → if expr { A } else { B }
     // Always applied (not just optimized) since it generates strictly better code.
     if let Some(MatchDispatchPlan::Bool(shape)) = dispatch_plan.as_ref()
-        && let Some(code) =
-            try_emit_bool_if_else(subject, &subj, arms, *shape, ctx, &subj_ectx, ectx)
+        && let Some(code) = try_emit_bool_if_else(subject, &subj, arms, *shape, ctx, ectx, ectx)
     {
         return code;
     }
@@ -1620,9 +1483,7 @@ fn try_emit_bool_if_else(
             op,
             invert,
         } => {
-            let rhs_vars = collect_vars(&rhs.node);
-            let lhs_ectx = subj_ectx.with_used_after(&rhs_vars);
-            let lhs_code = emit_expr(&lhs.node, ctx, &lhs_ectx);
+            let lhs_code = emit_expr(&lhs.node, ctx, subj_ectx);
             let rhs_code = emit_expr(&rhs.node, ctx, subj_ectx);
             let op_code = match op {
                 BoolCompareOp::Eq => "==",

@@ -1000,8 +1000,8 @@ fn loop(r: Result<Int, String>) -> Int
         let out = transpile(&ctx);
         let entry = generated_rust_entry_file(&out);
 
-        // Now uses native Rust match directly instead of dispatch table
-        assert!(entry.contains("match r {"));
+        // Uses native Rust match directly (r cloned since not-Copy Ident without last_use info)
+        assert!(entry.contains("match r.clone() {"));
         assert!(entry.contains("Ok(n)"));
         assert!(!entry.contains("__dispatch_subject"));
     }
@@ -1028,8 +1028,8 @@ fn right(r: Result<Int, String>) -> Int
         let out = transpile(&ctx);
         let entry = generated_rust_entry_file(&out);
 
-        // Now uses native Rust match directly instead of dispatch table
-        assert!(entry.contains("match r {"));
+        // Uses native Rust match directly (r cloned since not-Copy Ident without last_use info)
+        assert!(entry.contains("match r.clone() {"));
         assert!(entry.contains("Ok(n)"));
         assert!(!entry.contains("__dispatch_subject"));
     }

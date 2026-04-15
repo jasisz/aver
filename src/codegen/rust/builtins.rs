@@ -1,4 +1,4 @@
-use super::emit_ctx::{EmitCtx, compute_args_used_after_full};
+use super::emit_ctx::EmitCtx;
 use super::expr::{clone_arg, emit_expr};
 /// Mapping of Aver builtin/namespace functions to Rust equivalents.
 use crate::ast::Expr;
@@ -193,13 +193,6 @@ fn emit_replay_effect_call(
     ectx: &EmitCtx,
 ) -> Option<String> {
     let effect_name = builtin_effect_name(name);
-    let arg_ctxs = compute_args_used_after_full(
-        args,
-        &ectx.used_after,
-        &ectx.local_types,
-        &ectx.rc_wrapped,
-        &ectx.borrowed_params,
-    );
     let temp_names = (0..args.len())
         .map(|idx| format!("__effect_arg{}", idx))
         .collect::<Vec<_>>();
@@ -213,7 +206,7 @@ fn emit_replay_effect_call(
     let mut lines = Vec::new();
     lines.push("{".to_string());
     for (idx, arg) in args.iter().enumerate() {
-        let emitted = clone_arg(arg, ctx, &arg_ctxs[idx]);
+        let emitted = clone_arg(arg, ctx, ectx);
         lines.push(format!("    let {} = {};", temp_names[idx], emitted));
     }
     lines.push("    crate::cancel_checkpoint();".to_string());
@@ -268,13 +261,6 @@ pub fn emit_builtin_call(
     }
 
     let result = emit_builtin_call_inner(name, args, ctx, ectx)?;
-    let arg_ctxs = compute_args_used_after_full(
-        args,
-        &ectx.used_after,
-        &ectx.local_types,
-        &ectx.rc_wrapped,
-        &ectx.borrowed_params,
-    );
 
     // Convert String-returning builtins to AverStr.
     let result = if builtin_needs_str_conversion(name) {
@@ -286,21 +272,21 @@ pub fn emit_builtin_call(
     // Wrap Http/Disk/Env calls with policy checks when aver.toml policy is present.
     if ctx.policy.is_some() && !ctx.emit_replay_runtime {
         if name.starts_with("Http.") && !args.is_empty() {
-            let url_arg = emit_expr(&args[0], ctx, &arg_ctxs[0]);
+            let url_arg = emit_expr(&args[0], ctx, ectx);
             return Some(format!(
                 "{{ crate::cancel_checkpoint(); aver_policy::check_http(\"{}\", &{}).expect(\"aver.toml policy violation\"); {} }}",
                 name, url_arg, result
             ));
         }
         if name.starts_with("Disk.") && !args.is_empty() {
-            let path_arg = emit_expr(&args[0], ctx, &arg_ctxs[0]);
+            let path_arg = emit_expr(&args[0], ctx, ectx);
             return Some(format!(
                 "{{ crate::cancel_checkpoint(); aver_policy::check_disk(\"{}\", &{}).expect(\"aver.toml policy violation\"); {} }}",
                 name, path_arg, result
             ));
         }
         if name.starts_with("Env.") && !args.is_empty() {
-            let key_arg = emit_expr(&args[0], ctx, &arg_ctxs[0]);
+            let key_arg = emit_expr(&args[0], ctx, ectx);
             return Some(format!(
                 "{{ crate::cancel_checkpoint(); aver_policy::check_env(\"{}\", &{}).expect(\"aver.toml policy violation\"); {} }}",
                 name, key_arg, result
@@ -321,14 +307,7 @@ fn emit_builtin_call_inner(
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> Option<String> {
-    let arg_ctxs = compute_args_used_after_full(
-        args,
-        &ectx.used_after,
-        &ectx.local_types,
-        &ectx.rc_wrapped,
-        &ectx.borrowed_params,
-    );
-    let emit_arg = |idx: usize| emit_expr(&args[idx], ctx, &arg_ctxs[idx]);
+    let emit_arg = |idx: usize| emit_expr(&args[idx], ctx, ectx);
 
     match name {
         // ---- Console ----
@@ -349,32 +328,32 @@ fn emit_builtin_call_inner(
 
         // ---- Result ----
         "Result.Ok" => {
-            let arg = clone_arg(&args[0], ctx, &arg_ctxs[0]);
+            let arg = clone_arg(&args[0], ctx, ectx);
             Some(format!("Ok({})", arg))
         }
         "Result.Err" => {
-            let arg = clone_arg(&args[0], ctx, &arg_ctxs[0]);
+            let arg = clone_arg(&args[0], ctx, ectx);
             Some(format!("Err({})", arg))
         }
         "Result.withDefault" => {
-            let result = clone_arg(&args[0], ctx, &arg_ctxs[0]);
-            let default = clone_arg(&args[1], ctx, &arg_ctxs[1]);
+            let result = clone_arg(&args[0], ctx, ectx);
+            let default = clone_arg(&args[1], ctx, ectx);
             Some(format!("{}.unwrap_or({})", result, default))
         }
 
         // ---- Option ----
         "Option.Some" => {
-            let arg = clone_arg(&args[0], ctx, &arg_ctxs[0]);
+            let arg = clone_arg(&args[0], ctx, ectx);
             Some(format!("Some({})", arg))
         }
         "Option.withDefault" => {
-            let opt = clone_arg(&args[0], ctx, &arg_ctxs[0]);
-            let default = clone_arg(&args[1], ctx, &arg_ctxs[1]);
+            let opt = clone_arg(&args[0], ctx, ectx);
+            let default = clone_arg(&args[1], ctx, ectx);
             Some(format!("{}.unwrap_or({})", opt, default))
         }
         "Option.toResult" => {
-            let opt = clone_arg(&args[0], ctx, &arg_ctxs[0]);
-            let err = clone_arg(&args[1], ctx, &arg_ctxs[1]);
+            let opt = clone_arg(&args[0], ctx, ectx);
+            let err = clone_arg(&args[1], ctx, ectx);
             Some(format!("{}.ok_or({})", opt, err))
         }
 
@@ -517,17 +496,17 @@ fn emit_builtin_call_inner(
         }
         "String.contains" => {
             let s = emit_arg(0);
-            let sub = emit_str_arg_or_deref(&args[1], &arg_ctxs[1], ctx);
+            let sub = emit_str_arg_or_deref(&args[1], ectx, ctx);
             Some(format!("{}.contains({})", s, sub))
         }
         "String.startsWith" => {
             let s = emit_arg(0);
-            let prefix = emit_str_arg_or_deref(&args[1], &arg_ctxs[1], ctx);
+            let prefix = emit_str_arg_or_deref(&args[1], ectx, ctx);
             Some(format!("{}.starts_with({})", s, prefix))
         }
         "String.endsWith" => {
             let s = emit_arg(0);
-            let suffix = emit_str_arg_or_deref(&args[1], &arg_ctxs[1], ctx);
+            let suffix = emit_str_arg_or_deref(&args[1], ectx, ctx);
             Some(format!("{}.ends_with({})", s, suffix))
         }
         "String.trim" => {
@@ -594,8 +573,8 @@ fn emit_builtin_call_inner(
             }
         }
         "List.prepend" => {
-            let item = clone_arg(&args[0], ctx, &arg_ctxs[0]);
-            let list = clone_arg(&args[1], ctx, &arg_ctxs[1]);
+            let item = clone_arg(&args[0], ctx, ectx);
+            let list = clone_arg(&args[1], ctx, ectx);
             Some(format!("aver_rt::AverList::prepend({}, &{})", item, list))
         }
         "List.take" => {
@@ -613,12 +592,12 @@ fn emit_builtin_call_inner(
             ))
         }
         "List.concat" => {
-            let left = clone_arg(&args[0], ctx, &arg_ctxs[0]);
-            let right = clone_arg(&args[1], ctx, &arg_ctxs[1]);
+            let left = clone_arg(&args[0], ctx, ectx);
+            let right = clone_arg(&args[1], ctx, ectx);
             Some(format!("aver_rt::AverList::concat(&{}, &{})", left, right))
         }
         "List.reverse" => {
-            let list = emit_expr(&args[0], ctx, &arg_ctxs[0]);
+            let list = emit_expr(&args[0], ctx, ectx);
             Some(format!("{}.reverse()", list))
         }
         "List.contains" => {
@@ -637,7 +616,7 @@ fn emit_builtin_call_inner(
         // ---- Map ----
         "Map.empty" => Some("HashMap::new()".to_string()),
         "Map.fromList" => {
-            let list = clone_arg(&args[0], ctx, &arg_ctxs[0]);
+            let list = clone_arg(&args[0], ctx, ectx);
             Some(format!(
                 "{{ let mut m = HashMap::new(); for (k, v) in {}.iter().cloned() {{ m = m.insert_owned(k, v); }} m }}",
                 list
@@ -656,9 +635,9 @@ fn emit_builtin_call_inner(
             Some(format!("{}.get(&{}).cloned()", map, key))
         }
         "Map.set" => {
-            let map = clone_arg(&args[0], ctx, &arg_ctxs[0]);
-            let key = clone_arg(&args[1], ctx, &arg_ctxs[1]);
-            let val = clone_arg(&args[2], ctx, &arg_ctxs[2]);
+            let map = clone_arg(&args[0], ctx, ectx);
+            let key = clone_arg(&args[1], ctx, ectx);
+            let val = clone_arg(&args[2], ctx, ectx);
             Some(format!("{}.insert_owned({}, {})", map, key, val))
         }
         "Map.has" => {
@@ -667,7 +646,7 @@ fn emit_builtin_call_inner(
             Some(format!("{}.contains_key(&{})", map, key))
         }
         "Map.remove" => {
-            let map = clone_arg(&args[0], ctx, &arg_ctxs[0]);
+            let map = clone_arg(&args[0], ctx, ectx);
             let key = emit_arg(1);
             Some(format!("{}.remove_owned(&{})", map, key))
         }
@@ -747,7 +726,7 @@ fn emit_builtin_call_inner(
         // ---- Vector ----
         "Vector.new" => {
             let size = emit_arg(0);
-            let default = clone_arg(&args[1], ctx, &arg_ctxs[1]);
+            let default = clone_arg(&args[1], ctx, ectx);
             Some(format!(
                 "aver_rt::AverVector::new({} as usize, {})",
                 size, default
@@ -759,9 +738,9 @@ fn emit_builtin_call_inner(
             Some(format!("{}.get({} as usize).cloned()", vec, idx))
         }
         "Vector.set" => {
-            let vec = clone_arg(&args[0], ctx, &arg_ctxs[0]);
+            let vec = clone_arg(&args[0], ctx, ectx);
             let idx = emit_arg(1);
-            let val = clone_arg(&args[2], ctx, &arg_ctxs[2]);
+            let val = clone_arg(&args[2], ctx, ectx);
             Some(format!("{}.set_owned({} as usize, {})", vec, idx, val))
         }
         "Vector.len" => {
@@ -1008,7 +987,7 @@ fn emit_str_arg_or_deref(expr: &Expr, ectx: &EmitCtx, ctx: &CodegenContext) -> S
 #[cfg(test)]
 mod tests {
     use super::emit_builtin_call;
-    use crate::ast::{Expr, Literal, Spanned};
+    use crate::ast::{AnnotBool, Expr, Literal, Spanned};
     use crate::codegen::CodegenContext;
     use crate::codegen::rust::emit_ctx::EmitCtx;
     use crate::types::Type;
@@ -1050,10 +1029,22 @@ mod tests {
 
     #[test]
     fn http_post_preserves_nested_arg_liveness() {
+        // With last_use-based clone/move: Resolved with last_use=false gets .clone(),
+        // Resolved with last_use=true (or Ident) does not.
+        let config_not_last = Expr::Resolved {
+            slot: 0,
+            name: "config".to_string(),
+            last_use: AnnotBool(false),
+        };
+        let config_last = Expr::Resolved {
+            slot: 0,
+            name: "config".to_string(),
+            last_use: AnnotBool(true),
+        };
         let args = vec![
             Expr::FnCall(
                 Box::new(Spanned::bare(Expr::Ident("queryUrl".to_string()))),
-                vec![Spanned::bare(Expr::Ident("config".to_string()))],
+                vec![Spanned::bare(config_not_last)],
             ),
             Expr::FnCall(
                 Box::new(Spanned::bare(Expr::Ident("sqlBody".to_string()))),
@@ -1062,7 +1053,7 @@ mod tests {
             Expr::Literal(Literal::Str("application/json".to_string())),
             Expr::List(vec![Spanned::bare(Expr::FnCall(
                 Box::new(Spanned::bare(Expr::Ident("authHeader".to_string()))),
-                vec![Spanned::bare(Expr::Ident("config".to_string()))],
+                vec![Spanned::bare(config_last)],
             ))]),
         ];
         let mut local_types = HashMap::new();
@@ -1077,8 +1068,9 @@ mod tests {
         )
         .expect("Http.post should emit");
 
+        // First use: not last �� cloned
         assert!(emitted.contains("queryUrl(config.clone())"));
-        // Named-type param gets .clone() at every use site
+        // Last use: borrowed param still needs clone to produce owned value
         assert!(emitted.contains("authHeader(config.clone())"));
     }
 }
