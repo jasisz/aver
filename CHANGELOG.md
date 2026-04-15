@@ -2,6 +2,21 @@
 
 All notable changes to Aver are documented here.
 
+## 0.9.5 (2026-04-15)
+
+### Changed
+- **Shared symbol layer** — module visibility, type registration, and symbol resolution now go through a single shared layer. All backends consume the same `ModuleExports` and `SymbolRegistry` instead of building their own views.
+- **Unified module loader** — `load_module_tree()` replaces independent loaders in the VM compiler and type checker. Proper circular-import detection and module-name validation everywhere.
+
+### Fixed
+- **WASM codegen wrong types for private module helpers** — dependency modules with private functions returning non-Int types (e.g. `padTwo` returning `String`) caused invalid WASM. Codegen now has full signatures for all emitted functions.
+- **Rust codegen missing `Arc::new()` for cross-module recursive types** — self-host binary failed to compile from a clean cache. Constructor boxed-position lookup now handles qualified names.
+
+### Removed
+- Suffix-matching heuristic in VM type resolution
+- Dual-key registration in type checker (replaced by alias-based lookup)
+- Checker's `ModuleSigCache` and cycle-detection stack (handled by shared loader)
+
 ## 0.9.4 (2026-04-15)
 
 ### Fixed
