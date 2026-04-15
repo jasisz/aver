@@ -30,6 +30,14 @@ fn wasm_opt_available() -> bool {
         .unwrap_or(false)
 }
 
+fn write_temp_module(prefix: &str, source: &str) -> PathBuf {
+    let dir = temp_output_dir(prefix);
+    fs::create_dir_all(&dir).expect("create temp module dir");
+    let path = dir.join("main.av");
+    fs::write(&path, source).expect("write temp module");
+    path
+}
+
 #[test]
 fn wasm_compile_supports_multimodule_game_examples() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -134,4 +142,85 @@ fn wasm_opt_oz_does_not_increase_size_for_snake() {
 
     let _ = fs::remove_dir_all(&raw_output_dir);
     let _ = fs::remove_dir_all(&opt_output_dir);
+}
+
+#[test]
+fn wasm_run_preserves_recursive_linked_lists_across_compaction() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let module_path = write_temp_module(
+        "aver-wasm-linked-list",
+        r#"module Tmp
+
+fn repeat(n: Int) -> List<Int>
+    match n <= 0
+        true -> []
+        false -> List.concat(repeat(n - 1), [n])
+
+fn main()
+    ! [Console.print]
+    Console.print("{repeat(8)}")
+"#,
+    );
+
+    let output = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("run")
+        .arg(&module_path)
+        .arg("--wasm")
+        .output()
+        .expect("expected `aver run --wasm` to execute");
+
+    assert!(
+        output.status.success(),
+        "recursive linked-list WASM run failed:\n{}",
+        format_output(&output)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "[1, 2, 3, 4, 5, 6, 7, 8]"
+    );
+
+    let _ = fs::remove_dir_all(module_path.parent().expect("temp module dir"));
+}
+
+#[test]
+fn wasm_run_handles_large_map_build_without_stack_overflow() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let module_path = write_temp_module(
+        "aver-wasm-large-map",
+        r#"module Tmp
+
+fn build(n: Int, acc: Map<String, Int>) -> Map<String, Int>
+    match n <= 0
+        true -> acc
+        false -> build(n - 1, Map.set(acc, Int.toString(n), n))
+
+fn main()
+    ! [Console.print]
+    m = build(12000, Map.empty())
+    Console.print("Entries: {Int.toString(List.len(Map.entries(m)))}")
+"#,
+    );
+
+    let output = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("run")
+        .arg(&module_path)
+        .arg("--wasm")
+        .output()
+        .expect("expected large-map `aver run --wasm` to execute");
+
+    assert!(
+        output.status.success(),
+        "large map WASM run failed:\n{}",
+        format_output(&output)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "Entries: 12000"
+    );
+
+    let _ = fs::remove_dir_all(module_path.parent().expect("temp module dir"));
 }

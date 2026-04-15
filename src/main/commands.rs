@@ -3890,6 +3890,7 @@ fn load_module_recursive(
     }
 
     tco::transform_program(&mut items);
+    resolver::resolve_program(&mut items);
 
     let depends = items
         .iter()

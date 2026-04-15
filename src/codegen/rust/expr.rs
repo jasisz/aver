@@ -551,7 +551,7 @@ fn emit_body_expr_plan_with_options(
             // Field access on a borrowed param in return position needs .clone()
             // to produce an owned value (emit_expr produces `obj.field` without clone).
             if let Expr::Attr(obj, _) = expr
-                && let Expr::Ident(name) = &obj.node
+                && let Expr::Ident(name) | Expr::Resolved { name, .. } = &obj.node
                 && ectx.is_borrowed_param(name)
             {
                 return format!("{}.clone()", code);
@@ -563,7 +563,7 @@ fn emit_body_expr_plan_with_options(
             // Field access on a borrowed param in return position needs .clone()
             // to produce an owned value.
             if let LeafOp::FieldAccess { object, .. } = leaf
-                && let Expr::Ident(name) = &object.node
+                && let Expr::Ident(name) | Expr::Resolved { name, .. } = &object.node
                 && ectx.is_borrowed_param(name)
             {
                 return format!("{}.clone()", code);
@@ -1075,10 +1075,12 @@ pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
 fn expr_is_numeric(expr: &Expr, ectx: &EmitCtx) -> bool {
     match expr {
         Expr::Literal(Literal::Int(_) | Literal::Float(_)) => true,
-        Expr::Ident(name) => matches!(
-            ectx.local_types.get(name.as_str()),
-            Some(Type::Int | Type::Float)
-        ),
+        Expr::Ident(name) | Expr::Resolved { name, .. } => {
+            matches!(
+                ectx.local_types.get(name.as_str()),
+                Some(Type::Int | Type::Float)
+            )
+        }
         // Sub/Mul/Div always produce numeric results.
         Expr::BinOp(op, _, _) => !matches!(op, BinOp::Add),
         Expr::FnCall(fn_expr, _) => {
@@ -1121,7 +1123,7 @@ fn expr_is_numeric(expr: &Expr, ectx: &EmitCtx) -> bool {
 /// Looks up the record definition in the context to find the field's type.
 fn attr_result_is_copy(obj: &Expr, field: &str, ctx: &CodegenContext, ectx: &EmitCtx) -> bool {
     let obj_type = match obj {
-        Expr::Ident(name) => ectx.local_types.get(name),
+        Expr::Ident(name) | Expr::Resolved { name, .. } => ectx.local_types.get(name),
         _ => None,
     };
     let record_name = match obj_type {
@@ -1393,8 +1395,11 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
     let no_bindings = arms
         .iter()
         .all(|arm| pattern_bindings(&arm.pattern).is_empty());
-    let match_on_ref =
-        no_bindings && matches!(subject, Expr::Ident(name) if ectx.is_borrowed_param(name));
+    let match_on_ref = no_bindings
+        && matches!(
+            subject,
+            Expr::Ident(name) | Expr::Resolved { name, .. } if ectx.is_borrowed_param(name)
+        );
     let subj = if match_on_ref {
         emit_expr(subject, ctx, ectx)
     } else {

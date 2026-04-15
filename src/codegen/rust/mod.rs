@@ -781,6 +781,32 @@ fn greet(u: User) -> String
     }
 
     #[test]
+    fn borrowed_record_field_return_clones_for_owned_result() {
+        let ctx = ctx_from_source(
+            r#"
+module Demo
+
+record User
+    name: String
+
+fn getName(user: User) -> String
+    user.name
+"#,
+            "demo",
+        );
+
+        let out = transpile(&ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(entry.contains("pub fn getName(user: &User) -> AverStr"));
+        assert!(
+            entry.contains("user.name.clone()"),
+            "missing owned clone:\n{}",
+            entry
+        );
+    }
+
+    #[test]
     fn vector_get_with_literal_default_lowers_to_direct_unwrap_or_code() {
         let ctx = ctx_from_source(
             r#"

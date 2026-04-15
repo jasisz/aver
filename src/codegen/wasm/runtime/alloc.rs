@@ -515,10 +515,11 @@ pub(super) fn emit_collect_end(rt: &RuntimeFuncIndices) -> Function {
 /// target above the current heap, mirroring `aver-memory`'s "collect roots
 /// into compacted survivors, then truncate + append" shape.
 pub(super) fn emit_retain_i32(rt: &RuntimeFuncIndices) -> Function {
-    let mut f = Function::new(vec![(9, ValType::I32), (1, ValType::I64)]);
+    let mut f = Function::new(vec![(10, ValType::I32), (1, ValType::I64)]);
     // locals:
     // 1 old_ptr, 2 new_ptr, 3 size, 4 kind, 5 meta, 6 count,
-    // 7 i, 8 child, 9 field_addr, 10 header
+    // 7 i, 8 child/current_tail, 9 field_addr/root_ptr,
+    // 10 fixup_addr, 11 header
 
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::I32Const(0));
@@ -559,9 +560,9 @@ pub(super) fn emit_retain_i32(rt: &RuntimeFuncIndices) -> Function {
         align: 3,
         memory_index: 0,
     }));
-    f.instruction(&Instruction::LocalSet(10));
+    f.instruction(&Instruction::LocalSet(11));
 
-    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::LocalGet(11));
     f.instruction(&Instruction::I64Const(HDR_KIND_SHIFT as i64));
     f.instruction(&Instruction::I64ShrU);
     f.instruction(&Instruction::I32WrapI64);
@@ -575,11 +576,11 @@ pub(super) fn emit_retain_i32(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
         ValType::I32,
     )));
-    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::LocalGet(11));
     f.instruction(&Instruction::I32WrapI64);
     f.instruction(&Instruction::Else);
 
-    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::LocalGet(11));
     f.instruction(&Instruction::I64Const(HDR_META_SHIFT as i64));
     f.instruction(&Instruction::I64ShrU);
     f.instruction(&Instruction::I32WrapI64);
@@ -587,7 +588,7 @@ pub(super) fn emit_retain_i32(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(5));
 
-    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::LocalGet(11));
     f.instruction(&Instruction::I32WrapI64);
     f.instruction(&Instruction::LocalSet(6));
 
@@ -710,7 +711,8 @@ pub(super) fn emit_retain_i32(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
 
-    // List<i64> cons: head may be ptr, tail always ptr.
+    // List<i64> cons: head may be ptr, tail is finalized iteratively only
+    // after copied nodes exist, so parents never point at half-built tails.
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32Const(OBJ_LIST_CONS as i32));
     f.instruction(&Instruction::I32Eq);
@@ -738,22 +740,10 @@ pub(super) fn emit_retain_i32(rt: &RuntimeFuncIndices) -> Function {
     }));
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 16,
-        align: 3,
-        memory_index: 0,
-    }));
-    f.instruction(&Instruction::I32WrapI64);
-    f.instruction(&Instruction::Call(rt.retain_i32));
-    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::LocalSet(9));
     f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::LocalGet(8));
-    f.instruction(&Instruction::I64ExtendI32S);
-    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
-        offset: 16,
-        align: 3,
-        memory_index: 0,
-    }));
+    f.instruction(&Instruction::LocalSet(10));
+    emit_finalize_linked_tail_chain(&mut f, rt);
     f.instruction(&Instruction::End);
 
     // List<f64> cons: tail only.
@@ -762,22 +752,10 @@ pub(super) fn emit_retain_i32(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::I32Eq);
     f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
     f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 16,
-        align: 3,
-        memory_index: 0,
-    }));
-    f.instruction(&Instruction::I32WrapI64);
-    f.instruction(&Instruction::Call(rt.retain_i32));
-    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::LocalSet(9));
     f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::LocalGet(8));
-    f.instruction(&Instruction::I64ExtendI32S);
-    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
-        offset: 16,
-        align: 3,
-        memory_index: 0,
-    }));
+    f.instruction(&Instruction::LocalSet(10));
+    emit_finalize_linked_tail_chain(&mut f, rt);
     f.instruction(&Instruction::End);
 
     // Fixed-field records / tuples / variants use meta as pointer bitmask.
@@ -905,25 +883,28 @@ pub(super) fn emit_retain_i32(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::I32Const(OBJ_MAP_ENTRY as i32));
     f.instruction(&Instruction::I32Eq);
     f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-    for offset in [8u64, 16u64] {
-        f.instruction(&Instruction::LocalGet(2));
-        f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-            offset,
-            align: 3,
-            memory_index: 0,
-        }));
-        f.instruction(&Instruction::I32WrapI64);
-        f.instruction(&Instruction::Call(rt.retain_i32));
-        f.instruction(&Instruction::LocalSet(8));
-        f.instruction(&Instruction::LocalGet(2));
-        f.instruction(&Instruction::LocalGet(8));
-        f.instruction(&Instruction::I64ExtendI32S);
-        f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
-            offset,
-            align: 3,
-            memory_index: 0,
-        }));
-    }
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 8,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::Call(rt.retain_i32));
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I64ExtendI32S);
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 8,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalSet(9));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalSet(10));
+    emit_finalize_linked_tail_chain(&mut f, rt);
     f.instruction(&Instruction::End);
 
     f.instruction(&Instruction::LocalGet(2));
@@ -933,6 +914,301 @@ pub(super) fn emit_retain_i32(rt: &RuntimeFuncIndices) -> Function {
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     f
+}
+
+fn emit_store_tail_field(f: &mut Function, object_local: u32, value_local: u32) {
+    f.instruction(&Instruction::LocalGet(object_local));
+    f.instruction(&Instruction::I32Const(16));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(value_local));
+    f.instruction(&Instruction::I64ExtendI32S);
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
+}
+
+fn emit_copy_unpatched_linked_segment(f: &mut Function, rt: &RuntimeFuncIndices) {
+    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+
+    // Stop when the next tail is no longer an unforwarded linked node.
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32LeS);
+    f.instruction(&Instruction::BrIf(1));
+
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::GlobalGet(COLLECT_MARK_GLOBAL));
+    f.instruction(&Instruction::I32LtU);
+    f.instruction(&Instruction::BrIf(1));
+
+    // Already-copied temp nodes live in [collect_from, heap_ptr); copy only
+    // the original source nodes outside that scratch range.
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::GlobalGet(COLLECT_FROM_GLOBAL));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::GlobalGet(HEAP_PTR_GLOBAL));
+    f.instruction(&Instruction::I32LtU);
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::BrIf(1));
+
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::LocalSet(11));
+
+    f.instruction(&Instruction::LocalGet(11));
+    f.instruction(&Instruction::I64Const(HDR_KIND_SHIFT as i64));
+    f.instruction(&Instruction::I64ShrU);
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::I32Const(0xFF));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(4));
+
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(OBJ_FORWARD as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::BrIf(1));
+
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(OBJ_LIST_CONS as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(OBJ_LIST_CONS_F64 as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::I32Or);
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(OBJ_MAP_ENTRY as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::I32Or);
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::BrIf(1));
+
+    f.instruction(&Instruction::LocalGet(11));
+    f.instruction(&Instruction::I64Const(HDR_META_SHIFT as i64));
+    f.instruction(&Instruction::I64ShrU);
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::I32Const(HDR_META_MASK as i32));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(5));
+
+    f.instruction(&Instruction::I32Const(24));
+    f.instruction(&Instruction::Call(rt.alloc));
+    f.instruction(&Instruction::LocalSet(2));
+
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32Const(24));
+    f.instruction(&Instruction::MemoryCopy {
+        src_mem: 0,
+        dst_mem: 0,
+    });
+
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I64Const(
+        (OBJ_FORWARD << HDR_KIND_SHIFT) as i64,
+    ));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::I64Or);
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
+
+    // list cons: retain head if it is a pointer
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(OBJ_LIST_CONS as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 8,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::Call(rt.retain_i32));
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I64ExtendI32S);
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 8,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+
+    // map entry: tuple ptr at offset 8
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(OBJ_MAP_ENTRY as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 8,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::Call(rt.retain_i32));
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I64ExtendI32S);
+    f.instruction(&Instruction::I64Store(wasm_encoder::MemArg {
+        offset: 8,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::End);
+
+    // Advance using the copied node's still-unpatched old tail pointer.
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 16,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::Br(0));
+
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+}
+
+fn emit_finalize_linked_tail_chain(f: &mut Function, rt: &RuntimeFuncIndices) {
+    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+
+    // local10 = current copied node; local8 = raw tail pointer currently stored there.
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 16,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::LocalSet(8));
+
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32LeS);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    emit_store_tail_field(f, 10, 8);
+    f.instruction(&Instruction::Br(2));
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::GlobalGet(COLLECT_MARK_GLOBAL));
+    f.instruction(&Instruction::I32LtU);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    emit_store_tail_field(f, 10, 8);
+    f.instruction(&Instruction::Br(2));
+    f.instruction(&Instruction::End);
+
+    // Temp-range pointers are already copied nodes; follow them instead of
+    // trying to copy them again.
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::GlobalGet(COLLECT_FROM_GLOBAL));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::GlobalGet(HEAP_PTR_GLOBAL));
+    f.instruction(&Instruction::I32LtU);
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::LocalSet(10));
+    f.instruction(&Instruction::Br(1));
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::LocalSet(11));
+
+    f.instruction(&Instruction::LocalGet(11));
+    f.instruction(&Instruction::I64Const(HDR_KIND_SHIFT as i64));
+    f.instruction(&Instruction::I64ShrU);
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::I32Const(0xFF));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(4));
+
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(OBJ_FORWARD as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(11));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::LocalSet(8));
+    emit_store_tail_field(f, 10, 8);
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::LocalSet(10));
+    f.instruction(&Instruction::Br(1));
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(OBJ_LIST_CONS as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(OBJ_LIST_CONS_F64 as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::I32Or);
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(OBJ_MAP_ENTRY as i32));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::I32Or);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::LocalSet(7));
+    emit_copy_unpatched_linked_segment(f, rt);
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
+        offset: 0,
+        align: 3,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::LocalSet(8));
+    emit_store_tail_field(f, 10, 8);
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::LocalSet(10));
+    f.instruction(&Instruction::Br(1));
+    f.instruction(&Instruction::End);
+
+    // Unexpected non-linked tail: retain it once with the original recursive path.
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::Call(rt.retain_i32));
+    f.instruction(&Instruction::LocalSet(8));
+    emit_store_tail_field(f, 10, 8);
+    f.instruction(&Instruction::Br(1));
+
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::Return);
 }
 
 /// $wrap(tag: i32, inner: i64, ptr_flag: i32) -> i32
