@@ -16,6 +16,9 @@ pub struct EmitCtx {
     pub rc_wrapped: HashSet<String>,
     /// Parameters emitted as `&T` borrows (borrow-by-default for non-Copy, non-Str params).
     pub borrowed_params: HashSet<String>,
+    /// Prefix of the module currently being emitted, if any.
+    /// None = root/entry module; Some("Foo.Bar") = dependent module.
+    pub current_module_prefix: Option<String>,
 }
 
 impl EmitCtx {
@@ -25,6 +28,7 @@ impl EmitCtx {
             local_types: HashMap::new(),
             rc_wrapped: HashSet::new(),
             borrowed_params: HashSet::new(),
+            current_module_prefix: None,
         }
     }
 
@@ -40,6 +44,7 @@ impl EmitCtx {
             local_types: param_types,
             rc_wrapped: HashSet::new(),
             borrowed_params,
+            current_module_prefix: None,
         }
     }
 
@@ -49,6 +54,7 @@ impl EmitCtx {
             local_types: param_types,
             rc_wrapped: HashSet::new(),
             borrowed_params: HashSet::new(),
+            current_module_prefix: None,
         }
     }
 
@@ -73,7 +79,14 @@ impl EmitCtx {
             local_types: self.local_types.clone(),
             rc_wrapped: rc,
             borrowed_params: self.borrowed_params.clone(),
+            current_module_prefix: self.current_module_prefix.clone(),
         }
+    }
+
+    /// Set the current module prefix.
+    pub fn with_module_prefix(mut self, prefix: Option<String>) -> Self {
+        self.current_module_prefix = prefix;
+        self
     }
 }
 

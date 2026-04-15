@@ -140,7 +140,7 @@ dependencies = [
 
 [[package]]
 name = "aver-lsp"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "aver-lang",
  "serde_json",
