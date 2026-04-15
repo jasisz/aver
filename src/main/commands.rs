@@ -3942,48 +3942,11 @@ fn load_module_recursive(
         })
         .collect();
 
-    // Extract public function/type/opaque names from the module declaration.
-    let (public_function_names, public_type_names, opaque_public_type_names) = items
-        .iter()
-        .find_map(|i| {
-            if let TopLevel::Module(m) = i {
-                let exposed_set: HashSet<String> = m.exposes.iter().cloned().collect();
-                let opaque_set: HashSet<String> = m.exposes_opaque.iter().cloned().collect();
-
-                // Separate function names from type names by checking type_defs
-                let type_names_in_module: HashSet<String> = type_defs
-                    .iter()
-                    .map(|td| match td {
-                        TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name.clone(),
-                    })
-                    .collect();
-
-                let pub_fns: HashSet<String> = exposed_set
-                    .iter()
-                    .filter(|n| !type_names_in_module.contains(n.as_str()))
-                    .cloned()
-                    .collect();
-                let pub_types: HashSet<String> = exposed_set
-                    .iter()
-                    .filter(|n| type_names_in_module.contains(n.as_str()))
-                    .cloned()
-                    .collect();
-
-                Some((pub_fns, pub_types, opaque_set))
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-
     result.push(ModuleInfo {
         prefix: name.to_string(),
         depends,
         type_defs,
         fn_defs,
-        public_function_names,
-        public_type_names,
-        opaque_public_type_names,
     });
 }
 

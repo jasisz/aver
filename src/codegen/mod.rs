@@ -28,12 +28,6 @@ pub struct ModuleInfo {
     pub type_defs: Vec<TypeDef>,
     /// Function definitions from the module (excluding `main`).
     pub fn_defs: Vec<FnDef>,
-    /// Public function names exposed by this module.
-    pub public_function_names: HashSet<String>,
-    /// Public type names exposed by this module.
-    pub public_type_names: HashSet<String>,
-    /// Opaque public type names (visible in signatures but not constructable from outside).
-    pub opaque_public_type_names: HashSet<String>,
 }
 
 /// Collected context from the Aver program, shared across all backends.
@@ -114,16 +108,6 @@ pub fn build_context(
 
     let module_prefixes: HashSet<String> = modules.iter().map(|m| m.prefix.clone()).collect();
 
-    // Populate fn_sigs from dependent modules so callers can resolve cross-module signatures.
-    let mut fn_sigs = tc_result.fn_sigs.clone();
-    for module in &modules {
-        for fd in &module.fn_defs {
-            let qualified_name = format!("{}.{}", module.prefix, fd.name);
-            let sig = common::fn_sig_from_def(fd);
-            fn_sigs.insert(qualified_name, sig);
-        }
-    }
-
     // Compute which functions are in mutual-TCO SCC groups (emitted as trampoline + wrappers).
     let mut mutual_tco_members = HashSet::new();
     {
@@ -147,7 +131,7 @@ pub fn build_context(
 
     CodegenContext {
         items,
-        fn_sigs,
+        fn_sigs: tc_result.fn_sigs.clone(),
         memo_fns,
         memo_safe_types: tc_result.memo_safe_types.clone(),
         type_defs,

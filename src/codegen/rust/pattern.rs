@@ -1,14 +1,11 @@
 /// Aver patterns → Rust pattern strings.
 use crate::ast::*;
 use crate::codegen::CodegenContext;
-use crate::codegen::common::{
-    is_user_type_in_ctx, module_prefix_to_rust_path, resolve_module_call,
-};
+use crate::codegen::common::{is_user_type, module_prefix_to_rust_path, resolve_module_call};
 use crate::ir::{CallLowerCtx, SemanticConstructor, WrapperKind, classify_constructor_name};
 
 struct RustPatternCtx<'a> {
     ctx: &'a CodegenContext,
-    current_module_prefix: Option<&'a str>,
 }
 
 impl CallLowerCtx for RustPatternCtx<'_> {
@@ -17,7 +14,7 @@ impl CallLowerCtx for RustPatternCtx<'_> {
     }
 
     fn is_user_type(&self, name: &str) -> bool {
-        is_user_type_in_ctx(name, self.current_module_prefix, self.ctx)
+        is_user_type(name, self.ctx)
     }
 
     fn resolve_module_call<'a>(&self, dotted: &'a str) -> Option<(&'a str, &'a str)> {
@@ -85,10 +82,7 @@ fn emit_literal_pattern(lit: &Literal, _string_context: bool) -> String {
 }
 
 fn emit_constructor_pattern(name: &str, bindings: &[String], ctx: &CodegenContext) -> String {
-    let lower_ctx = RustPatternCtx {
-        ctx,
-        current_module_prefix: None,
-    };
+    let lower_ctx = RustPatternCtx { ctx };
     match classify_constructor_name(name, &lower_ctx) {
         SemanticConstructor::Wrapper(kind) => {
             let rust_ctor = match kind {

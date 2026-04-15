@@ -4,7 +4,7 @@ use super::pattern::emit_pattern;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
 use crate::codegen::common::{
-    expr_to_dotted_name, is_user_type_in_ctx, module_prefix_to_rust_path, resolve_module_call,
+    expr_to_dotted_name, is_user_type, module_prefix_to_rust_path, resolve_module_call,
 };
 use crate::ir::vars::pattern_bindings;
 use crate::ir::{
@@ -35,7 +35,7 @@ impl CallLowerCtx for RustCallCtx<'_, '_> {
     }
 
     fn is_user_type(&self, name: &str) -> bool {
-        is_user_type_in_ctx(name, self.ectx.current_module_prefix.as_deref(), self.ctx)
+        is_user_type(name, self.ctx)
     }
 
     fn resolve_module_call<'a>(&self, dotted: &'a str) -> Option<(&'a str, &'a str)> {
@@ -207,7 +207,7 @@ fn emit_expr_with_options(
                     return "None".to_string();
                 }
                 // User-defined type constructor access: Shape.Point
-                if is_user_type_in_ctx(type_name, ectx.current_module_prefix.as_deref(), ctx) {
+                if is_user_type(type_name, ctx) {
                     return format!("{}::{}", type_name, field);
                 }
             }
@@ -220,7 +220,7 @@ fn emit_expr_with_options(
                 if let Some(dot_pos) = bare.find('.') {
                     let type_name = &bare[..dot_pos];
                     let variant = &bare[dot_pos + 1..];
-                    if is_user_type_in_ctx(type_name, ectx.current_module_prefix.as_deref(), ctx) {
+                    if is_user_type(type_name, ctx) {
                         return format!("{}::{}::{}", module_path, type_name, variant);
                     }
                 }
