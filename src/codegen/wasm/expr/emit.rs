@@ -56,7 +56,7 @@ impl<'a> ExprEmitter<'a> {
     pub(super) fn emit_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Literal(lit) => self.emit_literal(lit),
-            Expr::Ident(name) => {
+            Expr::Ident(name) | Expr::Resolved { name, .. } => {
                 if let Some(&idx) = self.locals.get(name) {
                     self.instructions.push(Instruction::LocalGet(idx));
                 } else {
@@ -66,9 +66,6 @@ impl<'a> ExprEmitter<'a> {
                     ));
                     self.emit_default_value(self.infer_expr_type(expr));
                 }
-            }
-            Expr::Resolved { slot, .. } => {
-                self.instructions.push(Instruction::LocalGet(*slot as u32));
             }
             Expr::BinOp(op, lhs, rhs) => self.emit_binop(op, lhs, rhs),
             Expr::FnCall(callee, args) => self.emit_fn_call(callee, args),
@@ -1030,7 +1027,10 @@ impl<'a> ExprEmitter<'a> {
 
     fn emit_field_access(&mut self, base_expr: &Spanned<Expr>, field_name: &str) {
         // Check if this is an uppercase dotted path (type/namespace reference, not field access)
-        if let Expr::Ident(base_name) = &base_expr.node
+        if let Expr::Ident(base_name)
+        | Expr::Resolved {
+            name: base_name, ..
+        } = &base_expr.node
             && base_name.chars().next().is_some_and(|c| c.is_uppercase())
         {
             let qualified = format!("{}.{}", base_name, field_name);

@@ -1099,7 +1099,7 @@ fn collect_host_calls_from_expr(expr: &Expr, imports: &mut HashSet<String>) {
     match expr {
         Expr::FnCall(callee, args) => {
             if let Expr::Attr(base, method) = &callee.node
-                && let Expr::Ident(ns) = &base.node
+                && let Expr::Ident(ns) | Expr::Resolved { name: ns, .. } = &base.node
             {
                 let qualified = format!("{}.{}", ns, method);
                 if is_host_builtin(&qualified) {

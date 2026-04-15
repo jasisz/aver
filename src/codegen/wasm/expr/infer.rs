@@ -79,18 +79,13 @@ impl<'a> ExprEmitter<'a> {
                 Literal::Bool(_) => WasmType::I32,
                 Literal::Str(_) | Literal::Unit => WasmType::I32,
             },
-            Expr::Ident(name) => {
+            Expr::Ident(name) | Expr::Resolved { name, .. } => {
                 if let Some(&idx) = self.locals.get(name) {
                     self.local_types.get(&idx).copied().unwrap_or(WasmType::I64)
                 } else {
                     WasmType::I64
                 }
             }
-            Expr::Resolved { slot, .. } => self
-                .local_types
-                .get(&(*slot as u32))
-                .copied()
-                .unwrap_or(WasmType::I64),
             Expr::BinOp(op, lhs, rhs) => match op {
                 BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => {
                     WasmType::I32
@@ -130,7 +125,10 @@ impl<'a> ExprEmitter<'a> {
             Expr::IndependentProduct(_, _) => WasmType::I32,
             Expr::InterpolatedStr(_) => WasmType::I32,
             Expr::Attr(base, field) => {
-                if let Expr::Ident(base_name) = &base.node
+                if let Expr::Ident(base_name)
+                | Expr::Resolved {
+                    name: base_name, ..
+                } = &base.node
                     && base_name.chars().next().is_some_and(|c| c.is_uppercase())
                 {
                     return WasmType::I32;
@@ -158,14 +156,13 @@ impl<'a> ExprEmitter<'a> {
                 Literal::Str(_) => Some(Type::Str),
                 Literal::Unit => Some(Type::Unit),
             },
-            Expr::Ident(name) => {
+            Expr::Ident(name) | Expr::Resolved { name, .. } => {
                 if let Some(&idx) = self.locals.get(name) {
                     self.local_aver_types.get(&idx).cloned()
                 } else {
                     None
                 }
             }
-            Expr::Resolved { slot, .. } => self.local_aver_types.get(&(*slot as u32)).cloned(),
             Expr::BinOp(op, lhs, _) => match op {
                 BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => {
                     Some(Type::Bool)
@@ -245,7 +242,10 @@ impl<'a> ExprEmitter<'a> {
                 Some(Type::Named(type_name.clone()))
             }
             Expr::Attr(base, field) => {
-                if let Expr::Ident(base_name) = &base.node
+                if let Expr::Ident(base_name)
+                | Expr::Resolved {
+                    name: base_name, ..
+                } = &base.node
                     && base_name.chars().next().is_some_and(|c| c.is_uppercase())
                 {
                     let qualified = format!("{}.{}", base_name, field);

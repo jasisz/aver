@@ -78,7 +78,7 @@ pub enum SemanticConstructor {
 
 pub fn expr_to_dotted_name(expr: &Expr) -> Option<String> {
     match expr {
-        Expr::Ident(name) => Some(name.clone()),
+        Expr::Ident(name) | Expr::Resolved { name, .. } => Some(name.clone()),
         Expr::Attr(obj, field) => {
             let head = expr_to_dotted_name(&obj.node)?;
             Some(format!("{head}.{field}"))
