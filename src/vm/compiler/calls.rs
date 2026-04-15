@@ -94,12 +94,7 @@ impl<'a> FnCompiler<'a> {
     }
 
     pub(super) fn resolve_type_id(&self, name: &str) -> Option<u32> {
-        self.arena.find_type_id(name).or_else(|| {
-            name.rsplit('.')
-                .next()
-                .filter(|short| *short != name)
-                .and_then(|short| self.arena.find_type_id(short))
-        })
+        self.arena.find_type_id(name)
     }
 
     fn resolve_fn_id(&self, name: &str) -> Option<u32> {

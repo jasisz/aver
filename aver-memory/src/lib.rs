@@ -1170,6 +1170,8 @@ pub struct Arena<T: ArenaTypes> {
     pub type_variant_ctor_ids: Vec<Vec<u32>>,
     pub ctor_to_type_variant: Vec<(u32, u16)>,
     pub symbol_entries: Vec<ArenaSymbol<T>>,
+    /// Qualified-name aliases for types (e.g. "Data.Shape" → type_id for "Shape").
+    pub type_aliases: Vec<(String, u32)>,
 }
 
 #[derive(Debug, Clone)]

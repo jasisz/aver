@@ -19,6 +19,7 @@ impl<T: ArenaTypes> Arena<T> {
             type_variant_ctor_ids: Vec::new(),
             ctor_to_type_variant: Vec::new(),
             symbol_entries: Vec::new(),
+            type_aliases: Vec::new(),
         }
     }
 
@@ -44,6 +45,7 @@ impl<T: ArenaTypes> Arena<T> {
             type_variant_ctor_ids: self.type_variant_ctor_ids.clone(),
             ctor_to_type_variant: self.ctor_to_type_variant.clone(),
             symbol_entries: self.symbol_entries.clone(),
+            type_aliases: self.type_aliases.clone(),
         }
     }
 
@@ -622,11 +624,21 @@ impl<T: ArenaTypes> Arena<T> {
     pub fn get_variant_name(&self, type_id: u32, variant_id: u16) -> &str {
         &self.type_variant_names[type_id as usize][variant_id as usize]
     }
+    pub fn register_type_alias(&mut self, alias: &str, type_id: u32) {
+        self.type_aliases.push((alias.to_string(), type_id));
+    }
+
     pub fn find_type_id(&self, name: &str) -> Option<u32> {
         self.type_names
             .iter()
             .position(|n| n == name)
             .map(|i| i as u32)
+            .or_else(|| {
+                self.type_aliases
+                    .iter()
+                    .find(|(alias, _)| alias == name)
+                    .map(|(_, id)| *id)
+            })
     }
     pub fn find_variant_id(&self, type_id: u32, variant_name: &str) -> Option<u16> {
         self.type_variant_names

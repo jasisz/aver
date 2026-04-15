@@ -9,6 +9,7 @@ use crate::ast::{FnBody, FnDef, Stmt, TopLevel, TypeDef};
 use crate::nan_value::{Arena, NanValue};
 use crate::source::find_module_file;
 use crate::types::{option, result};
+use crate::visibility;
 
 use super::builtin::VmBuiltin;
 use super::opcode::*;
@@ -80,7 +81,21 @@ pub fn compile_program_with_modules(
                 compiler.globals[global_idx as usize] = VmSymbolTable::symbol_ref(symbol_id);
             }
             TopLevel::TypeDef(td) => {
-                compiler.register_type_def(td, arena);
+                // Current module: register in Arena (no qualified alias needed)
+                match td {
+                    TypeDef::Product { name, fields, .. } => {
+                        let field_names: Vec<String> =
+                            fields.iter().map(|(n, _)| n.clone()).collect();
+                        arena.register_record_type(name, field_names);
+                    }
+                    TypeDef::Sum { name, variants, .. } => {
+                        let variant_names: Vec<String> =
+                            variants.iter().map(|v| v.name.clone()).collect();
+                        arena.register_sum_type(name, variant_names);
+                    }
+                }
+                // VM-specific: register type symbols
+                compiler.register_type_in_symbols(td, arena);
             }
             _ => {}
         }
@@ -220,9 +235,22 @@ impl ProgramCompiler {
             }
         }
 
+        // Shared: collect type defs from AST, register in Arena with qualified aliases
+        for mt in visibility::collect_module_types(&mod_items) {
+            let type_id = match &mt.kind {
+                visibility::ModuleTypeKind::Record { field_names } => {
+                    arena.register_record_type(&mt.bare_name, field_names.clone())
+                }
+                visibility::ModuleTypeKind::Sum { variant_names } => {
+                    arena.register_sum_type(&mt.bare_name, variant_names.clone())
+                }
+            };
+            arena.register_type_alias(&format!("{}.{}", dep_name, mt.bare_name), type_id);
+        }
+        // VM-specific: register type symbols for namespace resolution
         for item in &mod_items {
             if let TopLevel::TypeDef(td) = item {
-                self.register_type_def(td, arena);
+                self.register_type_in_symbols(td, arena);
             }
         }
 
@@ -286,12 +314,10 @@ impl ProgramCompiler {
             }
         }
 
+        let exposes_ref = exposes.as_deref();
+
         for (fn_name, _fn_id) in &module_fn_ids {
-            let exposed = match &exposes {
-                Some(list) => list.iter().any(|e| e == fn_name),
-                None => !fn_name.starts_with('_'),
-            };
-            if exposed {
+            if visibility::is_exposed(fn_name, exposes_ref) {
                 let qualified = format!("{}.{}", dep_name, fn_name);
                 let global_idx = self.ensure_global(&qualified);
                 let symbol_id = self.symbols.find(&qualified).ok_or_else(|| CompileError {
@@ -307,11 +333,9 @@ impl ProgramCompiler {
                 let type_name = match td {
                     TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name,
                 };
-                let exposed = match &exposes {
-                    Some(list) => list.iter().any(|e| e == type_name),
-                    None => !type_name.starts_with('_'),
-                };
-                if exposed && let Some(type_symbol_id) = self.symbols.find(type_name) {
+                if visibility::is_exposed(type_name, exposes_ref)
+                    && let Some(type_symbol_id) = self.symbols.find(type_name)
+                {
                     let member_symbol_id = self.symbols.intern_name(type_name);
                     self.symbols.add_namespace_member_by_id(
                         module_symbol_id,
@@ -323,11 +347,7 @@ impl ProgramCompiler {
         }
 
         for (fn_name, _fn_id) in &module_fn_ids {
-            let exposed = match &exposes {
-                Some(list) => list.iter().any(|e| e == fn_name),
-                None => !fn_name.starts_with('_'),
-            };
-            if exposed {
+            if visibility::is_exposed(fn_name, exposes_ref) {
                 let qualified = format!("{}.{}", dep_name, fn_name);
                 if let Some(fn_symbol_id) = self.symbols.find(&qualified) {
                     let member_symbol_id = self.symbols.intern_name(fn_name);
@@ -353,22 +373,22 @@ impl ProgramCompiler {
         idx
     }
 
-    fn register_type_def(&mut self, td: &TypeDef, arena: &mut Arena) {
+    /// Register type symbols in VmSymbolTable for namespace resolution.
+    /// Arena registration is handled separately via shared `collect_module_types`.
+    fn register_type_in_symbols(&mut self, td: &TypeDef, arena: &Arena) {
         match td {
             TypeDef::Product { name, fields, .. } => {
                 self.symbols.intern_namespace_path(name);
-                let field_names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
-                let field_symbol_ids: Vec<u32> = field_names
+                let type_id = arena.find_type_id(name).expect("type already registered in Arena");
+                let field_symbol_ids: Vec<u32> = fields
                     .iter()
-                    .map(|field_name| self.symbols.intern_name(field_name))
+                    .map(|(field_name, _)| self.symbols.intern_name(field_name))
                     .collect();
-                let type_id = arena.register_record_type(name, field_names);
                 self.code.register_record_fields(type_id, &field_symbol_ids);
             }
             TypeDef::Sum { name, variants, .. } => {
                 let type_symbol_id = self.symbols.intern_namespace_path(name);
-                let variant_names: Vec<String> = variants.iter().map(|v| v.name.clone()).collect();
-                let type_id = arena.register_sum_type(name, variant_names);
+                let type_id = arena.find_type_id(name).expect("type already registered in Arena");
                 for (variant_id, variant) in variants.iter().enumerate() {
                     let ctor_id = arena
                         .find_ctor_id(type_id, variant_id as u16)
@@ -578,16 +598,18 @@ impl ProgramCompiler {
         };
 
         let module_symbol_id = self.symbols.intern_namespace_path(&module.name);
+        let exposes_ref = if module.exposes.is_empty() {
+            None
+        } else {
+            Some(module.exposes.as_slice())
+        };
 
         for item in items {
             match item {
                 TopLevel::FnDef(fndef) => {
-                    let exposed = if module.exposes.is_empty() {
-                        !fndef.name.starts_with('_')
-                    } else {
-                        module.exposes.iter().any(|name| name == &fndef.name)
-                    };
-                    if exposed && let Some(symbol_id) = self.symbols.find(&fndef.name) {
+                    if visibility::is_exposed(&fndef.name, exposes_ref)
+                        && let Some(symbol_id) = self.symbols.find(&fndef.name)
+                    {
                         let member_symbol_id = self.symbols.intern_name(&fndef.name);
                         self.symbols.add_namespace_member_by_id(
                             module_symbol_id,
@@ -597,12 +619,9 @@ impl ProgramCompiler {
                     }
                 }
                 TopLevel::TypeDef(TypeDef::Product { name, .. } | TypeDef::Sum { name, .. }) => {
-                    let exposed = if module.exposes.is_empty() {
-                        !name.starts_with('_')
-                    } else {
-                        module.exposes.iter().any(|member| member == name)
-                    };
-                    if exposed && let Some(symbol_id) = self.symbols.find(name) {
+                    if visibility::is_exposed(name, exposes_ref)
+                        && let Some(symbol_id) = self.symbols.find(name)
+                    {
                         let member_symbol_id = self.symbols.intern_name(name);
                         self.symbols.add_namespace_member_by_id(
                             module_symbol_id,

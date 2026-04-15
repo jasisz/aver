@@ -132,16 +132,6 @@ impl TypeChecker {
         })
     }
 
-    pub(super) fn exposed_set(items: &[TopLevel]) -> Option<HashSet<String>> {
-        Self::module_decl(items).and_then(|m| {
-            if m.exposes.is_empty() {
-                None
-            } else {
-                Some(m.exposes.iter().cloned().collect())
-            }
-        })
-    }
-
     pub(super) fn module_cache_key(path: &Path) -> String {
         canonicalize_path(path).to_string_lossy().to_string()
     }
@@ -249,7 +239,14 @@ impl TypeChecker {
                 }
             }
 
-            let exposed = Self::exposed_set(&items);
+            let exposed_list: Option<Vec<String>> = Self::module_decl(&items).and_then(|m| {
+                if m.exposes.is_empty() {
+                    None
+                } else {
+                    Some(m.exposes.clone())
+                }
+            });
+            let exposed_ref = exposed_list.as_deref();
             let opaque_set: HashSet<String> = Self::module_decl(&items)
                 .map(|m| m.exposes_opaque.iter().cloned().collect())
                 .unwrap_or_default();
@@ -260,11 +257,7 @@ impl TypeChecker {
             let mut opaque_types = Vec::new();
             for item in &items {
                 if let TopLevel::FnDef(fd) = item {
-                    let include = match &exposed {
-                        Some(set) => set.contains(&fd.name),
-                        None => !fd.name.starts_with('_'),
-                    };
-                    if !include {
+                    if !crate::visibility::is_exposed(&fd.name, exposed_ref) {
                         continue;
                     }
 
@@ -305,13 +298,9 @@ impl TypeChecker {
                             variants,
                             ..
                         } => {
-                            let include = match &exposed {
-                                Some(set) => {
-                                    set.contains(type_name) || opaque_set.contains(type_name)
-                                }
-                                None => !type_name.starts_with('_'),
-                            };
-                            if !include {
+                            if !crate::visibility::is_exposed(type_name, exposed_ref)
+                                && !opaque_set.contains(type_name)
+                            {
                                 continue;
                             }
                             let is_opaque = opaque_set.contains(type_name);
@@ -363,13 +352,9 @@ impl TypeChecker {
                             fields,
                             ..
                         } => {
-                            let include = match &exposed {
-                                Some(set) => {
-                                    set.contains(type_name) || opaque_set.contains(type_name)
-                                }
-                                None => !type_name.starts_with('_'),
-                            };
-                            if !include {
+                            if !crate::visibility::is_exposed(type_name, exposed_ref)
+                                && !opaque_set.contains(type_name)
+                            {
                                 continue;
                             }
                             let is_opaque = opaque_set.contains(type_name);
