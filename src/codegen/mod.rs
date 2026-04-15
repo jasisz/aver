@@ -130,26 +130,45 @@ pub fn build_context(
     }
 
     // Start with checker's fn_sigs (exposed API), then add signatures for
-    // ALL module functions (including private helpers). Codegen emits full
-    // module implementations, so it needs signatures for intra-module calls
-    // that the checker intentionally omits.
+    // ALL module functions (including private helpers) via SymbolRegistry.
+    // Codegen emits full module implementations, so it needs signatures for
+    // intra-module calls that the checker intentionally omits.
     let mut fn_sigs = tc_result.fn_sigs.clone();
-    for module in &modules {
-        for fd in &module.fn_defs {
-            let qualified = crate::visibility::qualified_name(&module.prefix, &fd.name);
-            if fn_sigs.contains_key(&qualified) {
+    {
+        let pairs: Vec<(String, Vec<TopLevel>)> = modules
+            .iter()
+            .map(|m| {
+                let items: Vec<TopLevel> = m
+                    .fn_defs
+                    .iter()
+                    .map(|fd| TopLevel::FnDef(fd.clone()))
+                    .chain(m.type_defs.iter().map(|td| TopLevel::TypeDef(td.clone())))
+                    .collect();
+                (m.prefix.clone(), items)
+            })
+            .collect();
+        let registry = crate::visibility::SymbolRegistry::from_modules_all(&pairs);
+        for entry in &registry.entries {
+            if fn_sigs.contains_key(&entry.canonical_name) {
                 continue;
             }
-            let params: Vec<crate::types::Type> = fd
-                .params
-                .iter()
-                .map(|(_, ty_str)| {
-                    crate::types::parse_type_str(ty_str)
-                })
-                .collect();
-            let ret = crate::types::parse_type_str(&fd.return_type);
-            let effects: Vec<String> = fd.effects.iter().map(|e| e.node.clone()).collect();
-            fn_sigs.insert(qualified, (params, ret, effects));
+            if let crate::visibility::SymbolKind::Function {
+                params,
+                return_type,
+                effects,
+                ..
+            } = &entry.kind
+            {
+                let parsed_params: Vec<crate::types::Type> = params
+                    .iter()
+                    .map(|(_, ty_str)| crate::types::parse_type_str(ty_str))
+                    .collect();
+                let ret = crate::types::parse_type_str(return_type);
+                fn_sigs.insert(
+                    entry.canonical_name.clone(),
+                    (parsed_params, ret, effects.clone()),
+                );
+            }
         }
     }
 

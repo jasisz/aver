@@ -129,6 +129,44 @@ pub fn collect_module_exports<'a>(items: &'a [TopLevel]) -> ModuleExports<'a> {
     ModuleExports { functions, types }
 }
 
+/// Collect ALL functions and types from a module — no visibility filtering.
+/// Used by codegen which emits full module implementations including private helpers.
+pub fn collect_all_module_symbols<'a>(items: &'a [TopLevel]) -> ModuleExports<'a> {
+    let functions = items
+        .iter()
+        .filter_map(|item| {
+            if let TopLevel::FnDef(fd) = item {
+                Some(fd)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let module = module_decl(items);
+    let opaque_names: Vec<&str> = module
+        .map(|m| m.exposes_opaque.iter().map(|s| s.as_str()).collect())
+        .unwrap_or_default();
+
+    let types = items
+        .iter()
+        .filter_map(|item| {
+            let TopLevel::TypeDef(td) = item else {
+                return None;
+            };
+            let name = match td {
+                TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name.as_str(),
+            };
+            Some(ExportedTypeDef {
+                def: td,
+                is_opaque: opaque_names.contains(&name),
+            })
+        })
+        .collect();
+
+    ModuleExports { functions, types }
+}
+
 // ---------------------------------------------------------------------------
 // Canonical symbol key construction
 // ---------------------------------------------------------------------------
@@ -196,12 +234,23 @@ pub struct SymbolRegistry {
 }
 
 impl SymbolRegistry {
-    /// Build a registry from a set of loaded modules (in dependency order).
+    /// Build a registry of exported symbols from a set of loaded modules.
     pub fn from_modules(modules: &[(String, Vec<TopLevel>)]) -> Self {
         let mut entries = Vec::new();
         for (module_name, items) in modules {
             let exports = collect_module_exports(items);
             Self::collect_from_exports(module_name, &exports, &mut entries);
+        }
+        SymbolRegistry { entries }
+    }
+
+    /// Build a registry of ALL symbols (including private) from loaded modules.
+    /// Used by codegen which emits full module implementations.
+    pub fn from_modules_all(modules: &[(String, Vec<TopLevel>)]) -> Self {
+        let mut entries = Vec::new();
+        for (module_name, items) in modules {
+            let all = collect_all_module_symbols(items);
+            Self::collect_from_exports(module_name, &all, &mut entries);
         }
         SymbolRegistry { entries }
     }
