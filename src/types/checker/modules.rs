@@ -239,151 +239,116 @@ impl TypeChecker {
                 }
             }
 
-            let exposed_list: Option<Vec<String>> = Self::module_decl(&items).and_then(|m| {
-                if m.exposes.is_empty() {
-                    None
-                } else {
-                    Some(m.exposes.clone())
-                }
-            });
-            let exposed_ref = exposed_list.as_deref();
-            let opaque_set: HashSet<String> = Self::module_decl(&items)
-                .map(|m| m.exposes_opaque.iter().cloned().collect())
-                .unwrap_or_default();
+            // Shared: determine what this module exports.
+            let exports = crate::visibility::collect_module_exports(&items);
+
             let mut fn_entries = Vec::new();
             let mut value_entries = Vec::new();
             let mut record_field_entries = Vec::new();
             let mut type_variants = Vec::new();
             let mut opaque_types = Vec::new();
-            for item in &items {
-                if let TopLevel::FnDef(fd) = item {
-                    if !crate::visibility::is_exposed(&fd.name, exposed_ref) {
-                        continue;
-                    }
 
-                    let mut params = Vec::new();
-                    for (param_name, ty_str) in &fd.params {
-                        let ty = parse_type_str_strict(ty_str).map_err(|unknown| {
-                            format!(
-                                "Module '{}', function '{}': unknown type '{}' for parameter '{}'",
-                                name, fd.name, unknown, param_name
-                            )
-                        })?;
-                        params.push(ty);
-                    }
-
-                    let ret = parse_type_str_strict(&fd.return_type).map_err(|unknown| {
+            for fd in &exports.functions {
+                let mut params = Vec::new();
+                for (param_name, ty_str) in &fd.params {
+                    let ty = parse_type_str_strict(ty_str).map_err(|unknown| {
                         format!(
-                            "Module '{}', function '{}': unknown return type '{}'",
-                            name, fd.name, unknown
+                            "Module '{}', function '{}': unknown type '{}' for parameter '{}'",
+                            name, fd.name, unknown, param_name
                         )
                     })?;
-
-                    fn_entries.push((
-                        format!("{}.{}", name, fd.name),
-                        FnSig {
-                            params,
-                            ret,
-                            effects: fd.effects.iter().map(|e| e.node.clone()).collect(),
-                        },
-                    ));
+                    params.push(ty);
                 }
+
+                let ret = parse_type_str_strict(&fd.return_type).map_err(|unknown| {
+                    format!(
+                        "Module '{}', function '{}': unknown return type '{}'",
+                        name, fd.name, unknown
+                    )
+                })?;
+
+                fn_entries.push((
+                    format!("{}.{}", name, fd.name),
+                    FnSig {
+                        params,
+                        ret,
+                        effects: fd.effects.iter().map(|e| e.node.clone()).collect(),
+                    },
+                ));
             }
 
-            for item in &items {
-                if let TopLevel::TypeDef(td) = item {
-                    match td {
-                        TypeDef::Sum {
-                            name: type_name,
-                            variants,
-                            ..
-                        } => {
-                            if !crate::visibility::is_exposed(type_name, exposed_ref)
-                                && !opaque_set.contains(type_name)
-                            {
-                                continue;
-                            }
-                            let is_opaque = opaque_set.contains(type_name);
+            for et in &exports.types {
+                match et.def {
+                    TypeDef::Sum {
+                        name: type_name,
+                        variants,
+                        ..
+                    } => {
+                        if et.is_opaque {
+                            fn_entries.push((
+                                type_name.clone(),
+                                FnSig {
+                                    params: vec![],
+                                    ret: Type::Named(type_name.clone()),
+                                    effects: vec![],
+                                },
+                            ));
+                            opaque_types.push(type_name.clone());
+                        } else {
+                            type_variants.push((
+                                type_name.clone(),
+                                variants.iter().map(|v| v.name.clone()).collect(),
+                            ));
 
-                            if is_opaque {
-                                // Opaque: register dummy sig so the type name resolves,
-                                // but do NOT register variants/constructors.
-                                fn_entries.push((
-                                    type_name.clone(),
-                                    FnSig {
-                                        params: vec![],
+                            for variant in variants {
+                                let params: Vec<Type> = variant
+                                    .fields
+                                    .iter()
+                                    .map(|f| parse_type_str_strict(f).unwrap_or(Type::Unknown))
+                                    .collect();
+                                let key = format!("{}.{}.{}", name, type_name, variant.name);
+                                let alias_key = format!("{}.{}", type_name, variant.name);
+                                if params.is_empty() {
+                                    let value_ty = Type::Named(type_name.clone());
+                                    value_entries.push((key, value_ty.clone()));
+                                    value_entries.push((alias_key, value_ty));
+                                } else {
+                                    let sig = FnSig {
+                                        params,
                                         ret: Type::Named(type_name.clone()),
                                         effects: vec![],
-                                    },
-                                ));
-                                opaque_types.push(type_name.clone());
-                            } else {
-                                type_variants.push((
-                                    type_name.clone(),
-                                    variants.iter().map(|v| v.name.clone()).collect(),
-                                ));
-
-                                for variant in variants {
-                                    let params: Vec<Type> = variant
-                                        .fields
-                                        .iter()
-                                        .map(|f| parse_type_str_strict(f).unwrap_or(Type::Unknown))
-                                        .collect();
-                                    let key = format!("{}.{}.{}", name, type_name, variant.name);
-                                    let alias_key = format!("{}.{}", type_name, variant.name);
-                                    if params.is_empty() {
-                                        let value_ty = Type::Named(type_name.clone());
-                                        value_entries.push((key, value_ty.clone()));
-                                        value_entries.push((alias_key, value_ty));
-                                    } else {
-                                        let sig = FnSig {
-                                            params,
-                                            ret: Type::Named(type_name.clone()),
-                                            effects: vec![],
-                                        };
-                                        fn_entries.push((key, sig.clone()));
-                                        fn_entries.push((alias_key, sig));
-                                    }
+                                    };
+                                    fn_entries.push((key, sig.clone()));
+                                    fn_entries.push((alias_key, sig));
                                 }
                             }
                         }
-                        TypeDef::Product {
-                            name: type_name,
-                            fields,
-                            ..
-                        } => {
-                            if !crate::visibility::is_exposed(type_name, exposed_ref)
-                                && !opaque_set.contains(type_name)
-                            {
-                                continue;
-                            }
-                            let is_opaque = opaque_set.contains(type_name);
-
-                            if is_opaque {
-                                // Opaque: register dummy sig so the type name resolves,
-                                // but do NOT register field types (blocks construction + field access).
-                                fn_entries.push((
-                                    type_name.clone(),
-                                    FnSig {
-                                        params: vec![],
-                                        ret: Type::Named(type_name.clone()),
-                                        effects: vec![],
-                                    },
+                    }
+                    TypeDef::Product {
+                        name: type_name,
+                        fields,
+                        ..
+                    } => {
+                        if et.is_opaque {
+                            fn_entries.push((
+                                type_name.clone(),
+                                FnSig {
+                                    params: vec![],
+                                    ret: Type::Named(type_name.clone()),
+                                    effects: vec![],
+                                },
+                            ));
+                            opaque_types.push(type_name.clone());
+                        } else {
+                            for (field_name, ty_str) in fields {
+                                let field_ty =
+                                    parse_type_str_strict(ty_str).unwrap_or(Type::Unknown);
+                                record_field_entries.push((
+                                    format!("{}.{}.{}", name, type_name, field_name),
+                                    field_ty.clone(),
                                 ));
-                                opaque_types.push(type_name.clone());
-                            } else {
-                                for (field_name, ty_str) in fields {
-                                    let field_ty =
-                                        parse_type_str_strict(ty_str).unwrap_or(Type::Unknown);
-                                    // Qualified key for explicit module paths.
-                                    record_field_entries.push((
-                                        format!("{}.{}.{}", name, type_name, field_name),
-                                        field_ty.clone(),
-                                    ));
-                                    // Unqualified alias for common `Note.id` style.
-                                    record_field_entries
-                                        .push((format!("{}.{}", type_name, field_name), field_ty));
-                                }
+                                record_field_entries
+                                    .push((format!("{}.{}", type_name, field_name), field_ty));
                             }
                         }
                     }

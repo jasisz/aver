@@ -1,4 +1,4 @@
-use crate::ast::{TopLevel, TypeDef};
+use crate::ast::{FnDef, Module, TopLevel, TypeDef};
 
 /// Type definition collected from a module — backend-agnostic metadata.
 #[derive(Debug, Clone)]
@@ -48,4 +48,83 @@ pub fn is_exposed(name: &str, exposes: Option<&[String]>) -> bool {
         Some(list) => list.iter().any(|e| e == name),
         None => !name.starts_with('_'),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Module exports — the shared answer to "what can importers see?"
+// ---------------------------------------------------------------------------
+
+/// An exported type definition with its opaque flag.
+pub struct ExportedTypeDef<'a> {
+    pub def: &'a TypeDef,
+    pub is_opaque: bool,
+}
+
+/// Everything a module exports — functions and types that passed visibility filtering.
+pub struct ModuleExports<'a> {
+    pub functions: Vec<&'a FnDef>,
+    pub types: Vec<ExportedTypeDef<'a>>,
+}
+
+/// Extract the module declaration from parsed items.
+pub fn module_decl(items: &[TopLevel]) -> Option<&Module> {
+    items.iter().find_map(|i| {
+        if let TopLevel::Module(m) = i {
+            Some(m)
+        } else {
+            None
+        }
+    })
+}
+
+/// Collect all exported items from a parsed module.
+/// Applies visibility rules: exposes list, underscore convention, opaque types.
+pub fn collect_module_exports<'a>(items: &'a [TopLevel]) -> ModuleExports<'a> {
+    let module = module_decl(items);
+
+    let exposes: Option<&[String]> = module.and_then(|m| {
+        if m.exposes.is_empty() {
+            None
+        } else {
+            Some(m.exposes.as_slice())
+        }
+    });
+
+    let opaque_names: Vec<&str> = module
+        .map(|m| m.exposes_opaque.iter().map(|s| s.as_str()).collect())
+        .unwrap_or_default();
+
+    let functions = items
+        .iter()
+        .filter_map(|item| {
+            let TopLevel::FnDef(fd) = item else {
+                return None;
+            };
+            if is_exposed(&fd.name, exposes) {
+                Some(fd)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let types = items
+        .iter()
+        .filter_map(|item| {
+            let TopLevel::TypeDef(td) = item else {
+                return None;
+            };
+            let name = match td {
+                TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name.as_str(),
+            };
+            let is_opaque = opaque_names.contains(&name);
+            if is_exposed(name, exposes) || is_opaque {
+                Some(ExportedTypeDef { def: td, is_opaque })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    ModuleExports { functions, types }
 }

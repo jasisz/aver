@@ -254,18 +254,7 @@ impl ProgramCompiler {
             }
         }
 
-        let exposes: Option<Vec<String>> = mod_items.iter().find_map(|i| {
-            if let TopLevel::Module(m) = i {
-                if m.exposes.is_empty() {
-                    None
-                } else {
-                    Some(m.exposes.clone())
-                }
-            } else {
-                None
-            }
-        });
-
+        // Compile ALL functions in the module (not just exposed).
         let mut module_fn_ids: Vec<(String, u32)> = Vec::new();
         for item in &mod_items {
             if let TopLevel::FnDef(fndef) = item {
@@ -314,49 +303,43 @@ impl ProgramCompiler {
             }
         }
 
-        let exposes_ref = exposes.as_deref();
+        // Shared: determine what this module exports (visibility + opaque).
+        let exports = visibility::collect_module_exports(&mod_items);
 
-        for (fn_name, _fn_id) in &module_fn_ids {
-            if visibility::is_exposed(fn_name, exposes_ref) {
-                let qualified = format!("{}.{}", dep_name, fn_name);
-                let global_idx = self.ensure_global(&qualified);
-                let symbol_id = self.symbols.find(&qualified).ok_or_else(|| CompileError {
-                    msg: format!("missing VM symbol for exposed function {}", qualified),
-                })?;
-                self.globals[global_idx as usize] = VmSymbolTable::symbol_ref(symbol_id);
-            }
+        // Register exported functions as globals.
+        for fd in &exports.functions {
+            let qualified = format!("{}.{}", dep_name, fd.name);
+            let global_idx = self.ensure_global(&qualified);
+            let symbol_id = self.symbols.find(&qualified).ok_or_else(|| CompileError {
+                msg: format!("missing VM symbol for exposed function {}", qualified),
+            })?;
+            self.globals[global_idx as usize] = VmSymbolTable::symbol_ref(symbol_id);
         }
 
+        // Register exported types and functions as namespace members.
         let module_symbol_id = self.symbols.intern_namespace_path(dep_name);
-        for item in &mod_items {
-            if let TopLevel::TypeDef(td) = item {
-                let type_name = match td {
-                    TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name,
-                };
-                if visibility::is_exposed(type_name, exposes_ref)
-                    && let Some(type_symbol_id) = self.symbols.find(type_name)
-                {
-                    let member_symbol_id = self.symbols.intern_name(type_name);
-                    self.symbols.add_namespace_member_by_id(
-                        module_symbol_id,
-                        member_symbol_id,
-                        VmSymbolTable::symbol_ref(type_symbol_id),
-                    );
-                }
+        for et in &exports.types {
+            let type_name = match et.def {
+                TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name,
+            };
+            if let Some(type_symbol_id) = self.symbols.find(type_name) {
+                let member_symbol_id = self.symbols.intern_name(type_name);
+                self.symbols.add_namespace_member_by_id(
+                    module_symbol_id,
+                    member_symbol_id,
+                    VmSymbolTable::symbol_ref(type_symbol_id),
+                );
             }
         }
-
-        for (fn_name, _fn_id) in &module_fn_ids {
-            if visibility::is_exposed(fn_name, exposes_ref) {
-                let qualified = format!("{}.{}", dep_name, fn_name);
-                if let Some(fn_symbol_id) = self.symbols.find(&qualified) {
-                    let member_symbol_id = self.symbols.intern_name(fn_name);
-                    self.symbols.add_namespace_member_by_id(
-                        module_symbol_id,
-                        member_symbol_id,
-                        VmSymbolTable::symbol_ref(fn_symbol_id),
-                    );
-                }
+        for fd in &exports.functions {
+            let qualified = format!("{}.{}", dep_name, fd.name);
+            if let Some(fn_symbol_id) = self.symbols.find(&qualified) {
+                let member_symbol_id = self.symbols.intern_name(&fd.name);
+                self.symbols.add_namespace_member_by_id(
+                    module_symbol_id,
+                    member_symbol_id,
+                    VmSymbolTable::symbol_ref(fn_symbol_id),
+                );
             }
         }
 
