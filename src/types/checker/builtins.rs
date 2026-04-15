@@ -15,8 +15,10 @@ impl TypeChecker {
             ),
         ];
         for (field, ty) in net_resp_fields {
-            self.record_field_types
-                .insert(format!("HttpResponse.{}", field), ty.clone());
+            self.record_field_types.insert(
+                crate::visibility::member_key("HttpResponse", field),
+                ty.clone(),
+            );
         }
         let net_req_fields: &[(&str, Type)] = &[
             ("method", Type::Str),
@@ -28,19 +30,23 @@ impl TypeChecker {
             ),
         ];
         for (field, ty) in net_req_fields {
-            self.record_field_types
-                .insert(format!("HttpRequest.{}", field), ty.clone());
+            self.record_field_types.insert(
+                crate::visibility::member_key("HttpRequest", field),
+                ty.clone(),
+            );
         }
         let header_fields: &[(&str, Type)] = &[("name", Type::Str), ("value", Type::Str)];
         for (field, ty) in header_fields {
             self.record_field_types
-                .insert(format!("Header.{}", field), ty.clone());
+                .insert(crate::visibility::member_key("Header", field), ty.clone());
         }
         let tcp_conn_fields: &[(&str, Type)] =
             &[("id", Type::Str), ("host", Type::Str), ("port", Type::Int)];
         for (field, ty) in tcp_conn_fields {
-            self.record_field_types
-                .insert(format!("Tcp.Connection.{}", field), ty.clone());
+            self.record_field_types.insert(
+                crate::visibility::member_key("Tcp.Connection", field),
+                ty.clone(),
+            );
         }
 
         let net_ret = || {
@@ -350,8 +356,10 @@ impl TypeChecker {
             let terminal_size_fields: &[(&str, Type)] =
                 &[("width", Type::Int), ("height", Type::Int)];
             for (field, ty) in terminal_size_fields {
-                self.record_field_types
-                    .insert(format!("Terminal.Size.{}", field), ty.clone());
+                self.record_field_types.insert(
+                    crate::visibility::member_key("Terminal.Size", field),
+                    ty.clone(),
+                );
             }
         }
 

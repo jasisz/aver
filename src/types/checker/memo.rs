@@ -13,8 +13,7 @@ impl TypeChecker {
                         .iter()
                         .map(|m| (m.dep_name.clone(), m.items.clone()))
                         .collect();
-                    let registry =
-                        crate::visibility::SymbolRegistry::from_modules(&pairs);
+                    let registry = crate::visibility::SymbolRegistry::from_modules(&pairs);
                     if let Err(e) = self.integrate_registry(&registry) {
                         self.error(e);
                     }

@@ -216,7 +216,10 @@ impl ProgramCompiler {
                     arena.register_sum_type(&mt.bare_name, variant_names.clone())
                 }
             };
-            arena.register_type_alias(&visibility::qualified_name(dep_name, &mt.bare_name), type_id);
+            arena.register_type_alias(
+                &visibility::qualified_name(dep_name, &mt.bare_name),
+                type_id,
+            );
         }
         for item in &mod_items {
             if let TopLevel::TypeDef(td) = item {
@@ -329,7 +332,9 @@ impl ProgramCompiler {
         match td {
             TypeDef::Product { name, fields, .. } => {
                 self.symbols.intern_namespace_path(name);
-                let type_id = arena.find_type_id(name).expect("type already registered in Arena");
+                let type_id = arena
+                    .find_type_id(name)
+                    .expect("type already registered in Arena");
                 let field_symbol_ids: Vec<u32> = fields
                     .iter()
                     .map(|(field_name, _)| self.symbols.intern_name(field_name))
@@ -338,7 +343,9 @@ impl ProgramCompiler {
             }
             TypeDef::Sum { name, variants, .. } => {
                 let type_symbol_id = self.symbols.intern_namespace_path(name);
-                let type_id = arena.find_type_id(name).expect("type already registered in Arena");
+                let type_id = arena
+                    .find_type_id(name)
+                    .expect("type already registered in Arena");
                 for (variant_id, variant) in variants.iter().enumerate() {
                     let ctor_id = arena
                         .find_ctor_id(type_id, variant_id as u16)

@@ -284,7 +284,8 @@ impl SymbolRegistry {
                     } else {
                         for (field_name, ty_str) in fields {
                             let id = entries.len() as u32;
-                            let canonical = qualified_member_key(module_name, type_name, field_name);
+                            let canonical =
+                                qualified_member_key(module_name, type_name, field_name);
                             let alias = member_key(type_name, field_name);
                             entries.push(SymbolEntry {
                                 id,

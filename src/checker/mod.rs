@@ -105,7 +105,7 @@ fn normalize_constructor_tag(path: &str) -> Option<String> {
     }
     let variant = parts.pop()?;
     let type_name = parts.pop()?;
-    Some(format!("{}.{}", type_name, variant))
+    Some(crate::visibility::member_key(type_name, variant))
 }
 
 fn constructor_tag_from_pattern(pattern: &Pattern) -> Option<String> {
@@ -206,7 +206,7 @@ fn local_sum_type_constructors(items: &[TopLevel], type_name: &str) -> Option<Ve
         TopLevel::TypeDef(TypeDef::Sum { name, variants, .. }) if name == type_name => Some(
             variants
                 .iter()
-                .map(|variant| format!("{name}.{}", variant.name))
+                .map(|variant| crate::visibility::member_key(name, &variant.name))
                 .collect(),
         ),
         _ => None,

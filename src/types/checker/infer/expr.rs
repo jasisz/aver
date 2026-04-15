@@ -591,7 +591,7 @@ impl TypeChecker {
                             ));
                             return Type::Unknown;
                         }
-                        let key = format!("{}.{}", type_name, field);
+                        let key = crate::visibility::member_key(type_name, field);
                         if let Some(field_ty) = self.find_record_field_type(&key) {
                             field_ty.clone()
                         } else {

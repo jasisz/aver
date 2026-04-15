@@ -115,8 +115,10 @@ impl TypeChecker {
                 // Register per-field types so dot-access is checked.
                 for (field_name, ty_str) in fields {
                     let field_ty = parse_type_str_strict(ty_str).unwrap_or(Type::Unknown);
-                    self.record_field_types
-                        .insert(crate::visibility::member_key(type_name, field_name), field_ty);
+                    self.record_field_types.insert(
+                        crate::visibility::member_key(type_name, field_name),
+                        field_ty,
+                    );
                 }
             }
         }
@@ -131,7 +133,6 @@ impl TypeChecker {
             }
         })
     }
-
 
     /// Extract a dotted path from an Expr (unwrapped, not Spanned).
     pub(super) fn attr_path(expr: &Expr) -> Option<Vec<String>> {
@@ -155,7 +156,6 @@ impl TypeChecker {
         self.fn_sigs.keys().any(|k| k.starts_with(&prefix))
             || self.value_members.keys().any(|k| k.starts_with(&prefix))
     }
-
 
     /// Populate checker maps from the shared SymbolRegistry.
     /// The registry is the canonical source — checker derives its maps from it.

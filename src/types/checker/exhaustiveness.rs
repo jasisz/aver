@@ -229,7 +229,7 @@ impl TypeChecker {
                 let mut out = Vec::new();
                 for variant in variants {
                     out.push(CtorSpec {
-                        tag: CtorTag::Named(format!("{}.{}", name, variant)),
+                        tag: CtorTag::Named(crate::visibility::member_key(name, variant)),
                         arg_types: self.named_variant_arg_types(name, variant),
                     });
                 }
@@ -247,27 +247,10 @@ impl TypeChecker {
     }
 
     fn named_variant_arg_types(&self, type_name: &str, variant: &str) -> Vec<Type> {
-        let local_key = format!("{}.{}", type_name, variant);
-        if let Some(sig) = self.find_fn_sig(&local_key) {
+        let key = crate::visibility::member_key(type_name, variant);
+        if let Some(sig) = self.find_fn_sig(&key) {
             return sig.params.clone();
         }
-
-        let suffix = format!(".{}.{}", type_name, variant);
-        let mut matches = self
-            .fn_sigs
-            .iter()
-            .filter_map(|(name, sig)| {
-                if name.ends_with(&suffix) {
-                    Some(sig.params.clone())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-        if matches.len() == 1 {
-            return matches.pop().unwrap_or_default();
-        }
-
         // Zero-arg constructors are values, not fn_sigs entries.
         Vec::new()
     }

@@ -28,7 +28,7 @@ struct ModuleTreeNode {
 }
 
 /// Transpile an Aver program to a Rust project.
-pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
+pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
     let has_embedded_policy = ctx.policy.is_some();
     let has_runtime_policy = ctx.runtime_policy_from_env;
     let embedded_independence_cancel = ctx
@@ -157,7 +157,11 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
         ),
     );
 
-    for module in &ctx.modules {
+    for i in 0..ctx.modules.len() {
+        // Set extra_fn_defs so find_fn_def_by_name resolves intra-module
+        // bare-name calls (e.g. buildFibStats calling finalizeFibStats).
+        ctx.extra_fn_defs = ctx.modules[i].fn_defs.clone();
+        let module = &ctx.modules[i];
         let path = module_prefix_to_rust_segments(&module.prefix);
         insert_module_content(
             &mut module_tree,
@@ -165,6 +169,7 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
             render_generated_module(module.depends.clone(), module_sections(module, ctx)),
         );
     }
+    ctx.extra_fn_defs.clear();
 
     emit_module_tree_files(&module_tree, "src/aver_generated", &mut files);
     files.sort_by(|left, right| left.0.cmp(&right.0));
@@ -578,7 +583,7 @@ mod tests {
 
     #[test]
     fn emission_banner_appears_in_root_main() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -588,7 +593,7 @@ fn main() -> Int
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let root_main = generated_file(&out, "src/main.rs");
 
         assert!(root_main.contains("// Aver Rust emission"));
@@ -630,7 +635,7 @@ fn main() -> Int
 
     #[test]
     fn list_cons_match_uses_cloned_uncons_fast_path_when_optimized() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -642,7 +647,7 @@ fn headPlusTailLen(xs: List<Int>) -> Int
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         // The common []/[h,..t] pattern uses aver_list_match! macro
@@ -651,7 +656,7 @@ fn headPlusTailLen(xs: List<Int>) -> Int
 
     #[test]
     fn list_cons_match_stays_structured_in_semantic_mode() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -663,7 +668,7 @@ fn headPlusTailLen(xs: List<Int>) -> Int
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         // Both modes now use the aver_list_match! macro for []/[h,..t] patterns
@@ -672,7 +677,7 @@ fn headPlusTailLen(xs: List<Int>) -> Int
 
     #[test]
     fn list_literal_clones_ident_when_used_afterward() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -686,7 +691,7 @@ fn useTwice(audit: Audit) -> List<Audit>
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         assert!(entry.contains("let first = aver_rt::AverList::from_vec(vec![audit.clone()]);"));
@@ -696,7 +701,7 @@ fn useTwice(audit: Audit) -> List<Audit>
 
     #[test]
     fn record_update_clones_base_when_value_is_used_afterward() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -711,7 +716,7 @@ fn touch(state: PaymentState) -> String
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         assert!(entry.contains("..state.clone()"));
@@ -719,7 +724,7 @@ fn touch(state: PaymentState) -> String
 
     #[test]
     fn mutual_tco_generates_trampoline_instead_of_regular_calls() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -736,7 +741,7 @@ fn isOdd(n: Int) -> Bool
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         // Should generate trampoline enum and dispatch
@@ -755,7 +760,7 @@ fn isOdd(n: Int) -> Bool
 
     #[test]
     fn field_access_does_not_double_clone() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -769,7 +774,7 @@ fn greet(u: User) -> String
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         // Field access should produce exactly one .clone(), never .clone().clone()
@@ -782,7 +787,7 @@ fn greet(u: User) -> String
 
     #[test]
     fn borrowed_record_field_return_clones_for_owned_result() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -795,7 +800,7 @@ fn getName(user: User) -> String
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         assert!(entry.contains("pub fn getName(user: &User) -> AverStr"));
@@ -808,7 +813,7 @@ fn getName(user: User) -> String
 
     #[test]
     fn vector_get_with_literal_default_lowers_to_direct_unwrap_or_code() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -818,7 +823,7 @@ fn cellAt(grid: Vector<Int>, idx: Int) -> Int
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         assert!(entry.contains("grid.get(idx as usize).cloned().unwrap_or(0i64)"));
@@ -826,7 +831,7 @@ fn cellAt(grid: Vector<Int>, idx: Int) -> Int
 
     #[test]
     fn vector_set_default_stays_structured_in_semantic_mode() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -836,7 +841,7 @@ fn updateOrKeep(vec: Vector<Int>, idx: Int, value: Int) -> Vector<Int>
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         // Both modes now use the inlined set_unchecked fast path
@@ -846,7 +851,7 @@ fn updateOrKeep(vec: Vector<Int>, idx: Int, value: Int) -> Vector<Int>
 
     #[test]
     fn vector_set_default_uses_ir_leaf_fast_path_when_optimized() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -856,7 +861,7 @@ fn updateOrKeep(vec: Vector<Int>, idx: Int, value: Int) -> Vector<Int>
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         assert!(entry.contains("set_unchecked"));
@@ -865,7 +870,7 @@ fn updateOrKeep(vec: Vector<Int>, idx: Int, value: Int) -> Vector<Int>
 
     #[test]
     fn vector_set_uses_owned_update_lowering() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -875,7 +880,7 @@ fn update(vec: Vector<Int>, idx: Int, value: Int) -> Option<Vector<Int>>
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         assert!(entry.contains(".set_owned("));
@@ -884,7 +889,7 @@ fn update(vec: Vector<Int>, idx: Int, value: Int) -> Option<Vector<Int>>
 
     #[test]
     fn map_remove_uses_owned_update_lowering() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -894,7 +899,7 @@ fn dropKey(m: Map<String, Int>, key: String) -> Map<String, Int>
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         assert!(entry.contains(".remove_owned(&"));
@@ -902,7 +907,7 @@ fn dropKey(m: Map<String, Int>, key: String) -> Map<String, Int>
 
     #[test]
     fn semantic_keeps_known_leaf_wrapper_call_structured() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -915,7 +920,7 @@ fn read(grid: Vector<Int>, idx: Int) -> Int
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         assert!(entry.contains("cellAt(grid, idx)"));
@@ -924,7 +929,7 @@ fn read(grid: Vector<Int>, idx: Int) -> Int
 
     #[test]
     fn optimized_keeps_known_leaf_wrapper_callsite_and_leaves_absorption_to_rust() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -937,7 +942,7 @@ fn read(grid: Vector<Int>, idx: Int) -> Int
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         assert!(entry.contains("cellAt(grid, idx)"));
@@ -946,7 +951,7 @@ fn read(grid: Vector<Int>, idx: Int) -> Int
 
     #[test]
     fn optimized_keeps_known_dispatch_wrapper_callsite_and_leaves_absorption_to_rust() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -961,7 +966,7 @@ fn readBucket(n: Int) -> Int
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         assert!(entry.contains("bucket(n)"));
@@ -970,7 +975,7 @@ fn readBucket(n: Int) -> Int
 
     #[test]
     fn bool_match_on_gte_normalizes_to_base_comparison_when_optimized() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -982,7 +987,7 @@ fn bucket(n: Int) -> Int
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         assert!(entry.contains("if (n < 10i64) { 3i64 } else { 7i64 }"));
@@ -990,7 +995,7 @@ fn bucket(n: Int) -> Int
 
     #[test]
     fn bool_match_stays_as_match_in_semantic_mode() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -1002,7 +1007,7 @@ fn bucket(n: Int) -> Int
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         // Both modes now use the normalized if-else form
@@ -1011,7 +1016,7 @@ fn bucket(n: Int) -> Int
 
     #[test]
     fn optimized_self_tco_uses_dispatch_table_for_wrapper_match() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -1023,7 +1028,7 @@ fn loop(r: Result<Int, String>) -> Int
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         // Uses native Rust match directly (r cloned since not-Copy Ident without last_use info)
@@ -1034,7 +1039,7 @@ fn loop(r: Result<Int, String>) -> Int
 
     #[test]
     fn optimized_mutual_tco_uses_dispatch_table_for_wrapper_match() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -1051,7 +1056,7 @@ fn right(r: Result<Int, String>) -> Int
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         // Uses native Rust match directly (r cloned since not-Copy Ident without last_use info)
@@ -1062,7 +1067,7 @@ fn right(r: Result<Int, String>) -> Int
 
     #[test]
     fn single_field_variant_display_avoids_vec_join() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -1074,7 +1079,7 @@ type Wrapper
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         // Single-field variant Wrap(Int): should NOT use vec![].join()
@@ -1106,7 +1111,7 @@ fn runGuestProgram(path: String) -> Result<String, String>
         ctx.emit_replay_runtime = true;
         ctx.guest_entry = Some("runGuestProgram".to_string());
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
         let replay_support = generated_file(&out, "src/replay_support.rs");
         let cargo_toml = generated_file(&out, "Cargo.toml");
@@ -1131,7 +1136,7 @@ fn runGuestProgram(path: String, guestArgs: List<String>) -> Result<String, Stri
         ctx.emit_replay_runtime = true;
         ctx.guest_entry = Some("runGuestProgram".to_string());
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
         let cargo_toml = generated_file(&out, "Cargo.toml");
 
@@ -1154,7 +1159,7 @@ fn main() -> Result<String, String>
         );
         ctx.emit_replay_runtime = true;
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let root_main = generated_file(&out, "src/main.rs");
 
         assert!(
@@ -1177,7 +1182,7 @@ fn main() -> Result<String, String>
         ctx.emit_replay_runtime = true;
         ctx.runtime_policy_from_env = true;
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let root_main = generated_file(&out, "src/main.rs");
         let replay_support = generated_file(&out, "src/replay_support.rs");
         let cargo_toml = generated_file(&out, "Cargo.toml");
@@ -1207,7 +1212,7 @@ fn main() -> Result<String, String>
             independence_mode: crate::config::IndependenceMode::default(),
         });
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let root_main = generated_file(&out, "src/main.rs");
         let replay_support = generated_file(&out, "src/replay_support.rs");
 
@@ -1230,7 +1235,7 @@ fn runGuestProgram(prog: Int, moduleFns: Int) -> Result<String, String>
         ctx.emit_self_host_support = true;
         ctx.guest_entry = Some("runGuestProgram".to_string());
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let root_main = generated_file(&out, "src/main.rs");
         let runtime_support = generated_file(&out, "src/runtime_support.rs");
         let self_host_support = generated_file(&out, "src/self_host_support.rs");
@@ -1262,7 +1267,7 @@ fn main() -> Result<(Int, Int), Int>
         );
         ctx.emit_replay_runtime = true;
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         assert!(!entry.contains("Ok::<_, aver_rt::AverStr>"));
@@ -1296,7 +1301,7 @@ fn main() -> Result<(Int, Int), String>
             independence_mode: crate::config::IndependenceMode::Cancel,
         });
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
         let runtime_support = generated_file(&out, "src/runtime_support.rs");
         let replay_support = generated_file(&out, "src/replay_support.rs");
@@ -1325,7 +1330,7 @@ fn main() -> Result<String, String>
         ctx.emit_replay_runtime = true;
         ctx.runtime_policy_from_env = true;
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let replay_support = generated_file(&out, "src/replay_support.rs");
 
         assert!(replay_support.contains("independence_mode_cancel"));
@@ -1334,7 +1339,7 @@ fn main() -> Result<String, String>
 
     #[test]
     fn effectful_codegen_inserts_cancel_checkpoint_before_builtin_calls() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Demo
 
@@ -1345,7 +1350,7 @@ fn main() -> Result<String, String>
             "demo",
         );
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
         assert!(entry.contains("crate::cancel_checkpoint(); (aver_rt::read_text"));
@@ -1371,7 +1376,7 @@ fn main() -> Result<(Int, Int), String>
         );
         ctx.emit_replay_runtime = true;
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let replay_support = generated_file(&out, "src/replay_support.rs");
 
         assert!(replay_support.contains("candidate.effect_occurrence"));

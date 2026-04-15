@@ -299,7 +299,7 @@ pub(super) fn build_self_host_binary(show_progress: bool) -> Result<PathBuf, Str
     if show_progress {
         eprintln!("Self-host: generating cached helper code...");
     }
-    let (ctx, _) = build_codegen_context(
+    let (mut ctx, _) = build_codegen_context(
         &self_host_file_str,
         Some("aver_self_host_cli"),
         Some(&self_host_root_str),
@@ -309,7 +309,7 @@ pub(super) fn build_self_host_binary(show_progress: bool) -> Result<PathBuf, Str
         true,
     );
 
-    let output = with_local_runtime_override(|| rust_codegen::transpile(&ctx));
+    let output = with_local_runtime_override(|| rust_codegen::transpile(&mut ctx));
     if show_progress {
         eprintln!("Self-host: materializing helper project...");
     }
@@ -3352,7 +3352,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         process::exit(1);
     }
 
-    let (ctx, _module_root) = build_codegen_context(
+    let (mut ctx, _module_root) = build_codegen_context(
         file,
         project_name,
         module_root_override,
@@ -3373,7 +3373,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         );
         process::exit(1);
     }
-    let output = with_local_runtime_override(|| rust_codegen::transpile(&ctx));
+    let output = with_local_runtime_override(|| rust_codegen::transpile(&mut ctx));
     let build_hint = format!("cd {} && cargo build && cargo run", output_dir);
     write_codegen_output(file, output_dir, "Rust", &build_hint, &output);
 }

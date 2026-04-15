@@ -177,15 +177,19 @@ impl TypeChecker {
     }
 
     fn find_value_member(&self, key: &str) -> Option<&Type> {
-        self.value_members
-            .get(key)
-            .or_else(|| self.sig_aliases.get(key).and_then(|c| self.value_members.get(c)))
+        self.value_members.get(key).or_else(|| {
+            self.sig_aliases
+                .get(key)
+                .and_then(|c| self.value_members.get(c))
+        })
     }
 
     fn find_record_field_type(&self, key: &str) -> Option<&Type> {
-        self.record_field_types
-            .get(key)
-            .or_else(|| self.sig_aliases.get(key).and_then(|c| self.record_field_types.get(c)))
+        self.record_field_types.get(key).or_else(|| {
+            self.sig_aliases
+                .get(key)
+                .and_then(|c| self.record_field_types.get(c))
+        })
     }
 
     // -- Helpers -----------------------------------------------------------

@@ -884,7 +884,7 @@ fn callee_borrow_mask(name: &str, arg_count: usize, ctx: &CodegenContext) -> Vec
 
     // No FnDef found, try fn_sigs (type-checker resolved types)
     let lookup_name = if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
-        format!("{}.{}", prefix, bare)
+        crate::visibility::qualified_name(prefix, bare)
     } else {
         name.to_string()
     };
@@ -928,13 +928,6 @@ fn find_fn_def_by_name<'a>(name: &str, ctx: &'a CodegenContext) -> Option<&'a Fn
             {
                 return Some(fd);
             }
-        }
-    }
-
-    // Check all module fn_defs for unqualified calls (same-module calls)
-    for module in &ctx.modules {
-        if let Some(fd) = module.fn_defs.iter().find(|fd| fd.name == name) {
-            return Some(fd);
         }
     }
 
