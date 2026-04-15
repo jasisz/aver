@@ -4,7 +4,6 @@ pub mod last_use;
 mod leaf;
 pub mod liveness;
 mod matches;
-pub mod reuse;
 pub mod vars;
 
 pub use body::{

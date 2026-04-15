@@ -10,10 +10,7 @@ use crate::codegen::common::{expr_to_dotted_name, is_user_type, resolve_module_c
 pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
     match &expr.node {
         Expr::Literal(lit) => emit_literal(lit),
-        Expr::Ident(name) => aver_name_to_lean(name),
-        Expr::Resolved { slot, .. } => panic!(
-            "Lean codegen: encountered Expr::Resolved({slot}). Pipeline should emit Ident."
-        ),
+        Expr::Ident(name) | Expr::Resolved { name, .. } => aver_name_to_lean(name),
         Expr::Attr(obj, field) => {
             if let Expr::Ident(type_name) = &obj.node {
                 // Option.None → none

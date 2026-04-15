@@ -36,9 +36,6 @@ pub fn transform_program(items: &mut [TopLevel]) {
             transform_fn(fd, scc_members);
         }
     }
-
-    // Annotate reuse info on TailCall nodes after all transforms.
-    crate::ir::reuse::annotate_program_reuse(items);
 }
 
 fn transform_fn(fd: &mut FnDef, scc_members: &HashSet<String>) {

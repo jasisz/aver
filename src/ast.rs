@@ -103,18 +103,11 @@ pub struct TailCallData {
     pub target: String,
     /// Arguments to pass.
     pub args: Vec<Spanned<Expr>>,
-    /// Per-argument reuse flags from `ir::reuse::annotate_program_reuse`.
-    /// `owned[i] == true` means argument `i` is sole-owned at this call site.
-    pub owned: Vec<bool>,
 }
 
 impl TailCallData {
     pub fn new(target: String, args: Vec<Spanned<Expr>>) -> Self {
-        Self {
-            target,
-            args,
-            owned: Vec::new(),
-        }
+        Self { target, args }
     }
 }
 

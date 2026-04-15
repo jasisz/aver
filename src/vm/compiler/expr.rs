@@ -63,9 +63,7 @@ impl<'a> FnCompiler<'a> {
                 Ok(())
             }
             Expr::FnCall(fn_expr, args) => self.compile_call(fn_expr, args),
-            Expr::TailCall(boxed) => {
-                self.compile_tail_call(&boxed.target, &boxed.args)
-            }
+            Expr::TailCall(boxed) => self.compile_tail_call(&boxed.target, &boxed.args),
             Expr::Match { subject, arms } => self.compile_match(subject, arms),
             Expr::Constructor(name, arg) => self.compile_constructor(name, arg.as_deref()),
             Expr::ErrorProp(inner) => self.compile_error_prop(inner),

@@ -1883,14 +1883,15 @@ fn emit_tco_expr(
                 }
             }
 
-            // Apply IR reuse analysis: if owned[i] is true, the parameter
-            // is sole-owned at this tail-call site — safe to move, no clone.
-            if !boxed.owned.is_empty() {
-                for (i, ac) in arg_ctxs.iter_mut().enumerate() {
-                    if i < boxed.owned.len() && boxed.owned[i] && i < params.len() {
-                        let param_rust = aver_name_to_rust(&params[i].0);
-                        ac.used_after.remove(&param_rust);
-                    }
+            // Use last_use annotations from ir::last_use — if a tail call arg
+            // contains a Resolved reference to the param with last_use=true,
+            // the param is sole-owned and can be moved instead of cloned.
+            for (i, ac) in arg_ctxs.iter_mut().enumerate() {
+                if i < params.len()
+                    && i < boxed.args.len()
+                    && arg_contains_last_use_name(&boxed.args[i].node, &params[i].0)
+                {
+                    ac.used_after.remove(&aver_name_to_rust(&params[i].0));
                 }
             }
 
@@ -2825,6 +2826,33 @@ pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) 
 
     writeln!(out, "}}").unwrap();
     out.trim_end().to_string()
+}
+
+/// Check if an expression tree contains a `Resolved { name, last_use: true }` for a given name.
+fn arg_contains_last_use_name(expr: &Expr, target: &str) -> bool {
+    match expr {
+        Expr::Resolved { name, last_use, .. } => name == target && last_use.0,
+        Expr::FnCall(fn_expr, args) => {
+            arg_contains_last_use_name(&fn_expr.node, target)
+                || args
+                    .iter()
+                    .any(|a| arg_contains_last_use_name(&a.node, target))
+        }
+        Expr::BinOp(_, left, right) => {
+            arg_contains_last_use_name(&left.node, target)
+                || arg_contains_last_use_name(&right.node, target)
+        }
+        Expr::Attr(obj, _) | Expr::ErrorProp(obj) => arg_contains_last_use_name(&obj.node, target),
+        Expr::Constructor(_, Some(inner)) => arg_contains_last_use_name(&inner.node, target),
+        Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
+            StrPart::Parsed(e) => arg_contains_last_use_name(&e.node, target),
+            _ => false,
+        }),
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => items
+            .iter()
+            .any(|e| arg_contains_last_use_name(&e.node, target)),
+        _ => false,
+    }
 }
 
 #[cfg(test)]

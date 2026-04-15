@@ -20,9 +20,9 @@ pub(super) fn substitute_expr(
     let line = expr.line;
     let new_node = match &expr.node {
         Expr::Literal(lit) => Expr::Literal(lit.clone()),
-        Expr::Ident(name) => {
+        Expr::Ident(name) | Expr::Resolved { name, .. } => {
             return bindings.get(name.as_str()).map_or_else(
-                || Spanned::new(Expr::Ident(name.clone()), line),
+                || Spanned::new(expr.node.clone(), line),
                 |bound| (*bound).clone(),
             );
         }
@@ -124,15 +124,7 @@ pub(super) fn substitute_expr(
                 .map(|arg| substitute_expr(arg, bindings))
                 .collect(),
         ))),
-        Expr::Resolved {
-            slot,
-            name,
-            last_use,
-        } => Expr::Resolved {
-            slot: *slot,
-            name: name.clone(),
-            last_use: *last_use,
-        },
+        // Resolved is handled in the Ident | Resolved arm above (early return)
     };
     Spanned::new(new_node, line)
 }
@@ -292,14 +284,14 @@ pub(super) fn find_fn_def_by_call_name<'a>(
 
 pub(super) fn expr_dotted_name(expr: &Spanned<Expr>) -> Option<String> {
     match &expr.node {
-        Expr::Ident(name) => Some(name.clone()),
+        Expr::Ident(name) | Expr::Resolved { name, .. } => Some(name.clone()),
         Expr::Attr(base, field) => expr_dotted_name(base).map(|p| format!("{p}.{field}")),
         _ => None,
     }
 }
 
 pub(super) fn matches_ident(expr: &Spanned<Expr>, name: &str) -> bool {
-    matches!(&expr.node, Expr::Ident(n) if n == name)
+    matches!(&expr.node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == name)
 }
 
 pub(super) fn callee_matches_name(expr: &Spanned<Expr>, target: &str) -> bool {
@@ -363,10 +355,14 @@ pub(super) fn binary_call_var_const(
     }
     let callee_name = expr_dotted_name(callee)?;
     match (&args[0].node, &args[1].node) {
-        (Expr::Ident(v), Expr::Literal(Literal::Int(n))) if v == var_name => {
+        (Expr::Ident(v) | Expr::Resolved { name: v, .. }, Expr::Literal(Literal::Int(n)))
+            if v == var_name =>
+        {
             Some((callee_name, true, *n))
         }
-        (Expr::Literal(Literal::Int(n)), Expr::Ident(v)) if v == var_name => {
+        (Expr::Literal(Literal::Int(n)), Expr::Ident(v) | Expr::Resolved { name: v, .. })
+            if v == var_name =>
+        {
             Some((callee_name, false, *n))
         }
         _ => None,

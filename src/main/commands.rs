@@ -3223,6 +3223,8 @@ fn build_codegen_context(
         process::exit(1);
     }
 
+    // Resolve locals + annotate last-use (unified across all backends)
+    resolver::resolve_program(&mut items);
 
     // Compute memo-eligible functions
     let memo_fns = compute_memo_fns(&items, &tc_result);

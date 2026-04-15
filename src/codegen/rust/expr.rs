@@ -199,10 +199,7 @@ fn emit_expr_with_options(
 
     match expr {
         Expr::Literal(lit) => emit_literal(lit),
-        Expr::Ident(name) => aver_name_to_rust(name),
-        Expr::Resolved { slot, .. } => emit_codegen_error_expr(format!(
-            "Rust codegen: encountered Expr::Resolved({slot}). Pipeline should emit Ident."
-        )),
+        Expr::Ident(name) | Expr::Resolved { name, .. } => aver_name_to_rust(name),
         Expr::Attr(obj, field) => {
             if let Expr::Ident(type_name) = &obj.node {
                 // Option.None → None
@@ -1189,7 +1186,7 @@ fn emit_type_constructor_call(
 /// produce an owned clone. Call sites for user functions override this via `borrow_arg`.
 pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
     match expr {
-        Expr::Ident(name) => {
+        Expr::Ident(name) | Expr::Resolved { name, .. } => {
             if ectx.skip_clone(name) {
                 code
             } else if ectx.is_rc_wrapped(name) {
@@ -1206,8 +1203,6 @@ pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
                 format!("{}.clone()", code)
             }
         }
-        // `emit_expr` already encodes this as a compile_error! expression.
-        Expr::Resolved { .. } => code,
         // Field access on records: emit_expr produces `obj.field` without clone.
         // Clone here when ownership is needed (constructors, return, etc.).
         // When passed to a function expecting `&T`, `borrow_arg` handles it.

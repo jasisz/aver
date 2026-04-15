@@ -284,7 +284,9 @@ fn map_update_match_expr(
         return false;
     }
     let subject_ok = match bound_name {
-        Some(name) => matches!(&subject.node, Expr::Ident(id) if id == name),
+        Some(name) => {
+            matches!(&subject.node, Expr::Ident(id) | Expr::Resolved { name: id, .. } if id == name)
+        }
         None => is_map_get_call(subject, &shape.map_param, &shape.key_param),
     };
     if !subject_ok {

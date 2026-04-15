@@ -19,10 +19,9 @@ pub fn collect_vars(expr: &Expr) -> HashSet<String> {
 
 fn collect_vars_inner(expr: &Expr, vars: &mut HashSet<String>) {
     match expr {
-        Expr::Ident(name) => {
+        Expr::Ident(name) | Expr::Resolved { name, .. } => {
             vars.insert(name.clone());
         }
-        Expr::Resolved { .. } => {}
         Expr::Literal(_) => {}
         Expr::Attr(obj, _) => collect_vars_inner(&obj.node, vars),
         Expr::FnCall(fn_expr, args) => {

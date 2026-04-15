@@ -11,7 +11,7 @@ use super::super::{AutoProof, intro_then};
 fn is_linear_int_expr(expr: &Spanned<Expr>, allowed_idents: &HashSet<&str>) -> bool {
     match &expr.node {
         Expr::Literal(crate::ast::Literal::Int(_)) => true,
-        Expr::Ident(name) => allowed_idents.contains(name.as_str()),
+        Expr::Ident(name) | Expr::Resolved { name, .. } => allowed_idents.contains(name.as_str()),
         Expr::BinOp(BinOp::Add | BinOp::Sub, left, right) => {
             is_linear_int_expr(left, allowed_idents) && is_linear_int_expr(right, allowed_idents)
         }

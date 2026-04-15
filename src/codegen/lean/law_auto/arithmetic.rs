@@ -239,16 +239,24 @@ fn int_unary_wrapper(ctx: &CodegenContext, fn_name: &str) -> Option<UnaryIntWrap
     };
 
     match (&left.node, &right.node) {
-        (Expr::Ident(id), Expr::Literal(Literal::Int(n))) if id == param => Some(UnaryIntWrapper {
-            op: *op,
-            constant: *n,
-            var_first: true,
-        }),
-        (Expr::Literal(Literal::Int(n)), Expr::Ident(id)) if id == param => Some(UnaryIntWrapper {
-            op: *op,
-            constant: *n,
-            var_first: false,
-        }),
+        (Expr::Ident(id) | Expr::Resolved { name: id, .. }, Expr::Literal(Literal::Int(n)))
+            if id == param =>
+        {
+            Some(UnaryIntWrapper {
+                op: *op,
+                constant: *n,
+                var_first: true,
+            })
+        }
+        (Expr::Literal(Literal::Int(n)), Expr::Ident(id) | Expr::Resolved { name: id, .. })
+            if id == param =>
+        {
+            Some(UnaryIntWrapper {
+                op: *op,
+                constant: *n,
+                var_first: false,
+            })
+        }
         _ => None,
     }
 }
