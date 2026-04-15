@@ -2,6 +2,11 @@
 
 All notable changes to Aver are documented here.
 
+## 0.9.4 (2026-04-15)
+
+### Fixed
+- **Rust codegen crash with forwarded arguments** — `aver compile` and `aver run --self-host` failed on programs with forwarded local variables after the unified resolver change in 0.9.3.
+
 ## 0.9.3 (2026-04-15)
 
 ### Performance
