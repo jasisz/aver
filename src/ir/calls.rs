@@ -241,7 +241,7 @@ pub fn classify_constructor_name(name: &str, ctx: &impl CallLowerCtx) -> Semanti
 
 fn classify_forward_arg(expr: &Expr, ctx: &impl CallLowerCtx) -> Option<ForwardArg> {
     match expr {
-        Expr::Resolved { slot, .. } => Some(ForwardArg::Slot(*slot)),
+        Expr::Resolved { name, .. } => Some(ForwardArg::Local(name.clone())),
         Expr::Ident(name) if ctx.is_local_value(name) => Some(ForwardArg::Local(name.clone())),
         _ => None,
     }
