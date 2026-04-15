@@ -95,7 +95,7 @@ impl TypeChecker {
                 self.used_names.insert(name.clone());
                 if let Some(ty) = self.locals.get(name) {
                     ty.clone()
-                } else if let Some(sig) = self.fn_sigs.get(name) {
+                } else if let Some(sig) = self.find_fn_sig(name) {
                     Self::fn_type_from_sig(sig)
                 } else {
                     self.error(format!("Unknown identifier '{}'", name));
@@ -162,7 +162,7 @@ impl TypeChecker {
                     };
 
                 if let Expr::Ident(name) = &fn_expr.node {
-                    if let Some(sig) = self.fn_sigs.get(name).cloned() {
+                    if let Some(sig) = self.find_fn_sig(name).cloned() {
                         let ret = check_call(self, name, sig);
                         validate_special_call(self, name, args);
                         return ret;
@@ -236,7 +236,7 @@ impl TypeChecker {
                         }
                         _ => {}
                     }
-                    if let Some(sig) = self.fn_sigs.get(&display_name).cloned() {
+                    if let Some(sig) = self.find_fn_sig(&display_name).cloned() {
                         let ret = check_call(self, &display_name, sig);
                         validate_special_call(self, &display_name, args);
                         return ret;
@@ -563,10 +563,10 @@ impl TypeChecker {
                     let obj_key = parts.join(".");
                     parts.push(field.clone());
                     let key = parts.join(".");
-                    if let Some(ty) = self.value_members.get(&key) {
+                    if let Some(ty) = self.find_value_member(&key) {
                         return ty.clone();
                     }
-                    if let Some(sig) = self.fn_sigs.get(&key) {
+                    if let Some(sig) = self.find_fn_sig(&key) {
                         return Self::fn_type_from_sig(sig);
                     }
                     if self.has_namespace_prefix(&key) {
@@ -592,7 +592,7 @@ impl TypeChecker {
                             return Type::Unknown;
                         }
                         let key = format!("{}.{}", type_name, field);
-                        if let Some(field_ty) = self.record_field_types.get(&key) {
+                        if let Some(field_ty) = self.find_record_field_type(&key) {
                             field_ty.clone()
                         } else {
                             let schema_prefix = format!("{}.", type_name);
@@ -636,7 +636,7 @@ impl TypeChecker {
                     let _ = self.infer_type(arg);
                 }
                 // Return type is the same as the target function's return type
-                if let Some(sig) = self.fn_sigs.get(target).cloned() {
+                if let Some(sig) = self.find_fn_sig(target).cloned() {
                     sig.ret
                 } else {
                     Type::Unknown

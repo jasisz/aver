@@ -111,6 +111,9 @@ struct TypeChecker {
     /// Populated for both user-defined `record` types and built-in records
     /// (HttpResponse, Header). Enables checked dot-access on Named types.
     record_field_types: HashMap<String, Type>,
+    /// Unqualified → qualified aliases for cross-module lookups.
+    /// E.g. "Shape.Circle" → "Data.Shape.Circle".
+    sig_aliases: HashMap<String, String>,
     /// Variant names for sum types: "Shape" → ["Circle", "Rect", "Point"].
     /// Pre-populated for Result and Option; extended by user-defined sum types.
     type_variants: HashMap<String, Vec<String>>,
@@ -149,6 +152,7 @@ impl TypeChecker {
             fn_sigs: HashMap::new(),
             value_members: HashMap::new(),
             record_field_types: HashMap::new(),
+            sig_aliases: HashMap::new(),
             type_variants,
             globals: HashMap::new(),
             locals: HashMap::new(),
@@ -163,6 +167,28 @@ impl TypeChecker {
         tc.register_builtins();
         tc
     }
+
+    // -- Alias-aware lookups ------------------------------------------------
+
+    fn find_fn_sig(&self, key: &str) -> Option<&FnSig> {
+        self.fn_sigs
+            .get(key)
+            .or_else(|| self.sig_aliases.get(key).and_then(|c| self.fn_sigs.get(c)))
+    }
+
+    fn find_value_member(&self, key: &str) -> Option<&Type> {
+        self.value_members
+            .get(key)
+            .or_else(|| self.sig_aliases.get(key).and_then(|c| self.value_members.get(c)))
+    }
+
+    fn find_record_field_type(&self, key: &str) -> Option<&Type> {
+        self.record_field_types
+            .get(key)
+            .or_else(|| self.sig_aliases.get(key).and_then(|c| self.record_field_types.get(c)))
+    }
+
+    // -- Helpers -----------------------------------------------------------
 
     /// Check whether `required_effect` is satisfied by `caller_effects`.
     fn caller_has_effect(&self, caller_effects: &[String], required_effect: &str) -> bool {

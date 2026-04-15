@@ -248,7 +248,7 @@ impl TypeChecker {
 
     fn named_variant_arg_types(&self, type_name: &str, variant: &str) -> Vec<Type> {
         let local_key = format!("{}.{}", type_name, variant);
-        if let Some(sig) = self.fn_sigs.get(&local_key) {
+        if let Some(sig) = self.find_fn_sig(&local_key) {
             return sig.params.clone();
         }
 

@@ -89,7 +89,7 @@ impl TypeChecker {
         self.current_fn_line = Some(f.line);
         // Start with globals and overlay parameter bindings.
         self.locals = self.globals.clone();
-        if let Some(sig) = self.fn_sigs.get(&f.name).cloned() {
+        if let Some(sig) = self.find_fn_sig(&f.name).cloned() {
             for ((param_name, _), param_type) in f.params.iter().zip(sig.params.iter()) {
                 self.locals.insert(param_name.clone(), param_type.clone());
             }
@@ -381,7 +381,7 @@ impl TypeChecker {
 
     pub(super) fn callable_effects(&self, fn_expr: &Expr) -> Option<(String, Vec<String>)> {
         if let Some(callee_name) = Self::callee_key(fn_expr)
-            && let Some(callee_sig) = self.fn_sigs.get(&callee_name)
+            && let Some(callee_sig) = self.find_fn_sig(&callee_name)
         {
             return Some((callee_name, callee_sig.effects.clone()));
         }

@@ -225,19 +225,20 @@ impl TypeChecker {
                                 .map(|f| parse_type_str_strict(f).unwrap_or(Type::Unknown))
                                 .collect();
                             let key = format!("{}.{}.{}", name, type_name, variant.name);
-                            let alias_key = format!("{}.{}", type_name, variant.name);
+                            let alias = format!("{}.{}", type_name, variant.name);
+                            self.sig_aliases.insert(alias, key.clone());
                             if params.is_empty() {
-                                let value_ty = Type::Named(type_name.clone());
-                                self.value_members.insert(key, value_ty.clone());
-                                self.value_members.insert(alias_key, value_ty);
+                                self.value_members
+                                    .insert(key, Type::Named(type_name.clone()));
                             } else {
-                                let sig = FnSig {
-                                    params,
-                                    ret: Type::Named(type_name.clone()),
-                                    effects: vec![],
-                                };
-                                self.fn_sigs.insert(key, sig.clone());
-                                self.fn_sigs.insert(alias_key, sig);
+                                self.fn_sigs.insert(
+                                    key,
+                                    FnSig {
+                                        params,
+                                        ret: Type::Named(type_name.clone()),
+                                        effects: vec![],
+                                    },
+                                );
                             }
                         }
                     }
@@ -261,12 +262,10 @@ impl TypeChecker {
                         for (field_name, ty_str) in fields {
                             let field_ty =
                                 parse_type_str_strict(ty_str).unwrap_or(Type::Unknown);
-                            self.record_field_types.insert(
-                                format!("{}.{}.{}", name, type_name, field_name),
-                                field_ty.clone(),
-                            );
-                            self.record_field_types
-                                .insert(format!("{}.{}", type_name, field_name), field_ty);
+                            let key = format!("{}.{}.{}", name, type_name, field_name);
+                            let alias = format!("{}.{}", type_name, field_name);
+                            self.sig_aliases.insert(alias, key.clone());
+                            self.record_field_types.insert(key, field_ty);
                         }
                     }
                 }

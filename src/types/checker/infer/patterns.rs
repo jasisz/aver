@@ -40,7 +40,7 @@ impl TypeChecker {
         let unknowns = || vec![Type::Unknown; arity];
 
         let from_sig = |name: &str| -> Option<Vec<Type>> {
-            self.fn_sigs.get(name).and_then(|sig| {
+            self.find_fn_sig(name).and_then(|sig| {
                 if sig.params.len() == arity {
                     Some(sig.params.clone())
                 } else {
