@@ -216,7 +216,7 @@ impl ProgramCompiler {
                     arena.register_sum_type(&mt.bare_name, variant_names.clone())
                 }
             };
-            arena.register_type_alias(&format!("{}.{}", dep_name, mt.bare_name), type_id);
+            arena.register_type_alias(&visibility::qualified_name(dep_name, &mt.bare_name), type_id);
         }
         for item in &mod_items {
             if let TopLevel::TypeDef(td) = item {
@@ -228,7 +228,7 @@ impl ProgramCompiler {
         let mut module_fn_ids: Vec<(String, u32)> = Vec::new();
         for item in &mod_items {
             if let TopLevel::FnDef(fndef) = item {
-                let qualified_name = format!("{}.{}", dep_name, fndef.name);
+                let qualified_name = visibility::qualified_name(dep_name, &fndef.name);
                 let effect_ids: Vec<u32> = fndef
                     .effects
                     .iter()
@@ -266,7 +266,7 @@ impl ProgramCompiler {
             if let TopLevel::FnDef(fndef) = item {
                 let (fn_name, fn_id) = &module_fn_ids[fn_idx];
                 let mut chunk = self.compile_fn_with_scope(fndef, arena, &module_scope)?;
-                chunk.name = format!("{}.{}", dep_name, fn_name);
+                chunk.name = visibility::qualified_name(dep_name, fn_name);
                 self.code.functions[*fn_id as usize] = chunk;
                 fn_idx += 1;
             }
@@ -276,7 +276,7 @@ impl ProgramCompiler {
         let exports = visibility::collect_module_exports(&mod_items);
 
         for fd in &exports.functions {
-            let qualified = format!("{}.{}", dep_name, fd.name);
+            let qualified = visibility::qualified_name(dep_name, &fd.name);
             let global_idx = self.ensure_global(&qualified);
             let symbol_id = self.symbols.find(&qualified).ok_or_else(|| CompileError {
                 msg: format!("missing VM symbol for exposed function {}", qualified),
@@ -299,7 +299,7 @@ impl ProgramCompiler {
             }
         }
         for fd in &exports.functions {
-            let qualified = format!("{}.{}", dep_name, fd.name);
+            let qualified = visibility::qualified_name(dep_name, &fd.name);
             if let Some(fn_symbol_id) = self.symbols.find(&qualified) {
                 let member_symbol_id = self.symbols.intern_name(&fd.name);
                 self.symbols.add_namespace_member_by_id(
@@ -343,7 +343,7 @@ impl ProgramCompiler {
                     let ctor_id = arena
                         .find_ctor_id(type_id, variant_id as u16)
                         .expect("ctor id");
-                    let qualified_name = format!("{}.{}", name, variant.name);
+                    let qualified_name = visibility::member_key(name, &variant.name);
                     let ctor_symbol_id = self.symbols.intern_variant_ctor(
                         &qualified_name,
                         VmVariantCtor {

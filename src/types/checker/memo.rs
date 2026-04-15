@@ -9,11 +9,14 @@ impl TypeChecker {
         {
             match crate::source::load_module_tree(&module.depends, base) {
                 Ok(modules) => {
-                    for loaded in &modules {
-                        if let Err(e) = self.integrate_module_sigs(&loaded.dep_name, &loaded.items)
-                        {
-                            self.error(e);
-                        }
+                    let pairs: Vec<_> = modules
+                        .iter()
+                        .map(|m| (m.dep_name.clone(), m.items.clone()))
+                        .collect();
+                    let registry =
+                        crate::visibility::SymbolRegistry::from_modules(&pairs);
+                    if let Err(e) = self.integrate_registry(&registry) {
+                        self.error(e);
                     }
                 }
                 Err(e) => self.error(e),

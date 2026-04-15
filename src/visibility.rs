@@ -1,4 +1,4 @@
-use crate::ast::{FnDef, Module, TopLevel, TypeDef};
+use crate::ast::{FnDef, Module, TopLevel, TypeDef, TypeVariant};
 
 /// Type definition collected from a module — backend-agnostic metadata.
 #[derive(Debug, Clone)]
@@ -127,4 +127,204 @@ pub fn collect_module_exports<'a>(items: &'a [TopLevel]) -> ModuleExports<'a> {
         .collect();
 
     ModuleExports { functions, types }
+}
+
+// ---------------------------------------------------------------------------
+// Canonical symbol key construction
+// ---------------------------------------------------------------------------
+
+/// "Module.function" — qualified name for cross-module function references.
+pub fn qualified_name(module: &str, name: &str) -> String {
+    format!("{}.{}", module, name)
+}
+
+/// "Type.member" — type-scoped key (constructor, field, variant).
+pub fn member_key(type_name: &str, member: &str) -> String {
+    format!("{}.{}", type_name, member)
+}
+
+/// "Module.Type.member" — fully-qualified type-scoped key.
+pub fn qualified_member_key(module: &str, type_name: &str, member: &str) -> String {
+    format!("{}.{}.{}", module, type_name, member)
+}
+
+// ---------------------------------------------------------------------------
+// SymbolRegistry — aggregated view of all module exports
+// ---------------------------------------------------------------------------
+
+/// A registered symbol with its canonical name and kind.
+#[derive(Debug, Clone)]
+pub struct SymbolEntry {
+    pub id: u32,
+    pub canonical_name: String,
+    pub alias: Option<String>,
+    pub module: String,
+    pub kind: SymbolKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum SymbolKind {
+    Function {
+        name: String,
+        params: Vec<(String, String)>,
+        return_type: String,
+        effects: Vec<String>,
+    },
+    OpaqueType {
+        name: String,
+    },
+    SumType {
+        name: String,
+        variants: Vec<String>,
+    },
+    Constructor {
+        type_name: String,
+        variant_name: String,
+        field_types: Vec<String>,
+    },
+    RecordField {
+        type_name: String,
+        field_name: String,
+        field_type: String,
+    },
+}
+
+/// All symbols exported by a module tree — canonical source of truth.
+#[derive(Debug, Clone, Default)]
+pub struct SymbolRegistry {
+    pub entries: Vec<SymbolEntry>,
+}
+
+impl SymbolRegistry {
+    /// Build a registry from a set of loaded modules (in dependency order).
+    pub fn from_modules(modules: &[(String, Vec<TopLevel>)]) -> Self {
+        let mut entries = Vec::new();
+        for (module_name, items) in modules {
+            let exports = collect_module_exports(items);
+            Self::collect_from_exports(module_name, &exports, &mut entries);
+        }
+        SymbolRegistry { entries }
+    }
+
+    fn collect_from_exports(
+        module_name: &str,
+        exports: &ModuleExports<'_>,
+        entries: &mut Vec<SymbolEntry>,
+    ) {
+        for fd in &exports.functions {
+            let id = entries.len() as u32;
+            entries.push(SymbolEntry {
+                id,
+                canonical_name: qualified_name(module_name, &fd.name),
+                alias: None,
+                module: module_name.to_string(),
+                kind: SymbolKind::Function {
+                    name: fd.name.clone(),
+                    params: fd.params.clone(),
+                    return_type: fd.return_type.clone(),
+                    effects: fd.effects.iter().map(|e| e.node.clone()).collect(),
+                },
+            });
+        }
+
+        for et in &exports.types {
+            match et.def {
+                TypeDef::Sum {
+                    name: type_name,
+                    variants,
+                    ..
+                } => {
+                    if et.is_opaque {
+                        let id = entries.len() as u32;
+                        entries.push(SymbolEntry {
+                            id,
+                            canonical_name: type_name.clone(),
+                            alias: None,
+                            module: module_name.to_string(),
+                            kind: SymbolKind::OpaqueType {
+                                name: type_name.clone(),
+                            },
+                        });
+                    } else {
+                        let id = entries.len() as u32;
+                        entries.push(SymbolEntry {
+                            id,
+                            canonical_name: type_name.clone(),
+                            alias: None,
+                            module: module_name.to_string(),
+                            kind: SymbolKind::SumType {
+                                name: type_name.clone(),
+                                variants: variants.iter().map(|v| v.name.clone()).collect(),
+                            },
+                        });
+                        Self::collect_variant_entries(
+                            module_name,
+                            type_name.as_str(),
+                            variants,
+                            entries,
+                        );
+                    }
+                }
+                TypeDef::Product {
+                    name: type_name,
+                    fields,
+                    ..
+                } => {
+                    if et.is_opaque {
+                        let id = entries.len() as u32;
+                        entries.push(SymbolEntry {
+                            id,
+                            canonical_name: type_name.clone(),
+                            alias: None,
+                            module: module_name.to_string(),
+                            kind: SymbolKind::OpaqueType {
+                                name: type_name.clone(),
+                            },
+                        });
+                    } else {
+                        for (field_name, ty_str) in fields {
+                            let id = entries.len() as u32;
+                            let canonical = qualified_member_key(module_name, type_name, field_name);
+                            let alias = member_key(type_name, field_name);
+                            entries.push(SymbolEntry {
+                                id,
+                                canonical_name: canonical,
+                                alias: Some(alias),
+                                module: module_name.to_string(),
+                                kind: SymbolKind::RecordField {
+                                    type_name: type_name.clone(),
+                                    field_name: field_name.clone(),
+                                    field_type: ty_str.clone(),
+                                },
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn collect_variant_entries(
+        module_name: &str,
+        type_name: &str,
+        variants: &[TypeVariant],
+        entries: &mut Vec<SymbolEntry>,
+    ) {
+        for variant in variants {
+            let id = entries.len() as u32;
+            let canonical = qualified_member_key(module_name, type_name, &variant.name);
+            let alias = member_key(type_name, &variant.name);
+            entries.push(SymbolEntry {
+                id,
+                canonical_name: canonical,
+                alias: Some(alias),
+                module: module_name.to_string(),
+                kind: SymbolKind::Constructor {
+                    type_name: type_name.to_string(),
+                    variant_name: variant.name.clone(),
+                    field_types: variant.fields.clone(),
+                },
+            });
+        }
+    }
 }
