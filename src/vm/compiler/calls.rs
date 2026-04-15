@@ -158,23 +158,15 @@ impl<'a> FnCompiler<'a> {
     }
 
     fn compile_forward_arg(&mut self, arg: ForwardArg) -> Result<(), CompileError> {
-        match arg {
-            ForwardArg::Slot(slot) => {
-                self.emit_op(LOAD_LOCAL);
-                self.emit_u8(slot as u8);
-                Ok(())
-            }
-            ForwardArg::Local(name) => {
-                let Some(&slot) = self.local_slots.get(&name) else {
-                    return Err(CompileError {
-                        msg: format!("forwarded local '{}' is not a known slot", name),
-                    });
-                };
-                self.emit_op(LOAD_LOCAL);
-                self.emit_u8(slot as u8);
-                Ok(())
-            }
-        }
+        let ForwardArg::Local(name) = arg;
+        let Some(&slot) = self.local_slots.get(&name) else {
+            return Err(CompileError {
+                msg: format!("forwarded local '{}' is not a known slot", name),
+            });
+        };
+        self.emit_op(LOAD_LOCAL);
+        self.emit_u8(slot as u8);
+        Ok(())
     }
 
     pub(super) fn compile_call(

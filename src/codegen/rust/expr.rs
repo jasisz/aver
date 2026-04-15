@@ -684,30 +684,13 @@ fn emit_forward_call_plan_with_options(
     ectx: &EmitCtx,
     allow_callsite_inlining: bool,
 ) -> String {
-    let args = plan
-        .args
-        .iter()
-        .map(forward_arg_to_expr)
-        .collect::<Option<Vec<_>>>();
-    match args {
-        Some(args) => emit_call_plan_with_args_with_options(
-            &plan.target,
-            &args,
-            ctx,
-            ectx,
-            allow_callsite_inlining,
-        ),
-        None => emit_codegen_error_expr(
-            "Rust codegen: unexpected slot-based ForwardCall in source-level emission".to_string(),
-        ),
-    }
+    let args: Vec<_> = plan.args.iter().map(forward_arg_to_expr).collect();
+    emit_call_plan_with_args_with_options(&plan.target, &args, ctx, ectx, allow_callsite_inlining)
 }
 
-fn forward_arg_to_expr(arg: &ForwardArg) -> Option<Expr> {
-    match arg {
-        ForwardArg::Local(name) => Some(Expr::Ident(name.clone())),
-        ForwardArg::Slot(_) => None,
-    }
+fn forward_arg_to_expr(arg: &ForwardArg) -> Expr {
+    let ForwardArg::Local(name) = arg;
+    Expr::Ident(name.clone())
 }
 
 fn emit_leaf_op_with_options(

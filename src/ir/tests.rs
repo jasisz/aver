@@ -321,7 +321,10 @@ fn classify_forward_call_for_known_target_and_forwarded_locals() {
         classify_forward_call_plan(&expr, &ForwardCtx),
         Some(ForwardCallPlan {
             target: CallPlan::Function("Data.Fib.fib".to_string()),
-            args: vec![ForwardArg::Slot(1), ForwardArg::Local("slot0".to_string())],
+            args: vec![
+                ForwardArg::Local("slot1".to_string()),
+                ForwardArg::Local("slot0".to_string())
+            ],
         })
     );
 }

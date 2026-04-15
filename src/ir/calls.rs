@@ -49,7 +49,6 @@ pub type SemanticCallee = CallPlan;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ForwardArg {
     Local(String),
-    Slot(u16),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
