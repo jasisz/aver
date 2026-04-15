@@ -1813,8 +1813,17 @@ fn emit_list_arm_body(arm: &MatchArm, ctx: &CodegenContext, body: String) -> Str
 }
 
 pub(super) fn constructor_boxed_positions(name: &str, ctx: &CodegenContext) -> HashSet<usize> {
+    let sig = ctx.fn_sigs.get(name).or_else(|| {
+        // Cross-module constructors: "Type.Variant" may be registered as
+        // "Module.Type.Variant" in fn_sigs. Search by suffix.
+        let suffix = format!(".{}", name);
+        ctx.fn_sigs
+            .iter()
+            .find(|(k, _)| k.ends_with(&suffix))
+            .map(|(_, v)| v)
+    });
     let mut out = HashSet::new();
-    let Some((params, ret, _)) = ctx.fn_sigs.get(name) else {
+    let Some((params, ret, _)) = sig else {
         return out;
     };
     let Type::Named(ret_name) = ret else {
@@ -1838,7 +1847,9 @@ pub(super) fn constructor_boxed_bindings(
     let mut sig_name = None;
     if ctx.fn_sigs.contains_key(name) {
         sig_name = Some(name.to_string());
-    } else if !name.contains('.') {
+    } else {
+        // Cross-module constructors: bare or dotted name may be registered
+        // with a module prefix in fn_sigs. Search by suffix.
         let suffix = format!(".{}", name);
         let mut matches = ctx
             .fn_sigs
