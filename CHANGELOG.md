@@ -2,6 +2,33 @@
 
 All notable changes to Aver are documented here.
 
+## 0.9.3 (2026-04-15)
+
+### Changed
+- **Unified resolver across all backends** — `Expr::Resolved { slot, name, last_use }` replaces the old `Resolved(u16)`. The resolver now runs for VM, Rust codegen, WASM, Lean, and Dafny. One AST representation, one liveness pass.
+- **`ir::last_use` replaces three liveness systems** — slot-based backwards analysis annotates every `Resolved` node with `last_use`. Replaces `ir::liveness` (name-based UsedAfter), `ir::reuse` (TailCallData.owned), and `EmitCtx.used_after` (Rust codegen). Net removal: ~675 lines.
+
+### Added
+- **`MOVE_LOCAL` VM opcode** — emitted for last-use variables. Loads the value and clears the slot, giving sole ownership across function boundaries. Enables in-place mutation for Map.set/Vector.set in any context, not just tail calls.
+- **Generalized owned-path optimization** — `CALL_BUILTIN_OWNED` now fires for sequential Map.set chains, nested expressions, and cross-function calls — anywhere `last_use` is true. Previously limited to tail-call args only.
+- **`rebuild_playground.py` builds compiler** — the script now also rebuilds `aver_bg.wasm` (in-browser compiler) via wasm-pack, not just game modules.
+
+### Fixed
+- **Map.set owned path not firing** — `pending_owned_mask` was silently overwritten by nested `compile_expr` calls (e.g. `Map.set(m, Int.toString(n), n)` — the `Int.toString` compilation clobbered the mask). VM map build 50K: 39s → 0.9s.
+- **VectorSetOrDefaultSameVector crash** — owned path emitted `CALL_BUILTIN_OWNED` returning `Option<Vector>` instead of the fused `VECTOR_SET_OR_KEEP` that unwraps to raw `Vector`. Pre-existing bug, now fixed.
+- **WASM stack overflow on large linked lists** — `$retain_i32` recursively retained tail pointers during boundary compaction, overflowing at ~5450 entries. Converted to iterative loop with fixup chain. Map build 50K in WASM now works (4.5s).
+- **WASM codegen type inference after resolution** — type inference, emission, and namespace detection now handle `Resolved` nodes alongside `Ident`.
+- **Lean `law_auto` after resolution** — expression substitution, pattern matching, and arithmetic detection all handle `Resolved`.
+- **`CALL_BUILTIN_OWNED` missing from parent-thin classification** — functions with last-use builtins (e.g. `String.replace`) were incorrectly classified as parent-thin.
+
+### Removed
+- `ir::reuse.rs` — replaced by `last_use` on `Resolved`
+- `ir::liveness.rs` — replaced by `ir::last_use` (slot-based)
+- `TailCallData.owned` — replaced by `last_use` on `Resolved`
+- `FnCompiler::owned_params` — replaced by `last_use` on `Resolved`
+- `EmitCtx.used_after` and all `compute_*_used_after*` functions (~50 call sites)
+- `pending_owned_mask` field — replaced by explicit parameter
+
 ## 0.9.2 (2026-04-13)
 
 ### Fixed
