@@ -129,9 +129,33 @@ pub fn build_context(
         }
     }
 
+    // Start with checker's fn_sigs (exposed API), then add signatures for
+    // ALL module functions (including private helpers). Codegen emits full
+    // module implementations, so it needs signatures for intra-module calls
+    // that the checker intentionally omits.
+    let mut fn_sigs = tc_result.fn_sigs.clone();
+    for module in &modules {
+        for fd in &module.fn_defs {
+            let qualified = crate::visibility::qualified_name(&module.prefix, &fd.name);
+            if fn_sigs.contains_key(&qualified) {
+                continue;
+            }
+            let params: Vec<crate::types::Type> = fd
+                .params
+                .iter()
+                .map(|(_, ty_str)| {
+                    crate::types::parse_type_str(ty_str)
+                })
+                .collect();
+            let ret = crate::types::parse_type_str(&fd.return_type);
+            let effects: Vec<String> = fd.effects.iter().map(|e| e.node.clone()).collect();
+            fn_sigs.insert(qualified, (params, ret, effects));
+        }
+    }
+
     CodegenContext {
         items,
-        fn_sigs: tc_result.fn_sigs.clone(),
+        fn_sigs,
         memo_fns,
         memo_safe_types: tc_result.memo_safe_types.clone(),
         type_defs,
