@@ -3,11 +3,10 @@ mod classify;
 mod expr;
 mod patterns;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::ast::{FnBody, FnDef, Stmt, TopLevel, TypeDef};
 use crate::nan_value::{Arena, NanValue};
-use crate::source::find_module_file;
 use crate::types::{option, result};
 use crate::visibility;
 
@@ -167,10 +166,8 @@ impl ProgramCompiler {
         }
     }
 
-    /// Load all modules from `depends [...]` declarations.
-    /// Compiles each module's functions into the shared CodeStore and builds
-    /// namespace globals so that `Data.Fibonacci.buildFibStats` resolves to
-    /// a CALL_KNOWN with the correct fn_id.
+    /// Load all modules from `depends [...]` declarations using the shared loader,
+    /// then compile each module's functions and register symbols.
     fn load_modules(
         &mut self,
         items: &[TopLevel],
@@ -189,53 +186,27 @@ impl ProgramCompiler {
             None => return Ok(()),
         };
 
-        let mut loaded = HashSet::new();
-        for dep_name in &module.depends {
-            self.load_module_recursive(dep_name, module_root, arena, &mut loaded)?;
+        let modules = crate::source::load_module_tree(&module.depends, module_root)
+            .map_err(|e| CompileError { msg: e })?;
+
+        for loaded in modules {
+            self.integrate_module(&loaded.dep_name, loaded.items, arena)?;
         }
         Ok(())
     }
 
-    fn load_module_recursive(
+    /// Integrate a loaded module into the VM: register types, compile functions,
+    /// expose symbols.
+    fn integrate_module(
         &mut self,
         dep_name: &str,
-        module_root: &str,
+        mut mod_items: Vec<TopLevel>,
         arena: &mut Arena,
-        loaded: &mut HashSet<String>,
     ) -> Result<(), CompileError> {
-        if loaded.contains(dep_name) {
-            return Ok(());
-        }
-        loaded.insert(dep_name.to_string());
-
-        let file_path = find_module_file(dep_name, module_root).ok_or_else(|| CompileError {
-            msg: format!("module '{}' not found (root: {})", dep_name, module_root),
-        })?;
-
-        let source = std::fs::read_to_string(&file_path).map_err(|e| CompileError {
-            msg: format!("cannot read module '{}': {}", dep_name, e),
-        })?;
-
-        let mut mod_items = crate::source::parse_source(&source).map_err(|e| CompileError {
-            msg: format!("parse error in module '{}': {}", dep_name, e),
-        })?;
-
         crate::tco::transform_program(&mut mod_items);
         crate::resolver::resolve_program(&mut mod_items);
 
-        if let Some(sub_module) = mod_items.iter().find_map(|i| {
-            if let TopLevel::Module(m) = i {
-                Some(m)
-            } else {
-                None
-            }
-        }) {
-            for sub_dep in &sub_module.depends {
-                self.load_module_recursive(sub_dep, module_root, arena, loaded)?;
-            }
-        }
-
-        // Shared: collect type defs from AST, register in Arena with qualified aliases
+        // Register types in Arena with qualified aliases.
         for mt in visibility::collect_module_types(&mod_items) {
             let type_id = match &mt.kind {
                 visibility::ModuleTypeKind::Record { field_names } => {
@@ -247,14 +218,13 @@ impl ProgramCompiler {
             };
             arena.register_type_alias(&format!("{}.{}", dep_name, mt.bare_name), type_id);
         }
-        // VM-specific: register type symbols for namespace resolution
         for item in &mod_items {
             if let TopLevel::TypeDef(td) = item {
                 self.register_type_in_symbols(td, arena);
             }
         }
 
-        // Compile ALL functions in the module (not just exposed).
+        // Compile ALL functions (not just exposed).
         let mut module_fn_ids: Vec<(String, u32)> = Vec::new();
         for item in &mod_items {
             if let TopLevel::FnDef(fndef) = item {
@@ -291,7 +261,6 @@ impl ProgramCompiler {
         }
 
         let module_scope: HashMap<String, u32> = module_fn_ids.iter().cloned().collect();
-
         let mut fn_idx = 0;
         for item in &mod_items {
             if let TopLevel::FnDef(fndef) = item {
@@ -303,10 +272,9 @@ impl ProgramCompiler {
             }
         }
 
-        // Shared: determine what this module exports (visibility + opaque).
+        // Expose exported functions and types via globals and namespace members.
         let exports = visibility::collect_module_exports(&mod_items);
 
-        // Register exported functions as globals.
         for fd in &exports.functions {
             let qualified = format!("{}.{}", dep_name, fd.name);
             let global_idx = self.ensure_global(&qualified);
@@ -316,7 +284,6 @@ impl ProgramCompiler {
             self.globals[global_idx as usize] = VmSymbolTable::symbol_ref(symbol_id);
         }
 
-        // Register exported types and functions as namespace members.
         let module_symbol_id = self.symbols.intern_namespace_path(dep_name);
         for et in &exports.types {
             let type_name = match et.def {

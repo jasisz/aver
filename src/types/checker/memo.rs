@@ -7,11 +7,16 @@ impl TypeChecker {
         if let Some(base) = base_dir
             && let Some(module) = Self::module_decl(items)
         {
-            let mut loading = Vec::new();
-            for dep_name in &module.depends {
-                if let Err(e) = self.load_module_sigs(dep_name, base, &mut loading) {
-                    self.error(e);
+            match crate::source::load_module_tree(&module.depends, base) {
+                Ok(modules) => {
+                    for loaded in &modules {
+                        if let Err(e) = self.integrate_module_sigs(&loaded.dep_name, &loaded.items)
+                        {
+                            self.error(e);
+                        }
+                    }
                 }
+                Err(e) => self.error(e),
             }
         }
 

@@ -9,14 +9,10 @@
 /// stricter rules for checker constraints: a bare `Unknown` does not satisfy
 /// a concrete expected type in argument/return/ascription checks.
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 
 use super::{Type, parse_type_str_strict};
 use crate::ast::{
     BinOp, Expr, FnDef, Literal, Module, Pattern, Spanned, Stmt, TailCallData, TopLevel, TypeDef,
-};
-use crate::source::{
-    canonicalize_path, find_module_file, parse_source, require_module_declaration,
 };
 
 mod builtins;
@@ -108,18 +104,8 @@ struct FnSig {
     effects: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
-struct ModuleSigCache {
-    fn_entries: Vec<(String, FnSig)>,
-    value_entries: Vec<(String, Type)>,
-    record_field_entries: Vec<(String, Type)>,
-    type_variants: Vec<(String, Vec<String>)>,
-    opaque_types: Vec<String>,
-}
-
 struct TypeChecker {
     fn_sigs: HashMap<String, FnSig>,
-    module_sig_cache: HashMap<String, ModuleSigCache>,
     value_members: HashMap<String, Type>,
     /// Field types for record types: "TypeName.fieldName" → Type.
     /// Populated for both user-defined `record` types and built-in records
@@ -161,7 +147,6 @@ impl TypeChecker {
 
         let mut tc = TypeChecker {
             fn_sigs: HashMap::new(),
-            module_sig_cache: HashMap::new(),
             value_members: HashMap::new(),
             record_field_types: HashMap::new(),
             type_variants,
