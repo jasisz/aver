@@ -93,6 +93,44 @@ def sync_sources() -> None:
         shutil.copy2(EXAMPLES_ROOT / filename, PLAYGROUND_SOURCES_ROOT / filename)
 
 
+WASM_COMPILER_DST = PLAYGROUND_ROOT / "wasm"
+
+
+def build_compiler() -> None:
+    """Rebuild the Aver-to-WASM compiler itself (aver_bg.wasm) via wasm-pack."""
+    if shutil.which("wasm-pack") is None:
+        raise SystemExit("`wasm-pack` not found. Install it: cargo install wasm-pack")
+
+    print("Building playground compiler (wasm-pack) ...")
+    result = subprocess.run(
+        [
+            "wasm-pack",
+            "build",
+            "--target",
+            "web",
+            "--features",
+            "playground",
+            "--no-default-features",
+        ],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        if result.stderr:
+            sys.stderr.write(result.stderr)
+        raise SystemExit("wasm-pack build failed")
+
+    pkg_dir = REPO_ROOT / "pkg"
+    for name in ("aver_bg.wasm", "aver.js"):
+        src = pkg_dir / name
+        dst = WASM_COMPILER_DST / name
+        shutil.copy2(src, dst)
+
+    size = (WASM_COMPILER_DST / "aver_bg.wasm").stat().st_size
+    print(f"  aver_bg.wasm: {format_kib(size)}")
+
+
 def build_wasm(aver_bin: str) -> None:
     if shutil.which("wasm-opt") is None:
         raise SystemExit("`wasm-opt` not found on PATH. Install binaryen before rebuilding playground WASM.")
@@ -191,8 +229,8 @@ def print_report(sizes: dict[str, str]) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Sync mirrored playground sources from examples/games, rebuild shipped "
-            "WASM artifacts with wasm-opt -Oz, and refresh website size labels."
+            "Rebuild the playground: compiler (wasm-pack), game WASM (aver compile "
+            "--wasm-opt oz), mirrored sources, and website size labels."
         )
     )
     parser.add_argument(
@@ -206,9 +244,14 @@ def parse_args() -> argparse.Namespace:
         help="Do not copy sources from examples/games into playground/sources",
     )
     parser.add_argument(
+        "--skip-compiler",
+        action="store_true",
+        help="Do not rebuild the aver_bg.wasm playground compiler via wasm-pack",
+    )
+    parser.add_argument(
         "--skip-build",
         action="store_true",
-        help="Do not rebuild playground .wasm artifacts",
+        help="Do not rebuild playground game .wasm artifacts",
     )
     parser.add_argument(
         "--skip-html",
@@ -220,6 +263,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+
+    if not args.skip_compiler:
+        build_compiler()
 
     if not args.skip_source_sync:
         sync_sources()
