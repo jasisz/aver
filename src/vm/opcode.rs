@@ -371,12 +371,12 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
         | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | LIST_NIL | LIST_CONS
         | LIST_LEN | LIST_PREPEND | UNWRAP_OR | UNWRAP_RESULT_OR | CONCAT | VECTOR_GET
-        | VECTOR_SET | VECTOR_SET_OR_KEEP | NOP => 0,
+        | VECTOR_SET | NOP => 0,
 
         // 1-byte
         LOAD_LOCAL | MOVE_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD
         | EXTRACT_TUPLE_ITEM | LIST_NEW | WRAP | TUPLE_NEW | TAIL_CALL_SELF
-        | TAIL_CALL_SELF_THIN => 1,
+        | TAIL_CALL_SELF_THIN | VECTOR_SET_OR_KEEP => 1,
 
         // 2-byte (u16 or u8+u8)
         LOAD_CONST | LOAD_GLOBAL | STORE_GLOBAL | JUMP | JUMP_IF_FALSE | MATCH_FAIL | MATCH_NIL

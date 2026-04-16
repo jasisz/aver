@@ -1315,11 +1315,22 @@ impl VM {
                 }
 
                 VECTOR_SET_OR_KEEP => {
+                    let vec_owned = read_u8!(code, ip) != 0;
                     let value = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let index = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let vec = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let idx = index.as_int(&self.arena);
                     if vec.is_empty_vector_immediate() || idx < 0 {
+                        self.stack.push(vec);
+                    } else if vec_owned && !vec.is_empty_vector_immediate() {
+                        // Owned path: modify vector in-place at the same arena slot.
+                        // No new allocation, no promotion needed.
+                        let items = self.arena.get_vector_mut(vec.arena_index());
+                        let i = idx as usize;
+                        if i < items.len() {
+                            items[i] = value;
+                        }
+                        // Return the same NanValue — same slot, same space.
                         self.stack.push(vec);
                     } else {
                         let items = self.arena.vector_ref_value(vec);

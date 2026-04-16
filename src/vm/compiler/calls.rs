@@ -405,14 +405,15 @@ impl<'a> FnCompiler<'a> {
                 index,
                 value,
             } => {
-                // Note: owned path cannot use CALL_BUILTIN_OWNED here because
-                // vec_set_nv_owned returns Option<Vector> while the fused
-                // VECTOR_SET_OR_KEEP unwraps to raw Vector. Direct Vector.set
-                // calls still get the owned path via emit_builtin_after_args.
+                // In the fused VECTOR_SET_OR_KEEP opcode, the default is
+                // implicitly the same vector — it's not loaded separately.
+                // So we can always take ownership: the vector appears twice
+                // in the AST (set arg + default) but only once on the stack.
                 self.compile_expr(vector)?;
                 self.compile_expr(index)?;
                 self.compile_expr(value)?;
                 self.emit_op(VECTOR_SET_OR_KEEP);
+                self.emit_u8(1); // always owned — fused op consumes the only ref
                 Ok(())
             }
             LeafOp::ListIndexGet { list, index } => {
