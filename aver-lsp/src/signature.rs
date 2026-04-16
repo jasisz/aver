@@ -199,16 +199,12 @@ fn split_params(s: &str) -> Vec<&str> {
     for i in 0..bytes.len() {
         match bytes[i] {
             b'(' => paren_depth += 1,
-            b')' => {
-                if paren_depth > 0 {
-                    paren_depth -= 1;
-                }
+            b')' if paren_depth > 0 => {
+                paren_depth -= 1;
             }
             b'<' => angle_depth += 1,
-            b'>' => {
-                if angle_depth > 0 {
-                    angle_depth -= 1;
-                }
+            b'>' if angle_depth > 0 => {
+                angle_depth -= 1;
             }
             b',' if paren_depth == 0 && angle_depth == 0 => {
                 result.push(s[start..i].trim());
