@@ -40,8 +40,8 @@ wasm-compile = ["dep:wasm-encoder"]
 playground = ["wasm-compile", "dep:wasm-bindgen"]
 
 [dependencies]
-aver-memory = { path = "aver-memory", version = "=0.2.1" }
-aver-rt = { path = "aver-rt", version = "=0.4.0", features = ["http", "random"], optional = true }
+aver-memory = { path = "aver-memory", version = "=0.2.2" }
+aver-rt = { path = "aver-rt", version = "=0.4.1", features = ["http", "random"], optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 colored = { version = "2", optional = true }
 thiserror = "1"
