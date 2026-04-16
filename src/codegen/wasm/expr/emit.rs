@@ -1026,15 +1026,14 @@ impl<'a> ExprEmitter<'a> {
     }
 
     fn emit_field_access(&mut self, base_expr: &Spanned<Expr>, field_name: &str) {
-        // Check if this is an uppercase dotted path (type/namespace reference, not field access)
-        if let Expr::Ident(base_name)
-        | Expr::Resolved {
-            name: base_name, ..
-        } = &base_expr.node
-            && base_name.chars().next().is_some_and(|c| c.is_uppercase())
+        // Check if this is an uppercase dotted path (type/namespace reference, not field access).
+        // Use expr_to_dotted_name on the full Attr expression to handle hierarchical modules
+        // like Domain.Types.TaskStatus.Blocked.
+        let full_expr = Expr::Attr(Box::new(base_expr.clone()), field_name.to_string());
+        if let Some(dotted) = crate::ir::expr_to_dotted_name(&full_expr)
+            && dotted.chars().next().is_some_and(|c| c.is_uppercase())
         {
-            let qualified = format!("{}.{}", base_name, field_name);
-            let ctor = classify_constructor_name(&qualified, &self.ir_ctx());
+            let ctor = classify_constructor_name(&dotted, &self.ir_ctx());
             match ctor {
                 SemanticConstructor::NoneValue => {
                     self.instructions
