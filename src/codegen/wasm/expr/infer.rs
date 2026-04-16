@@ -391,7 +391,7 @@ impl<'a> ExprEmitter<'a> {
         }
     }
 
-    fn infer_option_inner_aver_type(&self, expr: &Spanned<Expr>) -> Option<Type> {
+    pub(super) fn infer_option_inner_aver_type(&self, expr: &Spanned<Expr>) -> Option<Type> {
         match self.infer_aver_type(&expr.node) {
             Some(Type::Option(inner)) => Some(*inner),
             _ => None,

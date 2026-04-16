@@ -217,6 +217,78 @@ impl<'a> ExprEmitter<'a> {
                 }
                 self.emit_end();
             }
+            "Option.toResult" if args.len() == 2 => {
+                // args: [option(i32), err_value]
+                // Some(v) → Ok(v), None → Err(err_value)
+                let opt_local = self.alloc_local(WasmType::I32);
+                let inner_type = self
+                    .infer_option_inner_aver_type(&args[0])
+                    .map(|t| super::super::types::aver_type_to_wasm(&t))
+                    .unwrap_or(WasmType::I64);
+                let err_type = self.infer_expr_type(&args[1].node);
+                let err_is_ptr = self.expr_is_heap_ptr(&args[1].node);
+                let err_local = self.alloc_local(err_type);
+                self.instructions.push(Instruction::LocalSet(err_local));
+                self.instructions.push(Instruction::LocalSet(opt_local));
+                // Check if None
+                self.instructions.push(Instruction::LocalGet(opt_local));
+                self.instructions
+                    .push(Instruction::I32Const(super::super::value::NONE_SENTINEL));
+                self.instructions.push(Instruction::I32Eq);
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
+                // None → Err(err_value)
+                self.instructions
+                    .push(Instruction::I32Const(super::super::value::WRAP_ERR as i32));
+                self.instructions.push(Instruction::LocalGet(err_local));
+                match err_type {
+                    WasmType::I64 => {
+                        self.instructions.push(Instruction::I32Const(if err_is_ptr {
+                            1
+                        } else {
+                            0
+                        }));
+                        self.instructions.push(Instruction::Call(self.rt.wrap));
+                    }
+                    WasmType::F64 => {
+                        self.instructions.push(Instruction::Call(self.rt.wrap_f64));
+                    }
+                    WasmType::I32 => {
+                        self.instructions.push(Instruction::I32Const(if err_is_ptr {
+                            1
+                        } else {
+                            0
+                        }));
+                        self.instructions.push(Instruction::Call(self.rt.wrap_i32));
+                    }
+                }
+                self.emit_else();
+                // Some(v) → Ok(v): unwrap inner, re-wrap as Ok
+                let inner_is_ptr = matches!(inner_type, WasmType::I32);
+                self.instructions
+                    .push(Instruction::I32Const(super::super::value::WRAP_OK as i32));
+                self.instructions.push(Instruction::LocalGet(opt_local));
+                match inner_type {
+                    WasmType::I64 => {
+                        self.instructions.push(Instruction::Call(self.rt.unwrap));
+                        self.instructions
+                            .push(Instruction::I32Const(if inner_is_ptr { 1 } else { 0 }));
+                        self.instructions.push(Instruction::Call(self.rt.wrap));
+                    }
+                    WasmType::F64 => {
+                        self.instructions
+                            .push(Instruction::Call(self.rt.unwrap_f64));
+                        self.instructions.push(Instruction::Call(self.rt.wrap_f64));
+                    }
+                    WasmType::I32 => {
+                        self.instructions
+                            .push(Instruction::Call(self.rt.unwrap_i32));
+                        self.instructions
+                            .push(Instruction::I32Const(if inner_is_ptr { 1 } else { 0 }));
+                        self.instructions.push(Instruction::Call(self.rt.wrap_i32));
+                    }
+                }
+                self.emit_end();
+            }
             "Vector.fromList" if args.len() == 1 => {
                 let elem_is_ptr = self
                     .infer_aver_type(&args[0].node)
