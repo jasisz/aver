@@ -399,31 +399,22 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         CALL_BUILTIN_OWNED => 6, // symbol_id:u32 + argc:u8 + owned:u8
 
         // Variable-length
-        MATCH_DISPATCH | MATCH_DISPATCH_CONST => {
-            if ip < code.len() {
+        MATCH_DISPATCH | MATCH_DISPATCH_CONST
+            if ip < code.len() => {
                 let count = code[ip] as usize;
                 let entry_size = if op == MATCH_DISPATCH { 11 } else { 17 };
                 3 + count * entry_size
-            } else {
-                0
             }
-        }
-        RECORD_UPDATE => {
-            if ip + 2 < code.len() {
+        RECORD_UPDATE
+            if ip + 2 < code.len() => {
                 3 + code[ip + 2] as usize
-            } else {
-                0
             }
-        }
         // CALL_PAR count:u8 unwrap:u8 [argc:u8 × count]
-        CALL_PAR => {
-            if ip < code.len() {
+        CALL_PAR
+            if ip < code.len() => {
                 let count = code[ip] as usize;
                 2 + count
-            } else {
-                0
             }
-        }
         _ => 0,
     }
 }

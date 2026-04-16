@@ -178,11 +178,10 @@ fn collect_codegen_deps_expr(
                 }
             }
         }
-        Expr::TailCall(boxed) => {
-            if fn_names.contains(&boxed.target) {
+        Expr::TailCall(boxed)
+            if fn_names.contains(&boxed.target) => {
                 out.insert(boxed.target.clone());
             }
-        }
         _ => {}
     });
 }

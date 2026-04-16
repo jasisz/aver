@@ -1234,14 +1234,14 @@ pub(super) fn cmd_run_vm(
         eprintln!("Total opcodes: {}", report.total_opcodes);
         eprintln!("\nTop opcodes:");
         let mut sorted = report.opcodes.clone();
-        sorted.sort_by(|a, b| b.count.cmp(&a.count));
+        sorted.sort_by_key(|b| std::cmp::Reverse(b.count));
         for op in sorted.iter().take(20).filter(|o| o.count > 0) {
             let pct = op.count as f64 / report.total_opcodes as f64 * 100.0;
             eprintln!("  {:>22} {:>12}  ({:.1}%)", op.name, op.count, pct);
         }
         eprintln!("\nTop functions (by entries):");
         let mut fns = report.functions.clone();
-        fns.sort_by(|a, b| b.entries.cmp(&a.entries));
+        fns.sort_by_key(|b| std::cmp::Reverse(b.entries));
         for f in fns.iter().take(15).filter(|f| f.entries > 0) {
             let flags = format!(
                 "{}{}",

@@ -117,7 +117,7 @@ impl TypeChecker {
                 }
                 let binding_tys =
                     self.pattern_constructor_binding_types(name, subject_ty, bindings.len());
-                for (bind_name, bind_ty) in bindings.iter().zip(binding_tys.into_iter()) {
+                for (bind_name, bind_ty) in bindings.iter().zip(binding_tys) {
                     if bind_name != "_" {
                         out.push((bind_name.clone(), bind_ty));
                     }

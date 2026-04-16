@@ -482,7 +482,7 @@ fn values_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
     }
     let map = arena.clone_map_value(args[0]);
     let mut entries: Vec<(NanValue, NanValue)> = map.values().cloned().collect();
-    entries.sort_by(|(a, _), (b, _)| a.repr(arena).cmp(&b.repr(arena)));
+    entries.sort_by_key(|(a, _)| a.repr(arena));
     let vals: Vec<NanValue> = entries.into_iter().map(|(_, v)| v).collect();
     if vals.is_empty() {
         return Ok(NanValue::EMPTY_LIST);
@@ -505,7 +505,7 @@ fn entries_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
     }
     let map = arena.clone_map_value(args[0]);
     let mut entries: Vec<(NanValue, NanValue)> = map.values().cloned().collect();
-    entries.sort_by(|(a, _), (b, _)| a.repr(arena).cmp(&b.repr(arena)));
+    entries.sort_by_key(|(a, _)| a.repr(arena));
     let pairs: Vec<NanValue> = entries
         .into_iter()
         .map(|(k, v)| {

@@ -285,7 +285,7 @@ impl std::hash::Hash for Value {
             Value::Map(map) => {
                 10u8.hash(state);
                 let mut entries = map.iter().collect::<Vec<_>>();
-                entries.sort_by(|(k1, _), (k2, _)| aver_repr(k1).cmp(&aver_repr(k2)));
+                entries.sort_by_key(|(k1, _)| aver_repr(k1));
                 for (k, v) in entries {
                     k.hash(state);
                     v.hash(state);

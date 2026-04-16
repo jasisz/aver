@@ -144,7 +144,7 @@ impl VmProfileState {
 
     pub(crate) fn top_bigrams(&self, n: usize) -> Vec<((u8, u8), u64)> {
         let mut pairs: Vec<_> = self.bigram_counts.iter().map(|(&k, &v)| (k, v)).collect();
-        pairs.sort_by(|a, b| b.1.cmp(&a.1));
+        pairs.sort_by_key(|b| std::cmp::Reverse(b.1));
         pairs.truncate(n);
         pairs
     }

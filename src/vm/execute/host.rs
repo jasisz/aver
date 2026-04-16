@@ -132,7 +132,7 @@ impl VM {
         let mut roots: Vec<NanValue> = patches.iter().map(|patch| patch.value).collect();
         arena.promote_roots_to_stable(&mut roots);
 
-        for (patch, value) in patches.into_iter().zip(roots.into_iter()) {
+        for (patch, value) in patches.into_iter().zip(roots) {
             code.functions[patch.fn_idx].code[patch.bits_pos..patch.bits_pos + 8]
                 .copy_from_slice(&value.bits().to_be_bytes());
         }

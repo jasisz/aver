@@ -211,21 +211,19 @@ impl TypeChecker {
                             return Type::Option(Box::new(inner));
                         }
                         // Option/Result combinators: propagate inner types
-                        "Option.withDefault" => {
+                        "Option.withDefault"
                             // (Option<T>, T) -> T
-                            if arg_types.len() == 2 {
+                            if arg_types.len() == 2 => {
                                 return arg_types[1].clone();
                             }
-                        }
-                        "Result.withDefault" => {
+                        "Result.withDefault"
                             // (Result<T, E>, T) -> T
-                            if arg_types.len() == 2 {
+                            if arg_types.len() == 2 => {
                                 return arg_types[1].clone();
                             }
-                        }
-                        "Option.toResult" => {
+                        "Option.toResult"
                             // (Option<T>, E) -> Result<T, E>
-                            if arg_types.len() == 2 {
+                            if arg_types.len() == 2 => {
                                 let t = match &arg_types[0] {
                                     Type::Option(inner) => *inner.clone(),
                                     _ => Type::Unknown,
@@ -233,7 +231,6 @@ impl TypeChecker {
                                 let e = arg_types[1].clone();
                                 return Type::Result(Box::new(t), Box::new(e));
                             }
-                        }
                         _ => {}
                     }
                     if let Some(sig) = self.find_fn_sig(&display_name).cloned() {
