@@ -4,8 +4,22 @@ All notable changes to Aver are documented here.
 
 ## 0.9.6 (2026-04-16)
 
+### Performance
+- **VECTOR_SET_OR_KEEP in-place mutation** — fused `Option.withDefault(Vector.set(v, i, val), v)` always has sole ownership; the opcode now mutates the vector directly at its arena slot. Vector get/set 5k: 17ms → 816µs (20× faster).
+- **Skip promotion rewrite for bulk types without young refs** — vectors/maps/tuples of inline ints skip O(n) per-element rewrite during young→yard promotion. Vector get/set 5k: 17ms → 12.6ms (−26%).
+- **VM arena in-place map rewrite** — map promotion rewrites NanValue pairs in-place via `Rc::make_mut` instead of rebuilding the HashMap. Map build 5k: 24ms → 1.3ms (18.9×). COW ops inherit source allocation space, skipping redundant promotion.
+
 ### Changed
 - **Unified symbol resolution for uppercase dotted paths** — `classify_leaf_op` now classifies uppercase `Expr::Attr` paths (Option.None, variant constructors, module function refs) via three new `LeafOp` variants instead of returning `None`. Eliminates duplicate resolution logic from Rust and WASM backends. WASM backend now routes `Expr::Attr` through the shared IR layer.
+
+### Added
+- **WASM `Option.toResult` builtin** — `Some(v) → Ok(v)`, `None → Err(err_value)`.
+
+### Fixed
+- **WASM cross-module variant constructor resolution** — hierarchical module paths like `Domain.Types.TaskStatus.Blocked` now resolve correctly (previously only single-level bases worked).
+
+### Removed
+- Dead `entry_has_young_refs` function.
 
 ## 0.9.5 (2026-04-15)
 
