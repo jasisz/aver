@@ -929,6 +929,45 @@ impl<T: ArenaTypes> Arena<T> {
         value.with_heap_index(new_index)
     }
 
+    /// Check if a NanValue references young heap at or after `mark`.
+    #[inline(always)]
+    fn value_needs_young_promotion(value: NanValue, mark: u32) -> bool {
+        if let Some(index) = value.heap_index() {
+            let (space, raw_index) = Self::decode_index(index);
+            matches!(space, HeapSpace::Young) && raw_index >= mark
+        } else {
+            false
+        }
+    }
+
+    /// Check if any NanValue inside an entry references young heap at or after `mark`.
+    /// Only checks bulk-data types (Vector, Map, Tuple, Record) where skipping
+    /// the rewrite is a big win. Lists use Prepend/Concat nodes that almost always
+    /// have heap refs, so scanning them just adds overhead — return true directly.
+    fn entry_has_young_refs(entry: &ArenaEntry<T>, mark: u32) -> bool {
+        match entry {
+            ArenaEntry::Int(_)
+            | ArenaEntry::String(_)
+            | ArenaEntry::Builtin(_)
+            | ArenaEntry::Fn(_) => false,
+            ArenaEntry::Boxed(inner) => Self::value_needs_young_promotion(*inner, mark),
+            ArenaEntry::List(_) => true,
+            ArenaEntry::Tuple(items) | ArenaEntry::Vector(items) => {
+                items.iter().any(|v| Self::value_needs_young_promotion(*v, mark))
+            }
+            ArenaEntry::Map(map) => map.values().any(|(k, v)| {
+                Self::value_needs_young_promotion(*k, mark)
+                    || Self::value_needs_young_promotion(*v, mark)
+            }),
+            ArenaEntry::Record { fields, .. } | ArenaEntry::Variant { fields, .. } => {
+                fields.iter().any(|v| Self::value_needs_young_promotion(*v, mark))
+            }
+            ArenaEntry::Namespace { members, .. } => {
+                members.iter().any(|(_, v)| Self::value_needs_young_promotion(*v, mark))
+            }
+        }
+    }
+
     fn promote_entry_to_target(
         &mut self,
         entry: ArenaEntry<T>,
@@ -936,6 +975,25 @@ impl<T: ArenaTypes> Arena<T> {
         relocated: &mut [u32],
         target: AllocSpace,
     ) -> ArenaEntry<T> {
+        // Fast path for bulk-data types: if no NanValue in this entry points
+        // to young >= mark, skip the rewrite — move the entry as-is.
+        // Only check types where the scan is cheap relative to the rewrite cost.
+        match &entry {
+            ArenaEntry::Vector(items) | ArenaEntry::Tuple(items) if !items.is_empty() => {
+                if !items.iter().any(|v| Self::value_needs_young_promotion(*v, mark)) {
+                    return entry;
+                }
+            }
+            ArenaEntry::Map(map) if !map.is_empty() => {
+                if !map.values().any(|(k, v)| {
+                    Self::value_needs_young_promotion(*k, mark)
+                        || Self::value_needs_young_promotion(*v, mark)
+                }) {
+                    return entry;
+                }
+            }
+            _ => {}
+        }
         let mut rewrite = |arena: &mut Arena<T>, value: NanValue| {
             arena.promote_region_root_to_target(value, mark, relocated, target)
         };
