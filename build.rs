@@ -1,39 +1,26 @@
 fn main() {
-    // Extract the pinned aver-rt version from our Cargo.toml so the Rust
-    // codegen can embed it without reading files at runtime.  This works
-    // both from a local checkout (inline table) and crates.io install
-    // (expanded [dependencies.aver-rt] section).
     let manifest = std::fs::read_to_string("Cargo.toml").expect("failed to read Cargo.toml");
 
-    // Try inline format: aver-rt = { ..., version = "=0.4.1", ... }
+    // Inline: aver-rt = { ..., version = "=0.4.1", ... }
     for line in manifest.lines() {
-        let line = line.trim();
-        if line.starts_with("aver-rt") && line.contains("version = \"") {
-            if let Some(version) = extract_version(line) {
-                println!("cargo::rustc-env=AVER_RT_VERSION={version}");
-                return;
-            }
+        let trimmed = line.trim();
+        if trimmed.starts_with("aver-rt") && let Some(v) = extract_version(trimmed) {
+            emit(v);
+            return;
         }
     }
 
-    // Try expanded format: [dependencies.aver-rt] followed by version = "..."
-    let mut in_aver_rt_section = false;
+    // Expanded: [dependencies.aver-rt] section
+    let mut in_section = false;
     for line in manifest.lines() {
-        let line = line.trim();
-        if line == "[dependencies.aver-rt]" {
-            in_aver_rt_section = true;
-            continue;
-        }
-        if in_aver_rt_section {
-            if line.starts_with('[') {
-                break;
-            }
-            if line.starts_with("version") {
-                if let Some(version) = extract_version(line) {
-                    println!("cargo::rustc-env=AVER_RT_VERSION={version}");
-                    return;
-                }
-            }
+        let trimmed = line.trim();
+        if trimmed == "[dependencies.aver-rt]" {
+            in_section = true;
+        } else if in_section && trimmed.starts_with('[') {
+            break;
+        } else if in_section && trimmed.starts_with("version") && let Some(v) = extract_version(trimmed) {
+            emit(v);
+            return;
         }
     }
 
@@ -45,4 +32,8 @@ fn extract_version(line: &str) -> Option<&str> {
     let rest = &line[start..];
     let end = rest.find('"')?;
     Some(&rest[..end])
+}
+
+fn emit(version: &str) {
+    println!("cargo::rustc-env=AVER_RT_VERSION={version}");
 }
