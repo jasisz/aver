@@ -355,10 +355,12 @@ pub fn set_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Ru
         ));
     }
     ensure_hashable_nv("Map.set", args[1])?;
-    let old_map = arena.take_map_value(args[0]);
+    let source = args[0];
+    let old_map = arena.take_map_value(source);
     let key_hash = nv_key_bits(args[1], arena);
     let new_map = old_map.insert_owned(key_hash, (args[1], args[2]));
-    let map_idx = arena.push_map(new_map);
+    let map_idx =
+        arena.push_inheriting_source_space(aver_memory::ArenaEntry::Map(new_map), source);
     Ok(NanValue::new_map(map_idx))
 }
 

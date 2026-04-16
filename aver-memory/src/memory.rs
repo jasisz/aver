@@ -180,12 +180,12 @@ impl<T: ArenaTypes> Arena<T> {
                 }
                 ArenaEntry::Vector(items)
             }
-            ArenaEntry::Map(map) => {
-                let mut out = T::Map::new();
-                for (&hash, &(key, value)) in map.iter() {
-                    out = out.insert(hash, (rewrite(self, key), rewrite(self, value)));
-                }
-                ArenaEntry::Map(out)
+            ArenaEntry::Map(mut map) => {
+                map.rewrite_values_mut(|pair| {
+                    pair.0 = rewrite(self, pair.0);
+                    pair.1 = rewrite(self, pair.1);
+                });
+                ArenaEntry::Map(map)
             }
             ArenaEntry::Record {
                 type_id,

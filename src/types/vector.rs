@@ -276,13 +276,15 @@ pub fn vec_set_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue
     if idx < 0 {
         return Ok(NanValue::NONE);
     }
-    let mut items = arena.take_vector_value(args[0]);
+    let source = args[0];
+    let mut items = arena.take_vector_value(source);
     let uidx = idx as usize;
     if uidx >= items.len() {
         return Ok(NanValue::NONE);
     }
     items[uidx] = args[2];
-    let new_vec_idx = arena.push_vector(items);
+    let new_vec_idx = arena
+        .push_inheriting_source_space(aver_memory::ArenaEntry::Vector(items), source);
     Ok(NanValue::new_some_value(
         NanValue::new_vector(new_vec_idx),
         arena,

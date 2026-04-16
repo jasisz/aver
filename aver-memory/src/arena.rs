@@ -355,6 +355,28 @@ impl<T: ArenaTypes> Arena<T> {
         out
     }
 
+    /// Push an entry, inheriting the allocation space from a source value.
+    /// If the source lives in yard or handoff, the result is placed there too,
+    /// avoiding a pointless young→yard/handoff promotion later.
+    pub fn push_inheriting_source_space(&mut self, entry: ArenaEntry<T>, source: NanValue) -> u32 {
+        if let Some(index) = source.heap_index() {
+            let (space, _) = Self::decode_index(index);
+            let target = match space {
+                HeapSpace::Yard => Some(AllocSpace::Yard),
+                HeapSpace::Handoff => Some(AllocSpace::Handoff),
+                _ => None,
+            };
+            if let Some(target) = target {
+                let prev = self.alloc_space;
+                self.alloc_space = target;
+                let idx = self.push(entry);
+                self.alloc_space = prev;
+                return idx;
+            }
+        }
+        self.push(entry)
+    }
+
     // -- Typed push helpers ------------------------------------------------
 
     pub fn push_i64(&mut self, val: i64) -> u32 {

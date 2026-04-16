@@ -208,6 +208,14 @@ where
         self
     }
 
+    /// Rewrite values in place using `Rc::make_mut` (zero-copy when sole owner).
+    pub fn rewrite_values_in_place(&mut self, mut f: impl FnMut(&mut V)) {
+        let inner = Rc::make_mut(&mut self.inner);
+        for value in inner.values_mut() {
+            f(value);
+        }
+    }
+
     /// O(n) because `&self` preserves the original map.
     pub fn remove(&self, key: &K) -> Self {
         self.clone().remove_owned(key)

@@ -77,6 +77,9 @@ pub trait MapLike: Sized {
     fn insert_owned(self, key: u64, value: (NanValue, NanValue)) -> Self {
         self.insert(key, value) // default: fall back to &self version
     }
+    /// Rewrite NanValue pairs in place — avoids rebuilding the hash table.
+    /// Uses copy-on-write: O(1) when sole owner, O(n) clone when shared.
+    fn rewrite_values_mut(&mut self, f: impl FnMut(&mut (NanValue, NanValue)));
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool {
         self.len() == 0
@@ -1303,6 +1306,10 @@ impl MapLike for aver_rt::AverMap<u64, (NanValue, NanValue)> {
         aver_rt::AverMap::insert_owned(self, key, value)
     }
 
+    fn rewrite_values_mut(&mut self, f: impl FnMut(&mut (NanValue, NanValue))) {
+        self.rewrite_values_in_place(f)
+    }
+
     fn len(&self) -> usize {
         aver_rt::AverMap::len(self)
     }
@@ -1343,6 +1350,12 @@ impl MapLike for PersistentMap {
         let mut m = self.0.clone();
         m.insert(key, value);
         PersistentMap(m)
+    }
+
+    fn rewrite_values_mut(&mut self, mut f: impl FnMut(&mut (NanValue, NanValue))) {
+        for value in self.0.values_mut() {
+            f(value);
+        }
     }
 
     fn len(&self) -> usize {
