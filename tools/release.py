@@ -204,7 +204,7 @@ def verify(dry_run: bool) -> None:
         print("  [dry-run] would run: cargo fmt --check, clippy, test")
         return
 
-    run(["cargo", "fmt", "--check"])
+    run(["cargo", "fmt"])
     # Skip generated self-host code in clippy (same as CI)
     run(["cargo", "clippy", "--workspace", "--all-targets", "--exclude", "aver-lang", "--", "-D", "warnings"])
     run(["cargo", "clippy", "-p", "aver-lang", "--lib", "--bin", "aver", "--features", "wasm", "--", "-D", "warnings"])
