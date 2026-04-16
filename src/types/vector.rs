@@ -283,8 +283,8 @@ pub fn vec_set_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue
         return Ok(NanValue::NONE);
     }
     items[uidx] = args[2];
-    let new_vec_idx = arena
-        .push_inheriting_source_space(aver_memory::ArenaEntry::Vector(items), source);
+    let new_vec_idx =
+        arena.push_inheriting_source_space(aver_memory::ArenaEntry::Vector(items), source);
     Ok(NanValue::new_some_value(
         NanValue::new_vector(new_vec_idx),
         arena,
