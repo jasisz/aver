@@ -22,11 +22,12 @@ enum RuntimeKind {
     Vm,
     Wasm,
     Generated,
+    SelfHost,
 }
 
 impl RuntimeKind {
     fn all() -> &'static [RuntimeKind] {
-        &[Self::Vm, Self::Wasm, Self::Generated]
+        &[Self::Vm, Self::Wasm, Self::Generated, Self::SelfHost]
     }
 
     fn name(self) -> &'static str {
@@ -34,6 +35,7 @@ impl RuntimeKind {
             Self::Vm => "vm",
             Self::Wasm => "wasm",
             Self::Generated => "generated",
+            Self::SelfHost => "selfhost",
         }
     }
 }
@@ -114,7 +116,7 @@ struct CoreResult {
     vm_ms: f64,
     wasm_ms: f64,
     generated_ms: f64,
-    generated_build_ms: f64,
+    selfhost_ms: f64,
     outputs_match: bool,
 }
 
@@ -125,6 +127,7 @@ struct AppResult {
     vm_ms: f64,
     wasm_ms: f64,
     generated_ms: f64,
+    selfhost_ms: f64,
 }
 
 type CommandBatch = Vec<Vec<String>>;
@@ -145,7 +148,7 @@ struct RunContext<'a> {
 }
 
 fn usage() -> &'static str {
-    "Usage: cargo run --release --bin runtime_bench -- [--suite core|apps|all] [--runtime vm|wasm|generated|all] [--core-case SLUG|all] [--app workflow_engine|payment_ops|all] [--workload NAME|all] [--full] [--seed N] [--iters N] [--warmup N] [--output DIR] [--rebuild]"
+    "Usage: cargo run --release --bin runtime_bench -- [--suite core|apps|all] [--runtime vm|wasm|generated|selfhost|all] [--core-case SLUG|all] [--app workflow_engine|payment_ops|all] [--workload NAME|all] [--full] [--seed N] [--iters N] [--warmup N] [--output DIR] [--rebuild]"
 }
 
 fn parse_suite(value: &str) -> Option<SuiteKind> {
@@ -172,6 +175,7 @@ fn parse_runtimes(value: &str) -> Option<Vec<RuntimeKind>> {
             "vm" => RuntimeKind::Vm,
             "wasm" => RuntimeKind::Wasm,
             "generated" => RuntimeKind::Generated,
+            "selfhost" => RuntimeKind::SelfHost,
             _ => return None,
         };
         if !out.contains(&runtime) {
@@ -506,6 +510,14 @@ fn run_core_once(
             cmd.current_dir(repo_root);
             run_capture(&mut cmd, "core generated run")
         }
+        RuntimeKind::SelfHost => {
+            let mut cmd = Command::new(aver_bin);
+            cmd.current_dir(repo_root)
+                .arg("run")
+                .arg(source_path)
+                .arg("--self-host");
+            run_capture(&mut cmd, "core selfhost run")
+        }
     }
 }
 
@@ -532,34 +544,48 @@ fn bench_core_runtime(
     Ok((median(times), last_output))
 }
 
+fn best_vs_vm(result_vm_ms: f64, candidates: &[(&str, f64)]) -> String {
+    let best = candidates
+        .iter()
+        .filter(|(_, ms)| *ms > 0.0)
+        .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    match best {
+        Some((name, ms)) if result_vm_ms > 0.0 => format!("{:.1}x ({})", result_vm_ms / ms, name),
+        _ => "n/a".to_string(),
+    }
+}
+
 fn print_core_results(results: &[CoreResult]) {
     println!();
     println!("Core benchmarks — end-to-end wall time (median)");
-    println!("{:-<128}", "");
+    println!("{:-<140}", "");
     println!(
-        "{:<22} {:>12} {:>12} {:>12} {:>12} {:>12} {:>8}",
-        "Benchmark", "VM", "WASM", "Generated", "Gen build", "WASM speed", "Match"
+        "{:<22} {:>12} {:>12} {:>12} {:>12} {:>18} {:>8}",
+        "Benchmark", "VM", "WASM", "Generated", "Self-host", "Best vs VM", "Match"
     );
-    println!("{:-<128}", "");
+    println!("{:-<140}", "");
     for result in results {
-        let wasm_speed = if result.wasm_ms > 0.0 {
-            format!("{:.1}x", result.vm_ms / result.wasm_ms)
-        } else {
-            "n/a".to_string()
-        };
+        let best = best_vs_vm(
+            result.vm_ms,
+            &[
+                ("wasm", result.wasm_ms),
+                ("gen", result.generated_ms),
+                ("selfhost", result.selfhost_ms),
+            ],
+        );
         let match_status = if result.outputs_match { "OK" } else { "DIFF" };
         println!(
-            "{:<22} {:>10.3}ms {:>10.3}ms {:>10.3}ms {:>10.3}ms {:>12} {:>8}",
+            "{:<22} {:>10.3}ms {:>10.3}ms {:>10.3}ms {:>10.3}ms {:>18} {:>8}",
             result.name,
             result.vm_ms,
             result.wasm_ms,
             result.generated_ms,
-            result.generated_build_ms,
-            wasm_speed,
+            result.selfhost_ms,
+            best,
             match_status
         );
     }
-    println!("{:-<128}", "");
+    println!("{:-<140}", "");
 }
 
 fn benchmark_core(
@@ -588,7 +614,7 @@ fn benchmark_core(
             .join("core")
             .join(case.slug);
         let generated_name = format!("runtime_bench_core_{}", case.slug);
-        let (generated_bin, generated_build_ms) = ensure_generated_project(
+        let (generated_bin, _generated_build_ms) = ensure_generated_project(
             repo_root,
             aver_bin,
             GeneratedProjectSpec {
@@ -628,14 +654,25 @@ fn benchmark_core(
             cfg.warmup,
             cfg.iters,
         )?;
+        let (selfhost_ms, selfhost_out) = bench_core_runtime(
+            RuntimeKind::SelfHost,
+            repo_root,
+            aver_bin,
+            &source_path,
+            &generated_bin,
+            cfg.warmup,
+            cfg.iters,
+        )?;
 
         results.push(CoreResult {
             name: case.name,
             vm_ms,
             wasm_ms,
             generated_ms,
-            generated_build_ms,
-            outputs_match: vm_out == wasm_out && wasm_out == generated_out,
+            selfhost_ms,
+            outputs_match: vm_out == wasm_out
+                && wasm_out == generated_out
+                && generated_out == selfhost_out,
         });
     }
 
@@ -799,6 +836,17 @@ fn run_app_command(
             cmd.current_dir(repo_root);
             cmd
         }
+        RuntimeKind::SelfHost => {
+            let mut cmd = Command::new(aver_bin);
+            cmd.current_dir(repo_root)
+                .arg("run")
+                .arg(repo_root.join(app.entry_file()))
+                .arg("--module-root")
+                .arg(repo_root.join(app.module_root()))
+                .arg("--self-host")
+                .arg("--");
+            cmd
+        }
     };
 
     cmd.args(args);
@@ -876,29 +924,33 @@ fn print_app_results(results: &[AppResult], full: bool) {
             DEFAULT_WORKFLOW_APP_SEED
         );
     }
-    println!("{:-<120}", "");
+    println!("{:-<140}", "");
     println!(
-        "{:<18} {:<18} {:>12} {:>12} {:>12} {:>12}",
-        "App", "Workload", "VM", "WASM", "Generated", "WASM speed"
+        "{:<18} {:<18} {:>12} {:>12} {:>12} {:>12} {:>18}",
+        "App", "Workload", "VM", "WASM", "Generated", "Self-host", "Best vs VM"
     );
-    println!("{:-<120}", "");
+    println!("{:-<140}", "");
     for result in results {
-        let wasm_speed = if result.wasm_ms > 0.0 {
-            format!("{:.1}x", result.vm_ms / result.wasm_ms)
-        } else {
-            "n/a".to_string()
-        };
+        let best = best_vs_vm(
+            result.vm_ms,
+            &[
+                ("wasm", result.wasm_ms),
+                ("gen", result.generated_ms),
+                ("selfhost", result.selfhost_ms),
+            ],
+        );
         println!(
-            "{:<18} {:<18} {:>10.3}ms {:>10.3}ms {:>10.3}ms {:>12}",
+            "{:<18} {:<18} {:>10.3}ms {:>10.3}ms {:>10.3}ms {:>10.3}ms {:>18}",
             result.app,
             result.workload,
             result.vm_ms,
             result.wasm_ms,
             result.generated_ms,
-            wasm_speed
+            result.selfhost_ms,
+            best
         );
     }
-    println!("{:-<120}", "");
+    println!("{:-<140}", "");
 }
 
 fn benchmark_apps(
@@ -971,12 +1023,22 @@ fn benchmark_apps(
                 cfg.warmup,
                 cfg.iters,
             )?;
+            let selfhost_ms = bench_app_runtime(
+                RuntimeKind::SelfHost,
+                app,
+                workload,
+                app_seed,
+                &ctx,
+                cfg.warmup,
+                cfg.iters,
+            )?;
             results.push(AppResult {
                 app: app.name(),
                 workload,
                 vm_ms,
                 wasm_ms,
                 generated_ms,
+                selfhost_ms,
             });
         }
     }
@@ -995,7 +1057,7 @@ fn main() {
 
     if cfg.runtimes != RuntimeKind::all() {
         eprintln!(
-            "runtime_bench currently measures all three runtimes together; selective --runtime filtering is not implemented yet"
+            "runtime_bench currently measures all four runtimes together; selective --runtime filtering is not implemented yet"
         );
         std::process::exit(2);
     }
