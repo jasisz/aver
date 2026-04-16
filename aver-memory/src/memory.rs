@@ -951,21 +951,22 @@ impl<T: ArenaTypes> Arena<T> {
         // to young >= mark, skip the rewrite — move the entry as-is.
         // Only check types where the scan is cheap relative to the rewrite cost.
         match &entry {
-            ArenaEntry::Vector(items) | ArenaEntry::Tuple(items) if !items.is_empty() => {
-                if !items
-                    .iter()
-                    .any(|v| Self::value_needs_young_promotion(*v, mark))
-                {
-                    return entry;
-                }
+            ArenaEntry::Vector(items) | ArenaEntry::Tuple(items)
+                if !items.is_empty()
+                    && !items
+                        .iter()
+                        .any(|v| Self::value_needs_young_promotion(*v, mark)) =>
+            {
+                return entry;
             }
-            ArenaEntry::Map(map) if !map.is_empty() => {
-                if !map.values().any(|(k, v)| {
-                    Self::value_needs_young_promotion(*k, mark)
-                        || Self::value_needs_young_promotion(*v, mark)
-                }) {
-                    return entry;
-                }
+            ArenaEntry::Map(map)
+                if !map.is_empty()
+                    && !map.values().any(|(k, v)| {
+                        Self::value_needs_young_promotion(*k, mark)
+                            || Self::value_needs_young_promotion(*v, mark)
+                    }) =>
+            {
+                return entry;
             }
             _ => {}
         }
