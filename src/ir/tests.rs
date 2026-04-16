@@ -32,7 +32,7 @@ impl CallLowerCtx for DummyCtx {
     }
 
     fn is_user_type(&self, name: &str) -> bool {
-        matches!(name, "Shape" | "User")
+        matches!(name, "Shape" | "User" | "TaskStatus")
     }
 
     fn resolve_module_call<'a>(&self, dotted: &'a str) -> Option<(&'a str, &'a str)> {
@@ -40,6 +40,7 @@ impl CallLowerCtx for DummyCtx {
             "Data.Fib.fib" => Some(("Data.Fib", "fib")),
             "Models.Shape.Circle" => Some(("Models", "Shape.Circle")),
             "Map.generateMap" => Some(("Map", "generateMap")),
+            "Domain.Types.TaskStatus.Blocked" => Some(("Domain.Types", "TaskStatus.Blocked")),
             _ => None,
         }
     }
@@ -690,8 +691,9 @@ fn classify_int_mod_with_literal_default_leaf() {
 }
 
 #[test]
-fn uppercase_module_paths_are_not_field_leafs() {
+fn uppercase_module_paths_return_static_ref_leaf() {
     let ctx = DummyCtx;
+    // Data.Fib.fib is a module function reference, not a field access
     let expr = Expr::Attr(
         sbb(Expr::Attr(
             sbb(Expr::Ident("Data".to_string())),
@@ -699,7 +701,73 @@ fn uppercase_module_paths_are_not_field_leafs() {
         )),
         "fib".to_string(),
     );
-    assert_eq!(classify_leaf_op(&expr, &ctx), None);
+    assert_eq!(
+        classify_leaf_op(&expr, &ctx),
+        Some(LeafOp::StaticRef("Data.Fib.fib".to_string()))
+    );
+}
+
+#[test]
+fn option_none_returns_none_value_leaf() {
+    let ctx = DummyCtx;
+    let expr = Expr::Attr(
+        sbb(Expr::Ident("Option".to_string())),
+        "None".to_string(),
+    );
+    assert_eq!(classify_leaf_op(&expr, &ctx), Some(LeafOp::NoneValue));
+}
+
+#[test]
+fn shape_circle_returns_variant_constructor_leaf() {
+    let ctx = DummyCtx;
+    let expr = Expr::Attr(
+        sbb(Expr::Ident("Shape".to_string())),
+        "Circle".to_string(),
+    );
+    assert_eq!(
+        classify_leaf_op(&expr, &ctx),
+        Some(LeafOp::VariantConstructor {
+            qualified_type_name: "Shape".to_string(),
+            variant_name: "Circle".to_string(),
+        })
+    );
+}
+
+#[test]
+fn module_qualified_variant_returns_variant_constructor_leaf() {
+    let ctx = DummyCtx;
+    // Domain.Types.TaskStatus.Blocked — hierarchical module variant
+    let expr = Expr::Attr(
+        sbb(Expr::Attr(
+            sbb(Expr::Attr(
+                sbb(Expr::Ident("Domain".to_string())),
+                "Types".to_string(),
+            )),
+            "TaskStatus".to_string(),
+        )),
+        "Blocked".to_string(),
+    );
+    assert_eq!(
+        classify_leaf_op(&expr, &ctx),
+        Some(LeafOp::VariantConstructor {
+            qualified_type_name: "Domain.Types.TaskStatus".to_string(),
+            variant_name: "Blocked".to_string(),
+        })
+    );
+}
+
+#[test]
+fn builtin_path_returns_static_ref_leaf() {
+    let ctx = DummyCtx;
+    // List.len is a builtin namespace member in non-call position
+    let expr = Expr::Attr(
+        sbb(Expr::Ident("List".to_string())),
+        "len".to_string(),
+    );
+    assert_eq!(
+        classify_leaf_op(&expr, &ctx),
+        Some(LeafOp::StaticRef("List.len".to_string()))
+    );
 }
 
 #[test]

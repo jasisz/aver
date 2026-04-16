@@ -6,7 +6,7 @@ use super::{CallLowerCtx, CallPlan, classify_call_plan, expr_to_dotted_name};
 ///
 /// These are still semantic plans, not backend instructions: they recognize
 /// common Aver expression shapes whose meaning is clearer than the raw AST.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum LeafOp<'a> {
     FieldAccess {
         object: &'a Spanned<Expr>,
@@ -46,11 +46,20 @@ pub enum LeafOp<'a> {
         list: &'a Spanned<Expr>,
         index: &'a Spanned<Expr>,
     },
+    /// `Option.None` in non-call position.
+    NoneValue,
+    /// Nullary variant constructor: `Shape.Circle`, `Domain.Types.TaskStatus.Blocked`.
+    VariantConstructor {
+        qualified_type_name: String,
+        variant_name: String,
+    },
+    /// Static module/builtin path not in call position: `Fibonacci.fib`, `List.len`.
+    StaticRef(String),
 }
 
 pub fn classify_leaf_op<'a>(expr: &'a Expr, ctx: &impl CallLowerCtx) -> Option<LeafOp<'a>> {
     match expr {
-        Expr::Attr(object, field_name) => classify_field_access(expr, object, field_name),
+        Expr::Attr(object, field_name) => classify_field_access(expr, object, field_name, ctx),
         Expr::FnCall(fn_expr, args) => classify_leaf_call(&fn_expr.node, args, ctx),
         _ => None,
     }
@@ -60,19 +69,31 @@ fn classify_field_access<'a>(
     full_expr: &'a Expr,
     object: &'a Spanned<Expr>,
     field_name: &'a str,
+    ctx: &impl CallLowerCtx,
 ) -> Option<LeafOp<'a>> {
-    // Uppercase dotted paths are static module/type/builtin references, not
-    // runtime record field access.
-    if expr_to_dotted_name(full_expr).is_some_and(|dotted| {
-        dotted
-            .chars()
-            .next()
-            .is_some_and(|first| first.is_uppercase())
-    }) {
-        return None;
+    if !expr_to_dotted_name(full_expr)
+        .is_some_and(|dotted| dotted.chars().next().is_some_and(|c| c.is_uppercase()))
+    {
+        return Some(LeafOp::FieldAccess { object, field_name });
     }
 
-    Some(LeafOp::FieldAccess { object, field_name })
+    // Uppercase dotted path: reuse classify_call_plan to determine semantics.
+    match classify_call_plan(full_expr, ctx) {
+        CallPlan::NoneValue => Some(LeafOp::NoneValue),
+        CallPlan::TypeConstructor {
+            qualified_type_name,
+            variant_name,
+        } => Some(LeafOp::VariantConstructor {
+            qualified_type_name,
+            variant_name,
+        }),
+        CallPlan::Builtin(name) => Some(LeafOp::StaticRef(name)),
+        CallPlan::Function(name) => Some(LeafOp::StaticRef(name)),
+        CallPlan::Wrapper(_) => Some(LeafOp::StaticRef(
+            expr_to_dotted_name(full_expr).unwrap_or_default(),
+        )),
+        CallPlan::Dynamic => None,
+    }
 }
 
 fn classify_leaf_call<'a>(

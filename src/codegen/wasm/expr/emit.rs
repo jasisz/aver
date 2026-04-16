@@ -11,7 +11,8 @@ use wasm_encoder::Instruction;
 
 use crate::ast::{BinOp, Expr, Literal, Spanned, Stmt, StrPart, TailCallData};
 use crate::ir::{
-    CallPlan, SemanticConstructor, WrapperKind, classify_call_plan, classify_constructor_name,
+    CallPlan, LeafOp, SemanticConstructor, WrapperKind, classify_call_plan,
+    classify_constructor_name, classify_leaf_op,
 };
 use crate::types::Type;
 
@@ -78,8 +79,44 @@ impl<'a> ExprEmitter<'a> {
             Expr::RecordCreate { type_name, fields } => {
                 self.emit_record_create(type_name, fields);
             }
-            Expr::Attr(base_expr, field_name) => {
-                self.emit_field_access(base_expr, field_name);
+            Expr::Attr(_, _) => {
+                let leaf = {
+                    let ctx = self.ir_ctx();
+                    classify_leaf_op(expr, &ctx)
+                };
+                match leaf {
+                    Some(LeafOp::NoneValue) => {
+                        self.instructions
+                            .push(Instruction::I32Const(value::NONE_SENTINEL));
+                    }
+                    Some(LeafOp::VariantConstructor {
+                        qualified_type_name,
+                        variant_name,
+                    }) => {
+                        self.emit_variant_constructor(&qualified_type_name, &variant_name, &[]);
+                    }
+                    Some(LeafOp::StaticRef(name)) => {
+                        self.codegen_error(format!(
+                            "static path `{}` in value position not supported in WASM",
+                            name
+                        ));
+                        self.emit_default_value(WasmType::I32);
+                    }
+                    Some(LeafOp::FieldAccess {
+                        object, field_name, ..
+                    }) => {
+                        self.emit_field_access(object, field_name);
+                    }
+                    Some(other) => {
+                        unreachable!(
+                            "classify_leaf_op returned unexpected variant for Expr::Attr: {:?}",
+                            other
+                        );
+                    }
+                    None => {
+                        unreachable!("classify_leaf_op returned None for Expr::Attr");
+                    }
+                }
             }
             Expr::TailCall(tc) => self.emit_tailcall(tc),
             Expr::MapLiteral(entries) => {
@@ -1026,32 +1063,9 @@ impl<'a> ExprEmitter<'a> {
     }
 
     fn emit_field_access(&mut self, base_expr: &Spanned<Expr>, field_name: &str) {
-        // Check if this is an uppercase dotted path (type/namespace reference, not field access).
-        // Use expr_to_dotted_name on the full Attr expression to handle hierarchical modules
-        // like Domain.Types.TaskStatus.Blocked.
-        let full_expr = Expr::Attr(Box::new(base_expr.clone()), field_name.to_string());
-        if let Some(dotted) = crate::ir::expr_to_dotted_name(&full_expr)
-            && dotted.chars().next().is_some_and(|c| c.is_uppercase())
-        {
-            let ctor = classify_constructor_name(&dotted, &self.ir_ctx());
-            match ctor {
-                SemanticConstructor::NoneValue => {
-                    self.instructions
-                        .push(Instruction::I32Const(value::NONE_SENTINEL));
-                    return;
-                }
-                SemanticConstructor::TypeConstructor {
-                    qualified_type_name,
-                    variant_name,
-                } => {
-                    self.emit_variant_constructor(&qualified_type_name, &variant_name, &[]);
-                    return;
-                }
-                _ => {}
-            }
-        }
-
-        // Runtime field access on a record object
+        // Runtime field access on a record object.
+        // Uppercase dotted paths (None, variant ctors, static refs) are handled
+        // by classify_leaf_op in emit_expr before reaching here.
         self.emit_expr(&base_expr.node);
 
         // Resolve field index using base expression's type for disambiguation

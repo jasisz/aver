@@ -439,6 +439,53 @@ impl<'a> FnCompiler<'a> {
                 self.emit_op(UNWRAP_RESULT_OR);
                 Ok(())
             }
+            LeafOp::NoneValue => {
+                let idx = self.add_constant(NanValue::NONE);
+                self.emit_op(LOAD_CONST);
+                self.emit_u16(idx);
+                Ok(())
+            }
+            LeafOp::VariantConstructor {
+                ref qualified_type_name,
+                ref variant_name,
+            } => {
+                if let Some(type_id) = self.resolve_type_id(qualified_type_name)
+                    && let Some(variant_id) = self.arena.find_variant_id(type_id, variant_name)
+                {
+                    self.emit_op(VARIANT_NEW);
+                    self.emit_u16(type_id as u16);
+                    self.emit_u16(variant_id);
+                    self.emit_u8(0); // nullary — zero fields
+                    Ok(())
+                } else {
+                    Err(CompileError {
+                        msg: format!(
+                            "unknown variant constructor: {}.{}",
+                            qualified_type_name, variant_name
+                        ),
+                    })
+                }
+            }
+            LeafOp::StaticRef(ref name) => {
+                // Static function/builtin reference in value position.
+                // Resolve via namespace path lookup (same as compile_attr).
+                if let Some(dot) = name.rfind('.') {
+                    let ns_path = &name[..dot];
+                    let member = &name[dot + 1..];
+                    if let Some(symbol_id) = self.symbols.resolve_namespace_path(ns_path) {
+                        let idx = self.add_constant(VmSymbolTable::symbol_ref(symbol_id));
+                        self.emit_op(LOAD_CONST);
+                        self.emit_u16(idx);
+                        let field_symbol_id = self.symbols.intern_name(member);
+                        self.emit_op(RECORD_GET_NAMED);
+                        self.emit_u32(field_symbol_id);
+                        return Ok(());
+                    }
+                }
+                Err(CompileError {
+                    msg: format!("unresolved static reference: {}", name),
+                })
+            }
         }
     }
 

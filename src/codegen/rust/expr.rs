@@ -194,38 +194,15 @@ fn emit_expr_with_options(
 ) -> String {
     let lower_ctx = RustCallCtx { ctx, ectx };
     if let Some(leaf) = classify_leaf_op(expr, &lower_ctx) {
-        return emit_leaf_op_with_options(leaf, ctx, ectx, allow_callsite_inlining);
+        return emit_leaf_op_with_options(&leaf, ctx, ectx, allow_callsite_inlining);
     }
 
     match expr {
         Expr::Literal(lit) => emit_literal(lit),
         Expr::Ident(name) | Expr::Resolved { name, .. } => aver_name_to_rust(name),
         Expr::Attr(obj, field) => {
-            if let Expr::Ident(type_name) = &obj.node {
-                // Option.None → None
-                if type_name == "Option" && field == "None" {
-                    return "None".to_string();
-                }
-                // User-defined type constructor access: Shape.Point
-                if is_user_type(type_name, ctx) {
-                    return format!("{}::{}", type_name, field);
-                }
-            }
-            // Check if this is a module-qualified reference: Fibonacci.fib
-            if let Some(full_dotted) = expr_to_dotted_name(expr)
-                && let Some((prefix, bare)) = resolve_module_call(&full_dotted, ctx)
-            {
-                let module_path = module_prefix_to_rust_path(prefix);
-                // Could be a simple function name or a type.variant
-                if let Some(dot_pos) = bare.find('.') {
-                    let type_name = &bare[..dot_pos];
-                    let variant = &bare[dot_pos + 1..];
-                    if is_user_type(type_name, ctx) {
-                        return format!("{}::{}::{}", module_path, type_name, variant);
-                    }
-                }
-                return format!("{}::{}", module_path, aver_name_to_rust(bare));
-            }
+            // classify_leaf_op handles all Attr cases (field access, None,
+            // variant constructors, static refs). This fallback is a safety net.
             let obj_str = emit_expr(&obj.node, ctx, ectx);
             format!("{}.{}", obj_str, aver_name_to_rust(field))
         }
@@ -559,7 +536,7 @@ fn emit_body_expr_plan_with_options(
             code
         }
         BodyExprPlan::Leaf(leaf) => {
-            let code = emit_leaf_op_with_options(*leaf, ctx, ectx, allow_callsite_inlining);
+            let code = emit_leaf_op_with_options(leaf, ctx, ectx, allow_callsite_inlining);
             // Field access on a borrowed param in return position needs .clone()
             // to produce an owned value.
             if let LeafOp::FieldAccess { object, .. } = leaf
@@ -694,7 +671,7 @@ fn forward_arg_to_expr(arg: &ForwardArg) -> Expr {
 }
 
 fn emit_leaf_op_with_options(
-    leaf: LeafOp<'_>,
+    leaf: &LeafOp<'_>,
     ctx: &CodegenContext,
     ectx: &EmitCtx,
     allow_callsite_inlining: bool,
@@ -777,6 +754,30 @@ fn emit_leaf_op_with_options(
             let list = emit_expr_with_options(&list.node, ctx, ectx, allow_callsite_inlining);
             let index = emit_expr_with_options(&index.node, ctx, ectx, allow_callsite_inlining);
             format!("{}.to_vec().get({} as usize).cloned()", list, index)
+        }
+        LeafOp::NoneValue => "None".to_string(),
+        LeafOp::VariantConstructor {
+            qualified_type_name,
+            variant_name,
+        } => {
+            if let Some((prefix, _)) = resolve_module_call(qualified_type_name, ctx) {
+                let module_path = module_prefix_to_rust_path(prefix);
+                let bare_type = qualified_type_name
+                    .rsplit_once('.')
+                    .map(|(_, t)| t)
+                    .unwrap_or(qualified_type_name);
+                format!("{}::{}::{}", module_path, bare_type, variant_name)
+            } else {
+                format!("{}::{}", qualified_type_name, variant_name)
+            }
+        }
+        LeafOp::StaticRef(name) => {
+            if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
+                let module_path = module_prefix_to_rust_path(prefix);
+                format!("{}::{}", module_path, aver_name_to_rust(bare))
+            } else {
+                aver_name_to_rust(name)
+            }
         }
     }
 }
