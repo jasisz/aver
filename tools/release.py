@@ -211,14 +211,17 @@ def verify(dry_run: bool) -> None:
     run(["cargo", "test", "--features", "wasm"])
 
 
-def publish(dry_run: bool) -> None:
+def publish(new_versions: dict[str, str], old_versions: dict[str, str], dry_run: bool) -> None:
     print("Publishing to crates.io...")
     for crate in CRATE_ORDER:
+        if new_versions[crate] == old_versions[crate]:
+            print(f"  {crate}: skipped (unchanged)")
+            continue
         cmd = ["cargo", "publish", "-p", crate, "--allow-dirty"]
         if dry_run:
             print(f"  [dry-run] {' '.join(cmd)}")
         else:
-            print(f"  Publishing {crate}...")
+            print(f"  Publishing {crate} {new_versions[crate]}...")
             run(cmd)
 
 
@@ -302,7 +305,7 @@ def main() -> int:
 
     # 6. Publish
     if not args.skip_publish:
-        publish(dry_run)
+        publish(new_versions, old_versions, dry_run)
         print()
 
     # 7. Commit, tag, push, GitHub release
