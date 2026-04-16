@@ -160,6 +160,25 @@ def regenerate_self_host(dry_run: bool) -> None:
     if src_dest.exists():
         shutil.rmtree(src_dest)
     shutil.copytree(src_source, src_dest)
+
+    # Remove verify.rs (test-only, causes compile errors as [[bin]] in aver-lang)
+    verify_rs = src_dest / "verify.rs"
+    if verify_rs.exists():
+        verify_rs.unlink()
+
+    # Patch main.rs: add clippy::all allow, remove verify module
+    main_rs = src_dest / "main.rs"
+    text = main_rs.read_text()
+    text = text.replace(
+        "#![allow(",
+        "#![allow(clippy::all, ",
+    )
+    text = text.replace("\n#[cfg(test)]\nmod verify;\n", "\n")
+    main_rs.write_text(text)
+
+    # Format generated code
+    run(["cargo", "fmt"])
+
     print(f"  Copied {sum(1 for _ in src_dest.rglob('*.rs'))} files to src/self_host/")
 
 
