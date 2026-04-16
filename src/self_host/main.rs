@@ -1,4 +1,5 @@
 #![allow(
+    clippy::all,
     unused_variables,
     unused_mut,
     dead_code,
@@ -7,8 +8,7 @@
     non_snake_case,
     non_camel_case_types,
     unreachable_patterns,
-    hidden_glob_reexports,
-    clippy::all
+    hidden_glob_reexports
 )]
 // Aver Rust emission
 #[macro_use]

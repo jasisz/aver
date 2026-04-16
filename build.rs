@@ -4,7 +4,9 @@ fn main() {
     // Inline: aver-rt = { ..., version = "=0.4.1", ... }
     for line in manifest.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("aver-rt") && let Some(v) = extract_version(trimmed) {
+        if trimmed.starts_with("aver-rt")
+            && let Some(v) = extract_version(trimmed)
+        {
             emit(v);
             return;
         }
@@ -18,7 +20,10 @@ fn main() {
             in_section = true;
         } else if in_section && trimmed.starts_with('[') {
             break;
-        } else if in_section && trimmed.starts_with("version") && let Some(v) = extract_version(trimmed) {
+        } else if in_section
+            && trimmed.starts_with("version")
+            && let Some(v) = extract_version(trimmed)
+        {
             emit(v);
             return;
         }
