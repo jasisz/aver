@@ -1,35 +1,8 @@
 /// Cargo.toml generation for the transpiled project.
 use std::collections::HashSet;
-use std::path::Path;
 
-fn runtime_version(runtime_path: &Path) -> String {
-    let manifest_path = runtime_path.join("Cargo.toml");
-    let manifest = std::fs::read_to_string(&manifest_path).unwrap_or_else(|e| {
-        panic!(
-            "Rust transpiler: failed to read aver-rt manifest at {}: {}",
-            manifest_path.display(),
-            e
-        )
-    });
-    let value: toml::Value = manifest.parse().unwrap_or_else(|e| {
-        panic!(
-            "Rust transpiler: failed to parse aver-rt manifest at {}: {}",
-            manifest_path.display(),
-            e
-        )
-    });
-    value
-        .get("package")
-        .and_then(|pkg| pkg.get("version"))
-        .and_then(toml::Value::as_str)
-        .map(|version| format!("={version}"))
-        .unwrap_or_else(|| {
-            panic!(
-                "Rust transpiler: aver-rt manifest at {} is missing package.version",
-                manifest_path.display()
-            )
-        })
-}
+/// aver-rt version embedded at compile time from build.rs.
+const RUNTIME_VERSION: &str = env!("AVER_RT_VERSION");
 
 fn runtime_override_path() -> Option<String> {
     std::env::var("AVER_RUNTIME_PATH")
@@ -69,7 +42,6 @@ pub fn generate_cargo_toml(
     has_embedded_policy: bool,
     has_runtime_policy: bool,
     has_scoped_runtime: bool,
-    runtime_path: &Path,
 ) -> String {
     let mut lines = Vec::new();
     lines.push("[package]".to_string());
@@ -92,10 +64,10 @@ pub fn generate_cargo_toml(
     rt_features.sort();
 
     let mut deps = Vec::new();
-    let runtime_version = runtime_version(runtime_path);
+    let runtime_version = RUNTIME_VERSION;
     let runtime_path = runtime_override_path();
     deps.push(runtime_dependency_line(
-        &runtime_version,
+        runtime_version,
         &rt_features,
         runtime_path.as_deref(),
     ));

@@ -16,7 +16,7 @@ use aver::types::checker::run_type_check_full;
 use aver::value::{Value, aver_repr, list_to_vec};
 use aver::vm;
 
-use crate::commands::build_self_host_binary;
+use crate::commands::find_self_host_binary;
 use crate::shared::{apply_runtime_policy_to_vm, parse_file, read_file};
 
 fn collect_recording_files_from_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
@@ -290,7 +290,7 @@ fn replay_recording_file_self_host(
 
     let replay_module_root = resolve_replay_module_root(path, &recording);
     let replay_program_file = resolve_replay_program_file(&recording, &replay_module_root);
-    let binary_path = build_self_host_binary(false)?;
+    let binary_path = find_self_host_binary()?;
     let guest_args = decode_self_host_guest_args(&recording.input)?;
 
     let mut command = Command::new(&binary_path);

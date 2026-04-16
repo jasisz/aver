@@ -1037,7 +1037,9 @@ fn expr_is_hoistable_invariant(
     }
 
     match classify_body_expr_plan_for_rust(expr, ctx, ectx) {
-        BodyExprPlan::Leaf(LeafOp::StaticRef(_) | LeafOp::NoneValue) => false,
+        BodyExprPlan::Leaf(
+            LeafOp::StaticRef(_) | LeafOp::NoneValue | LeafOp::VariantConstructor { .. },
+        ) => false,
         BodyExprPlan::Leaf(_) => true,
         BodyExprPlan::Call { target, .. } => call_plan_is_effect_free(&target, ctx),
         BodyExprPlan::ForwardCall(plan) => call_plan_is_effect_free(&plan.target, ctx),

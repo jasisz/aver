@@ -17,8 +17,8 @@ keywords = ["language", "interpreter", "transpiler", "programming-language"]
 categories = ["compilers"]
 include = [
     "/src/**",
-    "/self_hosted/**",
     "!/src/bin/**",
+    "/build.rs",
     "/README.md",
     "/LICENSE",
 ]
@@ -30,6 +30,11 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "aver"
 path = "src/main.rs"
+
+[[bin]]
+name = "aver_self_host_cli"
+path = "src/self_host/main.rs"
+required-features = ["runtime"]
 
 [features]
 default = ["runtime", "terminal"]

@@ -2,6 +2,22 @@
 
 All notable changes to Aver are documented here.
 
+## 0.9.7 (2026-04-16)
+
+### Changed
+- **Pre-compiled self-host** — `--self-host` no longer generates Rust code and runs `cargo build` at runtime. The self-host interpreter is compiled as a `[[bin]]` target alongside `aver`, so `cargo install aver-lang` provides both binaries out of the box. No Rust toolchain needed at runtime.
+- **Cargo package cleanup** — published crate excludes `self_hosted/`, `examples/`, `tools/`, `editors/`, etc. Only `src/` and essentials ship. Self-host generated code lives in `src/self_host/`.
+
+### Added
+- **Release script** (`tools/release.py`) — automates version bumps, self-host regeneration, playground rebuild, crates.io publish, and GitHub release creation.
+
+### Fixed
+- **`--self-host` crash from crates.io install** — the runtime codegen tried to read `aver-rt/Cargo.toml` relative to the installed crate source, which doesn't exist. Eliminated by removing runtime codegen entirely.
+- **Rust codegen: TCO invariant hoisting of variant constructors** — enum variant constructors (e.g., `Val::ValStr`) were hoisted as loop invariants, causing move errors in generated Rust. Now excluded alongside builtins.
+
+### Removed
+- Runtime codegen pipeline for self-host (`build_self_host_binary`, fingerprinting, `cargo build --offline` invocation).
+
 ## 0.9.6 (2026-04-16)
 
 ### Performance

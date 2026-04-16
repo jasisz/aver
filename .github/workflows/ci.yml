@@ -26,7 +26,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --exclude aver-lang -- -D warnings && cargo clippy -p aver-lang --lib --bin aver --tests -- -D warnings
 
       - name: Test
         run: cargo test --workspace
@@ -44,7 +44,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Clippy (wasm)
-        run: cargo clippy -p aver-lang --all-targets --features wasm -- -D warnings
+        run: cargo clippy -p aver-lang --lib --bin aver --tests --features wasm -- -D warnings
 
       - name: Test (wasm)
         run: cargo test -p aver-lang --features wasm

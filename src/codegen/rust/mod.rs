@@ -85,7 +85,6 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
                 has_embedded_policy,
                 has_runtime_policy,
                 ctx.emit_replay_runtime,
-                &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("aver-rt"),
             ),
         ),
         (

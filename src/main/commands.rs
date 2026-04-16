@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc as Rc;
@@ -224,143 +223,25 @@ fn with_local_runtime_override<T>(run: impl FnOnce() -> T) -> T {
     result
 }
 
-fn hashed_cache_dir(label: &str, key: &str) -> PathBuf {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    label.hash(&mut hasher);
-    key.hash(&mut hasher);
-    let hash = hasher.finish();
-    std::env::temp_dir().join(format!("{label}-{hash:016x}"))
-}
-
-fn self_host_paths() -> (PathBuf, PathBuf) {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("self_hosted");
-    let file = root.join("main.av");
-    (file, root)
-}
-
-fn self_host_binary_path(cache_dir: &Path) -> PathBuf {
-    cache_dir.join("target").join("release").join(format!(
-        "aver_self_host_cli{}",
-        std::env::consts::EXE_SUFFIX
-    ))
-}
-
-fn self_host_build_fingerprint() -> Result<String, String> {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    env!("CARGO_PKG_VERSION").hash(&mut hasher);
-
-    if let Ok(exe) = std::env::current_exe() {
-        exe.to_string_lossy().hash(&mut hasher);
-        let meta = fs::metadata(&exe)
-            .map_err(|e| format!("Cannot stat current executable '{}': {}", exe.display(), e))?;
-        meta.len().hash(&mut hasher);
-        if let Ok(modified) = meta.modified()
-            && let Ok(delta) = modified.duration_since(UNIX_EPOCH)
-        {
-            delta.as_secs().hash(&mut hasher);
-            delta.subsec_nanos().hash(&mut hasher);
-        }
+/// Find the pre-compiled self-host binary next to the current executable.
+/// The binary is built as a `[[bin]]` target in the same Cargo package,
+/// so `cargo build` / `cargo install` places it alongside `aver`.
+pub(super) fn find_self_host_binary() -> Result<PathBuf, String> {
+    let self_exe =
+        std::env::current_exe().map_err(|e| format!("cannot determine executable path: {e}"))?;
+    let dir = self_exe
+        .parent()
+        .ok_or_else(|| "cannot determine executable directory".to_string())?;
+    let name = format!("aver_self_host_cli{}", std::env::consts::EXE_SUFFIX);
+    let binary = dir.join(&name);
+    if binary.exists() {
+        Ok(binary)
+    } else {
+        Err(format!(
+            "self-host binary not found at {}. Rebuild with: cargo build --features runtime",
+            binary.display()
+        ))
     }
-
-    let (_self_host_file, self_host_root) = self_host_paths();
-    let mut sources = Vec::new();
-    collect_av_input_files(&self_host_root, &mut sources)?;
-    sources.sort();
-    for path in sources {
-        path.strip_prefix(&self_host_root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .hash(&mut hasher);
-        fs::read(&path)
-            .map_err(|e| format!("Cannot read self-host source '{}': {}", path.display(), e))?
-            .hash(&mut hasher);
-    }
-
-    Ok(format!("{:016x}", hasher.finish()))
-}
-
-pub(super) fn build_self_host_binary(show_progress: bool) -> Result<PathBuf, String> {
-    let (self_host_file, self_host_root) = self_host_paths();
-    let expected_fingerprint = self_host_build_fingerprint()?;
-    let cache_dir = hashed_cache_dir("aver-self-host", &expected_fingerprint);
-    let binary_path = self_host_binary_path(&cache_dir);
-    let fingerprint_path = cache_dir.join(".fingerprint");
-
-    if binary_path.exists()
-        && fs::read_to_string(&fingerprint_path)
-            .ok()
-            .is_some_and(|stored| stored.trim() == expected_fingerprint)
-    {
-        return Ok(binary_path);
-    }
-
-    let self_host_file_str = path_to_string(&self_host_file);
-    let self_host_root_str = path_to_string(&self_host_root);
-    if show_progress {
-        eprintln!("Self-host: generating cached helper code...");
-    }
-    let (mut ctx, _) = build_codegen_context(
-        &self_host_file_str,
-        Some("aver_self_host_cli"),
-        Some(&self_host_root_str),
-        true,
-        &super::cli::CompilePolicyMode::Runtime,
-        Some("runGuestCliProgram"),
-        true,
-    );
-
-    let output = with_local_runtime_override(|| rust_codegen::transpile(&mut ctx));
-    if show_progress {
-        eprintln!("Self-host: materializing helper project...");
-    }
-    materialize_codegen_output(&cache_dir, &output)?;
-
-    if show_progress {
-        eprintln!("Self-host: building cached helper binary...");
-    }
-    let build = process::Command::new("cargo")
-        .arg("build")
-        .arg("--quiet")
-        .arg("--release")
-        .arg("--offline")
-        .current_dir(&cache_dir)
-        .output()
-        .map_err(|e| {
-            format!(
-                "Failed to build cached self-host binary in '{}': {}",
-                cache_dir.display(),
-                e
-            )
-        })?;
-    if !build.status.success() {
-        let stdout = String::from_utf8_lossy(&build.stdout).trim().to_string();
-        let stderr = String::from_utf8_lossy(&build.stderr).trim().to_string();
-        let mut msg = format!(
-            "Failed to build cached self-host binary in '{}'",
-            cache_dir.display()
-        );
-        if !stdout.is_empty() {
-            msg.push_str(&format!("\nstdout:\n{}", stdout));
-        }
-        if !stderr.is_empty() {
-            msg.push_str(&format!("\nstderr:\n{}", stderr));
-        }
-        return Err(msg);
-    }
-
-    fs::write(&fingerprint_path, format!("{expected_fingerprint}\n")).map_err(|e| {
-        format!(
-            "Cannot write self-host fingerprint '{}': {}",
-            fingerprint_path.display(),
-            e
-        )
-    })?;
-
-    if show_progress {
-        eprintln!("Self-host: helper ready.");
-    }
-
-    Ok(binary_path)
 }
 
 fn module_name(items: &[TopLevel]) -> Option<String> {
@@ -2095,7 +1976,7 @@ pub(super) fn cmd_run_self_hosted(
     }
 
     let module_root = resolve_module_root(module_root_override);
-    let binary_path = match build_self_host_binary(true) {
+    let binary_path = match find_self_host_binary() {
         Ok(path) => path,
         Err(e) => {
             eprintln!("{}", e.red());
