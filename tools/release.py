@@ -186,7 +186,9 @@ def verify(dry_run: bool) -> None:
         return
 
     run(["cargo", "fmt", "--check"])
-    run(["cargo", "clippy", "--features", "wasm", "--", "-D", "warnings"])
+    # Skip generated self-host code in clippy (same as CI)
+    run(["cargo", "clippy", "--workspace", "--all-targets", "--exclude", "aver-lang", "--", "-D", "warnings"])
+    run(["cargo", "clippy", "-p", "aver-lang", "--lib", "--bin", "aver", "--features", "wasm", "--", "-D", "warnings"])
     run(["cargo", "test", "--features", "wasm"])
 
 
