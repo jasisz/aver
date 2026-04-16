@@ -7,7 +7,7 @@ use super::expr::{
 use super::types::type_annotation_to_rust;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
-use crate::ir::{BodyExprPlan, CallPlan, thin_kind_is_parent_thin_candidate};
+use crate::ir::{BodyExprPlan, CallPlan, LeafOp, thin_kind_is_parent_thin_candidate};
 use crate::types::{Type, parse_type_str};
 /// Top-level Aver items → Rust items (structs, enums, functions, tests).
 use std::collections::{HashMap, HashSet};
@@ -1037,6 +1037,7 @@ fn expr_is_hoistable_invariant(
     }
 
     match classify_body_expr_plan_for_rust(expr, ctx, ectx) {
+        BodyExprPlan::Leaf(LeafOp::StaticRef(_) | LeafOp::NoneValue) => false,
         BodyExprPlan::Leaf(_) => true,
         BodyExprPlan::Call { target, .. } => call_plan_is_effect_free(&target, ctx),
         BodyExprPlan::ForwardCall(plan) => call_plan_is_effect_free(&plan.target, ctx),

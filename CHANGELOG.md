@@ -17,6 +17,7 @@ All notable changes to Aver are documented here.
 
 ### Fixed
 - **WASM cross-module variant constructor resolution** — hierarchical module paths like `Domain.Types.TaskStatus.Blocked` now resolve correctly (previously only single-level bases worked).
+- **Rust codegen: TCO invariant hoisting of builtin callees** — `List.prepend` and similar builtin namespace refs were hoisted as standalone value expressions, generating invalid Rust (`List.prepend`). Now excluded from hoisting since they're compile-time constants.
 
 ### Removed
 - Dead `entry_has_young_refs` function.
