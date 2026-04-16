@@ -359,9 +359,8 @@ pub fn collect_verify_coverage_warnings_in(
                             });
                     }
                 }
-                Type::List(_)
-                    if !args.iter().any(|arg| expr_is_empty_list_case(arg)) => {
-                        warnings.push(CheckFinding {
+                Type::List(_) if !args.iter().any(|arg| expr_is_empty_list_case(arg)) => {
+                    warnings.push(CheckFinding {
                                 line: block.line,
                                 module: module_name.clone(),
                                 file: source_file.map(|s| s.to_string()),
@@ -372,10 +371,9 @@ pub fn collect_verify_coverage_warnings_in(
                                 ),
                                 extra_spans: vec![],
                             });
-                    }
-                Type::Str
-                    if !args.iter().any(|arg| expr_is_empty_string_case(arg)) => {
-                        warnings.push(CheckFinding {
+                }
+                Type::Str if !args.iter().any(|arg| expr_is_empty_string_case(arg)) => {
+                    warnings.push(CheckFinding {
                                 line: block.line,
                                 module: module_name.clone(),
                                 file: source_file.map(|s| s.to_string()),
