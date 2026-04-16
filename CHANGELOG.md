@@ -2,6 +2,11 @@
 
 All notable changes to Aver are documented here.
 
+## 0.9.6 (2026-04-16)
+
+### Changed
+- **Unified symbol resolution for uppercase dotted paths** — `classify_leaf_op` now classifies uppercase `Expr::Attr` paths (Option.None, variant constructors, module function refs) via three new `LeafOp` variants instead of returning `None`. Eliminates duplicate resolution logic from Rust and WASM backends. WASM backend now routes `Expr::Attr` through the shared IR layer.
+
 ## 0.9.5 (2026-04-15)
 
 ### Changed

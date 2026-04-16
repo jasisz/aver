@@ -710,20 +710,14 @@ fn uppercase_module_paths_return_static_ref_leaf() {
 #[test]
 fn option_none_returns_none_value_leaf() {
     let ctx = DummyCtx;
-    let expr = Expr::Attr(
-        sbb(Expr::Ident("Option".to_string())),
-        "None".to_string(),
-    );
+    let expr = Expr::Attr(sbb(Expr::Ident("Option".to_string())), "None".to_string());
     assert_eq!(classify_leaf_op(&expr, &ctx), Some(LeafOp::NoneValue));
 }
 
 #[test]
 fn shape_circle_returns_variant_constructor_leaf() {
     let ctx = DummyCtx;
-    let expr = Expr::Attr(
-        sbb(Expr::Ident("Shape".to_string())),
-        "Circle".to_string(),
-    );
+    let expr = Expr::Attr(sbb(Expr::Ident("Shape".to_string())), "Circle".to_string());
     assert_eq!(
         classify_leaf_op(&expr, &ctx),
         Some(LeafOp::VariantConstructor {
@@ -760,10 +754,7 @@ fn module_qualified_variant_returns_variant_constructor_leaf() {
 fn builtin_path_returns_static_ref_leaf() {
     let ctx = DummyCtx;
     // List.len is a builtin namespace member in non-call position
-    let expr = Expr::Attr(
-        sbb(Expr::Ident("List".to_string())),
-        "len".to_string(),
-    );
+    let expr = Expr::Attr(sbb(Expr::Ident("List".to_string())), "len".to_string());
     assert_eq!(
         classify_leaf_op(&expr, &ctx),
         Some(LeafOp::StaticRef("List.len".to_string()))
