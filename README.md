@@ -26,7 +26,7 @@ This is not a language optimized for humans to type by hand all day. It is optim
 Website: [averlang.dev](https://averlang.dev)  
 Browser playground: [averlang.dev/playground](https://averlang.dev/playground/)
 
-Read the [Aver Manifesto](https://jasisz.github.io/aver-language/) for the longer argument, or [Common Pushback](docs/pushback.md) for questions, objections, and honest answers.
+Read the [Aver Manifesto](https://jasisz.github.io/aver-language/) for the longer argument, [Common Pushback](docs/pushback.md) for questions and objections, or [intent-trace](https://github.com/jasisz/intent-trace) for an empirical benchmark comparing Aver's legibility against Python variants across 108 AI-reviewed code changes.
 
 ---
 
