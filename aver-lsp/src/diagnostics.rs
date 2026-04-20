@@ -1,138 +1,141 @@
 use tower_lsp_server::ls_types::{
-    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, Position, Range, Uri,
+    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString,
+    Position, Range, Uri,
 };
 
 use std::sync::Arc as Rc;
 
 use aver::ast::{Expr, FnBody, FnDef, Spanned, TopLevel, VerifyKind};
-use aver::checker::{
-    check_module_intent_with_sigs, collect_verify_coverage_warnings, expr_to_str,
-    merge_verify_blocks,
+use aver::checker::{expr_to_str, merge_verify_blocks};
+use aver::diagnostics::{
+    AnalyzeOptions, Diagnostic as CanonicalDiagnostic, Severity as CanonicalSeverity,
+    analyze_source,
 };
 use aver::lexer::{Lexer, LexerError};
 use aver::nan_value::{Arena, NanValueConvert};
 use aver::parser::Parser;
 use aver::resolver;
 use aver::tco;
-use aver::types::checker::{TypeError, run_type_check_full};
 use aver::value::{Value, aver_repr};
 use aver::vm;
 
-/// Run the full Aver analysis pipeline on source text and return LSP diagnostics.
+/// Run the Aver analysis pipeline and return LSP diagnostics.
+///
+/// Stages:
+///   1. Lex / parse — if either fails, emit a single error diagnostic and stop.
+///   2. Canonical analysis via [`aver::diagnostics::analyze_source`] —
+///      type errors, intent/coverage/perf/cse/etc. warnings, unused bindings.
+///   3. Verify hygiene hints (case/law balance) — LSP-local for now; will
+///      migrate to canonical in a later commit when the Why pipeline does.
+///   4. Verify block execution — LSP-local; unified with CLI in a later
+///      commit alongside the playground Verify panel.
 pub fn diagnose(source: &str, base_dir: Option<&str>, uri: Option<&Uri>) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
-    // Phase 1: Lexing
+    // Phase 1: lex — own step to get precise lexer error locations.
     let mut lexer = Lexer::new(source);
     let tokens = match lexer.tokenize() {
         Ok(tokens) => tokens,
-        Err(e) => {
-            let (msg, line, col) = match e {
-                LexerError::Error { msg, line, col } => (msg, line, col),
-            };
-            diagnostics.push(Diagnostic {
-                range: Range {
-                    start: Position {
-                        line: line.saturating_sub(1) as u32,
-                        character: col.saturating_sub(1) as u32,
-                    },
-                    end: Position {
-                        line: line.saturating_sub(1) as u32,
-                        character: col as u32,
-                    },
-                },
-                severity: Some(DiagnosticSeverity::ERROR),
-                source: Some("aver".to_string()),
-                message: msg,
-                ..Default::default()
-            });
+        Err(LexerError::Error { msg, line, col }) => {
+            diagnostics.push(point_diagnostic(line, col, DiagnosticSeverity::ERROR, msg));
             return diagnostics;
         }
     };
 
-    // Phase 2: Parsing
+    // Phase 2: parse — same rationale.
     let mut parser = Parser::new(tokens);
-    let mut items = match parser.parse() {
+    let items = match parser.parse() {
         Ok(items) => items,
-        Err(e) => {
-            let (msg, line, col) = match e {
-                aver::parser::ParseError::Error { msg, line, col } => (msg, line, col),
-            };
-            diagnostics.push(Diagnostic {
-                range: Range {
-                    start: Position {
-                        line: line.saturating_sub(1) as u32,
-                        character: col.saturating_sub(1) as u32,
-                    },
-                    end: Position {
-                        line: line.saturating_sub(1) as u32,
-                        character: col as u32,
-                    },
-                },
-                severity: Some(DiagnosticSeverity::ERROR),
-                source: Some("aver".to_string()),
-                message: msg,
-                ..Default::default()
-            });
+        Err(aver::parser::ParseError::Error { msg, line, col }) => {
+            diagnostics.push(point_diagnostic(line, col, DiagnosticSeverity::ERROR, msg));
             return diagnostics;
         }
     };
 
-    // Phase 3: TCO transform (required before type checking)
-    tco::transform_program(&mut items);
-
-    // Phase 4: Type checking (with module resolution from base_dir)
-    let tc_result = run_type_check_full(&items, base_dir);
-    for te in &tc_result.errors {
-        diagnostics.push(type_error_to_diagnostic(te, source, uri));
+    // Phase 3: canonical analysis. Re-serializes source as it's cheap
+    // compared to going through parse again, and analyze_source's shape
+    // is the shared contract with CLI / playground.
+    let file_label = uri
+        .map(|u| u.to_string())
+        .unwrap_or_else(|| "<lsp>".to_string());
+    let mut opts = AnalyzeOptions::new(file_label);
+    if let Some(dir) = base_dir {
+        opts.module_base_dir = Some(dir.to_string());
+    }
+    let report = analyze_source(source, &opts);
+    for diag in &report.diagnostics {
+        diagnostics.push(to_lsp_diagnostic(diag, uri));
     }
 
-    // Phase 5: Contract-level findings (missing intent, descriptions, verify blocks)
-    let findings = check_module_intent_with_sigs(&items, Some(&tc_result.fn_sigs));
-    for warning in &findings.warnings {
-        diagnostics.push(check_finding_to_diagnostic(
-            warning,
-            DiagnosticSeverity::WARNING,
-            source,
-        ));
-    }
-    for error in &findings.errors {
-        diagnostics.push(check_finding_to_diagnostic(
-            error,
-            DiagnosticSeverity::ERROR,
-            source,
-        ));
-    }
-    for warning in &collect_verify_coverage_warnings(&items) {
-        diagnostics.push(check_finding_to_diagnostic(
-            warning,
-            DiagnosticSeverity::WARNING,
-            source,
-        ));
-    }
+    // Phase 4: verify hygiene hints (LSP-local).
     diagnostics.extend(verify_hygiene_diagnostics(&items));
 
-    // Phase 6: Run verify blocks (only when no type errors)
-    if tc_result.errors.is_empty() {
+    // Phase 5: verify block execution (LSP-local).
+    let tc_had_errors = report
+        .diagnostics
+        .iter()
+        .any(|d| matches!(d.severity, CanonicalSeverity::Error) && d.slug.starts_with("type-"));
+    if !tc_had_errors {
         diagnostics.extend(verify_run_diagnostics(items, base_dir));
     }
 
     diagnostics
 }
 
-/// Convert a checker finding to an LSP diagnostic.
-fn check_finding_to_diagnostic(
-    finding: &aver::checker::CheckFinding,
-    severity: DiagnosticSeverity,
-    source: &str,
-) -> Diagnostic {
-    let line = finding.line.saturating_sub(1) as u32;
-    let source_line = source.lines().nth(line as usize).unwrap_or("");
-    let (start_char, end_char) =
-        find_precise_span(source_line, &finding.message).unwrap_or_else(|| {
-            let indent = source_line.len() - source_line.trim_start().len();
-            (indent, indent + source_line.trim().len())
+// ─── Canonical → LSP mapping ─────────────────────────────────────────────────
+
+fn to_lsp_diagnostic(d: &CanonicalDiagnostic, uri: Option<&Uri>) -> Diagnostic {
+    let severity = match d.severity {
+        CanonicalSeverity::Error | CanonicalSeverity::Fail => DiagnosticSeverity::ERROR,
+        CanonicalSeverity::Warning => DiagnosticSeverity::WARNING,
+        CanonicalSeverity::Hint => DiagnosticSeverity::HINT,
+    };
+
+    // Prefer the first region's underline for precise range; fall back to
+    // the primary span.
+    let line = d.span.line.saturating_sub(1) as u32;
+    let (start_char, end_char) = d
+        .regions
+        .first()
+        .and_then(|r| r.underline.as_ref())
+        .map(|ul| (ul.col.saturating_sub(1), ul.col + ul.len.max(1) - 1))
+        .unwrap_or_else(|| {
+            let start = d.span.col.saturating_sub(1);
+            (start, start.max(start + 1))
         });
+
+    let related = if d.related.is_empty() {
+        None
+    } else {
+        uri.map(|u| {
+            d.related
+                .iter()
+                .map(|rel| DiagnosticRelatedInformation {
+                    location: Location {
+                        uri: u.clone(),
+                        range: Range {
+                            start: Position {
+                                line: rel.span.line.saturating_sub(1) as u32,
+                                character: rel.span.col.saturating_sub(1) as u32,
+                            },
+                            end: Position {
+                                line: rel.span.line.saturating_sub(1) as u32,
+                                character: (rel.span.col + 1) as u32,
+                            },
+                        },
+                    },
+                    message: rel.label.clone(),
+                })
+                .collect()
+        })
+    };
+
+    // Compose the human message: summary first, then repair if present.
+    let message = match d.repair.primary.as_deref() {
+        Some(repair) => format!("{}\n\nrepair: {}", d.summary, repair),
+        None => d.summary.clone(),
+    };
+
     Diagnostic {
         range: Range {
             start: Position {
@@ -145,99 +148,40 @@ fn check_finding_to_diagnostic(
             },
         },
         severity: Some(severity),
+        code: Some(NumberOrString::String(d.slug.to_string())),
         source: Some("aver".to_string()),
-        message: finding.message.clone(),
-        ..Default::default()
-    }
-}
-
-/// Find precise (start, end) byte offsets for the first backtick/quote-delimited
-/// fragment in `summary` within `source_line`. Returns 0-based offsets.
-fn find_precise_span(source_line: &str, summary: &str) -> Option<(usize, usize)> {
-    let search_after_arrow = summary.contains("right side") || summary.contains("=>");
-    for quote in ['`', '\''] {
-        if let Some(start_offset) = summary.find(quote) {
-            let start = start_offset + 1;
-            if let Some(end_offset) = summary[start..].find(quote) {
-                let needle = &summary[start..start + end_offset];
-                if !needle.is_empty() {
-                    let search_region = if search_after_arrow {
-                        source_line.find("=>").map(|p| p + 2).unwrap_or(0)
-                    } else {
-                        0
-                    };
-                    if let Some(pos) = source_line[search_region..].find(needle) {
-                        let col = search_region + pos;
-                        return Some((col, col + needle.len()));
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-fn type_error_to_diagnostic(te: &TypeError, source: &str, uri: Option<&Uri>) -> Diagnostic {
-    // When secondary span is present, narrow primary range to the return type after `->`.
-    let source_line = source.lines().nth(te.line.saturating_sub(1)).unwrap_or("");
-    let (start_char, end_char) = if te.secondary.is_some() {
-        if let Some(arrow_pos) = source_line.find("-> ") {
-            let after = &source_line[arrow_pos + 3..];
-            let len = after
-                .chars()
-                .take_while(|c| c.is_alphanumeric() || matches!(c, '<' | '>' | ',' | ' ' | '.'))
-                .count();
-            let len = after[..len].trim_end().len();
-            (arrow_pos + 3, arrow_pos + 3 + len.max(1))
-        } else if te.col > 0 {
-            (te.col, te.col + 1)
-        } else {
-            (0, 200)
-        }
-    } else if te.col > 0 {
-        (te.col, te.col + 1)
-    } else {
-        (0, 200)
-    };
-
-    let related = te.secondary.as_ref().and_then(|sec| {
-        let u = uri?;
-        Some(vec![DiagnosticRelatedInformation {
-            location: Location {
-                uri: u.clone(),
-                range: Range {
-                    start: Position {
-                        line: sec.line.saturating_sub(1) as u32,
-                        character: 0,
-                    },
-                    end: Position {
-                        line: sec.line.saturating_sub(1) as u32,
-                        character: 200,
-                    },
-                },
-            },
-            message: sec.label.clone(),
-        }])
-    });
-
-    Diagnostic {
-        range: Range {
-            start: Position {
-                line: te.line.saturating_sub(1) as u32,
-                character: start_char as u32,
-            },
-            end: Position {
-                line: te.line.saturating_sub(1) as u32,
-                character: end_char as u32,
-            },
-        },
-        severity: Some(DiagnosticSeverity::ERROR),
-        source: Some("aver".to_string()),
-        message: te.message.clone(),
+        message,
         related_information: related,
         ..Default::default()
     }
 }
+
+fn point_diagnostic(
+    line: usize,
+    col: usize,
+    severity: DiagnosticSeverity,
+    message: String,
+) -> Diagnostic {
+    Diagnostic {
+        range: Range {
+            start: Position {
+                line: line.saturating_sub(1) as u32,
+                character: col.saturating_sub(1) as u32,
+            },
+            end: Position {
+                line: line.saturating_sub(1) as u32,
+                character: col as u32,
+            },
+        },
+        severity: Some(severity),
+        source: Some("aver".to_string()),
+        message,
+        ..Default::default()
+    }
+}
+
+// ─── LSP-local: verify hygiene hints ─────────────────────────────────────────
+// Moves to canonical in a later commit.
 
 fn verify_hygiene_diagnostics(items: &[TopLevel]) -> Vec<Diagnostic> {
     let verify_by_fn = merge_verify_blocks(items).into_iter().fold(
@@ -292,6 +236,23 @@ fn verify_hygiene_diagnostics(items: &[TopLevel]) -> Vec<Diagnostic> {
     diagnostics
 }
 
+fn hint_at_line(line: usize, message: String) -> Diagnostic {
+    let line = line.saturating_sub(1) as u32;
+    Diagnostic {
+        range: Range {
+            start: Position { line, character: 0 },
+            end: Position { line, character: 0 },
+        },
+        severity: Some(DiagnosticSeverity::HINT),
+        source: Some("aver-lsp".to_string()),
+        message,
+        ..Default::default()
+    }
+}
+
+// ─── LSP-local: verify block execution ───────────────────────────────────────
+// Unified with CLI `aver verify` in a later commit.
+
 fn make_verify_vm_helper(
     name: String,
     line: usize,
@@ -326,7 +287,6 @@ fn verify_run_diagnostics(mut items: Vec<TopLevel>, base_dir: Option<&str>) -> V
         return vec![];
     }
 
-    // Build verify plans — add __verify_* helper fns to items
     struct CaseFns {
         left: String,
         right: String,
@@ -414,13 +374,12 @@ fn verify_run_diagnostics(mut items: Vec<TopLevel>, base_dir: Option<&str>) -> V
                 .unwrap_or(block.line);
             let col = 0usize;
 
-            // Guard check
             if let Some(guard_name) = &case_fns.guard {
                 match machine.run_named_function(guard_name, &[]) {
                     Ok(v) => {
                         let val = v.to_value(&machine.arena);
                         if val == Value::Bool(false) {
-                            continue; // skipped
+                            continue;
                         }
                     }
                     Err(_) => continue,
@@ -437,7 +396,7 @@ fn verify_run_diagnostics(mut items: Vec<TopLevel>, base_dir: Option<&str>) -> V
             let outcome = match (left_result, right_result) {
                 (Ok(Value::Ok(left_val)), Ok(Value::Ok(right_val))) => {
                     if *left_val == *right_val {
-                        continue; // pass
+                        continue;
                     }
                     format!(
                         "verify mismatch: {} — expected {}, got {}",
@@ -473,6 +432,7 @@ fn verify_run_diagnostics(mut items: Vec<TopLevel>, base_dir: Option<&str>) -> V
                     },
                 },
                 severity: Some(DiagnosticSeverity::ERROR),
+                code: Some(NumberOrString::String("verify-mismatch".to_string())),
                 source: Some("aver-verify".to_string()),
                 message: outcome,
                 ..Default::default()
@@ -481,20 +441,6 @@ fn verify_run_diagnostics(mut items: Vec<TopLevel>, base_dir: Option<&str>) -> V
     }
 
     diagnostics
-}
-
-fn hint_at_line(line: usize, message: String) -> Diagnostic {
-    let line = line.saturating_sub(1) as u32;
-    Diagnostic {
-        range: Range {
-            start: Position { line, character: 0 },
-            end: Position { line, character: 0 },
-        },
-        severity: Some(DiagnosticSeverity::HINT),
-        source: Some("aver-lsp".to_string()),
-        message,
-        ..Default::default()
-    }
 }
 
 #[cfg(test)]
@@ -596,5 +542,31 @@ verify add1 law add1Spec
                     .message
                     .contains("verify laws but no concrete examples")
         }));
+    }
+
+    #[test]
+    fn diagnostics_carry_slug_as_code() {
+        let source = r#"module Demo
+fn bad() -> Int
+    ? "type mismatch"
+    "string"
+"#;
+        let diagnostics = diagnose(source, None, None);
+        let has_type_error_with_code = diagnostics.iter().any(|d| {
+            d.severity == Some(DiagnosticSeverity::ERROR)
+                && matches!(
+                    &d.code,
+                    Some(tower_lsp_server::ls_types::NumberOrString::String(slug))
+                        if slug.starts_with("type-")
+                )
+        });
+        assert!(
+            has_type_error_with_code,
+            "expected a type-* diagnostic carrying its slug in the `code` field; got: {:?}",
+            diagnostics
+                .iter()
+                .map(|d| (d.severity, d.code.clone(), d.message.clone()))
+                .collect::<Vec<_>>()
+        );
     }
 }

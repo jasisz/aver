@@ -858,28 +858,48 @@ if (checkBtn) {
             const comp = await loadCompiler();
             setStatus("Checking…", "info");
             const json = comp.aver_check(source);
-            const diags = JSON.parse(json);
+            const bundle = JSON.parse(json);
+            const diagnostics = bundle.diagnostics || [];
             const lines = source.split("\n");
             let hasError = false;
 
-            for (const d of diags) {
-                if (d.severity === "ok") {
-                    appendConsole("stdout", `✓ ${d.message}`);
-                    continue;
-                }
-                const isErr = d.severity === "error";
-                if (isErr) hasError = true;
-                const tag = isErr ? "error" : "warning";
-                const lineNum = d.line || 0;
+            if (diagnostics.length === 0) {
+                appendConsole("stdout", "✓ All checks passed.");
+            }
 
-                appendConsole("stderr", `\n${tag}[${lineNum}:${d.col || 0}]: ${d.message}`);
+            for (const d of diagnostics) {
+                const isErr = d.severity === "error" || d.severity === "fail";
+                if (isErr) hasError = true;
+                const tag = d.severity;
+                const lineNum = d.span?.line || 0;
+                const col = d.span?.col || 0;
+
+                appendConsole("stderr",
+                    `\n${tag}[${d.slug}]: ${d.summary}`);
+                appendConsole("stderr",
+                    `  at: ${d.span?.file || "playground"}:${lineNum}:${col}`);
+
+                if (d.fn_name) {
+                    appendConsole("stderr", `  in-fn: ${d.fn_name}`);
+                }
+                if (d.repair?.primary) {
+                    appendConsole("stderr", `  repair: ${d.repair.primary}`);
+                }
 
                 if (lineNum > 0 && lineNum <= lines.length) {
                     const snippet = lines[lineNum - 1];
                     const pad = String(lineNum).length;
                     appendConsole("stdout", `${" ".repeat(pad + 1)} |`);
                     appendConsole("stdout", ` ${lineNum} | ${snippet}`);
-                    appendConsole("stdout", `${" ".repeat(pad + 1)} |`);
+                    const underline = d.regions?.[0]?.underline;
+                    if (underline && underline.col > 0) {
+                        const caretPad = " ".repeat(underline.col - 1);
+                        const carets = "^".repeat(Math.max(1, underline.len || 1));
+                        appendConsole("stdout",
+                            `${" ".repeat(pad + 1)} | ${caretPad}${carets}${underline.label ? "  " + underline.label : ""}`);
+                    } else {
+                        appendConsole("stdout", `${" ".repeat(pad + 1)} |`);
+                    }
                 }
             }
 
