@@ -52,6 +52,24 @@ pub fn verify_source(source: &str) -> String {
     analyze_source(source, &opts).to_json()
 }
 
+/// Run analysis plus the file-local "why" summary (per-function
+/// justification signals) and return the canonical report as JSON.
+pub fn why_source(source: &str) -> String {
+    let mut opts = AnalyzeOptions::new("playground");
+    opts.include_why_summary = true;
+    analyze_source(source, &opts).to_json()
+}
+
+/// Run analysis plus the file-local context summary (module shape,
+/// functions, types, decisions) and return the canonical report as
+/// JSON. Dependency bodies are not expanded — the playground sees the
+/// entry file only; `depends` carries names for UI.
+pub fn context_source(source: &str) -> String {
+    let mut opts = AnalyzeOptions::new("playground");
+    opts.include_context_summary = true;
+    analyze_source(source, &opts).to_json()
+}
+
 #[cfg(feature = "playground")]
 mod bindgen {
     use wasm_bindgen::prelude::*;
@@ -69,5 +87,15 @@ mod bindgen {
     #[wasm_bindgen]
     pub fn aver_verify(source: &str) -> String {
         super::verify_source(source)
+    }
+
+    #[wasm_bindgen]
+    pub fn aver_why(source: &str) -> String {
+        super::why_source(source)
+    }
+
+    #[wasm_bindgen]
+    pub fn aver_context(source: &str) -> String {
+        super::context_source(source)
     }
 }

@@ -97,9 +97,14 @@ WASM_COMPILER_DST = PLAYGROUND_ROOT / "wasm"
 
 
 def build_compiler() -> None:
-    """Rebuild the Aver-to-WASM compiler itself (aver_bg.wasm) via wasm-pack."""
+    """Rebuild the Aver-to-WASM compiler itself (aver_bg.wasm) via wasm-pack,
+    then shrink with wasm-opt -Oz."""
     if shutil.which("wasm-pack") is None:
         raise SystemExit("`wasm-pack` not found. Install it: cargo install wasm-pack")
+    if shutil.which("wasm-opt") is None:
+        raise SystemExit(
+            "`wasm-opt` not found on PATH. Install binaryen before rebuilding the compiler."
+        )
 
     print("Building playground compiler (wasm-pack) ...")
     result = subprocess.run(
@@ -122,13 +127,26 @@ def build_compiler() -> None:
         raise SystemExit("wasm-pack build failed")
 
     pkg_dir = REPO_ROOT / "pkg"
-    for name in ("aver_bg.wasm", "aver.js"):
-        src = pkg_dir / name
-        dst = WASM_COMPILER_DST / name
-        shutil.copy2(src, dst)
+    shutil.copy2(pkg_dir / "aver.js", WASM_COMPILER_DST / "aver.js")
 
-    size = (WASM_COMPILER_DST / "aver_bg.wasm").stat().st_size
-    print(f"  aver_bg.wasm: {format_kib(size)}")
+    raw_wasm = pkg_dir / "aver_bg.wasm"
+    optimized = WASM_COMPILER_DST / "aver_bg.wasm"
+    raw_size = raw_wasm.stat().st_size
+    print(f"  aver_bg.wasm (wasm-pack): {format_kib(raw_size)}")
+
+    opt_result = subprocess.run(
+        ["wasm-opt", "-Oz", str(raw_wasm), "-o", str(optimized)],
+        text=True,
+        capture_output=True,
+    )
+    if opt_result.returncode != 0:
+        if opt_result.stderr:
+            sys.stderr.write(opt_result.stderr)
+        raise SystemExit("wasm-opt -Oz failed on compiler wasm")
+
+    opt_size = optimized.stat().st_size
+    ratio = 100.0 * (raw_size - opt_size) / raw_size if raw_size else 0.0
+    print(f"  aver_bg.wasm (wasm-opt -Oz): {format_kib(opt_size)} (-{ratio:.1f}%)")
 
 
 def build_wasm(aver_bin: str) -> None:

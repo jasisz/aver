@@ -121,6 +121,14 @@ pub struct AnalysisReport {
     pub kind: &'static str,
     pub file_label: String,
     pub diagnostics: Vec<Diagnostic>,
+    /// File-local justification summary — present when the caller opts
+    /// in via `AnalyzeOptions::include_why_summary`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub why_summary: Option<crate::diagnostics::why::WhySummary>,
+    /// File-local context summary (module shape, functions, types,
+    /// decisions) — present when `include_context_summary` is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_summary: Option<crate::diagnostics::context::ContextSummary>,
 }
 
 impl AnalysisReport {
@@ -130,6 +138,8 @@ impl AnalysisReport {
             kind: "analysis",
             file_label: file_label.into(),
             diagnostics: Vec::new(),
+            why_summary: None,
+            context_summary: None,
         }
     }
 
@@ -142,6 +152,8 @@ impl AnalysisReport {
             kind: "analysis",
             file_label: file_label.into(),
             diagnostics,
+            why_summary: None,
+            context_summary: None,
         }
     }
 

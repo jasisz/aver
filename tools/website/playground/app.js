@@ -1001,6 +1001,197 @@ if (verifyBtn) {
     });
 }
 
+// Why button — file-local justification summary: which functions have
+// description, verify, coverage, decision impact; which don't.
+const whyBtn = document.querySelector("[data-why]");
+if (whyBtn) {
+    whyBtn.addEventListener("click", async () => {
+        const source = codeEditor?.value;
+        if (!source?.trim()) return;
+
+        setWorkspaceMode("edit");
+        setOutputMode("console");
+        state.activeGame = null;
+        clearOutput();
+
+        try {
+            const comp = await loadCompiler();
+            setStatus("Analyzing justification…", "info");
+            const json = comp.aver_why(source);
+            const bundle = JSON.parse(json);
+            const summary = bundle.why_summary;
+            if (!summary) {
+                appendConsole("stderr", "No why summary in response.");
+                setStatus("Why failed", "error");
+                return;
+            }
+
+            const pct = (part) =>
+                summary.total_lines > 0
+                    ? Math.round((part * 100) / summary.total_lines) + "%"
+                    : "0%";
+
+            appendConsole("stdout", `${summary.file_label}: ${summary.total_lines} lines`);
+            appendConsole("stdout",
+                `  justified ${pct(summary.justified_lines)} (${summary.justified_lines})  ` +
+                `partial ${pct(summary.partial_lines)} (${summary.partial_lines})  ` +
+                `unjustified ${pct(summary.unjustified_lines)} (${summary.unjustified_lines})`
+            );
+
+            if (!summary.has_module_intent) {
+                appendConsole("stdout", "  ! module has no intent block");
+            }
+
+            for (const d of summary.decisions || []) {
+                appendConsole("stdout",
+                    `  decision ${d.name} (${d.date}): ${d.reason_prefix}`);
+            }
+
+            const problematic = (summary.functions || []).filter(
+                (f) => f.level !== "justified"
+            );
+            problematic.sort((a, b) => {
+                const pa = a.level === "unjustified" ? 0 : 1;
+                const pb = b.level === "unjustified" ? 0 : 1;
+                if (pa !== pb) return pa - pb;
+                return b.lines - a.lines;
+            });
+
+            if (problematic.length === 0) {
+                appendConsole("stdout", "\n✓ Every function is fully justified.");
+            } else {
+                appendConsole("stdout", "");
+                for (const f of problematic) {
+                    const hints = (f.missing || []).join(", ");
+                    const suffix = hints ? `  (${hints})` : "";
+                    appendConsole("stdout", `  ${f.level}: ${f.name}${suffix}`);
+                }
+            }
+
+            const justifiedPct =
+                summary.total_lines > 0
+                    ? (summary.justified_lines * 100) / summary.total_lines
+                    : 0;
+            setStatus(
+                problematic.length === 0
+                    ? "Why: fully justified"
+                    : `Why: ${Math.round(justifiedPct)}% justified`,
+                justifiedPct >= 60 ? "success" : "info"
+            );
+        } catch (e) {
+            appendConsole("stderr", e.message || String(e));
+            setStatus("Why failed", "error");
+        }
+    });
+}
+
+// Context button — file-local module/API shape: module name, intent,
+// depends, exposed fns with signatures/effects/qualifiers, types,
+// decisions. Entry file only; dependency bodies are not expanded.
+const contextBtn = document.querySelector("[data-context]");
+if (contextBtn) {
+    contextBtn.addEventListener("click", async () => {
+        const source = codeEditor?.value;
+        if (!source?.trim()) return;
+
+        setWorkspaceMode("edit");
+        setOutputMode("console");
+        state.activeGame = null;
+        clearOutput();
+
+        try {
+            const comp = await loadCompiler();
+            setStatus("Building context…", "info");
+            const json = comp.aver_context(source);
+            const bundle = JSON.parse(json);
+            const ctx = bundle.context_summary;
+            if (!ctx) {
+                appendConsole("stderr", "No context summary in response.");
+                setStatus("Context failed", "error");
+                return;
+            }
+
+            const modLine = ctx.module_name
+                ? `module ${ctx.module_name}`
+                : "(no module declaration)";
+            appendConsole("stdout", `## ${modLine}`);
+            if (ctx.intent) {
+                appendConsole("stdout", `> ${ctx.intent.replace(/\n/g, " ")}`);
+            }
+
+            if ((ctx.depends || []).length > 0) {
+                appendConsole("stdout", `depends: ${ctx.depends.join(", ")}`);
+            }
+            if ((ctx.exposes || []).length > 0) {
+                appendConsole("stdout", `exposes: ${ctx.exposes.join(", ")}`);
+            }
+            if ((ctx.exposes_opaque || []).length > 0) {
+                appendConsole("stdout", `exposes opaque: ${ctx.exposes_opaque.join(", ")}`);
+            }
+
+            if ((ctx.api_effects || []).length > 0) {
+                appendConsole("stdout", `api effects: [${ctx.api_effects.join(", ")}]`);
+            }
+            if (ctx.main_effects) {
+                appendConsole("stdout", `main effects: [${ctx.main_effects.join(", ")}]`);
+            }
+
+            if ((ctx.types || []).length > 0) {
+                appendConsole("stdout", "");
+                appendConsole("stdout", "### Types");
+                for (const t of ctx.types) {
+                    const members =
+                        t.fields_or_variants && t.fields_or_variants.length > 0
+                            ? `  (${t.fields_or_variants.join(", ")})`
+                            : "";
+                    appendConsole("stdout", `  ${t.kind} ${t.name}${members}`);
+                }
+            }
+
+            if ((ctx.functions || []).length > 0) {
+                appendConsole("stdout", "");
+                appendConsole("stdout", "### Functions");
+                for (const f of ctx.functions) {
+                    const flags = [...f.qualifiers];
+                    if (f.auto_memo) flags.push("AUTO_MEMO");
+                    if (f.auto_tco) flags.push("AUTO_TCO");
+                    const flagStr = flags.length > 0 ? ` [${flags.join(", ")}]` : "";
+                    const exposureTag = f.is_exposed ? "" : " (private)";
+                    appendConsole("stdout", `  ${f.signature}${flagStr}${exposureTag}`);
+                    if (f.description) {
+                        appendConsole("stdout", `    ? "${f.description}"`);
+                    }
+                    if (f.verify_count > 0) {
+                        appendConsole("stdout",
+                            `    verify: ${f.verify_count} case(s)`);
+                        for (const sample of f.verify_samples || []) {
+                            appendConsole("stdout", `      ${sample}`);
+                        }
+                    }
+                }
+            }
+
+            if ((ctx.decisions || []).length > 0) {
+                appendConsole("stdout", "");
+                appendConsole("stdout", "### Decisions");
+                for (const d of ctx.decisions) {
+                    appendConsole("stdout",
+                        `  ${d.name} (${d.date}): ${d.reason_prefix}`);
+                    if ((d.impacts || []).length > 0) {
+                        appendConsole("stdout",
+                            `    impacts: ${d.impacts.join(", ")}`);
+                    }
+                }
+            }
+
+            setStatus("Context ready", "success");
+        } catch (e) {
+            appendConsole("stderr", e.message || String(e));
+            setStatus("Context failed", "error");
+        }
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Game source viewer
 // ---------------------------------------------------------------------------

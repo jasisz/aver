@@ -38,6 +38,12 @@ pub struct AnalyzeOptions {
     /// case. Off by default: analysis should stay pure static checks;
     /// callers opt in explicitly.
     pub include_verify_run: bool,
+    /// When `true`, populate `AnalysisReport::why_summary` with
+    /// per-function justification data. Off by default.
+    pub include_why_summary: bool,
+    /// When `true`, populate `AnalysisReport::context_summary` with
+    /// module shape / function / type / decision summary.
+    pub include_context_summary: bool,
 }
 
 impl Default for AnalyzeOptions {
@@ -54,6 +60,8 @@ impl Default for AnalyzeOptions {
             include_non_tail_warnings: true,
             include_unused_bindings: true,
             include_verify_run: false,
+            include_why_summary: false,
+            include_context_summary: false,
         }
     }
 }
@@ -258,7 +266,27 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
         }
     }
 
-    AnalysisReport::with_diagnostics(options.file_label.clone(), diagnostics)
+    let mut report = AnalysisReport::with_diagnostics(options.file_label.clone(), diagnostics);
+
+    if options.include_why_summary {
+        report.why_summary = Some(super::why::summarize(
+            &items,
+            source,
+            options.file_label.clone(),
+        ));
+    }
+
+    if options.include_context_summary {
+        let ctx = super::context::build_context_for_items(
+            &items,
+            source,
+            options.file_label.clone(),
+            options.module_base_dir.as_deref(),
+        );
+        report.context_summary = Some(super::context::summarize(&ctx));
+    }
+
+    report
 }
 
 /// Build a minimal `Diagnostic` for a parser error. Errors surface as a

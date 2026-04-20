@@ -1,13 +1,10 @@
-use std::collections::HashSet;
 use std::fs;
 
 use colored::Colorize;
 
 use aver::ast::TopLevel;
-use aver::call_graph::{find_recursive_fns, recursive_callsite_counts};
 use aver::source::parse_source;
-use aver::types;
-use aver::types::checker::{TypeCheckResult, TypeError};
+use aver::types::checker::TypeError;
 use aver::vm;
 
 pub(super) fn read_file(path: &str) -> Result<String, String> {
@@ -54,52 +51,11 @@ pub(super) fn print_type_errors(errors: &[TypeError]) {
     }
 }
 
-/// Determine which functions qualify for auto-memoization:
-/// pure (no effects), recursive, branchy recursion (>1 recursive callsite),
-/// where callsites are counted syntactically within the caller's recursive SCC,
-/// and all parameters are memo-safe types.
-pub(super) fn compute_memo_fns(items: &[TopLevel], tc_result: &TypeCheckResult) -> HashSet<String> {
-    let recursive = find_recursive_fns(items);
-    let recursive_calls = recursive_callsite_counts(items);
-    let mut memo = HashSet::new();
-
-    for fn_name in &recursive {
-        if let Some((params, _ret, effects)) = tc_result.fn_sigs.get(fn_name) {
-            // Must be pure (no effects)
-            if !effects.is_empty() {
-                continue;
-            }
-            // Must have branching recursion where memoization can collapse overlap.
-            if recursive_calls.get(fn_name).copied().unwrap_or(0) < 2 {
-                continue;
-            }
-            // All params must be memo-safe
-            let all_safe = params
-                .iter()
-                .all(|ty| is_memo_safe_type(ty, &tc_result.memo_safe_types));
-            if all_safe {
-                memo.insert(fn_name.clone());
-            }
-        }
-    }
-    memo
-}
-
-pub(super) fn is_memo_safe_type(ty: &types::Type, safe_named: &HashSet<String>) -> bool {
-    use aver::types::Type;
-    match ty {
-        // String stays excluded for now: memo keys hash String content,
-        // so string-heavy recursion can degrade to O(n) keying work.
-        Type::Int | Type::Float | Type::Bool | Type::Unit => true,
-        Type::Str => false,
-        Type::Tuple(items) => items.iter().all(|item| is_memo_safe_type(item, safe_named)),
-        Type::List(_) | Type::Vector(_) | Type::Map(_, _) | Type::Fn(_, _, _) | Type::Unknown => {
-            false
-        }
-        Type::Result(_, _) | Type::Option(_) => false,
-        Type::Named(name) => safe_named.contains(name),
-    }
-}
+// `compute_memo_fns` and `is_memo_safe_type` moved to
+// `aver::diagnostics::context` so the playground/LSP share one
+// implementation. Re-exported for the rest of `src/main/` that still
+// imports them from `super::shared`.
+pub(super) use aver::diagnostics::context::compute_memo_fns;
 
 pub(super) fn format_type_errors(errors: &[TypeError]) -> String {
     let mut out = Vec::new();
