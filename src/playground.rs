@@ -42,6 +42,16 @@ pub fn check_source(source: &str) -> String {
     analyze_source(source, &opts).to_json()
 }
 
+/// Run analysis plus verify block execution and return the canonical
+/// [`AnalysisReport`](crate::diagnostics::AnalysisReport) as JSON. Verify
+/// runs only when the source is typecheck-clean; callers see the same
+/// mismatch/runtime-error diagnostics as `aver verify`.
+pub fn verify_source(source: &str) -> String {
+    let mut opts = AnalyzeOptions::new("playground");
+    opts.include_verify_run = true;
+    analyze_source(source, &opts).to_json()
+}
+
 #[cfg(feature = "playground")]
 mod bindgen {
     use wasm_bindgen::prelude::*;
@@ -54,5 +64,10 @@ mod bindgen {
     #[wasm_bindgen]
     pub fn aver_check(source: &str) -> String {
         super::check_source(source)
+    }
+
+    #[wasm_bindgen]
+    pub fn aver_verify(source: &str) -> String {
+        super::verify_source(source)
     }
 }

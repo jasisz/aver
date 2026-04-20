@@ -783,8 +783,11 @@ impl VM {
                         let cli_args = self.runtime.cli_args().to_vec();
                         let silent_console = self.runtime.silent_console();
                         let runtime_policy = self.runtime.runtime_policy().cloned();
-                        let cancel_mode = self.runtime.independence_mode()
-                            == crate::config::IndependenceMode::Cancel;
+                        let independence_mode = self.runtime.independence_mode();
+                        let cancel_mode =
+                            independence_mode == crate::config::IndependenceMode::Cancel;
+                        let sequential_mode = independence_mode
+                            == crate::config::IndependenceMode::Sequential;
                         let prepared_calls: Vec<(NanValue, Vec<NanValue>, Arena)> = element_calls
                             .iter()
                             .map(|(callable, args)| {
@@ -918,7 +921,11 @@ impl VM {
                                 })
                                 .collect();
 
-                            let par_results = aver_rt::par_execute(tasks);
+                            let par_results = if sequential_mode {
+                                aver_rt::par_execute_sequential(tasks)
+                            } else {
+                                aver_rt::par_execute(tasks)
+                            };
                             let mut results = Vec::with_capacity(count);
                             for r in par_results {
                                 let (value, child_arena) = r?;

@@ -12,6 +12,8 @@ pub mod analyze;
 pub mod classify;
 pub mod factories;
 pub mod model;
+#[cfg(feature = "runtime")]
+pub mod verify_run;
 
 pub use analyze::{analyze_source, AnalyzeOptions};
 pub use factories::{

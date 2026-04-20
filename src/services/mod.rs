@@ -23,6 +23,7 @@ pub fn all_effect_names() -> Vec<&'static str> {
     out.extend_from_slice(console::DECLARED_EFFECTS);
     out.extend_from_slice(disk::DECLARED_EFFECTS);
     out.extend_from_slice(env::DECLARED_EFFECTS);
+    #[cfg(feature = "runtime-net")]
     out.extend_from_slice(http::DECLARED_EFFECTS);
     out.extend_from_slice(http_server::DECLARED_EFFECTS);
     out.extend_from_slice(random::DECLARED_EFFECTS);
@@ -37,6 +38,7 @@ pub mod args;
 pub mod console;
 pub mod disk;
 pub mod env;
+#[cfg(feature = "runtime-net")]
 pub mod http;
 pub mod http_server;
 pub mod random;

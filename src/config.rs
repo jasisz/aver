@@ -35,14 +35,27 @@ pub struct CheckSuppression {
     pub reason: String,
 }
 
-/// How independent products (`?!`) behave when one branch fails.
+/// How independent products (`!`/`?!`) are scheduled and how failures
+/// propagate.
+///
+/// Per `docs/independence.md`: sequential and concurrent evaluation are
+/// both valid under the language semantics. Pick the schedule that fits
+/// the environment — threads for native CLI, single-thread for
+/// wasm/playground.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IndependenceMode {
-    /// Wait for all branches to finish, then report one error.
+    /// Parallel execution. Wait for all branches to finish, then report
+    /// one error.
     #[default]
     Complete,
-    /// Signal siblings to stop as soon as one branch fails.
+    /// Parallel execution. Signal siblings to stop as soon as one branch
+    /// fails.
     Cancel,
+    /// Sequential left-to-right execution. No threads. Valid per the
+    /// language spec (any interleave is permitted, including the trivial
+    /// fully-sequential one). Used by wasm builds that cannot spawn
+    /// threads; also selectable for deterministic replay.
+    Sequential,
 }
 
 /// Project-level configuration loaded from `aver.toml`.
@@ -375,8 +388,9 @@ fn parse_independence_mode(table: &toml::Table) -> Result<IndependenceMode, Stri
         Some(toml::Value::String(s)) => match s.as_str() {
             "complete" => Ok(IndependenceMode::Complete),
             "cancel" => Ok(IndependenceMode::Cancel),
+            "sequential" => Ok(IndependenceMode::Sequential),
             other => Err(format!(
-                "[independence] mode must be \"complete\" or \"cancel\", got {:?}",
+                "[independence] mode must be \"complete\", \"cancel\", or \"sequential\", got {:?}",
                 other
             )),
         },

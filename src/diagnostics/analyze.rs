@@ -33,6 +33,11 @@ pub struct AnalyzeOptions {
     pub include_independence_warnings: bool,
     pub include_non_tail_warnings: bool,
     pub include_unused_bindings: bool,
+    /// When `true` **and** the `runtime` feature is enabled, execute every
+    /// verify block found in the source and emit a diagnostic per failing
+    /// case. Off by default: analysis should stay pure static checks;
+    /// callers opt in explicitly.
+    pub include_verify_run: bool,
 }
 
 impl Default for AnalyzeOptions {
@@ -48,6 +53,7 @@ impl Default for AnalyzeOptions {
             include_independence_warnings: true,
             include_non_tail_warnings: true,
             include_unused_bindings: true,
+            include_verify_run: false,
         }
     }
 }
@@ -186,6 +192,21 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
                 source,
                 &options.file_label,
             ));
+        }
+    }
+
+    #[cfg(feature = "runtime")]
+    if options.include_verify_run && tc_result.errors.is_empty() {
+        // Verify execution only runs when typecheck is clean — otherwise
+        // the compiled VM would crash on missing symbols.
+        let runnable_items = items.clone();
+        for diag in super::verify_run::run_verify_blocks(
+            runnable_items,
+            options.module_base_dir.as_deref(),
+            &options.file_label,
+            source,
+        ) {
+            diagnostics.push(diag);
         }
     }
 

@@ -8,7 +8,7 @@ pub mod codegen;
 pub mod config;
 pub mod diagnostics;
 pub mod effects;
-#[cfg(feature = "runtime")]
+#[cfg(all(feature = "runtime", feature = "tty-render"))]
 #[allow(dead_code)]
 #[path = "main/format_cmd.rs"]
 pub mod format;

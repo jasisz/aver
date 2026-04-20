@@ -1,7 +1,9 @@
 use crate::nan_value::{Arena, NanValue};
 #[cfg(feature = "terminal")]
 use crate::services::terminal;
-use crate::services::{console, disk, env, http, random, tcp, time};
+#[cfg(feature = "runtime-net")]
+use crate::services::http;
+use crate::services::{console, disk, env, random, tcp, time};
 use crate::types::{bool, byte, char, float, int, list, map, option, result, string};
 use crate::value::RuntimeError;
 
@@ -237,12 +239,20 @@ impl VmBuiltin {
                 console::effects(self.name())
             }
 
+            #[cfg(feature = "runtime-net")]
             Self::HttpGet
             | Self::HttpHead
             | Self::HttpDelete
             | Self::HttpPost
             | Self::HttpPut
             | Self::HttpPatch => http::effects(self.name()),
+            #[cfg(not(feature = "runtime-net"))]
+            Self::HttpGet
+            | Self::HttpHead
+            | Self::HttpDelete
+            | Self::HttpPost
+            | Self::HttpPut
+            | Self::HttpPatch => &[],
 
             Self::HttpServerListen
             | Self::HttpServerListenWith
@@ -313,12 +323,23 @@ impl VmBuiltin {
                 console::call_nv(self.name(), args, arena)
             }
 
+            #[cfg(feature = "runtime-net")]
             Self::HttpGet
             | Self::HttpHead
             | Self::HttpDelete
             | Self::HttpPost
             | Self::HttpPut
             | Self::HttpPatch => http::call_nv(self.name(), args, arena),
+            #[cfg(not(feature = "runtime-net"))]
+            Self::HttpGet
+            | Self::HttpHead
+            | Self::HttpDelete
+            | Self::HttpPost
+            | Self::HttpPut
+            | Self::HttpPatch => Some(Err(RuntimeError::Error(format!(
+                "{}: HTTP effects not available in this build",
+                self.name()
+            )))),
 
             Self::DiskReadText
             | Self::DiskWriteText
@@ -352,6 +373,22 @@ impl VmBuiltin {
             | Self::TerminalHideCursor
             | Self::TerminalShowCursor
             | Self::TerminalFlush => terminal::call_nv(self.name(), args, arena),
+            #[cfg(not(feature = "terminal"))]
+            Self::TerminalEnableRawMode
+            | Self::TerminalDisableRawMode
+            | Self::TerminalClear
+            | Self::TerminalMoveTo
+            | Self::TerminalPrint
+            | Self::TerminalSetColor
+            | Self::TerminalResetColor
+            | Self::TerminalReadKey
+            | Self::TerminalSize
+            | Self::TerminalHideCursor
+            | Self::TerminalShowCursor
+            | Self::TerminalFlush => Some(Err(RuntimeError::Error(format!(
+                "{}: Terminal effects not available in this build",
+                self.name()
+            )))),
 
             Self::TimeNow | Self::TimeUnixMs | Self::TimeSleep => {
                 time::call_nv(self.name(), args, arena)

@@ -128,6 +128,16 @@ pub fn par_execute<T: Send>(tasks: Vec<Box<dyn FnOnce() -> T + Send>>) -> Vec<T>
     })
 }
 
+/// Execute tasks sequentially, left-to-right. Used by `sequential` mode.
+/// Valid per the language spec (the fully-sequential interleave is always
+/// permitted). Available on every target — no threading required.
+///
+/// Signature matches [`par_execute`] (with `Send` bounds) so call sites
+/// can swap implementations without reshaping task boxes.
+pub fn par_execute_sequential<T: Send>(tasks: Vec<Box<dyn FnOnce() -> T + Send>>) -> Vec<T> {
+    tasks.into_iter().map(|task| task()).collect()
+}
+
 /// Execute tasks in parallel with cooperative cancellation (`cancel` mode).
 ///
 /// Each task receives a shared `cancelled` flag. When one branch fails, the

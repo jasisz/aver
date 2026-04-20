@@ -1,0 +1,9 @@
+# Target-specific rustflags for wasm builds.
+#
+# `getrandom` 0.3 requires an explicit backend declaration on
+# wasm32-unknown-unknown. The playground runs in a browser, so we select
+# the JavaScript crypto API backend. Keeping this here (not in workspace
+# Cargo.toml) scopes it to wasm builds and leaves native builds
+# untouched.
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']

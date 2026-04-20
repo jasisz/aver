@@ -912,6 +912,95 @@ if (checkBtn) {
     });
 }
 
+// Verify button — runs the canonical analysis pipeline with verify
+// block execution enabled. Shares rendering with Check but also reports
+// pass/fail counts per block.
+const verifyBtn = document.querySelector("[data-verify]");
+if (verifyBtn) {
+    verifyBtn.addEventListener("click", async () => {
+        const source = codeEditor?.value;
+        if (!source?.trim()) return;
+
+        setWorkspaceMode("edit");
+        setOutputMode("console");
+        state.activeGame = null;
+        clearOutput();
+
+        try {
+            const comp = await loadCompiler();
+            setStatus("Verifying…", "info");
+            const json = comp.aver_verify(source);
+            const bundle = JSON.parse(json);
+            const diagnostics = bundle.diagnostics || [];
+            const lines = source.split("\n");
+
+            const verifyFailSlugs = new Set([
+                "verify-mismatch",
+                "verify-runtime-error",
+                "verify-unexpected-err",
+            ]);
+            const verifyFailures = diagnostics.filter((d) => verifyFailSlugs.has(d.slug));
+            const staticIssues = diagnostics.filter((d) => !verifyFailSlugs.has(d.slug));
+            const hasStaticErrors = staticIssues.some(
+                (d) => d.severity === "error" || d.severity === "fail"
+            );
+
+            if (hasStaticErrors) {
+                appendConsole("stderr",
+                    "Static errors found — verify blocks were not executed.\n");
+            }
+
+            for (const d of staticIssues) {
+                const tag = d.severity;
+                const lineNum = d.span?.line || 0;
+                const col = d.span?.col || 0;
+                appendConsole(
+                    d.severity === "error" || d.severity === "fail" ? "stderr" : "stdout",
+                    `\n${tag}[${d.slug}]: ${d.summary}`
+                );
+                appendConsole("stdout",
+                    `  at: ${d.span?.file || "playground"}:${lineNum}:${col}`);
+                if (d.repair?.primary) {
+                    appendConsole("stdout", `  repair: ${d.repair.primary}`);
+                }
+            }
+
+            if (verifyFailures.length === 0 && !hasStaticErrors) {
+                appendConsole("stdout", "✓ All verify cases passed.");
+            }
+
+            for (const d of verifyFailures) {
+                const lineNum = d.span?.line || 0;
+                const col = d.span?.col || 0;
+                appendConsole("stderr", `\nfail[${d.slug}]: ${d.summary}`);
+                appendConsole("stdout",
+                    `  at: ${d.span?.file || "playground"}:${lineNum}:${col}`);
+                for (const [key, value] of d.fields || []) {
+                    appendConsole("stdout", `  ${key}: ${value}`);
+                }
+                if (lineNum > 0 && lineNum <= lines.length) {
+                    const snippet = lines[lineNum - 1];
+                    const pad = String(lineNum).length;
+                    appendConsole("stdout", `${" ".repeat(pad + 1)} |`);
+                    appendConsole("stdout", ` ${lineNum} | ${snippet}`);
+                    appendConsole("stdout", `${" ".repeat(pad + 1)} |`);
+                }
+            }
+
+            const anyFail = hasStaticErrors || verifyFailures.length > 0;
+            setStatus(
+                anyFail
+                    ? `Verify: ${verifyFailures.length} failing case(s)`
+                    : "Verify passed",
+                anyFail ? "error" : "success"
+            );
+        } catch (e) {
+            appendConsole("stderr", e.message || String(e));
+            setStatus("Verify failed", "error");
+        }
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Game source viewer
 // ---------------------------------------------------------------------------
