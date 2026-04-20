@@ -1,0 +1,13 @@
+---
+source: tests/cli_diagnostic_render_spec.rs
+expression: "render_tty(&diag, false)"
+---
+fail[verify-mismatch]: assertion failed
+  at: test.av:2:5
+  block: add
+  case: add(1, 2) == 3
+  expected: 3
+  actual: 4
+    |
+  2 |     add(1, 2) == 3
+    |     ^^^^^^^^^^^^^^  verify-mismatch

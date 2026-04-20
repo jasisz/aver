@@ -1,0 +1,571 @@
+//! Factory functions — convert internal error types to canonical `Diagnostic`.
+//!
+//! All factories are pure: they take source text + structural error data and
+//! return a `Diagnostic`. No IO, no globals, wasm-safe.
+
+use super::classify::{
+    classify_finding, classify_type_error, estimate_span_len, extract_fn_name_from_finding,
+    extract_return_type, extract_source_lines, extract_source_lines_range,
+    fill_small_region_gaps, find_block_header_line, find_precise_span, find_preamble_end,
+};
+use super::model::{AnnotatedRegion, Diagnostic, Repair, Severity, Span, Underline};
+use crate::checker::{CheckFinding, VerifyLawContext};
+use crate::types::checker::TypeError;
+
+/// Build a `Diagnostic` from a `TypeError` (from the typechecker).
+pub fn from_type_error(te: &TypeError, source: &str, file: &str) -> Diagnostic {
+    let msg = &te.message;
+    let line = te.line;
+    let col = te.col;
+
+    let (slug, conflict, fields, repair_text) = classify_type_error(msg);
+
+    let source_line_text = source
+        .lines()
+        .nth(line.saturating_sub(1))
+        .unwrap_or_default();
+    let (ul_col, ul_len) = if col > 0 {
+        (col, estimate_span_len(source_line_text, col))
+    } else {
+        let indent = source_line_text.len() - source_line_text.trim_start().len();
+        (indent + 1, source_line_text.trim().len())
+    };
+
+    let (primary_col, primary_len, primary_label) = if te.secondary.is_some() {
+        if let Some(arrow_pos) = source_line_text.find("-> ") {
+            let after_arrow = &source_line_text[arrow_pos + 3..];
+            let ret_type_len = after_arrow
+                .chars()
+                .take_while(|c| {
+                    c.is_alphanumeric()
+                        || *c == '<'
+                        || *c == '>'
+                        || *c == ','
+                        || *c == ' '
+                        || *c == '.'
+                })
+                .count();
+            let ret_type_len = after_arrow[..ret_type_len].trim_end().len();
+            (
+                arrow_pos + 4,
+                ret_type_len.max(1),
+                format!("declared {}", extract_return_type(msg)),
+            )
+        } else {
+            (ul_col, ul_len, String::new())
+        }
+    } else {
+        (ul_col, ul_len, String::new())
+    };
+
+    let primary_underline = if primary_len > 0 {
+        Some(Underline {
+            col: primary_col,
+            len: primary_len,
+            label: primary_label,
+        })
+    } else {
+        None
+    };
+
+    let mut regions = vec![AnnotatedRegion {
+        source_lines: extract_source_lines(source, line, 0),
+        underline: primary_underline,
+    }];
+
+    if let Some(ref sec) = te.secondary
+        && sec.line != line
+    {
+        let sec_source_text = source
+            .lines()
+            .nth(sec.line.saturating_sub(1))
+            .unwrap_or_default();
+        let (sec_col, sec_len) = if sec.col > 0 {
+            (sec.col, estimate_span_len(sec_source_text, sec.col))
+        } else {
+            let indent = sec_source_text.len() - sec_source_text.trim_start().len();
+            (indent + 1, sec_source_text.trim().len())
+        };
+        regions.push(AnnotatedRegion {
+            source_lines: extract_source_lines(source, sec.line, 0),
+            underline: Some(Underline {
+                col: sec_col,
+                len: sec_len,
+                label: sec.label.clone(),
+            }),
+        });
+    }
+
+    regions.sort_by_key(|r| r.source_lines.first().map(|sl| sl.line_num).unwrap_or(0));
+    fill_small_region_gaps(&mut regions, source);
+
+    Diagnostic {
+        severity: Severity::Error,
+        slug,
+        summary: msg.to_string(),
+        span: Span {
+            file: file.to_string(),
+            line,
+            col: ul_col,
+        },
+        fn_name: None,
+        intent: None,
+        fields,
+        conflict,
+        repair: repair_text.map(Repair::primary).unwrap_or_default(),
+        regions,
+        related: Vec::new(),
+    }
+}
+
+/// Build a `Diagnostic` for an unused binding warning.
+pub fn unused_binding_diagnostic(
+    binding: &str,
+    fn_name: &str,
+    line: usize,
+    source: &str,
+    file: &str,
+) -> Diagnostic {
+    Diagnostic {
+        severity: Severity::Warning,
+        slug: "unused-binding",
+        summary: format!("Unused binding '{}' in function '{}'", binding, fn_name),
+        span: Span {
+            file: file.to_string(),
+            line,
+            col: 0,
+        },
+        fn_name: Some(fn_name.to_string()),
+        intent: None,
+        fields: vec![("binding", binding.to_string())],
+        conflict: None,
+        repair: Repair::primary(format!("Remove the binding or prefix with _: _{}", binding)),
+        regions: AnnotatedRegion::single(extract_source_lines(source, line, 0), None),
+        related: Vec::new(),
+    }
+}
+
+/// Build a `Diagnostic` for a missing verify warning.
+pub fn missing_verify_diagnostic(
+    fn_name: &str,
+    line: usize,
+    intent: Option<&str>,
+    source: &str,
+    file: &str,
+) -> Diagnostic {
+    Diagnostic {
+        severity: Severity::Warning,
+        slug: "missing-verify",
+        summary: format!("Function '{}' has no verify block", fn_name),
+        span: Span {
+            file: file.to_string(),
+            line,
+            col: 0,
+        },
+        fn_name: Some(fn_name.to_string()),
+        intent: intent.map(str::to_string),
+        fields: Vec::new(),
+        conflict: None,
+        repair: Repair::primary(format!("Add a verify block: verify {}:", fn_name)),
+        regions: AnnotatedRegion::single(extract_source_lines(source, line, 0), None),
+        related: Vec::new(),
+    }
+}
+
+/// Build a `Diagnostic` for an effect violation.
+///
+/// Note: effect violations reach users through `from_type_error` +
+/// `classify_type_error`'s "effect-violation" branch. This standalone
+/// factory is retained for parity with the pre-canonical API and is
+/// scheduled for removal after consumer migration completes.
+#[deprecated(
+    note = "prefer from_type_error; effect violations are routed through classify_type_error"
+)]
+pub fn effect_violation_diagnostic(
+    msg: &str,
+    line: usize,
+    col: usize,
+    source: &str,
+    file: &str,
+) -> Diagnostic {
+    let underline = if col > 0 {
+        let source_line_text = source
+            .lines()
+            .nth(line.saturating_sub(1))
+            .unwrap_or_default();
+        Some(Underline {
+            col,
+            len: estimate_span_len(source_line_text, col),
+            label: String::new(),
+        })
+    } else {
+        None
+    };
+    Diagnostic {
+        severity: Severity::Error,
+        slug: "effect-violation",
+        summary: msg.to_string(),
+        span: Span {
+            file: file.to_string(),
+            line,
+            col,
+        },
+        fn_name: None,
+        intent: None,
+        fields: Vec::new(),
+        conflict: Some(msg.to_string()),
+        repair: Repair::primary(
+            "Declare missing effects with ! [Effect] on the function".to_string(),
+        ),
+        regions: AnnotatedRegion::single(extract_source_lines(source, line, 1), underline),
+        related: Vec::new(),
+    }
+}
+
+/// Build a `Diagnostic` from a `CheckFinding` (intent/verify/coverage/etc).
+pub fn from_check_finding(
+    severity: Severity,
+    finding: &CheckFinding,
+    source: &str,
+    file: &str,
+) -> Diagnostic {
+    let (slug, repair_text) = classify_finding(&finding.message);
+    let fn_name = finding
+        .fn_name
+        .clone()
+        .or_else(|| extract_fn_name_from_finding(&finding.message));
+
+    let summary = if repair_text.is_some() {
+        finding
+            .message
+            .split_once(" — ")
+            .or_else(|| finding.message.split_once(" -- "))
+            .map(|(s, _)| s.to_string())
+            .unwrap_or_else(|| finding.message.clone())
+    } else {
+        finding.message.clone()
+    };
+
+    let source_line_text = source
+        .lines()
+        .nth(finding.line.saturating_sub(1))
+        .unwrap_or_default();
+    let (col, span_len) = find_precise_span(source_line_text, &summary).unwrap_or_else(|| {
+        let indent = source_line_text.len() - source_line_text.trim_start().len();
+        (indent + 1, source_line_text.trim().len())
+    });
+
+    let primary_underline = if span_len > 0 {
+        Some(Underline {
+            col,
+            len: span_len,
+            label: String::new(),
+        })
+    } else {
+        None
+    };
+    let mut regions = vec![AnnotatedRegion {
+        source_lines: extract_source_lines(source, finding.line, 0),
+        underline: primary_underline,
+    }];
+
+    for extra in &finding.extra_spans {
+        let extra_source_line = source
+            .lines()
+            .nth(extra.line.saturating_sub(1))
+            .unwrap_or_default();
+        let (extra_col, extra_len) = if extra.col > 0 && extra.len > 0 {
+            (extra.col, extra.len)
+        } else {
+            find_precise_span(extra_source_line, &extra.label).unwrap_or_else(|| {
+                let indent = extra_source_line.len() - extra_source_line.trim_start().len();
+                (indent + 1, extra_source_line.trim().len())
+            })
+        };
+        regions.push(AnnotatedRegion {
+            source_lines: extract_source_lines(source, extra.line, 0),
+            underline: Some(Underline {
+                col: extra_col,
+                len: extra_len,
+                label: extra.label.clone(),
+            }),
+        });
+    }
+
+    let finding_is_header = source_line_text.trim_start().starts_with("fn ")
+        || source_line_text.trim_start().starts_with("verify ")
+        || source_line_text.trim_start().starts_with("decision ");
+    if !finding_is_header
+        && let Some(ref name) = fn_name
+        && let Some(header_line) = find_block_header_line(source, name, finding.line)
+        && header_line < finding.line
+    {
+        let preamble_end = find_preamble_end(source, header_line, finding.line);
+        let capped_end = preamble_end.min(header_line + 3);
+        let header_lines = extract_source_lines_range(source, header_line, capped_end);
+        if !header_lines.is_empty() {
+            regions.insert(
+                0,
+                AnnotatedRegion {
+                    source_lines: header_lines,
+                    underline: None,
+                },
+            );
+        }
+    }
+
+    regions.sort_by_key(|r| r.source_lines.first().map(|sl| sl.line_num).unwrap_or(0));
+    fill_small_region_gaps(&mut regions, source);
+
+    Diagnostic {
+        severity,
+        slug,
+        summary,
+        span: Span {
+            file: file.to_string(),
+            line: finding.line,
+            col,
+        },
+        fn_name,
+        intent: None,
+        fields: Vec::new(),
+        conflict: None,
+        repair: repair_text.map(Repair::primary).unwrap_or_default(),
+        regions,
+        related: Vec::new(),
+    }
+}
+
+// ─── Verify failure diagnostics ──────────────────────────────────────────────
+
+#[allow(clippy::too_many_arguments)]
+pub fn verify_mismatch_diagnostic(
+    file: &str,
+    source: &str,
+    block_name: &str,
+    case_expr: &str,
+    expected: &str,
+    actual: &str,
+    line: usize,
+    col: usize,
+    is_law: bool,
+    law_context: Option<&VerifyLawContext>,
+) -> Diagnostic {
+    let summary = if is_law { "law violated" } else { "assertion failed" };
+    let mut fields: Vec<(&'static str, String)> = vec![
+        ("block", block_name.to_string()),
+        ("case", case_expr.to_string()),
+        ("expected", expected.to_string()),
+        ("actual", actual.to_string()),
+    ];
+    if let Some(lctx) = law_context {
+        for (name, val) in &lctx.givens {
+            fields.push(("given", format!("{} = {}", name, val)));
+        }
+        fields.push(("law", lctx.law_expr.clone()));
+    }
+    Diagnostic {
+        severity: Severity::Fail,
+        slug: "verify-mismatch",
+        summary: summary.to_string(),
+        span: Span {
+            file: file.to_string(),
+            line,
+            col,
+        },
+        fn_name: None,
+        intent: None,
+        fields,
+        conflict: None,
+        repair: Repair::default(),
+        regions: AnnotatedRegion::single(
+            extract_source_lines(source, line, 0),
+            Some(Underline {
+                col,
+                len: source
+                    .lines()
+                    .nth(line.saturating_sub(1))
+                    .map(|l| l.trim().len())
+                    .unwrap_or(1)
+                    .max(1),
+                label: "verify-mismatch".to_string(),
+            }),
+        ),
+        related: Vec::new(),
+    }
+}
+
+pub fn verify_runtime_error_diagnostic(
+    file: &str,
+    source: &str,
+    block_name: &str,
+    case_expr: &str,
+    error: &str,
+    line: usize,
+    col: usize,
+) -> Diagnostic {
+    Diagnostic {
+        severity: Severity::Fail,
+        slug: "verify-runtime-error",
+        summary: "case aborted".to_string(),
+        span: Span {
+            file: file.to_string(),
+            line,
+            col,
+        },
+        fn_name: None,
+        intent: None,
+        fields: vec![
+            ("block", block_name.to_string()),
+            ("case", case_expr.to_string()),
+            ("error", error.to_string()),
+        ],
+        conflict: None,
+        repair: Repair::default(),
+        regions: AnnotatedRegion::single(
+            extract_source_lines(source, line, 0),
+            Some(Underline {
+                col,
+                len: source
+                    .lines()
+                    .nth(line.saturating_sub(1))
+                    .map(|l| l.trim().len())
+                    .unwrap_or(1)
+                    .max(1),
+                label: "verify-runtime-error".to_string(),
+            }),
+        ),
+        related: Vec::new(),
+    }
+}
+
+pub fn verify_unexpected_err_diagnostic(
+    file: &str,
+    source: &str,
+    block_name: &str,
+    case_expr: &str,
+    err_repr: &str,
+    line: usize,
+    col: usize,
+) -> Diagnostic {
+    Diagnostic {
+        severity: Severity::Fail,
+        slug: "verify-unexpected-err",
+        summary: "error propagated from ?".to_string(),
+        span: Span {
+            file: file.to_string(),
+            line,
+            col,
+        },
+        fn_name: None,
+        intent: None,
+        fields: vec![
+            ("block", block_name.to_string()),
+            ("case", case_expr.to_string()),
+            ("error", err_repr.to_string()),
+        ],
+        conflict: None,
+        repair: Repair::default(),
+        regions: AnnotatedRegion::single(
+            extract_source_lines(source, line, 0),
+            Some(Underline {
+                col,
+                len: source
+                    .lines()
+                    .nth(line.saturating_sub(1))
+                    .map(|l| l.trim().len())
+                    .unwrap_or(1)
+                    .max(1),
+                label: "verify-unexpected-err".to_string(),
+            }),
+        ),
+        related: Vec::new(),
+    }
+}
+
+// ─── Replay failure diagnostics ──────────────────────────────────────────────
+
+#[allow(clippy::too_many_arguments)]
+pub fn replay_output_mismatch_diagnostic(
+    program_file: &str,
+    recording_path: &str,
+    expected: &str,
+    actual: &str,
+    diff_path: Option<&str>,
+    entry_fn: &str,
+    entry_line: usize,
+    recording_output_line: usize,
+) -> Diagnostic {
+    let recording_ref = if recording_output_line > 0 {
+        format!("{}:{}", recording_path, recording_output_line)
+    } else {
+        format!("{}:$.output", recording_path)
+    };
+    let mut fields: Vec<(&'static str, String)> = vec![
+        ("recording", recording_ref),
+        ("expected", expected.to_string()),
+        ("actual", actual.to_string()),
+    ];
+    if let Some(dp) = diff_path {
+        let label = if dp == "$" {
+            "$ (root)".to_string()
+        } else {
+            dp.to_string()
+        };
+        fields.push(("diff", label));
+    }
+    Diagnostic {
+        severity: Severity::Fail,
+        slug: "replay-output-mismatch",
+        summary: "recorded output differs".to_string(),
+        span: Span {
+            file: program_file.to_string(),
+            line: entry_line,
+            col: 0,
+        },
+        fn_name: if entry_fn.is_empty() {
+            None
+        } else {
+            Some(entry_fn.to_string())
+        },
+        intent: None,
+        fields,
+        conflict: None,
+        repair: Repair::default(),
+        regions: AnnotatedRegion::single(vec![], None),
+        related: Vec::new(),
+    }
+}
+
+pub fn replay_effect_error_diagnostic(
+    program_file: &str,
+    recording_path: &str,
+    error: &str,
+    entry_fn: &str,
+    entry_line: usize,
+) -> Diagnostic {
+    Diagnostic {
+        severity: Severity::Fail,
+        slug: "replay-error",
+        summary: "replay failed".to_string(),
+        span: Span {
+            file: program_file.to_string(),
+            line: entry_line,
+            col: 0,
+        },
+        fn_name: if entry_fn.is_empty() {
+            None
+        } else {
+            Some(entry_fn.to_string())
+        },
+        intent: None,
+        fields: vec![
+            ("recording", recording_path.to_string()),
+            ("error", error.to_string()),
+        ],
+        conflict: None,
+        repair: Repair::default(),
+        regions: AnnotatedRegion::single(vec![], None),
+        related: Vec::new(),
+    }
+}

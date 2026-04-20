@@ -1,0 +1,5 @@
+---
+source: tests/cli_diagnostic_render_spec.rs
+expression: "serde_json::to_string(&diag).expect(\"serde serialization must not fail\")"
+---
+{"severity":"fail","slug":"verify-runtime-error","summary":"case aborted","span":{"file":"test.av","line":2,"col":5},"fields":[["block","div"],["case","div(1, 0) == 0"],["error","divide by zero"]],"regions":[{"source_lines":[{"line_num":2,"text":"    div(1, 0) == 0"}],"underline":{"col":5,"len":14,"label":"verify-runtime-error"}}]}

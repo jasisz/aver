@@ -1,0 +1,8 @@
+---
+source: tests/cli_diagnostic_render_spec.rs
+expression: "render_tty(diag, false)"
+---
+error[missing-verify]: Function 'add' has no verify block
+  at: test.av:2:4
+  in-fn: add
+  repair: Add a verify block with representative test cases

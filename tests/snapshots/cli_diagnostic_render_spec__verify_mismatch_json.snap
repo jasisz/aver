@@ -1,0 +1,5 @@
+---
+source: tests/cli_diagnostic_render_spec.rs
+expression: "serde_json::to_string(&diag).expect(\"serde serialization must not fail\")"
+---
+{"severity":"fail","slug":"verify-mismatch","summary":"assertion failed","span":{"file":"test.av","line":2,"col":5},"fields":[["block","add"],["case","add(1, 2) == 3"],["expected","3"],["actual","4"]],"regions":[{"source_lines":[{"line_num":2,"text":"    add(1, 2) == 3"}],"underline":{"col":5,"len":14,"label":"verify-mismatch"}}]}

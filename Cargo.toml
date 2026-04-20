@@ -30,6 +30,7 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "aver"
 path = "src/main.rs"
+required-features = ["runtime", "terminal", "tty-render"]
 
 [[bin]]
 name = "aver_self_host_cli"
@@ -37,9 +38,10 @@ path = "src/self_host/main.rs"
 required-features = ["runtime"]
 
 [features]
-default = ["runtime", "terminal"]
-runtime = ["dep:aver-rt", "aver-memory/runtime", "dep:clap", "dep:colored", "dep:toml"]
+default = ["runtime", "terminal", "tty-render"]
+runtime = ["dep:aver-rt", "aver-memory/runtime", "dep:clap", "dep:toml"]
 terminal = ["aver-rt/terminal"]
+tty-render = ["dep:colored"]
 wasm = ["wasm-compile", "dep:wasmtime"]
 wasm-compile = ["dep:wasm-encoder"]
 playground = ["wasm-compile", "dep:wasm-bindgen"]
@@ -60,6 +62,7 @@ wasmtime = { version = "29", optional = true, default-features = false, features
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+insta = "1"
 tempfile = "3"
 
 [[bench]]

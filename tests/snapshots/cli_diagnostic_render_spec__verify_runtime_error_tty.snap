@@ -1,0 +1,12 @@
+---
+source: tests/cli_diagnostic_render_spec.rs
+expression: "render_tty(&diag, false)"
+---
+fail[verify-runtime-error]: case aborted
+  at: test.av:2:5
+  block: div
+  case: div(1, 0) == 0
+  error: divide by zero
+    |
+  2 |     div(1, 0) == 0
+    |     ^^^^^^^^^^^^^^  verify-runtime-error

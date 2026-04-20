@@ -11,10 +11,7 @@ use aver::ast::{
     Expr, FnBody, FnDef, Pattern, Spanned, Stmt, TopLevel, TypeDef, VerifyBlock, VerifyKind,
 };
 use aver::checker::{
-    CheckFinding, VerifyResult, check_module_intent_with_sigs_in, collect_cse_warnings_in,
-    collect_independence_warnings_in, collect_perf_warnings_in,
-    collect_verify_coverage_warnings_in, collect_verify_law_dependency_warnings_in, expr_to_str,
-    index_decisions, merge_verify_blocks,
+    CheckFinding, VerifyResult, expr_to_str, index_decisions, merge_verify_blocks,
 };
 use aver::codegen;
 use aver::codegen::ModuleInfo;
@@ -23,7 +20,6 @@ use aver::codegen::rust as rust_codegen;
 use aver::nan_value::{Arena, NanValueConvert};
 use aver::resolver;
 use aver::source::{find_module_file, require_module_declaration};
-use aver::tail_check::collect_non_tail_recursion_warnings_with_sigs;
 use aver::tco;
 use aver::types::checker::run_type_check_full;
 use aver::types::{Type, parse_type_str};
@@ -35,6 +31,7 @@ use aver::verify_law::{
 use aver::vm;
 
 use super::diagnostic;
+use aver::tty_render::render_tty;
 
 use crate::shared::{
     apply_runtime_policy_to_vm, compute_memo_fns, format_type_errors, load_runtime_policy,
@@ -2084,109 +2081,27 @@ fn run_check_for_file(
             println!("Check: {}", shown_path.cyan());
         }
         let line_count = source.lines().count();
-        let mut transformed = items.clone();
-        tco::transform_program(&mut transformed);
 
-        // --- Collect all diagnostics ---
-        let tc_result = run_type_check_full(items, Some(module_root));
-        let non_tail_warnings =
-            collect_non_tail_recursion_warnings_with_sigs(&transformed, &tc_result.fn_sigs);
-        let findings =
-            check_module_intent_with_sigs_in(items, Some(&tc_result.fn_sigs), Some(path));
-        let coverage_warnings = collect_verify_coverage_warnings_in(items, Some(path));
-        let law_dependency_warnings =
-            collect_verify_law_dependency_warnings_in(items, &tc_result.fn_sigs, Some(path));
-        let cse_warnings = collect_cse_warnings_in(&transformed, Some(path));
-        let perf_warnings = collect_perf_warnings_in(&transformed, Some(path));
-        let independence_warnings =
-            collect_independence_warnings_in(&transformed, &tc_result.fn_sigs, Some(path));
+        // --- Canonical analysis pipeline ---
+        let opts = diagnostic::AnalyzeOptions {
+            file_label: shown_path.clone(),
+            module_base_dir: Some(module_root.to_string()),
+            ..Default::default()
+        };
+        let report = diagnostic::analyze_source(source, &opts);
+        let has_errors = report.diagnostics.iter().any(|d| d.is_error());
+        let mut diagnostics = report.diagnostics;
+
+        // --- Multi-file concerns: append unused-expose warnings computed
+        //     across the whole check unit (not visible to single-file analyze)
         let unused_exposes_warnings = unused_exposes_by_file
             .get(&canonical_path_key(path))
             .cloned()
             .unwrap_or_default();
-
-        let has_errors = !tc_result.errors.is_empty() || !findings.errors.is_empty();
-
-        // --- Collect all diagnostics (errors first, then warnings) ---
-        let mut diagnostics = Vec::new();
-
-        for te in &tc_result.errors {
-            diagnostics.push(diagnostic::from_type_error(te, source, &shown_path));
-        }
-        for e in &findings.errors {
-            diagnostics.push(diagnostic::from_check_finding(
-                diagnostic::Severity::Error,
-                e,
-                source,
-                &shown_path,
-            ));
-        }
-        for (binding_name, fn_name, line) in &tc_result.unused_bindings {
-            diagnostics.push(diagnostic::unused_binding_diagnostic(
-                binding_name,
-                fn_name,
-                *line,
-                source,
-                &shown_path,
-            ));
-        }
-        for w in findings
-            .warnings
-            .iter()
-            .chain(coverage_warnings.iter())
-            .chain(law_dependency_warnings.iter())
-            .chain(cse_warnings.iter())
-            .chain(perf_warnings.iter())
-            .chain(independence_warnings.iter())
-            .chain(unused_exposes_warnings.iter())
-        {
+        for w in &unused_exposes_warnings {
             diagnostics.push(diagnostic::from_check_finding(
                 diagnostic::Severity::Warning,
                 w,
-                source,
-                &shown_path,
-            ));
-        }
-        for warning in &non_tail_warnings {
-            // Deduplicate callsite lines: multiple calls on the same line
-            // get a single extra_span with a count suffix.
-            let mut line_counts: Vec<(usize, usize)> = Vec::new();
-            for &ln in &warning.callsite_lines {
-                if let Some(entry) = line_counts.iter_mut().find(|(l, _)| *l == ln) {
-                    entry.1 += 1;
-                } else {
-                    line_counts.push((ln, 1));
-                }
-            }
-            let max_shown = 3;
-            let extra_spans: Vec<_> = line_counts
-                .iter()
-                .take(max_shown)
-                .map(|&(ln, count)| {
-                    let label = if count > 1 {
-                        format!("{} non-tail calls", count)
-                    } else {
-                        "non-tail call".to_string()
-                    };
-                    aver::checker::FindingSpan {
-                        line: ln,
-                        col: 0,
-                        len: 0,
-                        label,
-                    }
-                })
-                .collect();
-            let finding = CheckFinding {
-                line: warning.line,
-                module: None,
-                file: Some(path.to_string()),
-                fn_name: Some(warning.fn_name.clone()),
-                message: warning.message.clone(),
-                extra_spans,
-            };
-            diagnostics.push(diagnostic::from_check_finding(
-                diagnostic::Severity::Warning,
-                &finding,
                 source,
                 &shown_path,
             ));
@@ -2202,14 +2117,18 @@ fn run_check_for_file(
         let suppressed_count = total_before - diagnostics.len();
 
         // --- Emit ---
-        for (i, diag) in diagnostics.iter().enumerate() {
-            if json {
-                println!("{}", diag.render_json().trim());
-            } else {
+        if json {
+            let bundle = diagnostic::AnalysisReport::with_diagnostics(
+                shown_path.clone(),
+                diagnostics.clone(),
+            );
+            println!("{}", bundle.to_json());
+        } else {
+            for (i, diag) in diagnostics.iter().enumerate() {
                 if i > 0 {
                     println!();
                 }
-                print!("{}", diag.render(verbose));
+                print!("{}", render_tty(diag, verbose));
             }
         }
         if !diagnostics.is_empty() && !json {
@@ -2808,7 +2727,7 @@ fn render_verify_output(
                         _ => None,
                     };
                     if let Some(d) = diag {
-                        println!("{}", d.render_json().trim());
+                        println!("{}", serde_json::to_string(&d).unwrap_or_default());
                     }
                 }
             }
@@ -2914,7 +2833,7 @@ fn render_verify_output(
                     if let Some(d) = diag {
                         if diag_count < max_diags {
                             println!();
-                            print!("{}", d.render(verbose));
+                            print!("{}", render_tty(&d, verbose));
                         }
                         diag_count += 1;
                     }

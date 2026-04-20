@@ -1,0 +1,12 @@
+---
+source: tests/cli_diagnostic_render_spec.rs
+expression: "render_tty(diag, false)"
+---
+error[type-error]: Function 'pick': body returns String but declared return type is Int
+  at: test.av:2:1
+    |
+  2 | fn pick() -> Int
+    |              ^^^  declared Int
+  3 |     ? "returns an Int"
+  4 |     "hello"
+    |     ^^^^^^^  returns String

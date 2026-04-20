@@ -18,6 +18,7 @@ use aver::vm;
 
 use crate::commands::find_self_host_binary;
 use crate::shared::{apply_runtime_policy_to_vm, parse_file, read_file};
+use aver::tty_render::render_tty;
 
 fn collect_recording_files_from_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
     let entries = fs::read_dir(dir)
@@ -440,7 +441,7 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
             None
         };
         if let Some(d) = diag {
-            println!("{}", d.render_json().trim());
+            println!("{}", serde_json::to_string(&d).unwrap_or_default());
         }
     } else {
         println!();
@@ -460,7 +461,7 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
                 &result.entry_fn,
                 result.entry_line,
             );
-            print!("{}", diag.render(true));
+            print!("{}", render_tty(&diag, true));
             return;
         }
 
@@ -495,7 +496,7 @@ fn render_replay_result(result: &ReplayResult, _diff: bool, json: bool) {
                     result.recording_output_line,
                 );
                 println!();
-                print!("{}", diag.render(true));
+                print!("{}", render_tty(&diag, true));
             }
         }
     }

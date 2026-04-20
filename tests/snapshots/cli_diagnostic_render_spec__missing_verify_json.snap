@@ -1,0 +1,5 @@
+---
+source: tests/cli_diagnostic_render_spec.rs
+expression: "serde_json::to_string(diag).expect(\"serde serialization must not fail\")"
+---
+{"severity":"error","slug":"missing-verify","summary":"Function 'add' has no verify block","span":{"file":"test.av","line":2,"col":4},"fn_name":"add","repair":{"primary":"Add a verify block with representative test cases"},"regions":[{"source_lines":[{"line_num":2,"text":"fn add(x: Int, y: Int) -> Int"}],"underline":{"col":4,"len":3,"label":""}}]}

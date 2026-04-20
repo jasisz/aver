@@ -1,0 +1,5 @@
+---
+source: tests/cli_diagnostic_render_spec.rs
+expression: "serde_json::to_string(diag).expect(\"serde serialization must not fail\")"
+---
+{"severity":"error","slug":"type-error","summary":"Function 'pick': body returns String but declared return type is Int","span":{"file":"test.av","line":2,"col":1},"regions":[{"source_lines":[{"line_num":2,"text":"fn pick() -> Int"}],"underline":{"col":14,"len":3,"label":"declared Int"}},{"source_lines":[{"line_num":3,"text":"    ? \"returns an Int\""}]},{"source_lines":[{"line_num":4,"text":"    \"hello\""}],"underline":{"col":5,"len":7,"label":"returns String"}}]}

@@ -6,6 +6,7 @@ pub mod checker;
 pub mod codegen;
 #[cfg(feature = "runtime")]
 pub mod config;
+pub mod diagnostics;
 pub mod effects;
 #[cfg(feature = "runtime")]
 #[allow(dead_code)]
@@ -27,6 +28,8 @@ pub mod services;
 pub mod source;
 pub mod tail_check;
 pub mod tco;
+#[cfg(feature = "tty-render")]
+pub mod tty_render;
 pub mod types;
 pub mod value;
 pub mod verify_law;

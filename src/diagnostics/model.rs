@@ -1,0 +1,171 @@
+//! Canonical diagnostic data model.
+//!
+//! Runtime-neutral and wasm-safe — no `colored`, no file IO, no VM.
+//! Shared between CLI (`src/main/tty_render.rs`), LSP (`aver-lsp`),
+//! and playground (`src/playground.rs`).
+
+use serde::Serialize;
+
+pub const SCHEMA_VERSION: u32 = 1;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    Error,
+    Warning,
+    Fail,
+    Hint,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Span {
+    pub file: String,
+    pub line: usize,
+    pub col: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SourceLine {
+    pub line_num: usize,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Underline {
+    pub col: usize,
+    pub len: usize,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AnnotatedRegion {
+    pub source_lines: Vec<SourceLine>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub underline: Option<Underline>,
+}
+
+impl AnnotatedRegion {
+    pub fn single(source_lines: Vec<SourceLine>, underline: Option<Underline>) -> Vec<Self> {
+        vec![Self {
+            source_lines,
+            underline,
+        }]
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct RelatedSpan {
+    pub span: Span,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Repair {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub alternatives: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub example: Option<String>,
+}
+
+impl Repair {
+    pub fn primary(text: impl Into<String>) -> Self {
+        Self {
+            primary: Some(text.into()),
+            alternatives: Vec::new(),
+            example: None,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.primary.is_none() && self.alternatives.is_empty() && self.example.is_none()
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Diagnostic {
+    pub severity: Severity,
+    pub slug: &'static str,
+    pub summary: String,
+    pub span: Span,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fn_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub intent: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<(&'static str, String)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflict: Option<String>,
+    #[serde(skip_serializing_if = "Repair::is_empty")]
+    pub repair: Repair,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub regions: Vec<AnnotatedRegion>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub related: Vec<RelatedSpan>,
+}
+
+impl Diagnostic {
+    pub fn is_warning(&self) -> bool {
+        matches!(self.severity, Severity::Warning)
+    }
+
+    pub fn is_error(&self) -> bool {
+        matches!(self.severity, Severity::Error | Severity::Fail)
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AnalysisReport {
+    pub schema_version: u32,
+    pub kind: &'static str,
+    pub file_label: String,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+impl AnalysisReport {
+    pub fn new(file_label: impl Into<String>) -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION,
+            kind: "analysis",
+            file_label: file_label.into(),
+            diagnostics: Vec::new(),
+        }
+    }
+
+    pub fn with_diagnostics(
+        file_label: impl Into<String>,
+        diagnostics: Vec<Diagnostic>,
+    ) -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION,
+            kind: "analysis",
+            file_label: file_label.into(),
+            diagnostics,
+        }
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|_| "{}".to_string())
+    }
+}
+
+/// Minimal JSON string escaping. Kept as a standalone helper so legacy
+/// per-record CLI JSON (bit-for-bit parity with 0.9.x) can build output
+/// without pulling serde into every format string.
+pub fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
