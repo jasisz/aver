@@ -1169,10 +1169,15 @@ if (contextBtn) {
 // emits bulk-memory ops (memory.copy), so we enable Features.All on
 // the module before optimizing — otherwise binaryen asserts in the
 // default MVP feature set.
+// Binaryen ships as a CommonJS bundle with Node-flavored
+// `module.require`. esm.sh can't rewrite it; unpkg 404s on nested
+// paths. Skypack's CJS→ESM conversion handles it. Still worth
+// keeping the failure quiet — if load ever breaks, the footnote
+// still explains the size.
 let binaryenPromise = null;
 function loadBinaryen() {
     if (!binaryenPromise) {
-        binaryenPromise = import("https://esm.sh/binaryen@123.0.0")
+        binaryenPromise = import("https://cdn.skypack.dev/binaryen@123.0.0")
             .then((mod) => mod.default || mod);
     }
     return binaryenPromise;
