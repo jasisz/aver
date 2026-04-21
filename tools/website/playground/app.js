@@ -3087,17 +3087,18 @@ const GAME_TOUCH = {
     // wumpus: console game, no touch controls
 };
 
-// Centralised "leaving game mode" hook — drop touch controls,
-// clear the active-game marker on the clicked game button, and
-// reset the dropzone hint to the default. Called wherever the user
-// moves from a loaded game to plain code (Run on own source,
-// loading an example, clicking another game, dropping a file).
-const DROPZONE_DEFAULT = "drop .wasm · .av · folder · .replay.json";
 function deactivateGame() {
     state.activeGame = null;
     document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
     buildTouchControls(null);
-    if (dom.fileMeta) dom.fileMeta.textContent = DROPZONE_DEFAULT;
+    if (dom.fileMeta) {
+        // Literal, not const, so hoisted calls during bootstrap don't
+        // hit a TDZ (function decls are hoisted, top-level `const`s
+        // are not — the mismatch silently broke game-click listener
+        // installation earlier because deactivateGame ran before its
+        // const sibling was initialised).
+        dom.fileMeta.textContent = "drop .wasm · .av · folder · .replay.json";
+    }
 }
 
 function buildTouchControls(gameName) {
