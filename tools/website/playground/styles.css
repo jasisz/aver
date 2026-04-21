@@ -835,6 +835,19 @@ body {
     padding-left: 1.2rem;
     font-size: 0.85em;
 }
+.audit-section .diag-snippet-line {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    color: var(--muted);
+    white-space: pre;
+    padding: 0;
+    line-height: 1.35;
+}
+.audit-section .diag-snippet-caret {
+    font-weight: 700;
+}
+.audit-section .diag-snippet-caret.diag-err { color: var(--red); }
+.audit-section .diag-snippet-caret.diag-warn { color: var(--orange); }
 
 /* ── Shared download button for panels ────────────────────────── */
 .ctx-header-row, .audit-header-row, .why-header-row {

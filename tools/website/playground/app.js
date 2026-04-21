@@ -2558,6 +2558,58 @@ function renderDiag(container, d) {
         rep.textContent = `repair: ${d.repair.primary}`;
         container.appendChild(rep);
     }
+    renderDiagRegions(container, d);
+}
+
+// Render the source-snippet regions + underline carets the same way
+// the CLI's tty_render does. Keeps the audit panel / verify / why
+// diagnostics visually consistent with `aver check` output.
+function renderDiagRegions(container, d) {
+    const regions = Array.isArray(d.regions) ? d.regions : [];
+    const maxNum = regions.reduce((m, r) => {
+        for (const sl of r.source_lines || []) {
+            if (sl.line_num > m) m = sl.line_num;
+        }
+        return m;
+    }, 0);
+    if (maxNum === 0) return;
+    const gutter = String(maxNum).length;
+    const pad = " ".repeat(gutter);
+    const sep = document.createElement("div");
+    sep.className = "diag-snippet-line";
+    sep.textContent = `  ${pad} |`;
+    container.appendChild(sep);
+
+    let lastEmitted = null;
+    for (const region of regions) {
+        const lines = region.source_lines || [];
+        if (lines.length > 0 && lastEmitted !== null && lines[0].line_num > lastEmitted + 1) {
+            const gap = document.createElement("div");
+            gap.className = "diag-snippet-line";
+            gap.textContent = "  ...";
+            container.appendChild(gap);
+        }
+        for (const sl of lines) {
+            if (lastEmitted !== null && sl.line_num <= lastEmitted) continue;
+            const num = String(sl.line_num).padStart(gutter, " ");
+            const line = document.createElement("div");
+            line.className = "diag-snippet-line";
+            line.textContent = `  ${num} | ${sl.text}`;
+            container.appendChild(line);
+            lastEmitted = sl.line_num;
+        }
+        const ul = region.underline;
+        if (ul && ul.col > 0) {
+            const caretPad = " ".repeat(Math.max(0, ul.col - 1));
+            const carets = "^".repeat(Math.max(1, ul.len || 1));
+            const label = ul.label ? `  ${ul.label}` : "";
+            const ulLine = document.createElement("div");
+            const isErr = d.severity === "error" || d.severity === "fail";
+            ulLine.className = `diag-snippet-line diag-snippet-caret ${isErr ? "diag-err" : "diag-warn"}`;
+            ulLine.textContent = `  ${pad} | ${caretPad}${carets}${label}`;
+            container.appendChild(ulLine);
+        }
+    }
 }
 
 function buildSection({ key, label, status, statusText, countText, teaching, issues, actions, extras }) {
