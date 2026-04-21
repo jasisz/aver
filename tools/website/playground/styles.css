@@ -292,6 +292,7 @@ body {
 .console-surface .stdout { color: var(--text); }
 .console-surface .stderr { color: var(--red); }
 .console-surface .warning { color: var(--orange); }
+.console-surface .success { color: var(--green); }
 
 .readline-bar {
     display: flex;

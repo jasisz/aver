@@ -1044,14 +1044,15 @@ if (whyBtn) {
                     : "0%";
 
             appendConsole("stdout", `${summary.file_label}: ${summary.total_lines} lines`);
-            appendConsole("stdout",
-                `  justified ${pct(summary.justified_lines)} (${summary.justified_lines})  ` +
-                `partial ${pct(summary.partial_lines)} (${summary.partial_lines})  ` +
-                `unjustified ${pct(summary.unjustified_lines)} (${summary.unjustified_lines})`
-            );
+            appendConsole("success",
+                `  justified   ${summary.justified_lines} lines (${pct(summary.justified_lines)})`);
+            appendConsole("warning",
+                `  partial     ${summary.partial_lines} lines (${pct(summary.partial_lines)})`);
+            appendConsole("stderr",
+                `  unjustified ${summary.unjustified_lines} lines (${pct(summary.unjustified_lines)})`);
 
             if (!summary.has_module_intent) {
-                appendConsole("stdout", "  ! module has no intent block");
+                appendConsole("warning", "  ! module has no intent block");
             }
 
             for (const d of summary.decisions || []) {
@@ -1070,13 +1071,14 @@ if (whyBtn) {
             });
 
             if (problematic.length === 0) {
-                appendConsole("stdout", "\n✓ Every function is fully justified.");
+                appendConsole("success", "\n✓ Every function is fully justified.");
             } else {
                 appendConsole("stdout", "");
                 for (const f of problematic) {
                     const hints = (f.missing || []).join(", ");
                     const suffix = hints ? `  (${hints})` : "";
-                    appendConsole("stdout", `  ${f.level}: ${f.name}${suffix}`);
+                    const channel = f.level === "unjustified" ? "stderr" : "warning";
+                    appendConsole(channel, `  ${f.level}: ${f.name}${suffix}`);
                 }
             }
 
