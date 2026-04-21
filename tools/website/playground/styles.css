@@ -367,6 +367,26 @@ body {
     letter-spacing: 0.06em;
     opacity: 0.7;
 }
+.recording-group-header .rec-btn {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.4rem;
+}
+.recording-branch-add {
+    padding: 0.25rem 0.75rem 0.4rem;
+    display: flex;
+    justify-content: flex-start;
+}
+.recording-branch-add .rec-btn {
+    font-size: 0.68rem;
+    padding: 0.2rem 0.55rem;
+    background: transparent;
+    border: 1px dashed rgba(56, 189, 248, 0.35);
+    color: #38bdf8;
+}
+.recording-branch-add .rec-btn:hover {
+    background: rgba(56, 189, 248, 0.1);
+    border-color: #38bdf8;
+}
 
 .recording-events {
     max-height: 55vh;

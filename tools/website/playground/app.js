@@ -1901,21 +1901,29 @@ function renderRecordingPanel() {
     // order-independent under `?!`.
     renderEventSegments(list, data.effects);
 
-    // Append-effect row at the bottom. Creates a blank card above
-    // the button so the user can fill it in and hit ▶ Replay.
+    // Append row: blank flat effect OR a fresh 2-branch independence
+    // group. Two buttons so the user can extend the trace in either
+    // shape without manually editing group_id/branch_path metadata.
     const appendRow = document.createElement("div");
     appendRow.className = "recording-append";
     const appendBtn = document.createElement("button");
     appendBtn.type = "button";
     appendBtn.className = "rec-btn";
     appendBtn.textContent = "＋ Add effect";
-    appendBtn.title = "Append a blank effect to the trace. Fill in type/args/outcome, then ▶ Replay to see how the program reacts to an injected call.";
+    appendBtn.title = "Append a blank flat effect. Fill in type/args/outcome, then ▶ Replay.";
     appendBtn.addEventListener("click", () => {
         state.recordingData.effects.push(blankEffect());
         resequence();
         renderRecordingPanel();
     });
     appendRow.appendChild(appendBtn);
+    const groupBtn = document.createElement("button");
+    groupBtn.type = "button";
+    groupBtn.className = "rec-btn";
+    groupBtn.textContent = "＋ Add group";
+    groupBtn.title = "Append a new independent product (`?!`) with two blank branches. Each branch can hold its own sequence of effects; replay treats the branches as order-independent.";
+    groupBtn.addEventListener("click", addNewIndependenceGroup);
+    appendRow.appendChild(groupBtn);
     list.appendChild(appendRow);
     panel.appendChild(list);
 
@@ -2008,15 +2016,33 @@ function renderGroupSegment(seg) {
     hint.title =
         "Effects in this group came from an Aver `?!` / `!` independent product. " +
         "Aver's runtime may reorder branches; replay matches them by (branch, occurrence) " +
-        "rather than by absolute position, so shuffling cards between branches can change " +
-        "behavior while shuffling within one branch is still sequential.";
+        "rather than by absolute position. Reorder within a branch = ok; swap whole group = ok.";
     header.appendChild(hint);
+    const spacer = document.createElement("span");
+    spacer.style.flex = "1";
+    header.appendChild(spacer);
+
+    // Group-level actions: move the whole group up / down past adjacent
+    // segments, or drop it entirely. Kept on the header so the user
+    // can't accidentally "move a card out of the group" — that would
+    // break `?!` semantics (branch_path + occurrence are the identity).
+    const canMoveUp = canMoveGroup(seg.group_id, -1);
+    const canMoveDown = canMoveGroup(seg.group_id, +1);
+    header.appendChild(recAction("↑", "Move this independent product up past the previous segment.", canMoveUp, () => {
+        moveGroup(seg.group_id, -1);
+    }));
+    header.appendChild(recAction("↓", "Move this independent product down past the next segment.", canMoveDown, () => {
+        moveGroup(seg.group_id, +1);
+    }));
+    header.appendChild(recAction("🗑", "Delete the whole independent product — every effect in every branch.", true, () => {
+        state.recordingData.effects = state.recordingData.effects.filter(e => e.group_id !== seg.group_id);
+        resequence();
+        renderRecordingPanel();
+    }));
     box.appendChild(header);
 
     const branches = document.createElement("div");
     branches.className = "recording-group-branches";
-    // Sort branches lexicographically — stable presentation across
-    // re-renders even if the VM recorded them interleaved.
     const keys = Array.from(seg.branches.keys()).sort();
     for (const path of keys) {
         const branch = document.createElement("div");
@@ -2028,10 +2054,151 @@ function renderGroupSegment(seg) {
         for (const { eff, idx } of seg.branches.get(path)) {
             branch.appendChild(renderEffectCard(eff, idx));
         }
+        // ＋ at the end of each branch — adds an effect with inherited
+        // group_id + branch_path so the new card lands in the right
+        // slot without the user having to know the metadata.
+        const addInBranch = document.createElement("button");
+        addInBranch.type = "button";
+        addInBranch.className = "rec-btn";
+        addInBranch.textContent = "＋ effect in this branch";
+        addInBranch.title = `Append a blank effect to branch ${path}.`;
+        addInBranch.addEventListener("click", () => {
+            const last = seg.branches.get(path).slice(-1)[0]?.idx ?? -1;
+            const insertAt = last < 0
+                ? state.recordingData.effects.length
+                : last + 1;
+            const nextOcc = nextOccurrenceInBranch(seg.group_id, path);
+            const blank = blankEffect();
+            blank.group_id = seg.group_id;
+            blank.branch_path = path;
+            blank.effect_occurrence = nextOcc;
+            state.recordingData.effects.splice(insertAt, 0, blank);
+            resequence();
+            renderRecordingPanel();
+        });
+        const addRow = document.createElement("div");
+        addRow.className = "recording-branch-add";
+        addRow.appendChild(addInBranch);
+        branch.appendChild(addRow);
         branches.appendChild(branch);
     }
     box.appendChild(branches);
     return box;
+}
+
+// ── Group-aware ordering helpers ──────────────────────────────────
+function groupIndices(groupId) {
+    const out = [];
+    state.recordingData.effects.forEach((e, i) => {
+        if (e.group_id === groupId) out.push(i);
+    });
+    return out;
+}
+
+function canMoveGroup(groupId, dir) {
+    const idxs = groupIndices(groupId);
+    if (idxs.length === 0) return false;
+    const first = idxs[0];
+    const last = idxs[idxs.length - 1];
+    return dir < 0 ? first > 0 : last < state.recordingData.effects.length - 1;
+}
+
+function moveGroup(groupId, dir) {
+    const list = state.recordingData.effects;
+    const idxs = groupIndices(groupId);
+    if (idxs.length === 0) return;
+    const first = idxs[0];
+    const last = idxs[idxs.length - 1];
+    const slice = list.splice(first, last - first + 1);
+    if (dir < 0) {
+        // Jump past the previous segment (flat effect or whole group).
+        let insertAt = first - 1;
+        const prevGid = list[insertAt]?.group_id ?? null;
+        if (prevGid != null) {
+            while (insertAt > 0 && list[insertAt - 1].group_id === prevGid) insertAt--;
+        }
+        list.splice(insertAt, 0, ...slice);
+    } else {
+        const nextGid = list[first]?.group_id ?? null;
+        let insertAt = first + 1;
+        if (nextGid != null) {
+            while (insertAt < list.length && list[insertAt].group_id === nextGid) insertAt++;
+        }
+        list.splice(insertAt, 0, ...slice);
+    }
+    resequence();
+    renderRecordingPanel();
+}
+
+function nextOccurrenceInBranch(groupId, branchPath) {
+    let max = -1;
+    for (const e of state.recordingData.effects) {
+        if (e.group_id === groupId && (e.branch_path ?? "0") === branchPath) {
+            const occ = e.effect_occurrence ?? 0;
+            if (occ > max) max = occ;
+        }
+    }
+    return max + 1;
+}
+
+function nextGroupId() {
+    let max = 0;
+    for (const e of state.recordingData.effects) {
+        if (typeof e.group_id === "number" && e.group_id > max) max = e.group_id;
+    }
+    return max + 1;
+}
+
+// Find the nearest swap-partner index respecting scope boundaries:
+// - within a branch (same group_id + branch_path) for grouped effects
+// - within a flat run (both group_id == null) for non-grouped
+// Returns null when there's no valid swap (card at start/end of
+// its scope, or next effect belongs to a different scope).
+function findSwapTarget(idx, dir) {
+    const list = state.recordingData.effects;
+    const cur = list[idx];
+    const target = idx + dir;
+    if (target < 0 || target >= list.length) return null;
+    const next = list[target];
+    if ((cur.group_id ?? null) !== (next.group_id ?? null)) return null;
+    if (cur.group_id != null && (cur.branch_path ?? "0") !== (next.branch_path ?? "0")) return null;
+    return target;
+}
+
+function swapEffectsAt(i, j) {
+    if (j == null) return;
+    const list = state.recordingData.effects;
+    [list[i], list[j]] = [list[j], list[i]];
+    resequence();
+    renderRecordingPanel();
+}
+
+function insertEffectAbove(idx) {
+    const cur = state.recordingData.effects[idx];
+    const blank = blankEffect();
+    if (cur?.group_id != null) {
+        blank.group_id = cur.group_id;
+        blank.branch_path = cur.branch_path ?? "0";
+        blank.effect_occurrence = cur.effect_occurrence ?? 0;
+    }
+    state.recordingData.effects.splice(idx, 0, blank);
+    resequence();
+    renderRecordingPanel();
+}
+
+function addNewIndependenceGroup() {
+    const gid = nextGroupId();
+    const branches = ["0", "1"];
+    const newEffects = branches.map((path) => {
+        const blank = blankEffect();
+        blank.group_id = gid;
+        blank.branch_path = path;
+        blank.effect_occurrence = 0;
+        return blank;
+    });
+    state.recordingData.effects.push(...newEffects);
+    resequence();
+    renderRecordingPanel();
 }
 
 const NULLARY_EFFECTS = new Set([
@@ -2063,27 +2230,40 @@ function renderEffectCard(effect, idx) {
     const head = document.createElement("div");
     head.className = "ev-head";
 
-    // Per-event actions, placed first so they sit on the left.
+    // Per-event actions. Ordering is scope-bounded: within a group
+    // branch, ↑/↓ only swap with siblings in the SAME branch (keeps
+    // `branch_path` + `effect_occurrence` semantics intact); in a flat
+    // segment, ↑/↓ stay inside that flat segment (can't cross into a
+    // neighbouring group). Whole-group moves live on the group header.
     const actions = document.createElement("div");
     actions.className = "ev-actions";
-    const total = state.recordingData.effects.length;
-    actions.appendChild(evAction("↑", "Move this effect up one position.", idx > 0, () => {
-        const list = state.recordingData.effects;
-        [list[idx - 1], list[idx]] = [list[idx], list[idx - 1]];
-        resequence();
-        renderRecordingPanel();
-    }));
-    actions.appendChild(evAction("↓", "Move this effect down one position.", idx < total - 1, () => {
-        const list = state.recordingData.effects;
-        [list[idx], list[idx + 1]] = [list[idx + 1], list[idx]];
-        resequence();
-        renderRecordingPanel();
-    }));
-    actions.appendChild(evAction("＋", "Insert a new effect above this one.", true, () => {
-        state.recordingData.effects.splice(idx, 0, blankEffect());
-        resequence();
-        renderRecordingPanel();
-    }));
+    const inGroup = effect.group_id != null;
+    const swapAboveIdx = findSwapTarget(idx, -1);
+    const swapBelowIdx = findSwapTarget(idx, +1);
+    actions.appendChild(evAction(
+        "↑",
+        inGroup
+            ? "Move up within this branch (cards can't cross branch boundaries)."
+            : "Move up within the flat segment (cards can't enter an independent product).",
+        swapAboveIdx != null,
+        () => swapEffectsAt(idx, swapAboveIdx),
+    ));
+    actions.appendChild(evAction(
+        "↓",
+        inGroup
+            ? "Move down within this branch (cards can't cross branch boundaries)."
+            : "Move down within the flat segment (cards can't enter an independent product).",
+        swapBelowIdx != null,
+        () => swapEffectsAt(idx, swapBelowIdx),
+    ));
+    actions.appendChild(evAction(
+        "＋",
+        inGroup
+            ? `Insert a new effect above this one, staying in branch ${effect.branch_path ?? "0"}.`
+            : "Insert a new effect above this one.",
+        true,
+        () => insertEffectAbove(idx),
+    ));
     actions.appendChild(evAction("🗑", "Drop this effect from the trace — replay will expect the program NOT to make this call.", true, () => {
         state.recordingData.effects.splice(idx, 1);
         resequence();
