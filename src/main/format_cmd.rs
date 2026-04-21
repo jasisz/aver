@@ -436,10 +436,44 @@ fn normalize_function_header_effects_line(line: &str) -> String {
     formatted
 }
 
+#[cfg(test)]
 fn normalize_function_header_effects(lines: Vec<String>) -> Vec<String> {
+    let mut sink = Vec::new();
+    normalize_function_header_effects_tracked(lines, &mut sink, None)
+}
+
+/// Per-line formatter for function headers.
+///
+/// When `line_offset` is provided, each rewritten line pushes a
+/// `bad-function-header` violation keyed on the original source line.
+/// `line_offset` is a `Vec<usize>` mapping input-line-index → source
+/// line number (1-based) so the factory can point back at the user's
+/// source accurately.
+fn normalize_function_header_effects_tracked(
+    lines: Vec<String>,
+    violations: &mut Vec<aver::diagnostics::model::FormatViolation>,
+    line_offset: Option<&[usize]>,
+) -> Vec<String> {
     lines
         .into_iter()
-        .map(|line| normalize_function_header_effects_line(&line))
+        .enumerate()
+        .map(|(idx, line)| {
+            let rewritten = normalize_function_header_effects_line(&line);
+            if rewritten != line {
+                let source_line = line_offset.and_then(|off| off.get(idx)).copied().unwrap_or(idx + 1);
+                violations.push(aver::diagnostics::model::FormatViolation {
+                    line: source_line,
+                    col: 1,
+                    rule: "bad-function-header",
+                    message:
+                        "function signature spacing / parameter separator differs from canonical form"
+                            .to_string(),
+                    before: Some(line.clone()),
+                    after: Some(rewritten.clone()),
+                });
+            }
+            rewritten
+        })
         .collect()
 }
 
@@ -714,6 +748,11 @@ fn normalize_source_lines_tracked(
     let normalized = source.replace("\r\n", "\n").replace('\r', "\n");
 
     let mut lines = Vec::new();
+    // Track original source line per position so downstream tracked
+    // passes can keep accurate violation coordinates. Per-line rules
+    // preserve count; reshape rules break this map and fall back to
+    // their own heuristics.
+    let mut line_offset: Vec<usize> = Vec::new();
     for (idx, raw) in normalized.split('\n').enumerate() {
         let trimmed = raw.trim_end_matches([' ', '\t']);
         let (line, violation) = normalize_leading_indent_tracked(trimmed, idx + 1);
@@ -721,10 +760,11 @@ fn normalize_source_lines_tracked(
             violations.push(v);
         }
         lines.push(line);
+        line_offset.push(idx + 1);
     }
 
     let lines = normalize_effect_declaration_blocks(lines);
-    let lines = normalize_function_header_effects(lines);
+    let lines = normalize_function_header_effects_tracked(lines, violations, Some(&line_offset));
     let lines = normalize_module_intent_blocks(lines);
     normalize_inline_decision_fields(lines)
 }
