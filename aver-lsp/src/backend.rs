@@ -335,7 +335,7 @@ impl LanguageServer for AverBackend {
 }
 
 fn format_document_edits(source: &str) -> Option<Vec<TextEdit>> {
-    let formatted = aver::format::try_format_source(source).ok()?;
+    let (formatted, _violations) = aver::format::try_format_source(source).ok()?;
     if formatted == source {
         return None;
     }

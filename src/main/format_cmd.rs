@@ -38,12 +38,12 @@ pub(super) fn cmd_format(path: &str, check: bool, json: bool) {
         process::exit(1);
     }
 
-    // Keep original + formatted around so JSON mode can emit per-line diff
-    // regions via the canonical factory.
+    // Keep original source + formatter violations so JSON/tty modes can
+    // render precise per-rule diagnostics via the canonical factory.
     struct Changed {
         path: PathBuf,
         original: String,
-        formatted: String,
+        violations: Vec<aver::diagnostics::model::FormatViolation>,
     }
     let mut changed: Vec<Changed> = Vec::new();
 
@@ -60,8 +60,8 @@ pub(super) fn cmd_format(path: &str, check: bool, json: bool) {
                 process::exit(1);
             }
         };
-        let formatted = match try_format_source(&src) {
-            Ok(s) => s,
+        let (formatted, violations) = match try_format_source(&src) {
+            Ok(pair) => pair,
             Err(e) => {
                 let msg = format!("Cannot format '{}': {}", file.display(), e);
                 if json {
@@ -83,7 +83,7 @@ pub(super) fn cmd_format(path: &str, check: bool, json: bool) {
             changed.push(Changed {
                 path: file.clone(),
                 original: src,
-                formatted,
+                violations,
             });
         }
     }
@@ -91,7 +91,7 @@ pub(super) fn cmd_format(path: &str, check: bool, json: bool) {
     if json {
         for c in &changed {
             let file_label = c.path.display().to_string();
-            let diag = needs_format_diagnostic(&file_label, &c.original, &c.formatted);
+            let diag = needs_format_diagnostic(&file_label, &c.violations, &c.original);
             let report = AnalysisReport::with_diagnostics(file_label, vec![diag]);
             println!("{}", report.to_json());
         }
@@ -117,8 +117,8 @@ pub(super) fn cmd_format(path: &str, check: bool, json: bool) {
                 println!();
             }
             let file_label = c.path.display().to_string();
-            let diag = needs_format_diagnostic(&file_label, &c.original, &c.formatted);
-            // verbose=true so per-line diff regions render in tty too —
+            let diag = needs_format_diagnostic(&file_label, &c.violations, &c.original);
+            // verbose=true so violation regions render in tty too —
             // parity with `--check --json` consumers.
             print!("{}", aver::tty_render::render_tty(&diag, true));
         }
@@ -866,7 +866,17 @@ fn normalize_inline_decision_fields(lines: Vec<String>) -> Vec<String> {
     out
 }
 
-pub fn try_format_source(source: &str) -> Result<String, String> {
+/// Format `source` and return the rewritten text plus a list of
+/// [`FormatViolation`]s — one per rule that fired on a specific
+/// location. Etap A: violations Vec is allocated but rules don't yet
+/// populate it; callers must not claim precise line ranges.
+/// Subsequent commits migrate each `normalize_*` rule to push to this
+/// vec as they rewrite.
+pub fn try_format_source(
+    source: &str,
+) -> Result<(String, Vec<aver::diagnostics::model::FormatViolation>), String> {
+    let mut violations: Vec<aver::diagnostics::model::FormatViolation> = Vec::new();
+
     let lines = normalize_source_lines(source);
     let normalized = lines.join("\n");
     let ast_info = parse_ast_info_checked(&normalized)?;
@@ -885,18 +895,20 @@ pub fn try_format_source(source: &str) -> Result<String, String> {
         }
     }
 
+    let _ = &mut violations; // silence unused-mut until rules populate it
+
     if non_empty_blocks.is_empty() {
-        return Ok("\n".to_string());
+        return Ok(("\n".to_string(), violations));
     }
     let mut out = non_empty_blocks.join("\n\n");
     out.push('\n');
-    Ok(out)
+    Ok((out, violations))
 }
 
 #[cfg(test)]
 pub fn format_source(source: &str) -> String {
     match try_format_source(source) {
-        Ok(formatted) => formatted,
+        Ok((formatted, _violations)) => formatted,
         Err(err) => panic!("format_source received invalid Aver source: {err}"),
     }
 }

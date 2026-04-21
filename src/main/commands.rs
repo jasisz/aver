@@ -2218,18 +2218,18 @@ pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bo
         opts.include_verify_run = true;
         let mut report = analyze_source(&source, &opts);
 
-        // Format check: append needs-format diagnostic with per-line diff
-        // regions (capped at the factory's MAX_DIFF_REGIONS).
-        let needs_format_pair = match try_format_source(&source) {
-            Ok(formatted) if formatted != source => Some(formatted),
-            _ => None,
+        // Format check: append needs-format diagnostic with structured
+        // per-rule violations (capped at the factory's MAX_VIOLATION_REGIONS).
+        let (format_changed, format_violations) = match try_format_source(&source) {
+            Ok((formatted, violations)) if formatted != source => (true, violations),
+            _ => (false, Vec::new()),
         };
-        let needs_format = needs_format_pair.is_some();
-        if let Some(formatted) = needs_format_pair {
+        let needs_format = format_changed;
+        if needs_format {
             report.diagnostics.push(needs_format_diagnostic(
                 &shown_path,
+                &format_violations,
                 &source,
-                &formatted,
             ));
             total_format_needed += 1;
         }

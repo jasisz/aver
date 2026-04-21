@@ -145,6 +145,26 @@ pub struct VerifySummary {
     pub blocks: Vec<VerifyBlockResult>,
 }
 
+/// One formatter rule firing on one location. Emitted by
+/// `try_format_source` alongside the rewritten text, then folded into a
+/// canonical `needs-format` [`Diagnostic`] by the factory.
+///
+/// `rule` is a stable slug ("bad-operator-spacing", "effect-order",
+/// "verify-block-order", …) consumed by LSP `code`, docs, and CI rules.
+/// `before`/`after` are optional short snippets for teaching; long
+/// rewrites can omit them.
+#[derive(Clone, Debug, Serialize)]
+pub struct FormatViolation {
+    pub line: usize,
+    pub col: usize,
+    pub rule: &'static str,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub before: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct VerifyBlockResult {
     pub name: String,
