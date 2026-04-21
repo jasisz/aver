@@ -2225,19 +2225,44 @@ async function rerunAuditSection(key) {
 
 async function applyFormatFix() {
     if (state.wasmOnly) return;
-    const source = getActiveSource();
-    if (!source?.trim()) return;
+    // Format every tab in the virtual fs, not just the active one —
+    // the audit panel summarises violations across the project, so
+    // ⚡ Fix formatting should flatten all of them in one go. Ends
+    // on whichever tab actually changed (entry first) so the user
+    // sees the diff immediately.
+    const targets = state.files.size > 0
+        ? Array.from(state.files.entries())
+        : [[getActiveName() || "playground.av", getActiveSource()]];
+    if (targets.every(([, src]) => !src?.trim())) return;
     try {
         const comp = await loadCompiler();
         setStatus("Formatting…", "info");
-        const rewritten = comp.aver_format(source);
-        if (rewritten === source) {
+        const changed = [];
+        for (const [path, src] of targets) {
+            if (!src?.trim()) continue;
+            const rewritten = comp.aver_format(src);
+            if (rewritten !== src) {
+                if (state.files.has(path)) state.files.set(path, rewritten);
+                changed.push(path);
+            }
+        }
+        if (changed.length === 0) {
             setStatus("Already formatted", "success");
         } else {
-            codeEditor.value = rewritten;
-            if (state.activeFile) state.files.set(state.activeFile, rewritten);
-            updateHighlight();
-            setStatus("Formatted", "success");
+            // Prefer showing the entry file if it changed, else the
+            // first changed file. setActiveFile syncs codeEditor +
+            // highlight in one call.
+            const entry = pickEntryFile();
+            const focus = changed.includes(entry) ? entry : changed[0];
+            if (state.files.has(focus)) setActiveFile(focus);
+            else {
+                codeEditor.value = state.files.get(focus) || "";
+                updateHighlight();
+            }
+            setStatus(
+                changed.length === 1 ? `Formatted ${changed[0]}` : `Formatted ${changed.length} files`,
+                "success"
+            );
         }
         await rerunAuditSection("format");
     } catch (e) {

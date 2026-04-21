@@ -219,7 +219,7 @@ pub fn context_project(files: &HashMap<String, String>, entry: &str) -> String {
 /// diagnostics + verify_summary.
 #[cfg(feature = "runtime")]
 pub fn audit_source(source: &str) -> String {
-    audit_impl(source, None)
+    audit_build_report(source, None, None, None).to_json()
 }
 
 #[cfg(feature = "runtime")]
@@ -231,11 +231,16 @@ pub fn audit_project(files: &HashMap<String, String>, entry: &str) -> String {
         .ok()
         .map(|items| module_depends(&items))
         .and_then(|deps| crate::source::load_module_tree_from_map(&deps, files).ok());
-    audit_impl(entry_source, loaded)
+    audit_build_report(entry_source, loaded, Some(files), Some(entry)).to_json()
 }
 
 #[cfg(feature = "runtime")]
-fn audit_impl(source: &str, loaded: Option<Vec<LoadedModule>>) -> String {
+fn audit_build_report(
+    source: &str,
+    loaded: Option<Vec<LoadedModule>>,
+    all_files: Option<&HashMap<String, String>>,
+    entry: Option<&str>,
+) -> crate::diagnostics::AnalysisReport {
     use crate::diagnostics::needs_format_diagnostic;
 
     let mut opts = AnalyzeOptions::new("playground");
@@ -245,7 +250,7 @@ fn audit_impl(source: &str, loaded: Option<Vec<LoadedModule>>) -> String {
     }
     let mut report = analyze_source(source, &opts);
 
-    // Dodaj format-check jako diagnostic w bundle (parity z CLI audit).
+    // Format-check for the entry source (parity with CLI audit).
     #[cfg(feature = "tty-render")]
     if let Ok((formatted, violations)) = crate::format::try_format_source(source)
         && formatted != source
@@ -257,7 +262,26 @@ fn audit_impl(source: &str, loaded: Option<Vec<LoadedModule>>) -> String {
         ));
     }
 
-    report.to_json()
+    // Extra pass: format-check every non-entry file in the virtual fs
+    // too, so the audit panel's Format section covers the whole
+    // project, not just main.av.
+    #[cfg(feature = "tty-render")]
+    if let (Some(files), Some(entry)) = (all_files, entry) {
+        for (path, src) in files {
+            if path == entry {
+                continue;
+            }
+            if let Ok((formatted, violations)) = crate::format::try_format_source(src)
+                && formatted != *src
+            {
+                report
+                    .diagnostics
+                    .push(needs_format_diagnostic(path, &violations, src));
+            }
+        }
+    }
+
+    report
 }
 
 /// Format the source and return the rewritten text. Non-mutating by
