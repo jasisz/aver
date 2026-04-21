@@ -433,7 +433,9 @@ fn parse_error_repair(body: &str) -> super::model::Repair {
     let hint = if body.contains("after '?'") {
         Some("Description needs a string literal: `? \"what this does\"`")
     } else if body.contains("after 'intent ='") {
-        Some("Module intent is a string or an indented block of strings: `intent = \"one line\"` or `intent =\\n    \"line one\"\\n    \"line two\"`")
+        Some(
+            "Module intent is a string or an indented block of strings: `intent = \"one line\"` or `intent =\\n    \"line one\"\\n    \"line two\"`",
+        )
     } else if body.contains("Expected '[' after '!'") {
         Some("Effects are a bracketed list: `! [Console.print, Random.int]`")
     } else if body.contains("Expected '=>' between key and value in map literal") {
@@ -441,11 +443,17 @@ fn parse_error_repair(body: &str) -> super::model::Repair {
     } else if body.contains("Tuple type must have at least 2 elements") {
         Some("Single-element tuples aren't allowed — use the bare type, or add a second element.")
     } else if body.contains("Constructor patterns must be qualified") {
-        Some("Qualify variant patterns with the type name: `Shape.Circle(r) ->` not `Circle(r) ->`.")
+        Some(
+            "Qualify variant patterns with the type name: `Shape.Circle(r) ->` not `Circle(r) ->`.",
+        )
     } else if body.contains("bind the whole value with a lower-case name") {
-        Some("Record patterns don't take positional args — bind the whole record: `match user ... u -> u.name`.")
+        Some(
+            "Record patterns don't take positional args — bind the whole record: `match user ... u -> u.name`.",
+        )
     } else if body.starts_with("Expected ") && body.contains(", found ") {
-        Some("Replace the unexpected token with the expected form; check for a missing keyword, bracket, or separator above.")
+        Some(
+            "Replace the unexpected token with the expected form; check for a missing keyword, bracket, or separator above.",
+        )
     } else if body.contains("must place `module <Name>`") {
         Some("Move `module <Name>` so it's the very first top-level item in the file.")
     } else if body.contains("must declare `module <Name>`") {
