@@ -72,13 +72,28 @@ body {
     border-color: var(--accent);
 }
 
-.top-meta {
-    margin-left: auto;
-    font-size: 0.75rem;
-    color: var(--muted);
+/* Bottom status bar — IDE-style thin strip for compile meta, status,
+   memory. Keeps the top-bar uncrowded (game nav already wraps) and
+   gives long status text room to breathe with ellipsis truncation. */
+.status-bar {
     display: flex;
     align-items: center;
     gap: 1rem;
+    padding: 0.25rem 0.75rem;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    font-size: 0.72rem;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    min-height: 1.6rem;
+    flex-shrink: 0;
+}
+.status-bar .status-spacer { flex: 1; }
+.status-bar [data-status] {
+    max-width: 50vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .memory-label {
     font-family: var(--mono, monospace);

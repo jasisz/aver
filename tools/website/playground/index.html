@@ -43,11 +43,6 @@
         <button data-game="wumpus" data-console-game>Wumpus <small>7.7 KiB</small></button>
     </nav>
     <a class="intro-link" href="https://github.com/jasisz/aver" target="_blank">GitHub</a>
-    <div class="top-meta">
-        <span class="compile-meta" data-compile-meta></span>
-        <span data-status data-tone="idle">Loading…</span>
-        <span data-memory class="memory-label"></span>
-    </div>
 </header>
 
 <div class="isolation-note" data-isolation-note hidden>
@@ -133,6 +128,13 @@
         </div>
     </section>
 </main>
+
+<footer class="status-bar">
+    <span class="compile-meta" data-compile-meta></span>
+    <span class="status-spacer"></span>
+    <span data-status data-tone="idle">Loading…</span>
+    <span data-memory class="memory-label"></span>
+</footer>
 
 <!-- hidden helpers for wasm-runner internals -->
 <span data-line-queued style="display:none">0</span>

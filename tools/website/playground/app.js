@@ -247,7 +247,7 @@ function handleWorkerMessage(event) {
                 appendConsole("stderr", message.error);
             }
             if (state.activeGame) {
-                setStatus("Game ended. Pick another or edit source to fork.", "idle");
+                setStatus("Game ended.", "idle");
             }
             break;
         default:
