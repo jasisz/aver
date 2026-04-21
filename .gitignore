@@ -7,3 +7,4 @@ out/
 .env
 tools/wasm-runner/target/
 *.cwasm/
+.claude/
