@@ -1862,6 +1862,7 @@ function updateRecplayButton() {
 function setRecording(parsed) {
     state.recordingData = parsed;
     state.lastRecording = JSON.stringify(parsed, null, 2);
+    state.lastReplayResult = null;
     updateRecplayButton();
     renderRecordingPanel();
 }
@@ -1869,6 +1870,7 @@ function setRecording(parsed) {
 function clearRecording() {
     state.recordingData = null;
     state.lastRecording = null;
+    state.lastReplayResult = null;
     updateRecplayButton();
     const existing = document.querySelector(".recording-panel");
     if (existing) existing.remove();
@@ -1923,6 +1925,21 @@ function renderRecordingPanel() {
         panel.appendChild(intro);
         dom.console.appendChild(panel);
         return;
+    }
+
+    // Replay result banner — shown right under the header when a
+    // replay has been run. Collapses the stderr dump into a single
+    // colored line.
+    if (state.lastReplayResult) {
+        const banner = document.createElement("div");
+        banner.className = `recording-replay-banner ${state.lastReplayResult.kind}`;
+        const icon = state.lastReplayResult.kind === "match"
+            ? "✓"
+            : state.lastReplayResult.kind === "prefix"
+                ? "⋯"
+                : "✗";
+        banner.innerHTML = `<span class="icon">${icon}</span> ${escapeHtml(state.lastReplayResult.summary)}`;
+        panel.appendChild(banner);
     }
 
     // Program-level outcome (what main returned / runtime error).
@@ -2181,6 +2198,8 @@ function resequence() {
 
 function commitRecording() {
     state.lastRecording = JSON.stringify(state.recordingData, null, 2);
+    // Any edit invalidates the previous replay result.
+    state.lastReplayResult = null;
 }
 
 function evAction(label, title, enabled, onClick) {
@@ -2286,18 +2305,26 @@ async function doReplay() {
             appendConsole("stderr", res.error || "unknown error");
             return;
         }
+        const exhausted =
+            /Replay exhausted/i.test(res.error || "") && res.replayed === res.total;
+        let kind, summary;
         if (res.matched) {
-            setStatus(
-                `Replay matched · ${res.replayed}/${res.total} effects · shift-click to re-record`,
-                "success"
-            );
+            kind = "match";
+            summary = `Replay matched · ${res.replayed}/${res.total} effects`;
+        } else if (exhausted) {
+            kind = "prefix";
+            summary = `Prefix replayed · ${res.replayed}/${res.total} · program continued past the recorded trace`;
         } else {
-            setStatus(
-                `Replay diverged · ${res.replayed}/${res.total}${res.error ? " · " + res.error : ""}`,
-                "error"
+            kind = "diverge";
+            const short = (res.error || "divergence").replace(
+                /^Runtime error \[line \d+\]:\s*/i,
+                ""
             );
-            if (res.error) appendConsole("stderr", res.error);
+            summary = `Replay diverged at ${res.replayed}/${res.total} · ${short}`;
         }
+        state.lastReplayResult = { kind, summary };
+        setStatus(summary, kind === "diverge" ? "error" : kind === "prefix" ? "info" : "success");
+        renderRecordingPanel();
     } catch (e) {
         appendConsole("stderr", e.message || String(e));
         setStatus("Replay failed", "error");

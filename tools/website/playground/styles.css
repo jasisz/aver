@@ -274,6 +274,29 @@ body {
     padding: 0.15rem 0.4rem;
     font-size: 0.85rem;
 }
+.recording-replay-banner {
+    padding: 0.4rem 0.75rem;
+    font-size: 0.75rem;
+    font-family: var(--font-mono);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.recording-replay-banner .icon { font-weight: 700; font-size: 0.85rem; }
+.recording-replay-banner.match {
+    background: rgba(74, 222, 128, 0.1);
+    color: #4ade80;
+}
+.recording-replay-banner.prefix {
+    background: rgba(56, 189, 248, 0.1);
+    color: #38bdf8;
+}
+.recording-replay-banner.diverge {
+    background: rgba(248, 113, 113, 0.12);
+    color: #f87171;
+}
+
 .recording-outcome {
     padding: 0.4rem 0.75rem;
     font-size: 0.75rem;
