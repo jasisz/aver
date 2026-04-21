@@ -112,11 +112,22 @@ pub(super) fn cmd_format(path: &str, check: bool, json: bool) {
             println!("{}", "Format check passed".green());
             return;
         }
-        println!("{}", "Format check failed".red());
-        println!("Files that need formatting:");
-        for c in &changed {
-            println!("  {}", c.path.display());
+        for (i, c) in changed.iter().enumerate() {
+            if i > 0 {
+                println!();
+            }
+            let file_label = c.path.display().to_string();
+            let diag = needs_format_diagnostic(&file_label, &c.original, &c.formatted);
+            // verbose=true so per-line diff regions render in tty too —
+            // parity with `--check --json` consumers.
+            print!("{}", aver::tty_render::render_tty(&diag, true));
         }
+        println!();
+        println!(
+            "{}: {} file(s) need formatting",
+            "Format check failed".red(),
+            changed.len()
+        );
         process::exit(1);
     }
 
