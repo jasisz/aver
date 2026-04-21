@@ -845,6 +845,8 @@ const EXAMPLES = {
     "result-monadic": `module Starter\n    intent = "idiomatic Result with ? short-circuit"\n\nfn parseNumber(s: String) -> Result<Int, String>\n    ? "parse a string into an int, with a friendly error"\n    match Int.fromString(s)\n        Result.Ok(n) -> Result.Ok(n)\n        Result.Err(_) -> Result.Err("not a number: {s}")\n\nverify parseNumber\n    parseNumber("42") => Result.Ok(42)\n    parseNumber("") => Result.Err("not a number: ")\n    parseNumber("abc") => Result.Err("not a number: abc")\n\nfn doubleParsed(s: String) -> Result<Int, String>\n    ? "parse then double; propagates parse errors via ?"\n    n = parseNumber(s)?\n    Result.Ok(n + n)\n\nverify doubleParsed\n    doubleParsed("21") => Result.Ok(42)\n    doubleParsed("oops") => Result.Err("not a number: oops")\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(doubleParsed("21"))\n    Console.print(doubleParsed("oops"))\n`,
 
     "independence": `module Independence\n    intent =\n        "Two effectful branches run under \`?!\` — Aver may reorder them at runtime."\n        "Hit ⏺ Record: the Trace panel groups both under one independent product,"\n        "so replay matches either order. Shuffle the cards inside the group and try Replay."\n\nfn announceA() -> Result<Int, String>\n    ? "first independent branch — prints and returns 10"\n    ! [Console.print]\n    Console.print("branch A")\n    Result.Ok(10)\n\nfn announceB() -> Result<Int, String>\n    ? "second independent branch — prints and returns 20"\n    ! [Console.print]\n    Console.print("branch B")\n    Result.Ok(20)\n\nfn main() -> Result<Unit, String>\n    ! [Console.print]\n    _pair = (announceA(), announceB())?!\n    Console.print("done — both branches ran")\n    Result.Ok(Unit)\n`,
+
+    "fanout": `module Fanout\n    intent =\n        "Three parallel fetches — and the third is itself a nested \`?!\`."\n        "Trace panel shows nested independence: outer branches 0/1/2, and"\n        "branch 2 contains its own independent product inside (2.0 / 2.1)."\n        "Record, then try reordering within an inner branch vs moving the whole inner group."\n\nfn fetchOne(tag: String) -> Result<Int, String>\n    ? "one independent remote call"\n    ! [Console.print]\n    Console.print("fetch {tag}")\n    Result.Ok(String.len(tag))\n\nfn fetchPair() -> Result<(Int, Int), String>\n    ? "inner pair — independent fetch of two"\n    ! [Console.print]\n    xy = (fetchOne("inner-A"), fetchOne("inner-B"))?!\n    Result.Ok(xy)\n\nfn main() -> Result<Unit, String>\n    ! [Console.print]\n    _all = (fetchOne("outer-1"), fetchOne("outer-2"), fetchPair())?!\n    Console.print("all fan-outs completed")\n    Result.Ok(Unit)\n`,
 };
 
 const codeEditor = document.querySelector("[data-code-editor]");
@@ -2028,13 +2030,13 @@ function renderGroupSegment(seg) {
     // break `?!` semantics (branch_path + occurrence are the identity).
     const canMoveUp = canMoveGroup(seg.group_id, -1);
     const canMoveDown = canMoveGroup(seg.group_id, +1);
-    header.appendChild(recAction("↑", "Move this independent product up past the previous segment.", canMoveUp, () => {
+    header.appendChild(evAction("↑", "Move this independent product up past the previous segment.", canMoveUp, () => {
         moveGroup(seg.group_id, -1);
     }));
-    header.appendChild(recAction("↓", "Move this independent product down past the next segment.", canMoveDown, () => {
+    header.appendChild(evAction("↓", "Move this independent product down past the next segment.", canMoveDown, () => {
         moveGroup(seg.group_id, +1);
     }));
-    header.appendChild(recAction("🗑", "Delete the whole independent product — every effect in every branch.", true, () => {
+    header.appendChild(evAction("🗑", "Delete the whole independent product — every effect in every branch.", true, () => {
         state.recordingData.effects = state.recordingData.effects.filter(e => e.group_id !== seg.group_id);
         resequence();
         renderRecordingPanel();
