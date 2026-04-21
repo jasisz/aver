@@ -206,23 +206,6 @@ body {
     font-weight: 600;
     margin-left: -0.15rem;
 }
-.compile-meta .compile-savings { color: var(--green); }
-.compile-meta .opt-btn {
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--muted);
-    font-size: 0.78rem;
-    line-height: 1;
-    padding: 0.1rem 0.35rem;
-    border-radius: 3px;
-    cursor: pointer;
-    transition: color 0.15s, border-color 0.15s;
-}
-.compile-meta .opt-btn:hover:not(:disabled) {
-    color: var(--accent);
-    border-color: var(--accent);
-}
-.compile-meta .opt-btn:disabled { opacity: 0.6; cursor: wait; }
 
 .dropzone-inline {
     position: relative;
