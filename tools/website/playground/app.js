@@ -4,6 +4,7 @@ const dom = {
     dropzone: document.querySelector("[data-dropzone]"),
     fileInput: document.querySelector("[data-file-input]"),
     fileMeta: document.querySelector("[data-file-meta]"),
+    compileMeta: document.querySelector("[data-compile-meta]"),
     runButton: document.querySelector("[data-run]"),
     stopButton: document.querySelector("[data-stop]"),
     clearButton: document.querySelector("[data-clear]"),
@@ -1181,21 +1182,22 @@ function loadBinaryen() {
 }
 
 function renderCompileMeta(rawSize, compileMs) {
-    dom.fileMeta.textContent = "";
-    const meta = document.createElement("span");
-    meta.textContent = `Compiled in ${compileMs}ms — ${(rawSize / 1024).toFixed(1)} KB`;
-    dom.fileMeta.appendChild(meta);
+    if (!dom.compileMeta) return;
+    dom.compileMeta.textContent = "";
+
+    const main = document.createElement("span");
+    main.className = "size-main";
+    main.textContent = `Compiled in ${compileMs}ms · ${(rawSize / 1024).toFixed(1)} KB`;
+    dom.compileMeta.appendChild(main);
 
     const hint = document.createElement("span");
-    hint.style.color = "var(--muted)";
-    hint.style.marginLeft = "0.4rem";
-    hint.textContent = "(inline runtime; CI uses --wasm-opt oz)";
-    dom.fileMeta.appendChild(hint);
+    hint.className = "muted-hint";
+    hint.textContent = "(mostly inline runtime)";
+    dom.compileMeta.appendChild(hint);
 
     const optBtn = document.createElement("button");
     optBtn.type = "button";
     optBtn.className = "download-btn";
-    optBtn.style.marginLeft = "0.4rem";
     optBtn.textContent = "⚡ Optimize";
     optBtn.title = "Load binaryen (wasm-opt, ~3 MB, first click only) and shrink the WASM with -Oz — same pipeline as `aver compile --wasm-opt oz`.";
     optBtn.addEventListener("click", async () => {
@@ -1207,7 +1209,6 @@ function renderCompileMeta(rawSize, compileMs) {
             optBtn.textContent = "Optimizing…";
             const before = new Uint8Array(state.wasmBytes);
             const mod = binaryen.readBinary(before);
-            // -Oz equivalent: optimizeLevel 0, shrinkLevel 2.
             binaryen.setOptimizeLevel(0);
             binaryen.setShrinkLevel(2);
             mod.optimize();
@@ -1217,22 +1218,22 @@ function renderCompileMeta(rawSize, compileMs) {
             state.wasmBytes = after.buffer.slice(0);
             const delta = ((1 - after.length / before.length) * 100).toFixed(1);
 
-            dom.fileMeta.textContent = "";
+            dom.compileMeta.textContent = "";
             const done = document.createElement("span");
-            done.textContent = `Compiled + optimized — ${(after.length / 1024).toFixed(2)} KB`;
-            dom.fileMeta.appendChild(done);
+            done.className = "size-main";
+            done.textContent = `Optimized · ${(after.length / 1024).toFixed(2)} KB`;
+            dom.compileMeta.appendChild(done);
             const savings = document.createElement("span");
-            savings.style.color = "var(--green)";
-            savings.style.marginLeft = "0.4rem";
+            savings.className = "savings";
             savings.textContent = `(−${delta}% after wasm-opt -Oz)`;
-            dom.fileMeta.appendChild(savings);
+            dom.compileMeta.appendChild(savings);
         } catch (e) {
             optBtn.disabled = false;
             optBtn.textContent = "⚡ Optimize";
             appendConsole("stderr", `wasm-opt failed: ${e.message || e}`);
         }
     });
-    dom.fileMeta.appendChild(optBtn);
+    dom.compileMeta.appendChild(optBtn);
 }
 
 // Context panel — markdown-style rendered DOM. Matches what an LLM

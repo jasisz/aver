@@ -188,6 +188,19 @@ body {
 .btn-subtle:hover { opacity: 1; }
 .toolbar-spacer { flex: 1; }
 
+.compile-meta {
+    font-size: 0.75rem;
+    color: var(--muted);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0 0.3rem;
+}
+.compile-meta:empty { display: none; }
+.compile-meta .muted-hint { color: var(--muted); opacity: 0.7; }
+.compile-meta .savings { color: var(--green); }
+.compile-meta .size-main { color: var(--text); font-weight: 500; }
+
 .dropzone-inline {
     position: relative;
     font-size: 0.7rem;
