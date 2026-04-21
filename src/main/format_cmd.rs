@@ -839,6 +839,16 @@ fn normalize_source_lines_tracked(
     let mut line_offset: Vec<usize> = Vec::new();
     for (idx, raw) in normalized.split('\n').enumerate() {
         let trimmed = raw.trim_end_matches([' ', '\t']);
+        if trimmed.len() != raw.len() {
+            violations.push(aver::diagnostics::model::FormatViolation {
+                line: idx + 1,
+                col: trimmed.len().max(0) + 1,
+                rule: "trailing-whitespace",
+                message: "trailing whitespace".to_string(),
+                before: None,
+                after: None,
+            });
+        }
         let (line, violation) = normalize_leading_indent_tracked(trimmed, idx + 1);
         if let Some(v) = violation {
             violations.push(v);
@@ -849,8 +859,8 @@ fn normalize_source_lines_tracked(
 
     let lines = normalize_effect_declaration_blocks_tracked(lines, violations, Some(&line_offset));
     let lines = normalize_function_header_effects_tracked(lines, violations, Some(&line_offset));
-    let lines = normalize_module_intent_blocks(lines);
-    normalize_inline_decision_fields(lines)
+    let lines = normalize_module_intent_blocks_tracked(lines, violations, Some(&line_offset));
+    normalize_inline_decision_fields_tracked(lines, violations, Some(&line_offset))
 }
 
 #[cfg(test)]
@@ -859,7 +869,45 @@ fn normalize_source_lines(source: &str) -> Vec<String> {
     normalize_source_lines_tracked(source, &mut sink)
 }
 
+#[cfg(test)]
 fn normalize_module_intent_blocks(lines: Vec<String>) -> Vec<String> {
+    let mut sink = Vec::new();
+    normalize_module_intent_blocks_tracked(lines, &mut sink, None)
+}
+
+fn normalize_module_intent_blocks_tracked(
+    lines: Vec<String>,
+    violations: &mut Vec<aver::diagnostics::model::FormatViolation>,
+    line_offset: Option<&[usize]>,
+) -> Vec<String> {
+    let before = lines.clone();
+    let after = normalize_module_intent_blocks_impl(lines);
+    if before != after {
+        // Find first differing input line and flag it.
+        let diff_idx = before
+            .iter()
+            .zip(&after)
+            .position(|(a, b)| a != b)
+            .unwrap_or(0);
+        let source_line = line_offset
+            .and_then(|off| off.get(diff_idx))
+            .copied()
+            .unwrap_or(diff_idx + 1);
+        violations.push(aver::diagnostics::model::FormatViolation {
+            line: source_line,
+            col: 1,
+            rule: "module-intent-reshape",
+            message:
+                "module intent block reshaped to canonical multiline form"
+                    .to_string(),
+            before: None,
+            after: None,
+        });
+    }
+    after
+}
+
+fn normalize_module_intent_blocks_impl(lines: Vec<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(lines.len());
     let mut in_module_header = false;
     let mut i = 0usize;
@@ -923,17 +971,51 @@ fn normalize_module_intent_blocks(lines: Vec<String>) -> Vec<String> {
     out
 }
 
+#[cfg(test)]
 fn normalize_internal_blank_runs(text: &str) -> String {
+    let mut sink = Vec::new();
+    normalize_internal_blank_runs_tracked(text, 0, &mut sink)
+}
+
+/// Collapse internal blank-line runs to at most 2, strip leading/trailing
+/// blanks. `block_start_line` is the 1-based source line of the block's
+/// first line so violations point back at the original source.
+fn normalize_internal_blank_runs_tracked(
+    text: &str,
+    block_start_line: usize,
+    violations: &mut Vec<aver::diagnostics::model::FormatViolation>,
+) -> String {
     let mut out = Vec::new();
     let mut blank_run = 0usize;
-    for raw in text.split('\n') {
+    let mut run_start_idx: Option<usize> = None;
+    for (rel_idx, raw) in text.split('\n').enumerate() {
         if raw.is_empty() {
+            if blank_run == 0 {
+                run_start_idx = Some(rel_idx);
+            }
             blank_run += 1;
             if blank_run <= 2 {
                 out.push(String::new());
             }
         } else {
+            if blank_run > 2
+                && let Some(start) = run_start_idx
+            {
+                let line = block_start_line.saturating_add(start).max(1);
+                violations.push(aver::diagnostics::model::FormatViolation {
+                    line,
+                    col: 1,
+                    rule: "excess-blank",
+                    message: format!(
+                        "{} consecutive blank lines; formatter collapses to 2",
+                        blank_run
+                    ),
+                    before: None,
+                    after: None,
+                });
+            }
             blank_run = 0;
+            run_start_idx = None;
             out.push(raw.to_string());
         }
     }
@@ -1001,7 +1083,44 @@ fn split_inline_decision_fields(content: &str) -> Vec<String> {
     }
 }
 
+#[cfg(test)]
 fn normalize_inline_decision_fields(lines: Vec<String>) -> Vec<String> {
+    let mut sink = Vec::new();
+    normalize_inline_decision_fields_tracked(lines, &mut sink, None)
+}
+
+fn normalize_inline_decision_fields_tracked(
+    lines: Vec<String>,
+    violations: &mut Vec<aver::diagnostics::model::FormatViolation>,
+    line_offset: Option<&[usize]>,
+) -> Vec<String> {
+    let before = lines.clone();
+    let after = normalize_inline_decision_fields_impl(lines);
+    if before != after {
+        let diff_idx = before
+            .iter()
+            .zip(&after)
+            .position(|(a, b)| a != b)
+            .unwrap_or(0);
+        let source_line = line_offset
+            .and_then(|off| off.get(diff_idx))
+            .copied()
+            .unwrap_or(diff_idx + 1);
+        violations.push(aver::diagnostics::model::FormatViolation {
+            line: source_line,
+            col: 1,
+            rule: "decision-inline",
+            message:
+                "decision fields should each live on their own line"
+                    .to_string(),
+            before: None,
+            after: None,
+        });
+    }
+    after
+}
+
+fn normalize_inline_decision_fields_impl(lines: Vec<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(lines.len());
     let mut in_decision = false;
 
@@ -1051,6 +1170,18 @@ pub fn try_format_source(
 ) -> Result<(String, Vec<aver::diagnostics::model::FormatViolation>), String> {
     let mut violations: Vec<aver::diagnostics::model::FormatViolation> = Vec::new();
 
+    if !source.is_empty() && !source.ends_with('\n') {
+        let last_line = source.lines().count().max(1);
+        violations.push(aver::diagnostics::model::FormatViolation {
+            line: last_line,
+            col: source.lines().last().map(str::len).unwrap_or(0) + 1,
+            rule: "missing-final-newline",
+            message: "file must end with a single newline".to_string(),
+            before: None,
+            after: None,
+        });
+    }
+
     let lines = normalize_source_lines_tracked(source, &mut violations);
     let normalized = lines.join("\n");
     let ast_info = parse_ast_info_checked(&normalized)?;
@@ -1062,7 +1193,11 @@ pub fn try_format_source(
     // 4) Rejoin with one blank line between top-level blocks.
     let mut non_empty_blocks = Vec::new();
     for block in reordered {
-        let text = normalize_internal_blank_runs(&block.text);
+        let text = normalize_internal_blank_runs_tracked(
+            &block.text,
+            block.start_line,
+            &mut violations,
+        );
         let text = text.trim_matches('\n').to_string();
         if !text.is_empty() {
             non_empty_blocks.push(text);
