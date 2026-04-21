@@ -346,17 +346,34 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
 /// patterns to a repair hint — otherwise the CLI / playground showed
 /// parse errors pointing at line 1:1 with no fix suggestion.
 fn parse_error_diagnostic(msg: &str, source: &str, file: &str) -> Diagnostic {
-    use super::classify::extract_source_lines;
-    use super::model::AnnotatedRegion;
+    use super::classify::{estimate_span_len, extract_source_lines_range};
+    use super::model::{AnnotatedRegion, Underline};
     let (line, col, body) = strip_parse_error_prefix(msg);
     let regions = if line > 0 {
-        let source_lines = extract_source_lines(source, line, 1);
+        // Include one line of pre-context so the reader sees the
+        // surrounding code, but stop at the target line so the
+        // underline renders directly beneath it (tty_render draws
+        // the caret after the last line of the region).
+        let start = line.saturating_sub(1).max(1);
+        let source_lines = extract_source_lines_range(source, start, line);
         if source_lines.is_empty() {
             Vec::new()
         } else {
+            // Underline the offending token so parse errors read the
+            // same way type errors do. estimate_span_len scans
+            // forward from `col` until whitespace / punctuation, so
+            // `Expected X, found Y` actually points at Y.
+            let underline = source
+                .lines()
+                .nth(line.saturating_sub(1))
+                .map(|l| Underline {
+                    col: col.max(1),
+                    len: estimate_span_len(l, col.max(1)),
+                    label: String::new(),
+                });
             vec![AnnotatedRegion {
                 source_lines,
-                underline: None,
+                underline,
             }]
         }
     } else {
