@@ -1458,17 +1458,28 @@ function renderCompileMeta(rawSize, compileMs) {
     if (!dom.compileMeta) return;
     dom.compileMeta.textContent = "";
 
+    const label = document.createElement("span");
+    label.className = "size-label";
+    label.textContent = "compiled ";
+    dom.compileMeta.appendChild(label);
+
     const main = document.createElement("span");
     main.className = "size-main";
-    main.textContent = `${compileMs}ms · ${(rawSize / 1024).toFixed(1)} KB`;
+    main.textContent = `${compileMs}ms · ${(rawSize / 1024).toFixed(1)} KiB`;
     dom.compileMeta.appendChild(main);
+
+    const aside = document.createElement("span");
+    aside.className = "size-aside";
+    aside.textContent = " (incl. inline runtime)";
+    dom.compileMeta.appendChild(aside);
 
     const footnote = document.createElement("span");
     footnote.className = "compile-footnote";
     footnote.textContent = "*";
     footnote.title =
-        "Most of this is Aver's inline runtime (alloc, strings, lists, maps). " +
-        "`aver compile --wasm-opt oz` in the CLI strips unused runtime; " +
+        "Raw WASM size before wasm-opt. Most of this is Aver's inline runtime " +
+        "(bump allocator, strings, lists, maps) — your program logic is a small " +
+        "fraction. The CLI's `aver compile --wasm-opt oz` strips unused runtime; " +
         "a one-line program typically drops to ~250 B.";
     dom.compileMeta.appendChild(footnote);
 }
