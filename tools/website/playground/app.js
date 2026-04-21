@@ -1051,6 +1051,20 @@ if (whyBtn) {
                 return;
             }
 
+            // Header row with download
+            const header = document.createElement("div");
+            header.className = "why-header-row";
+            const title = document.createElement("span");
+            title.className = "title";
+            title.textContent = "Why — justification map";
+            header.appendChild(title);
+            header.appendChild(makeDownloadButton(
+                "⬇ Download as .jsonl",
+                "Save the why bundle as JSON Lines — same shape as `aver why --json`",
+                () => downloadJsonl(bundle, "why.jsonl")
+            ));
+            dom.console.appendChild(header);
+
             const pct = (part) =>
                 summary.total_lines > 0
                     ? Math.round((part * 100) / summary.total_lines) + "%"
@@ -1152,15 +1166,149 @@ if (contextBtn) {
 // Context panel — markdown-style rendered DOM. Matches what an LLM
 // would see via `aver context`, presented as a module card instead
 // of plain-text console lines.
+function contextToMarkdown(ctx) {
+    const lines = [];
+    lines.push(`# module ${ctx.module_name || "(unnamed)"}`);
+    lines.push("");
+    if (ctx.intent) {
+        lines.push(`> ${ctx.intent.replace(/\n/g, " ")}`);
+        lines.push("");
+    }
+    const metaRow = (label, items, codeWrap) => {
+        if (!items || items.length === 0) return;
+        const rendered = codeWrap
+            ? items.map((x) => `\`${x}\``).join(", ")
+            : items.join(", ");
+        lines.push(`**${label}:** ${rendered}`);
+    };
+    metaRow("depends", ctx.depends);
+    metaRow("exposes", ctx.exposes, true);
+    metaRow("exposes opaque", ctx.exposes_opaque, true);
+    metaRow("api effects", ctx.api_effects, true);
+    if (ctx.main_effects) metaRow("main effects", ctx.main_effects, true);
+
+    if ((ctx.types || []).length > 0) {
+        lines.push("");
+        lines.push("## Types");
+        lines.push("");
+        for (const t of ctx.types) {
+            const members = (t.fields_or_variants || []).join(", ");
+            const suffix = members ? ` (${members})` : "";
+            lines.push(`- **${t.kind}** \`${t.name}\`${suffix}`);
+        }
+    }
+
+    if ((ctx.functions || []).length > 0) {
+        lines.push("");
+        lines.push("## Functions");
+        for (const f of ctx.functions) {
+            lines.push("");
+            lines.push(`### ${f.name}${f.is_exposed ? "" : " (private)"}`);
+            lines.push("");
+            lines.push("```aver");
+            lines.push(f.signature);
+            lines.push("```");
+            if (f.description) {
+                lines.push("");
+                lines.push(`> ${f.description}`);
+            }
+            const flags = [...(f.qualifiers || [])];
+            if (f.auto_memo) flags.push("AUTO_MEMO");
+            if (f.auto_tco) flags.push("AUTO_TCO");
+            if (flags.length > 0) {
+                lines.push("");
+                lines.push(`**Flags:** ${flags.map((x) => `\`${x}\``).join(", ")}`);
+            }
+            if ((f.effects || []).length > 0) {
+                lines.push(`**Effects:** ${f.effects.map((x) => `\`${x}\``).join(", ")}`);
+            }
+            if (f.verify_count > 0) {
+                lines.push("");
+                lines.push(`**Verify (${f.verify_count} case${f.verify_count > 1 ? "s" : ""}):**`);
+                for (const sample of f.verify_samples || []) {
+                    lines.push(`- \`${sample}\``);
+                }
+            }
+        }
+    }
+
+    if ((ctx.decisions || []).length > 0) {
+        lines.push("");
+        lines.push("## Decisions");
+        for (const d of ctx.decisions) {
+            lines.push("");
+            lines.push(`### ${d.name}`);
+            lines.push("");
+            lines.push(`**Date:** ${d.date}  `);
+            if (d.reason_prefix) lines.push(`**Reason:** ${d.reason_prefix}`);
+            if ((d.impacts || []).length > 0) {
+                lines.push(`**Impacts:** ${d.impacts.map((x) => `\`${x}\``).join(", ")}`);
+            }
+        }
+    }
+
+    lines.push("");
+    return lines.join("\n");
+}
+
+function triggerDownload(filename, content, mime) {
+    const blob = new Blob([content], { type: `${mime};charset=utf-8` });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 100);
+}
+
+function downloadContextMarkdown(ctx) {
+    triggerDownload(
+        `${ctx.module_name || "context"}.md`,
+        contextToMarkdown(ctx),
+        "text/markdown"
+    );
+}
+
+function downloadJsonl(bundles, filename) {
+    // JSON Lines format — one canonical bundle per line. Matches
+    // `aver <cmd> --json` output shape; consumers can pipe to `jq`.
+    const arr = Array.isArray(bundles) ? bundles : [bundles];
+    const content = arr.map((b) => JSON.stringify(b)).join("\n") + "\n";
+    triggerDownload(filename, content, "application/x-ndjson");
+}
+
+function makeDownloadButton(label, title, onClick) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "download-btn";
+    btn.textContent = label;
+    btn.title = title;
+    btn.addEventListener("click", onClick);
+    return btn;
+}
+
 function renderContextPanel(ctx) {
     const panel = document.createElement("div");
     panel.className = "context-panel";
 
+    // Header row: title + download button
+    const headerRow = document.createElement("div");
+    headerRow.className = "ctx-header-row";
     const title = document.createElement("h2");
     title.textContent = ctx.module_name
         ? `module ${ctx.module_name}`
         : "(no module declaration)";
-    panel.appendChild(title);
+    headerRow.appendChild(title);
+    const dlBtn = document.createElement("button");
+    dlBtn.className = "ctx-download-btn";
+    dlBtn.type = "button";
+    dlBtn.textContent = "⬇ Download as .md";
+    dlBtn.title = "Export this context as a Markdown file — same shape as `aver context --output ctx.md`";
+    dlBtn.addEventListener("click", () => downloadContextMarkdown(ctx));
+    headerRow.appendChild(dlBtn);
+    panel.appendChild(headerRow);
 
     if (ctx.intent) {
         const bq = document.createElement("blockquote");
@@ -1607,6 +1755,21 @@ if (auditBtn) {
 
             const panel = document.createElement("div");
             panel.className = "audit-panel";
+
+            const header = document.createElement("div");
+            header.className = "audit-header-row";
+            const title = document.createElement("span");
+            title.className = "title";
+            title.textContent = "Audit — 3-axis health report";
+            header.appendChild(title);
+            const bundle = JSON.parse(json);
+            header.appendChild(makeDownloadButton(
+                "⬇ Download as .jsonl",
+                "Save the audit bundle as JSON Lines — same shape as `aver audit --json`, pipe-friendly with jq",
+                () => downloadJsonl(bundle, "audit.jsonl")
+            ));
+            panel.appendChild(header);
+
             panel.appendChild(renderStaticSection(data, sectionActions("static")));
             panel.appendChild(renderVerifySection(data, sectionActions("verify")));
             panel.appendChild(renderFormatSection(data, sectionActions("format")));

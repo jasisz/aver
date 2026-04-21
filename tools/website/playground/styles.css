@@ -433,6 +433,47 @@ body {
     font-size: 0.85em;
 }
 
+/* ── Shared download button for panels ────────────────────────── */
+.ctx-header-row, .audit-header-row, .why-header-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+}
+.ctx-header-row { flex: 1; }
+.audit-header-row, .why-header-row {
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0.6rem;
+}
+.audit-header-row .title, .why-header-row .title {
+    flex: 1;
+    color: var(--muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+    font-family: system-ui, -apple-system, sans-serif;
+}
+.ctx-header-row h2 { flex: 1; }
+.ctx-download-btn, .download-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.72rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: system-ui, -apple-system, sans-serif;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+    white-space: nowrap;
+}
+.ctx-download-btn:hover, .download-btn:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: rgba(217, 119, 6, 0.08);
+}
+
 /* ── Context panel (markdown-style rendered) ──────────────────── */
 .context-panel {
     padding: 0.9rem 1.1rem;
