@@ -390,10 +390,7 @@ pub fn render_context_md(summary: &ContextSummary) -> String {
         ));
     }
     if let Some(main_effects) = &summary.main_effects {
-        out.push_str(&format!(
-            "main_effects: `[{}]`\n",
-            main_effects.join(", ")
-        ));
+        out.push_str(&format!("main_effects: `[{}]`\n", main_effects.join(", ")));
     }
     out.push('\n');
 

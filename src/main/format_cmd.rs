@@ -237,11 +237,6 @@ fn normalize_leading_indent_tracked(
     (out, violation)
 }
 
-#[cfg(test)]
-fn normalize_leading_indent(line: &str) -> String {
-    normalize_leading_indent_tracked(line, 0).0
-}
-
 fn effect_namespace(effect: &str) -> &str {
     match effect.split_once('.') {
         Some((namespace, _)) => namespace,
@@ -436,12 +431,6 @@ fn normalize_function_header_effects_line(line: &str) -> String {
     formatted
 }
 
-#[cfg(test)]
-fn normalize_function_header_effects(lines: Vec<String>) -> Vec<String> {
-    let mut sink = Vec::new();
-    normalize_function_header_effects_tracked(lines, &mut sink, None)
-}
-
 /// Per-line formatter for function headers.
 ///
 /// When `line_offset` is provided, each rewritten line pushes a
@@ -475,12 +464,6 @@ fn normalize_function_header_effects_tracked(
             rewritten
         })
         .collect()
-}
-
-#[cfg(test)]
-fn normalize_effect_declaration_blocks(lines: Vec<String>) -> Vec<String> {
-    let mut sink = Vec::new();
-    normalize_effect_declaration_blocks_tracked(lines, &mut sink, None)
 }
 
 fn normalize_effect_declaration_blocks_tracked(
@@ -549,7 +532,7 @@ fn normalize_effect_declaration_blocks_tracked(
                 .collect()
         };
 
-        let original_block: Vec<String> = lines[i..i + consumed].iter().cloned().collect();
+        let original_block: Vec<String> = lines[i..i + consumed].to_vec();
         let rewritten_block = format_block_effect_declaration(&indent, &effects);
         if original_block != rewritten_block {
             let source_line = line_offset
@@ -706,12 +689,6 @@ fn split_top_level_blocks(lines: &[String], ast_info: Option<&FormatAstInfo>) ->
     blocks
 }
 
-#[cfg(test)]
-fn reorder_verify_blocks(blocks: Vec<TopBlock>) -> Vec<TopBlock> {
-    let mut sink = Vec::new();
-    reorder_verify_blocks_tracked(blocks, &mut sink)
-}
-
 fn reorder_verify_blocks_tracked(
     blocks: Vec<TopBlock>,
     violations: &mut Vec<aver::diagnostics::model::FormatViolation>,
@@ -841,7 +818,7 @@ fn normalize_source_lines_tracked(
         if trimmed.len() != raw.len() {
             violations.push(aver::diagnostics::model::FormatViolation {
                 line: idx + 1,
-                col: trimmed.len().max(0) + 1,
+                col: trimmed.len() + 1,
                 rule: "trailing-whitespace",
                 message: "trailing whitespace".to_string(),
                 before: None,
@@ -860,18 +837,6 @@ fn normalize_source_lines_tracked(
     let lines = normalize_function_header_effects_tracked(lines, violations, Some(&line_offset));
     let lines = normalize_module_intent_blocks_tracked(lines, violations, Some(&line_offset));
     normalize_inline_decision_fields_tracked(lines, violations, Some(&line_offset))
-}
-
-#[cfg(test)]
-fn normalize_source_lines(source: &str) -> Vec<String> {
-    let mut sink = Vec::new();
-    normalize_source_lines_tracked(source, &mut sink)
-}
-
-#[cfg(test)]
-fn normalize_module_intent_blocks(lines: Vec<String>) -> Vec<String> {
-    let mut sink = Vec::new();
-    normalize_module_intent_blocks_tracked(lines, &mut sink, None)
 }
 
 fn normalize_module_intent_blocks_tracked(
@@ -966,12 +931,6 @@ fn normalize_module_intent_blocks_impl(lines: Vec<String>) -> Vec<String> {
     }
 
     out
-}
-
-#[cfg(test)]
-fn normalize_internal_blank_runs(text: &str) -> String {
-    let mut sink = Vec::new();
-    normalize_internal_blank_runs_tracked(text, 0, &mut sink)
 }
 
 /// Collapse internal blank-line runs to at most 2, strip leading/trailing
@@ -1078,12 +1037,6 @@ fn split_inline_decision_fields(content: &str) -> Vec<String> {
     } else {
         out
     }
-}
-
-#[cfg(test)]
-fn normalize_inline_decision_fields(lines: Vec<String>) -> Vec<String> {
-    let mut sink = Vec::new();
-    normalize_inline_decision_fields_tracked(lines, &mut sink, None)
 }
 
 fn normalize_inline_decision_fields_tracked(

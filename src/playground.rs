@@ -61,10 +61,7 @@ pub fn compile_project_to_wasm(
 
     resolver::resolve_program(&mut entry_items);
 
-    let modules: Vec<codegen::ModuleInfo> = loaded
-        .into_iter()
-        .map(|m| loaded_to_module_info(m))
-        .collect();
+    let modules: Vec<codegen::ModuleInfo> = loaded.into_iter().map(loaded_to_module_info).collect();
 
     let ctx = codegen::build_context(
         entry_items,
@@ -223,14 +220,18 @@ pub fn context_md_source(source: &str) -> String {
     let report = analyze_source(source, &opts);
     match report.context_summary {
         Some(summary) => crate::diagnostics::context::render_context_md(&summary),
-        None => "# Aver Context\n\n_No context available (parse or typecheck failed)._\n"
-            .to_string(),
+        None => {
+            "# Aver Context\n\n_No context available (parse or typecheck failed)._\n".to_string()
+        }
     }
 }
 
 pub fn context_md_project(files: &HashMap<String, String>, entry: &str) -> String {
     let Some(entry_source) = files.get(entry).cloned() else {
-        return format!("# Aver Context\n\n_Entry '{}' not found in project._\n", entry);
+        return format!(
+            "# Aver Context\n\n_Entry '{}' not found in project._\n",
+            entry
+        );
     };
     let mut opts = AnalyzeOptions::new("playground");
     opts.include_context_summary = true;
@@ -243,8 +244,9 @@ pub fn context_md_project(files: &HashMap<String, String>, entry: &str) -> Strin
     let report = analyze_source(&entry_source, &opts);
     match report.context_summary {
         Some(summary) => crate::diagnostics::context::render_context_md(&summary),
-        None => "# Aver Context\n\n_No context available (parse or typecheck failed)._\n"
-            .to_string(),
+        None => {
+            "# Aver Context\n\n_No context available (parse or typecheck failed)._\n".to_string()
+        }
     }
 }
 
