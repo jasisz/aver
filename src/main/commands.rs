@@ -2171,9 +2171,7 @@ fn run_check_for_file(
 /// summary aggregates the three axes.
 pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bool) {
     use super::format_cmd::try_format_source;
-    use aver::diagnostics::{
-        AnalyzeOptions, analyze_source, needs_format_diagnostic,
-    };
+    use aver::diagnostics::{AnalyzeOptions, analyze_source, needs_format_diagnostic};
 
     let module_root = crate::shared::resolve_module_root(module_root_override);
     let inputs = match resolve_av_inputs(path) {
@@ -2237,7 +2235,9 @@ pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bo
         let file_check_errors = report
             .diagnostics
             .iter()
-            .filter(|d| d.is_error() && d.slug != "verify-mismatch" && !d.slug.starts_with("verify-"))
+            .filter(|d| {
+                d.is_error() && d.slug != "verify-mismatch" && !d.slug.starts_with("verify-")
+            })
             .count();
         let file_verify_failures = report
             .verify_summary
@@ -2872,10 +2872,8 @@ fn render_verify_output(
                     total: block.passed + block.failed + block.skipped,
                 });
             }
-            let mut report = diagnostic::AnalysisReport::with_diagnostics(
-                display_path.clone(),
-                diagnostics,
-            );
+            let mut report =
+                diagnostic::AnalysisReport::with_diagnostics(display_path.clone(), diagnostics);
             report.verify_summary = Some(aver::diagnostics::model::VerifySummary {
                 blocks: block_results,
             });

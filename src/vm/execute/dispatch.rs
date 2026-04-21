@@ -786,8 +786,8 @@ impl VM {
                         let independence_mode = self.runtime.independence_mode();
                         let cancel_mode =
                             independence_mode == crate::config::IndependenceMode::Cancel;
-                        let sequential_mode = independence_mode
-                            == crate::config::IndependenceMode::Sequential;
+                        let sequential_mode =
+                            independence_mode == crate::config::IndependenceMode::Sequential;
                         let prepared_calls: Vec<(NanValue, Vec<NanValue>, Arena)> = element_calls
                             .iter()
                             .map(|(callable, args)| {

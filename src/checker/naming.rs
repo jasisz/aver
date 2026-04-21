@@ -95,21 +95,22 @@ fn check_type(
     source_file: Option<&str>,
 ) {
     let (name, line, fields_or_variants): (&str, usize, Vec<(&str, usize)>) = match td {
-        TypeDef::Sum { name, line, variants, .. } => (
+        TypeDef::Sum {
+            name,
+            line,
+            variants,
+            ..
+        } => (
             name,
             *line,
-            variants
-                .iter()
-                .map(|v| (v.name.as_str(), *line))
-                .collect(),
+            variants.iter().map(|v| (v.name.as_str(), *line)).collect(),
         ),
-        TypeDef::Product { name, line, fields, .. } => (
+        TypeDef::Product {
+            name, line, fields, ..
+        } => (
             name,
             *line,
-            fields
-                .iter()
-                .map(|(n, _)| (n.as_str(), *line))
-                .collect(),
+            fields.iter().map(|(n, _)| (n.as_str(), *line)).collect(),
         ),
     };
 

@@ -257,11 +257,9 @@ fn audit_build_report(
     if let Ok((formatted, violations)) = crate::format::try_format_source(source)
         && formatted != source
     {
-        report.diagnostics.push(needs_format_diagnostic(
-            "playground",
-            &violations,
-            source,
-        ));
+        report
+            .diagnostics
+            .push(needs_format_diagnostic("playground", &violations, source));
     }
 
     // Extra pass: format-check every non-entry file in the virtual fs
@@ -643,7 +641,15 @@ mod tests {
     fn load_rogue_files() -> HashMap<String, String> {
         let root = "tools/website/playground/sources/examples/games/rogue";
         let mut files: HashMap<String, String> = HashMap::new();
-        for f in ["types", "map", "fov", "pathfinding", "combat", "render", "main"] {
+        for f in [
+            "types",
+            "map",
+            "fov",
+            "pathfinding",
+            "combat",
+            "render",
+            "main",
+        ] {
             files.insert(format!("{}.av", f), read(&format!("{}/{}.av", root, f)));
         }
         files
@@ -654,7 +660,11 @@ mod tests {
         let files = load_rogue_files();
         let bytes = compile_project_to_wasm(&files, "main.av")
             .expect("rogue project should compile from virtual fs");
-        assert!(bytes.len() > 1000, "emitted wasm looks too small: {}", bytes.len());
+        assert!(
+            bytes.len() > 1000,
+            "emitted wasm looks too small: {}",
+            bytes.len()
+        );
     }
 
     // Only meaningful when `terminal` feature is off — otherwise the
@@ -686,7 +696,11 @@ mod tests {
         );
         let record: serde_json::Value =
             serde_json::from_str(&run_record_project(&files, "playground.av")).unwrap();
-        assert_eq!(record["ok"], true, "should record terminal stubs: {}", record);
+        assert_eq!(
+            record["ok"], true,
+            "should record terminal stubs: {}",
+            record
+        );
         assert_eq!(record["effect_count"], 3, "three terminal calls");
         assert!(
             record["runtime_error"].is_null(),
@@ -744,7 +758,10 @@ mod tests {
         let files = load_rogue_files();
         let report: serde_json::Value =
             serde_json::from_str(&check_project(&files, "main.av")).unwrap();
-        let diagnostics = report["diagnostics"].as_array().cloned().unwrap_or_default();
+        let diagnostics = report["diagnostics"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         let unknown_ident_on_deps: Vec<_> = diagnostics
             .iter()
             .filter(|d| d["slug"] == "unknown-ident")
@@ -776,7 +793,8 @@ mod tests {
                 "    ! [Console.print]",
                 "    Console.print(\"hi\")",
                 "",
-            ].join("\n"),
+            ]
+            .join("\n"),
         );
         let err = compile_project_to_wasm(&files, "main.av").unwrap_err();
         assert!(

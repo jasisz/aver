@@ -18,8 +18,7 @@ use crate::value::{Value, aver_repr};
 use crate::vm;
 
 use super::factories::{
-    verify_mismatch_diagnostic, verify_runtime_error_diagnostic,
-    verify_unexpected_err_diagnostic,
+    verify_mismatch_diagnostic, verify_runtime_error_diagnostic, verify_unexpected_err_diagnostic,
 };
 use super::model::{Diagnostic, VerifyBlockResult, VerifySummary};
 
@@ -100,11 +99,7 @@ fn run_verify_blocks_with_modules(
         for (idx, ((left_expr, right_expr), case_fns)) in
             block.cases.iter().zip(&plan.cases).enumerate()
         {
-            let case_expr = format!(
-                "{} == {}",
-                expr_to_str(left_expr),
-                expr_to_str(right_expr)
-            );
+            let case_expr = format!("{} == {}", expr_to_str(left_expr), expr_to_str(right_expr));
             let line = block
                 .case_spans
                 .get(idx)
@@ -204,7 +199,12 @@ fn run_verify_blocks_with_modules(
         });
     }
 
-    (diagnostics, VerifySummary { blocks: block_results })
+    (
+        diagnostics,
+        VerifySummary {
+            blocks: block_results,
+        },
+    )
 }
 
 // ─── Helper synthesis ─────────────────────────────────────────────────────────
@@ -235,7 +235,12 @@ fn synthesize_verify_helpers(
             let prefix = format!("__verify_{}_{}_{}", block.fn_name, block_idx, case_idx);
             let left_name = format!("{}_left", prefix);
             let right_name = format!("{}_right", prefix);
-            items.push(make_vm_helper(left_name.clone(), block.line, left_expr, true));
+            items.push(make_vm_helper(
+                left_name.clone(),
+                block.line,
+                left_expr,
+                true,
+            ));
             items.push(make_vm_helper(
                 right_name.clone(),
                 block.line,
@@ -264,12 +269,7 @@ fn synthesize_verify_helpers(
     plans
 }
 
-fn make_vm_helper(
-    name: String,
-    line: usize,
-    body_expr: Spanned<Expr>,
-    wrap_ok: bool,
-) -> TopLevel {
+fn make_vm_helper(name: String, line: usize, body_expr: Spanned<Expr>, wrap_ok: bool) -> TopLevel {
     let body_expr = if wrap_ok {
         Spanned {
             node: Expr::Constructor("Result.Ok".to_string(), Some(Box::new(body_expr.clone()))),

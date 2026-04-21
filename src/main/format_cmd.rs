@@ -549,8 +549,7 @@ fn normalize_effect_declaration_blocks_tracked(
                 .collect()
         };
 
-        let original_block: Vec<String> =
-            lines[i..i + consumed].iter().cloned().collect();
+        let original_block: Vec<String> = lines[i..i + consumed].iter().cloned().collect();
         let rewritten_block = format_block_effect_declaration(&indent, &effects);
         if original_block != rewritten_block {
             let source_line = line_offset
@@ -897,9 +896,7 @@ fn normalize_module_intent_blocks_tracked(
             line: source_line,
             col: 1,
             rule: "module-intent-reshape",
-            message:
-                "module intent block reshaped to canonical multiline form"
-                    .to_string(),
+            message: "module intent block reshaped to canonical multiline form".to_string(),
             before: None,
             after: None,
         });
@@ -1110,9 +1107,7 @@ fn normalize_inline_decision_fields_tracked(
             line: source_line,
             col: 1,
             rule: "decision-inline",
-            message:
-                "decision fields should each live on their own line"
-                    .to_string(),
+            message: "decision fields should each live on their own line".to_string(),
             before: None,
             after: None,
         });
@@ -1193,11 +1188,8 @@ pub fn try_format_source(
     // 4) Rejoin with one blank line between top-level blocks.
     let mut non_empty_blocks = Vec::new();
     for block in reordered {
-        let text = normalize_internal_blank_runs_tracked(
-            &block.text,
-            block.start_line,
-            &mut violations,
-        );
+        let text =
+            normalize_internal_blank_runs_tracked(&block.text, block.start_line, &mut violations);
         let text = text.trim_matches('\n').to_string();
         if !text.is_empty() {
             non_empty_blocks.push(text);

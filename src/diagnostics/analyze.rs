@@ -135,7 +135,12 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
 
     if let Some(ref findings) = findings {
         for e in &findings.errors {
-            diagnostics.push(from_check_finding(Severity::Error, e, source, &options.file_label));
+            diagnostics.push(from_check_finding(
+                Severity::Error,
+                e,
+                source,
+                &options.file_label,
+            ));
         }
     }
 
@@ -175,9 +180,7 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
 
     #[cfg(feature = "runtime")]
     if options.include_law_dependency_warnings {
-        for w in
-            collect_verify_law_dependency_warnings_in(&items, &tc_result.fn_sigs, None)
-        {
+        for w in collect_verify_law_dependency_warnings_in(&items, &tc_result.fn_sigs, None) {
             diagnostics.push(from_check_finding(
                 Severity::Warning,
                 &w,

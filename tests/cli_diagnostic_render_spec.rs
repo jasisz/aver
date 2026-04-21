@@ -9,8 +9,7 @@
 //! Colors are disabled so snapshots stay readable and diffable.
 
 use aver::diagnostics::{
-    AnalyzeOptions, analyze_source, verify_mismatch_diagnostic,
-    verify_runtime_error_diagnostic,
+    AnalyzeOptions, analyze_source, verify_mismatch_diagnostic, verify_runtime_error_diagnostic,
 };
 use aver::tty_render::render_tty;
 
@@ -35,7 +34,11 @@ fn pick() -> Int
         .unwrap_or_else(|| {
             panic!(
                 "expected a type error; got slugs: {:?}",
-                report.diagnostics.iter().map(|d| d.slug).collect::<Vec<_>>()
+                report
+                    .diagnostics
+                    .iter()
+                    .map(|d| d.slug)
+                    .collect::<Vec<_>>()
             )
         });
     insta::assert_snapshot!("type_error_tty", render_tty(diag, false));
@@ -62,7 +65,11 @@ fn add(x: Int, y: Int) -> Int
         .unwrap_or_else(|| {
             panic!(
                 "expected missing-verify diagnostic; got slugs: {:?}",
-                report.diagnostics.iter().map(|d| d.slug).collect::<Vec<_>>()
+                report
+                    .diagnostics
+                    .iter()
+                    .map(|d| d.slug)
+                    .collect::<Vec<_>>()
             )
         });
     insta::assert_snapshot!("missing_verify_tty", render_tty(diag, false));

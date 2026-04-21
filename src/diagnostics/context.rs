@@ -249,19 +249,11 @@ pub fn summarize(ctx: &FileContext) -> ContextSummary {
         .iter()
         .map(|fd| {
             let effects: Vec<String> = fd.effects.iter().map(|e| e.node.clone()).collect();
-            let qualifiers = ctx
-                .fn_memo_qual
-                .get(&fd.name)
-                .cloned()
-                .unwrap_or_default();
+            let qualifiers = ctx.fn_memo_qual.get(&fd.name).cloned().unwrap_or_default();
             let description = fd.desc.clone();
             let signature = render_signature(fd);
             let is_exposed = ctx.exposes.is_empty() || ctx.exposes.contains(&fd.name);
-            let specs = ctx
-                .fn_specs
-                .get(&fd.name)
-                .cloned()
-                .unwrap_or_default();
+            let specs = ctx.fn_specs.get(&fd.name).cloned().unwrap_or_default();
             let direct = ctx
                 .fn_direct_calls
                 .get(&fd.name)
@@ -324,7 +316,11 @@ pub fn summarize(ctx: &FileContext) -> ContextSummary {
                 name: d.name.clone(),
                 date: d.date.clone(),
                 reason_prefix,
-                impacts: d.impacts.iter().map(|i| i.node.text().to_string()).collect(),
+                impacts: d
+                    .impacts
+                    .iter()
+                    .map(|i| i.node.text().to_string())
+                    .collect(),
             }
         })
         .collect();
@@ -385,10 +381,7 @@ pub fn compute_memo_fns(items: &[TopLevel], tc_result: &TypeCheckResult) -> Hash
     memo
 }
 
-pub fn is_memo_safe_type(
-    ty: &crate::types::Type,
-    safe_named: &HashSet<String>,
-) -> bool {
+pub fn is_memo_safe_type(ty: &crate::types::Type, safe_named: &HashSet<String>) -> bool {
     use crate::types::Type;
     match ty {
         Type::Int | Type::Float | Type::Bool | Type::Unit => true,

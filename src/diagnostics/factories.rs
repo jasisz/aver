@@ -5,8 +5,8 @@
 
 use super::classify::{
     classify_finding, classify_type_error, estimate_span_len, extract_fn_name_from_finding,
-    extract_return_type, extract_source_lines, extract_source_lines_range,
-    fill_small_region_gaps, find_block_header_line, find_precise_span, find_preamble_end,
+    extract_return_type, extract_source_lines, extract_source_lines_range, fill_small_region_gaps,
+    find_block_header_line, find_preamble_end, find_precise_span,
 };
 use super::model::{AnnotatedRegion, Diagnostic, Repair, Severity, Span, Underline};
 use crate::checker::{CheckFinding, VerifyLawContext};
@@ -380,7 +380,11 @@ pub fn verify_mismatch_diagnostic(
     is_law: bool,
     law_context: Option<&VerifyLawContext>,
 ) -> Diagnostic {
-    let summary = if is_law { "law violated" } else { "assertion failed" };
+    let summary = if is_law {
+        "law violated"
+    } else {
+        "assertion failed"
+    };
     let mut fields: Vec<(&'static str, String)> = vec![
         ("block", block_name.to_string()),
         ("case", case_expr.to_string()),

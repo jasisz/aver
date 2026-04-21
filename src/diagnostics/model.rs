@@ -187,10 +187,7 @@ impl AnalysisReport {
         }
     }
 
-    pub fn with_diagnostics(
-        file_label: impl Into<String>,
-        diagnostics: Vec<Diagnostic>,
-    ) -> Self {
+    pub fn with_diagnostics(file_label: impl Into<String>, diagnostics: Vec<Diagnostic>) -> Self {
         Self {
             schema_version: SCHEMA_VERSION,
             kind: "analysis",

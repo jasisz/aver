@@ -21,11 +21,7 @@ pub(crate) fn extract_source_lines(source: &str, line: usize, context: usize) ->
 }
 
 /// Extract source lines for an inclusive range [from..to] (1-based).
-pub(crate) fn extract_source_lines_range(
-    source: &str,
-    from: usize,
-    to: usize,
-) -> Vec<SourceLine> {
+pub(crate) fn extract_source_lines_range(source: &str, from: usize, to: usize) -> Vec<SourceLine> {
     let lines: Vec<&str> = source.lines().collect();
     let start = from.saturating_sub(1);
     let end = to.min(lines.len());
@@ -130,11 +126,7 @@ pub(crate) fn find_block_header_line(
 
 /// Find where the block preamble ends. Returns the last preamble line
 /// number (1-based), capped before `before_line`.
-pub(crate) fn find_preamble_end(
-    source: &str,
-    header_line: usize,
-    before_line: usize,
-) -> usize {
+pub(crate) fn find_preamble_end(source: &str, header_line: usize, before_line: usize) -> usize {
     let mut end = header_line;
     for (i, line) in source.lines().enumerate() {
         let line_num = i + 1;
@@ -330,14 +322,18 @@ pub(crate) fn classify_finding(msg: &str) -> (&'static str, Option<String>) {
     } else if msg.starts_with("Module '") && msg.contains("should use PascalCase") {
         (
             "bad-module-name",
-            Some(
-                "Rename the module to PascalCase; update depends/file name to match".to_string(),
-            ),
+            Some("Rename the module to PascalCase; update depends/file name to match".to_string()),
         )
     } else if msg.starts_with("Variant '") && msg.contains("PascalCase") {
-        ("bad-variant-name", Some("Rename the variant to PascalCase".to_string()))
+        (
+            "bad-variant-name",
+            Some("Rename the variant to PascalCase".to_string()),
+        )
     } else if msg.starts_with("Record field '") && msg.contains("camelCase") {
-        ("bad-field-name", Some("Rename the field to camelCase".to_string()))
+        (
+            "bad-field-name",
+            Some("Rename the field to camelCase".to_string()),
+        )
     } else if msg.contains("verify examples") || msg.contains("verify case") {
         ("verify-coverage", None)
     } else {

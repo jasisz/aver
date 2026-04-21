@@ -1,10 +1,10 @@
-use crate::nan_value::{Arena, NanValue};
 #[cfg(not(feature = "terminal"))]
 use crate::nan_value::NanValueConvert;
-#[cfg(feature = "terminal")]
-use crate::services::terminal;
+use crate::nan_value::{Arena, NanValue};
 #[cfg(feature = "runtime-net")]
 use crate::services::http;
+#[cfg(feature = "terminal")]
+use crate::services::terminal;
 use crate::services::{console, disk, env, random, tcp, time};
 use crate::types::{bool, byte, char, float, int, list, map, option, result, string};
 use crate::value::RuntimeError;
