@@ -38,15 +38,18 @@ pub(crate) fn extract_return_type(msg: &str) -> &str {
     msg.rsplit("declared return type is ").next().unwrap_or("?")
 }
 
-/// Estimate how many characters to underline starting at `col` (1-based).
+/// Estimate how many characters to underline starting at `col` (1-based,
+/// counted in Unicode scalar values).
+///
+/// Byte-indexing into `line` mis-measures multi-byte characters (em-dash,
+/// CJK, emoji). We iterate `chars()` so `col` lines up with what the
+/// parser emits (char-based) and what frontends render (1 glyph per
+/// scalar).
 pub(crate) fn estimate_span_len(line: &str, col: usize) -> usize {
     let start = col.saturating_sub(1);
-    if start >= line.len() {
-        return 1;
-    }
-    let rest = &line[start..];
-    let len = rest
+    let len = line
         .chars()
+        .skip(start)
         .take_while(|c| !c.is_whitespace() && !matches!(c, '(' | ')' | '[' | ']' | ',' | ':'))
         .count();
     if len == 0 { 1 } else { len }
