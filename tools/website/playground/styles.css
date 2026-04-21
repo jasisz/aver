@@ -314,6 +314,16 @@ body {
     color: var(--text);
     overflow-y: auto;
     height: 100%;
+    /* Override parent `.console-surface` word-break: break-all so
+       words don't split mid-token in the structured panel. */
+    word-break: normal;
+    overflow-wrap: break-word;
+    white-space: normal;
+}
+.audit-panel .diag-line {
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: normal;
 }
 .audit-section {
     margin-bottom: 0.9rem;

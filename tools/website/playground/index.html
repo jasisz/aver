@@ -65,12 +65,12 @@
                 title="Justification map — which functions have ? descriptions, verify blocks, decision coverage.">Why</button>
             <button type="button" data-context class="btn-subtle"
                 title="Module shape sized for an LLM — intent, types, effects, verify samples.">Context</button>
-            <button type="button" data-format class="btn-subtle"
-                title="Rewrite the editor contents into canonical Aver form.">Format</button>
-            <!-- Hidden drivers for Audit's "re-run just this section" buttons -->
+            <!-- Format now lives inside the Audit panel's Format section
+                 (↻ re-run + ⚡ Fix formatting). Hidden individual drivers
+                 stay for future keyboard shortcuts / URL triggers. -->
             <button type="button" data-check hidden></button>
             <button type="button" data-verify hidden></button>
-            <button type="button" data-format-check hidden></button>
+            <button type="button" data-format hidden></button>
             <select data-examples>
                 <option value="">— examples —</option>
                 <optgroup label="Basics">

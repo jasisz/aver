@@ -1219,10 +1219,258 @@ if (contextBtn) {
     });
 }
 
-// Audit button — three-axis gate: static checks + verify + format.
-// Renders a structured panel with collapsible sections + per-section
-// re-run buttons that trigger the individual commands.
+// Audit panel — structured DOM with collapsible sections and
+// per-section re-run / fix actions that update only their own slice.
 const auditBtn = document.querySelector("[data-audit]");
+
+function parseAuditBundle(json) {
+    const bundle = JSON.parse(json);
+    const diagnostics = bundle.diagnostics || [];
+    const verifyFailSlugs = new Set([
+        "verify-mismatch", "verify-runtime-error", "verify-unexpected-err",
+    ]);
+    const formatSlugs = new Set(["needs-format"]);
+    const verifyFailures = diagnostics.filter((d) => verifyFailSlugs.has(d.slug));
+    const formatIssues = diagnostics.filter((d) => formatSlugs.has(d.slug));
+    const staticIssues = diagnostics.filter(
+        (d) => !verifyFailSlugs.has(d.slug) && !formatSlugs.has(d.slug)
+    );
+    return {
+        verifySummary: bundle.verify_summary,
+        staticIssues,
+        verifyFailures,
+        formatIssues,
+    };
+}
+
+function renderDiag(container, d) {
+    const isErr = d.severity === "error" || d.severity === "fail";
+    const cls = isErr ? "diag-err" : "diag-warn";
+    const head = document.createElement("div");
+    head.className = `diag-line ${cls}`;
+    head.textContent = `${d.severity}[${d.slug}]: ${d.summary}`;
+    container.appendChild(head);
+    const meta = document.createElement("div");
+    meta.className = "diag-line diag-meta";
+    meta.textContent = `at: ${d.span?.file || "playground"}:${d.span?.line || 0}:${d.span?.col || 0}`;
+    container.appendChild(meta);
+    if (d.repair?.primary) {
+        const rep = document.createElement("div");
+        rep.className = "diag-line diag-repair";
+        rep.textContent = `repair: ${d.repair.primary}`;
+        container.appendChild(rep);
+    }
+}
+
+function buildSection({ key, label, status, statusText, countText, teaching, issues, actions, extras }) {
+    const section = document.createElement("details");
+    section.className = "audit-section";
+    section.dataset.section = key;
+    if ((issues && issues.length > 0) || status === "fail") section.open = true;
+
+    const summary = document.createElement("summary");
+    summary.innerHTML = `
+        <span class="status-${status}">${statusText}</span>
+        <span class="section-label">${label}</span>
+        <span class="status-count">${countText ?? ""}</span>
+    `;
+    for (const a of actions || []) {
+        const btn = document.createElement("button");
+        btn.className = "rerun-btn";
+        btn.textContent = a.label;
+        btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            a.fn();
+        });
+        summary.appendChild(btn);
+    }
+    section.appendChild(summary);
+
+    const body = document.createElement("div");
+    body.className = "section-body";
+    if (teaching) {
+        const t = document.createElement("div");
+        t.className = "teach";
+        t.textContent = teaching;
+        body.appendChild(t);
+    }
+    if (extras) extras(body);
+    if (issues && issues.length > 0) {
+        for (const d of issues) renderDiag(body, d);
+    } else if (!extras) {
+        const ok = document.createElement("div");
+        ok.className = "diag-line diag-ok";
+        ok.textContent = "✓ clean";
+        body.appendChild(ok);
+    }
+    section.appendChild(body);
+    return section;
+}
+
+function renderStaticSection(data, actions) {
+    const { staticIssues } = data;
+    const staticErrors = staticIssues.filter(
+        (d) => d.severity === "error" || d.severity === "fail"
+    ).length;
+    const staticWarnings = staticIssues.length - staticErrors;
+    return buildSection({
+        key: "static",
+        label: "Static Checks — types, contracts, perf, naming",
+        status: staticErrors > 0 ? "fail" : (staticWarnings > 0 ? "warn" : "pass"),
+        statusText: staticErrors > 0 ? "✗" : (staticWarnings > 0 ? "!" : "✓"),
+        countText: staticIssues.length === 0
+            ? "no issues"
+            : `${staticErrors} error · ${staticWarnings} warn`,
+        teaching: "What `aver check` runs — the static lint layer. Catches code smells, type errors, effect mismatches, naming convention breaks before the program ever executes.",
+        issues: staticIssues,
+        actions,
+    });
+}
+
+function renderVerifySection(data, actions) {
+    const { verifyFailures, verifySummary } = data;
+    const verifyFailed = verifyFailures.length;
+    const verifyPassed = (verifySummary?.blocks || [])
+        .reduce((acc, b) => acc + b.passed, 0);
+    const verifyTotal = (verifySummary?.blocks || [])
+        .reduce((acc, b) => acc + b.total, 0);
+    return buildSection({
+        key: "verify",
+        label: "Verify — executed contract checks",
+        status: verifyFailed > 0 ? "fail" : (verifyTotal > 0 ? "pass" : "warn"),
+        statusText: verifyFailed > 0 ? "✗" : (verifyTotal > 0 ? "✓" : "—"),
+        countText: verifyTotal > 0 ? `${verifyPassed}/${verifyTotal} passed` : "no verify blocks",
+        teaching: "Each `verify` block's cases run in the VM. Pass rate tells you how well your function matches the spec you wrote alongside it. Verify is Aver's core contract.",
+        issues: verifyFailures,
+        actions,
+        extras: (body) => {
+            if (!verifySummary?.blocks?.length) {
+                const none = document.createElement("div");
+                none.className = "diag-line diag-meta";
+                none.textContent = "(no verify blocks in this file)";
+                body.appendChild(none);
+                return;
+            }
+            for (const b of verifySummary.blocks) {
+                const line = document.createElement("div");
+                const cls = b.failed > 0 ? "diag-err" : "diag-ok";
+                line.className = `diag-line ${cls}`;
+                const tag = b.failed > 0 ? "✗" : "✓";
+                const breakdown = b.skipped > 0
+                    ? `${b.passed}/${b.total} passed, ${b.skipped} skipped`
+                    : `${b.passed}/${b.total} passed`;
+                line.textContent = `${tag} ${b.name}  ${breakdown}`;
+                body.appendChild(line);
+            }
+        },
+    });
+}
+
+function renderFormatSection(data, actions) {
+    const { formatIssues } = data;
+    const needsFormat = formatIssues.length > 0;
+    return buildSection({
+        key: "format",
+        label: "Format — canonical Aver shape",
+        status: needsFormat ? "warn" : "pass",
+        statusText: needsFormat ? "!" : "✓",
+        countText: needsFormat ? "needs format" : "clean",
+        teaching: "Mechanical rewrites: indent, effect order, verify placement, blank runs. Re-run re-checks; Fix applies the formatter to your editor.",
+        issues: formatIssues,
+        actions,
+    });
+}
+
+// In-place section replacement — re-runs audit under the hood, swaps
+// just the targeted section's DOM node while preserving the rest of
+// the panel (open/closed states on sibling sections stay intact).
+async function rerunAuditSection(key) {
+    const source = codeEditor?.value;
+    if (!source?.trim()) return;
+    try {
+        const comp = await loadCompiler();
+        setStatus(`Re-running ${key}…`, "info");
+        const json = comp.aver_audit(source);
+        const data = parseAuditBundle(json);
+        const old = document.querySelector(`.audit-section[data-section="${key}"]`);
+        if (!old) return;
+        let replacement;
+        if (key === "static") {
+            replacement = renderStaticSection(data, sectionActions("static"));
+        } else if (key === "verify") {
+            replacement = renderVerifySection(data, sectionActions("verify"));
+        } else if (key === "format") {
+            replacement = renderFormatSection(data, sectionActions("format"));
+        }
+        // Preserve prior open/closed state on the section being replaced.
+        if (replacement) {
+            replacement.open = old.open;
+            old.replaceWith(replacement);
+        }
+        updateAuditStatus(data);
+    } catch (e) {
+        appendConsole("stderr", e.message || String(e));
+        setStatus(`${key} failed`, "error");
+    }
+}
+
+async function applyFormatFix() {
+    const source = codeEditor?.value;
+    if (!source?.trim()) return;
+    try {
+        const comp = await loadCompiler();
+        setStatus("Formatting…", "info");
+        const rewritten = comp.aver_format(source);
+        if (rewritten === source) {
+            setStatus("Already formatted", "success");
+        } else {
+            codeEditor.value = rewritten;
+            updateHighlight();
+            setStatus("Formatted", "success");
+        }
+        await rerunAuditSection("format");
+    } catch (e) {
+        appendConsole("stderr", e.message || String(e));
+        setStatus("Format failed", "error");
+    }
+}
+
+function sectionActions(key) {
+    if (key === "format") {
+        return [
+            { label: "↻ re-run", fn: () => rerunAuditSection("format") },
+            { label: "⚡ Fix formatting", fn: applyFormatFix },
+        ];
+    }
+    return [{ label: "↻ re-run", fn: () => rerunAuditSection(key) }];
+}
+
+function updateAuditStatus(data) {
+    const { staticIssues, verifyFailures, verifySummary, formatIssues } = data;
+    const staticErrors = staticIssues.filter(
+        (d) => d.severity === "error" || d.severity === "fail"
+    ).length;
+    const staticWarnings = staticIssues.length - staticErrors;
+    const verifyFailed = verifyFailures.length;
+    const verifyPassed = (verifySummary?.blocks || [])
+        .reduce((acc, b) => acc + b.passed, 0);
+    const verifyTotal = (verifySummary?.blocks || [])
+        .reduce((acc, b) => acc + b.total, 0);
+    const needsFormat = formatIssues.length > 0;
+    const parts = [];
+    if (staticErrors > 0) parts.push(`${staticErrors} error(s)`);
+    if (staticWarnings > 0) parts.push(`${staticWarnings} warning(s)`);
+    if (verifyTotal > 0) parts.push(`verify ${verifyPassed}/${verifyTotal}`);
+    if (needsFormat) parts.push("needs format");
+    const allClean = staticErrors === 0 && staticWarnings === 0
+        && verifyFailed === 0 && !needsFormat;
+    setStatus(
+        allClean ? "Audit: clean" : `Audit: ${parts.join(", ")}`,
+        allClean ? "success" : (staticErrors > 0 || verifyFailed > 0 ? "error" : "info")
+    );
+}
+
 if (auditBtn) {
     auditBtn.addEventListener("click", async () => {
         const source = codeEditor?.value;
@@ -1237,175 +1485,16 @@ if (auditBtn) {
             const comp = await loadCompiler();
             setStatus("Auditing…", "info");
             const json = comp.aver_audit(source);
-            const bundle = JSON.parse(json);
-            const diagnostics = bundle.diagnostics || [];
-            const verifySummary = bundle.verify_summary;
-
-            const verifyFailSlugs = new Set([
-                "verify-mismatch", "verify-runtime-error", "verify-unexpected-err",
-            ]);
-            const formatSlugs = new Set(["needs-format"]);
-
-            const verifyFailures = diagnostics.filter((d) => verifyFailSlugs.has(d.slug));
-            const formatIssues = diagnostics.filter((d) => formatSlugs.has(d.slug));
-            const staticIssues = diagnostics.filter(
-                (d) => !verifyFailSlugs.has(d.slug) && !formatSlugs.has(d.slug)
-            );
-            const staticErrors = staticIssues.filter(
-                (d) => d.severity === "error" || d.severity === "fail"
-            ).length;
-            const staticWarnings = staticIssues.length - staticErrors;
-            const verifyFailed = verifyFailures.length;
-            const verifyPassed = (verifySummary?.blocks || [])
-                .reduce((acc, b) => acc + b.passed, 0);
-            const verifyTotal = (verifySummary?.blocks || [])
-                .reduce((acc, b) => acc + b.total, 0);
-            const needsFormat = formatIssues.length > 0;
+            const data = parseAuditBundle(json);
 
             const panel = document.createElement("div");
             panel.className = "audit-panel";
-
-            const renderSection = ({
-                label, status, statusText, teaching, issues, body, rerunTarget,
-            }) => {
-                const section = document.createElement("details");
-                section.className = "audit-section";
-                if (issues && issues.length > 0) section.open = true;
-
-                const summary = document.createElement("summary");
-                summary.innerHTML = `
-                    <span class="status-${status}">${statusText}</span>
-                    <span class="section-label">${label}</span>
-                    <span class="status-count">${body ?? ""}</span>
-                `;
-                if (rerunTarget) {
-                    const rerun = document.createElement("button");
-                    rerun.className = "rerun-btn";
-                    rerun.textContent = "↻ re-run just this";
-                    rerun.addEventListener("click", (e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        const target = document.querySelector(`[${rerunTarget}]`);
-                        if (target) target.click();
-                    });
-                    summary.appendChild(rerun);
-                }
-                section.appendChild(summary);
-
-                const bodyEl = document.createElement("div");
-                bodyEl.className = "section-body";
-                if (teaching) {
-                    const t = document.createElement("div");
-                    t.className = "teach";
-                    t.textContent = teaching;
-                    bodyEl.appendChild(t);
-                }
-
-                if (issues && issues.length > 0) {
-                    for (const d of issues) {
-                        const isErr = d.severity === "error" || d.severity === "fail";
-                        const cls = isErr ? "diag-err" : "diag-warn";
-                        const head = document.createElement("div");
-                        head.className = `diag-line ${cls}`;
-                        head.textContent = `${d.severity}[${d.slug}]: ${d.summary}`;
-                        bodyEl.appendChild(head);
-                        const meta = document.createElement("div");
-                        meta.className = "diag-line diag-meta";
-                        meta.textContent = `at: ${d.span?.file || "playground"}:${d.span?.line || 0}:${d.span?.col || 0}`;
-                        bodyEl.appendChild(meta);
-                        if (d.repair?.primary) {
-                            const rep = document.createElement("div");
-                            rep.className = "diag-line diag-repair";
-                            rep.textContent = `repair: ${d.repair.primary}`;
-                            bodyEl.appendChild(rep);
-                        }
-                    }
-                } else {
-                    const ok = document.createElement("div");
-                    ok.className = "diag-line diag-ok";
-                    ok.textContent = "✓ clean";
-                    bodyEl.appendChild(ok);
-                }
-
-                section.appendChild(bodyEl);
-                panel.appendChild(section);
-            };
-
-            // Static Checks
-            renderSection({
-                label: "Static Checks — types, contracts, perf, naming",
-                status: staticErrors > 0 ? "fail" : (staticWarnings > 0 ? "warn" : "pass"),
-                statusText: staticErrors > 0 ? "✗" : (staticWarnings > 0 ? "!" : "✓"),
-                teaching: "What `aver check` runs — the static lint layer. Catches code smells, type errors, effect mismatches, naming convention breaks before the program ever executes.",
-                issues: staticIssues,
-                body: staticIssues.length === 0
-                    ? "no issues"
-                    : `${staticErrors} error · ${staticWarnings} warn`,
-                rerunTarget: "data-check",
-            });
-
-            // Verify
-            const verifyStatus = verifyFailed > 0
-                ? "fail"
-                : (verifyTotal > 0 ? "pass" : "warn");
-            const verifyStatusText = verifyFailed > 0
-                ? "✗"
-                : (verifyTotal > 0 ? "✓" : "—");
-            const verifyBody = verifyTotal > 0
-                ? `${verifyPassed}/${verifyTotal} passed`
-                : "no verify blocks";
-            renderSection({
-                label: "Verify — executed contract checks",
-                status: verifyStatus,
-                statusText: verifyStatusText,
-                teaching: "Each `verify` block's cases run in the VM. Pass rate tells you how well your function matches the spec you wrote alongside it. Verify is Aver's core contract.",
-                issues: verifyFailures,
-                body: verifyBody,
-                rerunTarget: "data-verify",
-            });
-            // If verify summary exists, add block breakdown
-            if (verifySummary?.blocks?.length) {
-                const verifyBodyEl = panel
-                    .lastElementChild.querySelector(".section-body");
-                for (const b of verifySummary.blocks) {
-                    const line = document.createElement("div");
-                    const cls = b.failed > 0 ? "diag-err" : "diag-ok";
-                    line.className = `diag-line ${cls}`;
-                    const tag = b.failed > 0 ? "✗" : "✓";
-                    const breakdown = b.skipped > 0
-                        ? `${b.passed}/${b.total} passed, ${b.skipped} skipped`
-                        : `${b.passed}/${b.total} passed`;
-                    line.textContent = `${tag} ${b.name}  ${breakdown}`;
-                    verifyBodyEl.insertBefore(line, verifyBodyEl.firstChild.nextSibling);
-                }
-            }
-
-            // Format
-            renderSection({
-                label: "Format — canonical Aver shape",
-                status: needsFormat ? "warn" : "pass",
-                statusText: needsFormat ? "!" : "✓",
-                teaching: "Mechanical rewrites: indent, effect order, verify placement, blank runs. Click [Format] in the toolbar to apply. Re-run just this section re-checks without rewriting.",
-                issues: formatIssues,
-                body: needsFormat ? "needs format" : "clean",
-                rerunTarget: "data-format",
-            });
-
+            panel.appendChild(renderStaticSection(data, sectionActions("static")));
+            panel.appendChild(renderVerifySection(data, sectionActions("verify")));
+            panel.appendChild(renderFormatSection(data, sectionActions("format")));
             dom.console.appendChild(panel);
 
-            const parts = [];
-            if (staticErrors > 0) parts.push(`${staticErrors} error(s)`);
-            if (staticWarnings > 0) parts.push(`${staticWarnings} warning(s)`);
-            if (verifyTotal > 0) {
-                parts.push(`verify ${verifyPassed}/${verifyTotal}`);
-            }
-            if (needsFormat) parts.push("needs format");
-            const allClean = staticErrors === 0 && staticWarnings === 0
-                && verifyFailed === 0 && !needsFormat;
-            setStatus(
-                allClean ? "Audit: clean" : `Audit: ${parts.join(", ")}`,
-                allClean ? "success" : (staticErrors > 0 || verifyFailed > 0 ? "error" : "info")
-            );
+            updateAuditStatus(data);
         } catch (e) {
             appendConsole("stderr", e.message || String(e));
             setStatus("Audit failed", "error");
