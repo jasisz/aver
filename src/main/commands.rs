@@ -2650,41 +2650,12 @@ fn render_verify_output(
         let display_path = display_check_path(&fr.path, module_root);
 
         if json {
-            // NDJSON mode
+            // One AnalysisReport bundle per file: failing-case diagnostics
+            // + per-block scorecard. Same shape the playground and LSP see.
+            let mut diagnostics: Vec<diagnostic::Diagnostic> = Vec::new();
+            let mut block_results: Vec<aver::diagnostics::model::VerifyBlockResult> =
+                Vec::with_capacity(fr.blocks.len());
             for block in &fr.blocks {
-                // block-result event
-                let mut failure_counts: std::collections::HashMap<&str, usize> =
-                    std::collections::HashMap::new();
-                for cr in &block.case_results {
-                    match &cr.outcome {
-                        VerifyCaseOutcome::Mismatch { .. } => {
-                            *failure_counts.entry("verify-mismatch").or_default() += 1
-                        }
-                        VerifyCaseOutcome::RuntimeError { .. } => {
-                            *failure_counts.entry("verify-runtime-error").or_default() += 1
-                        }
-                        VerifyCaseOutcome::UnexpectedErr { .. } => {
-                            *failure_counts.entry("verify-unexpected-err").or_default() += 1
-                        }
-                        _ => {}
-                    }
-                }
-                let failures_json: Vec<String> = failure_counts
-                    .iter()
-                    .map(|(k, v)| format!("\"{}\":{}", k, v))
-                    .collect();
-                println!(
-                    "{{\"schema_version\":1,\"kind\":\"block-result\",\"file\":{},\"block\":{},\"passed\":{},\"failed\":{},\"skipped\":{},\"total\":{},\"failures\":{{{}}}}}",
-                    diagnostic::json_escape(&display_path),
-                    diagnostic::json_escape(&block.block_label),
-                    block.passed,
-                    block.failed,
-                    block.skipped,
-                    block.passed + block.failed + block.skipped,
-                    failures_json.join(","),
-                );
-
-                // diagnostic events for failures
                 for cr in &block.case_results {
                     let (line, col) = cr.span.as_ref().map(|s| (s.line, s.col)).unwrap_or((1, 1));
                     let diag = match &cr.outcome {
@@ -2727,10 +2698,25 @@ fn render_verify_output(
                         _ => None,
                     };
                     if let Some(d) = diag {
-                        println!("{}", serde_json::to_string(&d).unwrap_or_default());
+                        diagnostics.push(d);
                     }
                 }
+                block_results.push(aver::diagnostics::model::VerifyBlockResult {
+                    name: block.block_label.clone(),
+                    passed: block.passed,
+                    failed: block.failed,
+                    skipped: block.skipped,
+                    total: block.passed + block.failed + block.skipped,
+                });
             }
+            let mut report = diagnostic::AnalysisReport::with_diagnostics(
+                display_path.clone(),
+                diagnostics,
+            );
+            report.verify_summary = Some(aver::diagnostics::model::VerifySummary {
+                blocks: block_results,
+            });
+            println!("{}", report.to_json());
         } else {
             // Terminal mode
             if idx > 0 {

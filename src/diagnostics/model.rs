@@ -120,6 +120,7 @@ pub struct AnalysisReport {
     pub schema_version: u32,
     pub kind: &'static str,
     pub file_label: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<Diagnostic>,
     /// File-local justification summary — present when the caller opts
     /// in via `AnalyzeOptions::include_why_summary`.
@@ -129,6 +130,28 @@ pub struct AnalysisReport {
     /// decisions) — present when `include_context_summary` is set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_summary: Option<crate::diagnostics::context::ContextSummary>,
+    /// Per-verify-block pass/fail/skip counts — present when
+    /// `include_verify_run` is set. Diagnostics list carries the failing
+    /// case details; `verify_summary` gives the scorecard.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verify_summary: Option<VerifySummary>,
+}
+
+/// Per-block verify results. Mirrors what `aver verify` used to emit as
+/// `block-result` NDJSON events — now folded into the analysis bundle
+/// so a single record per file carries failures + scorecard.
+#[derive(Clone, Debug, Serialize)]
+pub struct VerifySummary {
+    pub blocks: Vec<VerifyBlockResult>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct VerifyBlockResult {
+    pub name: String,
+    pub passed: usize,
+    pub failed: usize,
+    pub skipped: usize,
+    pub total: usize,
 }
 
 impl AnalysisReport {
@@ -140,6 +163,7 @@ impl AnalysisReport {
             diagnostics: Vec::new(),
             why_summary: None,
             context_summary: None,
+            verify_summary: None,
         }
     }
 
@@ -154,6 +178,7 @@ impl AnalysisReport {
             diagnostics,
             why_summary: None,
             context_summary: None,
+            verify_summary: None,
         }
     }
 

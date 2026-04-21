@@ -204,19 +204,25 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
     }
 
     #[cfg(feature = "runtime")]
-    if options.include_verify_run && tc_result.errors.is_empty() {
+    let verify_summary_opt = if options.include_verify_run && tc_result.errors.is_empty() {
         // Verify execution only runs when typecheck is clean — otherwise
         // the compiled VM would crash on missing symbols.
         let runnable_items = items.clone();
-        for diag in super::verify_run::run_verify_blocks(
+        let (verify_diags, verify_summary) = super::verify_run::run_verify_blocks(
             runnable_items,
             options.module_base_dir.as_deref(),
             &options.file_label,
             source,
-        ) {
+        );
+        for diag in verify_diags {
             diagnostics.push(diag);
         }
-    }
+        Some(verify_summary)
+    } else {
+        None
+    };
+    #[cfg(not(feature = "runtime"))]
+    let verify_summary_opt: Option<super::model::VerifySummary> = None;
 
     #[cfg(feature = "runtime")]
     if options.include_non_tail_warnings {
@@ -267,6 +273,7 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
     }
 
     let mut report = AnalysisReport::with_diagnostics(options.file_label.clone(), diagnostics);
+    report.verify_summary = verify_summary_opt;
 
     if options.include_why_summary {
         report.why_summary = Some(super::why::summarize(

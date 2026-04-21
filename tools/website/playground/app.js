@@ -957,6 +957,7 @@ if (verifyBtn) {
             const hasStaticErrors = staticIssues.some(
                 (d) => d.severity === "error" || d.severity === "fail"
             );
+            const verifySummary = bundle.verify_summary;
 
             if (hasStaticErrors) {
                 appendConsole("stderr",
@@ -978,7 +979,19 @@ if (verifyBtn) {
             }
 
             if (verifyFailures.length === 0 && !hasStaticErrors) {
-                appendConsole("stdout", "✓ All verify cases passed.");
+                appendConsole("success", "✓ All verify cases passed.");
+            }
+
+            if (verifySummary?.blocks?.length && !hasStaticErrors) {
+                appendConsole("stdout", "");
+                for (const b of verifySummary.blocks) {
+                    const tag = b.failed > 0 ? "✗" : "✓";
+                    const channel = b.failed > 0 ? "stderr" : "success";
+                    const breakdown = b.skipped > 0
+                        ? ` (${b.passed}/${b.total} passed, ${b.skipped} skipped)`
+                        : ` (${b.passed}/${b.total} passed)`;
+                    appendConsole(channel, `  ${tag} ${b.name}${breakdown}`);
+                }
             }
 
             for (const d of verifyFailures) {

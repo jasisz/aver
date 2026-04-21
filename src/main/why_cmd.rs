@@ -1,5 +1,6 @@
 use std::process;
 
+use aver::diagnostics::model::AnalysisReport;
 use aver::diagnostics::why::{FnDetail, Justification, WhySummary, summarize};
 use colored::Colorize;
 
@@ -27,7 +28,9 @@ pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>, verbose: b
         match analyze_file(file, &shown_path) {
             Ok(summary) => {
                 if json {
-                    render_file_json(&summary);
+                    let mut report = AnalysisReport::new(summary.file_label.clone());
+                    report.why_summary = Some(summary.clone());
+                    println!("{}", report.to_json());
                 } else {
                     render_file(&summary, verbose);
                 }
@@ -54,7 +57,7 @@ pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>, verbose: b
 
     if json {
         println!(
-            "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"lines\":{},\"justified\":{},\"partial\":{},\"unjustified\":{}}}",
+            "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"why\":{{\"total_lines\":{},\"justified\":{},\"partial\":{},\"unjustified\":{}}}}}",
             inputs.len(),
             total_lines,
             justified,
@@ -169,61 +172,6 @@ fn render_file(summary: &WhySummary, verbose: bool) {
     }
 
     println!();
-}
-
-fn render_file_json(summary: &WhySummary) {
-    let fns_json: Vec<String> = summary
-        .functions
-        .iter()
-        .map(|f| {
-            let level = match f.level {
-                Justification::Justified => "justified",
-                Justification::Partial => "partial",
-                Justification::Unjustified => "unjustified",
-            };
-            let missing_json = f
-                .missing
-                .iter()
-                .map(|m| format!("\"{}\"", json_escape(m)))
-                .collect::<Vec<_>>()
-                .join(",");
-            format!(
-                "{{\"name\":\"{}\",\"lines\":{},\"level\":\"{}\",\"description\":{},\"effectful\":{},\"verify_cases\":{},\"coverage_gaps\":{},\"decision_impact\":{},\"missing\":[{}]}}",
-                json_escape(&f.name),
-                f.lines,
-                level,
-                f.has_description,
-                f.is_effectful,
-                f.verify_cases,
-                f.has_coverage_gaps,
-                f.has_decision_impact,
-                missing_json
-            )
-        })
-        .collect();
-
-    let decisions_json: Vec<String> = summary
-        .decisions
-        .iter()
-        .map(|d| {
-            format!(
-                "{{\"name\":\"{}\",\"date\":\"{}\"}}",
-                json_escape(&d.name),
-                json_escape(&d.date)
-            )
-        })
-        .collect();
-
-    println!(
-        "{{\"schema_version\":1,\"kind\":\"file\",\"file\":\"{}\",\"lines\":{},\"justified\":{},\"partial\":{},\"unjustified\":{},\"decisions\":[{}],\"functions\":[{}]}}",
-        json_escape(&summary.file_label),
-        summary.total_lines,
-        summary.justified_lines,
-        summary.partial_lines,
-        summary.unjustified_lines,
-        decisions_json.join(","),
-        fns_json.join(",")
-    );
 }
 
 fn json_escape(s: &str) -> String {

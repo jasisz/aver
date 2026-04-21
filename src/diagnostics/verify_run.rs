@@ -21,24 +21,26 @@ use super::factories::{
     verify_mismatch_diagnostic, verify_runtime_error_diagnostic,
     verify_unexpected_err_diagnostic,
 };
-use super::model::Diagnostic;
+use super::model::{Diagnostic, VerifyBlockResult, VerifySummary};
 
-/// Run every verify block found in `items` and return a diagnostic per
-/// failing case (mismatches, runtime errors, unexpected errors from `?`).
+/// Run every verify block found in `items` and return failing-case
+/// diagnostics plus a per-block scorecard.
 ///
-/// Passes emit no diagnostic. Guards that evaluate to `false` skip the
-/// case silently (same as CLI `aver verify`).
+/// Passes emit no diagnostic. Guards that evaluate to `false` count as
+/// skipped (same semantics as CLI `aver verify`).
 pub fn run_verify_blocks(
     mut items: Vec<TopLevel>,
     base_dir: Option<&str>,
     file_label: &str,
     source: &str,
-) -> Vec<Diagnostic> {
+) -> (Vec<Diagnostic>, VerifySummary) {
+    let empty = VerifySummary { blocks: Vec::new() };
+
     tco::transform_program(&mut items);
 
     let verify_blocks = merge_verify_blocks(&items);
     if verify_blocks.is_empty() {
-        return Vec::new();
+        return (Vec::new(), empty);
     }
 
     let plans = synthesize_verify_helpers(&mut items, &verify_blocks);
@@ -50,15 +52,19 @@ pub fn run_verify_blocks(
     let (code, globals) =
         match vm::compile_program_with_modules(&items, &mut arena, base_dir, "") {
             Ok(v) => v,
-            Err(_) => return Vec::new(),
+            Err(_) => return (Vec::new(), empty),
         };
     let mut machine = vm::VM::new(code, globals, arena);
     machine.set_silent_console(true);
 
     let mut diagnostics = Vec::new();
+    let mut block_results: Vec<VerifyBlockResult> = Vec::with_capacity(plans.len());
 
     for plan in &plans {
         let block = &plan.block;
+        let mut passed = 0usize;
+        let mut failed = 0usize;
+        let mut skipped = 0usize;
         for (idx, ((left_expr, right_expr), case_fns)) in
             block.cases.iter().zip(&plan.cases).enumerate()
         {
@@ -74,15 +80,19 @@ pub fn run_verify_blocks(
                 .unwrap_or(block.line);
             let col = block.case_spans.get(idx).map(|s| s.col).unwrap_or(1);
 
-            // Guard: skip case if evaluator returns false.
+            // Guard: skip case if evaluator returns false (or aborts).
             if let Some(guard_name) = &case_fns.guard {
                 match machine.run_named_function(guard_name, &[]) {
                     Ok(v) => {
                         if v.to_value(&machine.arena) == Value::Bool(false) {
+                            skipped += 1;
                             continue;
                         }
                     }
-                    Err(_) => continue,
+                    Err(_) => {
+                        skipped += 1;
+                        continue;
+                    }
                 }
             }
 
@@ -98,8 +108,10 @@ pub fn run_verify_blocks(
             match (left, right) {
                 (Ok(Value::Ok(left_val)), Ok(Value::Ok(right_val))) => {
                     if *left_val == *right_val {
+                        passed += 1;
                         continue;
                     }
+                    failed += 1;
                     diagnostics.push(verify_mismatch_diagnostic(
                         file_label,
                         source,
@@ -114,6 +126,7 @@ pub fn run_verify_blocks(
                     ));
                 }
                 (Ok(Value::Err(err_val)), _) | (_, Ok(Value::Err(err_val))) => {
+                    failed += 1;
                     diagnostics.push(verify_unexpected_err_diagnostic(
                         file_label,
                         source,
@@ -125,6 +138,7 @@ pub fn run_verify_blocks(
                     ));
                 }
                 (Err(e), _) | (_, Err(e)) => {
+                    failed += 1;
                     diagnostics.push(verify_runtime_error_diagnostic(
                         file_label,
                         source,
@@ -136,6 +150,7 @@ pub fn run_verify_blocks(
                     ));
                 }
                 _ => {
+                    failed += 1;
                     diagnostics.push(verify_runtime_error_diagnostic(
                         file_label,
                         source,
@@ -148,9 +163,16 @@ pub fn run_verify_blocks(
                 }
             }
         }
+        block_results.push(VerifyBlockResult {
+            name: block.fn_name.clone(),
+            passed,
+            failed,
+            skipped,
+            total: passed + failed + skipped,
+        });
     }
 
-    diagnostics
+    (diagnostics, VerifySummary { blocks: block_results })
 }
 
 // ─── Helper synthesis ─────────────────────────────────────────────────────────

@@ -16,14 +16,49 @@ Top-level object per analyzed file:
   "kind": "analysis",
   "file_label": "path/or/playground",
   "diagnostics": [Diagnostic, ...],
-  "why_summary":    { ... } | null,
-  "context_summary":{ ... } | null
+  "why_summary":     { ... } | null,
+  "context_summary": { ... } | null,
+  "verify_summary":  { ... } | null
 }
 ```
 
 `schema_version` bumps on breaking shape changes. Optional trailing
-fields (`why_summary`, `context_summary`) are present only when the
-caller opts in.
+fields (`why_summary`, `context_summary`, `verify_summary`) are
+present only when the caller opts in. **Invariant:** at most one
+summary field is set per record — each command populates exactly the
+summary it computes. `diagnostics` is omitted when empty.
+
+## CLI NDJSON contract
+
+Every multi-record CLI command (`aver check`, `aver verify`,
+`aver why`) emits one bundle per analyzed file, one JSON object per
+line, followed by a trailing `summary` record with counts. Each line
+carries its own `schema_version` so consumers can grep, concat, or
+tail streams without losing context.
+
+```
+{"schema_version":1,"kind":"analysis","file_label":"a.av",...}
+{"schema_version":1,"kind":"analysis","file_label":"b.av",...}
+{"schema_version":1,"kind":"summary","files":2,"passed":1,"failed":1}
+```
+
+Single-record playground calls (`aver_check`, `aver_verify`,
+`aver_why`, `aver_context`) emit one bundle — the same shape as a
+single NDJSON line above.
+
+## `aver context --json` outlier
+
+`aver context --json` has its own top-level schema (currently v6,
+defined in `src/main/context_format.rs`) because the command emits a
+single multi-module document optimized for LLM byte budgets, not a
+stream of per-file bundles. Unifying it onto the NDJSON contract is
+tracked as a future migration — the selection engine (depth / budget
+/ focus / truncation) would need to adapt, and the canonical
+`ContextSummary` would need a per-module trim mode.
+
+Playground `aver_context` **does** use the canonical
+`AnalysisReport` + `context_summary` shape, since the playground sees
+a single file and has no byte budget concern.
 
 ## Diagnostic
 
