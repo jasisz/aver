@@ -631,6 +631,52 @@ mod tests {
         assert!(bytes.len() > 1000, "emitted wasm looks too small: {}", bytes.len());
     }
 
+    // Only meaningful when `terminal` feature is off — otherwise the
+    // real crossterm impl drives the effects and can fail outside a
+    // TTY (common in CI). The playground (wasm32-unknown-unknown)
+    // always ships without `terminal`, which is exactly this path.
+    #[cfg(not(feature = "terminal"))]
+    #[test]
+    fn records_terminal_effects_in_playground_build() {
+        // Snake uses Terminal.* extensively. In the playground build
+        // (no `terminal` feature → crossterm unavailable) the stubs in
+        // vm/builtin.rs should let the VM record each call with a Unit
+        // outcome instead of surfacing "not available in this build".
+        let mut files = HashMap::new();
+        files.insert(
+            "playground.av".to_string(),
+            [
+                "module Main",
+                "    intent = \"terminal smoke\"",
+                "",
+                "fn main() -> Unit",
+                "    ! [Terminal.enableRawMode, Terminal.clear, Terminal.disableRawMode]",
+                "    Terminal.enableRawMode()",
+                "    Terminal.clear()",
+                "    Terminal.disableRawMode()",
+                "",
+            ]
+            .join("\n"),
+        );
+        let record: serde_json::Value =
+            serde_json::from_str(&run_record_project(&files, "playground.av")).unwrap();
+        assert_eq!(record["ok"], true, "should record terminal stubs: {}", record);
+        assert_eq!(record["effect_count"], 3, "three terminal calls");
+        assert!(
+            record["runtime_error"].is_null(),
+            "terminal stubs shouldn't raise: {}",
+            record["runtime_error"]
+        );
+
+        let replay: serde_json::Value = serde_json::from_str(&replay_run_project(
+            &files,
+            "playground.av",
+            record["recording"].as_str().unwrap(),
+        ))
+        .unwrap();
+        assert_eq!(replay["matched"], true, "replay should match: {}", replay);
+    }
+
     #[test]
     fn run_record_captures_effects_then_replays_clean() {
         let mut files = HashMap::new();

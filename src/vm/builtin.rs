@@ -1,4 +1,4 @@
-use crate::nan_value::{Arena, NanValue};
+use crate::nan_value::{Arena, NanValue, NanValueConvert};
 #[cfg(feature = "terminal")]
 use crate::services::terminal;
 #[cfg(feature = "runtime-net")]
@@ -280,19 +280,23 @@ impl VmBuiltin {
             | Self::TcpReadLine
             | Self::TcpClose => tcp::effects(self.name()),
 
-            #[cfg(feature = "terminal")]
-            Self::TerminalEnableRawMode
-            | Self::TerminalDisableRawMode
-            | Self::TerminalClear
-            | Self::TerminalMoveTo
-            | Self::TerminalPrint
-            | Self::TerminalSetColor
-            | Self::TerminalResetColor
-            | Self::TerminalReadKey
-            | Self::TerminalSize
-            | Self::TerminalHideCursor
-            | Self::TerminalShowCursor
-            | Self::TerminalFlush => terminal::effects(self.name()),
+            // Effects list is structural metadata — same regardless of
+            // whether the runtime impl ships (crossterm doesn't build
+            // on wasm32). If we gated this, Replay mode in the
+            // playground would mis-classify Terminal.* as non-effectful
+            // and route them through invoke_nv → "not available".
+            Self::TerminalEnableRawMode => &["Terminal.enableRawMode"],
+            Self::TerminalDisableRawMode => &["Terminal.disableRawMode"],
+            Self::TerminalClear => &["Terminal.clear"],
+            Self::TerminalMoveTo => &["Terminal.moveTo"],
+            Self::TerminalPrint => &["Terminal.print"],
+            Self::TerminalSetColor => &["Terminal.setColor"],
+            Self::TerminalResetColor => &["Terminal.resetColor"],
+            Self::TerminalReadKey => &["Terminal.readKey"],
+            Self::TerminalSize => &["Terminal.size"],
+            Self::TerminalHideCursor => &["Terminal.hideCursor"],
+            Self::TerminalShowCursor => &["Terminal.showCursor"],
+            Self::TerminalFlush => &["Terminal.flush"],
 
             Self::TimeNow | Self::TimeUnixMs | Self::TimeSleep => time::effects(self.name()),
 
@@ -373,6 +377,11 @@ impl VmBuiltin {
             | Self::TerminalHideCursor
             | Self::TerminalShowCursor
             | Self::TerminalFlush => terminal::call_nv(self.name(), args, arena),
+            // Stub Terminal runtime when `terminal` feature is off
+            // (playground wasm32 build — crossterm doesn't compile).
+            // Record mode still gets a value to log; Replay never
+            // reaches this branch because effects() keeps Terminal.*
+            // classified as effectful → replay_builtin short-circuits.
             #[cfg(not(feature = "terminal"))]
             Self::TerminalEnableRawMode
             | Self::TerminalDisableRawMode
@@ -381,14 +390,24 @@ impl VmBuiltin {
             | Self::TerminalPrint
             | Self::TerminalSetColor
             | Self::TerminalResetColor
-            | Self::TerminalReadKey
-            | Self::TerminalSize
             | Self::TerminalHideCursor
             | Self::TerminalShowCursor
-            | Self::TerminalFlush => Some(Err(RuntimeError::Error(format!(
-                "{}: Terminal effects not available in this build",
-                self.name()
-            )))),
+            | Self::TerminalFlush => Some(Ok(NanValue::UNIT)),
+            #[cfg(not(feature = "terminal"))]
+            Self::TerminalReadKey => Some(Ok(NanValue::NONE)),
+            #[cfg(not(feature = "terminal"))]
+            Self::TerminalSize => {
+                use crate::value::Value;
+                use std::sync::Arc;
+                let rec = Value::Record {
+                    type_name: "Terminal.Size".to_string(),
+                    fields: Arc::from(vec![
+                        ("width".to_string(), Value::Int(80)),
+                        ("height".to_string(), Value::Int(24)),
+                    ]),
+                };
+                Some(Ok(NanValue::from_value(&rec, arena)))
+            }
 
             Self::TimeNow | Self::TimeUnixMs | Self::TimeSleep => {
                 time::call_nv(self.name(), args, arena)
