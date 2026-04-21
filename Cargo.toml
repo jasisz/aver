@@ -48,7 +48,7 @@ wasm-compile = ["dep:wasm-encoder"]
 playground = ["wasm-compile", "dep:wasm-bindgen", "runtime", "tty-render"]
 
 [dependencies]
-aver-memory = { path = "aver-memory", version = "=0.2.2" }
+aver-memory = { path = "aver-memory", version = "=0.2.3" }
 aver-rt = { path = "aver-rt", version = "=0.4.2", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 colored = { version = "2", optional = true }
