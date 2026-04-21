@@ -849,90 +849,17 @@ body {
 .output-pane[data-mode="console"] .terminal-wrap { display: none !important; }
 .output-pane[data-mode="console"] .console-wrap { display: flex; flex: 1; }
 
-/* Game mode: editor collapses, output takes full width */
-.workspace[data-mode="game"] .editor-pane { display: none; }
-.workspace[data-mode="game"] .output-pane { flex: 1; }
-
-.game-layout {
-    flex: 1;
-    display: flex;
-    min-height: 0;
-}
-
-.game-output {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-}
-
-/* ── Source viewer (game source code) ────────────────────────────── */
-
-.source-viewer {
-    display: none;
-    flex-direction: column;
-    border-right: none;
-    min-width: 200px;
-    max-width: 70%;
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
-}
-
-.workspace[data-mode="game"] .source-viewer { display: flex; }
-
-/* Draggable divider between source and game */
-.game-divider {
-    display: none;
+/* Draggable divider between editor and output panes. Replaces the
+   old in-game-layout divider; always present so the user can resize
+   code vs console/terminal regardless of game/edit mode. */
+.workspace-divider {
     width: 6px;
     cursor: col-resize;
     background: var(--border);
     flex-shrink: 0;
     transition: background 0.15s;
 }
-.game-divider:hover, .game-divider.dragging { background: var(--accent); }
-.workspace[data-mode="game"] .game-divider { display: block; }
-
-.source-tabs {
-    display: flex;
-    gap: 0;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-    overflow-x: auto;
-}
-
-.source-tabs button {
-    font-size: 0.75rem;
-    padding: 0.35rem 0.75rem;
-    background: transparent;
-    border: none;
-    border-bottom: 2px solid transparent;
-    color: var(--muted);
-    cursor: pointer;
-    white-space: nowrap;
-}
-
-.source-tabs button:hover { color: var(--text); }
-.source-tabs button.active {
-    color: var(--accent);
-    border-bottom-color: var(--accent);
-}
-
-.source-code {
-    flex: 1;
-    margin: 0;
-    padding: 0.75rem;
-    font-family: var(--font-mono);
-    font-size: 13px;
-    line-height: 1.6;
-    color: var(--text);
-    background: var(--bg);
-    overflow: auto;
-    white-space: pre;
-    word-wrap: normal;
-    tab-size: 4;
-    min-height: 0;
-}
+.workspace-divider:hover, .workspace-divider.dragging { background: var(--accent); }
 
 /* ── Touch controls (mobile gamepad) ─────────────────────────────── */
 
@@ -1031,17 +958,7 @@ body {
         min-width: 0;
         min-height: 200px;
     }
-    .source-viewer {
-        max-width: 100%;
-        max-height: 40vh;
-        min-width: 0;
-        border-right: none;
-        border-bottom: 1px solid var(--border);
-    }
-    .game-layout {
-        flex-direction: column;
-    }
-    .workspace[data-mode="game"] .source-viewer {
+    .workspace-divider {
         display: none;
     }
 }

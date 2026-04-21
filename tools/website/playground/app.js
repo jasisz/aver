@@ -55,6 +55,9 @@ const state = {
     files: new Map(),
     activeFile: null,
     wasmOnly: false,
+    // Snapshot of game source at load time. Non-null means "prebuilt
+    // .wasm owns Run until the user edits" — see forkPrebuiltIfEdited.
+    pristineFiles: null,
 };
 
 const TERM_COLORS = {
@@ -768,12 +771,13 @@ function backToEditor() {
     stopRun();
     state.programArgs = [];
     state.activeGame = null;
-    const ws = document.querySelector(".workspace");
-    if (ws) ws.dataset.showSource = "false";
     setWorkspaceMode("edit");
     setOutputMode("console");
     buildTouchControls(null);
     document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
+    // Return to the starter the same way the page boots — hello
+    // example in a single tab, no lingering game source or bytes.
+    loadExampleAsTab("hello");
     setStatus("Ready.", "success");
 }
 
@@ -797,7 +801,13 @@ document.querySelectorAll("[data-game]").forEach(btn => {
         setStatus(`Loading ${name}…`, "info");
 
         try {
-            const resp = await fetch(`./${name}.wasm`);
+            // Fetch .wasm + all .av source files in parallel so the
+            // editor shows real tabs (editable) at the same moment the
+            // binary is ready to run — no separate source-viewer mode.
+            const [resp] = await Promise.all([
+                fetch(`./${name}.wasm`),
+                loadGameSourcesAsTabs(name),
+            ]);
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const bytes = await resp.arrayBuffer();
             state.wasmBytes = bytes;
@@ -1011,10 +1021,19 @@ async function loadCompiler() {
 
 if (compileRunBtn) {
     compileRunBtn.addEventListener("click", async () => {
-        // If the user dropped a .wasm, just run the bytes — no source
-        // to recompile.
-        if (state.wasmOnly && state.wasmBytes) {
-            runSelectedModule();
+        // Run the prebuilt bytes whenever we have them AND the source
+        // hasn't been edited — covers both dropped .wasm (wasmOnly) and
+        // freshly-clicked games (source shown as tabs but still
+        // pristine). First edit drops state.wasmBytes → recompile.
+        if (state.wasmBytes && (state.wasmOnly || state.pristineFiles)) {
+            // Re-run the already-loaded game/binary. Terminal size is
+            // whatever was configured at first load; re-Run doesn't
+            // change output mode, just replays the module.
+            const activeGameBtn = document.querySelector("[data-game].active");
+            const fixed = activeGameBtn && !activeGameBtn.hasAttribute("data-console-game")
+                ? { cols: 80, rows: 35 }
+                : undefined;
+            runSelectedModule(fixed);
             return;
         }
         const source = getActiveSource();
@@ -1079,7 +1098,26 @@ function loadExampleAsTab(key) {
     leaveWasmOnlyMode();
     state.files.clear();
     state.activeFile = null;
+    state.pristineFiles = null;
+    state.wasmBytes = null;
+    state.wasmName = null;
     openFile(exampleTabName(key), source);
+}
+
+// Compare the virtual fs against the pristine snapshot (set when a
+// game is loaded). Any divergence "forks" the prebuilt binary: we
+// drop the cached bytes so the next Run recompiles from source.
+function forkPrebuiltIfEdited() {
+    if (!state.pristineFiles) return;
+    for (const [path, pristine] of state.pristineFiles) {
+        if ((state.files.get(path) ?? "") !== pristine) {
+            state.pristineFiles = null;
+            state.wasmBytes = null;
+            state.wasmName = null;
+            setStatus("Source edited — next ▶ Run will recompile the active file.", "info");
+            return;
+        }
+    }
 }
 
 if (codeEditor) {
@@ -1089,6 +1127,10 @@ if (codeEditor) {
         if (state.activeFile && state.files.has(state.activeFile)) {
             state.files.set(state.activeFile, codeEditor.value);
         }
+        // When game source was loaded pristine and the user edits it,
+        // drop the prebuilt bytes so the next Run recompiles the
+        // active file — they're "forking" the game.
+        forkPrebuiltIfEdited();
         updateHighlight();
     });
     codeEditor.addEventListener("scroll", () => {
@@ -1319,6 +1361,7 @@ if (whyBtn) {
         setOutputMode("console");
         state.activeGame = null;
         clearOutput();
+        clearCompileMeta();
 
         try {
             const comp = await loadCompiler();
@@ -1424,6 +1467,7 @@ if (contextBtn) {
         setOutputMode("console");
         state.activeGame = null;
         clearOutput();
+        clearCompileMeta();
 
         try {
             const comp = await loadCompiler();
@@ -1454,6 +1498,10 @@ if (contextBtn) {
 // skypack's build pipeline fails on binaryen's native wasm blob) —
 // three strikes, not worth keeping the code path. CLI users who want
 // the optimized size run `aver compile --wasm-opt oz` locally.
+function clearCompileMeta() {
+    if (dom.compileMeta) dom.compileMeta.textContent = "";
+}
+
 function renderCompileMeta(rawSize, compileMs) {
     if (!dom.compileMeta) return;
     dom.compileMeta.textContent = "";
@@ -2074,6 +2122,7 @@ if (auditBtn) {
         setOutputMode("console");
         state.activeGame = null;
         clearOutput();
+        clearCompileMeta();
 
         try {
             const comp = await loadCompiler();
@@ -2172,57 +2221,29 @@ async function fetchSource(path) {
     }
 }
 
-async function showGameSource(gameName) {
+// Load a game's bundled .av files straight into the multi-file
+// editor. Unifies the game-preview flow with the normal edit flow —
+// every file is a real tab (editable), the prebuilt .wasm still
+// powers ▶ Run so play is instant.
+async function loadGameSourcesAsTabs(gameName) {
     const paths = GAME_SOURCES[gameName];
     if (!paths) return;
-
-    const tabsEl = document.querySelector("[data-source-tabs]");
-    const codeEl = document.querySelector("[data-source-code]");
-    if (!tabsEl || !codeEl) return;
-
-    tabsEl.innerHTML = "";
-    codeEl.textContent = "Loading…";
-
+    leaveWasmOnlyMode();
+    state.files.clear();
+    state.activeFile = null;
     const sources = await Promise.all(paths.map(fetchSource));
-
-    tabsEl.innerHTML = "";
+    let firstPath = null;
     paths.forEach((path, i) => {
         const name = path.split("/").pop();
-        const btn = document.createElement("button");
-        btn.textContent = name;
-        if (i === 0) btn.classList.add("active");
-        btn.addEventListener("click", () => {
-            tabsEl.querySelectorAll("button").forEach(b => b.classList.remove("active"));
-            btn.classList.add("active");
-            import("./highlight.js").then(({ highlightAver }) => {
-                codeEl.innerHTML = highlightAver(sources[i]);
-            });
-        });
-        tabsEl.appendChild(btn);
+        state.files.set(name, sources[i]);
+        if (!firstPath || /^main\.av$/i.test(name)) firstPath = name;
     });
-
-    // Show first file highlighted
-    import("./highlight.js").then(({ highlightAver }) => {
-        codeEl.innerHTML = highlightAver(sources[0]);
-    });
+    if (firstPath) setActiveFile(firstPath);
+    // Snapshot the pristine source so edit-vs-prebuilt reconciliation
+    // stays simple: any divergence drops state.wasmBytes and the next
+    // Run recompiles the active tab.
+    state.pristineFiles = new Map(state.files);
 }
-
-// Toggle source button
-document.querySelector("[data-toggle-source]")?.addEventListener("click", () => {
-    const ws = document.querySelector(".workspace");
-    if (!ws) return;
-    const showing = ws.dataset.showSource === "true";
-    ws.dataset.showSource = showing ? "false" : "true";
-});
-
-// Load source when game is selected
-document.querySelectorAll("[data-game]").forEach(btn => {
-    btn.addEventListener("click", () => {
-        const ws = document.querySelector(".workspace");
-        if (ws) ws.dataset.showSource = "false";
-        showGameSource(btn.dataset.game);
-    });
-});
 
 // ---------------------------------------------------------------------------
 // Per-game touch controls
@@ -2387,12 +2408,14 @@ if (urlExample && EXAMPLES[urlExample] && codeEditor) {
     if (examplesSelect) examplesSelect.value = urlExample;
 }
 
-// Draggable divider between source viewer and game output
+// Draggable divider between editor pane and output pane.
+// Same UX as the old game-in-divider; now lives at workspace level
+// so it works in every mode (edit, game, dropped folder).
 {
-    const divider = document.querySelector("[data-game-divider]");
-    const layout = document.querySelector(".game-layout");
-    const source = document.querySelector("[data-source-viewer]");
-    if (divider && layout && source) {
+    const divider = document.querySelector("[data-workspace-divider]");
+    const layout = document.querySelector(".workspace");
+    const editor = document.querySelector(".editor-pane");
+    if (divider && layout && editor) {
         let dragging = false;
         divider.addEventListener("mousedown", (e) => {
             e.preventDefault();
@@ -2408,8 +2431,8 @@ if (urlExample && EXAMPLES[urlExample] && codeEditor) {
             const rect = layout.getBoundingClientRect();
             const pct = ((clientX - rect.left) / rect.width) * 100;
             const clamped = Math.min(Math.max(pct, 10), 80);
-            source.style.flex = "none";
-            source.style.width = clamped + "%";
+            editor.style.flex = "none";
+            editor.style.width = clamped + "%";
         };
         document.addEventListener("mousemove", (e) => onMove(e.clientX));
         document.addEventListener("touchmove", (e) => {
