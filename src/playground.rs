@@ -130,6 +130,39 @@ pub fn check_source(source: &str) -> String {
     analyze_source(source, &opts).to_json()
 }
 
+/// Multi-file variant: builds an `AnalyzeOptions` with dependency
+/// modules pre-loaded from the provided virtual fs map, so the type
+/// checker sees every `depends [...]` entry without disk IO.
+/// Verify execution is skipped for multi-file projects (VM module
+/// loader is disk-only today).
+fn analyze_project(
+    files: &HashMap<String, String>,
+    entry: &str,
+    make_opts: impl FnOnce(AnalyzeOptions) -> AnalyzeOptions,
+) -> String {
+    let entry_source = match files.get(entry) {
+        Some(s) => s.clone(),
+        None => {
+            return crate::diagnostics::AnalysisReport::new("playground").to_json();
+        }
+    };
+    let mut opts = AnalyzeOptions::new("playground");
+    // Parse once to extract depends; errors are surfaced again inside
+    // analyze_source with proper diagnostic formatting.
+    if let Ok(items) = parse_source(&entry_source) {
+        let depends = module_depends(&items);
+        if let Ok(loaded) = crate::source::load_module_tree_from_map(&depends, files) {
+            opts = opts.with_loaded_modules(loaded);
+        }
+    }
+    opts = make_opts(opts);
+    analyze_source(&entry_source, &opts).to_json()
+}
+
+pub fn check_project(files: &HashMap<String, String>, entry: &str) -> String {
+    analyze_project(files, entry, |o| o)
+}
+
 /// Run analysis plus verify block execution and return the canonical
 /// [`AnalysisReport`](crate::diagnostics::AnalysisReport) as JSON. Verify
 /// runs only when the source is typecheck-clean; callers see the same
@@ -140,12 +173,26 @@ pub fn verify_source(source: &str) -> String {
     analyze_source(source, &opts).to_json()
 }
 
+pub fn verify_project(files: &HashMap<String, String>, entry: &str) -> String {
+    analyze_project(files, entry, |mut o| {
+        o.include_verify_run = true;
+        o
+    })
+}
+
 /// Run analysis plus the file-local "why" summary (per-function
 /// justification signals) and return the canonical report as JSON.
 pub fn why_source(source: &str) -> String {
     let mut opts = AnalyzeOptions::new("playground");
     opts.include_why_summary = true;
     analyze_source(source, &opts).to_json()
+}
+
+pub fn why_project(files: &HashMap<String, String>, entry: &str) -> String {
+    analyze_project(files, entry, |mut o| {
+        o.include_why_summary = true;
+        o
+    })
 }
 
 /// Run analysis plus the file-local context summary (module shape,
@@ -158,6 +205,13 @@ pub fn context_source(source: &str) -> String {
     analyze_source(source, &opts).to_json()
 }
 
+pub fn context_project(files: &HashMap<String, String>, entry: &str) -> String {
+    analyze_project(files, entry, |mut o| {
+        o.include_context_summary = true;
+        o
+    })
+}
+
 /// Audit: three-axis health check — static analysis (every enabled
 /// collector), verify block execution, and format-check. Equivalent of
 /// the CLI `aver audit` but single-file. Returns a canonical
@@ -165,10 +219,30 @@ pub fn context_source(source: &str) -> String {
 /// diagnostics + verify_summary.
 #[cfg(feature = "runtime")]
 pub fn audit_source(source: &str) -> String {
+    audit_impl(source, None)
+}
+
+#[cfg(feature = "runtime")]
+pub fn audit_project(files: &HashMap<String, String>, entry: &str) -> String {
+    let Some(entry_source) = files.get(entry) else {
+        return crate::diagnostics::AnalysisReport::new("playground").to_json();
+    };
+    let loaded = parse_source(entry_source)
+        .ok()
+        .map(|items| module_depends(&items))
+        .and_then(|deps| crate::source::load_module_tree_from_map(&deps, files).ok());
+    audit_impl(entry_source, loaded)
+}
+
+#[cfg(feature = "runtime")]
+fn audit_impl(source: &str, loaded: Option<Vec<LoadedModule>>) -> String {
     use crate::diagnostics::needs_format_diagnostic;
 
     let mut opts = AnalyzeOptions::new("playground");
     opts.include_verify_run = true;
+    if let Some(loaded) = loaded {
+        opts = opts.with_loaded_modules(loaded);
+    }
     let mut report = analyze_source(source, &opts);
 
     // Dodaj format-check jako diagnostic w bundle (parity z CLI audit).
@@ -244,6 +318,46 @@ mod bindgen {
     pub fn aver_format(source: &str) -> String {
         super::format_source(source)
     }
+
+    // ── Project (multi-file) analysis bindings ─────────────────────
+    // Same semantics as the single-file siblings above, but deps
+    // referenced via `depends [...]` resolve against the supplied
+    // virtual fs (JSON path → source map) instead of failing with
+    // "Unknown identifier".
+
+    fn parse_files(files_json: &str) -> Result<std::collections::HashMap<String, String>, JsError> {
+        serde_json::from_str(files_json).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    #[wasm_bindgen]
+    pub fn aver_check_project(files_json: &str, entry: &str) -> Result<String, JsError> {
+        let files = parse_files(files_json)?;
+        Ok(super::check_project(&files, entry))
+    }
+
+    #[wasm_bindgen]
+    pub fn aver_verify_project(files_json: &str, entry: &str) -> Result<String, JsError> {
+        let files = parse_files(files_json)?;
+        Ok(super::verify_project(&files, entry))
+    }
+
+    #[wasm_bindgen]
+    pub fn aver_why_project(files_json: &str, entry: &str) -> Result<String, JsError> {
+        let files = parse_files(files_json)?;
+        Ok(super::why_project(&files, entry))
+    }
+
+    #[wasm_bindgen]
+    pub fn aver_context_project(files_json: &str, entry: &str) -> Result<String, JsError> {
+        let files = parse_files(files_json)?;
+        Ok(super::context_project(&files, entry))
+    }
+
+    #[wasm_bindgen]
+    pub fn aver_audit_project(files_json: &str, entry: &str) -> Result<String, JsError> {
+        let files = parse_files(files_json)?;
+        Ok(super::audit_project(&files, entry))
+    }
 }
 
 #[cfg(test)]
@@ -255,16 +369,44 @@ mod tests {
         std::fs::read_to_string(path).unwrap_or_else(|_| panic!("missing {}", path))
     }
 
-    #[test]
-    fn compiles_multi_file_rogue_from_virtual_fs() {
+    fn load_rogue_files() -> HashMap<String, String> {
         let root = "tools/website/playground/sources/examples/games/rogue";
         let mut files: HashMap<String, String> = HashMap::new();
         for f in ["types", "map", "fov", "pathfinding", "combat", "render", "main"] {
             files.insert(format!("{}.av", f), read(&format!("{}/{}.av", root, f)));
         }
+        files
+    }
+
+    #[test]
+    fn compiles_multi_file_rogue_from_virtual_fs() {
+        let files = load_rogue_files();
         let bytes = compile_project_to_wasm(&files, "main.av")
             .expect("rogue project should compile from virtual fs");
         assert!(bytes.len() > 1000, "emitted wasm looks too small: {}", bytes.len());
+    }
+
+    #[test]
+    fn multi_file_check_has_no_unknown_ident_noise() {
+        let files = load_rogue_files();
+        let report: serde_json::Value =
+            serde_json::from_str(&check_project(&files, "main.av")).unwrap();
+        let diagnostics = report["diagnostics"].as_array().cloned().unwrap_or_default();
+        let unknown_ident_on_deps: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d["slug"] == "unknown-ident")
+            .filter(|d| {
+                let s = d["summary"].as_str().unwrap_or("");
+                ["Types", "Map", "Fov", "Combat", "Render", "Pathfinding"]
+                    .iter()
+                    .any(|name| s.contains(&format!("'{}'", name)))
+            })
+            .collect();
+        assert!(
+            unknown_ident_on_deps.is_empty(),
+            "multi-file check still reports unknown-ident for declared deps: {:?}",
+            unknown_ident_on_deps
+        );
     }
 
     #[test]

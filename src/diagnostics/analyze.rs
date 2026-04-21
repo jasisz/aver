@@ -14,17 +14,22 @@ use crate::checker::{
 };
 #[cfg(feature = "runtime")]
 use crate::checker::{FindingSpan, collect_verify_law_dependency_warnings_in};
-use crate::source::parse_source;
+use crate::source::{LoadedModule, parse_source};
 #[cfg(feature = "runtime")]
 use crate::tail_check::collect_non_tail_recursion_warnings_with_sigs;
 use crate::tco;
-use crate::types::checker::run_type_check_full;
+use crate::types::checker::{run_type_check_full, run_type_check_with_loaded};
 
 /// Options for `analyze_source`. Defaults enable every available collector.
 #[derive(Clone, Debug)]
 pub struct AnalyzeOptions {
     pub file_label: String,
     pub module_base_dir: Option<String>,
+    /// Pre-resolved dependency modules (e.g. from a virtual filesystem
+    /// in the playground). When set, takes precedence over
+    /// `module_base_dir` — the type checker integrates these directly
+    /// instead of loading from disk.
+    pub loaded_modules: Option<Vec<LoadedModule>>,
     pub include_intent_warnings: bool,
     pub include_coverage_warnings: bool,
     pub include_law_dependency_warnings: bool,
@@ -52,6 +57,7 @@ impl Default for AnalyzeOptions {
         Self {
             file_label: "<input>".to_string(),
             module_base_dir: None,
+            loaded_modules: None,
             include_intent_warnings: true,
             include_coverage_warnings: true,
             include_law_dependency_warnings: true,
@@ -80,6 +86,11 @@ impl AnalyzeOptions {
         self.module_base_dir = Some(dir.into());
         self
     }
+
+    pub fn with_loaded_modules(mut self, loaded: Vec<LoadedModule>) -> Self {
+        self.loaded_modules = Some(loaded);
+        self
+    }
 }
 
 /// Run the single-file analysis pipeline.
@@ -100,7 +111,11 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
     let mut transformed = items.clone();
     tco::transform_program(&mut transformed);
 
-    let tc_result = run_type_check_full(&items, options.module_base_dir.as_deref());
+    let tc_result = if let Some(loaded) = options.loaded_modules.as_deref() {
+        run_type_check_with_loaded(&items, loaded)
+    } else {
+        run_type_check_full(&items, options.module_base_dir.as_deref())
+    };
 
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
 
@@ -217,7 +232,13 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
     }
 
     #[cfg(feature = "runtime")]
-    let verify_summary_opt = if options.include_verify_run && tc_result.errors.is_empty() {
+    let verify_summary_opt = if options.include_verify_run
+        && tc_result.errors.is_empty()
+        // Multi-file projects use an in-memory fs that the VM module
+        // loader can't see (disk-only). Skip verify execution for now;
+        // static analysis still runs, audit just omits the verify axis.
+        && options.loaded_modules.is_none()
+    {
         // Verify execution only runs when typecheck is clean — otherwise
         // the compiled VM would crash on missing symbols.
         let runnable_items = items.clone();

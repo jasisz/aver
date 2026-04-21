@@ -998,6 +998,19 @@ async function loadCompiler() {
     return compiler;
 }
 
+// Dispatch check/verify/why/context/audit to the multi-file binding
+// when the virtual fs has more than one tab, so depends[...] resolve
+// against the in-browser file map instead of surfacing as bogus
+// "Unknown identifier 'Types'" noise on every game fork.
+function runAnalysis(comp, kind, fallbackSource) {
+    const entry = pickEntryFile();
+    if (state.files.size > 1 && entry && typeof comp[`aver_${kind}_project`] === "function") {
+        const filesObj = Object.fromEntries(state.files);
+        return comp[`aver_${kind}_project`](JSON.stringify(filesObj), entry);
+    }
+    return comp[`aver_${kind}`](fallbackSource);
+}
+
 if (compileRunBtn) {
     compileRunBtn.addEventListener("click", async () => {
         // Run the prebuilt bytes whenever we have them AND the source
@@ -1191,7 +1204,7 @@ if (checkBtn) {
         try {
             const comp = await loadCompiler();
             setStatus("Checking…", "info");
-            const json = comp.aver_check(source);
+            const json = runAnalysis(comp, "check", source);
             const bundle = JSON.parse(json);
             const diagnostics = bundle.diagnostics || [];
             const lines = source.split("\n");
@@ -1267,7 +1280,7 @@ if (verifyBtn) {
         try {
             const comp = await loadCompiler();
             setStatus("Verifying…", "info");
-            const json = comp.aver_verify(source);
+            const json = runAnalysis(comp, "verify", source);
             const bundle = JSON.parse(json);
             const diagnostics = bundle.diagnostics || [];
             const lines = source.split("\n");
@@ -1371,7 +1384,7 @@ if (whyBtn) {
         try {
             const comp = await loadCompiler();
             setStatus("Analyzing justification…", "info");
-            const json = comp.aver_why(source);
+            const json = runAnalysis(comp, "why", source);
             const bundle = JSON.parse(json);
             const summary = bundle.why_summary;
             if (!summary) {
@@ -1476,7 +1489,7 @@ if (contextBtn) {
         try {
             const comp = await loadCompiler();
             setStatus("Building context…", "info");
-            const json = comp.aver_context(source);
+            const json = runAnalysis(comp, "context", source);
             const bundle = JSON.parse(json);
             const ctx = bundle.context_summary;
             if (!ctx) {
@@ -2183,7 +2196,7 @@ async function rerunAuditSection(key) {
     try {
         const comp = await loadCompiler();
         setStatus(`Re-running ${key}…`, "info");
-        const json = comp.aver_audit(source);
+        const json = runAnalysis(comp, "audit", source);
         const data = parseAuditBundle(json);
         const old = document.querySelector(`.audit-section[data-section="${key}"]`);
         if (!old) return;
@@ -2282,7 +2295,7 @@ if (auditBtn) {
         try {
             const comp = await loadCompiler();
             setStatus("Auditing…", "info");
-            const json = comp.aver_audit(source);
+            const json = runAnalysis(comp, "audit", source);
             const data = parseAuditBundle(json);
 
             const panel = document.createElement("div");

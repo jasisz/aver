@@ -86,6 +86,7 @@ pub fn canonicalize_path(path: &Path) -> PathBuf {
 // ---------------------------------------------------------------------------
 
 /// A parsed module ready for backend consumption.
+#[derive(Clone, Debug)]
 pub struct LoadedModule {
     pub dep_name: String,
     pub items: Vec<TopLevel>,
