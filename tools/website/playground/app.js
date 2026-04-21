@@ -1138,78 +1138,8 @@ if (contextBtn) {
                 return;
             }
 
-            const modLine = ctx.module_name
-                ? `module ${ctx.module_name}`
-                : "(no module declaration)";
-            appendConsole("stdout", `## ${modLine}`);
-            if (ctx.intent) {
-                appendConsole("stdout", `> ${ctx.intent.replace(/\n/g, " ")}`);
-            }
-
-            if ((ctx.depends || []).length > 0) {
-                appendConsole("stdout", `depends: ${ctx.depends.join(", ")}`);
-            }
-            if ((ctx.exposes || []).length > 0) {
-                appendConsole("stdout", `exposes: ${ctx.exposes.join(", ")}`);
-            }
-            if ((ctx.exposes_opaque || []).length > 0) {
-                appendConsole("stdout", `exposes opaque: ${ctx.exposes_opaque.join(", ")}`);
-            }
-
-            if ((ctx.api_effects || []).length > 0) {
-                appendConsole("stdout", `api effects: [${ctx.api_effects.join(", ")}]`);
-            }
-            if (ctx.main_effects) {
-                appendConsole("stdout", `main effects: [${ctx.main_effects.join(", ")}]`);
-            }
-
-            if ((ctx.types || []).length > 0) {
-                appendConsole("stdout", "");
-                appendConsole("stdout", "### Types");
-                for (const t of ctx.types) {
-                    const members =
-                        t.fields_or_variants && t.fields_or_variants.length > 0
-                            ? `  (${t.fields_or_variants.join(", ")})`
-                            : "";
-                    appendConsole("stdout", `  ${t.kind} ${t.name}${members}`);
-                }
-            }
-
-            if ((ctx.functions || []).length > 0) {
-                appendConsole("stdout", "");
-                appendConsole("stdout", "### Functions");
-                for (const f of ctx.functions) {
-                    const flags = [...f.qualifiers];
-                    if (f.auto_memo) flags.push("AUTO_MEMO");
-                    if (f.auto_tco) flags.push("AUTO_TCO");
-                    const flagStr = flags.length > 0 ? ` [${flags.join(", ")}]` : "";
-                    const exposureTag = f.is_exposed ? "" : " (private)";
-                    appendConsole("stdout", `  ${f.signature}${flagStr}${exposureTag}`);
-                    if (f.description) {
-                        appendConsole("stdout", `    ? "${f.description}"`);
-                    }
-                    if (f.verify_count > 0) {
-                        appendConsole("stdout",
-                            `    verify: ${f.verify_count} case(s)`);
-                        for (const sample of f.verify_samples || []) {
-                            appendConsole("stdout", `      ${sample}`);
-                        }
-                    }
-                }
-            }
-
-            if ((ctx.decisions || []).length > 0) {
-                appendConsole("stdout", "");
-                appendConsole("stdout", "### Decisions");
-                for (const d of ctx.decisions) {
-                    appendConsole("stdout",
-                        `  ${d.name} (${d.date}): ${d.reason_prefix}`);
-                    if ((d.impacts || []).length > 0) {
-                        appendConsole("stdout",
-                            `    impacts: ${d.impacts.join(", ")}`);
-                    }
-                }
-            }
+            const panel = renderContextPanel(ctx);
+            dom.console.appendChild(panel);
 
             setStatus("Context ready", "success");
         } catch (e) {
@@ -1217,6 +1147,194 @@ if (contextBtn) {
             setStatus("Context failed", "error");
         }
     });
+}
+
+// Context panel — markdown-style rendered DOM. Matches what an LLM
+// would see via `aver context`, presented as a module card instead
+// of plain-text console lines.
+function renderContextPanel(ctx) {
+    const panel = document.createElement("div");
+    panel.className = "context-panel";
+
+    const title = document.createElement("h2");
+    title.textContent = ctx.module_name
+        ? `module ${ctx.module_name}`
+        : "(no module declaration)";
+    panel.appendChild(title);
+
+    if (ctx.intent) {
+        const bq = document.createElement("blockquote");
+        bq.textContent = ctx.intent.replace(/\n/g, " ");
+        panel.appendChild(bq);
+    }
+
+    const metaLine = (label, items, joiner = ", ", codeWrap = false) => {
+        if (!items || items.length === 0) return;
+        const row = document.createElement("div");
+        row.className = "ctx-meta";
+        const lbl = document.createElement("strong");
+        lbl.textContent = `${label}: `;
+        row.appendChild(lbl);
+        items.forEach((item, idx) => {
+            if (idx > 0) row.appendChild(document.createTextNode(joiner));
+            if (codeWrap) {
+                const c = document.createElement("code");
+                c.textContent = item;
+                row.appendChild(c);
+            } else {
+                row.appendChild(document.createTextNode(item));
+            }
+        });
+        panel.appendChild(row);
+    };
+    metaLine("depends", ctx.depends);
+    metaLine("exposes", ctx.exposes, ", ", true);
+    metaLine("exposes opaque", ctx.exposes_opaque, ", ", true);
+    metaLine("api effects", ctx.api_effects, ", ", true);
+    if (ctx.main_effects) {
+        metaLine("main effects", ctx.main_effects, ", ", true);
+    }
+
+    if ((ctx.types || []).length > 0) {
+        const h = document.createElement("h3");
+        h.textContent = "Types";
+        panel.appendChild(h);
+        for (const t of ctx.types) {
+            const row = document.createElement("div");
+            row.className = "ctx-type";
+            const kind = document.createElement("span");
+            kind.className = "ctx-type-kind";
+            kind.textContent = t.kind;
+            row.appendChild(kind);
+            row.appendChild(document.createTextNode(t.name));
+            if (t.fields_or_variants && t.fields_or_variants.length > 0) {
+                row.appendChild(
+                    document.createTextNode(` (${t.fields_or_variants.join(", ")})`)
+                );
+            }
+            panel.appendChild(row);
+        }
+    }
+
+    if ((ctx.functions || []).length > 0) {
+        const h = document.createElement("h3");
+        h.textContent = "Functions";
+        panel.appendChild(h);
+        for (const f of ctx.functions) {
+            const card = document.createElement("div");
+            card.className = "ctx-fn" + (f.is_exposed ? " exposed" : "");
+            const sig = document.createElement("div");
+            sig.className = "ctx-fn-sig";
+            sig.textContent = f.signature;
+            card.appendChild(sig);
+            if (f.description) {
+                const desc = document.createElement("div");
+                desc.className = "ctx-fn-desc";
+                desc.textContent = `? "${f.description}"`;
+                card.appendChild(desc);
+            }
+            const tags = document.createElement("div");
+            tags.className = "ctx-tags";
+            const hasTags =
+                (f.qualifiers || []).length > 0 ||
+                (f.effects || []).length > 0 ||
+                f.auto_memo ||
+                f.auto_tco ||
+                !f.is_exposed;
+            if (hasTags) {
+                if (!f.is_exposed) {
+                    const t = document.createElement("span");
+                    t.className = "ctx-tag";
+                    t.textContent = "private";
+                    tags.appendChild(t);
+                }
+                for (const q of f.qualifiers || []) {
+                    const t = document.createElement("span");
+                    t.className = "ctx-tag" + (q === "PURE" ? " pure" : "");
+                    t.textContent = q;
+                    tags.appendChild(t);
+                }
+                if (f.auto_memo) {
+                    const t = document.createElement("span");
+                    t.className = "ctx-tag pure";
+                    t.textContent = "AUTO_MEMO";
+                    tags.appendChild(t);
+                }
+                if (f.auto_tco) {
+                    const t = document.createElement("span");
+                    t.className = "ctx-tag pure";
+                    t.textContent = "AUTO_TCO";
+                    tags.appendChild(t);
+                }
+                for (const e of f.effects || []) {
+                    const t = document.createElement("span");
+                    t.className = "ctx-tag effect";
+                    t.textContent = `! ${e}`;
+                    tags.appendChild(t);
+                }
+                card.appendChild(tags);
+            }
+            if (f.verify_count > 0) {
+                const v = document.createElement("div");
+                v.className = "ctx-verify";
+                v.textContent = `verify: ${f.verify_count} case(s)`;
+                card.appendChild(v);
+                for (const sample of f.verify_samples || []) {
+                    const s = document.createElement("div");
+                    s.className = "ctx-verify-sample";
+                    s.textContent = sample;
+                    card.appendChild(s);
+                }
+            }
+            panel.appendChild(card);
+        }
+    }
+
+    if ((ctx.decisions || []).length > 0) {
+        const h = document.createElement("h3");
+        h.textContent = "Decisions";
+        panel.appendChild(h);
+        for (const d of ctx.decisions) {
+            const card = document.createElement("div");
+            card.className = "ctx-decision";
+            const head = document.createElement("div");
+            const name = document.createElement("span");
+            name.className = "ctx-decision-name";
+            name.textContent = d.name;
+            const date = document.createElement("span");
+            date.className = "ctx-decision-date";
+            date.textContent = ` (${d.date})`;
+            head.appendChild(name);
+            head.appendChild(date);
+            card.appendChild(head);
+            if (d.reason_prefix) {
+                const reason = document.createElement("div");
+                reason.className = "ctx-decision-reason";
+                reason.textContent = d.reason_prefix;
+                card.appendChild(reason);
+            }
+            if ((d.impacts || []).length > 0) {
+                const impacts = document.createElement("div");
+                impacts.className = "ctx-meta";
+                impacts.textContent = `impacts: ${d.impacts.join(", ")}`;
+                card.appendChild(impacts);
+            }
+            panel.appendChild(card);
+        }
+    }
+
+    const hasAnyBody =
+        (ctx.types || []).length > 0 ||
+        (ctx.functions || []).length > 0 ||
+        (ctx.decisions || []).length > 0;
+    if (!hasAnyBody) {
+        const empty = document.createElement("div");
+        empty.className = "ctx-empty";
+        empty.textContent =
+            "(no types, functions, or decisions — add some and run Context again)";
+        panel.appendChild(empty);
+    }
+    return panel;
 }
 
 // Audit panel — structured DOM with collapsible sections and
