@@ -1,8 +1,10 @@
 # Changelog
 
-All notable changes to Aver are documented here.
+All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.10.0 (2026-04-21)
+## 0.10.0 "Telltale" (2026-04-21)
+
+> _Tooling now shows its work — parse errors point at the exact token with a repair, audit runs three axes in one shot, and every program can be recorded & replayed in the browser._
 
 ### Added
 - **`aver audit`** — one command that runs static checks, verify blocks, and format compliance together. CI-friendly exit code, `--json` for pipelines.
