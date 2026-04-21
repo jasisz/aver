@@ -147,25 +147,108 @@ pub fn unused_binding_diagnostic(
 
 /// Build a `Diagnostic` signaling that a file is not formatter-clean.
 ///
-/// Emitted by `aver format --check --json` (and, in aggregate, by
-/// `aver audit`). Consumers treat it as a warning: running
-/// `aver format` without `--check` would rewrite the file.
-pub fn needs_format_diagnostic(file: &str) -> Diagnostic {
+/// `original` and `formatted` are the file contents before/after running
+/// the formatter — we compute a per-line diff and surface up to
+/// `MAX_DIFF_REGIONS` changed ranges as `regions`, plus a count in
+/// `fields`. Primary span points to the first differing line.
+pub fn needs_format_diagnostic(file: &str, original: &str, formatted: &str) -> Diagnostic {
+    const MAX_DIFF_REGIONS: usize = 3;
+    const CONTEXT_LABEL: &str = "formatter would rewrite this";
+
+    let orig_lines: Vec<&str> = original.lines().collect();
+    let fmt_lines: Vec<&str> = formatted.lines().collect();
+
+    // Naive line-by-line diff: find maximal runs of disagreeing indices.
+    // If line counts differ, we still produce useful ranges by comparing
+    // up to the shorter length and flag the tail.
+    let min_len = orig_lines.len().min(fmt_lines.len());
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let mut i = 0;
+    while i < min_len {
+        if orig_lines[i] != fmt_lines[i] {
+            let start = i;
+            while i < min_len && orig_lines[i] != fmt_lines[i] {
+                i += 1;
+            }
+            ranges.push((start, i - 1));
+        } else {
+            i += 1;
+        }
+    }
+    if orig_lines.len() != fmt_lines.len() {
+        let start = min_len;
+        let end = orig_lines.len().max(fmt_lines.len()).saturating_sub(1);
+        ranges.push((start, end));
+    }
+
+    let total_changed_lines: usize = ranges
+        .iter()
+        .map(|(from, to)| to.saturating_sub(*from) + 1)
+        .sum();
+    let first_diff_line = ranges.first().map(|(from, _)| *from + 1).unwrap_or(1);
+
+    let mut regions: Vec<AnnotatedRegion> = Vec::new();
+    for (from, to) in ranges.iter().take(MAX_DIFF_REGIONS) {
+        let source_lines: Vec<super::model::SourceLine> = (*from..=*to)
+            .filter_map(|idx| {
+                orig_lines.get(idx).map(|text| super::model::SourceLine {
+                    line_num: idx + 1,
+                    text: text.to_string(),
+                })
+            })
+            .collect();
+        if !source_lines.is_empty() {
+            let underline = Some(Underline {
+                col: 1,
+                len: source_lines[0].text.len().max(1),
+                label: CONTEXT_LABEL.to_string(),
+            });
+            regions.push(AnnotatedRegion {
+                source_lines,
+                underline,
+            });
+        }
+    }
+
+    let mut fields: Vec<(&'static str, String)> = vec![
+        ("changed_lines", total_changed_lines.to_string()),
+        ("changed_ranges", ranges.len().to_string()),
+    ];
+    if ranges.len() > MAX_DIFF_REGIONS {
+        fields.push((
+            "shown_ranges",
+            format!("{} (of {})", MAX_DIFF_REGIONS, ranges.len()),
+        ));
+    }
+
+    let summary = if total_changed_lines == 0 {
+        "file is not formatter-clean".to_string()
+    } else if total_changed_lines == 1 {
+        format!("1 line would be rewritten (L{})", first_diff_line)
+    } else {
+        format!(
+            "{} lines would be rewritten across {} range(s), first at L{}",
+            total_changed_lines,
+            ranges.len(),
+            first_diff_line
+        )
+    };
+
     Diagnostic {
         severity: Severity::Warning,
         slug: "needs-format",
-        summary: "file is not formatter-clean; run `aver format` to rewrite".to_string(),
+        summary,
         span: Span {
             file: file.to_string(),
-            line: 1,
+            line: first_diff_line,
             col: 1,
         },
         fn_name: None,
         intent: None,
-        fields: Vec::new(),
+        fields,
         conflict: None,
         repair: Repair::primary("Run `aver format` to apply the formatter"),
-        regions: Vec::new(),
+        regions,
         related: Vec::new(),
     }
 }

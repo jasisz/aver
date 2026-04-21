@@ -38,7 +38,15 @@ pub(super) fn cmd_format(path: &str, check: bool, json: bool) {
         process::exit(1);
     }
 
-    let mut changed = Vec::new();
+    // Keep original + formatted around so JSON mode can emit per-line diff
+    // regions via the canonical factory.
+    struct Changed {
+        path: PathBuf,
+        original: String,
+        formatted: String,
+    }
+    let mut changed: Vec<Changed> = Vec::new();
+
     for file in &files {
         let src = match fs::read_to_string(file) {
             Ok(s) => s,
@@ -65,25 +73,26 @@ pub(super) fn cmd_format(path: &str, check: bool, json: bool) {
             }
         };
         if formatted != src {
-            changed.push(file.clone());
-            if !check && let Err(e) = fs::write(file, formatted) {
+            if !check && let Err(e) = fs::write(file, &formatted) {
                 eprintln!(
                     "{}",
                     format!("Cannot write '{}': {}", file.display(), e).red()
                 );
                 process::exit(1);
             }
+            changed.push(Changed {
+                path: file.clone(),
+                original: src,
+                formatted,
+            });
         }
     }
 
     if json {
-        for f in &changed {
-            let file_label = f.display().to_string();
-            let mut report = AnalysisReport::with_diagnostics(
-                file_label.clone(),
-                vec![needs_format_diagnostic(&file_label)],
-            );
-            report.schema_version = aver::diagnostics::SCHEMA_VERSION;
+        for c in &changed {
+            let file_label = c.path.display().to_string();
+            let diag = needs_format_diagnostic(&file_label, &c.original, &c.formatted);
+            let report = AnalysisReport::with_diagnostics(file_label, vec![diag]);
             println!("{}", report.to_json());
         }
         println!(
@@ -105,8 +114,8 @@ pub(super) fn cmd_format(path: &str, check: bool, json: bool) {
         }
         println!("{}", "Format check failed".red());
         println!("Files that need formatting:");
-        for f in &changed {
-            println!("  {}", f.display());
+        for c in &changed {
+            println!("  {}", c.path.display());
         }
         process::exit(1);
     }
@@ -114,8 +123,8 @@ pub(super) fn cmd_format(path: &str, check: bool, json: bool) {
     if changed.is_empty() {
         println!("{}", "Already formatted".green());
     } else {
-        for f in &changed {
-            println!("{} {}", "formatted".green(), f.display());
+        for c in &changed {
+            println!("{} {}", "formatted".green(), c.path.display());
         }
         println!("{}", format!("Formatted {} file(s)", changed.len()).green());
     }
