@@ -1590,95 +1590,6 @@ function renderCompileMeta(rawSize, compileMs) {
     dom.compileMeta.appendChild(footnote);
 }
 
-// Context panel — markdown-style rendered DOM. Matches what an LLM
-// would see via `aver context`, presented as a module card instead
-// of plain-text console lines.
-function contextToMarkdown(ctx) {
-    const lines = [];
-    lines.push(`# module ${ctx.module_name || "(unnamed)"}`);
-    lines.push("");
-    if (ctx.intent) {
-        lines.push(`> ${ctx.intent.replace(/\n/g, " ")}`);
-        lines.push("");
-    }
-    const metaRow = (label, items, codeWrap) => {
-        if (!items || items.length === 0) return;
-        const rendered = codeWrap
-            ? items.map((x) => `\`${x}\``).join(", ")
-            : items.join(", ");
-        lines.push(`**${label}:** ${rendered}`);
-    };
-    metaRow("depends", ctx.depends);
-    metaRow("exposes", ctx.exposes, true);
-    metaRow("exposes opaque", ctx.exposes_opaque, true);
-    metaRow("api effects", ctx.api_effects, true);
-    if (ctx.main_effects) metaRow("main effects", ctx.main_effects, true);
-
-    if ((ctx.types || []).length > 0) {
-        lines.push("");
-        lines.push("## Types");
-        lines.push("");
-        for (const t of ctx.types) {
-            const members = (t.fields_or_variants || []).join(", ");
-            const suffix = members ? ` (${members})` : "";
-            lines.push(`- **${t.kind}** \`${t.name}\`${suffix}`);
-        }
-    }
-
-    if ((ctx.functions || []).length > 0) {
-        lines.push("");
-        lines.push("## Functions");
-        for (const f of ctx.functions) {
-            lines.push("");
-            lines.push(`### ${f.name}${f.is_exposed ? "" : " (private)"}`);
-            lines.push("");
-            lines.push("```aver");
-            lines.push(f.signature);
-            lines.push("```");
-            if (f.description) {
-                lines.push("");
-                lines.push(`> ${f.description}`);
-            }
-            const flags = [...(f.qualifiers || [])];
-            if (f.auto_memo) flags.push("AUTO_MEMO");
-            if (f.auto_tco) flags.push("AUTO_TCO");
-            if (flags.length > 0) {
-                lines.push("");
-                lines.push(`**Flags:** ${flags.map((x) => `\`${x}\``).join(", ")}`);
-            }
-            if ((f.effects || []).length > 0) {
-                lines.push("");
-                lines.push(`**Effects:** ${f.effects.map((x) => `\`${x}\``).join(", ")}`);
-            }
-            if (f.verify_count > 0) {
-                lines.push("");
-                lines.push(`**Verify (${f.verify_count} case${f.verify_count > 1 ? "s" : ""}):**`);
-                for (const sample of f.verify_samples || []) {
-                    lines.push(`- \`${sample}\``);
-                }
-            }
-        }
-    }
-
-    if ((ctx.decisions || []).length > 0) {
-        lines.push("");
-        lines.push("## Decisions");
-        for (const d of ctx.decisions) {
-            lines.push("");
-            lines.push(`### ${d.name}`);
-            lines.push("");
-            lines.push(`**Date:** ${d.date}  `);
-            if (d.reason_prefix) lines.push(`**Reason:** ${d.reason_prefix}`);
-            if ((d.impacts || []).length > 0) {
-                lines.push(`**Impacts:** ${d.impacts.map((x) => `\`${x}\``).join(", ")}`);
-            }
-        }
-    }
-
-    lines.push("");
-    return lines.join("\n");
-}
-
 function triggerDownload(filename, content, mime) {
     const blob = new Blob([content], { type: `${mime};charset=utf-8` });
     const url = URL.createObjectURL(blob);
@@ -1691,12 +1602,25 @@ function triggerDownload(filename, content, mime) {
     setTimeout(() => URL.revokeObjectURL(url), 100);
 }
 
-function downloadContextMarkdown(ctx) {
-    triggerDownload(
-        `${ctx.module_name || "context"}.md`,
-        contextToMarkdown(ctx),
-        "text/markdown"
-    );
+async function downloadContextMarkdown(ctx) {
+    // Delegate to the canonical Rust renderer so the browser and
+    // `aver context --md` emit identical files. Routes multi-file
+    // projects through the project binding when applicable.
+    try {
+        const comp = await loadCompiler();
+        const entry = pickEntryFile();
+        const md =
+            state.files.size > 1 && entry
+                ? comp.aver_context_md_project(
+                      JSON.stringify(Object.fromEntries(state.files)),
+                      entry
+                  )
+                : comp.aver_context_md(getActiveSource());
+        triggerDownload(`${ctx.module_name || "context"}.md`, md, "text/markdown");
+    } catch (e) {
+        appendConsole("stderr", e.message || String(e));
+        setStatus("Context download failed", "error");
+    }
 }
 
 function downloadJsonl(bundles, filename) {
@@ -1877,9 +1801,10 @@ function clearRecording() {
 }
 
 function renderRecordingPanel() {
-    const existing = document.querySelector(".recording-panel");
-    if (existing) existing.remove();
-
+    // Trace is a full view switch — blow away whatever was in the
+    // console (audit panel, run output, stale text) so the panel
+    // owns the surface. Clicking 📜 Trace again closes it.
+    clearOutput();
     setWorkspaceModeConsole();
 
     const panel = document.createElement("div");
@@ -1912,7 +1837,6 @@ function renderRecordingPanel() {
     } else {
         header.appendChild(recAction("⏺ Record", "Run main() with effect recording on — every Console/Terminal/Time/etc. call becomes an editable event below.", () => doRecord(true), "rec-primary"));
     }
-    header.appendChild(recAction("✕", "Close the Trace panel.", () => clearPanel(), "rec-close"));
     panel.appendChild(header);
 
     if (!data) {

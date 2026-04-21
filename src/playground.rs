@@ -214,6 +214,40 @@ pub fn context_project(files: &HashMap<String, String>, entry: &str) -> String {
     })
 }
 
+/// Render the context as markdown (same shape as CLI
+/// `aver context --md`). Source → ContextSummary → markdown, no
+/// intermediate serialization.
+pub fn context_md_source(source: &str) -> String {
+    let mut opts = AnalyzeOptions::new("playground");
+    opts.include_context_summary = true;
+    let report = analyze_source(source, &opts);
+    match report.context_summary {
+        Some(summary) => crate::diagnostics::context::render_context_md(&summary),
+        None => "# Aver Context\n\n_No context available (parse or typecheck failed)._\n"
+            .to_string(),
+    }
+}
+
+pub fn context_md_project(files: &HashMap<String, String>, entry: &str) -> String {
+    let Some(entry_source) = files.get(entry).cloned() else {
+        return format!("# Aver Context\n\n_Entry '{}' not found in project._\n", entry);
+    };
+    let mut opts = AnalyzeOptions::new("playground");
+    opts.include_context_summary = true;
+    if let Ok(items) = parse_source(&entry_source) {
+        let deps = module_depends(&items);
+        if let Ok(loaded) = crate::source::load_module_tree_from_map(&deps, files) {
+            opts = opts.with_loaded_modules(loaded);
+        }
+    }
+    let report = analyze_source(&entry_source, &opts);
+    match report.context_summary {
+        Some(summary) => crate::diagnostics::context::render_context_md(&summary),
+        None => "# Aver Context\n\n_No context available (parse or typecheck failed)._\n"
+            .to_string(),
+    }
+}
+
 /// Audit: three-axis health check — static analysis (every enabled
 /// collector), verify block execution, and format-check. Equivalent of
 /// the CLI `aver audit` but single-file. Returns a canonical
@@ -600,6 +634,17 @@ mod bindgen {
     pub fn aver_context_project(files_json: &str, entry: &str) -> Result<String, JsError> {
         let files = parse_files(files_json)?;
         Ok(super::context_project(&files, entry))
+    }
+
+    #[wasm_bindgen]
+    pub fn aver_context_md(source: &str) -> String {
+        super::context_md_source(source)
+    }
+
+    #[wasm_bindgen]
+    pub fn aver_context_md_project(files_json: &str, entry: &str) -> Result<String, JsError> {
+        let files = parse_files(files_json)?;
+        Ok(super::context_md_project(&files, entry))
     }
 
     #[wasm_bindgen]
