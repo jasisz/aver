@@ -1164,76 +1164,27 @@ if (contextBtn) {
     });
 }
 
-// ── Compile-meta line + lazy-loaded wasm-opt ──────────────────────
-// `aver_compile` emits a standalone WASM module with Aver's inline
-// runtime baked in (alloc, strings, lists, maps, …). Without a
-// tree-shaking pass the runtime inflates every output to ~9–10 KB
-// even for a one-line program. `wasm-opt -Oz` typically drops that
-// to ~250 B. Binaryen.js (~3 MB) provides wasm-opt in-browser, but
-// we only load it if the user asks — default view explains the
-// situation, the ⚡ button opts in.
-let binaryenPromise = null;
-function loadBinaryen() {
-    if (!binaryenPromise) {
-        binaryenPromise = import("https://unpkg.com/binaryen@123.0.0/index.js")
-            .then((mod) => mod.default || mod);
-    }
-    return binaryenPromise;
-}
-
+// Compile meta shows time + raw WASM size with a footnote mark `*`
+// that carries a hover tooltip explaining where the bulk comes from
+// (inline runtime). We don't ship binaryen in the browser — keeping
+// the playground small matters more than showing the optimized size
+// inline.
 function renderCompileMeta(rawSize, compileMs) {
     if (!dom.compileMeta) return;
     dom.compileMeta.textContent = "";
-
     const main = document.createElement("span");
     main.className = "size-main";
-    main.textContent = `Compiled in ${compileMs}ms · ${(rawSize / 1024).toFixed(1)} KB`;
+    main.textContent = `${compileMs}ms · ${(rawSize / 1024).toFixed(1)} KB`;
     dom.compileMeta.appendChild(main);
 
-    const hint = document.createElement("span");
-    hint.className = "muted-hint";
-    hint.textContent = "(mostly inline runtime)";
-    dom.compileMeta.appendChild(hint);
-
-    const optBtn = document.createElement("button");
-    optBtn.type = "button";
-    optBtn.className = "download-btn";
-    optBtn.textContent = "⚡ Optimize";
-    optBtn.title = "Load binaryen (wasm-opt, ~3 MB, first click only) and shrink the WASM with -Oz — same pipeline as `aver compile --wasm-opt oz`.";
-    optBtn.addEventListener("click", async () => {
-        if (!state.wasmBytes) return;
-        optBtn.disabled = true;
-        optBtn.textContent = "Loading binaryen…";
-        try {
-            const binaryen = await loadBinaryen();
-            optBtn.textContent = "Optimizing…";
-            const before = new Uint8Array(state.wasmBytes);
-            const mod = binaryen.readBinary(before);
-            binaryen.setOptimizeLevel(0);
-            binaryen.setShrinkLevel(2);
-            mod.optimize();
-            const after = mod.emitBinary();
-            mod.dispose();
-
-            state.wasmBytes = after.buffer.slice(0);
-            const delta = ((1 - after.length / before.length) * 100).toFixed(1);
-
-            dom.compileMeta.textContent = "";
-            const done = document.createElement("span");
-            done.className = "size-main";
-            done.textContent = `Optimized · ${(after.length / 1024).toFixed(2)} KB`;
-            dom.compileMeta.appendChild(done);
-            const savings = document.createElement("span");
-            savings.className = "savings";
-            savings.textContent = `(−${delta}% after wasm-opt -Oz)`;
-            dom.compileMeta.appendChild(savings);
-        } catch (e) {
-            optBtn.disabled = false;
-            optBtn.textContent = "⚡ Optimize";
-            appendConsole("stderr", `wasm-opt failed: ${e.message || e}`);
-        }
-    });
-    dom.compileMeta.appendChild(optBtn);
+    const footnote = document.createElement("span");
+    footnote.className = "muted-hint compile-footnote";
+    footnote.textContent = "*";
+    footnote.title =
+        "Most of this is Aver's inline runtime (alloc, strings, lists, maps). " +
+        "`aver compile --wasm-opt oz` strips unused runtime — a one-line " +
+        "program typically drops to ~250 B.";
+    dom.compileMeta.appendChild(footnote);
 }
 
 // Context panel — markdown-style rendered DOM. Matches what an LLM
