@@ -16,6 +16,7 @@ All notable changes to Aver are documented here.
 - **Effects list in `aver context`** — `signature` is now params + return type only; effects live on the sibling `effects` array. Lets renderers (playground, LLMs) show them without duplicating `! [...]` on screen.
 
 ### Fixed
+- **Parse errors landed on line 1:1 with no hint** — the formatter stripped the real span and emitted a single red line that didn't tell you where or why. Now: real line/col pulled from the parser, source snippet with `^^^` caret under the offending token (clamped to the last char for EOL errors like Unterminated string), and repair hints for common shapes (`Expected '[' after '!'` → `! [Console.print, ...]`, missing `module <Name>`, map `=>` syntax, tuple-needs-2-elements, …). Playground audit panel renders the same snippet inline.
 - **Multi-file projects skipped verify in audit** — the VM module loader was disk-only, so folder-dropped projects in the playground couldn't run verify at all. VM and type checker both grew in-memory loaders; audit's verify axis now works across the whole project.
 - **Format fixer only touched the active file** — now reformats every tab in the project in one pass and focuses the file that actually changed so the diff is immediately visible.
 - **Audit's Format section looked only at the entry file** in multi-file mode. Now scans every file and reports violations against their real paths.
