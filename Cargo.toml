@@ -4,7 +4,7 @@ exclude = ["tools/wasm-runner"]
 
 [package]
 name = "aver-lang"
-version = "0.9.7"
+version = "0.10.0"
 edition = "2024"
 default-run = "aver"
 description = "VM and transpiler for Aver, a statically-typed language designed for AI-assisted development"
@@ -49,7 +49,7 @@ playground = ["wasm-compile", "dep:wasm-bindgen", "runtime", "tty-render"]
 
 [dependencies]
 aver-memory = { path = "aver-memory", version = "=0.2.2" }
-aver-rt = { path = "aver-rt", version = "=0.4.1", optional = true }
+aver-rt = { path = "aver-rt", version = "=0.4.2", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 colored = { version = "2", optional = true }
 thiserror = "1"

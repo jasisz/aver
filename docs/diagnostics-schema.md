@@ -1,8 +1,11 @@
 # Aver Diagnostics — JSON Schema
 
 Canonical JSON emitted by `aver check --json`, `aver verify --json`,
-playground `aver_check` / `aver_verify` / `aver_why` / `aver_context`,
-and the LSP (via `tower_lsp` types derived from this model).
+`aver audit --json`, `aver why --json`, `aver context --json`,
+`aver format --check --json`, playground `aver_check` / `aver_verify`
+/ `aver_why` / `aver_context` / `aver_audit` (plus their
+`_project` multi-file variants), and the LSP (via `tower_lsp`
+types derived from this model).
 
 Source of truth: `src/diagnostics/model.rs` (serde-derived).
 
