@@ -705,28 +705,6 @@ body {
     cursor: pointer;
 }
 
-/* ── Back button (game mode) ──────────────────────────────────────── */
-
-.back-bar {
-    display: none;
-    padding: 0.25rem 0.75rem;
-    border-bottom: 1px solid var(--border);
-}
-
-.back-bar button {
-    font-size: 0.75rem;
-    padding: 0.15rem 0.5rem;
-    border-radius: 3px;
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--muted);
-    cursor: pointer;
-}
-
-.back-bar button:hover { color: var(--text); border-color: var(--accent); }
-
-.workspace[data-mode="game"] .back-bar { display: block; }
-
 /* ── Header links ────────────────────────────────────────────────── */
 
 .intro-link {

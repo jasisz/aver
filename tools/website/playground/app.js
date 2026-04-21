@@ -246,9 +246,8 @@ function handleWorkerMessage(event) {
             if (!message.ok && message.error) {
                 appendConsole("stderr", message.error);
             }
-            // If a game just ended, show back-to-editor option
-            if (workspace && workspace.dataset.mode === "game") {
-                setStatus("Game ended. Click ← Back or pick another.", "idle");
+            if (state.activeGame) {
+                setStatus("Game ended. Pick another or edit source to fork.", "idle");
             }
             break;
         default:
@@ -262,9 +261,8 @@ async function loadSelectedFile(file) {
     state.activeGame = null;
     dom.fileMeta.textContent = `${file.name} · ${(file.size / 1024).toFixed(1)} KB`;
     dom.runButton.disabled = false;
-    // Switch to game mode (hide editor)
     document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
-    setWorkspaceMode("game");
+    renderPrebuiltMeta(file.name, state.wasmBytes.byteLength);
     clearOutput();
 
     // Check imports to decide terminal vs console
@@ -755,33 +753,11 @@ setStatus("Pick a game or write Aver code to start.", "idle");
 // ---------------------------------------------------------------------------
 
 const outputPane = document.querySelector("[data-output-pane]");
-const workspace = document.querySelector(".workspace");
 
 function setOutputMode(mode) {
     // mode: "console" | "terminal"
     if (outputPane) outputPane.dataset.mode = mode;
 }
-
-function setWorkspaceMode(mode) {
-    // mode: "edit" | "game"
-    if (workspace) workspace.dataset.mode = mode;
-}
-
-function backToEditor() {
-    stopRun();
-    state.programArgs = [];
-    state.activeGame = null;
-    setWorkspaceMode("edit");
-    setOutputMode("console");
-    buildTouchControls(null);
-    document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
-    // Return to the starter the same way the page boots — hello
-    // example in a single tab, no lingering game source or bytes.
-    loadExampleAsTab("hello");
-    setStatus("Ready.", "success");
-}
-
-document.querySelector("[data-back]")?.addEventListener("click", backToEditor);
 
 document.querySelectorAll("[data-game]").forEach(btn => {
     btn.addEventListener("click", async () => {
@@ -792,7 +768,6 @@ document.querySelectorAll("[data-game]").forEach(btn => {
         state.programArgs = args;
         state.activeGame = name;
         const isConsoleGame = btn.hasAttribute("data-console-game");
-        setWorkspaceMode("game");
         setOutputMode(isConsoleGame ? "console" : "terminal");
         buildTouchControls(name);
         clearOutput();
@@ -815,6 +790,10 @@ document.querySelectorAll("[data-game]").forEach(btn => {
             const sizeKiB = (bytes.byteLength / 1024).toFixed(1);
             dom.fileMeta.textContent = `${name}.wasm — ${sizeKiB} KiB`;
             dom.runButton.disabled = false;
+            // Show real prebuilt size (not a fake compile timing) so
+            // users don't see "compiled 0ms · 9.5 KiB" on a 29 KiB
+            // roguelike that was shipped by the CLI.
+            renderPrebuiltMeta(`${name}.wasm`, bytes.byteLength);
             setStatus(`Native WASM · ${name}.wasm · ${sizeKiB} KiB`, "success");
             runSelectedModule(isConsoleGame ? undefined : { cols: 80, rows: 35 });
         } catch (e) {
@@ -1040,7 +1019,6 @@ if (compileRunBtn) {
         if (!source.trim()) return;
 
         document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
-        setWorkspaceMode("edit");
         state.activeGame = null;
 
         const usesTerminal = source.includes("Terminal.");
@@ -1176,7 +1154,6 @@ if (checkBtn) {
         const source = getActiveSource();
         if (!source?.trim()) return;
 
-        setWorkspaceMode("edit");
         setOutputMode("console");
         state.activeGame = null;
         clearOutput();
@@ -1253,7 +1230,6 @@ if (verifyBtn) {
         const source = getActiveSource();
         if (!source?.trim()) return;
 
-        setWorkspaceMode("edit");
         setOutputMode("console");
         state.activeGame = null;
         clearOutput();
@@ -1357,7 +1333,6 @@ if (whyBtn) {
         const source = getActiveSource();
         if (!source?.trim()) return;
 
-        setWorkspaceMode("edit");
         setOutputMode("console");
         state.activeGame = null;
         clearOutput();
@@ -1463,7 +1438,6 @@ if (contextBtn) {
         const source = getActiveSource();
         if (!source?.trim()) return;
 
-        setWorkspaceMode("edit");
         setOutputMode("console");
         state.activeGame = null;
         clearOutput();
@@ -1500,6 +1474,29 @@ if (contextBtn) {
 // the optimized size run `aver compile --wasm-opt oz` locally.
 function clearCompileMeta() {
     if (dom.compileMeta) dom.compileMeta.textContent = "";
+}
+
+// For prebuilt games: show the .wasm size we just fetched, not a fake
+// "compiled Nms" number — no compile happened here.
+function renderPrebuiltMeta(name, rawSize) {
+    if (!dom.compileMeta) return;
+    dom.compileMeta.textContent = "";
+    const label = document.createElement("span");
+    label.className = "size-label";
+    label.textContent = "prebuilt ";
+    dom.compileMeta.appendChild(label);
+    const main = document.createElement("span");
+    main.className = "size-main";
+    main.textContent = `${name} · ${(rawSize / 1024).toFixed(1)} KiB`;
+    dom.compileMeta.appendChild(main);
+    const aside = document.createElement("span");
+    aside.className = "size-aside";
+    aside.textContent = " (wasm-opt -Oz)";
+    aside.title =
+        "Game binaries are compiled by the CLI with `aver compile --wasm-opt oz` " +
+        "and served as static files. Edit any tab to fork — next ▶ Run recompiles " +
+        "the active file in the browser.";
+    dom.compileMeta.appendChild(aside);
 }
 
 function renderCompileMeta(rawSize, compileMs) {
@@ -2118,7 +2115,6 @@ if (auditBtn) {
         const source = getActiveSource();
         if (!source?.trim()) return;
 
-        setWorkspaceMode("edit");
         setOutputMode("console");
         state.activeGame = null;
         clearOutput();
