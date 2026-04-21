@@ -796,7 +796,7 @@ if (compileRunBtn) {
 
             state.wasmBytes = wasmBytes.buffer;
             state.wasmName = "playground.wasm";
-            dom.fileMeta.textContent = `Compiled in ${ms}ms — ${(wasmBytes.length / 1024).toFixed(1)} KB`;
+            renderCompileMeta(wasmBytes.length, ms);
             dom.runButton.disabled = false;
             runSelectedModule();
         } catch (e) {
@@ -1161,6 +1161,78 @@ if (contextBtn) {
             setStatus("Context failed", "error");
         }
     });
+}
+
+// ── Compile-meta line + lazy-loaded wasm-opt ──────────────────────
+// `aver_compile` emits a standalone WASM module with Aver's inline
+// runtime baked in (alloc, strings, lists, maps, …). Without a
+// tree-shaking pass the runtime inflates every output to ~9–10 KB
+// even for a one-line program. `wasm-opt -Oz` typically drops that
+// to ~250 B. Binaryen.js (~3 MB) provides wasm-opt in-browser, but
+// we only load it if the user asks — default view explains the
+// situation, the ⚡ button opts in.
+let binaryenPromise = null;
+function loadBinaryen() {
+    if (!binaryenPromise) {
+        binaryenPromise = import("https://unpkg.com/binaryen@123.0.0/index.js")
+            .then((mod) => mod.default || mod);
+    }
+    return binaryenPromise;
+}
+
+function renderCompileMeta(rawSize, compileMs) {
+    dom.fileMeta.textContent = "";
+    const meta = document.createElement("span");
+    meta.textContent = `Compiled in ${compileMs}ms — ${(rawSize / 1024).toFixed(1)} KB`;
+    dom.fileMeta.appendChild(meta);
+
+    const hint = document.createElement("span");
+    hint.style.color = "var(--muted)";
+    hint.style.marginLeft = "0.4rem";
+    hint.textContent = "(inline runtime; CI uses --wasm-opt oz)";
+    dom.fileMeta.appendChild(hint);
+
+    const optBtn = document.createElement("button");
+    optBtn.type = "button";
+    optBtn.className = "download-btn";
+    optBtn.style.marginLeft = "0.4rem";
+    optBtn.textContent = "⚡ Optimize";
+    optBtn.title = "Load binaryen (wasm-opt, ~3 MB, first click only) and shrink the WASM with -Oz — same pipeline as `aver compile --wasm-opt oz`.";
+    optBtn.addEventListener("click", async () => {
+        if (!state.wasmBytes) return;
+        optBtn.disabled = true;
+        optBtn.textContent = "Loading binaryen…";
+        try {
+            const binaryen = await loadBinaryen();
+            optBtn.textContent = "Optimizing…";
+            const before = new Uint8Array(state.wasmBytes);
+            const mod = binaryen.readBinary(before);
+            // -Oz equivalent: optimizeLevel 0, shrinkLevel 2.
+            binaryen.setOptimizeLevel(0);
+            binaryen.setShrinkLevel(2);
+            mod.optimize();
+            const after = mod.emitBinary();
+            mod.dispose();
+
+            state.wasmBytes = after.buffer.slice(0);
+            const delta = ((1 - after.length / before.length) * 100).toFixed(1);
+
+            dom.fileMeta.textContent = "";
+            const done = document.createElement("span");
+            done.textContent = `Compiled + optimized — ${(after.length / 1024).toFixed(2)} KB`;
+            dom.fileMeta.appendChild(done);
+            const savings = document.createElement("span");
+            savings.style.color = "var(--green)";
+            savings.style.marginLeft = "0.4rem";
+            savings.textContent = `(−${delta}% after wasm-opt -Oz)`;
+            dom.fileMeta.appendChild(savings);
+        } catch (e) {
+            optBtn.disabled = false;
+            optBtn.textContent = "⚡ Optimize";
+            appendConsole("stderr", `wasm-opt failed: ${e.message || e}`);
+        }
+    });
+    dom.fileMeta.appendChild(optBtn);
 }
 
 // Context panel — markdown-style rendered DOM. Matches what an LLM
