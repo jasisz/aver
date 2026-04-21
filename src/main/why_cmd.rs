@@ -1,17 +1,10 @@
-use std::collections::{HashMap, HashSet};
 use std::process;
 
+use aver::diagnostics::why::{FnDetail, Justification, WhySummary, summarize};
 use colored::Colorize;
-
-use aver::ast::{DecisionBlock, FnDef, TopLevel};
-use aver::checker::{collect_verify_coverage_warnings, merge_verify_blocks};
 
 use super::commands::{display_check_path, resolve_av_inputs};
 use super::shared::{parse_file, read_file, resolve_module_root};
-
-// ---------------------------------------------------------------------------
-// Public entry point
-// ---------------------------------------------------------------------------
 
 pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>, verbose: bool, json: bool) {
     let module_root = resolve_module_root(module_root_override);
@@ -23,23 +16,25 @@ pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>, verbose: b
         }
     };
 
-    let mut total_stats = FileStats::default();
+    // Aggregate totals across all analyzed files — displayed at the end.
+    let mut total_lines = 0usize;
+    let mut justified = 0usize;
+    let mut partial = 0usize;
+    let mut unjustified = 0usize;
 
     for file in &inputs {
         let shown_path = display_check_path(file, &module_root);
-        match analyze_file(file) {
-            Ok(stats) => {
+        match analyze_file(file, &shown_path) {
+            Ok(summary) => {
                 if json {
-                    render_file_json(&shown_path, &stats);
+                    render_file_json(&summary);
                 } else {
-                    render_file(&shown_path, &stats, verbose);
+                    render_file(&summary, verbose);
                 }
-                total_stats.total_lines += stats.total_lines;
-                total_stats.justified_lines += stats.justified_lines;
-                total_stats.partial_lines += stats.partial_lines;
-                total_stats.unjustified_lines += stats.unjustified_lines;
-                total_stats.decisions.extend(stats.decisions);
-                total_stats.fn_details.extend(stats.fn_details);
+                total_lines += summary.total_lines;
+                justified += summary.justified_lines;
+                partial += summary.partial_lines;
+                unjustified += summary.unjustified_lines;
             }
             Err(e) => {
                 if json {
@@ -61,10 +56,10 @@ pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>, verbose: b
         println!(
             "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"lines\":{},\"justified\":{},\"partial\":{},\"unjustified\":{}}}",
             inputs.len(),
-            total_stats.total_lines,
-            total_stats.justified_lines,
-            total_stats.partial_lines,
-            total_stats.unjustified_lines
+            total_lines,
+            justified,
+            partial,
+            unjustified
         );
     } else {
         println!("{}", "─".repeat(50).dimmed());
@@ -73,25 +68,25 @@ pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>, verbose: b
             "{} {} files, {} lines",
             "Summary:".bold(),
             inputs.len(),
-            total_stats.total_lines
+            total_lines
         );
         println!(
             "  {}    {} lines ({})",
             "justified".green(),
-            total_stats.justified_lines,
-            fmt_pct(total_stats.justified_lines, total_stats.total_lines)
+            justified,
+            fmt_pct(justified, total_lines)
         );
         println!(
             "  {}      {} lines ({})",
             "partial".yellow(),
-            total_stats.partial_lines,
-            fmt_pct(total_stats.partial_lines, total_stats.total_lines)
+            partial,
+            fmt_pct(partial, total_lines)
         );
         println!(
             "  {}  {} lines ({})",
             "unjustified".red(),
-            total_stats.unjustified_lines,
-            fmt_pct(total_stats.unjustified_lines, total_stats.total_lines)
+            unjustified,
+            fmt_pct(unjustified, total_lines)
         );
         println!();
         println!(
@@ -102,253 +97,35 @@ pub(super) fn cmd_why(path: &str, module_root_override: Option<&str>, verbose: b
     }
 }
 
-// ---------------------------------------------------------------------------
-// Analysis
-// ---------------------------------------------------------------------------
-
-#[derive(Default, Clone)]
-struct FnDetail {
-    name: String,
-    lines: usize,
-    has_description: bool,
-    is_effectful: bool,
-    verify_cases: usize,
-    has_coverage_gaps: bool,
-    has_decision_impact: bool,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum Justification {
-    /// description + verify with no coverage gaps
-    Justified,
-    /// has something but incomplete (desc only, verify with gaps, decision only, etc.)
-    Partial,
-    /// nothing at all
-    Unjustified,
-}
-
-impl FnDetail {
-    fn justification(&self) -> Justification {
-        let has_verify = self.verify_cases > 0;
-        if self.is_effectful {
-            // Effectful functions can't have verify blocks —
-            // description alone is sufficient for "justified".
-            if self.has_description {
-                return Justification::Justified;
-            }
-        } else {
-            // Pure: description AND verify without coverage gaps
-            if self.has_description && has_verify && !self.has_coverage_gaps {
-                return Justification::Justified;
-            }
-        }
-        // Partial: has at least one signal
-        if self.has_description || has_verify || self.has_decision_impact {
-            return Justification::Partial;
-        }
-        Justification::Unjustified
-    }
-}
-
-#[derive(Default)]
-struct FileStats {
-    total_lines: usize,
-    justified_lines: usize,
-    partial_lines: usize,
-    unjustified_lines: usize,
-    decisions: Vec<DecisionSummary>,
-    fn_details: Vec<FnDetail>,
-}
-
-#[derive(Clone)]
-struct DecisionSummary {
-    name: String,
-    date: String,
-    reason_prefix: String,
-}
-
-fn analyze_file(path: &str) -> Result<FileStats, String> {
+fn analyze_file(path: &str, shown_path: &str) -> Result<WhySummary, String> {
     let source = read_file(path)?;
     let items = parse_file(&source)?;
-
-    let total_lines = source.lines().count();
-
-    // Collect decisions
-    let decisions: Vec<&DecisionBlock> = items
-        .iter()
-        .filter_map(|item| match item {
-            TopLevel::Decision(d) => Some(d),
-            _ => None,
-        })
-        .collect();
-
-    let impact_symbols: HashSet<String> = decisions
-        .iter()
-        .flat_map(|d| d.impacts.iter().map(|i| i.node.text().to_string()))
-        .collect();
-
-    // Verify: merge blocks, count cases per fn
-    let merged_verify = merge_verify_blocks(&items);
-    let mut verify_cases_per_fn: HashMap<String, usize> = HashMap::new();
-    for vb in &merged_verify {
-        *verify_cases_per_fn.entry(vb.fn_name.clone()).or_default() += vb.cases.len();
-    }
-
-    // Coverage gaps: run the existing checker, collect fn names with warnings
-    let coverage_warnings = collect_verify_coverage_warnings(&items);
-    let fns_with_coverage_gaps: HashSet<String> = coverage_warnings
-        .iter()
-        .filter_map(|w| {
-            // Messages are "verify examples for {fn_name} ..."
-            w.message
-                .strip_prefix("verify examples for ")
-                .or_else(|| {
-                    w.message
-                        .strip_prefix("verify examples for recursive function ")
-                })
-                .and_then(|rest| rest.split_whitespace().next())
-                .map(|s| s.to_string())
-        })
-        .collect();
-
-    // Check module intent
-    let has_module_intent = items
-        .iter()
-        .any(|item| matches!(item, TopLevel::Module(m) if !m.intent.is_empty()));
-
-    // Analyze functions
-    let fns: Vec<&FnDef> = items
-        .iter()
-        .filter_map(|item| match item {
-            TopLevel::FnDef(fd) => Some(fd),
-            _ => None,
-        })
-        .collect();
-
-    let mut fn_details = Vec::new();
-    let mut justified_lines = 0usize;
-    let mut partial_lines = 0usize;
-    let mut unjustified_lines = 0usize;
-
-    for (i, fd) in fns.iter().enumerate() {
-        let fn_start = fd.line;
-        let fn_end = if i + 1 < fns.len() {
-            fns[i + 1].line.saturating_sub(1)
-        } else {
-            next_toplevel_line_after(&items, fd.line).unwrap_or(total_lines)
-        };
-        let fn_lines = fn_end.saturating_sub(fn_start).max(1);
-
-        let has_decision_impact = impact_symbols.contains(&fd.name)
-            || impact_symbols
-                .iter()
-                .any(|s: &String| fd.name.starts_with(s.as_str()));
-
-        let verify_cases = verify_cases_per_fn.get(&fd.name).copied().unwrap_or(0);
-
-        let detail = FnDetail {
-            name: fd.name.clone(),
-            lines: fn_lines,
-            has_description: fd.desc.is_some(),
-            is_effectful: !fd.effects.is_empty(),
-            verify_cases,
-            has_coverage_gaps: fns_with_coverage_gaps.contains(&fd.name),
-            has_decision_impact,
-        };
-
-        match detail.justification() {
-            Justification::Justified => justified_lines += fn_lines,
-            Justification::Partial => partial_lines += fn_lines,
-            Justification::Unjustified => unjustified_lines += fn_lines,
-        }
-
-        fn_details.push(detail);
-    }
-
-    // Non-function lines
-    let non_fn_lines =
-        total_lines.saturating_sub(justified_lines + partial_lines + unjustified_lines);
-    if has_module_intent {
-        justified_lines += non_fn_lines;
-    } else {
-        unjustified_lines += non_fn_lines;
-    }
-
-    let decision_summaries: Vec<DecisionSummary> = decisions
-        .iter()
-        .map(|d| {
-            let reason_prefix: String = d.reason.chars().take(60).collect();
-            let reason_prefix = if d.reason.len() > 60 {
-                format!("{}...", reason_prefix.trim_end())
-            } else {
-                reason_prefix
-            };
-            DecisionSummary {
-                name: d.name.clone(),
-                date: d.date.clone(),
-                reason_prefix,
-            }
-        })
-        .collect();
-
-    Ok(FileStats {
-        total_lines,
-        justified_lines,
-        partial_lines,
-        unjustified_lines,
-        decisions: decision_summaries,
-        fn_details,
-    })
+    Ok(summarize(&items, &source, shown_path))
 }
 
-fn next_toplevel_line_after(items: &[TopLevel], after_line: usize) -> Option<usize> {
-    let mut min_line = None;
-    for item in items {
-        let line = match item {
-            TopLevel::FnDef(fd) => fd.line,
-            TopLevel::Verify(v) => v.line,
-            TopLevel::Decision(d) => d.line,
-            TopLevel::TypeDef(_) | TopLevel::Module(_) | TopLevel::Stmt(_) => continue,
-        };
-        if line > after_line {
-            min_line = Some(match min_line {
-                Some(cur) if line < cur => line,
-                Some(cur) => cur,
-                None => line,
-            });
-        }
-    }
-    min_line.map(|l| l.saturating_sub(1))
-}
-
-// ---------------------------------------------------------------------------
-// Rendering
-// ---------------------------------------------------------------------------
-
-fn render_file(shown_path: &str, stats: &FileStats, verbose: bool) {
-    let just_raw = raw_pct(stats.justified_lines, stats.total_lines);
+fn render_file(summary: &WhySummary, verbose: bool) {
+    let just_raw = raw_pct(summary.justified_lines, summary.total_lines);
 
     let color_path = if just_raw >= 60 {
-        shown_path.green()
+        summary.file_label.green()
     } else if just_raw >= 30 {
-        shown_path.yellow()
+        summary.file_label.yellow()
     } else {
-        shown_path.red()
+        summary.file_label.red()
     };
     println!("{}", color_path);
 
-    // One-line summary
     println!(
         "  {} {} | {} {} | {} {}",
-        fmt_pct(stats.justified_lines, stats.total_lines).green(),
+        fmt_pct(summary.justified_lines, summary.total_lines).green(),
         "justified".green(),
-        fmt_pct(stats.partial_lines, stats.total_lines).yellow(),
+        fmt_pct(summary.partial_lines, summary.total_lines).yellow(),
         "partial".yellow(),
-        fmt_pct(stats.unjustified_lines, stats.total_lines).red(),
+        fmt_pct(summary.unjustified_lines, summary.total_lines).red(),
         "unjustified".red(),
     );
 
-    for d in &stats.decisions {
+    for d in &summary.decisions {
         println!(
             "  {} {} {}: {}",
             "decision".blue(),
@@ -358,44 +135,29 @@ fn render_file(shown_path: &str, stats: &FileStats, verbose: bool) {
         );
     }
 
-    // Show partial/unjustified functions (up to 3 worst)
-    let mut problematic: Vec<&FnDetail> = stats
-        .fn_details
+    let mut problematic: Vec<&FnDetail> = summary
+        .functions
         .iter()
-        .filter(|f| f.justification() != Justification::Justified)
+        .filter(|f| f.level != Justification::Justified)
         .collect();
     problematic.sort_by(|a, b| {
-        // Unjustified first, then partial; within each tier, largest first
-        a.justification()
-            .cmp_priority()
-            .cmp(&b.justification().cmp_priority())
+        a.level
+            .priority()
+            .cmp(&b.level.priority())
             .then(b.lines.cmp(&a.lines))
     });
 
     let max_shown = if verbose { usize::MAX } else { 3 };
     for f in problematic.iter().take(max_shown) {
-        let tag = match f.justification() {
+        let tag = match f.level {
             Justification::Unjustified => "unjustified:".red(),
             Justification::Partial => "partial:".yellow(),
             Justification::Justified => unreachable!(),
         };
-        let mut hints = Vec::new();
-        if !f.has_description {
-            hints.push("no description");
-        }
-        if f.is_effectful {
-            if !f.has_description {
-                hints.push("effectful — test via replay");
-            }
-        } else if f.verify_cases == 0 {
-            hints.push("no verify");
-        } else if f.has_coverage_gaps {
-            hints.push("verify has gaps");
-        }
-        let hint = if hints.is_empty() {
+        let hint = if f.missing.is_empty() {
             String::new()
         } else {
-            format!(" ({})", hints.join(", "))
+            format!(" ({})", f.missing.join(", "))
         };
         println!("  {} {}{}", tag, f.name, hint.dimmed());
     }
@@ -409,36 +171,22 @@ fn render_file(shown_path: &str, stats: &FileStats, verbose: bool) {
     println!();
 }
 
-impl Justification {
-    fn cmp_priority(self) -> u8 {
-        match self {
-            Justification::Unjustified => 0,
-            Justification::Partial => 1,
-            Justification::Justified => 2,
-        }
-    }
-}
-
-fn render_file_json(shown_path: &str, stats: &FileStats) {
-    // Per-function details as JSON array
-    let fns_json: Vec<String> = stats
-        .fn_details
+fn render_file_json(summary: &WhySummary) {
+    let fns_json: Vec<String> = summary
+        .functions
         .iter()
         .map(|f| {
-            let level = match f.justification() {
+            let level = match f.level {
                 Justification::Justified => "justified",
                 Justification::Partial => "partial",
                 Justification::Unjustified => "unjustified",
             };
-            let mut missing = Vec::new();
-            if !f.has_description {
-                missing.push("\"no description\"");
-            }
-            if f.verify_cases == 0 {
-                missing.push("\"no verify\"");
-            } else if f.has_coverage_gaps {
-                missing.push("\"verify has gaps\"");
-            }
+            let missing_json = f
+                .missing
+                .iter()
+                .map(|m| format!("\"{}\"", json_escape(m)))
+                .collect::<Vec<_>>()
+                .join(",");
             format!(
                 "{{\"name\":\"{}\",\"lines\":{},\"level\":\"{}\",\"description\":{},\"effectful\":{},\"verify_cases\":{},\"coverage_gaps\":{},\"decision_impact\":{},\"missing\":[{}]}}",
                 json_escape(&f.name),
@@ -449,12 +197,12 @@ fn render_file_json(shown_path: &str, stats: &FileStats) {
                 f.verify_cases,
                 f.has_coverage_gaps,
                 f.has_decision_impact,
-                missing.join(",")
+                missing_json
             )
         })
         .collect();
 
-    let decisions_json: Vec<String> = stats
+    let decisions_json: Vec<String> = summary
         .decisions
         .iter()
         .map(|d| {
@@ -468,11 +216,11 @@ fn render_file_json(shown_path: &str, stats: &FileStats) {
 
     println!(
         "{{\"schema_version\":1,\"kind\":\"file\",\"file\":\"{}\",\"lines\":{},\"justified\":{},\"partial\":{},\"unjustified\":{},\"decisions\":[{}],\"functions\":[{}]}}",
-        json_escape(shown_path),
-        stats.total_lines,
-        stats.justified_lines,
-        stats.partial_lines,
-        stats.unjustified_lines,
+        json_escape(&summary.file_label),
+        summary.total_lines,
+        summary.justified_lines,
+        summary.partial_lines,
+        summary.unjustified_lines,
         decisions_json.join(","),
         fns_json.join(",")
     );
