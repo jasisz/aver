@@ -255,6 +255,12 @@ pub(crate) fn classify_type_error(msg: &str) -> TypeErrorClassification {
 }
 
 pub(crate) fn classify_finding(msg: &str) -> (&'static str, Option<String>) {
+    if msg.starts_with("File must declare `module") {
+        return (
+            "missing-module",
+            Some("Add `module <Name>` as the first top-level item".to_string()),
+        );
+    }
     if msg.contains("has effects") && msg.contains("verify blocks are for pure") {
         (
             "verify-effectful",

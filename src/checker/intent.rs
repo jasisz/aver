@@ -285,6 +285,34 @@ pub fn check_module_intent_with_sigs_in(
         }
     });
 
+    // Aver files are module-scoped. A file with top-level declarations
+    // (fn, type, verify, decision) but no `module Name` header is not
+    // a valid Aver source — the CLI's `require_module_declaration`
+    // enforces this, and the canonical analyzer should too so audit /
+    // playground / LSP all agree.
+    if module_name.is_none() {
+        let has_top_level = items.iter().any(|item| {
+            matches!(
+                item,
+                TopLevel::FnDef(_)
+                    | TopLevel::TypeDef(_)
+                    | TopLevel::Verify(_)
+                    | TopLevel::Decision(_)
+            )
+        });
+        if has_top_level {
+            errors.push(CheckFinding {
+                line: 1,
+                module: None,
+                file: source_file.map(|s| s.to_string()),
+                fn_name: None,
+                message: "File must declare `module <Name>` as the first top-level item"
+                    .to_string(),
+                extra_spans: vec![],
+            });
+        }
+    }
+
     let mut verified_fns: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut spec_fns: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut empty_verify_fns: std::collections::HashSet<&str> = std::collections::HashSet::new();
