@@ -1960,56 +1960,83 @@ function setWorkspaceModeConsole() {
 // rows when they'd just show "()" or "→ null" — cleans up the trace.
 // Source of truth: registered Aver built-ins in src/services/* and
 // src/vm/builtin.rs. Not exhaustive; unknowns render normally.
-// Cluster effects into rendering segments so the trace panel can
-// visually reflect `?!` / `!` independence. Grouped effects (same
-// group_id) land in a labelled container; branches (branch_path)
-// become sub-stacks within it. Non-grouped effects render as before.
-function segmentEffects(effects) {
-    const segments = [];
-    let current = null;
+// Build a nested tree from effects so `?!` inside `?!` renders as
+// a sub-group inside the outer branch rather than as two sibling
+// groups. Each effect's `branch_path` (dot-separated) tells us the
+// nesting: "2.0" = outer branch "2" → inner branch "0". Routing is
+// recursive; each level looks up the group_id at that prefix via
+// a first pass over the effects (groupAtPrefix map).
+function buildEffectTree(effects) {
+    const groupAtPrefix = new Map();
+    for (const e of effects) {
+        if (e.group_id == null) continue;
+        const parts = (e.branch_path ?? "").split(".");
+        const parent = parts.slice(0, -1).join(".");
+        if (!groupAtPrefix.has(parent)) groupAtPrefix.set(parent, e.group_id);
+    }
+    const root = [];
     effects.forEach((eff, idx) => {
-        const gid = eff.group_id;
-        if (gid == null) {
-            if (!current || current.kind !== "flat") {
-                current = { kind: "flat", items: [] };
-                segments.push(current);
-            }
-            current.items.push({ eff, idx });
+        if (eff.group_id == null) {
+            pushFlatNode(root, { eff, idx });
             return;
         }
-        if (!current || current.kind !== "group" || current.group_id !== gid) {
-            current = { kind: "group", group_id: gid, branches: new Map() };
-            segments.push(current);
-        }
-        const path = eff.branch_path ?? "?";
-        if (!current.branches.has(path)) current.branches.set(path, []);
-        current.branches.get(path).push({ eff, idx });
+        const parts = (eff.branch_path ?? "").split(".");
+        routeEffect(root, groupAtPrefix, "", parts, { eff, idx });
     });
-    return segments;
+    return root;
+}
+
+function pushFlatNode(container, item) {
+    const last = container[container.length - 1];
+    if (last?.kind === "flat") last.items.push(item);
+    else container.push({ kind: "flat", items: [item] });
+}
+
+function routeEffect(container, groupAtPrefix, prefix, remaining, item) {
+    if (remaining.length === 0) { pushFlatNode(container, item); return; }
+    const groupId = groupAtPrefix.get(prefix);
+    let seg = container[container.length - 1];
+    if (seg?.kind !== "group" || seg.group_id !== groupId) {
+        seg = { kind: "group", group_id: groupId, branches: new Map() };
+        container.push(seg);
+    }
+    const branchKey = remaining[0];
+    if (!seg.branches.has(branchKey)) seg.branches.set(branchKey, []);
+    const branchNodes = seg.branches.get(branchKey);
+    if (remaining.length === 1) {
+        pushFlatNode(branchNodes, item);
+    } else {
+        const nextPrefix = prefix ? prefix + "." + branchKey : branchKey;
+        routeEffect(branchNodes, groupAtPrefix, nextPrefix, remaining.slice(1), item);
+    }
 }
 
 function renderEventSegments(container, effects) {
-    for (const seg of segmentEffects(effects)) {
-        if (seg.kind === "flat") {
-            for (const { eff, idx } of seg.items) {
+    renderTreeNodes(container, buildEffectTree(effects));
+}
+
+function renderTreeNodes(container, nodes) {
+    for (const node of nodes) {
+        if (node.kind === "flat") {
+            for (const { eff, idx } of node.items) {
                 container.appendChild(renderEffectCard(eff, idx));
             }
         } else {
-            container.appendChild(renderGroupSegment(seg));
+            container.appendChild(renderGroupNode(node));
         }
     }
 }
 
-function renderGroupSegment(seg) {
+function renderGroupNode(group) {
     const box = document.createElement("div");
     box.className = "recording-group";
-    box.dataset.groupId = String(seg.group_id);
+    box.dataset.groupId = String(group.group_id);
 
     const header = document.createElement("div");
     header.className = "recording-group-header";
     const label = document.createElement("span");
     label.className = "recording-group-label";
-    const n = seg.branches.size;
+    const n = group.branches.size;
     label.textContent = `independent product · ${n} branch${n === 1 ? "" : "es"}`;
     header.appendChild(label);
     const hint = document.createElement("span");
@@ -2018,26 +2045,33 @@ function renderGroupSegment(seg) {
     hint.title =
         "Effects in this group came from an Aver `?!` / `!` independent product. " +
         "Aver's runtime may reorder branches; replay matches them by (branch, occurrence) " +
-        "rather than by absolute position. Reorder within a branch = ok; swap whole group = ok.";
+        "rather than by absolute position. Nested groups sit inside their parent branch.";
     header.appendChild(hint);
     const spacer = document.createElement("span");
     spacer.style.flex = "1";
     header.appendChild(spacer);
 
-    // Group-level actions: move the whole group up / down past adjacent
-    // segments, or drop it entirely. Kept on the header so the user
-    // can't accidentally "move a card out of the group" — that would
-    // break `?!` semantics (branch_path + occurrence are the identity).
-    const canMoveUp = canMoveGroup(seg.group_id, -1);
-    const canMoveDown = canMoveGroup(seg.group_id, +1);
+    const canMoveUp = canMoveGroup(group.group_id, -1);
+    const canMoveDown = canMoveGroup(group.group_id, +1);
     header.appendChild(evAction("↑", "Move this independent product up past the previous segment.", canMoveUp, () => {
-        moveGroup(seg.group_id, -1);
+        moveGroup(group.group_id, -1);
     }));
     header.appendChild(evAction("↓", "Move this independent product down past the next segment.", canMoveDown, () => {
-        moveGroup(seg.group_id, +1);
+        moveGroup(group.group_id, +1);
     }));
-    header.appendChild(evAction("🗑", "Delete the whole independent product — every effect in every branch.", true, () => {
-        state.recordingData.effects = state.recordingData.effects.filter(e => e.group_id !== seg.group_id);
+    header.appendChild(evAction("🗑", "Delete the whole independent product — every effect in every branch, including nested groups.", true, () => {
+        // Nested groups live inside this one via branch_path prefix.
+        // Drop both this group and anything whose branch_path starts
+        // with one of its branch keys (the nested children).
+        const myBranches = Array.from(group.branches.keys());
+        state.recordingData.effects = state.recordingData.effects.filter(e => {
+            if (e.group_id === group.group_id) return false;
+            if (e.group_id != null && e.branch_path) {
+                const top = e.branch_path.split(".")[0];
+                if (myBranches.includes(top)) return false;
+            }
+            return true;
+        });
         resequence();
         renderRecordingPanel();
     }));
@@ -2045,43 +2079,58 @@ function renderGroupSegment(seg) {
 
     const branches = document.createElement("div");
     branches.className = "recording-group-branches";
-    const keys = Array.from(seg.branches.keys()).sort();
-    for (const path of keys) {
+    const keys = Array.from(group.branches.keys()).sort();
+    for (const key of keys) {
         const branch = document.createElement("div");
         branch.className = "recording-branch";
         const bLabel = document.createElement("div");
         bLabel.className = "recording-branch-label";
-        bLabel.textContent = `branch ${path}`;
+        bLabel.textContent = `branch ${key}`;
         branch.appendChild(bLabel);
-        for (const { eff, idx } of seg.branches.get(path)) {
-            branch.appendChild(renderEffectCard(eff, idx));
+        // Branch children are a tree themselves — recurse so a nested
+        // `?!` renders as a sub-box inside the parent branch instead
+        // of as a sibling group next to the parent.
+        renderTreeNodes(branch, group.branches.get(key));
+
+        // ＋ at the end — only for branches whose direct children are
+        // effects (not a nested group). Nested branches get their own
+        // ＋ button at their level.
+        const children = group.branches.get(key);
+        const hasOnlyNestedGroup =
+            children.length === 1 && children[0].kind === "group";
+        if (!hasOnlyNestedGroup) {
+            const addInBranch = document.createElement("button");
+            addInBranch.type = "button";
+            addInBranch.className = "rec-btn";
+            addInBranch.textContent = "＋ effect in this branch";
+            addInBranch.title = `Append a blank effect to branch ${key}.`;
+            addInBranch.addEventListener("click", () => {
+                // Flatten direct effect indices to find last one.
+                let lastIdx = -1;
+                for (const node of children) {
+                    if (node.kind !== "flat") continue;
+                    for (const { idx } of node.items) {
+                        if (idx > lastIdx) lastIdx = idx;
+                    }
+                }
+                const insertAt = lastIdx < 0
+                    ? state.recordingData.effects.length
+                    : lastIdx + 1;
+                const nextOcc = nextOccurrenceInBranch(group.group_id, key);
+                const blank = blankEffect();
+                blank.group_id = group.group_id;
+                blank.branch_path = key;
+                blank.effect_occurrence = nextOcc;
+                state.recordingData.effects.splice(insertAt, 0, blank);
+                resequence();
+                renderRecordingPanel();
+            });
+            const addRow = document.createElement("div");
+            addRow.className = "recording-branch-add";
+            addRow.appendChild(addInBranch);
+            branch.appendChild(addRow);
         }
-        // ＋ at the end of each branch — adds an effect with inherited
-        // group_id + branch_path so the new card lands in the right
-        // slot without the user having to know the metadata.
-        const addInBranch = document.createElement("button");
-        addInBranch.type = "button";
-        addInBranch.className = "rec-btn";
-        addInBranch.textContent = "＋ effect in this branch";
-        addInBranch.title = `Append a blank effect to branch ${path}.`;
-        addInBranch.addEventListener("click", () => {
-            const last = seg.branches.get(path).slice(-1)[0]?.idx ?? -1;
-            const insertAt = last < 0
-                ? state.recordingData.effects.length
-                : last + 1;
-            const nextOcc = nextOccurrenceInBranch(seg.group_id, path);
-            const blank = blankEffect();
-            blank.group_id = seg.group_id;
-            blank.branch_path = path;
-            blank.effect_occurrence = nextOcc;
-            state.recordingData.effects.splice(insertAt, 0, blank);
-            resequence();
-            renderRecordingPanel();
-        });
-        const addRow = document.createElement("div");
-        addRow.className = "recording-branch-add";
-        addRow.appendChild(addInBranch);
-        branch.appendChild(addRow);
+
         branches.appendChild(branch);
     }
     box.appendChild(branches);
