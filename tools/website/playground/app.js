@@ -1141,6 +1141,9 @@ function loadExampleAsTab(key) {
     state.pristineFiles = null;
     state.wasmBytes = null;
     state.wasmName = null;
+    // Stale trace for the previous program would be confusing — drop
+    // it so the new example starts with a fresh panel.
+    if (typeof clearRecording === "function") clearRecording();
     openFile(exampleTabName(key), source);
 }
 
@@ -1943,6 +1946,23 @@ function renderRecordingPanel() {
         list.appendChild(empty);
     }
     data.effects.forEach((eff, idx) => list.appendChild(renderEffectCard(eff, idx)));
+
+    // Append-effect row at the bottom. Creates a blank card above
+    // the button so the user can fill it in and hit ▶ Replay.
+    const appendRow = document.createElement("div");
+    appendRow.className = "recording-append";
+    const appendBtn = document.createElement("button");
+    appendBtn.type = "button";
+    appendBtn.className = "rec-btn";
+    appendBtn.textContent = "＋ Add effect";
+    appendBtn.title = "Append a blank effect to the trace. Fill in type/args/outcome, then ▶ Replay to see how the program reacts to an injected call.";
+    appendBtn.addEventListener("click", () => {
+        state.recordingData.effects.push(blankEffect());
+        resequence();
+        renderRecordingPanel();
+    });
+    appendRow.appendChild(appendBtn);
+    list.appendChild(appendRow);
     panel.appendChild(list);
 
     dom.console.appendChild(panel);
@@ -1977,16 +1997,24 @@ function renderEffectCard(effect, idx) {
     card.className = "recording-event";
     card.dataset.seq = String(effect.seq ?? idx);
 
+    // Head: seq + editable effect type + optional caller info.
     const head = document.createElement("div");
     head.className = "ev-head";
     const seq = document.createElement("span");
     seq.className = "ev-seq";
     seq.textContent = `#${effect.seq ?? idx}`;
-    const type = document.createElement("span");
-    type.className = "ev-type";
-    type.textContent = effect.type || "(unknown)";
     head.appendChild(seq);
-    head.appendChild(type);
+    const typeInput = document.createElement("input");
+    typeInput.className = "ev-type-edit";
+    typeInput.type = "text";
+    typeInput.spellcheck = false;
+    typeInput.value = effect.type || "";
+    typeInput.title = "Effect type, e.g. Console.print, Terminal.readKey, Time.sleep.";
+    typeInput.addEventListener("input", () => {
+        effect.type = typeInput.value;
+        commitRecording();
+    });
+    head.appendChild(typeInput);
     if (effect.caller_fn) {
         const caller = document.createElement("span");
         caller.className = "ev-caller";
@@ -1995,13 +2023,38 @@ function renderEffectCard(effect, idx) {
     }
     card.appendChild(head);
 
-    // Args — read-only for now (editing these is rare + risky).
-    if (Array.isArray(effect.args) && effect.args.length > 0) {
-        const args = document.createElement("div");
-        args.className = "ev-args";
-        args.textContent = `(${effect.args.map(a => jsonCompact(a)).join(", ")})`;
-        card.appendChild(args);
-    }
+    // Args — editable as a JSON array. Empty array = nullary call.
+    const argsRow = document.createElement("div");
+    argsRow.className = "ev-args-row";
+    const argsLabel = document.createElement("span");
+    argsLabel.className = "ev-side-label";
+    argsLabel.textContent = "(";
+    argsRow.appendChild(argsLabel);
+    const argsInput = document.createElement("input");
+    argsInput.className = "ev-args-edit";
+    argsInput.type = "text";
+    argsInput.spellcheck = false;
+    argsInput.value = jsonCompactArgs(effect.args || []);
+    argsInput.title = ARG_HINT;
+    argsInput.addEventListener("input", () => {
+        argsInput.classList.remove("invalid");
+        try {
+            // Accept either a bare JSON array `[1, "x"]` or a
+            // comma-separated value list `1, "x"` — both map to args.
+            const raw = argsInput.value.trim();
+            const parsed = parseArgs(raw);
+            effect.args = parsed;
+            commitRecording();
+        } catch (_) {
+            argsInput.classList.add("invalid");
+        }
+    });
+    argsRow.appendChild(argsInput);
+    const argsClose = document.createElement("span");
+    argsClose.className = "ev-side-label";
+    argsClose.textContent = ")";
+    argsRow.appendChild(argsClose);
+    card.appendChild(argsRow);
 
     // Outcome — editable. Swapping this is the whole point.
     const out = document.createElement("div");
@@ -2015,6 +2068,7 @@ function renderEffectCard(effect, idx) {
     input.className = "ev-outcome-edit" + (isErr ? " err" : "");
     input.type = "text";
     input.spellcheck = false;
+    input.title = OUTCOME_HINT;
     input.value = isErr
         ? (effect.outcome?.message || "")
         : jsonCompact(effect.outcome?.value);
@@ -2026,33 +2080,107 @@ function renderEffectCard(effect, idx) {
             } else {
                 effect.outcome = { kind: "value", value: JSON.parse(input.value) };
             }
-            state.lastRecording = JSON.stringify(state.recordingData, null, 2);
+            commitRecording();
         } catch (_) {
-            // Surface parse failure visually; don't throw.
             input.classList.add("invalid");
         }
     });
     out.appendChild(input);
     card.appendChild(out);
 
-    // Per-event actions.
+    // Per-event actions: reorder + delete + insert-above.
     const actions = document.createElement("div");
     actions.className = "ev-actions";
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "rec-btn";
-    del.textContent = "🗑";
-    del.title = "Drop this effect from the trace — replay will expect the program NOT to make this call.";
-    del.addEventListener("click", () => {
-        state.recordingData.effects.splice(idx, 1);
-        state.recordingData.effects.forEach((e, i) => { e.seq = i; });
-        state.lastRecording = JSON.stringify(state.recordingData, null, 2);
+    const total = state.recordingData.effects.length;
+    actions.appendChild(evAction("↑", "Move this effect up one position.", idx > 0, () => {
+        const list = state.recordingData.effects;
+        [list[idx - 1], list[idx]] = [list[idx], list[idx - 1]];
+        resequence();
         renderRecordingPanel();
-    });
-    actions.appendChild(del);
+    }));
+    actions.appendChild(evAction("↓", "Move this effect down one position.", idx < total - 1, () => {
+        const list = state.recordingData.effects;
+        [list[idx], list[idx + 1]] = [list[idx + 1], list[idx]];
+        resequence();
+        renderRecordingPanel();
+    }));
+    actions.appendChild(evAction("＋", "Insert a new effect above this one.", true, () => {
+        state.recordingData.effects.splice(idx, 0, blankEffect());
+        resequence();
+        renderRecordingPanel();
+    }));
+    actions.appendChild(evAction("🗑", "Drop this effect from the trace — replay will expect the program NOT to make this call.", true, () => {
+        state.recordingData.effects.splice(idx, 1);
+        resequence();
+        renderRecordingPanel();
+    }));
     card.appendChild(actions);
 
     return card;
+}
+
+const ARG_HINT =
+    "JSON array of argument values — same shape as Aver's value→JSON encoding. " +
+    "Accepts a bare list (e.g. `100`) or a full array (`[100]`). " +
+    "Special shapes: null = Unit, {\"$none\": true} = None, " +
+    "{\"$some\": v} = Some(v), {\"$ok\": v} = Ok(v), {\"$err\": v} = Err(v).";
+
+const OUTCOME_HINT =
+    "What the effect returned. JSON encoding of an Aver value. " +
+    "null = Unit (most void effects). {\"$none\": true} = Option::None. " +
+    "{\"$some\": v} = Option::Some(v). {\"$ok\": v}/{\"$err\": v} for Result. " +
+    "Edit to inject a different reply — replay will feed it to the program.";
+
+function jsonCompactArgs(args) {
+    if (!Array.isArray(args) || args.length === 0) return "";
+    if (args.length === 1) return jsonCompact(args[0]);
+    return args.map(jsonCompact).join(", ");
+}
+
+function parseArgs(raw) {
+    if (raw === "") return [];
+    // Full-array shorthand: `[1, 2, 3]`
+    if (raw.startsWith("[")) {
+        const arr = JSON.parse(raw);
+        if (!Array.isArray(arr)) throw new Error("expected an array");
+        return arr;
+    }
+    // Comma-separated: `1, "x", null` → wrap & parse.
+    const wrapped = `[${raw}]`;
+    const arr = JSON.parse(wrapped);
+    if (!Array.isArray(arr)) throw new Error("expected a comma-separated list");
+    return arr;
+}
+
+function blankEffect() {
+    return {
+        seq: 0,
+        type: "Console.print",
+        args: [""],
+        outcome: { kind: "value", value: null },
+        caller_fn: "",
+        source_line: 0,
+    };
+}
+
+function resequence() {
+    state.recordingData.effects.forEach((e, i) => { e.seq = i; });
+    commitRecording();
+}
+
+function commitRecording() {
+    state.lastRecording = JSON.stringify(state.recordingData, null, 2);
+}
+
+function evAction(label, title, enabled, onClick) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "rec-btn";
+    btn.textContent = label;
+    btn.title = title;
+    btn.disabled = !enabled;
+    btn.addEventListener("click", onClick);
+    return btn;
 }
 
 function jsonCompact(val) {
@@ -2774,6 +2902,7 @@ async function loadGameSourcesAsTabs(gameName) {
     leaveWasmOnlyMode();
     state.files.clear();
     state.activeFile = null;
+    if (typeof clearRecording === "function") clearRecording();
     const sources = await Promise.all(paths.map(fetchSource));
     let firstPath = null;
     paths.forEach((path, i) => {

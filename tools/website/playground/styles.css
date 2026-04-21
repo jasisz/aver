@@ -316,6 +316,46 @@ body {
     color: #f97316;
     font-weight: 600;
 }
+.recording-event .ev-type-edit {
+    background: transparent;
+    border: 1px dashed transparent;
+    color: #f97316;
+    font-weight: 600;
+    font-family: inherit;
+    font-size: inherit;
+    padding: 0.1rem 0.25rem;
+    border-radius: 3px;
+    min-width: 9rem;
+}
+.recording-event .ev-type-edit:hover { border-color: var(--border); }
+.recording-event .ev-type-edit:focus {
+    border-color: var(--accent);
+    background: var(--bg);
+    outline: none;
+}
+.recording-event .ev-args-row {
+    grid-column: 1;
+    display: flex;
+    gap: 0.25rem;
+    align-items: center;
+    color: var(--muted);
+}
+.recording-event .ev-side-label { color: var(--muted); }
+.recording-event .ev-args-edit {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.75rem;
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+}
+.recording-event .ev-args-edit:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+.recording-event .ev-args-edit.invalid { border-color: var(--red, #f87171); }
 .recording-event .ev-caller {
     color: var(--muted);
     font-size: 0.68rem;
@@ -369,6 +409,17 @@ body {
 }
 .recording-intro p { margin-bottom: 0.6rem; line-height: 1.5; }
 .recording-intro .rec-btn.rec-primary { font-size: 0.78rem; padding: 0.35rem 0.8rem; }
+
+.recording-append {
+    padding: 0.5rem 0.75rem;
+    display: flex;
+    justify-content: center;
+    background: rgba(251, 191, 36, 0.04);
+}
+.rec-btn[disabled] {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
 
 .btn-download {
     color: var(--muted) !important;
