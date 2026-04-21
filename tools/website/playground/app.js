@@ -1220,8 +1220,8 @@ if (contextBtn) {
 }
 
 // Audit button — three-axis gate: static checks + verify + format.
-// This is what a CI pipeline would run. Output is grouped by axis so
-// the learner sees where each signal comes from.
+// Renders a structured panel with collapsible sections + per-section
+// re-run buttons that trigger the individual commands.
 const auditBtn = document.querySelector("[data-audit]");
 if (auditBtn) {
     auditBtn.addEventListener("click", async () => {
@@ -1251,7 +1251,6 @@ if (auditBtn) {
             const staticIssues = diagnostics.filter(
                 (d) => !verifyFailSlugs.has(d.slug) && !formatSlugs.has(d.slug)
             );
-
             const staticErrors = staticIssues.filter(
                 (d) => d.severity === "error" || d.severity === "fail"
             ).length;
@@ -1263,59 +1262,137 @@ if (auditBtn) {
                 .reduce((acc, b) => acc + b.total, 0);
             const needsFormat = formatIssues.length > 0;
 
-            const renderDiag = (d) => {
-                const isErr = d.severity === "error" || d.severity === "fail";
-                const channel = isErr ? "stderr" : "warning";
-                appendConsole(channel, `  ${d.severity}[${d.slug}]: ${d.summary}`);
-                appendConsole("stdout",
-                    `    at: ${d.span?.file || "playground"}:${d.span?.line || 0}:${d.span?.col || 0}`);
-                if (d.repair?.primary) {
-                    appendConsole("stdout", `    repair: ${d.repair.primary}`);
+            const panel = document.createElement("div");
+            panel.className = "audit-panel";
+
+            const renderSection = ({
+                label, status, statusText, teaching, issues, body, rerunTarget,
+            }) => {
+                const section = document.createElement("details");
+                section.className = "audit-section";
+                if (issues && issues.length > 0) section.open = true;
+
+                const summary = document.createElement("summary");
+                summary.innerHTML = `
+                    <span class="status-${status}">${statusText}</span>
+                    <span class="section-label">${label}</span>
+                    <span class="status-count">${body ?? ""}</span>
+                `;
+                if (rerunTarget) {
+                    const rerun = document.createElement("button");
+                    rerun.className = "rerun-btn";
+                    rerun.textContent = "↻ re-run just this";
+                    rerun.addEventListener("click", (e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        const target = document.querySelector(`[${rerunTarget}]`);
+                        if (target) target.click();
+                    });
+                    summary.appendChild(rerun);
                 }
+                section.appendChild(summary);
+
+                const bodyEl = document.createElement("div");
+                bodyEl.className = "section-body";
+                if (teaching) {
+                    const t = document.createElement("div");
+                    t.className = "teach";
+                    t.textContent = teaching;
+                    bodyEl.appendChild(t);
+                }
+
+                if (issues && issues.length > 0) {
+                    for (const d of issues) {
+                        const isErr = d.severity === "error" || d.severity === "fail";
+                        const cls = isErr ? "diag-err" : "diag-warn";
+                        const head = document.createElement("div");
+                        head.className = `diag-line ${cls}`;
+                        head.textContent = `${d.severity}[${d.slug}]: ${d.summary}`;
+                        bodyEl.appendChild(head);
+                        const meta = document.createElement("div");
+                        meta.className = "diag-line diag-meta";
+                        meta.textContent = `at: ${d.span?.file || "playground"}:${d.span?.line || 0}:${d.span?.col || 0}`;
+                        bodyEl.appendChild(meta);
+                        if (d.repair?.primary) {
+                            const rep = document.createElement("div");
+                            rep.className = "diag-line diag-repair";
+                            rep.textContent = `repair: ${d.repair.primary}`;
+                            bodyEl.appendChild(rep);
+                        }
+                    }
+                } else {
+                    const ok = document.createElement("div");
+                    ok.className = "diag-line diag-ok";
+                    ok.textContent = "✓ clean";
+                    bodyEl.appendChild(ok);
+                }
+
+                section.appendChild(bodyEl);
+                panel.appendChild(section);
             };
 
-            // ── Section: Static Checks ─────────────────────────────
-            appendConsole("section-title",
-                "## Static Checks — types, contracts, perf, naming");
-            appendConsole("section-hint",
-                "   What `aver check` runs. Catches code smells before the program runs.");
-            if (staticIssues.length === 0) {
-                appendConsole("success", "  ✓ No static issues");
-            } else {
-                for (const d of staticIssues) renderDiag(d);
-            }
+            // Static Checks
+            renderSection({
+                label: "Static Checks — types, contracts, perf, naming",
+                status: staticErrors > 0 ? "fail" : (staticWarnings > 0 ? "warn" : "pass"),
+                statusText: staticErrors > 0 ? "✗" : (staticWarnings > 0 ? "!" : "✓"),
+                teaching: "What `aver check` runs — the static lint layer. Catches code smells, type errors, effect mismatches, naming convention breaks before the program ever executes.",
+                issues: staticIssues,
+                body: staticIssues.length === 0
+                    ? "no issues"
+                    : `${staticErrors} error · ${staticWarnings} warn`,
+                rerunTarget: "data-check",
+            });
 
-            // ── Section: Verify ────────────────────────────────────
-            appendConsole("section-title",
-                "## Verify — executed contract checks");
-            appendConsole("section-hint",
-                "   Each `verify` block's cases run in the VM. Pass rate tells you how well your function matches its spec.");
+            // Verify
+            const verifyStatus = verifyFailed > 0
+                ? "fail"
+                : (verifyTotal > 0 ? "pass" : "warn");
+            const verifyStatusText = verifyFailed > 0
+                ? "✗"
+                : (verifyTotal > 0 ? "✓" : "—");
+            const verifyBody = verifyTotal > 0
+                ? `${verifyPassed}/${verifyTotal} passed`
+                : "no verify blocks";
+            renderSection({
+                label: "Verify — executed contract checks",
+                status: verifyStatus,
+                statusText: verifyStatusText,
+                teaching: "Each `verify` block's cases run in the VM. Pass rate tells you how well your function matches the spec you wrote alongside it. Verify is Aver's core contract.",
+                issues: verifyFailures,
+                body: verifyBody,
+                rerunTarget: "data-verify",
+            });
+            // If verify summary exists, add block breakdown
             if (verifySummary?.blocks?.length) {
+                const verifyBodyEl = panel
+                    .lastElementChild.querySelector(".section-body");
                 for (const b of verifySummary.blocks) {
+                    const line = document.createElement("div");
+                    const cls = b.failed > 0 ? "diag-err" : "diag-ok";
+                    line.className = `diag-line ${cls}`;
                     const tag = b.failed > 0 ? "✗" : "✓";
-                    const channel = b.failed > 0 ? "stderr" : "success";
                     const breakdown = b.skipped > 0
                         ? `${b.passed}/${b.total} passed, ${b.skipped} skipped`
                         : `${b.passed}/${b.total} passed`;
-                    appendConsole(channel, `  ${tag} ${b.name}  ${breakdown}`);
+                    line.textContent = `${tag} ${b.name}  ${breakdown}`;
+                    verifyBodyEl.insertBefore(line, verifyBodyEl.firstChild.nextSibling);
                 }
-                for (const d of verifyFailures) renderDiag(d);
-            } else {
-                appendConsole("section-hint", "  (no verify blocks in this file)");
             }
 
-            // ── Section: Format ────────────────────────────────────
-            appendConsole("section-title",
-                "## Format — canonical Aver shape");
-            appendConsole("section-hint",
-                "   Mechanical rewrites: indent, effect order, verify placement. Click [Format] in the toolbar to apply.");
-            if (formatIssues.length === 0) {
-                appendConsole("success", "  ✓ Formatter-clean");
-            } else {
-                for (const d of formatIssues) renderDiag(d);
-            }
+            // Format
+            renderSection({
+                label: "Format — canonical Aver shape",
+                status: needsFormat ? "warn" : "pass",
+                statusText: needsFormat ? "!" : "✓",
+                teaching: "Mechanical rewrites: indent, effect order, verify placement, blank runs. Click [Format] in the toolbar to apply. Re-run just this section re-checks without rewriting.",
+                issues: formatIssues,
+                body: needsFormat ? "needs format" : "clean",
+                rerunTarget: "data-format",
+            });
 
-            // ── Verdict ────────────────────────────────────────────
+            dom.console.appendChild(panel);
+
             const parts = [];
             if (staticErrors > 0) parts.push(`${staticErrors} error(s)`);
             if (staticWarnings > 0) parts.push(`${staticWarnings} warning(s)`);
@@ -1323,7 +1400,6 @@ if (auditBtn) {
                 parts.push(`verify ${verifyPassed}/${verifyTotal}`);
             }
             if (needsFormat) parts.push("needs format");
-
             const allClean = staticErrors === 0 && staticWarnings === 0
                 && verifyFailed === 0 && !needsFormat;
             setStatus(

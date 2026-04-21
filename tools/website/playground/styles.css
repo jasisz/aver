@@ -306,6 +306,133 @@ body {
     opacity: 0.75;
 }
 
+/* ── Teaching tooltips on toolbar buttons ─────────────────────── */
+.tool-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15rem;
+    position: relative;
+}
+.tool-hint {
+    color: var(--muted);
+    opacity: 0.55;
+    font-size: 0.85em;
+    cursor: help;
+    padding: 0 0.15rem;
+    user-select: none;
+    transition: opacity 0.15s, color 0.15s;
+}
+.tool-hint:hover {
+    opacity: 1;
+    color: var(--accent);
+}
+.tool-hint:hover::after {
+    content: attr(data-hint);
+    position: absolute;
+    top: calc(100% + 0.4rem);
+    left: 0;
+    z-index: 10;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.5rem 0.7rem;
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 0.75rem;
+    line-height: 1.45;
+    width: max-content;
+    max-width: 22rem;
+    white-space: normal;
+    color: var(--text);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+    font-weight: normal;
+}
+
+/* ── Audit sections (collapsible) ─────────────────────────────── */
+.audit-panel {
+    padding: 0.5rem 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--text);
+    overflow-y: auto;
+    height: 100%;
+}
+.audit-section {
+    margin-bottom: 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: rgba(148, 163, 184, 0.03);
+}
+.audit-section > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 0.55rem 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-weight: 600;
+    border-radius: 6px;
+    user-select: none;
+}
+.audit-section > summary::-webkit-details-marker { display: none; }
+.audit-section > summary::before {
+    content: "▸";
+    display: inline-block;
+    transition: transform 0.15s;
+    color: var(--muted);
+    width: 0.8rem;
+    font-size: 0.7em;
+}
+.audit-section[open] > summary::before { transform: rotate(90deg); }
+.audit-section .section-label { flex: 1; }
+.audit-section .status-pass { color: var(--green); margin-right: 0.3rem; }
+.audit-section .status-fail { color: var(--red); margin-right: 0.3rem; }
+.audit-section .status-warn { color: var(--orange); margin-right: 0.3rem; }
+.audit-section .status-count { color: var(--muted); font-weight: 400; font-size: 0.88em; }
+.audit-section .rerun-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.78rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+.audit-section .rerun-btn:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+}
+.audit-section .section-body {
+    padding: 0.4rem 0.9rem 0.7rem 1.9rem;
+    border-top: 1px solid var(--border);
+}
+.audit-section .teach {
+    color: var(--muted);
+    font-style: italic;
+    font-size: 0.8rem;
+    margin-bottom: 0.6rem;
+    font-family: system-ui, -apple-system, sans-serif;
+    line-height: 1.45;
+}
+.audit-section .diag-line {
+    padding: 0.1rem 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.audit-section .diag-err { color: var(--red); }
+.audit-section .diag-warn { color: var(--orange); }
+.audit-section .diag-ok { color: var(--green); }
+.audit-section .diag-meta {
+    color: var(--muted);
+    padding-left: 1.2rem;
+    font-size: 0.85em;
+}
+.audit-section .diag-repair {
+    color: var(--accent);
+    padding-left: 1.2rem;
+    font-size: 0.85em;
+}
+
 .readline-bar {
     display: flex;
     gap: 0.3rem;

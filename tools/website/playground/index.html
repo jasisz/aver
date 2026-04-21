@@ -57,16 +57,30 @@
     <!-- Left: editor -->
     <section class="editor-pane">
         <div class="editor-toolbar">
-            <button type="button" data-compile-run
-                title="Execute your program (compiled to WASM). Uses imports for Console, Random, Time — full effect pipeline.">▶ Run</button>
-            <button type="button" data-audit class="btn-subtle"
-                title="Three-axis health check: static analysis (types, contracts, perf, naming) + verify block execution + format compliance. This is your CI gate.">Audit</button>
-            <button type="button" data-why class="btn-subtle"
-                title="Justification map — which functions have ? descriptions, verify blocks, decision coverage. Teaches what 'explainable Aver' means.">Why</button>
-            <button type="button" data-context class="btn-subtle"
-                title="Module shape sized for an LLM window — intent, types, effects, verify samples. What an agent needs to understand your code.">Context</button>
-            <button type="button" data-format class="btn-subtle"
-                title="Rewrite the editor content to canonical Aver form (indentation, effect order, verify placement, blank runs).">Format</button>
+            <span class="tool-group">
+                <button type="button" data-compile-run>▶ Run</button>
+                <span class="tool-hint" data-hint="Execute your program. The playground compiles to WASM and wires Console, Random, Time as JS imports.">ⓘ</span>
+            </span>
+            <span class="tool-group">
+                <button type="button" data-audit class="btn-subtle">Audit</button>
+                <span class="tool-hint" data-hint="Three axes of health: static checks (types, contracts, perf, naming) + verify block execution + format compliance. This is your CI gate.">ⓘ</span>
+            </span>
+            <span class="tool-group">
+                <button type="button" data-why class="btn-subtle">Why</button>
+                <span class="tool-hint" data-hint="Justification map — which functions have ? descriptions, verify blocks, decision coverage. Teaches what 'explainable Aver' means.">ⓘ</span>
+            </span>
+            <span class="tool-group">
+                <button type="button" data-context class="btn-subtle">Context</button>
+                <span class="tool-hint" data-hint="Module shape sized for an LLM window — intent, types, effects, verify samples. What an agent needs to understand your code.">ⓘ</span>
+            </span>
+            <span class="tool-group">
+                <button type="button" data-format class="btn-subtle">Format</button>
+                <span class="tool-hint" data-hint="Rewrite the editor contents into canonical Aver form. Mechanical rewrites only — indent, effect order, verify placement.">ⓘ</span>
+            </span>
+            <!-- Hidden drivers for Audit's "re-run just this section" buttons -->
+            <button type="button" data-check hidden></button>
+            <button type="button" data-verify hidden></button>
+            <button type="button" data-format-check hidden></button>
             <select data-examples>
                 <option value="">— examples —</option>
                 <optgroup label="Basics">
