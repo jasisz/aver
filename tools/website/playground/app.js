@@ -1930,7 +1930,14 @@ function renderRecordingPanel() {
         const outRow = document.createElement("div");
         outRow.className = "recording-outcome";
         if (data.output.kind === "runtime_error") {
-            outRow.innerHTML = `<span class="label err">main threw:</span> <code>${escapeHtml(data.output.message || "")}</code>`;
+            const msg = data.output.message || "";
+            const capped = /record cap reached/i.test(msg);
+            if (capped) {
+                outRow.classList.add("capped");
+                outRow.innerHTML = `<span class="label">⚠ capped:</span> <code>${escapeHtml(msg)}</code>`;
+            } else {
+                outRow.innerHTML = `<span class="label err">main threw:</span> <code>${escapeHtml(msg)}</code>`;
+            }
         } else {
             outRow.innerHTML = `<span class="label">main returned:</span> <code>${escapeHtml(JSON.stringify(data.output.value))}</code>`;
         }
@@ -1997,9 +2004,38 @@ function renderEffectCard(effect, idx) {
     card.className = "recording-event";
     card.dataset.seq = String(effect.seq ?? idx);
 
-    // Head: seq + editable effect type + optional caller info.
+    // Head: actions (left) + seq + editable effect type + caller (right).
     const head = document.createElement("div");
     head.className = "ev-head";
+
+    // Per-event actions, placed first so they sit on the left.
+    const actions = document.createElement("div");
+    actions.className = "ev-actions";
+    const total = state.recordingData.effects.length;
+    actions.appendChild(evAction("↑", "Move this effect up one position.", idx > 0, () => {
+        const list = state.recordingData.effects;
+        [list[idx - 1], list[idx]] = [list[idx], list[idx - 1]];
+        resequence();
+        renderRecordingPanel();
+    }));
+    actions.appendChild(evAction("↓", "Move this effect down one position.", idx < total - 1, () => {
+        const list = state.recordingData.effects;
+        [list[idx], list[idx + 1]] = [list[idx + 1], list[idx]];
+        resequence();
+        renderRecordingPanel();
+    }));
+    actions.appendChild(evAction("＋", "Insert a new effect above this one.", true, () => {
+        state.recordingData.effects.splice(idx, 0, blankEffect());
+        resequence();
+        renderRecordingPanel();
+    }));
+    actions.appendChild(evAction("🗑", "Drop this effect from the trace — replay will expect the program NOT to make this call.", true, () => {
+        state.recordingData.effects.splice(idx, 1);
+        resequence();
+        renderRecordingPanel();
+    }));
+    head.appendChild(actions);
+
     const seq = document.createElement("span");
     seq.className = "ev-seq";
     seq.textContent = `#${effect.seq ?? idx}`;
@@ -2021,6 +2057,9 @@ function renderEffectCard(effect, idx) {
         caller.textContent = `in ${effect.caller_fn}${effect.source_line ? `:${effect.source_line}` : ""}`;
         head.appendChild(caller);
     }
+    const spacer = document.createElement("span");
+    spacer.className = "ev-spacer";
+    head.appendChild(spacer);
     card.appendChild(head);
 
     // Args — editable as a JSON array. Empty array = nullary call.
@@ -2087,34 +2126,6 @@ function renderEffectCard(effect, idx) {
     });
     out.appendChild(input);
     card.appendChild(out);
-
-    // Per-event actions: reorder + delete + insert-above.
-    const actions = document.createElement("div");
-    actions.className = "ev-actions";
-    const total = state.recordingData.effects.length;
-    actions.appendChild(evAction("↑", "Move this effect up one position.", idx > 0, () => {
-        const list = state.recordingData.effects;
-        [list[idx - 1], list[idx]] = [list[idx], list[idx - 1]];
-        resequence();
-        renderRecordingPanel();
-    }));
-    actions.appendChild(evAction("↓", "Move this effect down one position.", idx < total - 1, () => {
-        const list = state.recordingData.effects;
-        [list[idx], list[idx + 1]] = [list[idx + 1], list[idx]];
-        resequence();
-        renderRecordingPanel();
-    }));
-    actions.appendChild(evAction("＋", "Insert a new effect above this one.", true, () => {
-        state.recordingData.effects.splice(idx, 0, blankEffect());
-        resequence();
-        renderRecordingPanel();
-    }));
-    actions.appendChild(evAction("🗑", "Drop this effect from the trace — replay will expect the program NOT to make this call.", true, () => {
-        state.recordingData.effects.splice(idx, 1);
-        resequence();
-        renderRecordingPanel();
-    }));
-    card.appendChild(actions);
 
     return card;
 }
@@ -2231,8 +2242,19 @@ async function doRecord(skipDownload = true) {
             return;
         }
         setRecording(parsed);
-        const note = res.runtime_error ? ` (main threw: ${res.runtime_error})` : "";
-        setStatus(`Recorded ${res.effect_count} effect(s)${note}`, "success");
+        // Cap-hit is a soft stop: we still keep everything recorded
+        // before the cap. Surface it as info instead of error so the
+        // user reads it as "you can still work with this prefix".
+        const capped = /record cap reached/i.test(res.runtime_error || "");
+        if (capped) {
+            setStatus(
+                `Recorded ${res.effect_count} effects (capped — program was still running, trace is a prefix)`,
+                "info"
+            );
+        } else {
+            const note = res.runtime_error ? ` (main threw: ${res.runtime_error})` : "";
+            setStatus(`Recorded ${res.effect_count} effect(s)${note}`, "success");
+        }
     } catch (e) {
         appendConsole("stderr", e.message || String(e));
         setStatus("Record failed", "error");

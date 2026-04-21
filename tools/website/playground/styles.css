@@ -282,6 +282,12 @@ body {
     border-bottom: 1px solid var(--border);
     background: rgba(0, 0, 0, 0.15);
 }
+.recording-outcome.capped {
+    background: rgba(251, 191, 36, 0.12);
+    color: #fbbf24;
+}
+.recording-outcome.capped .label { color: #fbbf24; font-weight: 600; }
+.recording-outcome.capped code { color: #fde68a; }
 .recording-outcome .label { margin-right: 0.4rem; color: var(--muted); }
 .recording-outcome .label.err { color: var(--red, #f87171); }
 .recording-outcome code { color: var(--text); }
@@ -299,15 +305,19 @@ body {
 .recording-event {
     padding: 0.5rem 0.75rem;
     border-bottom: 1px dashed var(--border);
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 0.25rem 0.75rem;
-    align-items: start;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
     font-family: var(--font-mono);
     font-size: 0.75rem;
 }
 .recording-event:last-child { border-bottom: none; }
-.recording-event .ev-head { display: flex; gap: 0.5rem; align-items: baseline; }
+.recording-event .ev-head {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+.recording-event .ev-head .ev-spacer { flex: 1; }
 .recording-event .ev-seq {
     color: var(--muted);
     font-size: 0.7rem;
@@ -334,7 +344,6 @@ body {
     outline: none;
 }
 .recording-event .ev-args-row {
-    grid-column: 1;
     display: flex;
     gap: 0.25rem;
     align-items: center;
@@ -364,10 +373,8 @@ body {
 .recording-event .ev-args {
     color: var(--muted);
     word-break: break-all;
-    grid-column: 1;
 }
 .recording-event .ev-outcome {
-    grid-column: 1;
     display: flex;
     gap: 0.4rem;
     align-items: center;
@@ -398,8 +405,8 @@ body {
     color: #fca5a5;
 }
 .recording-event .ev-actions {
-    grid-row: 1 / span 3;
-    align-self: start;
+    display: flex;
+    gap: 0.2rem;
 }
 .recording-intro {
     padding: 0.9rem;

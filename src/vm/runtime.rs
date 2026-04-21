@@ -234,11 +234,14 @@ impl VmRuntime {
             (true, VmExecutionMode::Record) => {
                 // Record-cap safety net: caller (e.g. the browser
                 // playground) can set a ceiling via set_record_cap so
-                // runaway loops (game on an input-starved stub) fail
-                // fast instead of hanging the wasm main thread.
+                // runaway loops (game on an input-starved stub) stop
+                // cleanly instead of hanging the wasm main thread.
+                // The partial recording stays intact — callers can
+                // still replay everything captured up to the cap.
                 if self.replay_state.record_full() {
                     return Err(VmError::runtime(format!(
-                        "Record budget exceeded while calling {} — likely an infinite effect loop. Add a quit condition or raise the cap.",
+                        "record cap reached (kept {} effects so far) while calling {} — program was still running. Recording below is a prefix.",
+                        self.replay_state.recorded_effects().len(),
                         builtin_name
                     )));
                 }
