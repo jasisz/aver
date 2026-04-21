@@ -184,7 +184,16 @@ fn is_av_file(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()) == Some("av")
 }
 
-fn normalize_leading_indent(line: &str) -> String {
+/// Normalize a single line's leading indent: expand tabs to 4 spaces,
+/// strip trailing whitespace implicitly by collapsing empty content.
+///
+/// Returns the rewritten line plus an optional violation if the input
+/// carried mixed / tab-based indent. The caller supplies `source_line`
+/// so the violation can point back to the original source.
+fn normalize_leading_indent_tracked(
+    line: &str,
+    source_line: usize,
+) -> (String, Option<aver::diagnostics::model::FormatViolation>) {
     let mut end = 0usize;
     for (idx, ch) in line.char_indices() {
         if ch == ' ' || ch == '\t' {
@@ -196,9 +205,12 @@ fn normalize_leading_indent(line: &str) -> String {
 
     let (indent, rest) = line.split_at(end);
     if rest.is_empty() {
-        return String::new();
+        // Line was only whitespace: not a format violation — formatter
+        // collapses to empty regardless of what the user typed.
+        return (String::new(), None);
     }
 
+    let had_tab = indent.contains('\t');
     let mut out = String::new();
     for ch in indent.chars() {
         if ch == '\t' {
@@ -208,7 +220,26 @@ fn normalize_leading_indent(line: &str) -> String {
         }
     }
     out.push_str(rest);
-    out
+
+    let violation = if had_tab {
+        Some(aver::diagnostics::model::FormatViolation {
+            line: source_line,
+            col: 1,
+            rule: "tab-indent",
+            message: "tab in leading indent; formatter expands to 4 spaces".to_string(),
+            before: Some(indent.replace('\t', "\\t")),
+            after: Some(indent.replace('\t', "    ")),
+        })
+    } else {
+        None
+    };
+
+    (out, violation)
+}
+
+#[cfg(test)]
+fn normalize_leading_indent(line: &str) -> String {
+    normalize_leading_indent_tracked(line, 0).0
 }
 
 fn effect_namespace(effect: &str) -> &str {
@@ -669,13 +700,26 @@ fn parse_ast_info_checked(source: &str) -> Result<FormatAstInfo, String> {
     Ok(info)
 }
 
-fn normalize_source_lines(source: &str) -> Vec<String> {
+/// Normalize source lines and accumulate per-rule format violations.
+///
+/// Each violation references the **original** 1-based source line,
+/// tracked through `normalize_leading_indent_tracked`. Rules further
+/// downstream still operate on `Vec<String>` today and remain silent
+/// contributors to the `violations` accumulator — migration is
+/// incremental, one rule at a time.
+fn normalize_source_lines_tracked(
+    source: &str,
+    violations: &mut Vec<aver::diagnostics::model::FormatViolation>,
+) -> Vec<String> {
     let normalized = source.replace("\r\n", "\n").replace('\r', "\n");
 
     let mut lines = Vec::new();
-    for raw in normalized.split('\n') {
+    for (idx, raw) in normalized.split('\n').enumerate() {
         let trimmed = raw.trim_end_matches([' ', '\t']);
-        let line = normalize_leading_indent(trimmed);
+        let (line, violation) = normalize_leading_indent_tracked(trimmed, idx + 1);
+        if let Some(v) = violation {
+            violations.push(v);
+        }
         lines.push(line);
     }
 
@@ -683,6 +727,12 @@ fn normalize_source_lines(source: &str) -> Vec<String> {
     let lines = normalize_function_header_effects(lines);
     let lines = normalize_module_intent_blocks(lines);
     normalize_inline_decision_fields(lines)
+}
+
+#[cfg(test)]
+fn normalize_source_lines(source: &str) -> Vec<String> {
+    let mut sink = Vec::new();
+    normalize_source_lines_tracked(source, &mut sink)
 }
 
 fn normalize_module_intent_blocks(lines: Vec<String>) -> Vec<String> {
@@ -877,7 +927,7 @@ pub fn try_format_source(
 ) -> Result<(String, Vec<aver::diagnostics::model::FormatViolation>), String> {
     let mut violations: Vec<aver::diagnostics::model::FormatViolation> = Vec::new();
 
-    let lines = normalize_source_lines(source);
+    let lines = normalize_source_lines_tracked(source, &mut violations);
     let normalized = lines.join("\n");
     let ast_info = parse_ast_info_checked(&normalized)?;
 
@@ -894,8 +944,6 @@ pub fn try_format_source(
             non_empty_blocks.push(text);
         }
     }
-
-    let _ = &mut violations; // silence unused-mut until rules populate it
 
     if non_empty_blocks.is_empty() {
         return Ok(("\n".to_string(), violations));
