@@ -504,6 +504,27 @@ fn err_json(msg: String) -> String {
 mod bindgen {
     use wasm_bindgen::prelude::*;
 
+    // Route Rust panics to console.error via a one-shot hook so the
+    // browser console shows the real message instead of "unreachable
+    // executed". Installed lazily at the first binding entry; cheap
+    // if called repeatedly (Once guard).
+    #[wasm_bindgen]
+    extern "C" {
+        #[wasm_bindgen(js_namespace = console, js_name = error)]
+        fn console_error(s: &str);
+    }
+
+    // Called automatically by wasm-bindgen when the module boots
+    // (`await mod.default(...)` in JS). Routes Rust panics to the
+    // browser's console.error so wasm traps ("unreachable executed")
+    // carry the real panic message instead of a generic stub.
+    #[wasm_bindgen(start)]
+    pub fn init_playground() {
+        std::panic::set_hook(Box::new(|info| {
+            console_error(&format!("Aver playground panic: {}", info));
+        }));
+    }
+
     #[wasm_bindgen]
     pub fn aver_compile(source: &str) -> Result<Vec<u8>, JsError> {
         super::compile_to_wasm(source).map_err(|e| JsError::new(&e))

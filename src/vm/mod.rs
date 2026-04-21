@@ -39,6 +39,8 @@ pub fn register_service_types(arena: &mut crate::nan_value::Arena) {
         "Tcp.Connection",
         vec!["id".into(), "host".into(), "port".into()],
     );
-    #[cfg(feature = "terminal")]
+    // Always register Terminal.Size so record-field access works in
+    // every build (the playground wasm ships without `terminal` but
+    // the compiler still emits field reads against the stubs).
     arena.register_record_type("Terminal.Size", vec!["width".into(), "height".into()]);
 }
