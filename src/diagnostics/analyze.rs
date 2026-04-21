@@ -338,25 +338,102 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
     report
 }
 
-/// Build a minimal `Diagnostic` for a parser error. Errors surface as a
-/// single line-1 diagnostic with the parser message as summary.
-fn parse_error_diagnostic(msg: &str, _source: &str, file: &str) -> Diagnostic {
-    use super::model::Repair;
+/// Build a `Diagnostic` for a parser error.
+///
+/// Parser emits its message as `error[LINE:COL]: <body>` (see
+/// `ParseError::Display`). We strip the prefix to rebuild the real
+/// span, add a source region anchored on that line, and map common
+/// patterns to a repair hint — otherwise the CLI / playground showed
+/// parse errors pointing at line 1:1 with no fix suggestion.
+fn parse_error_diagnostic(msg: &str, source: &str, file: &str) -> Diagnostic {
+    use super::classify::extract_source_lines;
+    use super::model::AnnotatedRegion;
+    let (line, col, body) = strip_parse_error_prefix(msg);
+    let regions = if line > 0 {
+        let source_lines = extract_source_lines(source, line, 1);
+        if source_lines.is_empty() {
+            Vec::new()
+        } else {
+            vec![AnnotatedRegion {
+                source_lines,
+                underline: None,
+            }]
+        }
+    } else {
+        Vec::new()
+    };
     Diagnostic {
         severity: Severity::Error,
         slug: "parse-error",
-        summary: msg.to_string(),
+        summary: body.to_string(),
         span: Span {
             file: file.to_string(),
-            line: 1,
-            col: 1,
+            line: line.max(1),
+            col: col.max(1),
         },
         fn_name: None,
         intent: None,
         fields: Vec::new(),
         conflict: None,
-        repair: Repair::default(),
-        regions: Vec::new(),
+        repair: parse_error_repair(body),
+        regions,
         related: Vec::new(),
+    }
+}
+
+fn strip_parse_error_prefix(msg: &str) -> (usize, usize, &str) {
+    // `error[LINE:COL]: body` — the parser's Display impl (see
+    // src/parser/mod.rs). Lexer errors may share the shape.
+    let Some(rest) = msg.strip_prefix("error[") else {
+        return (0, 0, msg);
+    };
+    let Some(close) = rest.find("]: ") else {
+        return (0, 0, msg);
+    };
+    let (coord, tail) = rest.split_at(close);
+    let body = &tail[3..];
+    let Some((line_s, col_s)) = coord.split_once(':') else {
+        return (0, 0, body);
+    };
+    let line = line_s.parse::<usize>().unwrap_or(0);
+    let col = col_s.parse::<usize>().unwrap_or(0);
+    (line, col, body)
+}
+
+fn parse_error_repair(body: &str) -> super::model::Repair {
+    // Map common parser messages to a concrete nudge. The parser
+    // emits short human strings (`Expected X, found Y`, `Expected '['
+    // after '!'`, ...); we pattern-match on the shape so the repair
+    // points at a likely fix instead of leaving the user staring at
+    // "found EOF".
+    use super::model::Repair;
+    let hint = if body.contains("after '?'") {
+        Some("Description needs a string literal: `? \"what this does\"`")
+    } else if body.contains("after 'intent ='") {
+        Some("Module intent is a string or an indented block of strings: `intent = \"one line\"` or `intent =\\n    \"line one\"\\n    \"line two\"`")
+    } else if body.contains("Expected '[' after '!'") {
+        Some("Effects are a bracketed list: `! [Console.print, Random.int]`")
+    } else if body.contains("Expected '=>' between key and value in map literal") {
+        Some("Map literal uses `=>`: `{\"k\" => 1, \"other\" => 2}`")
+    } else if body.contains("Tuple type must have at least 2 elements") {
+        Some("Single-element tuples aren't allowed — use the bare type, or add a second element.")
+    } else if body.contains("Constructor patterns must be qualified") {
+        Some("Qualify variant patterns with the type name: `Shape.Circle(r) ->` not `Circle(r) ->`.")
+    } else if body.contains("bind the whole value with a lower-case name") {
+        Some("Record patterns don't take positional args — bind the whole record: `match user ... u -> u.name`.")
+    } else if body.starts_with("Expected ") && body.contains(", found ") {
+        Some("Replace the unexpected token with the expected form; check for a missing keyword, bracket, or separator above.")
+    } else if body.contains("must place `module <Name>`") {
+        Some("Move `module <Name>` so it's the very first top-level item in the file.")
+    } else if body.contains("must declare `module <Name>`") {
+        Some("Add `module <Name>` as the first line of the file.")
+    } else if body.contains("must contain exactly one module declaration") {
+        Some("Keep one `module` per file — split multi-module files into one file each.")
+    } else {
+        None
+    };
+    Repair {
+        primary: hint.map(String::from),
+        ..Repair::default()
     }
 }

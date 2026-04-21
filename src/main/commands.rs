@@ -269,8 +269,17 @@ fn collect_check_units(
 
         let path_str = path.to_string_lossy().to_string();
         let source = read_file(&path_str)?;
-        let items = parse_file(&source)?;
-        require_module_declaration(&items, &path_str)?;
+
+        // Parse failure shouldn't abort the whole check — let
+        // analyze_source turn it into a canonical parse-error
+        // diagnostic (with line/col + repair hint) the same way
+        // every other diagnostic flows. We still have the source so
+        // the downstream render can snippet the error line.
+        let items = parse_file(&source).unwrap_or_default();
+
+        if !items.is_empty() {
+            let _ = require_module_declaration(&items, &path_str);
+        }
 
         if include_deps
             && let Some(m) = items.iter().find_map(|item| {
