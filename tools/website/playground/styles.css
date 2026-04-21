@@ -845,11 +845,14 @@ body {
 }
 .audit-section .diag-snippet-caret {
     font-weight: 700;
+    text-decoration: underline wavy;
+    text-underline-offset: 0.15em;
 }
 .audit-section .diag-snippet-caret.diag-err { color: var(--red); }
 .audit-section .diag-snippet-caret.diag-warn { color: var(--orange); }
-/* Invisible copy of the source prefix so carets line up 1:1 with
-   chars above — plain " ".repeat drifts on em-dash / CJK / emoji. */
+/* Invisible copy of the source so the highlighted range above sits
+   at the exact same column widths regardless of glyph — plain
+   " ".repeat(col-1) drifts on em-dash / CJK / emoji. */
 .audit-section .diag-snippet-ghost { color: transparent; }
 
 /* ── Shared download button for panels ────────────────────────── */

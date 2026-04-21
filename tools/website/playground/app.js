@@ -2600,27 +2600,39 @@ function renderDiagRegions(container, d) {
         }
         const ul = region.underline;
         if (ul && ul.col > 0) {
-            // Align the carets to the target line character-for-
-            // character by using the line's own text as an invisible
-            // padding span. Plain " ".repeat(col-1) drifts when the
-            // line contains chars whose monospace glyph width isn't
-            // exactly 1ch (em-dash, CJK, emoji, …).
+            // Width-safe underline: re-render the target line with
+            // before/after transparent and the caret range in the
+            // diagnostic colour. Because the caret row has the exact
+            // same characters as the source line above, glyph widths
+            // match 1:1 regardless of font quirks (em-dash, CJK, …).
+            // Plain " ".repeat(col-1) drifts on non-1ch glyphs.
             const target = lines[lines.length - 1]?.text ?? "";
-            const before = target.slice(0, Math.max(0, ul.col - 1));
             const caretLen = Math.max(1, ul.len || 1);
-            const carets = "^".repeat(caretLen);
+            const before = target.slice(0, Math.max(0, ul.col - 1));
+            let mid = target.slice(ul.col - 1, ul.col - 1 + caretLen);
+            const after = target.slice(ul.col - 1 + caretLen);
+            // If the underline starts past end of line (e.g. parser
+            // reports col = line_len + 1 for EOL errors), synthesize
+            // a caret so there's something to see.
+            if (!mid) mid = "^".repeat(caretLen);
             const isErr = d.severity === "error" || d.severity === "fail";
             const ulLine = document.createElement("div");
             ulLine.className = "diag-snippet-line";
             ulLine.append(`  ${pad} | `);
-            const ghost = document.createElement("span");
-            ghost.className = "diag-snippet-ghost";
-            ghost.textContent = before;
-            ulLine.appendChild(ghost);
+            const pre = document.createElement("span");
+            pre.className = "diag-snippet-ghost";
+            pre.textContent = before;
+            ulLine.appendChild(pre);
             const caret = document.createElement("span");
             caret.className = `diag-snippet-caret ${isErr ? "diag-err" : "diag-warn"}`;
-            caret.textContent = carets;
+            caret.textContent = mid;
             ulLine.appendChild(caret);
+            if (after) {
+                const post = document.createElement("span");
+                post.className = "diag-snippet-ghost";
+                post.textContent = after;
+                ulLine.appendChild(post);
+            }
             if (ul.label) {
                 ulLine.appendChild(document.createTextNode(`  ${ul.label}`));
             }
