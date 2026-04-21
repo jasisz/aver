@@ -1,22 +1,14 @@
 # Aver Diagnostic Slugs
 
-Every diagnostic Aver emits carries a stable `slug` that consumers
-(CLI, LSP, playground, agent frameworks) can key off. This page is
-the canonical reference, grouped by category.
+Every diagnostic Aver emits carries a stable `slug` that consumers (CLI, LSP, playground, agent frameworks) can key off. This page is the canonical reference, grouped by category.
 
-Source of truth: `src/diagnostics/classify.rs` (classifier) and
-`src/checker/*.rs` / `src/main/format_cmd.rs` (emitters). If you're
-editing this table, also check that the slug string actually appears
-in one of those files.
+Source of truth: `src/diagnostics/classify.rs` (classifier) and `src/checker/*.rs` / `src/main/format_cmd.rs` (emitters). If you're editing this table, also check that the slug string actually appears in one of those files.
 
 ## Severity meanings
 
-- **`error`** — compilation / contract failure; blocks downstream
-  steps (e.g. type error stops `aver verify`).
-- **`warning`** — non-blocking code smell; agent / reviewer should
-  see it but the program still runs.
-- **`fail`** — runtime / verify / replay divergence; the program
-  typechecks but misbehaves at the specified case.
+- **`error`** — compilation / contract failure; blocks downstream steps (e.g. type error stops `aver verify`).
+- **`warning`** — non-blocking code smell; agent / reviewer should see it but the program still runs.
+- **`fail`** — runtime / verify / replay divergence; the program typechecks but misbehaves at the specified case.
 - **`hint`** — IDE-only nudge; LSP surfaces, CLI usually ignores.
 
 ## Type & lexer
@@ -91,9 +83,7 @@ in one of those files.
 
 ## Format (mechanical rewrites)
 
-All format slugs are `warning` severity. They fire from
-`aver format --check` (and `aver audit`). Every rewrite carries a
-`FormatViolation` with the stable `rule` slug below.
+All format slugs are `warning` severity. They fire from `aver format --check` (and `aver audit`). Every rewrite carries a `FormatViolation` with the stable `rule` slug below.
 
 | Slug | Fires when |
 |---|---|
@@ -117,10 +107,7 @@ All format slugs are `warning` severity. They fire from
 
 ## LSP integration
 
-Every Diagnostic carries its slug in LSP's `code` field, so editors
-with `code_description` support can link back to this page. The LSP
-server doesn't embed a per-slug URL today; consumers can build one
-using the slug as an anchor:
+Every Diagnostic carries its slug in LSP's `code` field, so editors with `code_description` support can link back to this page. The LSP server doesn't embed a per-slug URL today; consumers can build one using the slug as an anchor:
 
 ```
 https://github.com/jasisz/aver/blob/main/docs/diagnostics-slugs.md#<slug>
