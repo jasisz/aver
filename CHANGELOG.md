@@ -9,21 +9,15 @@ All notable changes to Aver are documented here.
 - **`aver format --check` / `aver format --check --json`** — non-mutating format verification. Every rewrite reports a structured `FormatViolation` with a stable `rule` slug: `tab-indent`, `bad-function-header`, `effects-unsorted`, `effects-reshape`, `verify-misplaced`, `excess-blank`, `module-intent-reshape`, `decision-inline`, `trailing-whitespace`, `missing-final-newline`. Agents and linters can key off specific rules instead of free-text diffs.
 - **Naming convention checker** — flags non-camelCase functions / fields and non-PascalCase types / modules / variants as stable diagnostics (`bad-fn-name`, `bad-type-name`, `bad-module-name`, `bad-variant-name`, `bad-field-name`). Runs as part of `aver check` and `aver audit`.
 - **Canonical diagnostic bundle across every CLI command** — `aver check --json`, `aver verify --json`, `aver why --json`, `aver audit --json`, `aver format --check --json` all emit `AnalysisReport` NDJSON now. One schema, `schema_version: 1`, documented in `docs/diagnostics-schema.md`.
-- **Browser playground reworked end to end** — multi-file tabbed editor, `📜 Trace` panel with editable record & replay, `⬇ Download project` (`.av` or `.zip`), and full parity with CLI audit / why / context / format for every game and folder you drop in. Try it at [averlang.dev/playground](https://averlang.dev/playground/).
+- **Reworked [browser playground](https://averlang.dev/playground/)** — multi-file editor, interactive record & replay, full parity with CLI audit / why / context / format. Go play.
 
 ### Changed
 - **Format engine rewritten around structured violations** — the formatter used to report "needs format" as opaque before/after diffs. Every normalization pass now tracks per-line rule violations with original source-line numbers, so `--check` output points at the exact line that needs the specific fix instead of dumping a reformatted file. `needs-format` stays as the aggregate marker; each `FormatViolation` rides alongside with its rule slug.
-- **Effects list in `aver context`** — `signature` is now params + return type only; effects live on the sibling `effects` array. Lets renderers (playground, LLMs) show them without duplicating `! [...]` on screen.
+- **Effects list in `aver context`** — `signature` is now params + return type only; effects live on the sibling `effects` array. Lets renderers show them without duplicating `! [...]` on screen.
 
 ### Fixed
-- **Parse errors landed on line 1:1 with no hint** — the formatter stripped the real span and emitted a single red line that didn't tell you where or why. Now: real line/col pulled from the parser, source snippet with `^^^` caret under the offending token (clamped to the last char for EOL errors like Unterminated string), and repair hints for common shapes (`Expected '[' after '!'` → `! [Console.print, ...]`, missing `module <Name>`, map `=>` syntax, tuple-needs-2-elements, …). Playground audit panel renders the same snippet inline.
-- **Multi-file projects skipped verify in audit** — the VM module loader was disk-only, so folder-dropped projects in the playground couldn't run verify at all. VM and type checker both grew in-memory loaders; audit's verify axis now works across the whole project.
-- **Format fixer only touched the active file** — now reformats every tab in the project in one pass and focuses the file that actually changed so the diff is immediately visible.
-- **Audit's Format section looked only at the entry file** in multi-file mode. Now scans every file and reports violations against their real paths.
+- **Parse errors landed on line 1:1 with no hint** — the formatter stripped the real span and emitted a single red line that didn't tell you where or why. Now: real line/col pulled from the parser, source snippet with `^^^` caret under the offending token (clamped to the last char for EOL errors like Unterminated string), and repair hints for common shapes (`Expected '[' after '!'` → `! [Console.print, ...]`, missing `module <Name>`, map `=>` syntax, tuple-needs-2-elements, …).
 - **`Time.sleep` on wasm32-unknown-unknown panicked** ("can't sleep") — the browser runtime now makes it a no-op; native builds keep real blocking sleep.
-
-### Removed
-- **Playground's hand-rolled `aver context` markdown** — browser now routes through the canonical Rust renderer, emits the same file as CLI `aver context`.
 
 ## 0.9.7 (2026-04-16)
 
