@@ -31,12 +31,46 @@ pub fn compile_program_with_modules(
     module_root: Option<&str>,
     source_file: &str,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
+    compile_program_inner(items, arena, source_file, ModuleSource::Disk(module_root))
+}
+
+/// Compile using dependency modules that were already parsed off-disk
+/// (or out of a virtual filesystem). The browser playground uses this
+/// to run multi-file programs without any real fs access.
+pub fn compile_program_with_loaded_modules(
+    items: &[TopLevel],
+    arena: &mut Arena,
+    loaded: Vec<crate::source::LoadedModule>,
+    source_file: &str,
+) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
+    compile_program_inner(items, arena, source_file, ModuleSource::Loaded(loaded))
+}
+
+enum ModuleSource<'a> {
+    Disk(Option<&'a str>),
+    Loaded(Vec<crate::source::LoadedModule>),
+}
+
+fn compile_program_inner(
+    items: &[TopLevel],
+    arena: &mut Arena,
+    source_file: &str,
+    module_source: ModuleSource<'_>,
+) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
     let mut compiler = ProgramCompiler::new();
     compiler.source_file = source_file.to_string();
     compiler.sync_record_field_symbols(arena);
 
-    if let Some(module_root) = module_root {
-        compiler.load_modules(items, module_root, arena)?;
+    match module_source {
+        ModuleSource::Disk(Some(module_root)) => {
+            compiler.load_modules(items, module_root, arena)?;
+        }
+        ModuleSource::Disk(None) => {}
+        ModuleSource::Loaded(loaded) => {
+            for m in loaded {
+                compiler.integrate_module(&m.dep_name, m.items, arena)?;
+            }
+        }
     }
 
     for item in items {

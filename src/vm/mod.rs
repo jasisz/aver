@@ -7,7 +7,9 @@ mod runtime;
 mod symbol;
 mod types;
 
-pub use compiler::{compile_program, compile_program_with_modules};
+pub use compiler::{
+    compile_program, compile_program_with_loaded_modules, compile_program_with_modules,
+};
 pub use execute::VM;
 pub use opcode::opcode_name;
 pub use profile::{

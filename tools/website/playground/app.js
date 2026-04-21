@@ -292,10 +292,18 @@ async function onFileChange(fileList) {
         return;
     }
 
+    // A dropped .replay.json seeds state.lastRecording so ▶ Replay can
+    // pick it up without asking for the file again.
+    if (files.length === 1 && /\.replay\.json$|\.json$/i.test(files[0].name)) {
+        state.lastRecording = await files[0].text();
+        setStatus(`Loaded recording ${files[0].name} — click ▶ Replay to verify.`, "success");
+        return;
+    }
+
     // Otherwise: collect .av files (flat list or from a dropped folder).
     const avFiles = files.filter((f) => f.name.endsWith(".av"));
     if (avFiles.length === 0) {
-        setStatus("Drop a .wasm, .av, or folder containing .av files.", "error");
+        setStatus("Drop a .wasm, .av, folder, or .replay.json.", "error");
         return;
     }
 
@@ -1820,6 +1828,94 @@ function downloadProject() {
 }
 
 document.querySelector("[data-download]")?.addEventListener("click", downloadProject);
+
+// ── Record / Replay ─────────────────────────────────────────────────
+// Routes through the VM-in-wasm: Record captures every effect call
+// made by fn main(), Replay verifies that a second run reproduces the
+// same trace effect-for-effect. Same semantics as the CLI's
+// `aver run --record` / `aver replay --test`, minus disk IO.
+
+document.querySelector("[data-record]")?.addEventListener("click", async () => {
+    if (state.wasmOnly) {
+        setStatus("No source — drop .av or a folder first.", "error");
+        return;
+    }
+    const entry = pickEntryFile();
+    const filesObj = state.files.size > 0
+        ? Object.fromEntries(state.files)
+        : { "playground.av": getActiveSource() };
+    if (!entry || !filesObj[entry]?.trim()) {
+        setStatus("Nothing to record.", "error");
+        return;
+    }
+    try {
+        const comp = await loadCompiler();
+        setStatus("Recording…", "info");
+        const json = comp.aver_run_record(JSON.stringify(filesObj), entry);
+        const res = JSON.parse(json);
+        if (!res.ok) {
+            setStatus("Record failed", "error");
+            appendConsole("stderr", res.error || "unknown error");
+            return;
+        }
+        state.lastRecording = res.recording;
+        const base = (entry.replace(/\.av$/, "") || "playground");
+        triggerDownload(`${base}.replay.json`, res.recording, "application/json");
+        const note = res.runtime_error
+            ? ` (main threw: ${res.runtime_error})`
+            : "";
+        setStatus(`Recorded ${res.effect_count} effect(s) → ${base}.replay.json${note}`, "success");
+    } catch (e) {
+        appendConsole("stderr", e.message || String(e));
+        setStatus("Record failed", "error");
+    }
+});
+
+document.querySelector("[data-replay]")?.addEventListener("click", async () => {
+    if (state.wasmOnly) {
+        setStatus("No source — drop .av or a folder first.", "error");
+        return;
+    }
+    if (!state.lastRecording) {
+        setStatus("Drop a .replay.json first (or hit 🔴 Record).", "error");
+        return;
+    }
+    const entry = pickEntryFile();
+    const filesObj = state.files.size > 0
+        ? Object.fromEntries(state.files)
+        : { "playground.av": getActiveSource() };
+    if (!entry || !filesObj[entry]?.trim()) {
+        setStatus("Nothing to replay against.", "error");
+        return;
+    }
+    try {
+        const comp = await loadCompiler();
+        setStatus("Replaying…", "info");
+        const json = comp.aver_replay_run(
+            JSON.stringify(filesObj),
+            entry,
+            state.lastRecording
+        );
+        const res = JSON.parse(json);
+        if (!res.ok) {
+            setStatus("Replay failed", "error");
+            appendConsole("stderr", res.error || "unknown error");
+            return;
+        }
+        if (res.matched) {
+            setStatus(`Replay matched · ${res.replayed}/${res.total} effects`, "success");
+        } else {
+            setStatus(
+                `Replay diverged · ${res.replayed}/${res.total}${res.error ? " · " + res.error : ""}`,
+                "error"
+            );
+            if (res.error) appendConsole("stderr", res.error);
+        }
+    } catch (e) {
+        appendConsole("stderr", e.message || String(e));
+        setStatus("Replay failed", "error");
+    }
+});
 
 function makeDownloadButton(label, title, onClick) {
     const btn = document.createElement("button");

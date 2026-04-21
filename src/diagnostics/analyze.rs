@@ -232,22 +232,27 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
     }
 
     #[cfg(feature = "runtime")]
-    let verify_summary_opt = if options.include_verify_run
-        && tc_result.errors.is_empty()
-        // Multi-file projects use an in-memory fs that the VM module
-        // loader can't see (disk-only). Skip verify execution for now;
-        // static analysis still runs, audit just omits the verify axis.
-        && options.loaded_modules.is_none()
-    {
+    let verify_summary_opt = if options.include_verify_run && tc_result.errors.is_empty() {
         // Verify execution only runs when typecheck is clean — otherwise
-        // the compiled VM would crash on missing symbols.
+        // the compiled VM would crash on missing symbols. Multi-file
+        // now works through the same VM path via loaded_modules →
+        // compile_program_with_loaded_modules.
         let runnable_items = items.clone();
-        let (verify_diags, verify_summary) = super::verify_run::run_verify_blocks(
-            runnable_items,
-            options.module_base_dir.as_deref(),
-            &options.file_label,
-            source,
-        );
+        let (verify_diags, verify_summary) = if let Some(loaded) = options.loaded_modules.clone() {
+            super::verify_run::run_verify_blocks_with_loaded(
+                runnable_items,
+                loaded,
+                &options.file_label,
+                source,
+            )
+        } else {
+            super::verify_run::run_verify_blocks(
+                runnable_items,
+                options.module_base_dir.as_deref(),
+                &options.file_label,
+                source,
+            )
+        };
         for diag in verify_diags {
             diagnostics.push(diag);
         }

@@ -208,6 +208,24 @@ body {
     background: rgba(56, 189, 248, 0.1) !important;
     border-color: #38bdf8 !important;
 }
+.btn-record {
+    color: #f87171 !important;
+    border-color: rgba(248, 113, 113, 0.45) !important;
+    font-weight: 600;
+}
+.btn-record:hover {
+    background: rgba(248, 113, 113, 0.1) !important;
+    border-color: #f87171 !important;
+}
+.btn-replay {
+    color: #fbbf24 !important;
+    border-color: rgba(251, 191, 36, 0.45) !important;
+    font-weight: 600;
+}
+.btn-replay:hover {
+    background: rgba(251, 191, 36, 0.1) !important;
+    border-color: #fbbf24 !important;
+}
 
 .btn-download {
     color: var(--muted) !important;

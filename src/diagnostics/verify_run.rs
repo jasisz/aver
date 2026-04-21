@@ -29,8 +29,33 @@ use super::model::{Diagnostic, VerifyBlockResult, VerifySummary};
 /// Passes emit no diagnostic. Guards that evaluate to `false` count as
 /// skipped (same semantics as CLI `aver verify`).
 pub fn run_verify_blocks(
-    mut items: Vec<TopLevel>,
+    items: Vec<TopLevel>,
     base_dir: Option<&str>,
+    file_label: &str,
+    source: &str,
+) -> (Vec<Diagnostic>, VerifySummary) {
+    run_verify_blocks_with_modules(items, ModuleSource::Disk(base_dir), file_label, source)
+}
+
+/// Variant that accepts pre-loaded dependency modules (e.g. from the
+/// playground's virtual fs) instead of a disk module root.
+pub fn run_verify_blocks_with_loaded(
+    items: Vec<TopLevel>,
+    loaded: Vec<crate::source::LoadedModule>,
+    file_label: &str,
+    source: &str,
+) -> (Vec<Diagnostic>, VerifySummary) {
+    run_verify_blocks_with_modules(items, ModuleSource::Loaded(loaded), file_label, source)
+}
+
+enum ModuleSource<'a> {
+    Disk(Option<&'a str>),
+    Loaded(Vec<crate::source::LoadedModule>),
+}
+
+fn run_verify_blocks_with_modules(
+    mut items: Vec<TopLevel>,
+    module_source: ModuleSource<'_>,
     file_label: &str,
     source: &str,
 ) -> (Vec<Diagnostic>, VerifySummary) {
@@ -49,11 +74,18 @@ pub fn run_verify_blocks(
 
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
-    let (code, globals) =
-        match vm::compile_program_with_modules(&items, &mut arena, base_dir, "") {
-            Ok(v) => v,
-            Err(_) => return (Vec::new(), empty),
-        };
+    let compile_result = match module_source {
+        ModuleSource::Disk(base_dir) => {
+            vm::compile_program_with_modules(&items, &mut arena, base_dir, "")
+        }
+        ModuleSource::Loaded(loaded) => {
+            vm::compile_program_with_loaded_modules(&items, &mut arena, loaded, "")
+        }
+    };
+    let (code, globals) = match compile_result {
+        Ok(v) => v,
+        Err(_) => return (Vec::new(), empty),
+    };
     let mut machine = vm::VM::new(code, globals, arena);
     machine.set_silent_console(true);
 

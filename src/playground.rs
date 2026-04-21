@@ -9,6 +9,8 @@ use crate::resolver;
 use crate::source::{LoadedModule, load_module_tree_from_map, parse_source};
 use crate::tco;
 use crate::types::checker::{run_type_check_full, run_type_check_with_loaded};
+#[cfg(feature = "runtime")]
+use crate::{nan_value::Arena, vm};
 
 /// Compile Aver source text to WASM bytes.
 pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
@@ -294,6 +296,205 @@ pub fn format_source(source: &str) -> String {
         .unwrap_or_else(|_| source.to_string())
 }
 
+// ── Record / replay ────────────────────────────────────────────────
+// Runs `fn main` through the in-browser VM, captures every effect
+// call as a SessionRecording, and returns the recording as JSON.
+// Replay loads such a recording back and checks that the program
+// reproduces the same effect trace — byte-for-byte parity with the
+// CLI's `aver run --record` / `aver replay`.
+
+#[cfg(feature = "runtime")]
+#[derive(serde::Serialize)]
+struct RunRecordResult {
+    ok: bool,
+    recording: Option<String>,
+    error: Option<String>,
+    effect_count: u32,
+    runtime_error: Option<String>,
+}
+
+#[cfg(feature = "runtime")]
+pub fn run_record_project(files: &HashMap<String, String>, entry: &str) -> String {
+    let Some(entry_source) = files.get(entry).cloned() else {
+        return err_json(format!("Entry '{}' not in virtual fs", entry));
+    };
+    match run_record_inner(&entry_source, files, entry) {
+        Ok(res) => serde_json::to_string(&res).unwrap_or_else(|_| "{}".to_string()),
+        Err(e) => err_json(e),
+    }
+}
+
+#[cfg(feature = "runtime")]
+fn run_record_inner(
+    entry_source: &str,
+    files: &HashMap<String, String>,
+    entry: &str,
+) -> Result<RunRecordResult, String> {
+    use crate::replay::json::JsonValue;
+    use crate::replay::session::{RecordedOutcome, SessionRecording};
+    use crate::replay::{session_recording_to_string_pretty, value_to_json_lossy};
+
+    let (mut items, loaded) = parse_and_load(entry_source, files, entry)?;
+    tco::transform_program(&mut items);
+
+    // Type-check first so we surface nice errors instead of a VM
+    // panic on missing symbols.
+    let tc_result = run_type_check_with_loaded(&items, &loaded);
+    if !tc_result.errors.is_empty() {
+        return Err(format_tc_errors(&tc_result.errors));
+    }
+
+    resolver::resolve_program(&mut items);
+
+    let mut arena = Arena::new();
+    vm::register_service_types(&mut arena);
+    let (code, globals) = vm::compile_program_with_loaded_modules(&items, &mut arena, loaded, "")
+        .map_err(|e| format!("Compile error: {}", e.msg))?;
+
+    let mut machine = vm::VM::new(code, globals, arena);
+    machine.set_silent_console(true);
+    machine.start_recording();
+
+    let mut runtime_error: Option<String> = None;
+    let output = match machine.run() {
+        Ok(val) => {
+            // Recorded outcome is only used by replay-validation; the
+            // browser usually drives Unit out of main, so a lossy
+            // representation is fine. If a program returns a rich
+            // value we'll fall back to its `aver_repr`.
+            use crate::nan_value::NanValueConvert;
+            let value = val.to_value(&machine.arena);
+            RecordedOutcome::Value(value_to_json_lossy(&value))
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            runtime_error = Some(msg.clone());
+            RecordedOutcome::RuntimeError(msg)
+        }
+    };
+
+    let recording = SessionRecording {
+        schema_version: 1,
+        request_id: "playground".to_string(),
+        timestamp: String::new(),
+        program_file: entry.to_string(),
+        module_root: "<virtual-fs>".to_string(),
+        entry_fn: "main".to_string(),
+        input: JsonValue::Null,
+        effects: machine.recorded_effects().to_vec(),
+        output,
+    };
+
+    Ok(RunRecordResult {
+        ok: true,
+        effect_count: recording.effects.len() as u32,
+        recording: Some(session_recording_to_string_pretty(&recording)),
+        error: None,
+        runtime_error,
+    })
+}
+
+#[cfg(feature = "runtime")]
+#[derive(serde::Serialize)]
+struct ReplayResult {
+    ok: bool,
+    matched: bool,
+    replayed: u32,
+    total: u32,
+    error: Option<String>,
+}
+
+#[cfg(feature = "runtime")]
+pub fn replay_run_project(
+    files: &HashMap<String, String>,
+    entry: &str,
+    recording_json: &str,
+) -> String {
+    match replay_run_inner(files, entry, recording_json) {
+        Ok(r) => serde_json::to_string(&r).unwrap_or_else(|_| "{}".to_string()),
+        Err(e) => serde_json::to_string(&ReplayResult {
+            ok: false,
+            matched: false,
+            replayed: 0,
+            total: 0,
+            error: Some(e),
+        })
+        .unwrap_or_else(|_| "{}".to_string()),
+    }
+}
+
+#[cfg(feature = "runtime")]
+fn replay_run_inner(
+    files: &HashMap<String, String>,
+    entry: &str,
+    recording_json: &str,
+) -> Result<ReplayResult, String> {
+    use crate::replay::session::parse_session_recording;
+
+    let Some(entry_source) = files.get(entry).cloned() else {
+        return Err(format!("Entry '{}' not in virtual fs", entry));
+    };
+    let recording = parse_session_recording(recording_json)?;
+    let total = recording.effects.len() as u32;
+
+    let (mut items, loaded) = parse_and_load(&entry_source, files, entry)?;
+    tco::transform_program(&mut items);
+
+    let tc_result = run_type_check_with_loaded(&items, &loaded);
+    if !tc_result.errors.is_empty() {
+        return Err(format_tc_errors(&tc_result.errors));
+    }
+
+    resolver::resolve_program(&mut items);
+
+    let mut arena = Arena::new();
+    vm::register_service_types(&mut arena);
+    let (code, globals) = vm::compile_program_with_loaded_modules(&items, &mut arena, loaded, "")
+        .map_err(|e| format!("Compile error: {}", e.msg))?;
+
+    let mut machine = vm::VM::new(code, globals, arena);
+    machine.set_silent_console(true);
+    machine.start_replay(recording.effects, true);
+
+    let run_err = machine.run().err().map(|e| e.to_string());
+    let consumed = machine.ensure_replay_consumed();
+    let (replayed, _remaining) = machine.replay_progress();
+
+    let error = run_err.or_else(|| consumed.err().map(|e| e.to_string()));
+
+    Ok(ReplayResult {
+        ok: true,
+        matched: error.is_none() && replayed as u32 == total,
+        replayed: replayed as u32,
+        total,
+        error,
+    })
+}
+
+#[cfg(feature = "runtime")]
+fn parse_and_load(
+    entry_source: &str,
+    files: &HashMap<String, String>,
+    _entry: &str,
+) -> Result<(Vec<TopLevel>, Vec<LoadedModule>), String> {
+    let items = parse_source(entry_source)?;
+    let depends = module_depends(&items);
+    let loaded = load_module_tree_from_map(&depends, files)?;
+    Ok((items, loaded))
+}
+
+#[cfg(feature = "runtime")]
+fn err_json(msg: String) -> String {
+    serde_json::to_string(&RunRecordResult {
+        ok: false,
+        recording: None,
+        error: Some(msg),
+        effect_count: 0,
+        runtime_error: None,
+    })
+    .unwrap_or_else(|_| "{}".to_string())
+}
+
 #[cfg(feature = "playground")]
 mod bindgen {
     use wasm_bindgen::prelude::*;
@@ -382,6 +583,26 @@ mod bindgen {
         let files = parse_files(files_json)?;
         Ok(super::audit_project(&files, entry))
     }
+
+    // ── Record / replay bindings ───────────────────────────────────
+    // Project-shaped on purpose: single-file callers pass
+    // `{"playground.av": source}` with entry "playground.av".
+
+    #[wasm_bindgen]
+    pub fn aver_run_record(files_json: &str, entry: &str) -> Result<String, JsError> {
+        let files = parse_files(files_json)?;
+        Ok(super::run_record_project(&files, entry))
+    }
+
+    #[wasm_bindgen]
+    pub fn aver_replay_run(
+        files_json: &str,
+        entry: &str,
+        recording_json: &str,
+    ) -> Result<String, JsError> {
+        let files = parse_files(files_json)?;
+        Ok(super::replay_run_project(&files, entry, recording_json))
+    }
 }
 
 #[cfg(test)]
@@ -408,6 +629,42 @@ mod tests {
         let bytes = compile_project_to_wasm(&files, "main.av")
             .expect("rogue project should compile from virtual fs");
         assert!(bytes.len() > 1000, "emitted wasm looks too small: {}", bytes.len());
+    }
+
+    #[test]
+    fn run_record_captures_effects_then_replays_clean() {
+        let mut files = HashMap::new();
+        files.insert(
+            "playground.av".to_string(),
+            [
+                "module Main",
+                "    intent = \"record/replay smoke\"",
+                "",
+                "fn main() -> Unit",
+                "    ! [Console.print]",
+                "    Console.print(\"hello\")",
+                "    Console.print(\"world\")",
+                "",
+            ]
+            .join("\n"),
+        );
+
+        let record_json = run_record_project(&files, "playground.av");
+        let record: serde_json::Value = serde_json::from_str(&record_json).unwrap();
+        assert_eq!(record["ok"], true, "record should succeed: {}", record_json);
+        assert_eq!(record["effect_count"], 2, "two Console.print calls");
+        let recording_str = record["recording"].as_str().expect("recording string");
+
+        let replay_json = replay_run_project(&files, "playground.av", recording_str);
+        let replay: serde_json::Value = serde_json::from_str(&replay_json).unwrap();
+        assert_eq!(replay["ok"], true);
+        assert_eq!(
+            replay["matched"], true,
+            "replay should match captured effects: {}",
+            replay_json
+        );
+        assert_eq!(replay["replayed"], 2);
+        assert_eq!(replay["total"], 2);
     }
 
     #[test]
