@@ -281,8 +281,11 @@ impl TypeChecker {
             self.insert_sig(name, params, ret.clone(), effects);
         }
 
-        // Terminal namespace (behind cfg feature)
-        #[cfg(feature = "terminal")]
+        // Terminal namespace — always register signatures so static
+        // analysis (playground, LSP, `aver check`) knows about them.
+        // The runtime impl is still gated by `feature = "terminal"`
+        // (crossterm doesn't build on wasm32-unknown-unknown). WASM
+        // codegen routes Terminal.* to host imports, no runtime dep.
         {
             let terminal_sigs: &[(&str, &[Type], Type, &[&str])] = &[
                 (
