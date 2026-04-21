@@ -209,6 +209,14 @@ body {
     border-color: #38bdf8 !important;
 }
 
+.btn-download {
+    color: var(--muted) !important;
+    border-color: var(--border) !important;
+}
+.btn-download:hover {
+    color: var(--text) !important;
+    border-color: var(--accent) !important;
+}
 .btn-subtle { opacity: 0.6; }
 .btn-subtle:hover { opacity: 1; }
 .toolbar-spacer { flex: 1; }

@@ -1671,6 +1671,139 @@ function downloadJsonl(bundles, filename) {
     triggerDownload(filename, content, "application/x-ndjson");
 }
 
+// ── Minimal uncompressed ZIP writer ───────────────────────────────
+// Avoids pulling JSZip (~100 KiB) from a CDN — the playground project
+// is a handful of tiny .av files, "store" compression is plenty.
+// Spec: APPNOTE.TXT — Local File Header + Central Directory + EOCD.
+const ZIP_CRC_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+        let c = n;
+        for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+        t[n] = c;
+    }
+    return t;
+})();
+function zipCrc32(bytes) {
+    let c = 0xffffffff;
+    for (let i = 0; i < bytes.length; i++) {
+        c = ZIP_CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+    }
+    return (c ^ 0xffffffff) >>> 0;
+}
+function buildZip(entries) {
+    const u16 = (arr, o, v) => { arr[o] = v & 0xff; arr[o + 1] = (v >> 8) & 0xff; };
+    const u32 = (arr, o, v) => {
+        arr[o] = v & 0xff;
+        arr[o + 1] = (v >>> 8) & 0xff;
+        arr[o + 2] = (v >>> 16) & 0xff;
+        arr[o + 3] = (v >>> 24) & 0xff;
+    };
+    const enc = new TextEncoder();
+    const parts = [];
+    const central = [];
+    let offset = 0;
+    for (const e of entries) {
+        const name = enc.encode(e.name);
+        const data = e.data instanceof Uint8Array ? e.data : enc.encode(e.data);
+        const crc = zipCrc32(data);
+        const size = data.length;
+
+        const lfh = new Uint8Array(30 + name.length);
+        u32(lfh, 0, 0x04034b50);    // local file header sig
+        u16(lfh, 4, 20);            // version needed
+        u16(lfh, 6, 0);             // flags
+        u16(lfh, 8, 0);             // compression: store
+        u16(lfh, 10, 0);            // mod time
+        u16(lfh, 12, 0x21);         // mod date (1980-01-01)
+        u32(lfh, 14, crc);
+        u32(lfh, 18, size);         // compressed
+        u32(lfh, 22, size);         // uncompressed
+        u16(lfh, 26, name.length);
+        u16(lfh, 28, 0);            // extra len
+        lfh.set(name, 30);
+        parts.push(lfh, data);
+
+        const cdh = new Uint8Array(46 + name.length);
+        u32(cdh, 0, 0x02014b50);    // central dir sig
+        u16(cdh, 4, 20);            // version made by
+        u16(cdh, 6, 20);            // version needed
+        u16(cdh, 8, 0);             // flags
+        u16(cdh, 10, 0);            // compression
+        u16(cdh, 12, 0);
+        u16(cdh, 14, 0x21);
+        u32(cdh, 16, crc);
+        u32(cdh, 20, size);
+        u32(cdh, 24, size);
+        u16(cdh, 28, name.length);
+        u16(cdh, 30, 0);            // extra
+        u16(cdh, 32, 0);            // comment
+        u16(cdh, 34, 0);            // disk start
+        u16(cdh, 36, 0);            // int attrs
+        u32(cdh, 38, 0);            // ext attrs
+        u32(cdh, 42, offset);
+        cdh.set(name, 46);
+        central.push(cdh);
+
+        offset += lfh.length + size;
+    }
+    const cdStart = offset;
+    const cdSize = central.reduce((s, c) => s + c.length, 0);
+    const eocd = new Uint8Array(22);
+    u32(eocd, 0, 0x06054b50);
+    u16(eocd, 4, 0);            // disk number
+    u16(eocd, 6, 0);            // central dir disk
+    u16(eocd, 8, entries.length);
+    u16(eocd, 10, entries.length);
+    u32(eocd, 12, cdSize);
+    u32(eocd, 16, cdStart);
+    u16(eocd, 20, 0);           // comment len
+    return new Blob([...parts, ...central, eocd], { type: "application/zip" });
+}
+
+// Download the virtual fs — single .av when there's one file, a
+// "store"-zip otherwise. Game forks come back as a proper multi-
+// file project the user can drop straight into `aver compile`.
+function downloadProject() {
+    if (state.wasmOnly && state.wasmBytes) {
+        const blob = new Blob([state.wasmBytes], { type: "application/wasm" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = state.wasmName || "program.wasm";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 100);
+        return;
+    }
+    if (state.files.size === 0) {
+        setStatus("Nothing to download.", "info");
+        return;
+    }
+    const projectName = state.activeGame
+        || (state.activeFile ? state.activeFile.replace(/\.av$/, "") : "playground");
+    if (state.files.size === 1) {
+        const [name, source] = state.files.entries().next().value;
+        triggerDownload(name, source, "text/plain");
+        setStatus(`Downloaded ${name}.`, "success");
+        return;
+    }
+    const entries = Array.from(state.files, ([name, data]) => ({ name, data }));
+    const blob = buildZip(entries);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${projectName}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 100);
+    setStatus(`Downloaded ${projectName}.zip (${state.files.size} files).`, "success");
+}
+
+document.querySelector("[data-download]")?.addEventListener("click", downloadProject);
+
 function makeDownloadButton(label, title, onClick) {
     const btn = document.createElement("button");
     btn.type = "button";
