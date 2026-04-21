@@ -7,6 +7,7 @@
     --accent: #d97706;
     --green: #4ade80;
     --red: #f87171;
+    --orange: #fb923c;
     --font-mono: "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
 }
 
@@ -290,6 +291,7 @@ body {
 
 .console-surface .stdout { color: var(--text); }
 .console-surface .stderr { color: var(--red); }
+.console-surface .warning { color: var(--orange); }
 
 .readline-bar {
     display: flex;

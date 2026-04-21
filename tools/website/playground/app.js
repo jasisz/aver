@@ -883,19 +883,20 @@ if (checkBtn) {
                 const isErr = d.severity === "error" || d.severity === "fail";
                 if (isErr) hasError = true;
                 const tag = d.severity;
+                const channel = isErr ? "stderr" : "warning";
                 const lineNum = d.span?.line || 0;
                 const col = d.span?.col || 0;
 
-                appendConsole("stderr",
+                appendConsole(channel,
                     `\n${tag}[${d.slug}]: ${d.summary}`);
-                appendConsole("stderr",
+                appendConsole(channel,
                     `  at: ${d.span?.file || "playground"}:${lineNum}:${col}`);
 
                 if (d.fn_name) {
-                    appendConsole("stderr", `  in-fn: ${d.fn_name}`);
+                    appendConsole(channel, `  in-fn: ${d.fn_name}`);
                 }
                 if (d.repair?.primary) {
-                    appendConsole("stderr", `  repair: ${d.repair.primary}`);
+                    appendConsole(channel, `  repair: ${d.repair.primary}`);
                 }
 
                 if (lineNum > 0 && lineNum <= lines.length) {
@@ -964,16 +965,15 @@ if (verifyBtn) {
 
             for (const d of staticIssues) {
                 const tag = d.severity;
+                const isErr = d.severity === "error" || d.severity === "fail";
+                const channel = isErr ? "stderr" : "warning";
                 const lineNum = d.span?.line || 0;
                 const col = d.span?.col || 0;
-                appendConsole(
-                    d.severity === "error" || d.severity === "fail" ? "stderr" : "stdout",
-                    `\n${tag}[${d.slug}]: ${d.summary}`
-                );
-                appendConsole("stdout",
+                appendConsole(channel, `\n${tag}[${d.slug}]: ${d.summary}`);
+                appendConsole(channel,
                     `  at: ${d.span?.file || "playground"}:${lineNum}:${col}`);
                 if (d.repair?.primary) {
-                    appendConsole("stdout", `  repair: ${d.repair.primary}`);
+                    appendConsole(channel, `  repair: ${d.repair.primary}`);
                 }
             }
 
