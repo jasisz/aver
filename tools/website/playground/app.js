@@ -742,6 +742,18 @@ const EXAMPLES = {
     shapes: `type Shape\n    Circle(Float)\n    Rectangle(Float, Float)\n\nfn area(shape: Shape) -> Float\n    match shape\n        Shape.Circle(r) -> 3.14159 * r * r\n        Shape.Rectangle(w, h) -> w * h\n\nfn main() -> Unit\n    ! [Console.print]\n    c = Shape.Circle(5.0)\n    r = Shape.Rectangle(3.0, 4.0)\n    Console.print("circle area = {Float.toString(area(c))}")\n    Console.print("rect area = {Float.toString(area(r))}")\n\nverify area\n    area(Shape.Circle(1.0)) => 3.14159\n    area(Shape.Rectangle(3.0, 4.0)) => 12.0`,
     quicksort: `fn filterLess(xs: List<Int>, pivot: Int) -> List<Int>\n    match xs\n        [] -> []\n        [h, ..t] -> match h < pivot\n            true -> List.prepend(h, filterLess(t, pivot))\n            false -> filterLess(t, pivot)\n\nfn filterGte(xs: List<Int>, pivot: Int) -> List<Int>\n    match xs\n        [] -> []\n        [h, ..t] -> match h >= pivot\n            true -> List.prepend(h, filterGte(t, pivot))\n            false -> filterGte(t, pivot)\n\nfn quicksort(xs: List<Int>) -> List<Int>\n    match xs\n        [] -> []\n        [pivot, ..rest] -> List.concat(List.concat(quicksort(filterLess(rest, pivot)), [pivot]), quicksort(filterGte(rest, pivot)))\n\nfn main() -> Unit\n    ! [Console.print]\n    input = [38, 27, 43, 3, 9, 82, 10]\n    Console.print("input:  {input}")\n    Console.print("sorted: {quicksort(input)}")\n\nverify quicksort\n    quicksort([]) => []\n    quicksort([3, 1, 2]) => [1, 2, 3]`,
     rle: `type RlePair\n    Pair(String, Int)\n\nfn encode(chars: List<String>, current: String, count: Int, acc: List<RlePair>) -> List<RlePair>\n    match chars\n        [] -> List.reverse(List.prepend(RlePair.Pair(current, count), acc))\n        [h, ..t] -> match h == current\n            true -> encode(t, current, count + 1, acc)\n            false -> encode(t, h, 1, List.prepend(RlePair.Pair(current, count), acc))\n\nfn rleEncode(input: String) -> List<RlePair>\n    chars = String.chars(input)\n    match chars\n        [] -> []\n        [first, ..rest] -> encode(rest, first, 1, [])\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(rleEncode("aaabbbccddddee"))`,
+
+    // ─── Trust-loop starters ──────────────────────────────────────────
+    // Each demonstrates one leg of Aver's thesis: effects → verify →
+    // decisions → errors-that-teach. Deep-linkable via ?example=<slug>.
+
+    "effect-violation": `module Starter\n    intent = "greet the user"\n\nfn greet() -> Unit\n    Console.print("hello, world")\n`,
+
+    "verify-first": `module Starter\n    intent = "pure arithmetic, locked by verify"\n\nfn add(a: Int, b: Int) -> Int\n    ? "sum of two ints"\n    a + b\n\nverify add\n    add(1, 2) => 3\n    add(2, 3) => 5\n    add(0, 0) => 0\n`,
+
+    "decision-block": `module Payments\n    intent = "transactions as append-only log"\n\ndecision ImmutableTransactions\n    date = "2026-04-20"\n    reason =\n        "Audit trail requires transactions be append-only and non-modifiable."\n        "Mutable ledger would break compliance with SOX."\n    chosen = "ImmutableWithVersioning"\n    rejected = ["MutableLedger"]\n    impacts = [createTransaction]\n\nfn createTransaction(amount: Int) -> Int\n    ? "build an immutable transaction record"\n    amount\n\nverify createTransaction\n    createTransaction(100) => 100\n    createTransaction(0) => 0\n`,
+
+    "result-monadic": `module Starter\n    intent = "idiomatic Result with ? short-circuit"\n\nfn parseNumber(s: String) -> Result<Int, String>\n    ? "parse a string into an int, with a friendly error"\n    match Int.fromString(s)\n        Result.Ok(n) -> Result.Ok(n)\n        Result.Err(_) -> Result.Err("not a number: {s}")\n\nfn doubleParsed(s: String) -> Result<Int, String>\n    ? "parse then double; propagates parse errors via ?"\n    n = parseNumber(s)?\n    Result.Ok(n + n)\n\nverify parseNumber\n    parseNumber("42") => Result.Ok(42)\n    parseNumber("abc") => Result.Err("not a number: abc")\n\nverify doubleParsed\n    doubleParsed("21") => Result.Ok(42)\n    doubleParsed("oops") => Result.Err("not a number: oops")\n`,
 };
 
 const codeEditor = document.querySelector("[data-code-editor]");
@@ -1427,6 +1439,15 @@ const urlGame = new URLSearchParams(window.location.search).get("game");
 if (urlGame) {
     const btn = document.querySelector(`[data-game="${urlGame}"]`);
     if (btn) btn.click();
+}
+
+// Auto-load starter from ?example= URL parameter. Shareable link that
+// drops the user straight into a trust-loop demo.
+const urlExample = new URLSearchParams(window.location.search).get("example");
+if (urlExample && EXAMPLES[urlExample] && codeEditor) {
+    codeEditor.value = EXAMPLES[urlExample];
+    if (examplesSelect) examplesSelect.value = urlExample;
+    updateHighlight();
 }
 
 // Draggable divider between source viewer and game output

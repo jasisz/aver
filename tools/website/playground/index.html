@@ -64,12 +64,20 @@
             <button type="button" data-context class="btn-subtle">Context</button>
             <select data-examples>
                 <option value="">— examples —</option>
-                <option value="hello">Hello World</option>
-                <option value="calculator">Calculator</option>
-                <option value="fibonacci">Fibonacci</option>
-                <option value="shapes">Shapes</option>
-                <option value="quicksort">Quicksort</option>
-                <option value="rle">RLE Encoding</option>
+                <optgroup label="Basics">
+                    <option value="hello">Hello World</option>
+                    <option value="calculator">Calculator</option>
+                    <option value="fibonacci">Fibonacci</option>
+                    <option value="shapes">Shapes</option>
+                    <option value="quicksort">Quicksort</option>
+                    <option value="rle">RLE Encoding</option>
+                </optgroup>
+                <optgroup label="Trust loop">
+                    <option value="effect-violation">Effect violation</option>
+                    <option value="verify-first">Verify-first</option>
+                    <option value="decision-block">Decision block</option>
+                    <option value="result-monadic">Result / monadic</option>
+                </optgroup>
             </select>
             <button type="button" data-stop disabled class="btn-subtle">Stop</button>
             <span class="toolbar-spacer"></span>

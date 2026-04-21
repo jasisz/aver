@@ -138,7 +138,7 @@ paths = [<span class="hl-string">"./data/**"</span>]</pre>
 
         <div class="feature-card">
             <h3>Errors that teach</h3>
-            <p>Diagnostics built for humans and LLMs — precise, actionable, with hints.</p>
+            <p>Diagnostics built for humans and LLMs — precise, actionable, with hints. <a href="playground/?example=effect-violation">Try in playground →</a></p>
             <pre class="code-block code-sm"><span class="hl-red">Error [3:5]:</span> <span class="hl-fn">'greet'</span> calls
   <span class="hl-fn">'Console.print'</span> but does
   not declare the effect.
@@ -148,7 +148,7 @@ paths = [<span class="hl-string">"./data/**"</span>]</pre>
 
         <div class="feature-card">
             <h3>AI-native navigation</h3>
-            <p><code>aver context</code> exports types, effects, intents — sized to fit an LLM window.</p>
+            <p><code>aver context</code> exports types, effects, intents — sized to fit an LLM window. Also runs in-browser via the playground Context panel.</p>
             <pre class="code-block code-sm"><span class="hl-muted">$</span> aver context app.av
 
 <span class="hl-comment"># Module: Main</span>
@@ -160,7 +160,7 @@ paths = [<span class="hl-string">"./data/**"</span>]</pre>
 
         <div class="feature-card">
             <h3>Formal verification</h3>
-            <p>Verify blocks export to <em>Lean 4</em> proofs and <em>Dafny</em> lemmas. Specs become machine-checked.</p>
+            <p>Verify blocks export to <em>Lean 4</em> proofs and <em>Dafny</em> lemmas. Specs become machine-checked. Run verify locally or <a href="playground/?example=verify-first">in-browser</a>.</p>
             <pre class="code-block code-sm"><span class="hl-comment">-- Generated Lean 4:</span>
 <span class="hl-keyword">example</span> :
   fromString <span class="hl-string">"[1,2]"</span> =
