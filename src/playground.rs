@@ -70,6 +70,44 @@ pub fn context_source(source: &str) -> String {
     analyze_source(source, &opts).to_json()
 }
 
+/// Audit: three-axis health check — static analysis (every enabled
+/// collector), verify block execution, and format-check. Equivalent of
+/// the CLI `aver audit` but single-file. Returns a canonical
+/// [`AnalysisReport`](crate::diagnostics::AnalysisReport) bundle with
+/// diagnostics + verify_summary.
+#[cfg(feature = "runtime")]
+pub fn audit_source(source: &str) -> String {
+    use crate::diagnostics::needs_format_diagnostic;
+
+    let mut opts = AnalyzeOptions::new("playground");
+    opts.include_verify_run = true;
+    let mut report = analyze_source(source, &opts);
+
+    // Dodaj format-check jako diagnostic w bundle (parity z CLI audit).
+    #[cfg(feature = "tty-render")]
+    if let Ok((formatted, violations)) = crate::format::try_format_source(source)
+        && formatted != source
+    {
+        report.diagnostics.push(needs_format_diagnostic(
+            "playground",
+            &violations,
+            source,
+        ));
+    }
+
+    report.to_json()
+}
+
+/// Format the source and return the rewritten text. Non-mutating by
+/// itself — caller (JS) replaces editor contents. Returns the original
+/// source unchanged on parse error.
+#[cfg(feature = "tty-render")]
+pub fn format_source(source: &str) -> String {
+    crate::format::try_format_source(source)
+        .map(|(text, _violations)| text)
+        .unwrap_or_else(|_| source.to_string())
+}
+
 #[cfg(feature = "playground")]
 mod bindgen {
     use wasm_bindgen::prelude::*;
@@ -97,5 +135,15 @@ mod bindgen {
     #[wasm_bindgen]
     pub fn aver_context(source: &str) -> String {
         super::context_source(source)
+    }
+
+    #[wasm_bindgen]
+    pub fn aver_audit(source: &str) -> String {
+        super::audit_source(source)
+    }
+
+    #[wasm_bindgen]
+    pub fn aver_format(source: &str) -> String {
+        super::format_source(source)
     }
 }

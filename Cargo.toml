@@ -45,7 +45,7 @@ terminal = ["aver-rt/terminal"]
 tty-render = ["dep:colored"]
 wasm = ["wasm-compile", "dep:wasmtime"]
 wasm-compile = ["dep:wasm-encoder"]
-playground = ["wasm-compile", "dep:wasm-bindgen", "runtime"]
+playground = ["wasm-compile", "dep:wasm-bindgen", "runtime", "tty-render"]
 
 [dependencies]
 aver-memory = { path = "aver-memory", version = "=0.2.2" }

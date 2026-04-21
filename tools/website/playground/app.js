@@ -1219,6 +1219,150 @@ if (contextBtn) {
     });
 }
 
+// Audit button — three-axis gate: static checks + verify + format.
+// This is what a CI pipeline would run. Output is grouped by axis so
+// the learner sees where each signal comes from.
+const auditBtn = document.querySelector("[data-audit]");
+if (auditBtn) {
+    auditBtn.addEventListener("click", async () => {
+        const source = codeEditor?.value;
+        if (!source?.trim()) return;
+
+        setWorkspaceMode("edit");
+        setOutputMode("console");
+        state.activeGame = null;
+        clearOutput();
+
+        try {
+            const comp = await loadCompiler();
+            setStatus("Auditing…", "info");
+            const json = comp.aver_audit(source);
+            const bundle = JSON.parse(json);
+            const diagnostics = bundle.diagnostics || [];
+            const verifySummary = bundle.verify_summary;
+
+            const verifyFailSlugs = new Set([
+                "verify-mismatch", "verify-runtime-error", "verify-unexpected-err",
+            ]);
+            const formatSlugs = new Set(["needs-format"]);
+
+            const verifyFailures = diagnostics.filter((d) => verifyFailSlugs.has(d.slug));
+            const formatIssues = diagnostics.filter((d) => formatSlugs.has(d.slug));
+            const staticIssues = diagnostics.filter(
+                (d) => !verifyFailSlugs.has(d.slug) && !formatSlugs.has(d.slug)
+            );
+
+            const staticErrors = staticIssues.filter(
+                (d) => d.severity === "error" || d.severity === "fail"
+            ).length;
+            const staticWarnings = staticIssues.length - staticErrors;
+            const verifyFailed = verifyFailures.length;
+            const verifyPassed = (verifySummary?.blocks || [])
+                .reduce((acc, b) => acc + b.passed, 0);
+            const verifyTotal = (verifySummary?.blocks || [])
+                .reduce((acc, b) => acc + b.total, 0);
+            const needsFormat = formatIssues.length > 0;
+
+            const renderDiag = (d) => {
+                const isErr = d.severity === "error" || d.severity === "fail";
+                const channel = isErr ? "stderr" : "warning";
+                appendConsole(channel, `  ${d.severity}[${d.slug}]: ${d.summary}`);
+                appendConsole("stdout",
+                    `    at: ${d.span?.file || "playground"}:${d.span?.line || 0}:${d.span?.col || 0}`);
+                if (d.repair?.primary) {
+                    appendConsole("stdout", `    repair: ${d.repair.primary}`);
+                }
+            };
+
+            // ── Section: Static Checks ─────────────────────────────
+            appendConsole("section-title",
+                "## Static Checks — types, contracts, perf, naming");
+            appendConsole("section-hint",
+                "   What `aver check` runs. Catches code smells before the program runs.");
+            if (staticIssues.length === 0) {
+                appendConsole("success", "  ✓ No static issues");
+            } else {
+                for (const d of staticIssues) renderDiag(d);
+            }
+
+            // ── Section: Verify ────────────────────────────────────
+            appendConsole("section-title",
+                "## Verify — executed contract checks");
+            appendConsole("section-hint",
+                "   Each `verify` block's cases run in the VM. Pass rate tells you how well your function matches its spec.");
+            if (verifySummary?.blocks?.length) {
+                for (const b of verifySummary.blocks) {
+                    const tag = b.failed > 0 ? "✗" : "✓";
+                    const channel = b.failed > 0 ? "stderr" : "success";
+                    const breakdown = b.skipped > 0
+                        ? `${b.passed}/${b.total} passed, ${b.skipped} skipped`
+                        : `${b.passed}/${b.total} passed`;
+                    appendConsole(channel, `  ${tag} ${b.name}  ${breakdown}`);
+                }
+                for (const d of verifyFailures) renderDiag(d);
+            } else {
+                appendConsole("section-hint", "  (no verify blocks in this file)");
+            }
+
+            // ── Section: Format ────────────────────────────────────
+            appendConsole("section-title",
+                "## Format — canonical Aver shape");
+            appendConsole("section-hint",
+                "   Mechanical rewrites: indent, effect order, verify placement. Click [Format] in the toolbar to apply.");
+            if (formatIssues.length === 0) {
+                appendConsole("success", "  ✓ Formatter-clean");
+            } else {
+                for (const d of formatIssues) renderDiag(d);
+            }
+
+            // ── Verdict ────────────────────────────────────────────
+            const parts = [];
+            if (staticErrors > 0) parts.push(`${staticErrors} error(s)`);
+            if (staticWarnings > 0) parts.push(`${staticWarnings} warning(s)`);
+            if (verifyTotal > 0) {
+                parts.push(`verify ${verifyPassed}/${verifyTotal}`);
+            }
+            if (needsFormat) parts.push("needs format");
+
+            const allClean = staticErrors === 0 && staticWarnings === 0
+                && verifyFailed === 0 && !needsFormat;
+            setStatus(
+                allClean ? "Audit: clean" : `Audit: ${parts.join(", ")}`,
+                allClean ? "success" : (staticErrors > 0 || verifyFailed > 0 ? "error" : "info")
+            );
+        } catch (e) {
+            appendConsole("stderr", e.message || String(e));
+            setStatus("Audit failed", "error");
+        }
+    });
+}
+
+// Format button — rewrite editor content to canonical form.
+// Non-destructive on parse error: falls back to original text.
+const formatBtn = document.querySelector("[data-format]");
+if (formatBtn) {
+    formatBtn.addEventListener("click", async () => {
+        const source = codeEditor?.value;
+        if (!source?.trim()) return;
+
+        try {
+            const comp = await loadCompiler();
+            setStatus("Formatting…", "info");
+            const rewritten = comp.aver_format(source);
+            if (rewritten === source) {
+                setStatus("Already formatted", "success");
+                return;
+            }
+            codeEditor.value = rewritten;
+            updateHighlight();
+            setStatus("Formatted", "success");
+        } catch (e) {
+            appendConsole("stderr", e.message || String(e));
+            setStatus("Format failed", "error");
+        }
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Game source viewer
 // ---------------------------------------------------------------------------

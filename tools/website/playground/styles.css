@@ -293,6 +293,18 @@ body {
 .console-surface .stderr { color: var(--red); }
 .console-surface .warning { color: var(--orange); }
 .console-surface .success { color: var(--green); }
+.console-surface .section-title {
+    color: var(--muted);
+    font-weight: 600;
+    margin-top: 0.5rem;
+    padding-top: 0.3rem;
+    border-top: 1px solid var(--border);
+}
+.console-surface .section-hint {
+    color: var(--muted);
+    font-style: italic;
+    opacity: 0.75;
+}
 
 .readline-bar {
     display: flex;
