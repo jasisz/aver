@@ -8,23 +8,42 @@ impl TypeChecker {
             && let Some(module) = Self::module_decl(items)
         {
             match crate::source::load_module_tree(&module.depends, base) {
-                Ok(modules) => {
-                    let pairs: Vec<_> = modules
-                        .iter()
-                        .map(|m| (m.dep_name.clone(), m.items.clone()))
-                        .collect();
-                    let registry = crate::visibility::SymbolRegistry::from_modules(&pairs);
-                    if let Err(e) = self.integrate_registry(&registry) {
-                        self.error(e);
-                    }
-                }
+                Ok(modules) => self.integrate_loaded_modules(&modules),
                 Err(e) => self.error(e),
             }
         }
 
+        self.check_body(items);
+    }
+
+    /// Type-check `items` against a caller-supplied list of already
+    /// loaded dependency modules (skips disk IO). Used by the
+    /// playground so multi-file projects stored in an in-browser map
+    /// type-check without touching a filesystem.
+    pub(super) fn check_with_loaded(
+        &mut self,
+        items: &[TopLevel],
+        loaded: &[crate::source::LoadedModule],
+    ) {
+        self.build_signatures(items);
+        self.integrate_loaded_modules(loaded);
+        self.check_body(items);
+    }
+
+    fn integrate_loaded_modules(&mut self, modules: &[crate::source::LoadedModule]) {
+        let pairs: Vec<_> = modules
+            .iter()
+            .map(|m| (m.dep_name.clone(), m.items.clone()))
+            .collect();
+        let registry = crate::visibility::SymbolRegistry::from_modules(&pairs);
+        if let Err(e) = self.integrate_registry(&registry) {
+            self.error(e);
+        }
+    }
+
+    fn check_body(&mut self, items: &[TopLevel]) {
         self.check_top_level_stmts(items);
         self.check_verify_blocks(items);
-
         for item in items {
             if let TopLevel::FnDef(f) = item {
                 self.check_fn(f);

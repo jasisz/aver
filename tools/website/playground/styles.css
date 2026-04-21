@@ -211,7 +211,6 @@ body {
 .compile-meta:empty { display: none; }
 .compile-meta .size-label { color: var(--muted); }
 .compile-meta .size-main { color: var(--text); }
-.compile-meta .size-aside { color: var(--muted); font-style: italic; }
 .compile-meta .compile-footnote {
     color: var(--accent);
     cursor: help;

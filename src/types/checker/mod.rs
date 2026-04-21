@@ -69,8 +69,23 @@ pub fn run_type_check_with_base(items: &[TopLevel], base_dir: Option<&str>) -> V
 pub fn run_type_check_full(items: &[TopLevel], base_dir: Option<&str>) -> TypeCheckResult {
     let mut checker = TypeChecker::new();
     checker.check(items, base_dir);
+    finalize_check_result(checker, items)
+}
 
-    // Export fn_sigs for memo analysis
+/// Variant of [`run_type_check_full`] that uses pre-loaded dependency
+/// modules instead of resolving them from disk. The playground feeds
+/// this from its in-memory virtual fs so multi-file projects type-
+/// check without any filesystem access.
+pub fn run_type_check_with_loaded(
+    items: &[TopLevel],
+    loaded: &[crate::source::LoadedModule],
+) -> TypeCheckResult {
+    let mut checker = TypeChecker::new();
+    checker.check_with_loaded(items, loaded);
+    finalize_check_result(checker, items)
+}
+
+fn finalize_check_result(checker: TypeChecker, items: &[TopLevel]) -> TypeCheckResult {
     let fn_sigs: HashMap<String, (Vec<Type>, Type, Vec<String>)> = checker
         .fn_sigs
         .iter()
@@ -82,7 +97,6 @@ pub fn run_type_check_full(items: &[TopLevel], base_dir: Option<&str>) -> TypeCh
         })
         .collect();
 
-    // Compute memo-safe named types
     let memo_safe_types = checker.compute_memo_safe_types(items);
 
     TypeCheckResult {

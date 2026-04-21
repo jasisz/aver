@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::ast::TopLevel;
@@ -90,6 +90,117 @@ pub struct LoadedModule {
     pub dep_name: String,
     pub items: Vec<TopLevel>,
     pub path: PathBuf,
+}
+
+/// Sibling of [`load_module_tree`] that resolves dependency modules
+/// from an in-memory file map instead of the filesystem. Used by the
+/// playground so a browser-side virtual fs can compile a multi-file
+/// project without disk IO.
+///
+/// The map's keys must be file paths matching what
+/// [`find_module_file`] would produce (e.g. `"types.av"`,
+/// `"rogue/combat.av"`). Both lowercase and exact casings are tried
+/// for each requested dep, mirroring the on-disk search order.
+pub fn load_module_tree_from_map(
+    root_deps: &[String],
+    files: &HashMap<String, String>,
+) -> Result<Vec<LoadedModule>, String> {
+    let mut result = Vec::new();
+    let mut loaded: HashSet<String> = HashSet::new();
+    let mut loading: Vec<String> = Vec::new();
+    for dep in root_deps {
+        load_recursive_from_map(dep, files, &mut loaded, &mut loading, &mut result)?;
+    }
+    Ok(result)
+}
+
+fn load_recursive_from_map(
+    dep_name: &str,
+    files: &HashMap<String, String>,
+    loaded: &mut HashSet<String>,
+    loading: &mut Vec<String>,
+    result: &mut Vec<LoadedModule>,
+) -> Result<(), String> {
+    let key = find_file_key_in_map(dep_name, files)
+        .ok_or_else(|| format!("Module '{}' not found in virtual fs", dep_name))?;
+
+    if loaded.contains(&key) {
+        return Ok(());
+    }
+    if loading.contains(&key) {
+        let chain = loading
+            .iter()
+            .cloned()
+            .chain(std::iter::once(key.clone()))
+            .collect::<Vec<_>>()
+            .join(" -> ");
+        return Err(format!("Circular import: {}", chain));
+    }
+    loading.push(key.clone());
+
+    let source = files.get(&key).unwrap();
+    let items =
+        parse_source(source).map_err(|e| format!("Parse error in '{}': {}", dep_name, e))?;
+    require_module_declaration(&items, &key)?;
+
+    if let Some(module) = visibility::module_decl(&items) {
+        let expected = dep_name.rsplit('.').next().unwrap_or(dep_name);
+        if module.name != expected {
+            return Err(format!(
+                "Module name mismatch: expected '{}' (from dep '{}'), found '{}' in '{}'",
+                expected, dep_name, module.name, key
+            ));
+        }
+        for sub_dep in &module.depends {
+            load_recursive_from_map(sub_dep, files, loaded, loading, result)?;
+        }
+    }
+
+    loading.pop();
+    loaded.insert(key.clone());
+    result.push(LoadedModule {
+        dep_name: dep_name.to_string(),
+        items,
+        path: PathBuf::from(&key),
+    });
+    Ok(())
+}
+
+fn find_file_key_in_map(dep_name: &str, files: &HashMap<String, String>) -> Option<String> {
+    let parts: Vec<&str> = dep_name.split('.').filter(|s| !s.is_empty()).collect();
+    if parts.is_empty() {
+        return None;
+    }
+    let lower_rel = format!(
+        "{}.av",
+        parts
+            .iter()
+            .map(|p| p.to_lowercase())
+            .collect::<Vec<_>>()
+            .join("/")
+    );
+    let exact_rel = format!("{}.av", parts.join("/"));
+    let last = parts.last().copied().unwrap_or(dep_name);
+    let last_lower = format!("{}.av", last.to_lowercase());
+    let last_exact = format!("{}.av", last);
+
+    for candidate in [&lower_rel, &exact_rel, &last_lower, &last_exact] {
+        if files.contains_key(candidate) {
+            return Some(candidate.clone());
+        }
+    }
+    // Fallback: case-insensitive scan — browsers let users name files
+    // however they like, and dep names are canonical-cased anyway.
+    let wanted = last.to_lowercase();
+    files
+        .keys()
+        .find(|k| {
+            Path::new(k)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .is_some_and(|stem| stem.eq_ignore_ascii_case(&wanted))
+        })
+        .cloned()
 }
 
 /// Load a dependency tree starting from `root_deps`.

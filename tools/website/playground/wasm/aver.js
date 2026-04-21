@@ -55,6 +55,28 @@ export function aver_compile(source) {
 }
 
 /**
+ * Compile a multi-file project. `files_json` is a JSON object
+ * mapping path -> source (e.g. `{"types.av": "...", "main.av":
+ * "..."}`). `entry` is the key of the entry file.
+ * @param {string} files_json
+ * @param {string} entry
+ * @returns {Uint8Array}
+ */
+export function aver_compile_project(files_json, entry) {
+    const ptr0 = passStringToWasm0(files_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(entry, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.aver_compile_project(ptr0, len0, ptr1, len1);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
+}
+
+/**
  * @param {string} source
  * @returns {string}
  */

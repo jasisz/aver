@@ -1,12 +1,14 @@
 //! Browser-facing entry points for the Aver playground.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
+use crate::ast::TopLevel;
 use crate::codegen;
 use crate::diagnostics::{AnalyzeOptions, analyze_source};
-use crate::source::parse_source;
+use crate::resolver;
+use crate::source::{LoadedModule, load_module_tree_from_map, parse_source};
 use crate::tco;
-use crate::types::checker::run_type_check_full;
+use crate::types::checker::{run_type_check_full, run_type_check_with_loaded};
 
 /// Compile Aver source text to WASM bytes.
 pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
@@ -15,12 +17,7 @@ pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
 
     let tc_result = run_type_check_full(&items, None);
     if !tc_result.errors.is_empty() {
-        let msgs: Vec<String> = tc_result
-            .errors
-            .iter()
-            .map(|e| format!("error[{}:{}]: {}", e.line, e.col, e.message))
-            .collect();
-        return Err(msgs.join("\n"));
+        return Err(format_tc_errors(&tc_result.errors));
     }
 
     let ctx = codegen::build_context(
@@ -31,6 +28,97 @@ pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
         vec![],
     );
     codegen::wasm::emit_wasm(&ctx)
+}
+
+/// Compile a multi-file Aver project from an in-memory file map.
+/// `files` maps `path -> source` (matching what `find_module_file`
+/// expects: e.g. `"types.av"`, `"rogue/combat.av"`). `entry` is the
+/// key of the file holding `module Main` (the `fn main` live point).
+///
+/// Mirrors the CLI's multi-file build, minus disk IO — the same
+/// type checker, resolver, and codegen are reused verbatim so the
+/// browser sees identical semantics.
+pub fn compile_project_to_wasm(
+    files: &HashMap<String, String>,
+    entry: &str,
+) -> Result<Vec<u8>, String> {
+    let entry_source = files
+        .get(entry)
+        .ok_or_else(|| format!("Entry '{}' not present in file map", entry))?;
+
+    let mut entry_items = parse_source(entry_source)?;
+    tco::transform_program(&mut entry_items);
+
+    let root_depends = module_depends(&entry_items);
+    let loaded = load_module_tree_from_map(&root_depends, files)?;
+
+    let tc_result = run_type_check_with_loaded(&entry_items, &loaded);
+    if !tc_result.errors.is_empty() {
+        return Err(format_tc_errors(&tc_result.errors));
+    }
+
+    resolver::resolve_program(&mut entry_items);
+
+    let modules: Vec<codegen::ModuleInfo> = loaded
+        .into_iter()
+        .map(|m| loaded_to_module_info(m))
+        .collect();
+
+    let ctx = codegen::build_context(
+        entry_items,
+        &tc_result,
+        HashSet::new(),
+        "playground".to_string(),
+        modules,
+    );
+    codegen::wasm::emit_wasm(&ctx)
+}
+
+fn module_depends(items: &[TopLevel]) -> Vec<String> {
+    items
+        .iter()
+        .find_map(|i| match i {
+            TopLevel::Module(m) => Some(m.depends.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+fn loaded_to_module_info(m: LoadedModule) -> codegen::ModuleInfo {
+    let mut items = m.items;
+    tco::transform_program(&mut items);
+    resolver::resolve_program(&mut items);
+
+    let depends = module_depends(&items);
+    let type_defs = items
+        .iter()
+        .filter_map(|i| match i {
+            TopLevel::TypeDef(td) => Some(td.clone()),
+            _ => None,
+        })
+        .collect();
+    let fn_defs = items
+        .iter()
+        .filter_map(|i| match i {
+            TopLevel::FnDef(fd) if fd.name != "main" => Some(fd.clone()),
+            _ => None,
+        })
+        .collect();
+
+    codegen::ModuleInfo {
+        prefix: m.dep_name,
+        depends,
+        type_defs,
+        fn_defs,
+    }
+}
+
+fn format_tc_errors(errors: &[crate::types::checker::TypeError]) -> String {
+    errors
+        .iter()
+        .map(|e| format!("error[{}:{}]: {}", e.line, e.col, e.message))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Run the single-file analysis pipeline and return the canonical
@@ -117,6 +205,16 @@ mod bindgen {
         super::compile_to_wasm(source).map_err(|e| JsError::new(&e))
     }
 
+    /// Compile a multi-file project. `files_json` is a JSON object
+    /// mapping path -> source (e.g. `{"types.av": "...", "main.av":
+    /// "..."}`). `entry` is the key of the entry file.
+    #[wasm_bindgen]
+    pub fn aver_compile_project(files_json: &str, entry: &str) -> Result<Vec<u8>, JsError> {
+        let files: std::collections::HashMap<String, String> =
+            serde_json::from_str(files_json).map_err(|e| JsError::new(&e.to_string()))?;
+        super::compile_project_to_wasm(&files, entry).map_err(|e| JsError::new(&e))
+    }
+
     #[wasm_bindgen]
     pub fn aver_check(source: &str) -> String {
         super::check_source(source)
@@ -145,5 +243,51 @@ mod bindgen {
     #[wasm_bindgen]
     pub fn aver_format(source: &str) -> String {
         super::format_source(source)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn read(path: &str) -> String {
+        std::fs::read_to_string(path).unwrap_or_else(|_| panic!("missing {}", path))
+    }
+
+    #[test]
+    fn compiles_multi_file_rogue_from_virtual_fs() {
+        let root = "tools/website/playground/sources/examples/games/rogue";
+        let mut files: HashMap<String, String> = HashMap::new();
+        for f in ["types", "map", "fov", "pathfinding", "combat", "render", "main"] {
+            files.insert(format!("{}.av", f), read(&format!("{}/{}.av", root, f)));
+        }
+        let bytes = compile_project_to_wasm(&files, "main.av")
+            .expect("rogue project should compile from virtual fs");
+        assert!(bytes.len() > 1000, "emitted wasm looks too small: {}", bytes.len());
+    }
+
+    #[test]
+    fn reports_missing_dep_clearly() {
+        let mut files = HashMap::new();
+        files.insert(
+            "main.av".to_string(),
+            [
+                "module Main",
+                "    intent = \"demo\"",
+                "    depends [Missing]",
+                "",
+                "fn main() -> Unit",
+                "    ! [Console.print]",
+                "    Console.print(\"hi\")",
+                "",
+            ].join("\n"),
+        );
+        let err = compile_project_to_wasm(&files, "main.av").unwrap_err();
+        assert!(
+            err.contains("Missing") || err.contains("not found"),
+            "expected missing-module error, got: {}",
+            err
+        );
     }
 }

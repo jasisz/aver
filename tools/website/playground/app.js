@@ -1015,24 +1015,39 @@ if (compileRunBtn) {
             runSelectedModule(fixed);
             return;
         }
-        const source = getActiveSource();
-        if (!source.trim()) return;
+        const entry = pickEntryFile();
+        const source = entry ? state.files.get(entry) : getActiveSource();
+        if (!source || !source.trim()) return;
 
         document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
         state.activeGame = null;
 
-        const usesTerminal = source.includes("Terminal.");
-        setOutputMode(usesTerminal ? "terminal" : "console");
+        // Terminal vs console detection needs to look at *all* sources
+        // for multi-file projects — main.av might import a renderer
+        // that's the only thing calling Terminal.
+        const anySourceUsesTerminal = state.files.size > 0
+            ? Array.from(state.files.values()).some(s => s.includes("Terminal."))
+            : source.includes("Terminal.");
+        setOutputMode(anySourceUsesTerminal ? "terminal" : "console");
         clearOutput();
-        // Show readline bar for console programs
         const readlineBar = document.querySelector("[data-readline-bar]");
-        if (readlineBar) readlineBar.style.display = usesTerminal ? "none" : "flex";
+        if (readlineBar) readlineBar.style.display = anySourceUsesTerminal ? "none" : "flex";
 
         try {
             const comp = await loadCompiler();
-            setStatus("Compiling…", "info");
             const t0 = performance.now();
-            const wasmBytes = comp.aver_compile(source);
+            let wasmBytes;
+            // Route multi-file projects through the project binding so
+            // `depends [Types, Map, ...]` resolve against the virtual
+            // fs instead of erroring on "unknown module".
+            if (state.files.size > 1 && entry) {
+                setStatus(`Compiling project (entry: ${entry})…`, "info");
+                const filesObj = Object.fromEntries(state.files);
+                wasmBytes = comp.aver_compile_project(JSON.stringify(filesObj), entry);
+            } else {
+                setStatus("Compiling…", "info");
+                wasmBytes = comp.aver_compile(source);
+            }
             const ms = (performance.now() - t0).toFixed(0);
 
             state.wasmBytes = wasmBytes.buffer;
@@ -1046,6 +1061,21 @@ if (compileRunBtn) {
             appendConsole("stderr", msg);
         }
     });
+}
+
+// Decide which file in the virtual fs is the `fn main` entry for
+// project compilation. Prefer "main.av" (CLI convention); fall back
+// to any file whose source declares `module Main`; otherwise the
+// active tab.
+function pickEntryFile() {
+    if (state.files.size === 0) return null;
+    for (const key of state.files.keys()) {
+        if (/^main\.av$/i.test(key) || /\/main\.av$/i.test(key)) return key;
+    }
+    for (const [key, src] of state.files) {
+        if (/^\s*module\s+Main\b/m.test(src)) return key;
+    }
+    return state.activeFile || state.files.keys().next().value || null;
 }
 
 const highlightEl = document.querySelector("[data-highlight]");
@@ -1092,7 +1122,7 @@ function forkPrebuiltIfEdited() {
             state.pristineFiles = null;
             state.wasmBytes = null;
             state.wasmName = null;
-            setStatus("Source edited — next ▶ Run will recompile the active file.", "info");
+            setStatus("Edited — Run rebuilds.", "info");
             return;
         }
     }
@@ -1489,14 +1519,14 @@ function renderPrebuiltMeta(name, rawSize) {
     main.className = "size-main";
     main.textContent = `${name} · ${(rawSize / 1024).toFixed(1)} KiB`;
     dom.compileMeta.appendChild(main);
-    const aside = document.createElement("span");
-    aside.className = "size-aside";
-    aside.textContent = " (wasm-opt -Oz)";
-    aside.title =
-        "Game binaries are compiled by the CLI with `aver compile --wasm-opt oz` " +
-        "and served as static files. Edit any tab to fork — next ▶ Run recompiles " +
-        "the active file in the browser.";
-    dom.compileMeta.appendChild(aside);
+    const footnote = document.createElement("span");
+    footnote.className = "compile-footnote";
+    footnote.textContent = "*";
+    footnote.title =
+        "Game binaries are compiled by the CLI with `aver compile " +
+        "--wasm-opt oz` and served as static files. Edit any tab to " +
+        "fork — next ▶ Run recompiles the active file in the browser.";
+    dom.compileMeta.appendChild(footnote);
 }
 
 function renderCompileMeta(rawSize, compileMs) {
@@ -1513,19 +1543,15 @@ function renderCompileMeta(rawSize, compileMs) {
     main.textContent = `${compileMs}ms · ${(rawSize / 1024).toFixed(1)} KiB`;
     dom.compileMeta.appendChild(main);
 
-    const aside = document.createElement("span");
-    aside.className = "size-aside";
-    aside.textContent = " (incl. inline runtime)";
-    dom.compileMeta.appendChild(aside);
-
     const footnote = document.createElement("span");
     footnote.className = "compile-footnote";
     footnote.textContent = "*";
     footnote.title =
-        "Raw WASM size before wasm-opt. Most of this is Aver's inline runtime " +
-        "(bump allocator, strings, lists, maps) — your program logic is a small " +
-        "fraction. The CLI's `aver compile --wasm-opt oz` strips unused runtime; " +
-        "a one-line program typically drops to ~250 B.";
+        "Raw WASM size, no wasm-opt. Includes Aver's inline runtime " +
+        "(bump allocator, strings, lists, maps). The CLI's " +
+        "`aver compile --wasm-opt oz` strips unused runtime and " +
+        "simplifies the generated code — a one-line program drops to " +
+        "~250 B, real programs roughly halve.";
     dom.compileMeta.appendChild(footnote);
 }
 
