@@ -3090,13 +3090,19 @@ const GAME_TOUCH = {
 function deactivateGame() {
     state.activeGame = null;
     document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
-    buildTouchControls(null);
+    // Hide touch controls inline rather than calling buildTouchControls,
+    // which dereferences `const GAME_TOUCH` — a top-level const that's
+    // in the TDZ while bootstrap (loadExampleAsTab("hello") → this
+    // function) still runs. buildTouchControls itself is hoisted as a
+    // function decl, but its body's const lookup would throw and halt
+    // the rest of module init, leaving listeners (incl. game-click)
+    // unattached.
+    const tc = document.querySelector("[data-touch-controls]");
+    if (tc) {
+        tc.innerHTML = "";
+        tc.style.display = "none";
+    }
     if (dom.fileMeta) {
-        // Literal, not const, so hoisted calls during bootstrap don't
-        // hit a TDZ (function decls are hoisted, top-level `const`s
-        // are not — the mismatch silently broke game-click listener
-        // installation earlier because deactivateGame ran before its
-        // const sibling was initialised).
         dom.fileMeta.textContent = "drop .wasm · .av · folder · .replay.json";
     }
 }
