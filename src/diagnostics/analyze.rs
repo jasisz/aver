@@ -359,18 +359,24 @@ fn parse_error_diagnostic(msg: &str, source: &str, file: &str) -> Diagnostic {
         if source_lines.is_empty() {
             Vec::new()
         } else {
-            // Underline the offending token so parse errors read the
-            // same way type errors do. estimate_span_len scans
-            // forward from `col` until whitespace / punctuation, so
-            // `Expected X, found Y` actually points at Y.
-            let underline = source
-                .lines()
-                .nth(line.saturating_sub(1))
-                .map(|l| Underline {
-                    col: col.max(1),
-                    len: estimate_span_len(l, col.max(1)),
+            // Underline the offending token. Parser emits col =
+            // line_len + 1 for errors that fire at the newline
+            // (e.g. Unterminated string literal); clamp to the last
+            // real char so the caret doesn't float off the end of
+            // the line.
+            let underline = source.lines().nth(line.saturating_sub(1)).map(|l| {
+                let line_chars = l.chars().count();
+                let anchor = if col > line_chars && line_chars > 0 {
+                    line_chars
+                } else {
+                    col.max(1)
+                };
+                Underline {
+                    col: anchor,
+                    len: estimate_span_len(l, anchor),
                     label: String::new(),
-                });
+                }
+            });
             vec![AnnotatedRegion {
                 source_lines,
                 underline,

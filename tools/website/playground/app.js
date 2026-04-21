@@ -2574,9 +2574,10 @@ function renderDiagRegions(container, d) {
     }, 0);
     if (maxNum === 0) return;
     const gutter = String(maxNum).length;
+    const pad = " ".repeat(gutter);
     const sep = document.createElement("div");
     sep.className = "diag-snippet-line";
-    sep.textContent = `  ${" ".repeat(gutter)} |`;
+    sep.textContent = `  ${pad} |`;
     container.appendChild(sep);
 
     const isErr = d.severity === "error" || d.severity === "fail";
@@ -2589,40 +2590,49 @@ function renderDiagRegions(container, d) {
             gap.textContent = "  ...";
             container.appendChild(gap);
         }
-        const targetLineNum = lines[lines.length - 1]?.line_num;
-        const underline = region.underline;
         for (const sl of lines) {
             if (lastEmitted !== null && sl.line_num <= lastEmitted) continue;
             const num = String(sl.line_num).padStart(gutter, " ");
             const line = document.createElement("div");
             line.className = "diag-snippet-line";
-            // Highlight the error range inline when this is the
-            // target line. No separate caret row — avoids all the
-            // glyph-width alignment pain with em-dash / CJK / emoji,
-            // and reads like a VSCode squiggle straight in the code.
-            line.append(`  ${num} | `);
-            if (sl.line_num === targetLineNum && underline && underline.col > 0) {
-                const col = underline.col;
-                const len = Math.max(1, underline.len || 1);
-                const before = sl.text.slice(0, col - 1);
-                const mid = sl.text.slice(col - 1, col - 1 + len);
-                const after = sl.text.slice(col - 1 + len);
-                if (before) line.append(before);
-                const hi = document.createElement("span");
-                hi.className = `diag-snippet-caret ${isErr ? "diag-err" : "diag-warn"}`;
-                // If the error column sits past end of line (parser
-                // reports EOL with col = len+1), show a visible pin.
-                hi.textContent = mid || "▮";
-                line.appendChild(hi);
-                if (after) line.append(after);
-                if (underline.label) {
-                    line.append(`  ${underline.label}`);
-                }
-            } else {
-                line.append(sl.text);
-            }
+            line.textContent = `  ${num} | ${sl.text}`;
             container.appendChild(line);
             lastEmitted = sl.line_num;
+        }
+
+        const ul = region.underline;
+        if (ul && ul.col > 0) {
+            // Caret row below the snippet (same shape as CLI
+            // tty_render). Width-matching uses an invisible copy of
+            // the target line prefix as padding — `" ".repeat(col-1)`
+            // drifts on em-dash / CJK / emoji because those glyphs
+            // aren't exactly 1ch wide in most monospace fonts.
+            //
+            // Parser errors like Unterminated-string-at-newline
+            // report `col = lineLen + 1`. Clamp so the caret sits
+            // under the last real character of the line instead of
+            // floating in empty space after it.
+            const target = lines[lines.length - 1]?.text ?? "";
+            const targetLen = [...target].length;
+            const col = Math.min(ul.col, Math.max(1, targetLen));
+            const caretLen = Math.max(1, ul.len || 1);
+            const carets = "^".repeat(caretLen);
+            const before = [...target].slice(0, col - 1).join("");
+            const ulLine = document.createElement("div");
+            ulLine.className = "diag-snippet-line";
+            ulLine.append(`  ${pad} | `);
+            const ghost = document.createElement("span");
+            ghost.className = "diag-snippet-ghost";
+            ghost.textContent = before;
+            ulLine.appendChild(ghost);
+            const caret = document.createElement("span");
+            caret.className = `diag-snippet-caret ${isErr ? "diag-err" : "diag-warn"}`;
+            caret.textContent = carets;
+            ulLine.appendChild(caret);
+            if (ul.label) {
+                ulLine.appendChild(document.createTextNode(`  ${ul.label}`));
+            }
+            container.appendChild(ulLine);
         }
     }
 }

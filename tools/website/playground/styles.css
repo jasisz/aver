@@ -845,8 +845,6 @@ body {
 }
 .audit-section .diag-snippet-caret {
     font-weight: 700;
-    text-decoration: underline wavy;
-    text-underline-offset: 0.15em;
 }
 .audit-section .diag-snippet-caret.diag-err { color: var(--red); }
 .audit-section .diag-snippet-caret.diag-warn { color: var(--orange); }
