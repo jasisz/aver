@@ -794,8 +794,11 @@ document.querySelectorAll("[data-game]").forEach(btn => {
             // users don't see "compiled 0ms · 9.5 KiB" on a 29 KiB
             // roguelike that was shipped by the CLI.
             renderPrebuiltMeta(`${name}.wasm`, bytes.byteLength);
-            setStatus(`Native WASM · ${name}.wasm · ${sizeKiB} KiB`, "success");
-            runSelectedModule(isConsoleGame ? undefined : { cols: 80, rows: 35 });
+            // Don't auto-run — loading a game should surface the source
+            // for reading first. ▶ Run is right there when the user's
+            // ready. (Pre-edit: runs the prebuilt bytes; post-edit:
+            // forkPrebuiltIfEdited kicks in and Run recompiles.)
+            setStatus(`Loaded ${name}.wasm · ${sizeKiB} KiB · ▶ Run to play`, "success");
         } catch (e) {
             setStatus(`Failed to load ${name}: ${e.message}`, "error");
         }
