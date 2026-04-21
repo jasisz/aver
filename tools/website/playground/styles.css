@@ -79,13 +79,13 @@ body {
     display: flex;
     align-items: center;
     gap: 1rem;
-    padding: 0.25rem 0.75rem;
+    padding: 0.45rem 0.85rem;
     border-top: 1px solid var(--border);
     background: var(--surface);
-    font-size: 0.72rem;
+    font-size: 0.75rem;
     color: var(--muted);
     font-family: var(--font-mono);
-    min-height: 1.6rem;
+    min-height: 2rem;
     flex-shrink: 0;
 }
 .status-bar .status-spacer { flex: 1; }
