@@ -1627,6 +1627,13 @@ function contextToMarkdown(ctx) {
                 lines.push("");
                 lines.push(`**Flags:** ${flags.map((x) => `\`${x}\``).join(", ")}`);
             }
+            if ((f.effects || []).length > 0) {
+                lines.push("");
+                lines.push(`**Effects:** ${f.effects.map((x) => `\`${x}\``).join(", ")}`);
+            } else {
+                lines.push("");
+                lines.push(`**Effects:** _pure_`);
+            }
             if (f.verify_count > 0) {
                 lines.push("");
                 lines.push(`**Verify (${f.verify_count} case${f.verify_count > 1 ? "s" : ""}):**`);
@@ -1919,43 +1926,51 @@ function renderContextPanel(ctx) {
                 desc.textContent = `? "${f.description}"`;
                 card.appendChild(desc);
             }
-            // Effects already appear in f.signature as ` ! [...]`, so
-            // we only render tags that add orthogonal info: visibility,
-            // qualifiers, auto_memo / auto_tco.
+            // Signature now carries only params + return type (effects
+            // stripped in Rust render_signature), so effects get their
+            // own tag row here. Keeps the signature readable and makes
+            // the effect surface scannable at a glance.
             const tags = document.createElement("div");
             tags.className = "ctx-tags";
-            const hasTags =
-                (f.qualifiers || []).length > 0 ||
-                f.auto_memo ||
-                f.auto_tco ||
-                !f.is_exposed;
-            if (hasTags) {
-                if (!f.is_exposed) {
-                    const t = document.createElement("span");
-                    t.className = "ctx-tag";
-                    t.textContent = "private";
-                    tags.appendChild(t);
-                }
-                for (const q of f.qualifiers || []) {
-                    const t = document.createElement("span");
-                    t.className = "ctx-tag" + (q === "PURE" ? " pure" : "");
-                    t.textContent = q;
-                    tags.appendChild(t);
-                }
-                if (f.auto_memo) {
-                    const t = document.createElement("span");
-                    t.className = "ctx-tag pure";
-                    t.textContent = "AUTO_MEMO";
-                    tags.appendChild(t);
-                }
-                if (f.auto_tco) {
-                    const t = document.createElement("span");
-                    t.className = "ctx-tag pure";
-                    t.textContent = "AUTO_TCO";
-                    tags.appendChild(t);
-                }
-                card.appendChild(tags);
+            const effects = f.effects || [];
+            if (!f.is_exposed) {
+                const t = document.createElement("span");
+                t.className = "ctx-tag";
+                t.textContent = "private";
+                tags.appendChild(t);
             }
+            for (const q of f.qualifiers || []) {
+                const t = document.createElement("span");
+                t.className = "ctx-tag" + (q === "PURE" ? " pure" : "");
+                t.textContent = q;
+                tags.appendChild(t);
+            }
+            if (f.auto_memo) {
+                const t = document.createElement("span");
+                t.className = "ctx-tag pure";
+                t.textContent = "AUTO_MEMO";
+                tags.appendChild(t);
+            }
+            if (f.auto_tco) {
+                const t = document.createElement("span");
+                t.className = "ctx-tag pure";
+                t.textContent = "AUTO_TCO";
+                tags.appendChild(t);
+            }
+            if (effects.length === 0) {
+                const t = document.createElement("span");
+                t.className = "ctx-tag pure";
+                t.textContent = "! pure";
+                tags.appendChild(t);
+            } else {
+                for (const e of effects) {
+                    const t = document.createElement("span");
+                    t.className = "ctx-tag effect";
+                    t.textContent = `! ${e}`;
+                    tags.appendChild(t);
+                }
+            }
+            card.appendChild(tags);
             if (f.verify_count > 0) {
                 const v = document.createElement("div");
                 v.className = "ctx-verify";

@@ -346,25 +346,16 @@ pub fn summarize(ctx: &FileContext) -> ContextSummary {
 }
 
 fn render_signature(fd: &FnDef) -> String {
+    // Type-only signature: params + return type. Effects live on the
+    // separate `effects: [...]` JSON field so renderers (playground,
+    // LLMs) can show them alongside without duplicating on screen.
     let params = fd
         .params
         .iter()
         .map(|(name, type_str)| format!("{}: {}", name, type_str))
         .collect::<Vec<_>>()
         .join(", ");
-    let effects = if fd.effects.is_empty() {
-        String::new()
-    } else {
-        format!(
-            " ! [{}]",
-            fd.effects
-                .iter()
-                .map(|e| e.node.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    };
-    format!("fn {}({}) -> {}{}", fd.name, params, fd.return_type, effects)
+    format!("fn {}({}) -> {}", fd.name, params, fd.return_type)
 }
 
 // ─── Pure helpers exposed to CLI / playground ────────────────────────────────
