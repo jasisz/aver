@@ -9,7 +9,7 @@ use super::factories::{from_check_finding, from_type_error, unused_binding_diagn
 use super::model::{AnalysisReport, Diagnostic, Severity, Span};
 use crate::checker::{
     CheckFinding, check_module_intent_with_sigs_in, collect_cse_warnings_in,
-    collect_independence_warnings_in, collect_perf_warnings_in,
+    collect_independence_warnings_in, collect_naming_warnings_in, collect_perf_warnings_in,
     collect_verify_coverage_warnings_in,
 };
 #[cfg(feature = "runtime")]
@@ -31,6 +31,7 @@ pub struct AnalyzeOptions {
     pub include_cse_warnings: bool,
     pub include_perf_warnings: bool,
     pub include_independence_warnings: bool,
+    pub include_naming_warnings: bool,
     pub include_non_tail_warnings: bool,
     pub include_unused_bindings: bool,
     /// When `true` **and** the `runtime` feature is enabled, execute every
@@ -57,6 +58,7 @@ impl Default for AnalyzeOptions {
             include_cse_warnings: true,
             include_perf_warnings: true,
             include_independence_warnings: true,
+            include_naming_warnings: true,
             include_non_tail_warnings: true,
             include_unused_bindings: true,
             include_verify_run: false,
@@ -194,6 +196,17 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
 
     if options.include_independence_warnings {
         for w in collect_independence_warnings_in(&transformed, &tc_result.fn_sigs, None) {
+            diagnostics.push(from_check_finding(
+                Severity::Warning,
+                &w,
+                source,
+                &options.file_label,
+            ));
+        }
+    }
+
+    if options.include_naming_warnings {
+        for w in collect_naming_warnings_in(&items, None) {
             diagnostics.push(from_check_finding(
                 Severity::Warning,
                 &w,

@@ -311,6 +311,27 @@ pub(crate) fn classify_finding(msg: &str) -> (&'static str, Option<String>) {
         ("verify-rhs", None)
     } else if msg.contains("consider granular") {
         ("effect-granularity", split_repair(msg))
+    } else if msg.starts_with("Function '") && msg.contains("should use camelCase") {
+        (
+            "bad-fn-name",
+            Some("Rename the function to camelCase; fix call sites manually".to_string()),
+        )
+    } else if msg.starts_with("Type '") && msg.contains("should use PascalCase") {
+        (
+            "bad-type-name",
+            Some("Rename the type to PascalCase; fix constructor references manually".to_string()),
+        )
+    } else if msg.starts_with("Module '") && msg.contains("should use PascalCase") {
+        (
+            "bad-module-name",
+            Some(
+                "Rename the module to PascalCase; update depends/file name to match".to_string(),
+            ),
+        )
+    } else if msg.starts_with("Variant '") && msg.contains("PascalCase") {
+        ("bad-variant-name", Some("Rename the variant to PascalCase".to_string()))
+    } else if msg.starts_with("Record field '") && msg.contains("camelCase") {
+        ("bad-field-name", Some("Rename the field to camelCase".to_string()))
     } else if msg.contains("verify examples") || msg.contains("verify case") {
         ("verify-coverage", None)
     } else {

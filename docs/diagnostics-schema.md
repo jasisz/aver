@@ -85,7 +85,7 @@ a single file and has no byte budget concern.
 - `severity.fail` is reserved for verify / replay failures where a
   contract held but the observed result diverges.
 - `severity.hint` is for LSP-only suggestions (e.g. verify hygiene).
-- `slug` is the stable identifier; see `docs/slugs/*.md`.
+- `slug` is the stable identifier; see [`docs/diagnostics-slugs.md`](./diagnostics-slugs.md) for the full list grouped by category.
 - `fields` is an ordered list of `[key, value]` tuples (not a map) so
   display order is deterministic.
 
