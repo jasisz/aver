@@ -5,63 +5,25 @@ All notable changes to Aver are documented here.
 ## 0.10.0 (2026-04-21)
 
 ### Added
-- **`aver audit`** — one command that runs static checks, verify
-  blocks, and format compliance together. CI-friendly exit code,
-  `--json` for pipelines.
-- **`aver format --check`** — non-mutating format verification.
-  Reports stable rule slugs (`tab-indent`, `bad-function-header`,
-  `trailing-whitespace`, `missing-final-newline`, …) so agents and
-  linters can key off specific violations instead of free-text
-  messages. `--json` available.
-- **Naming convention checker** — flags non-camelCase functions /
-  fields and non-PascalCase types / modules / variants as stable
-  diagnostics (`bad-fn-name`, `bad-type-name`, `bad-module-name`,
-  `bad-variant-name`, `bad-field-name`).
-- **Playground goes multi-file** — drop a folder of `.av` files
-  (or click a game like Rogue or Doom) and the editor opens every
-  file as a tab. Audit, Trace, Context, Why, and Run all resolve
-  `depends [...]` against the tabs you see — no round-trip through
-  disk.
-- **📜 Trace panel in the playground** — interactive record &
-  replay. ⏺ runs `main()` in-browser and captures every effect
-  call (Console, Terminal, Time, Random, …). Each event is an
-  editable card: change an outcome, reorder, insert, drop. Hit
-  ▶ to replay the edited trace against the current source and see
-  match / prefix / divergence inline. Import / export via
-  `.replay.json` (same shape as `aver run --record`).
-- **⬇ Download project** — one button exports what's in the
-  editor. Single file → `.av`, many → `.zip` ready to drop into
-  `aver compile main.av`.
+- **`aver audit`** — one command that runs static checks, verify blocks, and format compliance together. CI-friendly exit code, `--json` for pipelines.
+- **`aver format --check`** — non-mutating format verification. Reports stable rule slugs (`tab-indent`, `bad-function-header`, `trailing-whitespace`, `missing-final-newline`, …) so agents and linters can key off specific violations instead of free-text messages. `--json` available.
+- **Naming convention checker** — flags non-camelCase functions / fields and non-PascalCase types / modules / variants as stable diagnostics (`bad-fn-name`, `bad-type-name`, `bad-module-name`, `bad-variant-name`, `bad-field-name`).
+- **Playground goes multi-file** — drop a folder of `.av` files (or click a game like Rogue or Doom) and the editor opens every file as a tab. Audit, Trace, Context, Why, and Run all resolve `depends [...]` against the tabs you see, no round-trip through disk.
+- **📜 Trace panel in the playground** — interactive record & replay. ⏺ runs `main()` in-browser and captures every effect call (Console, Terminal, Time, Random, …). Each event is an editable card: change an outcome, reorder, insert, drop. Hit ▶ to replay the edited trace against the current source and see match / prefix / divergence inline. Import / export via `.replay.json` (same shape as `aver run --record`).
+- **⬇ Download project** — one button exports what's in the editor. Single file → `.av`, many → `.zip` ready to drop into `aver compile main.av`.
 
 ### Changed
-- **Playground UX** — toolbar reordered to **Run, Audit, Trace,
-  Context, Why**; compile meta moved to a thin bottom status bar;
-  clicking a game loads it editably without auto-running; Record
-  and Replay merged into the single Trace panel.
-- **`aver context` markdown** — the playground's Download-as-md
-  now emits the same shape as CLI `aver context --md` (same
-  headers, same effect folding, same verify sample list).
+- **Playground UX** — toolbar reordered to **Run, Audit, Trace, Context, Why**; compile meta moved to a thin bottom status bar; clicking a game loads it editably without auto-running; Record and Replay merged into the single Trace panel.
+- **`aver context` markdown** — the playground's Download-as-md now emits the same shape as CLI `aver context --md` (same headers, same effect folding, same verify sample list).
 
 ### Fixed
-- **Games could not be audited / traced in the playground** —
-  Terminal effects, multi-file `depends`, and `Time.sleep` all
-  blocked the browser VM in different ways. Every game in
-  `examples/games/` now runs, audits, and records in-browser.
-- **Fix formatting only touched the active tab** — now reformats
-  every tab in the project in one pass and surfaces the first
-  changed file so the diff is visible.
-- **Audit's Format section only looked at the entry file** in
-  multi-file mode. Now scans every tab and reports violations
-  against their real paths.
-- **Record run on a game with no quit path used to hang the
-  browser tab.** Playground now caps at 10 000 effects and shows
-  a yellow "capped — program was still running" banner instead of
-  freezing. The captured prefix is fully replayable.
+- **Games could not be audited / traced in the playground** — Terminal effects, multi-file `depends`, and `Time.sleep` all blocked the browser VM in different ways. Every game in `examples/games/` now runs, audits, and records in-browser.
+- **Fix formatting only touched the active tab** — now reformats every tab in the project in one pass and surfaces the first changed file so the diff is visible.
+- **Audit's Format section only looked at the entry file** in multi-file mode. Now scans every tab and reports violations against their real paths.
+- **Record run on a game with no quit path used to hang the browser tab.** Playground now caps at 10 000 effects and shows a yellow "capped — program was still running" banner instead of freezing. The captured prefix is fully replayable.
 
 ### Removed
-- **`aver context --md`** playground implementation divergence —
-  the old hand-rolled markdown emitter is gone; browser and CLI
-  now emit identical files.
+- **`aver context --md`** playground implementation divergence — the old hand-rolled markdown emitter is gone; browser and CLI now emit identical files.
 
 ## 0.9.7 (2026-04-16)
 
