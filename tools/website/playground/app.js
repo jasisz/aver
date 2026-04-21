@@ -5,6 +5,7 @@ const dom = {
     fileInput: document.querySelector("[data-file-input]"),
     fileMeta: document.querySelector("[data-file-meta]"),
     compileMeta: document.querySelector("[data-compile-meta]"),
+    editorTabs: document.querySelector("[data-editor-tabs]"),
     runButton: document.querySelector("[data-run]"),
     stopButton: document.querySelector("[data-stop]"),
     clearButton: document.querySelector("[data-clear]"),
@@ -48,6 +49,12 @@ const state = {
     terminalFrame: 0,
     lastTerminal: null,
     canvasLayout: null,
+    /// Virtual filesystem for the editor.
+    /// Map<path, source>. Path is a simple string — for single-file edit
+    /// it's "playground.av"; for folder drop we keep the relative path.
+    files: new Map(),
+    activeFile: null,
+    wasmOnly: false,
 };
 
 const TERM_COLORS = {
@@ -231,6 +238,7 @@ function handleWorkerMessage(event) {
             }
             dom.runButton.disabled = false;
             dom.stopButton.disabled = true;
+    dom.stopButton.hidden = true;
             setRawMode(false);
             if (!message.ok && message.error) {
                 appendConsole("stderr", message.error);
@@ -273,15 +281,46 @@ async function loadSelectedFile(file) {
 }
 
 async function onFileChange(fileList) {
-    const [file] = fileList;
-    if (!file) {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+
+    // If there's a single .wasm among them, route to binary-only mode.
+    if (files.length === 1 && files[0].name.endsWith(".wasm")) {
+        await loadSelectedFile(files[0]);
+        enterWasmOnlyMode(files[0].name);
         return;
     }
-    if (!file.name.endsWith(".wasm")) {
-        setStatus("Select a `.wasm` file.", "error");
+
+    // Otherwise: collect .av files (flat list or from a dropped folder).
+    const avFiles = files.filter((f) => f.name.endsWith(".av"));
+    if (avFiles.length === 0) {
+        setStatus("Drop a .wasm, .av, or folder containing .av files.", "error");
         return;
     }
-    await loadSelectedFile(file);
+
+    // Reset the virtual fs and rebuild from the dropped set.
+    leaveWasmOnlyMode();
+    state.files.clear();
+    state.activeFile = null;
+    state.wasmBytes = null;
+    state.wasmName = null;
+    let firstPath = null;
+    for (const f of avFiles) {
+        // webkitRelativePath is set for folder drops; fall back to name.
+        const path = f.webkitRelativePath || f.name;
+        const source = await f.text();
+        state.files.set(path, source);
+        if (!firstPath || /main\.av$/i.test(path)) {
+            firstPath = path;
+        }
+    }
+    if (firstPath) setActiveFile(firstPath);
+    setStatus(
+        avFiles.length === 1
+            ? `Loaded ${avFiles[0].name}`
+            : `Loaded ${avFiles.length} .av files`,
+        "success"
+    );
 }
 
 async function runSelectedModule(fixedSize) {
@@ -295,6 +334,7 @@ async function runSelectedModule(fixedSize) {
     if (dom.memory) dom.memory.textContent = "";
     dom.runButton.disabled = true;
     dom.stopButton.disabled = false;
+    dom.stopButton.hidden = false;
     dom.terminal.dataset.empty = "false";
     dom.terminal.focus({ preventScroll: true });
     const worker = spawnWorker(fixedSize);
@@ -310,6 +350,7 @@ function stopRun() {
     state.sharedKeyView = null;
     dom.runButton.disabled = !state.wasmBytes;
     dom.stopButton.disabled = true;
+    dom.stopButton.hidden = true;
     setRawMode(false);
     setStatus("Run stopped.", "idle");
 }
@@ -610,8 +651,48 @@ dom.dropzone.addEventListener("dragleave", () => {
 dom.dropzone.addEventListener("drop", async (event) => {
     event.preventDefault();
     dom.dropzone.dataset.drag = "false";
+    const items = event.dataTransfer?.items;
+    // If the drop includes any directory entries, walk them — a flat
+    // `.files` list drops folder contents silently in every browser.
+    if (items && Array.from(items).some(it => it.webkitGetAsEntry?.()?.isDirectory)) {
+        const collected = [];
+        for (const it of items) {
+            const entry = it.webkitGetAsEntry?.();
+            if (entry) await walkEntry(entry, "", collected);
+        }
+        await onFileChange(collected);
+        return;
+    }
     await onFileChange(event.dataTransfer.files);
 });
+
+// Recursively walk a DataTransferItem entry tree, pushing File objects
+// with webkitRelativePath set so the multi-file loader can mirror the
+// folder layout in the virtual fs.
+async function walkEntry(entry, prefix, out) {
+    if (entry.isFile) {
+        const file = await new Promise((res, rej) => entry.file(res, rej));
+        Object.defineProperty(file, "webkitRelativePath", {
+            value: prefix + entry.name,
+            configurable: true,
+        });
+        out.push(file);
+        return;
+    }
+    if (entry.isDirectory) {
+        const reader = entry.createReader();
+        // readEntries paginates — loop until empty.
+        const entries = [];
+        while (true) {
+            const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+            if (!batch.length) break;
+            entries.push(...batch);
+        }
+        for (const child of entries) {
+            await walkEntry(child, prefix + entry.name + "/", out);
+        }
+    }
+}
 
 dom.runButton.addEventListener("click", async () => {
     await runSelectedModule();
@@ -758,6 +839,162 @@ const EXAMPLES = {
 };
 
 const codeEditor = document.querySelector("[data-code-editor]");
+
+// ── Virtual multi-file state ──────────────────────────────────────
+// The editor now holds a Map<path, source>; `codeEditor.value`
+// mirrors the currently-active entry. All listeners call
+// `getActiveSource()` / `getProjectFiles()` instead of touching
+// `codeEditor.value` directly, so the same flow works for a single
+// freshly-typed file or a dropped folder.
+function getActiveSource() {
+    if (state.activeFile && state.files.has(state.activeFile)) {
+        return state.files.get(state.activeFile);
+    }
+    return codeEditor ? codeEditor.value : "";
+}
+function getActiveName() {
+    return state.activeFile || "playground.av";
+}
+function getProjectFiles() {
+    // Return a plain object {path: source} for multi-file consumers.
+    // Single-file fallback: use whatever's in the editor.
+    if (state.files.size === 0) {
+        return { "playground.av": codeEditor ? codeEditor.value : "" };
+    }
+    const out = {};
+    for (const [k, v] of state.files) out[k] = v;
+    return out;
+}
+
+function renderTabs() {
+    if (!dom.editorTabs) return;
+    dom.editorTabs.textContent = "";
+    for (const [path] of state.files) {
+        const tab = document.createElement("span");
+        tab.className = "tab" + (path === state.activeFile ? " active" : "");
+        tab.dataset.path = path;
+        const label = document.createElement("span");
+        label.textContent = path;
+        tab.appendChild(label);
+        const close = document.createElement("span");
+        close.className = "tab-close";
+        close.textContent = "×";
+        close.title = `Close ${path}`;
+        close.addEventListener("click", (e) => {
+            e.stopPropagation();
+            closeFile(path);
+        });
+        tab.appendChild(close);
+        tab.addEventListener("click", () => setActiveFile(path));
+        dom.editorTabs.appendChild(tab);
+    }
+    if (state.files.size > 0) {
+        const addBtn = document.createElement("button");
+        addBtn.type = "button";
+        addBtn.className = "tab-new";
+        addBtn.textContent = "+ new";
+        addBtn.title = "Create a new .av tab in the editor";
+        addBtn.addEventListener("click", newFilePrompt);
+        dom.editorTabs.appendChild(addBtn);
+    }
+}
+
+function setActiveFile(path) {
+    if (!state.files.has(path)) return;
+    // Save current editor value back into the map before switching.
+    if (state.activeFile && state.files.has(state.activeFile)) {
+        state.files.set(state.activeFile, codeEditor.value);
+    }
+    state.activeFile = path;
+    codeEditor.value = state.files.get(path);
+    updateHighlight();
+    renderTabs();
+}
+
+function openFile(path, source, { activate = true } = {}) {
+    state.files.set(path, source);
+    if (activate) setActiveFile(path);
+    else renderTabs();
+}
+
+function closeFile(path) {
+    if (!state.files.has(path)) return;
+    state.files.delete(path);
+    if (state.activeFile === path) {
+        const next = state.files.keys().next().value || null;
+        state.activeFile = null;
+        if (next) setActiveFile(next);
+        else {
+            codeEditor.value = "";
+            renderTabs();
+        }
+    } else {
+        renderTabs();
+    }
+}
+
+function newFilePrompt() {
+    const name = prompt("New file name (e.g. Helpers.av):", "Helpers.av");
+    if (!name) return;
+    const normalized = name.endsWith(".av") ? name : `${name}.av`;
+    if (state.files.has(normalized)) {
+        setActiveFile(normalized);
+        return;
+    }
+    leaveWasmOnlyMode();
+    openFile(normalized, `module ${normalized.replace(/\.av$/, "")}\n    intent = ""\n`);
+}
+
+// ── "Binary .wasm only" overlay ───────────────────────────────────
+// When the user drops a compiled .wasm we still support Run (the
+// bytes live in state.wasmBytes), but there's no source to edit.
+// Show a clear overlay instead of an empty editor so analysis
+// buttons aren't a silent mystery.
+function enterWasmOnlyMode(wasmName) {
+    state.wasmOnly = true;
+    // Park any current source tabs silently — they're irrelevant
+    // while we're displaying a binary. The user can drop an .av /
+    // folder to leave this mode.
+    if (codeEditor) codeEditor.value = "";
+    if (dom.editorTabs) {
+        dom.editorTabs.textContent = "";
+        const tab = document.createElement("span");
+        tab.className = "tab active";
+        tab.textContent = `🛆 ${wasmName} (binary)`;
+        tab.title = "Compiled WASM — no Aver source. Drop an .av file or folder to edit source.";
+        dom.editorTabs.appendChild(tab);
+    }
+    showEditorOverlay(
+        "Compiled WASM loaded",
+        `No Aver source available. You can ▶ Run this binary. Drop an .av file or a folder of .av files to resume editing.`
+    );
+}
+function leaveWasmOnlyMode() {
+    state.wasmOnly = false;
+    hideEditorOverlay();
+    renderTabs();
+}
+function showEditorOverlay(title, message) {
+    let overlay = document.querySelector(".editor-overlay");
+    if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.className = "editor-overlay";
+        const wrap = document.querySelector(".editor-wrap");
+        if (wrap) wrap.appendChild(overlay);
+    }
+    overlay.innerHTML = "";
+    const h = document.createElement("strong");
+    h.textContent = title;
+    const p = document.createElement("p");
+    p.textContent = message;
+    overlay.appendChild(h);
+    overlay.appendChild(p);
+    overlay.style.display = "flex";
+}
+function hideEditorOverlay() {
+    const overlay = document.querySelector(".editor-overlay");
+    if (overlay) overlay.style.display = "none";
+}
 const compileRunBtn = document.querySelector("[data-compile-run]");
 const examplesSelect = document.querySelector("[data-examples]");
 
@@ -774,7 +1011,13 @@ async function loadCompiler() {
 
 if (compileRunBtn) {
     compileRunBtn.addEventListener("click", async () => {
-        const source = codeEditor.value;
+        // If the user dropped a .wasm, just run the bytes — no source
+        // to recompile.
+        if (state.wasmOnly && state.wasmBytes) {
+            runSelectedModule();
+            return;
+        }
+        const source = getActiveSource();
         if (!source.trim()) return;
 
         document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
@@ -820,8 +1063,34 @@ function updateHighlight() {
     });
 }
 
+function exampleTabName(key) {
+    // Name tabs after the example so the multi-file editor shows
+    // something recognizable instead of a generic placeholder.
+    const pascal = key
+        .split(/[-_]/)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join("");
+    return `${pascal || "Playground"}.av`;
+}
+
+function loadExampleAsTab(key) {
+    const source = EXAMPLES[key];
+    if (!source) return;
+    leaveWasmOnlyMode();
+    state.files.clear();
+    state.activeFile = null;
+    openFile(exampleTabName(key), source);
+}
+
 if (codeEditor) {
-    codeEditor.addEventListener("input", updateHighlight);
+    codeEditor.addEventListener("input", () => {
+        // Mirror the current buffer into the virtual fs whenever the
+        // user types — keeps getActiveSource() cheap and correct.
+        if (state.activeFile && state.files.has(state.activeFile)) {
+            state.files.set(state.activeFile, codeEditor.value);
+        }
+        updateHighlight();
+    });
     codeEditor.addEventListener("scroll", () => {
         if (highlightEl) {
             highlightEl.scrollTop = codeEditor.scrollTop;
@@ -839,19 +1108,18 @@ if (codeEditor) {
             const end = codeEditor.selectionEnd;
             codeEditor.value = codeEditor.value.substring(0, s) + "    " + codeEditor.value.substring(end);
             codeEditor.selectionStart = codeEditor.selectionEnd = s + 4;
+            if (state.activeFile) state.files.set(state.activeFile, codeEditor.value);
         }
     });
-    codeEditor.value = EXAMPLES.hello;
-    updateHighlight();
+    // Bootstrap with the hello example as the initial tab so new
+    // visitors see a tab bar + editable source from first paint.
+    loadExampleAsTab("hello");
 }
 
 if (examplesSelect) {
     examplesSelect.addEventListener("change", () => {
         const name = examplesSelect.value;
-        if (EXAMPLES[name] && codeEditor) {
-            codeEditor.value = EXAMPLES[name];
-            updateHighlight();
-        }
+        if (EXAMPLES[name]) loadExampleAsTab(name);
     });
 }
 
@@ -859,7 +1127,11 @@ if (examplesSelect) {
 const checkBtn = document.querySelector("[data-check]");
 if (checkBtn) {
     checkBtn.addEventListener("click", async () => {
-        const source = codeEditor?.value;
+        if (state.wasmOnly) {
+            setStatus("No source — drop .av or folder first.", "error");
+            return;
+        }
+        const source = getActiveSource();
         if (!source?.trim()) return;
 
         setWorkspaceMode("edit");
@@ -932,7 +1204,11 @@ if (checkBtn) {
 const verifyBtn = document.querySelector("[data-verify]");
 if (verifyBtn) {
     verifyBtn.addEventListener("click", async () => {
-        const source = codeEditor?.value;
+        if (state.wasmOnly) {
+            setStatus("No source — drop .av or folder first.", "error");
+            return;
+        }
+        const source = getActiveSource();
         if (!source?.trim()) return;
 
         setWorkspaceMode("edit");
@@ -1032,7 +1308,11 @@ if (verifyBtn) {
 const whyBtn = document.querySelector("[data-why]");
 if (whyBtn) {
     whyBtn.addEventListener("click", async () => {
-        const source = codeEditor?.value;
+        if (state.wasmOnly) {
+            setStatus("No source — drop .av or folder first.", "error");
+            return;
+        }
+        const source = getActiveSource();
         if (!source?.trim()) return;
 
         setWorkspaceMode("edit");
@@ -1133,7 +1413,11 @@ if (whyBtn) {
 const contextBtn = document.querySelector("[data-context]");
 if (contextBtn) {
     contextBtn.addEventListener("click", async () => {
-        const source = codeEditor?.value;
+        if (state.wasmOnly) {
+            setStatus("No source — drop .av or folder first.", "error");
+            return;
+        }
+        const source = getActiveSource();
         if (!source?.trim()) return;
 
         setWorkspaceMode("edit");
@@ -1678,7 +1962,8 @@ function renderFormatSection(data, actions) {
 // just the targeted section's DOM node while preserving the rest of
 // the panel (open/closed states on sibling sections stay intact).
 async function rerunAuditSection(key) {
-    const source = codeEditor?.value;
+    if (state.wasmOnly) return;
+    const source = getActiveSource();
     if (!source?.trim()) return;
     try {
         const comp = await loadCompiler();
@@ -1708,7 +1993,8 @@ async function rerunAuditSection(key) {
 }
 
 async function applyFormatFix() {
-    const source = codeEditor?.value;
+    if (state.wasmOnly) return;
+    const source = getActiveSource();
     if (!source?.trim()) return;
     try {
         const comp = await loadCompiler();
@@ -1718,6 +2004,7 @@ async function applyFormatFix() {
             setStatus("Already formatted", "success");
         } else {
             codeEditor.value = rewritten;
+            if (state.activeFile) state.files.set(state.activeFile, rewritten);
             updateHighlight();
             setStatus("Formatted", "success");
         }
@@ -1765,7 +2052,11 @@ function updateAuditStatus(data) {
 
 if (auditBtn) {
     auditBtn.addEventListener("click", async () => {
-        const source = codeEditor?.value;
+        if (state.wasmOnly) {
+            setStatus("No source — drop .av or folder first.", "error");
+            return;
+        }
+        const source = getActiveSource();
         if (!source?.trim()) return;
 
         setWorkspaceMode("edit");
@@ -1814,7 +2105,11 @@ if (auditBtn) {
 const formatBtn = document.querySelector("[data-format]");
 if (formatBtn) {
     formatBtn.addEventListener("click", async () => {
-        const source = codeEditor?.value;
+        if (state.wasmOnly) {
+            setStatus("No source — drop .av or folder first.", "error");
+            return;
+        }
+        const source = getActiveSource();
         if (!source?.trim()) return;
 
         try {
@@ -1826,6 +2121,7 @@ if (formatBtn) {
                 return;
             }
             codeEditor.value = rewritten;
+            if (state.activeFile) state.files.set(state.activeFile, rewritten);
             updateHighlight();
             setStatus("Formatted", "success");
         } catch (e) {
@@ -2076,9 +2372,8 @@ if (urlGame) {
 // drops the user straight into a trust-loop demo.
 const urlExample = new URLSearchParams(window.location.search).get("example");
 if (urlExample && EXAMPLES[urlExample] && codeEditor) {
-    codeEditor.value = EXAMPLES[urlExample];
+    loadExampleAsTab(urlExample);
     if (examplesSelect) examplesSelect.value = urlExample;
-    updateHighlight();
 }
 
 // Draggable divider between source viewer and game output

@@ -59,6 +59,8 @@
         <div class="editor-toolbar">
             <button type="button" data-compile-run
                 title="Execute your program (compiled to WASM). Console, Random, Time wired as JS imports.">▶ Run</button>
+            <button type="button" data-stop disabled hidden class="btn-stop"
+                title="Halt the running program.">⏹ Stop</button>
             <button type="button" data-audit class="btn-audit"
                 title="Three axes: static checks + verify execution + format compliance. CI gate.">🔍 Audit</button>
             <button type="button" data-why class="btn-why"
@@ -88,14 +90,16 @@
                     <option value="result-monadic">Result / monadic</option>
                 </optgroup>
             </select>
-            <button type="button" data-stop disabled class="btn-subtle">Stop</button>
             <span class="compile-meta" data-compile-meta></span>
             <span class="toolbar-spacer"></span>
             <div class="dropzone-inline" data-dropzone data-drag="false">
-                <input type="file" accept=".wasm,application/wasm" data-file-input>
-                <span data-file-meta>drop .wasm · <code>aver compile --target wasm</code></span>
+                <!-- accepts .wasm (run it), .av (single tab), folder (many tabs).
+                     webkitdirectory is toggled from JS when the user drags. -->
+                <input type="file" accept=".wasm,application/wasm,.av,text/plain" multiple data-file-input>
+                <span data-file-meta>drop .wasm · .av · folder</span>
             </div>
         </div>
+        <div class="editor-tabs" data-editor-tabs></div>
         <div class="editor-wrap">
             <pre class="editor-highlight" data-highlight aria-hidden="true"></pre>
             <textarea data-code-editor spellcheck="false" autocomplete="off" autocorrect="off" placeholder="Write Aver code here… (Ctrl+Enter to run)"></textarea>
