@@ -1630,9 +1630,6 @@ function contextToMarkdown(ctx) {
             if ((f.effects || []).length > 0) {
                 lines.push("");
                 lines.push(`**Effects:** ${f.effects.map((x) => `\`${x}\``).join(", ")}`);
-            } else {
-                lines.push("");
-                lines.push(`**Effects:** _pure_`);
             }
             if (f.verify_count > 0) {
                 lines.push("");
@@ -1957,18 +1954,13 @@ function renderContextPanel(ctx) {
                 t.textContent = "AUTO_TCO";
                 tags.appendChild(t);
             }
-            if (effects.length === 0) {
+            // Empty effects == PURE (which qualifiers already carries),
+            // so don't double-tag it. Only render explicit effects.
+            for (const e of effects) {
                 const t = document.createElement("span");
-                t.className = "ctx-tag pure";
-                t.textContent = "! pure";
+                t.className = "ctx-tag effect";
+                t.textContent = `! ${e}`;
                 tags.appendChild(t);
-            } else {
-                for (const e of effects) {
-                    const t = document.createElement("span");
-                    t.className = "ctx-tag effect";
-                    t.textContent = `! ${e}`;
-                    tags.appendChild(t);
-                }
             }
             card.appendChild(tags);
             if (f.verify_count > 0) {
