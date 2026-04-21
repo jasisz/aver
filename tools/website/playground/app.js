@@ -2016,6 +2016,30 @@ function setWorkspaceModeConsole() {
     setOutputMode("console");
 }
 
+// Effects we know are nullary or void. Used to hide the args/outcome
+// rows when they'd just show "()" or "→ null" — cleans up the trace.
+// Source of truth: registered Aver built-ins in src/services/* and
+// src/vm/builtin.rs. Not exhaustive; unknowns render normally.
+const NULLARY_EFFECTS = new Set([
+    "Console.readLine",
+    "Terminal.enableRawMode", "Terminal.disableRawMode", "Terminal.clear",
+    "Terminal.resetColor", "Terminal.readKey", "Terminal.size",
+    "Terminal.hideCursor", "Terminal.showCursor", "Terminal.flush",
+    "Time.now", "Time.unixMs",
+]);
+const VOID_EFFECTS = new Set([
+    "Console.print", "Console.error", "Console.warn", "Console.log",
+    "Terminal.enableRawMode", "Terminal.disableRawMode", "Terminal.clear",
+    "Terminal.moveTo", "Terminal.print", "Terminal.setColor",
+    "Terminal.resetColor", "Terminal.hideCursor", "Terminal.showCursor",
+    "Terminal.flush",
+    "Time.sleep",
+    "Disk.writeText", "Disk.appendText", "Disk.delete", "Disk.deleteDir",
+    "Disk.makeDir",
+    "Env.set",
+    "Tcp.send", "Tcp.writeLine", "Tcp.close",
+]);
+
 function renderEffectCard(effect, idx) {
     const card = document.createElement("div");
     card.className = "recording-event";
@@ -2067,6 +2091,9 @@ function renderEffectCard(effect, idx) {
         effect.type = typeInput.value;
         commitRecording();
     });
+    // Re-render on blur so nullary/void hiding picks up the new type
+    // without stealing focus mid-keystroke.
+    typeInput.addEventListener("change", () => renderRecordingPanel());
     head.appendChild(typeInput);
     if (effect.caller_fn) {
         const caller = document.createElement("span");
@@ -2079,70 +2106,82 @@ function renderEffectCard(effect, idx) {
     head.appendChild(spacer);
     card.appendChild(head);
 
-    // Args — editable as a JSON array. Empty array = nullary call.
-    const argsRow = document.createElement("div");
-    argsRow.className = "ev-args-row";
-    const argsLabel = document.createElement("span");
-    argsLabel.className = "ev-side-label";
-    argsLabel.textContent = "(";
-    argsRow.appendChild(argsLabel);
-    const argsInput = document.createElement("input");
-    argsInput.className = "ev-args-edit";
-    argsInput.type = "text";
-    argsInput.spellcheck = false;
-    argsInput.value = jsonCompactArgs(effect.args || []);
-    argsInput.title = ARG_HINT;
-    argsInput.addEventListener("input", () => {
-        argsInput.classList.remove("invalid");
-        try {
-            // Accept either a bare JSON array `[1, "x"]` or a
-            // comma-separated value list `1, "x"` — both map to args.
-            const raw = argsInput.value.trim();
-            const parsed = parseArgs(raw);
-            effect.args = parsed;
-            commitRecording();
-        } catch (_) {
-            argsInput.classList.add("invalid");
-        }
-    });
-    argsRow.appendChild(argsInput);
-    const argsClose = document.createElement("span");
-    argsClose.className = "ev-side-label";
-    argsClose.textContent = ")";
-    argsRow.appendChild(argsClose);
-    card.appendChild(argsRow);
-
-    // Outcome — editable. Swapping this is the whole point.
-    const out = document.createElement("div");
-    out.className = "ev-outcome";
-    const kindLabel = document.createElement("span");
-    const isErr = effect.outcome?.kind === "runtime_error";
-    kindLabel.className = "ev-arrow" + (isErr ? " err" : "");
-    kindLabel.textContent = isErr ? "!" : "→";
-    out.appendChild(kindLabel);
-    const input = document.createElement("input");
-    input.className = "ev-outcome-edit" + (isErr ? " err" : "");
-    input.type = "text";
-    input.spellcheck = false;
-    input.title = OUTCOME_HINT;
-    input.value = isErr
-        ? (effect.outcome?.message || "")
-        : jsonCompact(effect.outcome?.value);
-    input.addEventListener("input", () => {
-        input.classList.remove("invalid");
-        try {
-            if (isErr) {
-                effect.outcome = { kind: "runtime_error", message: input.value };
-            } else {
-                effect.outcome = { kind: "value", value: JSON.parse(input.value) };
+    // Args — editable as a JSON array. Hidden when the effect is
+    // known to be nullary AND no args were recorded (don't hide if
+    // the user already has something in there).
+    const argsTrivial =
+        NULLARY_EFFECTS.has(effect.type) && (!effect.args || effect.args.length === 0);
+    if (!argsTrivial) {
+        const argsRow = document.createElement("div");
+        argsRow.className = "ev-args-row";
+        const argsLabel = document.createElement("span");
+        argsLabel.className = "ev-side-label";
+        argsLabel.textContent = "(";
+        argsRow.appendChild(argsLabel);
+        const argsInput = document.createElement("input");
+        argsInput.className = "ev-args-edit";
+        argsInput.type = "text";
+        argsInput.spellcheck = false;
+        argsInput.value = jsonCompactArgs(effect.args || []);
+        argsInput.title = ARG_HINT;
+        argsInput.addEventListener("input", () => {
+            argsInput.classList.remove("invalid");
+            try {
+                // Accept either a bare JSON array `[1, "x"]` or a
+                // comma-separated list `1, "x"` — both map to args.
+                const raw = argsInput.value.trim();
+                const parsed = parseArgs(raw);
+                effect.args = parsed;
+                commitRecording();
+            } catch (_) {
+                argsInput.classList.add("invalid");
             }
-            commitRecording();
-        } catch (_) {
-            input.classList.add("invalid");
-        }
-    });
-    out.appendChild(input);
-    card.appendChild(out);
+        });
+        argsRow.appendChild(argsInput);
+        const argsClose = document.createElement("span");
+        argsClose.className = "ev-side-label";
+        argsClose.textContent = ")";
+        argsRow.appendChild(argsClose);
+        card.appendChild(argsRow);
+    }
+
+    // Outcome — editable. Hidden for known void effects with a
+    // null/Unit outcome (no useful knob to turn). Runtime errors
+    // always render — they're interesting regardless.
+    const isErr = effect.outcome?.kind === "runtime_error";
+    const outcomeTrivial =
+        !isErr && VOID_EFFECTS.has(effect.type) && effect.outcome?.value === null;
+    if (!outcomeTrivial) {
+        const out = document.createElement("div");
+        out.className = "ev-outcome";
+        const kindLabel = document.createElement("span");
+        kindLabel.className = "ev-arrow" + (isErr ? " err" : "");
+        kindLabel.textContent = isErr ? "!" : "→";
+        out.appendChild(kindLabel);
+        const input = document.createElement("input");
+        input.className = "ev-outcome-edit" + (isErr ? " err" : "");
+        input.type = "text";
+        input.spellcheck = false;
+        input.title = OUTCOME_HINT;
+        input.value = isErr
+            ? (effect.outcome?.message || "")
+            : jsonCompact(effect.outcome?.value);
+        input.addEventListener("input", () => {
+            input.classList.remove("invalid");
+            try {
+                if (isErr) {
+                    effect.outcome = { kind: "runtime_error", message: input.value };
+                } else {
+                    effect.outcome = { kind: "value", value: JSON.parse(input.value) };
+                }
+                commitRecording();
+            } catch (_) {
+                input.classList.add("invalid");
+            }
+        });
+        out.appendChild(input);
+        card.appendChild(out);
+    }
 
     return card;
 }
