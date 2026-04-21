@@ -258,10 +258,9 @@ function handleWorkerMessage(event) {
 async function loadSelectedFile(file) {
     state.wasmBytes = await file.arrayBuffer();
     state.wasmName = file.name;
-    state.activeGame = null;
+    deactivateGame();
     dom.fileMeta.textContent = `${file.name} · ${(file.size / 1024).toFixed(1)} KB`;
     dom.runButton.disabled = false;
-    document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
     renderPrebuiltMeta(file.name, state.wasmBytes.byteLength);
     clearOutput();
 
@@ -1051,8 +1050,7 @@ if (compileRunBtn) {
         const source = entry ? state.files.get(entry) : getActiveSource();
         if (!source || !source.trim()) return;
 
-        document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
-        state.activeGame = null;
+        deactivateGame();
 
         // Terminal vs console detection needs to look at *all* sources
         // for multi-file projects — main.av might import a renderer
@@ -1141,6 +1139,7 @@ function loadExampleAsTab(key) {
     state.pristineFiles = null;
     state.wasmBytes = null;
     state.wasmName = null;
+    deactivateGame();
     // Stale trace for the previous program would be confusing — drop
     // it so the new example starts with a fresh panel.
     if (typeof clearRecording === "function") clearRecording();
@@ -1220,7 +1219,7 @@ if (checkBtn) {
         if (!source?.trim()) return;
 
         setOutputMode("console");
-        state.activeGame = null;
+        deactivateGame();
         clearOutput();
 
         try {
@@ -1296,7 +1295,7 @@ if (verifyBtn) {
         if (!source?.trim()) return;
 
         setOutputMode("console");
-        state.activeGame = null;
+        deactivateGame();
         clearOutput();
 
         try {
@@ -1399,7 +1398,7 @@ if (whyBtn) {
         if (!source?.trim()) return;
 
         setOutputMode("console");
-        state.activeGame = null;
+        deactivateGame();
         clearOutput();
         clearCompileMeta();
 
@@ -1504,7 +1503,7 @@ if (contextBtn) {
         if (!source?.trim()) return;
 
         setOutputMode("console");
-        state.activeGame = null;
+        deactivateGame();
         clearOutput();
         clearCompileMeta();
 
@@ -2884,7 +2883,7 @@ if (auditBtn) {
         if (!source?.trim()) return;
 
         setOutputMode("console");
-        state.activeGame = null;
+        deactivateGame();
         clearOutput();
         clearCompileMeta();
 
@@ -3087,6 +3086,19 @@ const GAME_TOUCH = {
     ],
     // wumpus: console game, no touch controls
 };
+
+// Centralised "leaving game mode" hook — drop touch controls,
+// clear the active-game marker on the clicked game button, and
+// reset the dropzone hint to the default. Called wherever the user
+// moves from a loaded game to plain code (Run on own source,
+// loading an example, clicking another game, dropping a file).
+const DROPZONE_DEFAULT = "drop .wasm · .av · folder · .replay.json";
+function deactivateGame() {
+    state.activeGame = null;
+    document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
+    buildTouchControls(null);
+    if (dom.fileMeta) dom.fileMeta.textContent = DROPZONE_DEFAULT;
+}
 
 function buildTouchControls(gameName) {
     const container = document.querySelector("[data-touch-controls]");
