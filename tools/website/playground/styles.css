@@ -389,8 +389,9 @@ body {
 }
 
 .recording-events {
-    max-height: 55vh;
-    overflow-y: auto;
+    /* No own scroll — the enclosing .console-surface scrolls the
+       whole Trace panel, so short traces use minimal height and
+       long ones expand to fill the available pane. */
 }
 .recording-event {
     padding: 0.5rem 0.75rem;

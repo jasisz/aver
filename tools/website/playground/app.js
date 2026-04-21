@@ -316,6 +316,7 @@ async function onFileChange(fileList) {
 
     // Reset the virtual fs and rebuild from the dropped set.
     leaveWasmOnlyMode();
+    setUrlParam(null, null);
     state.files.clear();
     state.activeFile = null;
     state.wasmBytes = null;
@@ -774,12 +775,26 @@ function setOutputMode(mode) {
     if (outputPane) outputPane.dataset.mode = mode;
 }
 
+// Address bar reflects the current scene so any navigation is
+// copy-pasteable. replaceState — not pushState — keeps the back
+// button clean (one playground visit == one history entry).
+function setUrlParam(key, value) {
+    try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("example");
+        url.searchParams.delete("game");
+        if (key && value) url.searchParams.set(key, value);
+        window.history.replaceState({}, "", url.toString());
+    } catch (_) { /* older browsers: silent */ }
+}
+
 document.querySelectorAll("[data-game]").forEach(btn => {
     btn.addEventListener("click", async () => {
         const name = btn.dataset.game;
         const args = btn.dataset.args ? btn.dataset.args.split(" ") : [];
         document.querySelectorAll("[data-game]").forEach(b => b.classList.remove("active"));
         btn.classList.add("active");
+        setUrlParam("game", name);
         state.programArgs = args;
         state.activeGame = name;
         const isConsoleGame = btn.hasAttribute("data-console-game");
@@ -954,6 +969,7 @@ function newFilePrompt() {
     }
     leaveWasmOnlyMode();
     openFile(normalized, `module ${normalized.replace(/\.av$/, "")}\n    intent = ""\n`);
+    setUrlParam(null, null);
 }
 
 // ── "Binary .wasm only" overlay ───────────────────────────────────
@@ -1148,6 +1164,7 @@ function loadExampleAsTab(key) {
     // it so the new example starts with a fresh panel.
     if (typeof clearRecording === "function") clearRecording();
     openFile(exampleTabName(key), source);
+    setUrlParam("example", key);
 }
 
 // Compare the virtual fs against the pristine snapshot (set when a
