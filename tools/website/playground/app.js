@@ -843,6 +843,8 @@ const EXAMPLES = {
     "decision-block": `module Payments\n    intent = "transactions as append-only log"\n\ndecision ImmutableTransactions\n    date = "2026-04-20"\n    reason =\n        "Audit trail requires transactions be append-only and non-modifiable."\n        "Mutable ledger would break compliance with SOX."\n    chosen = "ImmutableWithVersioning"\n    rejected = ["MutableLedger"]\n    impacts = [createTransaction]\n\nfn createTransaction(amount: Int) -> Int\n    ? "build an immutable transaction record"\n    amount\n\nverify createTransaction\n    createTransaction(100) => 100\n    createTransaction(0) => 0\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(createTransaction(100))\n`,
 
     "result-monadic": `module Starter\n    intent = "idiomatic Result with ? short-circuit"\n\nfn parseNumber(s: String) -> Result<Int, String>\n    ? "parse a string into an int, with a friendly error"\n    match Int.fromString(s)\n        Result.Ok(n) -> Result.Ok(n)\n        Result.Err(_) -> Result.Err("not a number: {s}")\n\nverify parseNumber\n    parseNumber("42") => Result.Ok(42)\n    parseNumber("") => Result.Err("not a number: ")\n    parseNumber("abc") => Result.Err("not a number: abc")\n\nfn doubleParsed(s: String) -> Result<Int, String>\n    ? "parse then double; propagates parse errors via ?"\n    n = parseNumber(s)?\n    Result.Ok(n + n)\n\nverify doubleParsed\n    doubleParsed("21") => Result.Ok(42)\n    doubleParsed("oops") => Result.Err("not a number: oops")\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(doubleParsed("21"))\n    Console.print(doubleParsed("oops"))\n`,
+
+    "independence": `module Independence\n    intent =\n        "Two effectful branches run under \`?!\` — Aver may reorder them at runtime."\n        "Hit ⏺ Record: the Trace panel groups both under one independent product,"\n        "so replay matches either order. Shuffle the cards inside the group and try Replay."\n\nfn announceA() -> Result<Int, String>\n    ? "first independent branch — prints and returns 10"\n    ! [Console.print]\n    Console.print("branch A")\n    Result.Ok(10)\n\nfn announceB() -> Result<Int, String>\n    ? "second independent branch — prints and returns 20"\n    ! [Console.print]\n    Console.print("branch B")\n    Result.Ok(20)\n\nfn main() -> Result<Unit, String>\n    ! [Console.print]\n    pair = (announceA(), announceB())?!\n    Console.print("done — both branches ran")\n    Result.Ok(())\n`,
 };
 
 const codeEditor = document.querySelector("[data-code-editor]");
@@ -1892,7 +1894,12 @@ function renderRecordingPanel() {
         empty.textContent = "No effects recorded — main() ran purely.";
         list.appendChild(empty);
     }
-    data.effects.forEach((eff, idx) => list.appendChild(renderEffectCard(eff, idx)));
+    // Effects may carry independent-product metadata (group_id,
+    // branch_path, effect_occurrence). Render them nested so the
+    // unique Aver semantics are visible in the trace panel — plain
+    // linear list would hide the fact that these effects are
+    // order-independent under `?!`.
+    renderEventSegments(list, data.effects);
 
     // Append-effect row at the bottom. Creates a blank card above
     // the button so the user can fill it in and hit ▶ Replay.
@@ -1943,6 +1950,90 @@ function setWorkspaceModeConsole() {
 // rows when they'd just show "()" or "→ null" — cleans up the trace.
 // Source of truth: registered Aver built-ins in src/services/* and
 // src/vm/builtin.rs. Not exhaustive; unknowns render normally.
+// Cluster effects into rendering segments so the trace panel can
+// visually reflect `?!` / `!` independence. Grouped effects (same
+// group_id) land in a labelled container; branches (branch_path)
+// become sub-stacks within it. Non-grouped effects render as before.
+function segmentEffects(effects) {
+    const segments = [];
+    let current = null;
+    effects.forEach((eff, idx) => {
+        const gid = eff.group_id;
+        if (gid == null) {
+            if (!current || current.kind !== "flat") {
+                current = { kind: "flat", items: [] };
+                segments.push(current);
+            }
+            current.items.push({ eff, idx });
+            return;
+        }
+        if (!current || current.kind !== "group" || current.group_id !== gid) {
+            current = { kind: "group", group_id: gid, branches: new Map() };
+            segments.push(current);
+        }
+        const path = eff.branch_path ?? "?";
+        if (!current.branches.has(path)) current.branches.set(path, []);
+        current.branches.get(path).push({ eff, idx });
+    });
+    return segments;
+}
+
+function renderEventSegments(container, effects) {
+    for (const seg of segmentEffects(effects)) {
+        if (seg.kind === "flat") {
+            for (const { eff, idx } of seg.items) {
+                container.appendChild(renderEffectCard(eff, idx));
+            }
+        } else {
+            container.appendChild(renderGroupSegment(seg));
+        }
+    }
+}
+
+function renderGroupSegment(seg) {
+    const box = document.createElement("div");
+    box.className = "recording-group";
+    box.dataset.groupId = String(seg.group_id);
+
+    const header = document.createElement("div");
+    header.className = "recording-group-header";
+    const label = document.createElement("span");
+    label.className = "recording-group-label";
+    const n = seg.branches.size;
+    label.textContent = `independent product · ${n} branch${n === 1 ? "" : "es"}`;
+    header.appendChild(label);
+    const hint = document.createElement("span");
+    hint.className = "recording-group-hint";
+    hint.textContent = "order-independent under ?!";
+    hint.title =
+        "Effects in this group came from an Aver `?!` / `!` independent product. " +
+        "Aver's runtime may reorder branches; replay matches them by (branch, occurrence) " +
+        "rather than by absolute position, so shuffling cards between branches can change " +
+        "behavior while shuffling within one branch is still sequential.";
+    header.appendChild(hint);
+    box.appendChild(header);
+
+    const branches = document.createElement("div");
+    branches.className = "recording-group-branches";
+    // Sort branches lexicographically — stable presentation across
+    // re-renders even if the VM recorded them interleaved.
+    const keys = Array.from(seg.branches.keys()).sort();
+    for (const path of keys) {
+        const branch = document.createElement("div");
+        branch.className = "recording-branch";
+        const bLabel = document.createElement("div");
+        bLabel.className = "recording-branch-label";
+        bLabel.textContent = `branch ${path}`;
+        branch.appendChild(bLabel);
+        for (const { eff, idx } of seg.branches.get(path)) {
+            branch.appendChild(renderEffectCard(eff, idx));
+        }
+        branches.appendChild(branch);
+    }
+    box.appendChild(branches);
+    return box;
+}
+
 const NULLARY_EFFECTS = new Set([
     "Console.readLine",
     "Terminal.enableRawMode", "Terminal.disableRawMode", "Terminal.clear",

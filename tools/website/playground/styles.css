@@ -321,6 +321,53 @@ body {
     font-style: italic;
     text-align: center;
 }
+/* Independent-product grouping — effects inside a `?!` / `!` boxed
+   so the trace panel visually reflects Aver's core concurrency
+   semantics. Left border in accent colour, branches stacked with
+   small labels so the reader sees which branch produced what. */
+.recording-group {
+    border-left: 3px solid rgba(56, 189, 248, 0.55);
+    border-radius: 4px;
+    background: rgba(56, 189, 248, 0.05);
+    margin: 0.35rem 0.5rem 0.35rem 0.25rem;
+}
+.recording-group-header {
+    padding: 0.35rem 0.6rem;
+    display: flex;
+    gap: 0.75rem;
+    align-items: baseline;
+    color: #38bdf8;
+    font-size: 0.72rem;
+    letter-spacing: 0.02em;
+    border-bottom: 1px dashed rgba(56, 189, 248, 0.2);
+    background: rgba(56, 189, 248, 0.05);
+}
+.recording-group-label {
+    font-weight: 600;
+    text-transform: uppercase;
+}
+.recording-group-hint {
+    color: var(--muted);
+    font-style: italic;
+    font-size: 0.7rem;
+    cursor: help;
+}
+.recording-group-branches { display: flex; flex-direction: column; }
+.recording-branch {
+    border-top: 1px dashed rgba(56, 189, 248, 0.15);
+    padding-left: 0.4rem;
+}
+.recording-branch:first-child { border-top: none; }
+.recording-branch-label {
+    padding: 0.2rem 0.5rem;
+    color: #38bdf8;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    opacity: 0.7;
+}
+
 .recording-events {
     max-height: 55vh;
     overflow-y: auto;
