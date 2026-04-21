@@ -477,7 +477,17 @@ fn normalize_function_header_effects_tracked(
         .collect()
 }
 
+#[cfg(test)]
 fn normalize_effect_declaration_blocks(lines: Vec<String>) -> Vec<String> {
+    let mut sink = Vec::new();
+    normalize_effect_declaration_blocks_tracked(lines, &mut sink, None)
+}
+
+fn normalize_effect_declaration_blocks_tracked(
+    lines: Vec<String>,
+    violations: &mut Vec<aver::diagnostics::model::FormatViolation>,
+    line_offset: Option<&[usize]>,
+) -> Vec<String> {
     let mut out = Vec::with_capacity(lines.len());
     let mut i = 0usize;
 
@@ -539,7 +549,39 @@ fn normalize_effect_declaration_blocks(lines: Vec<String>) -> Vec<String> {
                 .collect()
         };
 
-        out.extend(format_block_effect_declaration(&indent, &effects));
+        let original_block: Vec<String> =
+            lines[i..i + consumed].iter().cloned().collect();
+        let rewritten_block = format_block_effect_declaration(&indent, &effects);
+        if original_block != rewritten_block {
+            let source_line = line_offset
+                .and_then(|off| off.get(i))
+                .copied()
+                .unwrap_or(i + 1);
+            let rule = {
+                let mut sorted = effects.clone();
+                sorted.sort();
+                if effects != sorted {
+                    "effects-unsorted"
+                } else {
+                    "effects-reshape"
+                }
+            };
+            let message = match rule {
+                "effects-unsorted" => {
+                    "effect list out of order; formatter sorts alphabetically".to_string()
+                }
+                _ => "effect declaration reshaped to canonical form".to_string(),
+            };
+            violations.push(aver::diagnostics::model::FormatViolation {
+                line: source_line,
+                col: 1,
+                rule,
+                message,
+                before: Some(original_block.join(" | ")),
+                after: Some(rewritten_block.join(" | ")),
+            });
+        }
+        out.extend(rewritten_block);
         i += consumed;
     }
 
@@ -665,7 +707,16 @@ fn split_top_level_blocks(lines: &[String], ast_info: Option<&FormatAstInfo>) ->
     blocks
 }
 
+#[cfg(test)]
 fn reorder_verify_blocks(blocks: Vec<TopBlock>) -> Vec<TopBlock> {
+    let mut sink = Vec::new();
+    reorder_verify_blocks_tracked(blocks, &mut sink)
+}
+
+fn reorder_verify_blocks_tracked(
+    blocks: Vec<TopBlock>,
+    violations: &mut Vec<aver::diagnostics::model::FormatViolation>,
+) -> Vec<TopBlock> {
     let verify_blocks: Vec<TopBlock> = blocks
         .iter()
         .filter(|b| matches!(b.kind, BlockKind::Verify(_)))
@@ -674,6 +725,15 @@ fn reorder_verify_blocks(blocks: Vec<TopBlock>) -> Vec<TopBlock> {
 
     if verify_blocks.is_empty() {
         return blocks;
+    }
+
+    // Remember the original position (0-based index in `blocks`) of
+    // each verify block so we can flag a violation if it ends up moving.
+    let mut original_positions: HashMap<(String, usize), usize> = HashMap::new();
+    for (pos, block) in blocks.iter().enumerate() {
+        if let BlockKind::Verify(name) = &block.kind {
+            original_positions.insert((name.clone(), block.start_line), pos);
+        }
     }
 
     let mut by_fn: HashMap<String, Vec<usize>> = HashMap::new();
@@ -705,6 +765,30 @@ fn reorder_verify_blocks(blocks: Vec<TopBlock>) -> Vec<TopBlock> {
     for (idx, block) in verify_blocks.iter().enumerate() {
         if !used[idx] {
             out.push(block.clone());
+        }
+    }
+
+    // Any verify block whose final position (in `out`) differs from its
+    // original position (in `blocks`) is a violation — the formatter
+    // moved it. Key by (name, start_line) to disambiguate duplicates.
+    for (new_pos, block) in out.iter().enumerate() {
+        if let BlockKind::Verify(name) = &block.kind {
+            let key = (name.clone(), block.start_line);
+            if let Some(&orig_pos) = original_positions.get(&key)
+                && orig_pos != new_pos
+            {
+                violations.push(aver::diagnostics::model::FormatViolation {
+                    line: block.start_line,
+                    col: 1,
+                    rule: "verify-misplaced",
+                    message: format!(
+                        "verify block '{}' should be placed immediately after its function",
+                        name
+                    ),
+                    before: None,
+                    after: None,
+                });
+            }
         }
     }
 
@@ -763,7 +847,7 @@ fn normalize_source_lines_tracked(
         line_offset.push(idx + 1);
     }
 
-    let lines = normalize_effect_declaration_blocks(lines);
+    let lines = normalize_effect_declaration_blocks_tracked(lines, violations, Some(&line_offset));
     let lines = normalize_function_header_effects_tracked(lines, violations, Some(&line_offset));
     let lines = normalize_module_intent_blocks(lines);
     normalize_inline_decision_fields(lines)
@@ -973,7 +1057,7 @@ pub fn try_format_source(
 
     // 3) Split into top-level blocks and co-locate verify blocks under their functions.
     let blocks = split_top_level_blocks(&lines, Some(&ast_info));
-    let reordered = reorder_verify_blocks(blocks);
+    let reordered = reorder_verify_blocks_tracked(blocks, &mut violations);
 
     // 4) Rejoin with one blank line between top-level blocks.
     let mut non_empty_blocks = Vec::new();

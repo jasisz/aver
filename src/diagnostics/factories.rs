@@ -182,11 +182,17 @@ pub fn needs_format_diagnostic(
         };
     }
 
-    let first = &violations[0];
+    // Regions must be in ascending-line order so the tty renderer
+    // doesn't collapse later regions into earlier already-emitted lines.
+    let mut sorted: Vec<&super::model::FormatViolation> = violations.iter().collect();
+    sorted.sort_by_key(|v| (v.line, v.col));
+    // `first` tracks the earliest-appearing violation so the summary
+    // and primary span agree with the first rendered region.
+    let first = sorted[0];
 
     let source_lines: Vec<&str> = source.lines().collect();
     let mut regions: Vec<AnnotatedRegion> = Vec::new();
-    for v in violations.iter().take(MAX_VIOLATION_REGIONS) {
+    for v in sorted.iter().take(MAX_VIOLATION_REGIONS) {
         let line_text = source_lines
             .get(v.line.saturating_sub(1))
             .copied()
@@ -221,14 +227,9 @@ pub fn needs_format_diagnostic(
     }
 
     let summary = if violations.len() == 1 {
-        format!("L{}: {}", first.line, first.message)
+        first.message.clone()
     } else {
-        format!(
-            "{} violations, first at L{}: {}",
-            violations.len(),
-            first.line,
-            first.message
-        )
+        format!("{} violations, first: {}", violations.len(), first.message)
     };
 
     Diagnostic {
