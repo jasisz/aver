@@ -153,6 +153,37 @@ body {
     font-weight: 600;
 }
 
+/* Tool-specific accent borders — invite clicks without shouting.
+   Each command's color matches its role: Audit = verification green,
+   Why = justification purple, Context = navigation teal. */
+.btn-audit {
+    color: var(--green) !important;
+    border-color: rgba(74, 222, 128, 0.45) !important;
+    font-weight: 600;
+}
+.btn-audit:hover {
+    background: rgba(74, 222, 128, 0.1) !important;
+    border-color: var(--green) !important;
+}
+.btn-why {
+    color: #c084fc !important;
+    border-color: rgba(192, 132, 252, 0.45) !important;
+    font-weight: 600;
+}
+.btn-why:hover {
+    background: rgba(192, 132, 252, 0.1) !important;
+    border-color: #c084fc !important;
+}
+.btn-context {
+    color: #38bdf8 !important;
+    border-color: rgba(56, 189, 248, 0.45) !important;
+    font-weight: 600;
+}
+.btn-context:hover {
+    background: rgba(56, 189, 248, 0.1) !important;
+    border-color: #38bdf8 !important;
+}
+
 .btn-subtle { opacity: 0.6; }
 .btn-subtle:hover { opacity: 1; }
 .toolbar-spacer { flex: 1; }
