@@ -4,26 +4,37 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use aver::ast::TopLevel;
+use aver::diagnostics::model::AnalysisReport;
+use aver::diagnostics::needs_format_diagnostic;
 use aver::lexer::Lexer;
 use aver::parser::Parser;
 use aver::types::{Type, parse_type_str_strict};
 use colored::Colorize;
 
 #[allow(dead_code)]
-pub(super) fn cmd_format(path: &str, check: bool) {
+pub(super) fn cmd_format(path: &str, check: bool, json: bool) {
+    // JSON mode implies --check: it's a report of diffs, never writes.
+    let check = check || json;
+
     let root = Path::new(path);
     let mut files = Vec::new();
     if let Err(e) = collect_av_files(root, &mut files) {
-        eprintln!("{}", e.red());
+        if json {
+            emit_fatal_json("cannot-collect", &e);
+        } else {
+            eprintln!("{}", e.red());
+        }
         process::exit(1);
     }
     files.sort();
 
     if files.is_empty() {
-        eprintln!(
-            "{}",
-            format!("No .av files found under '{}'", root.display()).red()
-        );
+        let msg = format!("No .av files found under '{}'", root.display());
+        if json {
+            emit_fatal_json("no-files", &msg);
+        } else {
+            eprintln!("{}", msg.red());
+        }
         process::exit(1);
     }
 
@@ -32,20 +43,24 @@ pub(super) fn cmd_format(path: &str, check: bool) {
         let src = match fs::read_to_string(file) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!(
-                    "{}",
-                    format!("Cannot read '{}': {}", file.display(), e).red()
-                );
+                let msg = format!("Cannot read '{}': {}", file.display(), e);
+                if json {
+                    emit_fatal_json("read-failed", &msg);
+                } else {
+                    eprintln!("{}", msg.red());
+                }
                 process::exit(1);
             }
         };
         let formatted = match try_format_source(&src) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!(
-                    "{}",
-                    format!("Cannot format '{}': {}", file.display(), e).red()
-                );
+                let msg = format!("Cannot format '{}': {}", file.display(), e);
+                if json {
+                    emit_fatal_json("format-failed", &msg);
+                } else {
+                    eprintln!("{}", msg.red());
+                }
                 process::exit(1);
             }
         };
@@ -59,6 +74,28 @@ pub(super) fn cmd_format(path: &str, check: bool) {
                 process::exit(1);
             }
         }
+    }
+
+    if json {
+        for f in &changed {
+            let file_label = f.display().to_string();
+            let mut report = AnalysisReport::with_diagnostics(
+                file_label.clone(),
+                vec![needs_format_diagnostic(&file_label)],
+            );
+            report.schema_version = aver::diagnostics::SCHEMA_VERSION;
+            println!("{}", report.to_json());
+        }
+        println!(
+            "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"format\":{{\"clean\":{},\"needs_format\":{}}}}}",
+            files.len(),
+            files.len() - changed.len(),
+            changed.len()
+        );
+        if !changed.is_empty() {
+            process::exit(1);
+        }
+        return;
     }
 
     if check {
@@ -82,6 +119,15 @@ pub(super) fn cmd_format(path: &str, check: bool) {
         }
         println!("{}", format!("Formatted {} file(s)", changed.len()).green());
     }
+}
+
+fn emit_fatal_json(kind: &str, message: &str) {
+    use aver::diagnostics::json_escape;
+    println!(
+        "{{\"schema_version\":1,\"kind\":\"file-error\",\"error_kind\":\"{}\",\"error\":{}}}",
+        kind,
+        json_escape(message)
+    );
 }
 
 #[allow(dead_code)]

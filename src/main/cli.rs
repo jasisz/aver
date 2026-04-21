@@ -183,6 +183,18 @@ pub(super) enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Run check + verify + format-check in one pass
+    Audit {
+        /// File or directory to audit (default: current directory)
+        #[arg(default_value = ".")]
+        path: String,
+        /// Project module root for dependency resolution
+        #[arg(long)]
+        module_root: Option<String>,
+        /// Emit NDJSON AnalysisReport bundles — one per file, trailing summary
+        #[arg(long)]
+        json: bool,
+    },
     /// Format Aver source files
     Format {
         /// File or directory to format (default: current directory)
@@ -191,6 +203,10 @@ pub(super) enum Commands {
         /// Check formatting only (non-zero exit if changes would be made)
         #[arg(long)]
         check: bool,
+        /// Emit NDJSON AnalysisReport bundles for files needing formatting
+        /// (implies --check). One bundle per file, trailing summary.
+        #[arg(long)]
+        json: bool,
     },
     /// Replay an execution from recorded effects JSON
     Replay {

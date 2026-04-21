@@ -79,8 +79,11 @@ fn main() {
         } => {
             commands::cmd_verify(file, module_root.as_deref(), *deps, *verbose, *json);
         }
-        Commands::Format { path, check } => {
-            format_cmd::cmd_format(path, *check);
+        Commands::Audit { path, module_root, json } => {
+            commands::cmd_audit(path, module_root.as_deref(), *json);
+        }
+        Commands::Format { path, check, json } => {
+            format_cmd::cmd_format(path, *check, *json);
         }
         Commands::Replay {
             recording,

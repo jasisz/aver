@@ -2165,6 +2165,165 @@ fn run_check_for_file(
     Ok(has_any_error)
 }
 
+/// Composite: static check + verify execution + format-check in one
+/// pass. JSON mode emits one AnalysisReport bundle per file (diagnostics
+/// include check issues + verify failures + needs-format), trailing
+/// summary aggregates the three axes.
+pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bool) {
+    use super::format_cmd::try_format_source;
+    use aver::diagnostics::{
+        AnalyzeOptions, analyze_source, needs_format_diagnostic,
+    };
+
+    let module_root = crate::shared::resolve_module_root(module_root_override);
+    let inputs = match resolve_av_inputs(path) {
+        Ok(v) => v,
+        Err(e) => {
+            if json {
+                println!(
+                    "{{\"schema_version\":1,\"kind\":\"file-error\",\"error\":{}}}",
+                    aver::diagnostics::json_escape(&e)
+                );
+            } else {
+                eprintln!("{}", e.red());
+            }
+            process::exit(1);
+        }
+    };
+
+    let mut total_check_errors = 0usize;
+    let mut total_verify_failures = 0usize;
+    let mut total_format_needed = 0usize;
+
+    for file in &inputs {
+        let shown_path = display_check_path(file, &module_root);
+        let source = match crate::shared::read_file(file) {
+            Ok(s) => s,
+            Err(e) => {
+                if json {
+                    println!(
+                        "{{\"schema_version\":1,\"kind\":\"file-error\",\"file\":{},\"error\":{}}}",
+                        aver::diagnostics::json_escape(&shown_path),
+                        aver::diagnostics::json_escape(&e)
+                    );
+                } else {
+                    eprintln!("{}: {}", shown_path.red(), e);
+                }
+                continue;
+            }
+        };
+
+        let mut opts = AnalyzeOptions::new(shown_path.clone());
+        opts.module_base_dir = Some(module_root.clone());
+        opts.include_verify_run = true;
+        let mut report = analyze_source(&source, &opts);
+
+        // Format check: append needs-format diagnostic if applicable.
+        let needs_format = match try_format_source(&source) {
+            Ok(formatted) => formatted != source,
+            Err(_) => false,
+        };
+        if needs_format {
+            report
+                .diagnostics
+                .push(needs_format_diagnostic(&shown_path));
+            total_format_needed += 1;
+        }
+
+        let file_check_errors = report
+            .diagnostics
+            .iter()
+            .filter(|d| d.is_error() && d.slug != "verify-mismatch" && !d.slug.starts_with("verify-"))
+            .count();
+        let file_verify_failures = report
+            .verify_summary
+            .as_ref()
+            .map(|vs| vs.blocks.iter().map(|b| b.failed).sum::<usize>())
+            .unwrap_or(0);
+        total_check_errors += file_check_errors;
+        total_verify_failures += file_verify_failures;
+
+        if json {
+            println!("{}", report.to_json());
+        } else {
+            render_audit_tty(&shown_path, &report, needs_format);
+        }
+    }
+
+    if json {
+        println!(
+            "{{\"schema_version\":1,\"kind\":\"summary\",\"files\":{},\"audit\":{{\"check_errors\":{},\"verify_failures\":{},\"format_needed\":{}}}}}",
+            inputs.len(),
+            total_check_errors,
+            total_verify_failures,
+            total_format_needed
+        );
+    } else {
+        println!();
+        println!("{}", "─".repeat(50).dimmed());
+        println!(
+            "{} {} files | {} check errors | {} verify failures | {} format",
+            "Audit:".bold(),
+            inputs.len(),
+            total_check_errors,
+            total_verify_failures,
+            total_format_needed
+        );
+    }
+
+    if total_check_errors > 0 || total_verify_failures > 0 || total_format_needed > 0 {
+        process::exit(1);
+    }
+}
+
+fn render_audit_tty(
+    shown_path: &str,
+    report: &aver::diagnostics::AnalysisReport,
+    needs_format: bool,
+) {
+    println!();
+    println!("{}", format!("Audit: {}", shown_path).cyan());
+    for diag in &report.diagnostics {
+        println!("  {}[{}]: {}", severity_tag(diag), diag.slug, diag.summary);
+    }
+    if let Some(vs) = &report.verify_summary {
+        for block in &vs.blocks {
+            if block.failed == 0 && block.skipped == 0 {
+                println!(
+                    "  {} verify {}  {}/{}",
+                    "✓".green(),
+                    block.name,
+                    block.passed,
+                    block.total
+                );
+            } else {
+                println!(
+                    "  {} verify {}  {}/{} passed, {} failed, {} skipped",
+                    "✗".red(),
+                    block.name,
+                    block.passed,
+                    block.total,
+                    block.failed,
+                    block.skipped
+                );
+            }
+        }
+    }
+    if needs_format {
+        println!("  {} needs format", "!".yellow());
+    }
+}
+
+fn severity_tag(diag: &aver::diagnostics::Diagnostic) -> colored::ColoredString {
+    use aver::diagnostics::Severity;
+    match diag.severity {
+        Severity::Error => "error".red(),
+        Severity::Fail => "fail".red(),
+        Severity::Warning => "warning".yellow(),
+        Severity::Hint => "hint".cyan(),
+    }
+}
+
 pub(super) fn cmd_check(
     path: &str,
     module_root_override: Option<&str>,

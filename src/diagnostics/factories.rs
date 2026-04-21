@@ -145,6 +145,31 @@ pub fn unused_binding_diagnostic(
     }
 }
 
+/// Build a `Diagnostic` signaling that a file is not formatter-clean.
+///
+/// Emitted by `aver format --check --json` (and, in aggregate, by
+/// `aver audit`). Consumers treat it as a warning: running
+/// `aver format` without `--check` would rewrite the file.
+pub fn needs_format_diagnostic(file: &str) -> Diagnostic {
+    Diagnostic {
+        severity: Severity::Warning,
+        slug: "needs-format",
+        summary: "file is not formatter-clean; run `aver format` to rewrite".to_string(),
+        span: Span {
+            file: file.to_string(),
+            line: 1,
+            col: 1,
+        },
+        fn_name: None,
+        intent: None,
+        fields: Vec::new(),
+        conflict: None,
+        repair: Repair::primary("Run `aver format` to apply the formatter"),
+        regions: Vec::new(),
+        related: Vec::new(),
+    }
+}
+
 /// Build a `Diagnostic` from a `CheckFinding` (intent/verify/coverage/etc).
 pub fn from_check_finding(
     severity: Severity,
