@@ -45,6 +45,18 @@ pub fn time_sleep(ms: i64) {
     if ms < 0 {
         panic!("Time.sleep: ms must be non-negative");
     }
+    // Browsers have no synchronous sleep primitive on
+    // wasm32-unknown-unknown — std::thread::sleep panics with
+    // "can't sleep". Treat it as a no-op there; the playground's
+    // recorder still captures the call + duration in args, and
+    // replay reproduces the trace faithfully. Native builds keep
+    // real blocking sleep.
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    {
+        let _ = ms;
+        return;
+    }
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     std::thread::sleep(std::time::Duration::from_millis(ms as u64));
 }
 
