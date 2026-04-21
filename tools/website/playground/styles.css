@@ -306,47 +306,6 @@ body {
     opacity: 0.75;
 }
 
-/* ── Teaching tooltips on toolbar buttons ─────────────────────── */
-.tool-group {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.15rem;
-    position: relative;
-}
-.tool-hint {
-    color: var(--muted);
-    opacity: 0.55;
-    font-size: 0.85em;
-    cursor: help;
-    padding: 0 0.15rem;
-    user-select: none;
-    transition: opacity 0.15s, color 0.15s;
-}
-.tool-hint:hover {
-    opacity: 1;
-    color: var(--accent);
-}
-.tool-hint:hover::after {
-    content: attr(data-hint);
-    position: absolute;
-    top: calc(100% + 0.4rem);
-    left: 0;
-    z-index: 10;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 0.5rem 0.7rem;
-    font-family: system-ui, -apple-system, sans-serif;
-    font-size: 0.75rem;
-    line-height: 1.45;
-    width: max-content;
-    max-width: 22rem;
-    white-space: normal;
-    color: var(--text);
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
-    font-weight: normal;
-}
-
 /* ── Audit sections (collapsible) ─────────────────────────────── */
 .audit-panel {
     padding: 0.5rem 0.75rem;
