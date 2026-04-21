@@ -441,10 +441,26 @@ body {
 .recording-intro .rec-btn.rec-primary { font-size: 0.78rem; padding: 0.35rem 0.8rem; }
 
 .recording-append {
-    padding: 0.5rem 0.75rem;
+    padding: 0.6rem 0.75rem;
     display: flex;
     justify-content: center;
     background: rgba(251, 191, 36, 0.04);
+}
+.recording-append .rec-btn {
+    font-size: 0.75rem;
+    padding: 0.35rem 1rem;
+    background: transparent;
+    border: 1px dashed rgba(251, 191, 36, 0.45);
+    color: #fbbf24;
+    letter-spacing: 0.02em;
+    font-weight: 600;
+    transition: background 0.12s, border-color 0.12s;
+}
+.recording-append .rec-btn:hover {
+    background: rgba(251, 191, 36, 0.1);
+    border-color: #fbbf24;
+    border-style: solid;
+    color: #fde68a;
 }
 .rec-btn[disabled] {
     opacity: 0.3;
