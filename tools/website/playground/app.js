@@ -295,9 +295,16 @@ async function onFileChange(fileList) {
     // A dropped .replay.json seeds state.lastRecording so ▶ Replay can
     // pick it up without asking for the file again.
     if (files.length === 1 && /\.replay\.json$|\.json$/i.test(files[0].name)) {
-        state.lastRecording = await files[0].text();
-        if (typeof updateRecplayButton === "function") updateRecplayButton();
-        setStatus(`Loaded recording ${files[0].name} — click ▶ Replay to verify.`, "success");
+        const text = await files[0].text();
+        try {
+            const parsed = JSON.parse(text);
+            if (typeof setRecording === "function") setRecording(parsed);
+            else state.lastRecording = text;
+        } catch (e) {
+            setStatus(`Invalid recording: ${e.message}`, "error");
+            return;
+        }
+        setStatus(`Loaded recording ${files[0].name} — 📜 Trace panel opened.`, "success");
         return;
     }
 
@@ -1838,15 +1845,226 @@ document.querySelector("[data-download]")?.addEventListener("click", downloadPro
 // `aver replay --test`, minus disk IO.
 
 function updateRecplayButton() {
-    const btn = document.querySelector("[data-recplay]");
+    const btn = document.querySelector("[data-trace]");
     if (!btn) return;
-    if (state.lastRecording) {
-        btn.textContent = "▶ Replay";
-        btn.classList.add("has-recording");
+    btn.classList.toggle("has-recording", !!state.lastRecording);
+}
+
+// ── Recording panel ────────────────────────────────────────────────
+// Interactive trace viewer. Every effect shows up as an editable
+// card: swap an outcome value, delete an event, hit ↻ to re-record
+// or ▶ to replay the edited trace against the current source. Makes
+// record/replay a live debugging surface, not just a download flow.
+
+function setRecording(parsed) {
+    state.recordingData = parsed;
+    state.lastRecording = JSON.stringify(parsed, null, 2);
+    updateRecplayButton();
+    renderRecordingPanel();
+}
+
+function clearRecording() {
+    state.recordingData = null;
+    state.lastRecording = null;
+    updateRecplayButton();
+    const existing = document.querySelector(".recording-panel");
+    if (existing) existing.remove();
+}
+
+function renderRecordingPanel() {
+    const existing = document.querySelector(".recording-panel");
+    if (existing) existing.remove();
+
+    setWorkspaceModeConsole();
+
+    const panel = document.createElement("div");
+    panel.className = "recording-panel";
+
+    // Header: title + actions.
+    const header = document.createElement("div");
+    header.className = "recording-header";
+    const title = document.createElement("span");
+    title.className = "title";
+    const data = state.recordingData;
+    if (data) {
+        const count = data.effects.length;
+        title.textContent = `Trace · ${count} effect${count === 1 ? "" : "s"} · ${data.program_file || "playground"}`;
     } else {
-        btn.textContent = "⏺ Record";
-        btn.classList.remove("has-recording");
+        title.textContent = "Trace — effect log";
     }
+    header.appendChild(title);
+    const spacer = document.createElement("span");
+    spacer.style.flex = "1";
+    header.appendChild(spacer);
+
+    if (data) {
+        header.appendChild(recAction("▶ Replay", "Replay the (possibly edited) recording against the current source.", () => doReplay(), "rec-primary"));
+        header.appendChild(recAction("↻ Re-record", "Run main() again and overwrite this recording.", () => doRecord(true)));
+        header.appendChild(recAction("⬇ Download", "Save the current recording (with any edits) as a .replay.json.", () => {
+            const base = (data.program_file || "playground").replace(/\.av$/, "") || "playground";
+            triggerDownload(`${base}.replay.json`, state.lastRecording, "application/json");
+        }));
+    } else {
+        header.appendChild(recAction("⏺ Record", "Run main() with effect recording on — every Console/Terminal/Time/etc. call becomes an editable event below.", () => doRecord(true), "rec-primary"));
+    }
+    header.appendChild(recAction("✕", "Close the Trace panel.", () => clearPanel(), "rec-close"));
+    panel.appendChild(header);
+
+    if (!data) {
+        const intro = document.createElement("div");
+        intro.className = "recording-intro";
+        intro.innerHTML = `
+            <p>A <strong>trace</strong> is the effect log of <code>main()</code> running in the VM — every <code>Console.print</code>, <code>Terminal.readKey</code>, <code>Random.int</code>… captured with its outcome.</p>
+            <p>Click <strong>⏺ Record</strong> to capture one, or drop a <code>.replay.json</code> onto the dropzone above. Then edit outcomes inline and hit <strong>▶ Replay</strong> to see how the program reacts.</p>
+        `;
+        panel.appendChild(intro);
+        dom.console.appendChild(panel);
+        return;
+    }
+
+    // Program-level outcome (what main returned / runtime error).
+    if (data.output) {
+        const outRow = document.createElement("div");
+        outRow.className = "recording-outcome";
+        if (data.output.kind === "runtime_error") {
+            outRow.innerHTML = `<span class="label err">main threw:</span> <code>${escapeHtml(data.output.message || "")}</code>`;
+        } else {
+            outRow.innerHTML = `<span class="label">main returned:</span> <code>${escapeHtml(JSON.stringify(data.output.value))}</code>`;
+        }
+        panel.appendChild(outRow);
+    }
+
+    const list = document.createElement("div");
+    list.className = "recording-events";
+    if (data.effects.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "recording-empty";
+        empty.textContent = "No effects recorded — main() ran purely.";
+        list.appendChild(empty);
+    }
+    data.effects.forEach((eff, idx) => list.appendChild(renderEffectCard(eff, idx)));
+    panel.appendChild(list);
+
+    dom.console.appendChild(panel);
+}
+
+// Close the panel without forgetting the recording — clearRecording
+// would also nuke state.lastRecording; clearPanel just hides the UI.
+function clearPanel() {
+    const existing = document.querySelector(".recording-panel");
+    if (existing) existing.remove();
+}
+
+function recAction(label, tip, onClick, extraClass) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "rec-btn" + (extraClass ? ` ${extraClass}` : "");
+    btn.textContent = label;
+    btn.title = tip;
+    btn.addEventListener("click", onClick);
+    return btn;
+}
+
+function setWorkspaceModeConsole() {
+    // Recording panel lives in the console surface; if we're in
+    // terminal mode (came off a game run) swap back to console so
+    // the panel is actually visible.
+    setOutputMode("console");
+}
+
+function renderEffectCard(effect, idx) {
+    const card = document.createElement("div");
+    card.className = "recording-event";
+    card.dataset.seq = String(effect.seq ?? idx);
+
+    const head = document.createElement("div");
+    head.className = "ev-head";
+    const seq = document.createElement("span");
+    seq.className = "ev-seq";
+    seq.textContent = `#${effect.seq ?? idx}`;
+    const type = document.createElement("span");
+    type.className = "ev-type";
+    type.textContent = effect.type || "(unknown)";
+    head.appendChild(seq);
+    head.appendChild(type);
+    if (effect.caller_fn) {
+        const caller = document.createElement("span");
+        caller.className = "ev-caller";
+        caller.textContent = `in ${effect.caller_fn}${effect.source_line ? `:${effect.source_line}` : ""}`;
+        head.appendChild(caller);
+    }
+    card.appendChild(head);
+
+    // Args — read-only for now (editing these is rare + risky).
+    if (Array.isArray(effect.args) && effect.args.length > 0) {
+        const args = document.createElement("div");
+        args.className = "ev-args";
+        args.textContent = `(${effect.args.map(a => jsonCompact(a)).join(", ")})`;
+        card.appendChild(args);
+    }
+
+    // Outcome — editable. Swapping this is the whole point.
+    const out = document.createElement("div");
+    out.className = "ev-outcome";
+    const kindLabel = document.createElement("span");
+    const isErr = effect.outcome?.kind === "runtime_error";
+    kindLabel.className = "ev-arrow" + (isErr ? " err" : "");
+    kindLabel.textContent = isErr ? "!" : "→";
+    out.appendChild(kindLabel);
+    const input = document.createElement("input");
+    input.className = "ev-outcome-edit" + (isErr ? " err" : "");
+    input.type = "text";
+    input.spellcheck = false;
+    input.value = isErr
+        ? (effect.outcome?.message || "")
+        : jsonCompact(effect.outcome?.value);
+    input.addEventListener("input", () => {
+        input.classList.remove("invalid");
+        try {
+            if (isErr) {
+                effect.outcome = { kind: "runtime_error", message: input.value };
+            } else {
+                effect.outcome = { kind: "value", value: JSON.parse(input.value) };
+            }
+            state.lastRecording = JSON.stringify(state.recordingData, null, 2);
+        } catch (_) {
+            // Surface parse failure visually; don't throw.
+            input.classList.add("invalid");
+        }
+    });
+    out.appendChild(input);
+    card.appendChild(out);
+
+    // Per-event actions.
+    const actions = document.createElement("div");
+    actions.className = "ev-actions";
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "rec-btn";
+    del.textContent = "🗑";
+    del.title = "Drop this effect from the trace — replay will expect the program NOT to make this call.";
+    del.addEventListener("click", () => {
+        state.recordingData.effects.splice(idx, 1);
+        state.recordingData.effects.forEach((e, i) => { e.seq = i; });
+        state.lastRecording = JSON.stringify(state.recordingData, null, 2);
+        renderRecordingPanel();
+    });
+    actions.appendChild(del);
+    card.appendChild(actions);
+
+    return card;
+}
+
+function jsonCompact(val) {
+    try { return JSON.stringify(val); } catch { return String(val); }
+}
+
+function escapeHtml(str) {
+    return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
 }
 
 function currentProjectFiles() {
@@ -1855,7 +2073,7 @@ function currentProjectFiles() {
         : { "playground.av": getActiveSource() };
 }
 
-async function doRecord(silentDownload = false) {
+async function doRecord(skipDownload = true) {
     if (state.wasmOnly) {
         setStatus("No source — drop .av or a folder first.", "error");
         return;
@@ -1876,18 +2094,17 @@ async function doRecord(silentDownload = false) {
             appendConsole("stderr", res.error || "unknown error");
             return;
         }
-        state.lastRecording = res.recording;
-        updateRecplayButton();
-        const base = entry.replace(/\.av$/, "") || "playground";
-        if (!silentDownload) {
-            triggerDownload(`${base}.replay.json`, res.recording, "application/json");
+        let parsed;
+        try {
+            parsed = JSON.parse(res.recording);
+        } catch (e) {
+            setStatus("Recording parse failed", "error");
+            appendConsole("stderr", e.message);
+            return;
         }
+        setRecording(parsed);
         const note = res.runtime_error ? ` (main threw: ${res.runtime_error})` : "";
-        const suffix = silentDownload ? "" : ` → ${base}.replay.json`;
-        setStatus(
-            `Recorded ${res.effect_count} effect(s)${suffix}${note} · ▶ Replay to verify`,
-            "success"
-        );
+        setStatus(`Recorded ${res.effect_count} effect(s)${note}`, "success");
     } catch (e) {
         appendConsole("stderr", e.message || String(e));
         setStatus("Record failed", "error");
@@ -1937,15 +2154,18 @@ async function doReplay() {
     }
 }
 
-document.querySelector("[data-recplay]")?.addEventListener("click", async (e) => {
-    if (e.shiftKey || !state.lastRecording) {
-        await doRecord();
+// Clicking 📜 Trace toggles the panel. The panel itself owns the
+// Record / Replay / Download / Re-record flow — button stays a
+// pure open/close affordance.
+document.querySelector("[data-trace]")?.addEventListener("click", () => {
+    const open = document.querySelector(".recording-panel");
+    if (open) {
+        open.remove();
     } else {
-        await doReplay();
+        renderRecordingPanel();
     }
 });
 
-// Initial render + sync after a .replay.json drop.
 updateRecplayButton();
 
 function makeDownloadButton(label, title, onClick) {

@@ -93,6 +93,13 @@ impl VM {
         self.runtime.start_recording();
     }
 
+    /// Cap the recorder at `cap` events. Useful for browser record
+    /// runs where a game with no quit path would otherwise hang the
+    /// wasm main thread. `None` (default) = unlimited, matching CLI.
+    pub fn set_record_cap(&mut self, cap: Option<usize>) {
+        self.runtime.set_record_cap(cap);
+    }
+
     /// Start replaying from recorded effects.
     pub fn start_replay(
         &mut self,

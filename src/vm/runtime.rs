@@ -116,6 +116,10 @@ impl VmRuntime {
         self.replay_state.start_recording();
     }
 
+    pub(super) fn set_record_cap(&mut self, cap: Option<usize>) {
+        self.replay_state.set_record_cap(cap);
+    }
+
     pub(super) fn start_replay(&mut self, effects: Vec<EffectRecord>, validate_args: bool) {
         self.replay_state.start_replay(effects, validate_args);
     }
@@ -228,6 +232,16 @@ impl VmRuntime {
                     other => VmError::runtime(format!("{:?}", other)),
                 }),
             (true, VmExecutionMode::Record) => {
+                // Record-cap safety net: caller (e.g. the browser
+                // playground) can set a ceiling via set_record_cap so
+                // runaway loops (game on an input-starved stub) fail
+                // fast instead of hanging the wasm main thread.
+                if self.replay_state.record_full() {
+                    return Err(VmError::runtime(format!(
+                        "Record budget exceeded while calling {} — likely an infinite effect loop. Add a quit condition or raise the cap.",
+                        builtin_name
+                    )));
+                }
                 let args_json = {
                     let vals: Vec<_> = args.iter().map(|a| a.to_value(arena)).collect();
                     values_to_json_lossy(&vals)

@@ -51,6 +51,12 @@ pub struct EffectReplayState {
     next_group_id: u32,
     /// Indices within replay_effects consumed from current group (for unordered match).
     group_consumed: Vec<usize>,
+    /// Optional safety cap for recording — `record_effect` stops
+    /// accepting new events beyond this count and callers can check
+    /// `record_full()` to bail out of a runaway loop (e.g. a game
+    /// that never reaches a quit condition). None = unlimited (CLI
+    /// default).
+    record_cap: Option<usize>,
 }
 
 impl EffectReplayState {
@@ -76,6 +82,14 @@ impl EffectReplayState {
         self.validate_replay_args = false;
         self.args_diff_count = 0;
         self.reset_group_state();
+    }
+
+    pub fn set_record_cap(&mut self, cap: Option<usize>) {
+        self.record_cap = cap;
+    }
+
+    pub fn record_full(&self) -> bool {
+        matches!(self.record_cap, Some(cap) if self.recorded_effects.len() >= cap)
     }
 
     pub fn start_replay(&mut self, effects: Vec<EffectRecord>, validate_args: bool) {

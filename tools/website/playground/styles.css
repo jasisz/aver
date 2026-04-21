@@ -208,26 +208,167 @@ body {
     background: rgba(56, 189, 248, 0.1) !important;
     border-color: #38bdf8 !important;
 }
-/* One button, two modes. Red while it still needs to record; once a
-   recording is cached, morphs to yellow ▶ Replay. Shift-click to
-   re-record — status hints at it post-record. */
-.btn-recplay {
-    color: #f87171 !important;
-    border-color: rgba(248, 113, 113, 0.45) !important;
-    font-weight: 600;
-}
-.btn-recplay:hover {
-    background: rgba(248, 113, 113, 0.1) !important;
-    border-color: #f87171 !important;
-}
-.btn-recplay.has-recording {
+/* Trace toolbar button — opens the Recording panel (which owns the
+   record/replay/import/download flow). Amber so it's visually in the
+   same family as effects-as-orange throughout the rest of the UI. */
+.btn-trace {
     color: #fbbf24 !important;
     border-color: rgba(251, 191, 36, 0.45) !important;
+    font-weight: 600;
 }
-.btn-recplay.has-recording:hover {
+.btn-trace:hover {
     background: rgba(251, 191, 36, 0.1) !important;
     border-color: #fbbf24 !important;
 }
+.btn-trace.has-recording {
+    color: #fb923c !important;
+    border-color: rgba(251, 146, 60, 0.55) !important;
+}
+
+/* ── Recording panel ─────────────────────────────────────────────── */
+.recording-panel {
+    background: var(--surface);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    border-radius: 6px;
+    margin: 0.75rem;
+    overflow: hidden;
+}
+.recording-header {
+    display: flex;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    gap: 0.5rem;
+    background: rgba(251, 191, 36, 0.08);
+    border-bottom: 1px solid var(--border);
+}
+.recording-header .title {
+    font-weight: 600;
+    color: #fbbf24;
+    font-size: 0.85rem;
+}
+.recording-header .rec-btn,
+.recording-event .rec-btn {
+    font-size: 0.7rem;
+    padding: 0.2rem 0.5rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: inherit;
+}
+.recording-header .rec-btn:hover,
+.recording-event .rec-btn:hover {
+    color: var(--text);
+    border-color: var(--accent);
+}
+.recording-header .rec-btn.rec-primary {
+    color: #fbbf24;
+    border-color: rgba(251, 191, 36, 0.45);
+}
+.recording-header .rec-btn.rec-primary:hover {
+    background: rgba(251, 191, 36, 0.1);
+}
+.recording-header .rec-btn.rec-close {
+    color: var(--muted);
+    padding: 0.15rem 0.4rem;
+    font-size: 0.85rem;
+}
+.recording-outcome {
+    padding: 0.4rem 0.75rem;
+    font-size: 0.75rem;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    border-bottom: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.15);
+}
+.recording-outcome .label { margin-right: 0.4rem; color: var(--muted); }
+.recording-outcome .label.err { color: var(--red, #f87171); }
+.recording-outcome code { color: var(--text); }
+.recording-empty {
+    padding: 0.75rem;
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-style: italic;
+    text-align: center;
+}
+.recording-events {
+    max-height: 55vh;
+    overflow-y: auto;
+}
+.recording-event {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px dashed var(--border);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.25rem 0.75rem;
+    align-items: start;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+}
+.recording-event:last-child { border-bottom: none; }
+.recording-event .ev-head { display: flex; gap: 0.5rem; align-items: baseline; }
+.recording-event .ev-seq {
+    color: var(--muted);
+    font-size: 0.7rem;
+}
+.recording-event .ev-type {
+    color: #f97316;
+    font-weight: 600;
+}
+.recording-event .ev-caller {
+    color: var(--muted);
+    font-size: 0.68rem;
+    font-style: italic;
+}
+.recording-event .ev-args {
+    color: var(--muted);
+    word-break: break-all;
+    grid-column: 1;
+}
+.recording-event .ev-outcome {
+    grid-column: 1;
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+}
+.recording-event .ev-arrow {
+    color: var(--accent);
+    font-weight: 600;
+}
+.recording-event .ev-arrow.err { color: var(--red, #f87171); }
+.recording-event .ev-outcome-edit {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.75rem;
+    padding: 0.2rem 0.45rem;
+    border-radius: 3px;
+}
+.recording-event .ev-outcome-edit:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+.recording-event .ev-outcome-edit.invalid {
+    border-color: var(--red, #f87171);
+}
+.recording-event .ev-outcome-edit.err {
+    color: #fca5a5;
+}
+.recording-event .ev-actions {
+    grid-row: 1 / span 3;
+    align-self: start;
+}
+.recording-intro {
+    padding: 0.9rem;
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.8rem;
+}
+.recording-intro p { margin-bottom: 0.6rem; line-height: 1.5; }
+.recording-intro .rec-btn.rec-primary { font-size: 0.78rem; padding: 0.35rem 0.8rem; }
 
 .btn-download {
     color: var(--muted) !important;

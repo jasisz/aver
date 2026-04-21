@@ -353,6 +353,11 @@ fn run_record_inner(
 
     let mut machine = vm::VM::new(code, globals, arena);
     machine.set_silent_console(true);
+    // Safety net — a game with no quit path (Terminal.readKey always
+    // returning None under the stubs) would otherwise loop forever on
+    // the wasm main thread. 10k effects is way above any sensible
+    // real program and short-circuits to a clear error fast.
+    machine.set_record_cap(Some(10_000));
     machine.start_recording();
 
     let mut runtime_error: Option<String> = None;

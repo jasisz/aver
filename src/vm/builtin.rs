@@ -1,4 +1,6 @@
-use crate::nan_value::{Arena, NanValue, NanValueConvert};
+use crate::nan_value::{Arena, NanValue};
+#[cfg(not(feature = "terminal"))]
+use crate::nan_value::NanValueConvert;
 #[cfg(feature = "terminal")]
 use crate::services::terminal;
 #[cfg(feature = "runtime-net")]
