@@ -2600,13 +2600,30 @@ function renderDiagRegions(container, d) {
         }
         const ul = region.underline;
         if (ul && ul.col > 0) {
-            const caretPad = " ".repeat(Math.max(0, ul.col - 1));
-            const carets = "^".repeat(Math.max(1, ul.len || 1));
-            const label = ul.label ? `  ${ul.label}` : "";
-            const ulLine = document.createElement("div");
+            // Align the carets to the target line character-for-
+            // character by using the line's own text as an invisible
+            // padding span. Plain " ".repeat(col-1) drifts when the
+            // line contains chars whose monospace glyph width isn't
+            // exactly 1ch (em-dash, CJK, emoji, …).
+            const target = lines[lines.length - 1]?.text ?? "";
+            const before = target.slice(0, Math.max(0, ul.col - 1));
+            const caretLen = Math.max(1, ul.len || 1);
+            const carets = "^".repeat(caretLen);
             const isErr = d.severity === "error" || d.severity === "fail";
-            ulLine.className = `diag-snippet-line diag-snippet-caret ${isErr ? "diag-err" : "diag-warn"}`;
-            ulLine.textContent = `  ${pad} | ${caretPad}${carets}${label}`;
+            const ulLine = document.createElement("div");
+            ulLine.className = "diag-snippet-line";
+            ulLine.append(`  ${pad} | `);
+            const ghost = document.createElement("span");
+            ghost.className = "diag-snippet-ghost";
+            ghost.textContent = before;
+            ulLine.appendChild(ghost);
+            const caret = document.createElement("span");
+            caret.className = `diag-snippet-caret ${isErr ? "diag-err" : "diag-warn"}`;
+            caret.textContent = carets;
+            ulLine.appendChild(caret);
+            if (ul.label) {
+                ulLine.appendChild(document.createTextNode(`  ${ul.label}`));
+            }
             container.appendChild(ulLine);
         }
     }

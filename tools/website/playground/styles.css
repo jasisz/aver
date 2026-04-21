@@ -848,6 +848,9 @@ body {
 }
 .audit-section .diag-snippet-caret.diag-err { color: var(--red); }
 .audit-section .diag-snippet-caret.diag-warn { color: var(--orange); }
+/* Invisible copy of the source prefix so carets line up 1:1 with
+   chars above — plain " ".repeat drifts on em-dash / CJK / emoji. */
+.audit-section .diag-snippet-ghost { color: transparent; }
 
 /* ── Shared download button for panels ────────────────────────── */
 .ctx-header-row, .audit-header-row, .why-header-row {
