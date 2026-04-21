@@ -2087,12 +2087,16 @@ function renderEffectCard(effect, idx) {
     typeInput.spellcheck = false;
     typeInput.value = effect.type || "";
     typeInput.title = "Effect type, e.g. Console.print, Terminal.readKey, Time.sleep.";
+    // Auto-size the input to fit the full type name (plus a little
+    // padding for cursor room). Mono font makes `size` = char count
+    // match pixel width cleanly.
+    const fitSize = (v) => Math.max(10, (v || "").length + 2);
+    typeInput.size = fitSize(typeInput.value);
     typeInput.addEventListener("input", () => {
         effect.type = typeInput.value;
+        typeInput.size = fitSize(typeInput.value);
         commitRecording();
     });
-    // Re-render on blur so nullary/void hiding picks up the new type
-    // without stealing focus mid-keystroke.
     typeInput.addEventListener("change", () => renderRecordingPanel());
     head.appendChild(typeInput);
     if (effect.caller_fn) {

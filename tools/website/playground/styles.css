@@ -358,7 +358,11 @@ body {
     font-size: inherit;
     padding: 0.1rem 0.25rem;
     border-radius: 3px;
-    min-width: 9rem;
+    /* Auto-sizing via the `size` attribute (set from JS); CSS just
+       sets a sensible floor so an empty input still reads as a field. */
+    min-width: 6rem;
+    width: auto;
+    box-sizing: content-box;
 }
 .recording-event .ev-type-edit:hover { border-color: var(--border); }
 .recording-event .ev-type-edit:focus {
