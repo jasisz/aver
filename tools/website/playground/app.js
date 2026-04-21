@@ -1219,7 +1219,7 @@ if (checkBtn) {
         if (!source?.trim()) return;
 
         setOutputMode("console");
-        deactivateGame();
+        state.activeGame = null;
         clearOutput();
 
         try {
@@ -1295,7 +1295,7 @@ if (verifyBtn) {
         if (!source?.trim()) return;
 
         setOutputMode("console");
-        deactivateGame();
+        state.activeGame = null;
         clearOutput();
 
         try {
@@ -1398,7 +1398,7 @@ if (whyBtn) {
         if (!source?.trim()) return;
 
         setOutputMode("console");
-        deactivateGame();
+        state.activeGame = null;
         clearOutput();
         clearCompileMeta();
 
@@ -1503,7 +1503,7 @@ if (contextBtn) {
         if (!source?.trim()) return;
 
         setOutputMode("console");
-        deactivateGame();
+        state.activeGame = null;
         clearOutput();
         clearCompileMeta();
 
@@ -2883,7 +2883,7 @@ if (auditBtn) {
         if (!source?.trim()) return;
 
         setOutputMode("console");
-        deactivateGame();
+        state.activeGame = null;
         clearOutput();
         clearCompileMeta();
 
