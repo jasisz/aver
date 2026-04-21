@@ -208,21 +208,23 @@ body {
     background: rgba(56, 189, 248, 0.1) !important;
     border-color: #38bdf8 !important;
 }
-.btn-record {
+/* One button, two modes. Red while it still needs to record; once a
+   recording is cached, morphs to yellow ▶ Replay. Shift-click to
+   re-record — status hints at it post-record. */
+.btn-recplay {
     color: #f87171 !important;
     border-color: rgba(248, 113, 113, 0.45) !important;
     font-weight: 600;
 }
-.btn-record:hover {
+.btn-recplay:hover {
     background: rgba(248, 113, 113, 0.1) !important;
     border-color: #f87171 !important;
 }
-.btn-replay {
+.btn-recplay.has-recording {
     color: #fbbf24 !important;
     border-color: rgba(251, 191, 36, 0.45) !important;
-    font-weight: 600;
 }
-.btn-replay:hover {
+.btn-recplay.has-recording:hover {
     background: rgba(251, 191, 36, 0.1) !important;
     border-color: #fbbf24 !important;
 }
