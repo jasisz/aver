@@ -2,8 +2,8 @@
 
 > Status: design, pre-implementation
 > Release codename: **Oracle**
-> Next release (deferred scope): **Relay** — `?!` cancel mode + cross-branch trace ordering
-> Later release: **Ledger** — stateful effects (Store<K,V>) via ghost Map + refinement to trace
+> Next release (deferred scope): **Relay** — `?!` cancel mode, cross-branch trace ordering, higher-order effectful callbacks, user-defined effects
+> Later release: **Ledger** — stateful effects (Store<K,V>) via ghost Map + refinement
 
 ## Pitch (one sentence)
 
@@ -11,34 +11,47 @@ Effectful functions become first-class in `aver proof`: previously silently skip
 
 ## What changes for users (only two new conventions)
 
-1. **Spec for an effectful function takes effects as explicit parameters** — reader functions for snapshot dims, oracle functions for generative dims.
-2. **`verify fn trace` keyword** enables trace-aware laws using `.result` / `.trace` projections. Without it, law checks only return value (so adding a debug print does not break proofs that do not care about traces).
+1. **Spec for an effectful function takes effects as explicit parameters** — reader functions for snapshot dims, branch-indexed oracle functions for generative dims.
+2. **`verify fn trace` keyword** enables trace-aware laws using `.result` / `.trace` projections. Without it, law checks only the return value (so adding a debug print does not break proofs that do not care about traces).
 
 Everything else is identical to today: `! [Effect.method]` in function body, `verify fn law fnSpec`, `given` sample values, `!` / `?!` in source.
+
+## Foundational model: structural path
+
+Every Aver evaluation runs in a structural context path `BranchPath`:
+
+- Sequential code: root path (`[]` or empty dewey-decimal string `""`).
+- Entering branch `j` of a `!` or `?!` group: path extended with `j` (e.g. `[]` → `[0]`, `[0]` → `[0, 0]`).
+- Nested groups extend the path further.
+
+BranchPath is **source-derived and schedule-invariant**. Every effect occurrence has a canonical address `(BranchPath, occurrence_in_branch)`. There is no "branch path only in parallel" — sequential code uses the root path uniformly.
+
+This model is the foundation of generative oracle signatures, trace addressing, and the normalization theorem below.
 
 ## Scope
 
 ### In
 
-- **Snapshot** effects → capability threading: single reader function param, deterministic.
-- **Generative** effects → oracle + counter threading: `(Int, args...) -> T` oracle, integer counter advanced per call.
-- **Output** effects → trace threading: ghost `List<EffectCall>` appended per call, opt-in in law via `trace` keyword.
-- **Effectful `!`** (parallel independence) → branch-witness tree.
+- **Snapshot** effects → capability threading: single reader function param, deterministic, not branch-indexed.
+- **Generative** effects → oracle with branch-indexed signature `(BranchPath, Int, args...) -> T` plus per-branch integer counter advanced per call.
+- **Output** effects → per-branch trace segment threading: ghost `List<EffectCall>` appended per call; structural tree assembled at join. Opt-in in law via `trace` keyword.
+- **Effectful `!`** (parallel independence) → branch-witness tree with structural branch paths.
 - **Effectful `?!`** in `complete` mode → same witness tree, plus left-to-right error priority aggregation.
 - **`Result` / `?` preservation** — ghost state (counter, trace) survives early return.
-- **Structural trace addressing** matching replay JSON format: `group_id` + `branch_path` + `effect_occurrence`.
+- **Structural tree trace API** indexed by source path, not runtime IDs. Replay tooling maps runtime IDs to structural paths for display.
 
-### Out (with clear rejection messages)
+### Out (with clear rejection)
 
-- **`?!` in `cancel` mode** — proofs assume `complete`; if `aver.toml` has `mode = cancel`, emit stderr warning.
+- **`?!` in `cancel` mode** — hard error from `aver proof` unless explicit opt-in flag.
 - **Stateful effects** (Store, DB, any effect where write affects subsequent read) — replay only; Ledger release.
 - **Higher-order effectful callbacks** (e.g. `HttpServer.listenWith(handler: Req -> ! [...] Resp)`) — proof subset rejection; runtime and replay unaffected.
 - **Interactive / dialogue effects** (request-response protocols, subprocess stdin/stdout, LLM tool calls) — replay only.
 - **Cross-branch global ordering laws** ("event A before event B across two `!` branches") — structurally inexpressible; explicit rejection. Within-branch ordering is fine.
+- **Custom (non-built-in) effects** — rejected from proof subset in Oracle v1; Relay release will add user-defined effect classification.
 
-## Effect classification (built-in, not user-declared)
+## Effect classification (built-in, closed set for Oracle v1)
 
-Each built-in effect method is assigned one or more dimensions. This is a language-author decision, codified in the compiler. Users never declare dimensions.
+Oracle v1 only covers functions whose effects all appear in this table. Classification is fixed by Aver language authors, not declared by user.
 
 | Effect | Method | Dimension(s) | Notes |
 |---|---|---|---|
@@ -52,7 +65,7 @@ Each built-in effect method is assigned one or more dimensions. This is a langua
 | `Log` | `write : (Level, String) -> Unit` | output | trace-appending |
 | `Http` | `get : String -> String` | generative + output | request emitted to trace, response arbitrary |
 
-Effects marked **stateful** or **interactive** (e.g. `Store.read/write`, `Tcp.requestResponse`) are not in this table — they remain replay-only. Classification for every built-in effect is locked in before release.
+Effects marked **stateful** or **interactive** (`Store.read/write`, `Tcp.requestResponse`, `Db.*`, etc.) are not in this table — they remain replay-only. Full classification for every built-in effect is locked in before release.
 
 ## User-facing examples
 
@@ -61,7 +74,15 @@ Effects marked **stateful** or **interactive** (e.g. `Store.read/write`, `Tcp.re
 ```aver
 fn absVal(x: Int) -> Int
     ? "Returns absolute value."
-    if x < 0 then -x else x
+    match x < 0
+        true  -> 0 - x
+        false -> x
+
+fn absValSpec(x: Int) -> Int
+    ? "Reference."
+    match x < 0
+        true  -> 0 - x
+        false -> x
 
 verify absVal law absValSpec
     given x: Int = -3..3
@@ -96,25 +117,25 @@ verify loadPort law loadPortSpec
     loadPort() => loadPortSpec(Args.get)
 ```
 
-`doubleCheck(Args.get(0), Args.get(0))` proves `true` — correct, because args are stable within a run.
+`doubleCheck(Args.get(0), Args.get(0))` proves `true` — correct, because args are stable within a run. Snapshot capability is a pure extensional function; same input → same output.
 
-### 3. Generative — Random.next
+### 3. Generative — Random.next (branch-indexed oracle)
 
 ```aver
 fn pickThree() -> (Int, Int, Int)
     ! [Random.next]
     (Random.next(), Random.next(), Random.next())
 
-fn pickThreeSpec(oracle: Int -> Int) -> (Int, Int, Int)
-    ? "Three draws from the oracle."
-    (oracle(0), oracle(1), oracle(2))
+fn pickThreeSpec(oracle: (BranchPath, Int) -> Int) -> (Int, Int, Int)
+    ? "Three draws from the oracle in the root branch."
+    (oracle([], 0), oracle([], 1), oracle([], 2))
 
 verify pickThree law pickThreeSpec
-    given Random.next: Int -> Int = [seedA, seedB]
+    given Random.next: (BranchPath, Int) -> Int = [seedA, seedB]
     pickThree() => pickThreeSpec(Random.next)
 ```
 
-`doubleCheck(Random.next(), Random.next())` does **not** prove `true` — different indices, oracle may return different values.
+Sequential code — all three calls happen in the root path `[]`. Counter distinguishes them (0, 1, 2). `doubleCheck(Random.next(), Random.next())` does **not** prove `true` — same path, different counters → `oracle([], 0)` and `oracle([], 1)` may return different values.
 
 ### 4. Output — default (trace ignored)
 
@@ -148,66 +169,73 @@ verify greetAll trace law greetAllSpec
 
 The effect call `Console.print("Hello, Alice!")` used as a value inside `.trace.contains(...)` is the event literal — no separate event ADT for users to learn.
 
-### 6. Parallel `!` — trace addressing matches replay JSON
+### 6. Parallel `!` — structural tree trace API
 
 Source:
 ```aver
 fn fanOut(a: String, b: String) -> Unit
     ! [Console.print]
-    Console.print("fetch outer-" + a) !
-    Console.print("fetch outer-" + b) !
-    {
-        Console.print("fetch inner-A") !
-        Console.print("fetch inner-B") !
+    Console.print("fetch outer-" + a) !     // stmt 0, branch 0
+    Console.print("fetch outer-" + b) !     // stmt 0, branch 1
+    {                                        // stmt 0, branch 2 — nested group
+        Console.print("fetch inner-A") !    //   branch 0
+        Console.print("fetch inner-B") !    //   branch 1
     }
-    Console.print("all fan-outs completed")
+    Console.print("all fan-outs completed") // stmt 1 (sequential, root continuation)
 ```
 
-Replay JSON (from playground) shows:
-```json
-{"group_id":1,"branch_path":"0",  "effect_occurrence":0,"type":"Console.print","args":["fetch outer-1"]}
-{"group_id":1,"branch_path":"1",  "effect_occurrence":0,"type":"Console.print","args":["fetch outer-2"]}
-{"group_id":2,"branch_path":"2.0","effect_occurrence":0,"type":"Console.print","args":["fetch inner-A"]}
-{"group_id":2,"branch_path":"2.1","effect_occurrence":0,"type":"Console.print","args":["fetch inner-B"]}
-```
-
-Law uses the same coordinates (copy-paste from replay JSON):
+Law uses tree-navigation API:
 ```aver
 verify fanOut trace
     given a: String = ["1"], b: String = ["2"]
-    fanOut(a, b).trace[1]["0"][0]   => Some(Console.print("fetch outer-1"))
-    fanOut(a, b).trace[1]["1"][0]   => Some(Console.print("fetch outer-2"))
-    fanOut(a, b).trace[2]["2.0"][0] => Some(Console.print("fetch inner-A"))
-    fanOut(a, b).trace[2]["2.1"][0] => Some(Console.print("fetch inner-B"))
-    fanOut(a, b).trace.sequential(4) => Some(Console.print("all fan-outs completed"))
+    
+    fanOut(a, b).trace.stmt(0).branch(0).event(0)
+        => Some(Console.print("fetch outer-1"))
+    
+    fanOut(a, b).trace.stmt(0).branch(1).event(0)
+        => Some(Console.print("fetch outer-2"))
+    
+    fanOut(a, b).trace.stmt(0).branch(2).branch(0).event(0)
+        => Some(Console.print("fetch inner-A"))
+    
+    fanOut(a, b).trace.stmt(0).branch(2).branch(1).event(0)
+        => Some(Console.print("fetch inner-B"))
+    
+    fanOut(a, b).trace.stmt(1).event(0)
+        => Some(Console.print("all fan-outs completed"))
 ```
 
-Indexing: `trace[group_id][branch_path][effect_occurrence]`. Sequential (non-grouped) events addressed via `.sequential(n)`.
+Navigation mirrors source structure: `stmt(i)` for top-level statement, `branch(j)` for entering a `!` / `?!` branch, `event(k)` for the k-th effect occurrence at the current node. Sequential events are addressed by `stmt(i).event(k)` with no intervening `branch`. Uniform — no `.sequential()` special case for non-parallel events.
+
+**Replay tooling** (playground Trace view, `aver replay`) displays the structural path alongside any runtime IDs so users can copy-paste paths directly into verify blocks.
 
 ### 7. Fork-join `?!` complete mode
 
 ```aver
-fn parseEither(raw: String) -> Result<(Config, Config), Error>
-    ! [Parser.run]
-    a = Parser.run("json", raw) ?!
-    b = Parser.run("yaml", raw) ?!
+fn fetchBoth(urlA: String, urlB: String) -> Result<(String, String), String>
+    ! [Http.get]
+    a = Http.get(urlA) ?!
+    b = Http.get(urlB) ?!
     Ok((a, b))
 
-fn parseEitherSpec(
-    raw: String,
-    parser: (String, String) -> Result<Config, Error>
-) -> Result<(Config, Config), Error>
-    ? "Try both parsers; first source-order Err wins."
-    match (parser("json", raw), parser("yaml", raw))
+fn fetchBothSpec(
+    urlA: String,
+    urlB: String,
+    http: (BranchPath, Int, String) -> Result<String, String>
+) -> Result<(String, String), String>
+    ? "Try both URLs; first source-order Err wins."
+    match (http([0], 0, urlA), http([1], 0, urlB))
         (Ok(a), Ok(b))  -> Ok((a, b))
         (Err(e), _)     -> Err(e)
         (Ok(_), Err(e)) -> Err(e)
 
-verify parseEither law parseEitherSpec
-    given raw: String = ["{\"port\": 8080}"]
-    given Parser.run: (String, String) -> Result<Config, Error> = [goodParser]
-    parseEither(raw) => parseEitherSpec(raw, Parser.run)
+verify fetchBoth law fetchBothSpec
+    given urlA: String = ["https://a"], urlB: String = ["https://b"]
+    given Http.get: (BranchPath, Int, String) -> Result<String, String> = [httpStub]
+    fetchBoth(urlA, urlB) => fetchBothSpec(urlA, urlB, Http.get)
 ```
+
+`Http.get` is generative + output. Oracle covers the response; output side appears in trace when the verify block uses `trace` keyword. In `?!` complete, both branches run to completion; aggregation takes the first `Err` in source order.
 
 ### 8. Mixed dimensions in one function
 
@@ -221,19 +249,20 @@ fn report(region: String) -> Unit
 fn reportSpec(
     region: String,
     args: Int -> String,
-    oracle: Int -> Int
+    oracle: (BranchPath, Int) -> Int
 ) -> Unit
-    ? "Report builds message from arg[0], a draw from oracle, and region."
-    let _ = args(0) + " report " + toString(oracle(0)) + " for " + region
+    ? "Report returns Unit; side-effect visible in trace."
     Unit
 
 verify report trace law reportSpec
-    given region: String              = ["PL"]
-    given Args.get: Int -> String     = [argsStub]
-    given Random.next: Int -> Int     = [randStub]
-    report(region).result              => reportSpec(region, Args.get, Random.next)
-    report(region).trace.length()      => 1
+    given region: String                        = ["PL"]
+    given Args.get: Int -> String               = [argsStub]
+    given Random.next: (BranchPath, Int) -> Int = [randStub]
+    report(region).result                       => reportSpec(region, Args.get, Random.next)
+    report(region).trace.stmt(2).length()       => 1
 ```
+
+(Return value of `report` is `Unit`, so `reportSpec` trivially returns `Unit`. Real content of this law is in the trace assertion — exactly one event emitted at statement 2.)
 
 ## Codegen (internal, invisible to user)
 
@@ -260,25 +289,42 @@ data BranchWitness
 
 ### Threading rules per dimension
 
-- **Snapshot**: capability function parameter, unchanged through evaluation.
-- **Generative**: `(Int, args) -> T` oracle parameter + `Int` counter; counter incremented after each call.
-- **Output**: `List<EffectCall>` trace parameter, appended per call.
+- **Snapshot**: capability function parameter, unchanged through evaluation; NOT branch-indexed (stable across branches by definition).
+- **Generative**: `(BranchPath, Int, args...) -> T` oracle parameter + **per-branch** `Int` counter. Counter resets at branch entry; BranchPath advances on branch entry.
+- **Output**: per-branch `List<EffectCall>` trace segment appended per call; structural tree assembled from per-branch segments at join.
 - **`Result` / `?` preservation**: lifted function returns `(Result<A, E>, counter, trace)`, so error paths preserve ghost state.
 
-### Structural trace normalization
+### Structural trace normalization (theorem, not axiom)
 
-For any two legal runtime schedules of the same evaluation, the normalized structural trace is identical. This is the fundamental soundness lemma for trace-aware laws under `!` / `?!` complete. It is either proven in-compiler or treated as a definitional axiom of proof-trace semantics (decision deferred to implementation phase).
+**Theorem (schedule-invariance of structural trace)**:
 
-### Trace addressing model
+For any two legal runtime schedules `s1, s2` of the same Aver evaluation `e`:
+```
+normalize(runtime_trace(e, s1)) = normalize(runtime_trace(e, s2))
+```
+where `normalize` produces the structural trace indexed by `(BranchPath, occurrence_in_branch)`.
 
-- `group_id`: structural order of `!` / `?!` encounter within a function body (1-indexed, source-derived).
-- `branch_path`: dewey-decimal string like `"2.0"` encoding the hierarchical branch position from the innermost enclosing group outward.
-- `effect_occurrence`: 0-indexed counter within the branch.
-- Sequential (non-grouped) effects: addressed via `.sequential(n)` in the proof API.
+**Proof sketch**:
+- For `!`: follows from the `!` annotation meaning "operations commute on state". Different orderings of commuting operations produce the same final state per branch, and since each branch maintains its own trace segment, normalization is order-independent.
+- For `?!` complete: all branches run to completion (no cancellation); each branch's local trace is determined by its own execution independently of other branches' scheduling. Aggregation at join operates on completed branch Results and is schedule-invariant.
+- For `;`: trivial — single ordering.
 
-`group_id` is included in the proof API despite being structurally derivable, because:
-- Sibling groups at the same nesting level need disambiguation.
-- User already sees it in replay JSON; consistency between replay view and proof asserts matters.
+This is a theorem, not an axiom. It must be proven (either as a meta-lemma in the compiler, or emitted as a lemma-scheme that each generated proof references). A user inspecting an exported `.lean` / `.dfy` can either trust or mechanically verify it.
+
+### Trace addressing (tree API)
+
+The trace is a tree mirroring source structure:
+
+- `.stmt(i)` — i-th top-level statement in the function body.
+- `.branch(j)` — enter the j-th branch of a `!` / `?!` group at the current tree node.
+- `.event(k)` — the k-th effect occurrence at the current tree node.
+- `.length()` — number of events at the current tree node (flat count at that node, not recursive).
+
+Paths compose: `.stmt(0).branch(2).branch(1).event(0)` addresses the first event of the second sub-branch of the third branch of the first-statement's group.
+
+**No `group_id` in the user API**. Source structure alone disambiguates. For the rare case of multiple sibling groups at a single statement (e.g. tuple of groups), the API reserves `.group(g)` infix.
+
+Runtime replay data carries `group_id` + `branch_path` for its own bookkeeping; a resolved structural path is additionally emitted for each event so users can copy-paste from replay view into proofs.
 
 ## Trust assumptions (generated header in each `.lean` / `.dfy`)
 
@@ -287,24 +333,29 @@ For any two legal runtime schedules of the same evaluation, the normalized struc
 //
 // Effects and dimensions:
 //   Args.get      — snapshot: stable return for same input within run
-//   Random.next   — generative: each call returns arbitrary Int; no correlation assumed
-//   Console.print — output: invocations appear in trace in source-structural order
+//   Random.next   — generative: oracle indexed by (BranchPath, Int); each call fresh
+//   Console.print — output: per-branch trace segment appended per call
 //   ...
 //
 // Concurrency:
-//   !  (independent parallel): proof holds for any legal schedule
-//   ?! in complete mode: all branches run; error aggregated left-to-right
-//   ?! in cancel mode: NOT COVERED (see aver.toml mode setting)
+//   !  (independent parallel): proof holds for any legal schedule,
+//        by schedule-invariance theorem of structural trace normalization.
+//   ?! in complete mode: all branches run; error aggregated left-to-right.
+//   ?! in cancel mode: NOT COVERED by this export. Project must set
+//        mode = complete in aver.toml, or pass --allow-mode-mismatch
+//        to aver proof.
 //
 // Structural trace addressing:
-//   Events addressed by (group_id, branch_path, effect_occurrence)
-//   Cross-branch ordering NOT observable
-//   Wall-clock and shared-channel adjacency NOT expressible
+//   Events addressed by (BranchPath, occurrence_in_branch).
+//   BranchPath is source-derived, schedule-invariant.
+//   Cross-branch ordering NOT observable.
+//   Wall-clock and shared-channel adjacency NOT expressible.
 //
 // Out of scope in this export:
 //   - Stateful effects
 //   - Higher-order effectful callbacks
 //   - Interactive protocols
+//   - Custom (non-built-in) effects
 ```
 
 ## Rejection diagnostics
@@ -320,14 +371,26 @@ error: function 'setupServer' uses higher-order effectful callback
        Higher-order effectful callbacks are outside the proof subset.
        The function continues to work at runtime and in replay.
 
-warning: project uses mode = cancel in aver.toml
-         Proofs exported by aver proof assume mode = complete.
-         Switch to mode = complete, or accept that exported proofs do not cover cancel semantics.
+error: project uses mode = cancel in aver.toml, but aver proof only
+       supports ?! in complete mode.
 
-error: cross-branch ordering assertion in verify block:
-         foo().trace["0"][0]._at_seq < foo().trace["1"][0]._at_seq
-       Global ordering across independent branches is not observable in Oracle v1.
-       Assert per-branch or switch to sequential ';'.
+       To proceed:
+       - set mode = complete in aver.toml (recommended), OR
+       - pass --allow-mode-mismatch to aver proof
+         (exported proofs do NOT cover cancel semantics; runtime must
+          still be configured with mode = complete for the proofs to
+          transfer to execution).
+
+error: cross-branch ordering assertion at line N:
+         foo().trace.stmt(0).branch(0).event(0) < foo().trace.stmt(0).branch(1).event(0)
+       Global ordering across independent ! branches is not observable.
+       Assert per-branch, or sequentialize the operations with ';'.
+
+error: function 'customThing' uses unclassified effect 'MyEffect.do'
+       Custom effects are not in Oracle v1's proof subset.
+       Built-in effects supported in proof: Args, Env, ProjectConfig,
+       Random, Time, File, Console, Log, Http.
+       User-defined effects are planned for Relay release.
 ```
 
 ## Scope estimate
@@ -335,34 +398,35 @@ error: cross-branch ordering assertion in verify block:
 | Component | Effort |
 |---|---|
 | BranchWitness ADT + parser / AST support | 2 days |
-| Codegen per-dimension lift (snapshot / generative / output) | 1.5 weeks |
+| Codegen per-dimension lift with BranchPath threading | 2 weeks |
 | `Result` / `?` preservation across ghost state | 3 days |
 | Branch witness tree construction for `!` and `?!` complete | 1 week |
 | Aggregation rule for `?!` at join point | 2 days |
 | `verify fn trace` keyword + trace-aware law parser | 3 days |
-| Trace addressing API (`group_id` / `branch_path` / `effect_occurrence`) | 3 days |
+| Tree trace API (stmt / branch / event navigation) | 4 days |
 | Dafny emission | 1 week |
 | Lean emission | 1 week |
 | Rejection diagnostics + trust-assumption header generator | 3 days |
-| Normalization lemma / axiom (structural trace schedule-invariance) | 3 days |
+| Normalization theorem (proof, not axiom) | 1 week |
+| Replay tooling — structural path display alongside runtime IDs | 2 days |
 | Tests + migration examples | 1 week |
 | Docs | 3 days |
 
-**Realistic total: 6–8 weeks focused work.**
-**Pessimistic: 10 weeks** if normalization or `?!` aggregation prove subtler than expected.
+**Realistic total: 7–9 weeks focused work.**
+**Pessimistic: 11 weeks** if normalization theorem or `?!` aggregation prove subtler than expected.
 
 ## Risks
 
-1. **Normalization theorem** for structural trace soundness: formulation may need care; subtleties may surface mid-implementation.
+1. **Normalization theorem formulation** needs care; `?!` complete aggregation under different schedules demands precise statement. If proof turns out hard, falling back to axiom is a regression in soundness story — want to avoid.
 2. **Dafny solver cost** for deep branch nesting: N=2 fine; N=5+ nested `!` / `?!` unclear.
-3. **Spec-vs-impl brittleness** for generative dim: counter alignment means spec and impl must consume oracle identically. A UX cliff for refactor-sensitive users.
+3. **Spec-vs-impl brittleness** for generative dim: BranchPath + counter alignment means spec and impl must consume oracle identically. UX cliff for refactor-sensitive users.
 4. **Debug prints affecting trace-aware laws** — documented as expected; some users may still find it surprising.
-5. **`group_id` source-stability for recursion**: each recursive call generates a new group instance; proof API uses "order of encounter in function body" which is stable across non-recursive code but needs clear semantics for recursive fan-out (Aver repo already exercises this via playground).
+5. **Sibling groups at same statement level**: rare case (tuple of groups, etc.) needs `.group(g)` infix in API. Verify consistency across examples before committing.
 
 ## Follow-up releases
 
-- **Relay** — adds `?!` cancel mode with cooperative cancellation semantics, cross-branch trace ordering via merge witnesses, and higher-order effectful callbacks.
-- **Ledger** — stateful effects (Store<K,V>) via ghost `Map<K, V>` + refinement relation tying runtime replay trace to the abstract model. Introduces relation-based proofs ("proved relative to trusted Store laws / host adapter").
+- **Relay** — `?!` cancel mode with cooperative cancellation semantics; cross-branch trace ordering via merge witnesses; higher-order effectful callbacks; user-defined effect classification.
+- **Ledger** — stateful effects (Store<K,V>) via ghost `Map<K, V>` + refinement relation tying runtime replay trace to the abstract model. Relation-based proofs ("proved relative to trusted Store laws / host adapter").
 
 ## Prior art
 
