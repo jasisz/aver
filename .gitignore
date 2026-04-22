@@ -2,7 +2,6 @@
 .idea
 
 out/
-.claude/plans/
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 .junie/
