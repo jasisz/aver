@@ -182,30 +182,41 @@ fn pipelineContinue(ready: String, remaining: List<String>) -> Result<Unit, Stri
 
 `process(ready)` and `fetchOne(url)` form an independent product: item N is consumed while item N+1 is produced. This is not streaming — there is no incremental delivery mechanism. It is structured overlap: each recursive step overlaps one unit of consumption with one unit of production.
 
-### Windowed parallel fetch (bounded concurrency)
+### Static-width windowing (bounded concurrency)
 
 ```aver
-fn processInWindows(urls: List<String>, windowSize: Int) -> Result<Unit, String>
+fn fetchThree(a: String, b: String, c: String) -> (Result<String, String>, Result<String, String>, Result<String, String>)
+    ? "Fetch three URLs concurrently."
+    ! [Http.get]
+    (fetchOne(a), fetchOne(b), fetchOne(c))?!
+
+fn processInWindows(urls: List<String>) -> Result<Unit, String>
+    ? "Fetch at most 3 concurrently; recurse on the tail."
     ! [Http.get, Console.print]
     match urls
         [] -> Result.Ok(Unit)
-        _ ->
-            bodies = fetchAllParallel(List.take(urls, windowSize))?!
-            processAll(bodies)?
-            processInWindows(List.drop(urls, windowSize), windowSize)
+        [a, b, c, ..rest] ->
+            match fetchThree(a, b, c)
+                (Result.Ok(_), Result.Ok(_), Result.Ok(_)) -> processInWindows(rest)
+                _ -> Result.Err("partial failure in window")
+        [a, b] -> match (fetchOne(a), fetchOne(b))?!
+            (Result.Ok(_), Result.Ok(_)) -> Result.Ok(Unit)
+            _ -> Result.Err("partial failure")
+        [a] -> match fetchOne(a)
+            Result.Ok(_) -> Result.Ok(Unit)
+            Result.Err(e) -> Result.Err(e)
 ```
 
-`windowSize` bounds the number of concurrent effects — at most N in flight at any time. This is bounded concurrency, not backpressure (the producer does not wait for a demand signal from the consumer).
+The window size is a compile-time constant (3 here) — the list is chunked at runtime via recursive pattern matching, each chunk handed to a fixed-arity `?!`. Concurrency is bounded to the window size without a runtime knob.
 
 ### What these patterns are
 
 These patterns are not new semantic primitives; they emerge from composing independent products with sequential control flow:
 
 - **Pipeline parallelism** — overlap production and consumption via `?!` + recursion
-- **Bounded concurrency** — limit fan-out via window size parameter
-- **Batched concurrent processing** — parallel fetch within window, sequential between windows
+- **Static-width windowing** — chunk a list by pattern, apply a fixed-arity `?!` per chunk, bounded concurrency falls out
 
-These are not: element-by-element streaming, demand-driven backpressure, or channel-based communication.
+These are not: element-by-element streaming, demand-driven backpressure, channel-based communication, or dynamic-arity fan-out (`?!` is statically shaped — the number of concurrent branches is fixed at the call site).
 
 ## What Aver does not have
 
