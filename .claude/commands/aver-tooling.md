@@ -52,6 +52,34 @@ aver format examples --check
 
 `format` accepts files or directories and walks `.av` files recursively.
 
+### Audit
+
+```bash
+aver audit file-or-dir --module-root . --deps
+```
+
+`audit` is the single-shot CI gate that runs all three axes at once:
+
+1. static checks (same diagnostics as `check`)
+2. `verify` execution (same as `verify`)
+3. `format --check` (structural compliance)
+
+Output is a flat list of `error[slug]:` / `warning[slug]:` lines plus a
+summary footer: `N files | X check errors | Y verify failures | Z format`.
+Any non-zero count fails the command.
+
+- warnings (e.g. `independence-hazard`, `non-tail-recursion`) do not fail
+  the audit — they are advisory
+- errors come from the same machinery as `check` / `verify` / `format`, so
+  slugs are stable and match `docs/diagnostics-slugs.md`
+- prefer `aver audit` over chaining `check && verify && format --check` —
+  it runs the pipeline once and reports everything in one place
+
+Use it before showing a snippet to the user or committing docs examples;
+it catches illegal `?!` usages, match-arm body-on-next-line parse errors,
+and effect-type mismatches that a naked `aver run` can miss when the VM
+short-circuits on the first failure.
+
 ### Context
 
 ```bash

@@ -862,6 +862,8 @@ const EXAMPLES = {
     "independence": `module Independence\n    intent =\n        "Two effectful branches run under \`?!\` — Aver may reorder them at runtime."\n        "Hit ⏺ Record: the Trace panel groups both under one independent product,"\n        "so replay matches either order. Shuffle the cards inside the group and try Replay."\n\nfn announceA() -> Result<Int, String>\n    ? "first independent branch — prints and returns 10"\n    ! [Console.print]\n    Console.print("branch A")\n    Result.Ok(10)\n\nfn announceB() -> Result<Int, String>\n    ? "second independent branch — prints and returns 20"\n    ! [Console.print]\n    Console.print("branch B")\n    Result.Ok(20)\n\nfn main() -> Result<Unit, String>\n    ! [Console.print]\n    _pair = (announceA(), announceB())?!\n    Console.print("done — both branches ran")\n    Result.Ok(Unit)\n`,
 
     "fanout": `module Fanout\n    intent =\n        "Three parallel fetches — and the third is itself a nested \`?!\`."\n        "Trace panel shows nested independence: outer branches 0/1/2, and"\n        "branch 2 contains its own independent product inside (2.0 / 2.1)."\n        "Record, then try reordering within an inner branch vs moving the whole inner group."\n\nfn fetchOne(tag: String) -> Result<Int, String>\n    ? "one independent remote call"\n    ! [Console.print]\n    Console.print("fetch {tag}")\n    Result.Ok(String.len(tag))\n\nfn fetchPair() -> Result<(Int, Int), String>\n    ? "inner pair — independent fetch of two"\n    ! [Console.print]\n    xy = (fetchOne("inner-A"), fetchOne("inner-B"))?!\n    Result.Ok(xy)\n\nfn main() -> Result<Unit, String>\n    ! [Console.print]\n    _all = (fetchOne("outer-1"), fetchOne("outer-2"), fetchPair())?!\n    Console.print("all fan-outs completed")\n    Result.Ok(Unit)\n`,
+
+    "rec-fanout": `module RecFanout\n    intent =\n        "Recursive fan-out: a list of N items becomes N concurrent leaves"\n        "via \`?!\` pairing head against the recursion on the tail. Ten items"\n        "expand into a cascade of nested \`?!\` — every leaf is independent."\n        "Record to see the cascade; Replay works up to depth 2 today."\n\nfn fetch(tag: String) -> Result<Int, String>\n    ? "one independent leaf call"\n    ! [Console.print]\n    Console.print("fetch {tag}")\n    Result.Ok(String.len(tag))\n\nfn fanoutStep(x: String, rest: List<String>) -> Result<Int, String>\n    ? "pair head with recursive tail under ?!"\n    ! [Console.print]\n    pair = (fetch(x), fanout(rest))?!\n    match pair\n        (h, t) -> Result.Ok(h + t)\n\nfn fanout(items: List<String>) -> Result<Int, String>\n    ? "recursive fan-out over a list"\n    ! [Console.print]\n    match items\n        [] -> Result.Ok(0)\n        [x, ..rest] -> fanoutStep(x, rest)\n\nfn main() -> Unit\n    ! [Console.print]\n    result = fanout(["01", "02", "03", "04", "05", "06", "07", "08", "09", "10"])\n    match result\n        Result.Ok(n) -> Console.print("total = {n}")\n        Result.Err(e) -> Console.print("error: {e}")\n`,
 };
 
 const codeEditor = document.querySelector("[data-code-editor]");
@@ -2058,11 +2060,12 @@ function renderGroupNode(group) {
     header.appendChild(label);
     const hint = document.createElement("span");
     hint.className = "recording-group-hint";
-    hint.textContent = "order-independent under ?!";
+    hint.textContent = "independent branches under ?! / !";
     hint.title =
         "Effects in this group came from an Aver `?!` / `!` independent product. " +
-        "Aver's runtime may reorder branches; replay matches them by (branch, occurrence) " +
-        "rather than by absolute position. Nested groups sit inside their parent branch.";
+        "Branches are independent — Aver's runtime may reorder them; replay matches " +
+        "them by (branch, occurrence) rather than by absolute position. Nested groups " +
+        "sit inside their parent branch.";
     header.appendChild(hint);
     const spacer = document.createElement("span");
     spacer.style.flex = "1";
