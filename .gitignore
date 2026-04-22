@@ -3,8 +3,9 @@
 
 out/
 .claude/plans/
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
 .junie/
 .env
 tools/wasm-runner/target/
 *.cwasm/
-.claude/
