@@ -82,9 +82,7 @@ impl RuntimeType {
             RuntimeType::Bool => Type::Bool,
             RuntimeType::OptionStr => Type::Option(Box::new(Type::Str)),
             RuntimeType::ListStr => Type::List(Box::new(Type::Str)),
-            RuntimeType::ResultStrStr => {
-                Type::Result(Box::new(Type::Str), Box::new(Type::Str))
-            }
+            RuntimeType::ResultStrStr => Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
             RuntimeType::HttpResponseResult => Type::Result(
                 Box::new(Type::Named("HttpResponse".to_string())),
                 Box::new(Type::Str),
@@ -221,10 +219,7 @@ pub fn oracle_signature(method: &str) -> Option<Type> {
             ))
         }
         EffectDimension::Generative | EffectDimension::GenerativeOutput => {
-            let mut params = vec![
-                Type::Named(branch_path::TYPE_NAME.to_string()),
-                Type::Int,
-            ];
+            let mut params = vec![Type::Named(branch_path::TYPE_NAME.to_string()), Type::Int];
             params.extend(c.runtime_params.iter().copied().map(runtime_type));
             Some(Type::Fn(
                 params,

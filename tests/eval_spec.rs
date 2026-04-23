@@ -3229,7 +3229,11 @@ updated = User.update(u, age = 99)
 fn assert_branch_path(value: &Value, expected_dewey: &str) {
     match value {
         Value::Record { type_name, fields } => {
-            assert_eq!(type_name, "BranchPath", "expected BranchPath, got {}", type_name);
+            assert_eq!(
+                type_name, "BranchPath",
+                "expected BranchPath, got {}",
+                type_name
+            );
             let dewey = fields
                 .iter()
                 .find(|(n, _)| n == "dewey")

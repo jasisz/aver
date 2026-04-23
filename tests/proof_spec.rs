@@ -93,11 +93,7 @@ fn proof_export_builds_grok_s_language_when_lake_is_available() {
 // Oracle v1 — aver.toml mode rejection in aver proof
 // ---------------------------------------------------------------------------
 
-fn run_aver_proof_in_dir(
-    dir: &PathBuf,
-    source: &str,
-    toml: &str,
-) -> std::process::Output {
+fn run_aver_proof_in_dir(dir: &PathBuf, source: &str, toml: &str) -> std::process::Output {
     std::fs::write(dir.join("aver.toml"), toml).expect("write aver.toml");
     std::fs::write(dir.join("program.av"), source).expect("write program.av");
     let aver_bin = env!("CARGO_BIN_EXE_aver");

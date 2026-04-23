@@ -2146,7 +2146,9 @@ fn result_only_law_on_recursive_effectful_function_is_accepted() {
     );
     let errs = errors(src);
     assert!(
-        !errs.iter().any(|e| e.contains("recursive effectful function")),
+        !errs
+            .iter()
+            .any(|e| e.contains("recursive effectful function")),
         "result-only law should not be rejected; got: {:?}",
         errs
     );
@@ -2167,7 +2169,9 @@ fn trace_law_on_non_recursive_effectful_function_is_accepted() {
     );
     let errs = errors(src);
     assert!(
-        !errs.iter().any(|e| e.contains("recursive effectful function")),
+        !errs
+            .iter()
+            .any(|e| e.contains("recursive effectful function")),
         "non-recursive effectful function should not trigger the rejection; got: {:?}",
         errs
     );
@@ -2187,7 +2191,9 @@ fn trace_law_on_recursive_pure_function_is_accepted() {
     );
     let errs = errors(src);
     assert!(
-        !errs.iter().any(|e| e.contains("recursive effectful function")),
+        !errs
+            .iter()
+            .any(|e| e.contains("recursive effectful function")),
         "pure recursive function should not trigger the rejection; got: {:?}",
         errs
     );
@@ -2243,7 +2249,9 @@ fn verify_law_on_classified_effects_is_accepted() {
     );
     let errs = errors(src);
     assert!(
-        !errs.iter().any(|e| e.contains("outside Oracle v1's proof subset")),
+        !errs
+            .iter()
+            .any(|e| e.contains("outside Oracle v1's proof subset")),
         "classified effects should not trigger the rejection; got: {:?}",
         errs
     );
@@ -2264,7 +2272,9 @@ fn verify_cases_on_stateful_effect_is_not_rejected_as_proof_subset() {
     );
     let errs = errors(src);
     assert!(
-        !errs.iter().any(|e| e.contains("outside Oracle v1's proof subset")),
+        !errs
+            .iter()
+            .any(|e| e.contains("outside Oracle v1's proof subset")),
         "cases-form verify should not trigger the proof-subset rejection; got: {:?}",
         errs
     );
