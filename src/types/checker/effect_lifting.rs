@@ -57,6 +57,14 @@ pub struct LiftConfig {
     /// Map from effect method (`"Random.int"`) → local binding name
     /// (`"rnd"`) the lifted body should call in place of the effect.
     pub oracles: HashMap<String, String>,
+    /// Oracle v1: effectful user-defined helpers visible from this
+    /// body. Name → list of effect methods the helper declares. Call
+    /// sites to these fns in the lifted body get `(path, oracle...)`
+    /// args injected so the callee's lifted form sees them. Without
+    /// this, proof export emits `helper()` bare and the typechecker
+    /// on Lean / Dafny rejects it (arity mismatch). Empty for v0
+    /// tests that don't have helpers.
+    pub effectful_helpers: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,10 +188,43 @@ fn try_lift_error_prop_stmt(
     Ok(Some(Stmt::Expr(cont)))
 }
 
+/// Oracle v1: if `callee` resolves to a known effectful user helper
+/// (from `cfg.effectful_helpers`), return its declared effect list.
+/// Otherwise `None` — caller proceeds with standard non-injected
+/// lowering.
+fn callee_helper_effects(callee: &Expr, cfg: &LiftConfig) -> Option<Vec<String>> {
+    let name = match callee {
+        Expr::Ident(n) | Expr::Resolved { name: n, .. } => n.clone(),
+        _ => return None,
+    };
+    cfg.effectful_helpers.get(&name).cloned()
+}
+
 /// Deterministic binding name for the k-th `?!` branch's unwrapped
 /// value. Underscore-prefixed so it never collides with user idents.
 fn cps_binding(k: usize) -> String {
     format!("ep_{}", k)
+}
+
+/// Oracle v1: build a nested `match` cascade from `items` that is a
+/// self-contained `Result<(T1, …, Tn), E>` expression. Used when `?!`
+/// appears at expression position (e.g. nested inside another `?!`,
+/// or as a branch of an outer `!`). Innermost arm wraps the
+/// unwrapped tuple in `Result.Ok`. First-Err-wins.
+fn build_error_prop_cascade(items: Vec<Spanned<Expr>>, line: SourceLine) -> Spanned<Expr> {
+    let tuple_items: Vec<Spanned<Expr>> = (0..items.len())
+        .map(|i| spanned(Expr::Ident(cps_binding(i)), line))
+        .collect();
+    let tuple_expr = spanned(Expr::Tuple(tuple_items), line);
+    let ok_wrap = spanned(
+        Expr::Constructor("Result.Ok".to_string(), Some(Box::new(tuple_expr))),
+        line,
+    );
+    let mut cont = ok_wrap;
+    for (i, lifted) in items.into_iter().enumerate().rev() {
+        cont = result_match_cascade(lifted, cps_binding(i), cont, line);
+    }
+    cont
 }
 
 /// Build `match subject with Result.Err(e) -> Result.Err(e) |
@@ -368,6 +409,41 @@ fn lift_expr(
             // or higher-order call we pass through after recursing args.
             if let Some(effect_name) = effect_method_name(&callee.node) {
                 lift_classified_call(expr, &effect_name, args, cfg, path_expr, counter)?
+            } else if let Some(helper_effects) = callee_helper_effects(&callee.node, cfg) {
+                // Oracle v1: call site to an effectful user helper —
+                // inject `(path, oracle...)` args so the call matches
+                // the helper's lifted arity. Path is the current
+                // scope's path expression (no `.child(path, i)` because
+                // a helper call is a sequential point, not a fresh
+                // branch); the helper's own `!`/`?!` bodies build
+                // their own `BranchPath.child` threading.
+                let new_callee = lift_expr(callee, cfg, path_expr, counter)?;
+                let new_args = lift_args(args, cfg, path_expr, counter)?;
+                let mut injected: Vec<Spanned<Expr>> = Vec::new();
+                let needs_path = helper_effects.iter().any(|e| {
+                    matches!(
+                        classify(e).map(|c| c.dimension),
+                        Some(EffectDimension::Generative | EffectDimension::GenerativeOutput)
+                    )
+                });
+                if needs_path {
+                    injected.push(path_expr.clone());
+                }
+                let mut seen = std::collections::HashSet::new();
+                for e in &helper_effects {
+                    if !seen.insert(e.clone()) {
+                        continue;
+                    }
+                    let Some(c) = classify(e) else { continue };
+                    if matches!(c.dimension, EffectDimension::Output) {
+                        continue;
+                    }
+                    if let Some(oracle_name) = cfg.oracles.get(e) {
+                        injected.push(spanned(Expr::Ident(oracle_name.clone()), expr.line));
+                    }
+                }
+                injected.extend(new_args);
+                Expr::FnCall(Box::new(new_callee), injected)
             } else {
                 let new_callee = lift_expr(callee, cfg, path_expr, counter)?;
                 let new_args = lift_args(args, cfg, path_expr, counter)?;
@@ -425,6 +501,15 @@ fn lift_expr(
                 let mut branch_counter: u32 = 0;
                 let lifted = lift_expr(element, cfg, &branch_path, &mut branch_counter)?;
                 new_elements.push(lifted);
+            }
+            if *is_error_prop {
+                // Oracle v1: `?!` at expression position desugars to a
+                // nested match cascade whose innermost Ok arm wraps
+                // the tuple in `Result.Ok`. Handles nested `?!` inside
+                // another `?!` — each one becomes a Result-returning
+                // expression that the outer CPS consumes uniformly.
+                // Same first-Err semantics as the stmt-level rewrite.
+                return Ok(build_error_prop_cascade(new_elements, expr.line));
             }
             Expr::IndependentProduct(new_elements, *is_error_prop)
         }
@@ -692,6 +777,17 @@ pub fn type_to_annotation(ty: &Type) -> String {
 ///
 /// Returns `None` if the function's effect list is empty (nothing to lift).
 pub fn lift_fn_def(fd: &FnDef) -> Result<Option<FnDef>, LiftError> {
+    lift_fn_def_with_helpers(fd, &HashMap::new())
+}
+
+/// Oracle v1: lift an effectful fn with a known set of sibling
+/// effectful helpers. Call sites to any helper in `helpers` get
+/// `(path, oracle...)` args injected so their lifted arity matches.
+/// Empty map = standalone lift (no helpers visible).
+pub fn lift_fn_def_with_helpers(
+    fd: &FnDef,
+    helpers: &HashMap<String, Vec<String>>,
+) -> Result<Option<FnDef>, LiftError> {
     if fd.effects.is_empty() {
         return Ok(None);
     }
@@ -736,6 +832,7 @@ pub fn lift_fn_def(fd: &FnDef) -> Result<Option<FnDef>, LiftError> {
     let cfg = LiftConfig {
         path_name,
         oracles: oracles_map,
+        effectful_helpers: helpers.clone(),
     };
 
     let lifted_body = lift_body(&fd.body, &cfg)?;
