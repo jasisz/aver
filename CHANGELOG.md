@@ -11,6 +11,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Fixed
 - **Playground replay ignored the recording's entry point** — `aver_replay_run` always re-invoked `main()` regardless of what the recording declared, which meant non-main recordings (from drag-and-drop or CLI imports) were silently compared against the wrong program. Replay now parses `entry_fn` / `input` from the recording and calls the matching function, mirroring CLI `aver replay` semantics.
+- **Playground Trace panel hard-coded "main"** — after recording via ⏺ Record fn…, the outcome row and empty-trace hint still said "main returned: …" / "main() ran purely" regardless of the actual entry. Labels now show the recording's real `entry_fn` (e.g. `area(…) returned: 3.14159`). ↻ Re-record remembers the last custom entry expression and re-runs the same call instead of quietly falling back to main.
 
 ## 0.10.0 "Telltale" (2026-04-21)
 

@@ -1817,6 +1817,7 @@ function clearRecording() {
     state.recordingData = null;
     state.lastRecording = null;
     state.lastReplayResult = null;
+    state.lastEntryExpr = null;
     updateRecplayButton();
     const existing = document.querySelector(".recording-panel");
     if (existing) existing.remove();
@@ -1850,16 +1851,19 @@ function renderRecordingPanel() {
     header.appendChild(spacer);
 
     if (data) {
+        const reRecordTooltip = state.lastEntryExpr
+            ? `Re-run ${state.lastEntryExpr} and overwrite this recording.`
+            : "Run main() again and overwrite this recording.";
         header.appendChild(recAction("▶ Replay", "Replay the (possibly edited) recording against the current source.", () => doReplay(), "rec-primary"));
-        header.appendChild(recAction("↻ Re-record", "Run main() again and overwrite this recording.", () => doRecord(true)));
+        header.appendChild(recAction("↻ Re-record", reRecordTooltip, () => doRecord(true, state.lastEntryExpr)));
         header.appendChild(recAction("⬇ Download", "Save the current recording (with any edits) as a .replay.json.", () => {
             const base = (data.program_file || "playground").replace(/\.av$/, "") || "playground";
             triggerDownload(`${base}.replay.json`, state.lastRecording, "application/json");
         }));
     } else {
         header.appendChild(recAction("⏺ Record", "Run main() with effect recording on — every Console/Terminal/Time/etc. call becomes an editable event below.", () => doRecord(true), "rec-primary"));
-        header.appendChild(recAction("⏺ Record fn…", "Record a specific function call (e.g. 'loadTaxRate(\"PL\")') instead of main(). Args must be literals.", () => {
-            const expr = prompt('Call expression to record (e.g. loadTaxRate("PL")):');
+        header.appendChild(recAction("⏺ Record fn…", "Record a specific function call (e.g. 'area(Shape.Circle(1.0))') instead of main(). Arguments must be literals or ADT constructors.", () => {
+            const expr = prompt('Call expression to record (e.g. area(Shape.Circle(1.0))):', state.lastEntryExpr || "");
             const trimmed = expr?.trim();
             if (trimmed) doRecord(true, trimmed);
         }));
@@ -1894,7 +1898,10 @@ function renderRecordingPanel() {
         panel.appendChild(banner);
     }
 
-    // Program-level outcome (what main returned / runtime error).
+    // Program-level outcome (what the entry function returned / threw).
+    const entryLabel = data.entry_fn && data.entry_fn !== "main"
+        ? `${data.entry_fn}(…)`
+        : "main()";
     if (data.output) {
         const outRow = document.createElement("div");
         outRow.className = "recording-outcome";
@@ -1905,10 +1912,10 @@ function renderRecordingPanel() {
                 outRow.classList.add("capped");
                 outRow.innerHTML = `<span class="label">⚠ capped:</span> <code>${escapeHtml(msg)}</code>`;
             } else {
-                outRow.innerHTML = `<span class="label err">main threw:</span> <code>${escapeHtml(msg)}</code>`;
+                outRow.innerHTML = `<span class="label err">${escapeHtml(entryLabel)} threw:</span> <code>${escapeHtml(msg)}</code>`;
             }
         } else {
-            outRow.innerHTML = `<span class="label">main returned:</span> <code>${escapeHtml(JSON.stringify(data.output.value))}</code>`;
+            outRow.innerHTML = `<span class="label">${escapeHtml(entryLabel)} returned:</span> <code>${escapeHtml(JSON.stringify(data.output.value))}</code>`;
         }
         panel.appendChild(outRow);
     }
@@ -1918,7 +1925,7 @@ function renderRecordingPanel() {
     if (data.effects.length === 0) {
         const empty = document.createElement("div");
         empty.className = "recording-empty";
-        empty.textContent = "No effects recorded — main() ran purely.";
+        empty.textContent = `No effects recorded — ${entryLabel} ran purely.`;
         list.appendChild(empty);
     }
     // Effects may carry independent-product metadata (group_id,
@@ -2556,6 +2563,9 @@ async function doRecord(skipDownload = true, entryExpr = null) {
         setStatus("Nothing to record.", "error");
         return;
     }
+    // Remember the entry expression so ↻ Re-record runs the same call instead
+    // of silently falling back to main(). Cleared when Record (main) is used.
+    state.lastEntryExpr = entryExpr || null;
     try {
         const comp = await loadCompiler();
         setStatus(entryExpr ? `Recording ${entryExpr}…` : "Recording…", "info");
