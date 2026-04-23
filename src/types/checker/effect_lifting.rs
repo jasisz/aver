@@ -307,12 +307,17 @@ fn lift_classified_call(
 
     match classification.dimension {
         EffectDimension::Output => {
-            // Output effects are not lifted in this transform; they stay
-            // as-is and are handled separately by the trace-context
-            // elaborator (separate commit).
-            let new_args = lift_args(args, cfg, path_expr, counter)?;
-            let callee_expr = rebuild_dotted_callee(effect_name, original);
-            Ok(Expr::FnCall(Box::new(callee_expr), new_args))
+            // Output effects have no semantic contribution to the
+            // proof — they're trace-appending side effects. Replace
+            // the call with `Unit` so the lifted body emits as pure
+            // math both in Dafny and Lean (Dafny `function` happens
+            // to drop non-tail Unit statements; Lean does not, so
+            // without this replacement `Console.print(x)` leaks into
+            // the emitted proof as an unresolved identifier).
+            // The runtime side of trace assertions is handled by the
+            // verify-trace collector, not by lifted proofs.
+            let _ = (args, cfg, path_expr, counter);
+            Ok(Expr::Literal(crate::ast::Literal::Unit))
         }
         EffectDimension::Snapshot => {
             let oracle_name =
@@ -662,26 +667,22 @@ mod tests {
     }
 
     #[test]
-    fn lift_output_effect_is_left_alone() {
+    fn lift_output_effect_is_replaced_with_unit() {
         let body = parse_body("    Console.print(\"hi\")");
         let cfg = simple_cfg_with(&[]);
         let lifted = lift_body(&body, &cfg).unwrap();
         let [Stmt::Expr(tail)] = &lifted.stmts()[..] else {
             panic!("expected one expr stmt");
         };
-        // Console.print unchanged — it's output and goes through the
-        // trace-context elaborator in a separate pass.
-        let Expr::FnCall(callee, _) = &tail.node else {
-            panic!("expected FnCall");
-        };
-        let Expr::Attr(head, field) = &callee.node else {
-            panic!("expected Attr callee");
-        };
-        match &head.node {
-            Expr::Ident(n) => assert_eq!(n, "Console"),
-            other => panic!("expected Console head, got {:?}", other),
+        // Oracle v1: output effects have no semantic contribution to
+        // the proof (they're trace-append only). The lifter replaces
+        // them with `Unit` so the emitted body is pure math on both
+        // backends. Runtime trace assertions go through the verify-
+        // trace collector, not lifted proofs.
+        match &tail.node {
+            Expr::Literal(crate::ast::Literal::Unit) => {}
+            other => panic!("expected Unit, got {:?}", other),
         }
-        assert_eq!(field, "print");
     }
 
     #[test]
