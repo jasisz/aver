@@ -97,6 +97,26 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
         }
     }
 
+    // Oracle v1: emit lifted form for effectful functions whose effects are
+    // all classified (snapshot / generative / output). The lifter prepends
+    // `path: BranchPath` plus one oracle / capability param per non-output
+    // effect, rewriting effect-method calls in the body. Unclassified or
+    // higher-order-callback effects are still skipped.
+    for item in &ctx.items {
+        if let TopLevel::FnDef(fd) = item
+            && !fd.effects.is_empty()
+            && fd.name != "main"
+            && !body_uses_error_prop(&fd.body)
+            && fd
+                .effects
+                .iter()
+                .all(|e| crate::types::checker::effect_classification::is_classified(&e.node))
+            && let Ok(Some(lifted)) = crate::types::checker::effect_lifting::lift_fn_def(fd)
+        {
+            sections.push(toplevel::emit_fn_def(&lifted, ctx));
+        }
+    }
+
     // Emit verify law blocks: sample assertions + universal lemma.
     let mut law_counter: std::collections::HashMap<String, usize> =
         std::collections::HashMap::new();
@@ -245,3 +265,126 @@ function ByteToHex(b: int): Result<string, string>
 function ByteFromHex(s: string): Result<int, string>
 function ToString<T>(v: T): string
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::codegen::build_context;
+    use crate::source::parse_source;
+    use crate::tco;
+    use crate::types::checker::run_type_check_full;
+    use std::collections::HashSet;
+
+    fn ctx_from_source(src: &str, project_name: &str) -> CodegenContext {
+        let mut items = parse_source(src).expect("parse");
+        tco::transform_program(&mut items);
+        let tc = run_type_check_full(&items, None);
+        assert!(
+            tc.errors.is_empty(),
+            "source should typecheck: {:?}",
+            tc.errors
+        );
+        build_context(items, &tc, HashSet::new(), project_name.to_string(), vec![])
+    }
+
+    fn dafny_output(out: &ProjectOutput) -> &str {
+        out.files
+            .iter()
+            .find_map(|(name, content)| name.ends_with(".dfy").then_some(content.as_str()))
+            .expect("expected a .dfy file")
+    }
+
+    #[test]
+    fn prelude_carries_branch_path_datatype_and_helpers() {
+        let src = "module M\n    intent = \"t\"\n\nfn pure(x: Int) -> Int\n    x\n";
+        let ctx = ctx_from_source(src, "m");
+        let out = transpile(&ctx);
+        let dfy = dafny_output(&out);
+        assert!(dfy.contains("datatype BranchPath"));
+        assert!(dfy.contains("function BranchPath_root()"));
+        assert!(dfy.contains("function BranchPath_child"));
+        assert!(dfy.contains("function BranchPath_parse"));
+    }
+
+    #[test]
+    fn effectful_generative_fn_emits_lifted_form() {
+        // Plan Example 3 analog: pickOne() ! [Random.int] Random.int(1, 6)
+        let src = "module M\n\
+             \x20   intent = \"t\"\n\
+             \n\
+             fn pickOne() -> Int\n\
+             \x20   ! [Random.int]\n\
+             \x20   Random.int(1, 6)\n";
+        let ctx = ctx_from_source(src, "m");
+        let out = transpile(&ctx);
+        let dfy = dafny_output(&out);
+        // Signature carries the lifted params.
+        assert!(
+            dfy.contains("function pickOne(path: BranchPath"),
+            "missing path param:\n{}",
+            dfy
+        );
+        assert!(
+            dfy.contains("rnd_Random_int"),
+            "missing oracle param:\n{}",
+            dfy
+        );
+        // Body calls oracle with threaded path + counter 0.
+        assert!(
+            dfy.contains("rnd_Random_int(path, 0, 1, 6)"),
+            "missing oracle call:\n{}",
+            dfy
+        );
+    }
+
+    #[test]
+    fn pure_functions_still_emit_as_before() {
+        // Sanity: pure fn continues to come out of the regular path — no
+        // spurious path / oracle params prepended.
+        let src = "module M\n    intent = \"t\"\n\nfn double(x: Int) -> Int\n    x + x\n";
+        let ctx = ctx_from_source(src, "m");
+        let out = transpile(&ctx);
+        let dfy = dafny_output(&out);
+        assert!(dfy.contains("function double(x: int): int"));
+        assert!(!dfy.contains("function double(path: BranchPath"));
+    }
+
+    #[test]
+    fn effectful_fn_with_unclassified_effect_is_still_skipped() {
+        // Disk.writeText is stateful — not in the v1 proof subset. The fn
+        // must not appear in the emitted Dafny output.
+        let src = "module M\n\
+             \x20   intent = \"t\"\n\
+             \n\
+             fn save(msg: String) -> Result<Unit, String>\n\
+             \x20   ! [Disk.writeText]\n\
+             \x20   Disk.writeText(\"log\", msg)\n";
+        let ctx = ctx_from_source(src, "m");
+        let out = transpile(&ctx);
+        let dfy = dafny_output(&out);
+        assert!(
+            !dfy.contains("function save"),
+            "stateful effectful fn should be skipped; got:\n{}",
+            dfy
+        );
+    }
+
+    #[test]
+    fn branch_path_call_renders_with_underscore_names() {
+        // Verify the expression-emission bridge: Aver-source BranchPath
+        // constructor calls map onto the Dafny underscore-named helpers.
+        let src = "module M\n\
+             \x20   intent = \"t\"\n\
+             \n\
+             fn mkPath() -> BranchPath\n\
+             \x20   BranchPath.child(BranchPath.root(), 2)\n";
+        let ctx = ctx_from_source(src, "m");
+        let out = transpile(&ctx);
+        let dfy = dafny_output(&out);
+        assert!(
+            dfy.contains("BranchPath_child(BranchPath_root(), 2)"),
+            "expected underscore-form call; got:\n{}",
+            dfy
+        );
+    }
+}

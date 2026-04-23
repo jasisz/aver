@@ -259,6 +259,23 @@ fn emit_fn_call(fn_expr: &Spanned<Expr>, args: &[Spanned<Expr>], ctx: &CodegenCo
         return emit_dafny_builtin(builtin, &a);
     }
 
+    // Oracle v1: BranchPath.* constructor calls map onto the underscore-
+    // named prelude functions (Dafny's dotted notation collides with
+    // record-member access on the BranchPath datatype).
+    if let Some(name) = dotted.as_deref() {
+        let a: Vec<String> = args.iter().map(|e| emit_expr(e, ctx)).collect();
+        match name {
+            "BranchPath.root" if a.is_empty() => return "BranchPath_root()".to_string(),
+            "BranchPath.child" if a.len() == 2 => {
+                return format!("BranchPath_child({}, {})", a[0], a[1]);
+            }
+            "BranchPath.parse" if a.len() == 1 => {
+                return format!("BranchPath_parse({})", a[0]);
+            }
+            _ => {}
+        }
+    }
+
     // Not a recognized builtin — generic function call
     let fn_name = emit_expr(fn_expr, ctx);
     let arg_strs: Vec<String> = args.iter().map(|e| emit_expr(e, ctx)).collect();
