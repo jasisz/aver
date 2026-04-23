@@ -245,40 +245,74 @@ impl TypeChecker {
                     ));
                     continue;
                 }
-                if vb.trace && recursive_fns.contains(&vb.fn_name) {
-                    let classified_effects: Vec<String> = self
-                        .fn_sigs
-                        .get(&vb.fn_name)
-                        .map(|sig| {
-                            sig.effects
-                                .iter()
-                                .filter(|e| {
-                                    super::effect_classification::is_classified(e.as_str())
-                                })
-                                .cloned()
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    if !classified_effects.is_empty() {
-                        self.error_at_line(
-                            vb.line,
-                            format!(
-                                "verify '{fn_name} trace {kind}' targets a recursive effectful function \
-                                 (effects: {effects}). Trace-aware laws on effectful recursion are not \
-                                 supported in Oracle v1 — the caller_fn filter that scopes fn.trace to \
-                                 direct emissions cannot distinguish the outermost invocation from \
-                                 recursive self-calls. Drop the 'trace' keyword to use a result-only \
-                                 law, or refactor the effect-emitting work into a non-recursive helper \
-                                 and verify the helper's trace separately.",
-                                fn_name = vb.fn_name,
-                                kind = match &vb.kind {
-                                    crate::ast::VerifyKind::Law(law) => format!("law {}", law.name),
-                                    crate::ast::VerifyKind::Cases => String::new(),
-                                },
-                                effects = classified_effects.join(", "),
-                            ),
-                        );
-                    }
+                // Oracle v1: classify the verified function's effects to
+                // decide whether this verify block is in the proof subset.
+                let fn_effects: Vec<String> = self
+                    .fn_sigs
+                    .get(&vb.fn_name)
+                    .map(|sig| sig.effects.clone())
+                    .unwrap_or_default();
+                let classified_effects: Vec<String> = fn_effects
+                    .iter()
+                    .filter(|e| {
+                        super::effect_classification::is_classified(e.as_str())
+                    })
+                    .cloned()
+                    .collect();
+                let unclassified_effects: Vec<String> = fn_effects
+                    .iter()
+                    .filter(|e| {
+                        !super::effect_classification::is_classified(e.as_str())
+                    })
+                    .cloned()
+                    .collect();
+
+                // Rejection 1: trace-aware law on a recursive effectful function.
+                if vb.trace
+                    && recursive_fns.contains(&vb.fn_name)
+                    && !classified_effects.is_empty()
+                {
+                    self.error_at_line(
+                        vb.line,
+                        format!(
+                            "verify '{fn_name} trace {kind}' targets a recursive effectful function \
+                             (effects: {effects}). Trace-aware laws on effectful recursion are not \
+                             supported in Oracle v1 — the caller_fn filter that scopes fn.trace to \
+                             direct emissions cannot distinguish the outermost invocation from \
+                             recursive self-calls. Drop the 'trace' keyword to use a result-only \
+                             law, or refactor the effect-emitting work into a non-recursive helper \
+                             and verify the helper's trace separately.",
+                            fn_name = vb.fn_name,
+                            kind = match &vb.kind {
+                                crate::ast::VerifyKind::Law(law) => format!("law {}", law.name),
+                                crate::ast::VerifyKind::Cases => String::new(),
+                            },
+                            effects = classified_effects.join(", "),
+                        ),
+                    );
+                }
+
+                // Rejection 2: verify on a function using effects outside
+                // the Oracle v1 proof subset (stateful / interactive /
+                // higher-order-callback).
+                if !unclassified_effects.is_empty()
+                    && matches!(vb.kind, crate::ast::VerifyKind::Law(_))
+                {
+                    self.error_at_line(
+                        vb.line,
+                        format!(
+                            "verify law '{fn_name}' uses effect(s) outside Oracle v1's proof subset: \
+                             {effects}. These effects are stateful, interactive, or higher-order and \
+                             cannot be lifted to pure form. Use 'aver record' / 'aver replay' for \
+                             deterministic reproduction; stateful proof support is planned for the \
+                             Ledger release, interactive / higher-order-callback support for Relay. \
+                             Oracle v1's classified effects: Args.get, Env.get, Random.int, \
+                             Random.float, Time.now, Time.unixMs, Disk.readText, Http.get/.head/.delete, \
+                             Console.print/.error/.warn.",
+                            fn_name = vb.fn_name,
+                            effects = unclassified_effects.join(", "),
+                        ),
+                    );
                 }
                 // Inherit effects from the tested function so verify blocks
                 // can call effectful functions without declaring effects.
