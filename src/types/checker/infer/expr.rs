@@ -626,6 +626,18 @@ impl TypeChecker {
                                 vec![],
                             );
                         }
+                        // Oracle v1: `.branch(idx)` narrows a group-
+                        // scoped trace further to a single branch of
+                        // that `!`/`?!` group. Only meaningful after
+                        // `.group(N)`; the projection runner rejects
+                        // a bare `.trace.branch(idx)` call.
+                        "branch" => {
+                            return Type::Fn(
+                                vec![Type::Int],
+                                Box::new(Type::Named("Trace".to_string())),
+                                vec![],
+                            );
+                        }
                         _ => {}
                     }
                 }
