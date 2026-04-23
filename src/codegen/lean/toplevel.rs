@@ -1581,20 +1581,22 @@ fn emit_verify_law_block(
             .iter()
             .enumerate()
             .map(|(idx, (left, right))| {
-                // Oracle v1: same SampleValue rewrite as per-case
-                // sample theorems.
+                // Oracle v1: per-case sample rewrite. Each case has
+                // its own domain-value binding (one case per value
+                // in `given stub: E = [a, b, ...]`). Use the case's
+                // own binding map rather than the law-level `.first()`
+                // which would emit cross-case mismatches.
+                let case_bindings = vb.case_givens.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
+                let mode =
+                    crate::codegen::common::OracleInjectionMode::SampleCaseBinding(case_bindings);
                 let left_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
                     left,
                     law,
                     ctx,
-                    crate::codegen::common::OracleInjectionMode::SampleValue,
+                    mode.clone(),
                 );
-                let right_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
-                    right,
-                    law,
-                    ctx,
-                    crate::codegen::common::OracleInjectionMode::SampleValue,
-                );
+                let right_rw =
+                    crate::codegen::common::rewrite_effectful_calls_in_law(right, law, ctx, mode);
                 let left_str = emit_expr(&left_rw, ctx);
                 let right_str = emit_expr(&right_rw, ctx);
                 if let Some(guard) = law.sample_guards.get(idx) {
@@ -1635,21 +1637,16 @@ fn emit_verify_law_block(
 
     for (idx, (left, right)) in vb.cases.iter().enumerate() {
         let theorem_name = format!("{}_sample_{}", theorem_base, case_index_start + idx + 1);
-        // Oracle v1: sample theorems inject the concrete stub value
-        // (SampleValue mode) — they test the surface law at a single
-        // point, no lemma-local binding in scope.
-        let left_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
-            left,
-            law,
-            ctx,
-            crate::codegen::common::OracleInjectionMode::SampleValue,
-        );
-        let right_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
-            right,
-            law,
-            ctx,
-            crate::codegen::common::OracleInjectionMode::SampleValue,
-        );
+        // Oracle v1: inject the case-specific stub value so a domain
+        // like `given stub: E = [a, b]` produces two sample theorems —
+        // one with `a`, one with `b` — instead of mismatched
+        // `impl(…, a) = spec(…, b)` pairs.
+        let case_bindings = vb.case_givens.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
+        let mode = crate::codegen::common::OracleInjectionMode::SampleCaseBinding(case_bindings);
+        let left_rw =
+            crate::codegen::common::rewrite_effectful_calls_in_law(left, law, ctx, mode.clone());
+        let right_rw =
+            crate::codegen::common::rewrite_effectful_calls_in_law(right, law, ctx, mode);
         let left_str = emit_expr(&left_rw, ctx);
         let right_str = emit_expr(&right_rw, ctx);
         let sample_prop = if let Some(guard) = law.sample_guards.get(idx) {
