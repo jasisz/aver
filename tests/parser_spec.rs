@@ -1006,6 +1006,67 @@ verify add law commutative
     );
 }
 
+#[test]
+fn verify_law_given_accepts_oracle_effect_ref_random_int() {
+    // Oracle v1: `given <name>: <Effect.method> = [<stubs>]` — the type
+    // position holds an effect-method reference (lowercase suffix after dot).
+    // The type checker (not the parser) resolves it to the oracle signature.
+    let src = r#"
+verify f law law1
+    given rnd: Random.int = [stubA]
+    f() => stubA
+"#;
+    let items = parse(src);
+    assert_eq!(items.len(), 1);
+    let TopLevel::Verify(vb) = &items[0] else {
+        panic!("expected Verify");
+    };
+    let VerifyKind::Law(law) = &vb.kind else {
+        panic!("expected law verify");
+    };
+    assert_eq!(law.givens.len(), 1);
+    assert_eq!(law.givens[0].name, "rnd");
+    assert_eq!(law.givens[0].type_name, "Random.int");
+}
+
+#[test]
+fn verify_law_given_accepts_oracle_effect_ref_http_get() {
+    let src = r#"
+verify f law law1
+    given h: Http.get = [stubHttp]
+    f() => stubHttp
+"#;
+    let items = parse(src);
+    let TopLevel::Verify(vb) = &items[0] else {
+        panic!("expected Verify");
+    };
+    let VerifyKind::Law(law) = &vb.kind else {
+        panic!("expected law verify");
+    };
+    assert_eq!(law.givens[0].type_name, "Http.get");
+}
+
+#[test]
+fn verify_law_given_preserves_regular_type_annotations() {
+    // Sanity: Upper.Upper still works, lowercase-after-dot doesn't clobber
+    // the existing `given urlA: String = [...]` and dotted-type paths.
+    let src = r#"
+verify f law law1
+    given conn: Tcp.Connection = [stub]
+    given s: String = ["hi"]
+    f(conn, s) => f(conn, s)
+"#;
+    let items = parse(src);
+    let TopLevel::Verify(vb) = &items[0] else {
+        panic!("expected Verify");
+    };
+    let VerifyKind::Law(law) = &vb.kind else {
+        panic!("expected law verify");
+    };
+    assert_eq!(law.givens[0].type_name, "Tcp.Connection");
+    assert_eq!(law.givens[1].type_name, "String");
+}
+
 // ---------------------------------------------------------------------------
 // Decision blocks
 // ---------------------------------------------------------------------------
