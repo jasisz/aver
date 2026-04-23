@@ -4,6 +4,7 @@ Dafny is the automated-verification backend for Aver. It emits `verify law` bloc
 
 Use it when you want:
 - automated checking of `verify law` properties
+- automated checking of Oracle-lifted laws over classified effects
 - Z3/SMT solver attempting universal proofs for you
 - a quick validation of whether your laws hold before investing in Lean proof strategies
 
@@ -30,12 +31,13 @@ A single `.dfy` file containing:
 - **Prelude**: `Result<T,E>`, `Option<T>`, list/map/string helpers
 - **Datatypes**: user-defined `record` → `datatype`, `type` (sum) → `datatype`
 - **Functions**: pure Aver functions → `function` with `decreases` clauses
+- **Oracle-lifted functions**: classified effectful functions become pure functions with explicit oracle/capability parameters
 - **Lemmas**: `verify law` blocks → `lemma` with `ensures` and optional inductive hints
 
 ## What it does NOT generate
 
 - `verify` cases (non-law concrete assertions) — Z3 can't efficiently compute deeply recursive functions on specific inputs; Lean's `native_decide` is the right tool for this
-- Effectful functions — only pure functions are emitted
+- Unclassified effectful functions — only pure functions and Oracle-lifted classified effects are emitted
 - Functions using `?` (ErrorProp) — Dafny pure functions cannot express early-return Err propagation
 - `fn main()` — entry point is skipped
 

@@ -1277,8 +1277,8 @@ mod tests {
 
     #[test]
     fn lift_fn_def_on_plan_example_3_pick_three() {
-        // Example 3 from .claude/plans/oracle.md: sequential Random.int
-        // calls. Lifting should produce oracle calls with counter 0, 1, 2.
+        // Sequential Random.int calls should lift to oracle calls with
+        // counter 0, 1, 2.
         let fd = parse_fn(
             "fn pickThree() -> (Int, Int, Int)\n\
              \x20   ! [Random.int]\n\

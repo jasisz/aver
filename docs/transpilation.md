@@ -3,7 +3,7 @@
 There are two code-generation commands:
 
 - [Rust backend](rust.md): deployment-oriented Cargo project generation via `aver compile`
-- [Lean backend](lean.md): proof export for the pure subset of Aver via `aver proof`
+- [Lean backend](lean.md): proof export for pure Aver code and Oracle-lifted classified effects via `aver proof`
 - [Dafny backend](dafny.md): Z3-powered automated law verification via `aver proof --backend dafny`
 
 They solve different problems and share the same `CodegenContext` infrastructure.
@@ -45,6 +45,7 @@ Use Rust when you want:
 
 Use Lean when you want:
 - proof artifacts for pure Aver code
+- proof artifacts for classified effectful laws via Oracle lifting
 - `verify` as executable Lean checks (`native_decide`)
 - `verify law` as candidate universal theorems for supported shapes, with
   sampled or checked-domain fallback for the rest
@@ -52,6 +53,7 @@ Use Lean when you want:
 
 Use Dafny when you want:
 - automated `verify law` checking without writing proof tactics
+- automated checking of Oracle-lifted classified effect laws
 - Z3/SMT solver attempting universal proofs for you
 - a quick smoke test of whether your laws are provable
 
@@ -60,7 +62,7 @@ Use Dafny when you want:
 | | Lean | Dafny |
 |---|---|---|
 | Verify cases | `native_decide` — always works | Not emitted (Z3 can't compute) |
-| Verify laws | Hand-crafted tactic strategies | Z3 attempts automatically |
+| Verify laws | Hand-crafted tactic strategies, including Oracle-lifted classified effects | Z3 attempts automatically, including Oracle-lifted classified effects |
 | Proof quality | Kernel-verified (gold standard) | SMT-checked (no counterexample found) |
 | Effort | High (strategy per pattern) | Zero (just emit and run) |
 | External deps | Lean 4 + Lake | Dafny + .NET + Z3 |

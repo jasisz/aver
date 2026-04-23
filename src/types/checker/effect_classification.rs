@@ -8,21 +8,20 @@
 //! - For snapshot and generative, the corresponding capability/oracle
 //!   signature that lifted specs bind via `given name: E.m = [...]`.
 //!
-//! Output-only effects (Console.print / .error / .warn) are classified but
-//! do not have an oracle signature — they append to the per-branch trace
-//! segment and are asserted about via the trace API, not by binding an
-//! oracle in `given`.
+//! Output-only effects (for example `Console.print`, `Time.sleep`, and
+//! terminal drawing calls) are classified but do not have an oracle signature:
+//! they append to the per-branch trace segment and are asserted about via the
+//! trace API, not by binding an oracle in `given`.
 //!
 //! The table is the single source of truth consumed by:
 //!
 //! - `given`-clause type inference (`given rnd: Random.int` → oracle type
 //!   `(BranchPath, Int, Int, Int) -> Int`).
 //! - Lifting of effectful function bodies at proof-export time.
-//! - Rejection diagnostics for unclassified / stateful / interactive effects.
+//! - Rejection diagnostics for unclassified effects.
 //!
 //! Source of runtime signatures: `src/services/*.rs` and `docs/services.md`.
-//! Keep this table synchronized with the real built-ins; the plan requires
-//! the classification to be closed before release.
+//! Keep this table synchronized with the real built-ins.
 
 use super::super::Type;
 use crate::types::branch_path;
@@ -38,7 +37,8 @@ pub enum EffectDimension {
     /// Trace-appending side-effect only. No oracle; assertions via trace API.
     Output,
     /// Both generative (response value from oracle) and output (request
-    /// emitted to trace). Used by `Http.*`.
+    /// emitted to trace). Used by request/operation-style effects such as
+    /// `Http.*`, mutating `Disk.*`, and one-shot `Tcp.*`.
     GenerativeOutput,
 }
 
@@ -58,6 +58,7 @@ pub struct EffectClassification {
 /// Converted into [`Type`] on demand via [`runtime_type`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeType {
+    Unknown,
     Unit,
     Int,
     Float,
@@ -65,7 +66,9 @@ pub enum RuntimeType {
     Bool,
     OptionStr,
     ListStr,
+    ResultUnitStr,
     ResultStrStr,
+    ResultListStrStr,
     HttpResponseResult,
     /// `List<Header>` — the headers argument on `Http.post/put/patch`.
     ListHeader,
@@ -74,6 +77,7 @@ pub enum RuntimeType {
 impl RuntimeType {
     fn as_type(self) -> Type {
         match self {
+            RuntimeType::Unknown => Type::Unknown,
             RuntimeType::Unit => Type::Unit,
             RuntimeType::Int => Type::Int,
             RuntimeType::Float => Type::Float,
@@ -81,7 +85,12 @@ impl RuntimeType {
             RuntimeType::Bool => Type::Bool,
             RuntimeType::OptionStr => Type::Option(Box::new(Type::Str)),
             RuntimeType::ListStr => Type::List(Box::new(Type::Str)),
+            RuntimeType::ResultUnitStr => Type::Result(Box::new(Type::Unit), Box::new(Type::Str)),
             RuntimeType::ResultStrStr => Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
+            RuntimeType::ResultListStrStr => Type::Result(
+                Box::new(Type::List(Box::new(Type::Str))),
+                Box::new(Type::Str),
+            ),
             RuntimeType::HttpResponseResult => Type::Result(
                 Box::new(Type::Named("HttpResponse".to_string())),
                 Box::new(Type::Str),
@@ -141,6 +150,24 @@ const CLASSIFICATIONS: &[EffectClassification] = &[
         runtime_params: &[RuntimeType::Str],
         runtime_return: RuntimeType::ResultStrStr,
     },
+    EffectClassification {
+        method: "Disk.exists",
+        dimension: EffectDimension::Generative,
+        runtime_params: &[RuntimeType::Str],
+        runtime_return: RuntimeType::Bool,
+    },
+    EffectClassification {
+        method: "Disk.listDir",
+        dimension: EffectDimension::Generative,
+        runtime_params: &[RuntimeType::Str],
+        runtime_return: RuntimeType::ResultListStrStr,
+    },
+    EffectClassification {
+        method: "Console.readLine",
+        dimension: EffectDimension::Generative,
+        runtime_params: &[],
+        runtime_return: RuntimeType::ResultStrStr,
+    },
     // Generative + output (Http)
     EffectClassification {
         method: "Http.get",
@@ -194,21 +221,115 @@ const CLASSIFICATIONS: &[EffectClassification] = &[
         ],
         runtime_return: RuntimeType::HttpResponseResult,
     },
+    // Disk writes/deletes are modelled like HTTP writes: the operation is
+    // emitted to the trace, and success/failure comes from the oracle. Oracle
+    // does not assert persistent filesystem state after the operation.
+    EffectClassification {
+        method: "Disk.writeText",
+        dimension: EffectDimension::GenerativeOutput,
+        runtime_params: &[RuntimeType::Str, RuntimeType::Str],
+        runtime_return: RuntimeType::ResultUnitStr,
+    },
+    EffectClassification {
+        method: "Disk.appendText",
+        dimension: EffectDimension::GenerativeOutput,
+        runtime_params: &[RuntimeType::Str, RuntimeType::Str],
+        runtime_return: RuntimeType::ResultUnitStr,
+    },
+    EffectClassification {
+        method: "Disk.delete",
+        dimension: EffectDimension::GenerativeOutput,
+        runtime_params: &[RuntimeType::Str],
+        runtime_return: RuntimeType::ResultUnitStr,
+    },
+    EffectClassification {
+        method: "Disk.deleteDir",
+        dimension: EffectDimension::GenerativeOutput,
+        runtime_params: &[RuntimeType::Str],
+        runtime_return: RuntimeType::ResultUnitStr,
+    },
+    EffectClassification {
+        method: "Disk.makeDir",
+        dimension: EffectDimension::GenerativeOutput,
+        runtime_params: &[RuntimeType::Str],
+        runtime_return: RuntimeType::ResultUnitStr,
+    },
+    // One-shot TCP operations — request is trace output, response comes from oracle.
+    EffectClassification {
+        method: "Tcp.send",
+        dimension: EffectDimension::GenerativeOutput,
+        runtime_params: &[RuntimeType::Str, RuntimeType::Int, RuntimeType::Str],
+        runtime_return: RuntimeType::ResultStrStr,
+    },
+    EffectClassification {
+        method: "Tcp.ping",
+        dimension: EffectDimension::GenerativeOutput,
+        runtime_params: &[RuntimeType::Str, RuntimeType::Int],
+        runtime_return: RuntimeType::ResultUnitStr,
+    },
     // Output-only — no oracle signature, but classified for completeness.
     EffectClassification {
         method: "Console.print",
         dimension: EffectDimension::Output,
-        runtime_params: &[],
+        runtime_params: &[RuntimeType::Unknown],
         runtime_return: RuntimeType::Unit,
     },
     EffectClassification {
         method: "Console.error",
         dimension: EffectDimension::Output,
-        runtime_params: &[],
+        runtime_params: &[RuntimeType::Unknown],
         runtime_return: RuntimeType::Unit,
     },
     EffectClassification {
         method: "Console.warn",
+        dimension: EffectDimension::Output,
+        runtime_params: &[RuntimeType::Unknown],
+        runtime_return: RuntimeType::Unit,
+    },
+    EffectClassification {
+        method: "Time.sleep",
+        dimension: EffectDimension::Output,
+        runtime_params: &[RuntimeType::Int],
+        runtime_return: RuntimeType::Unit,
+    },
+    EffectClassification {
+        method: "Terminal.clear",
+        dimension: EffectDimension::Output,
+        runtime_params: &[],
+        runtime_return: RuntimeType::Unit,
+    },
+    EffectClassification {
+        method: "Terminal.moveTo",
+        dimension: EffectDimension::Output,
+        runtime_params: &[RuntimeType::Int, RuntimeType::Int],
+        runtime_return: RuntimeType::Unit,
+    },
+    EffectClassification {
+        method: "Terminal.print",
+        dimension: EffectDimension::Output,
+        runtime_params: &[RuntimeType::Unknown],
+        runtime_return: RuntimeType::Unit,
+    },
+    EffectClassification {
+        method: "Terminal.readKey",
+        dimension: EffectDimension::Generative,
+        runtime_params: &[],
+        runtime_return: RuntimeType::OptionStr,
+    },
+    EffectClassification {
+        method: "Terminal.hideCursor",
+        dimension: EffectDimension::Output,
+        runtime_params: &[],
+        runtime_return: RuntimeType::Unit,
+    },
+    EffectClassification {
+        method: "Terminal.showCursor",
+        dimension: EffectDimension::Output,
+        runtime_params: &[],
+        runtime_return: RuntimeType::Unit,
+    },
+    EffectClassification {
+        method: "Terminal.flush",
         dimension: EffectDimension::Output,
         runtime_params: &[],
         runtime_return: RuntimeType::Unit,
@@ -286,9 +407,33 @@ mod tests {
     }
 
     #[test]
+    fn disk_write_text_is_generative_output() {
+        let c = classify("Disk.writeText").unwrap();
+        assert_eq!(c.dimension, EffectDimension::GenerativeOutput);
+    }
+
+    #[test]
     fn console_print_is_output() {
         let c = classify("Console.print").unwrap();
         assert_eq!(c.dimension, EffectDimension::Output);
+    }
+
+    #[test]
+    fn console_read_line_is_generative() {
+        let c = classify("Console.readLine").unwrap();
+        assert_eq!(c.dimension, EffectDimension::Generative);
+    }
+
+    #[test]
+    fn time_sleep_is_output() {
+        let c = classify("Time.sleep").unwrap();
+        assert_eq!(c.dimension, EffectDimension::Output);
+    }
+
+    #[test]
+    fn terminal_read_key_is_generative() {
+        let c = classify("Terminal.readKey").unwrap();
+        assert_eq!(c.dimension, EffectDimension::Generative);
     }
 
     #[test]
@@ -372,10 +517,89 @@ mod tests {
     }
 
     #[test]
+    fn oracle_signature_for_console_read_line_is_branch_indexed() {
+        let sig = oracle_signature("Console.readLine").unwrap();
+        // (BranchPath, Int) -> Result<String, String>
+        match sig {
+            Type::Fn(params, ret, _) => {
+                assert_eq!(params.len(), 2);
+                assert!(matches!(params[0], Type::Named(ref n) if n == "BranchPath"));
+                assert_eq!(params[1], Type::Int);
+                assert_eq!(*ret, Type::Result(Box::new(Type::Str), Box::new(Type::Str)));
+            }
+            other => panic!("expected Fn, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn oracle_signature_for_disk_list_dir_returns_result_list_string() {
+        let sig = oracle_signature("Disk.listDir").unwrap();
+        // (BranchPath, Int, String) -> Result<List<String>, String>
+        match sig {
+            Type::Fn(params, ret, _) => {
+                assert_eq!(params.len(), 3);
+                assert!(matches!(params[0], Type::Named(ref n) if n == "BranchPath"));
+                assert_eq!(params[1], Type::Int);
+                assert_eq!(params[2], Type::Str);
+                assert_eq!(
+                    *ret,
+                    Type::Result(
+                        Box::new(Type::List(Box::new(Type::Str))),
+                        Box::new(Type::Str)
+                    )
+                );
+            }
+            other => panic!("expected Fn, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn oracle_signature_for_tcp_ping_returns_result_unit_string() {
+        let sig = oracle_signature("Tcp.ping").unwrap();
+        // (BranchPath, Int, String, Int) -> Result<Unit, String>
+        match sig {
+            Type::Fn(params, ret, _) => {
+                assert_eq!(params.len(), 4);
+                assert!(matches!(params[0], Type::Named(ref n) if n == "BranchPath"));
+                assert_eq!(params[1], Type::Int);
+                assert_eq!(params[2], Type::Str);
+                assert_eq!(params[3], Type::Int);
+                assert_eq!(
+                    *ret,
+                    Type::Result(Box::new(Type::Unit), Box::new(Type::Str))
+                );
+            }
+            other => panic!("expected Fn, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn oracle_signature_for_disk_write_text_returns_result_unit_string() {
+        let sig = oracle_signature("Disk.writeText").unwrap();
+        // (BranchPath, Int, String, String) -> Result<Unit, String>
+        match sig {
+            Type::Fn(params, ret, _) => {
+                assert_eq!(params.len(), 4);
+                assert!(matches!(params[0], Type::Named(ref n) if n == "BranchPath"));
+                assert_eq!(params[1], Type::Int);
+                assert_eq!(params[2], Type::Str);
+                assert_eq!(params[3], Type::Str);
+                assert_eq!(
+                    *ret,
+                    Type::Result(Box::new(Type::Unit), Box::new(Type::Str))
+                );
+            }
+            other => panic!("expected Fn, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn oracle_signature_for_output_effect_is_none() {
         assert!(oracle_signature("Console.print").is_none());
         assert!(oracle_signature("Console.error").is_none());
         assert!(oracle_signature("Console.warn").is_none());
+        assert!(oracle_signature("Time.sleep").is_none());
+        assert!(oracle_signature("Terminal.print").is_none());
     }
 
     #[test]
@@ -387,16 +611,34 @@ mod tests {
             "Random.float",
             "Time.now",
             "Time.unixMs",
+            "Time.sleep",
             "Disk.readText",
+            "Disk.exists",
+            "Disk.listDir",
+            "Disk.writeText",
+            "Disk.appendText",
+            "Disk.delete",
+            "Disk.deleteDir",
+            "Disk.makeDir",
+            "Console.readLine",
             "Http.get",
             "Http.head",
             "Http.delete",
             "Http.post",
             "Http.put",
             "Http.patch",
+            "Tcp.send",
+            "Tcp.ping",
             "Console.print",
             "Console.error",
             "Console.warn",
+            "Terminal.clear",
+            "Terminal.moveTo",
+            "Terminal.print",
+            "Terminal.readKey",
+            "Terminal.hideCursor",
+            "Terminal.showCursor",
+            "Terminal.flush",
         ] {
             assert!(is_classified(name), "{} should be classified", name);
         }
@@ -433,17 +675,20 @@ mod tests {
     }
 
     #[test]
-    fn stateful_and_interactive_effects_not_classified() {
+    fn ambient_protocol_and_modal_effects_not_classified() {
         // These remain replay-only in v1.
         for name in &[
             "Env.set",
-            "Disk.writeText",
-            "Disk.appendText",
-            "Time.sleep",
-            "Console.readLine",
-            "Tcp.send",
+            "Tcp.connect",
+            "Tcp.writeLine",
+            "Tcp.readLine",
+            "Tcp.close",
             "HttpServer.listen",
-            "Terminal.clear",
+            "Terminal.enableRawMode",
+            "Terminal.disableRawMode",
+            "Terminal.setColor",
+            "Terminal.resetColor",
+            "Terminal.size",
         ] {
             assert!(!is_classified(name), "{} should NOT be classified", name);
         }

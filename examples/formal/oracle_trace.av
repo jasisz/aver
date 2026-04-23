@@ -1,0 +1,140 @@
+module OracleTrace
+    intent =
+        "Demonstrates Oracle verification for classified effects."
+        "Shows explicit stubs, result projection, trace assertions, and multi-stub expansion."
+
+fn lowDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int
+    ? "Deterministic Random.int stub returning the lower bound."
+    min
+
+verify lowDie
+    lowDie(BranchPath.Root, 0, 1, 6) => 1
+
+fn highDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int
+    ? "Deterministic Random.int stub returning the upper bound."
+    max
+
+verify highDie
+    highDie(BranchPath.Root, 0, 1, 6) => 6
+
+fn fakeLine(path: BranchPath, n: Int) -> Result<String, String>
+    ? "Deterministic Console.readLine stub."
+    Result.Ok("deploy")
+
+fn fakeLineErr(path: BranchPath, n: Int) -> Result<String, String>
+    ? "Deterministic failing Console.readLine stub."
+    Result.Err("stdin closed")
+
+fn fakeConfigExists(path: BranchPath, n: Int, file: String) -> Bool
+    ? "Deterministic Disk.exists stub."
+    file == "aver.toml"
+
+verify fakeConfigExists
+    fakeConfigExists(BranchPath.Root, 0, "aver.toml") => true
+    fakeConfigExists(BranchPath.Root, 0, "missing.toml") => false
+
+fn fakeWrite(path: BranchPath, n: Int, file: String, content: String) -> Result<Unit, String>
+    ? "Deterministic Disk.writeText stub."
+    Result.Ok(Unit)
+
+fn fakeWriteErr(path: BranchPath, n: Int, file: String, content: String) -> Result<Unit, String>
+    ? "Deterministic failing Disk.writeText stub."
+    Result.Err("disk full")
+
+fn fakeKey(path: BranchPath, n: Int) -> Option<String>
+    ? "Deterministic Terminal.readKey stub."
+    Option.Some("q")
+
+fn fakeTcpSend(path: BranchPath, n: Int, host: String, port: Int, message: String) -> Result<String, String>
+    ? "Deterministic Tcp.send stub."
+    Result.Ok("ACK:{message}")
+
+fn fakeTcpSendErr(path: BranchPath, n: Int, host: String, port: Int, message: String) -> Result<String, String>
+    ? "Deterministic failing Tcp.send stub."
+    Result.Err("offline")
+
+fn rollAndReport() -> Int
+    ? "Rolls a die and reports the result."
+    ! [Random.int, Console.print]
+    roll = Random.int(1, 6)
+    Console.print("rolled {roll}")
+    roll
+
+verify rollAndReport trace
+    given rnd: Random.int = [lowDie, highDie]
+    expected = rnd(BranchPath.Root, 0, 1, 6)
+    rollAndReport().result => expected
+    rollAndReport().trace.contains(Console.print) => true
+    rollAndReport().trace.length() => 2
+
+verify rollAndReport trace
+    given rnd: Random.int = [lowDie]
+    rollAndReport().trace.contains(Console.print("rolled 1")) => true
+
+fn readCommand() -> Result<String, String>
+    ? "Reads one command from the console."
+    ! [Console.readLine]
+    Console.readLine()
+
+verify readCommand trace
+    given line: Console.readLine = [fakeLine, fakeLineErr]
+    readCommand().result => line(BranchPath.Root, 0)
+    readCommand().trace.contains(Console.readLine()) => true
+
+fn configExists(file: String) -> Bool
+    ? "Checks whether a config file exists."
+    ! [Disk.exists]
+    Disk.exists(file)
+
+verify configExists trace
+    given exists: Disk.exists = [fakeConfigExists]
+    configExists("aver.toml").result => exists(BranchPath.Root, 0, "aver.toml")
+    configExists("aver.toml").trace.contains(Disk.exists("aver.toml")) => true
+    configExists("missing.toml").result => exists(BranchPath.Root, 0, "missing.toml")
+    configExists("missing.toml").trace.contains(Disk.exists("missing.toml")) => true
+
+fn writeConfig() -> Result<Unit, String>
+    ? "Writes config as an operation/result effect."
+    ! [Disk.writeText]
+    Disk.writeText("aver.toml", "mode=oracle")
+
+verify writeConfig trace
+    given write: Disk.writeText = [fakeWrite, fakeWriteErr]
+    writeConfig().result => write(BranchPath.Root, 0, "aver.toml", "mode=oracle")
+    writeConfig().trace.contains(Disk.writeText("aver.toml", "mode=oracle")) => true
+
+fn pauseThenAnswer() -> Int
+    ? "Sleeps and returns a value; sleep is output-only in Oracle."
+    ! [Time.sleep]
+    Time.sleep(5)
+    42
+
+verify pauseThenAnswer trace
+    pauseThenAnswer().result => 42
+    pauseThenAnswer().trace.contains(Time.sleep(5)) => true
+
+fn readKeyOrEmpty() -> String
+    ? "Reads one terminal key."
+    ! [Terminal.readKey]
+    match Terminal.readKey()
+        Option.Some(key) -> key
+        Option.None      -> ""
+
+verify readKeyOrEmpty trace
+    given key: Terminal.readKey = [fakeKey]
+    readKeyOrEmpty().result => "q"
+    readKeyOrEmpty().trace.contains(Terminal.readKey()) => true
+
+fn sendPing() -> Result<String, String>
+    ? "Sends one TCP message; this is one-shot request/result, not a session."
+    ! [Tcp.send]
+    Tcp.send("127.0.0.1", 6379, "PING")
+
+verify sendPing trace
+    given send: Tcp.send = [fakeTcpSend, fakeTcpSendErr]
+    sendPing().result => send(BranchPath.Root, 0, "127.0.0.1", 6379, "PING")
+    sendPing().trace.contains(Tcp.send("127.0.0.1", 6379, "PING")) => true
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("OracleTrace: run `aver verify examples/formal/oracle_trace.av`")

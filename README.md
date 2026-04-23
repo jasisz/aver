@@ -8,14 +8,15 @@
 
 # Aver
 
-Aver is a statically typed language designed for AI to write in and humans to review, with a bytecode VM for runtime execution, a Rust backend for deployment, a WASM backend for browser and embedded targets, Lean proof export for pure core logic, and Dafny verification for automated law checking via Z3.
+Aver is a statically typed language designed for AI to write in and humans to review, with a bytecode VM for runtime execution, a Rust backend for deployment, a WASM backend for browser and embedded targets, Lean proof export for pure logic and classified effectful laws, and Dafny verification for automated law checking via Z3.
 
 It is built around one idea: the risky part of AI-written code is usually not syntax, it is missing intent. Aver makes that intent explicit and machine-readable:
 
 - effects are part of the function signature
 - decisions live next to the code they explain
 - pure behavior lives in colocated `verify` blocks
-- effectful behavior can be recorded and replayed deterministically
+- selected effectful behavior can be verified with explicit stubs and trace assertions
+- effectful runs can be recorded and replayed deterministically
 - `aver why` scores every function's justification coverage: description, verify, decisions
 - `aver audit` runs all three axes — static checks, verify execution, format compliance — as a single CI gate
 - `aver context` exports the contract-level view of a module graph for humans or LLMs
@@ -365,7 +366,7 @@ verify charge
     charge("x",    -1)   => Result.Ok("txn-x--1")
 ```
 
-`verify` blocks stay next to the function they cover. `aver check` treats a missing `verify` block on a pure, non-trivial, non-`main` function as a contract error. Effectful flows are intentionally handled separately via replay.
+`verify` blocks stay next to the function they cover. `aver check` treats a missing `verify` block on a pure, non-trivial, non-`main` function as a contract error.
 
 Regular verify:
 
@@ -388,9 +389,28 @@ verify add law commutative
 
 For the proof-oriented style where a law relates an implementation to a pure spec function, see [docs/language.md](docs/language.md) and [docs/lean.md](docs/lean.md).
 
+Trace-aware verify for classified effects:
+
+```aver
+fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int
+    ? "Deterministic Random.int stub."
+    4
+
+fn pickOne() -> Int
+    ? "Rolls once."
+    ! [Random.int]
+    Random.int(1, 6)
+
+verify pickOne trace
+    given rnd: Random.int = [fairDie]
+    pickOne().result => rnd(BranchPath.Root, 0, 1, 6)
+```
+
+`verify <fn> trace` runs the function under explicit `given` stubs, exposes `.result` for the return value, and exposes `.trace` for classified emissions such as `Console.print(...)` or `Http.get(...)`. See [docs/oracle.md](docs/oracle.md) for the full model.
+
 ### Replay
 
-Use deterministic replay for effectful code:
+Use deterministic replay for stateful, interactive, or external effectful code:
 
 1. run once against real services and record the effect trace
 2. replay offline with no real network, disk, or TCP calls
@@ -402,7 +422,7 @@ aver replay recordings/rec-123.json --diff
 aver replay recordings/ --test --diff
 ```
 
-Pure logic belongs in `verify`. Effectful flows belong in replay recordings.
+Use `verify <fn> trace` when the effects are classified and can be replaced by explicit stubs. Use replay when the flow depends on ambient state, persistent TCP sessions, terminal modes, or server callbacks.
 
 ---
 
@@ -450,7 +470,7 @@ Aver has four backend paths:
 
 - VM-based workflow for `run`, `check`, `verify`, `replay`, and `context`
 - Rust compilation for generating a native Cargo project with `aver compile`
-- Lean proof export for pure core logic and `verify` / `verify law` obligations with `aver proof`
+- Lean proof export for pure core logic, Oracle-lifted classified effectful laws, and `verify` / `verify law` obligations with `aver proof`
   Supported law shapes become real universal theorems; the rest stay as
   executable samples or checked-domain theorems instead of fake proofs.
 - Dafny verification for automated `verify law` checking via Z3 with `aver proof --backend dafny`
@@ -484,12 +504,13 @@ dafny verify fibonacci.dfy
 Rust is the deployment backend. Lean and Dafny are complementary proof backends:
 
 - **Lean** handles `verify` cases via `native_decide` (100% success on concrete examples) and supported `verify law` shapes via hand-crafted tactic strategies
-- **Dafny** emits only `verify law` blocks as lemmas and lets Z3 attempt automated proofs — no tactic authoring needed, but limited on concrete computation
+- **Dafny** emits `verify law` blocks as lemmas and lets Z3 attempt automated proofs — no tactic authoring needed, but limited on concrete computation
 
 For backend-specific details, see:
 - [docs/rust.md](docs/rust.md) for Cargo generation and deployment flow
 - [docs/lean.md](docs/lean.md) for proof export, formal-verification path, and current Lean examples
 - [docs/dafny.md](docs/dafny.md) for Dafny verification and Z3-powered law checking
+- [docs/oracle.md](docs/oracle.md) for verifying classified effects with stubs and traces
 
 ---
 
@@ -528,6 +549,7 @@ Curated shared examples:
 | `data/fibonacci.av` | Tail recursion, records, decision blocks |
 | `formal/law_auto.av` | Lean proof export, `verify law`, conservative universal auto-proofs plus sampled/domain fallback |
 | `formal/spec_laws.av` | Implementation-vs-spec laws (`verify foo law fooSpec`) and Lean spec theorems for supported shapes |
+| `formal/oracle_trace.av` | Oracle trace verification for classified effects with explicit stubs |
 | `apps/mission_control.av` | Command parser, pure state machine, effectful shell |
 | `games/wumpus.av` | Hunt the Wumpus: cave exploration, match-driven control flow |
 | `modules/app.av` | Module imports via `depends [Data.Fibonacci]` |
@@ -563,6 +585,7 @@ For repository self-documentation via decision exports, see `decisions/architect
 | [docs/constructors.md](docs/constructors.md) | Constructor rules and parsing contract |
 | [editors/README.md](editors/README.md) | VS Code + LSP setup and Sublime Text support |
 | [docs/services.md](docs/services.md) | Full API reference for all namespaces (signatures, effects, notes) |
+| [docs/oracle.md](docs/oracle.md) | Oracle: trace-aware verify and proof export for classified effects |
 | [docs/vm.md](docs/vm.md) | Bytecode VM design note: execution model, `NanValue`, opcodes, effects |
 | [docs/types.md](docs/types.md) | Key data types (compiler, AST, runtime) |
 | [docs/extending.md](docs/extending.md) | How to add keywords, namespace functions, expression types |

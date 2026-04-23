@@ -256,11 +256,11 @@ pub(crate) fn classify_finding(msg: &str) -> (&'static str, Option<String>) {
             Some("Add `module <Name>` as the first top-level item".to_string()),
         );
     }
-    if msg.contains("has effects") && msg.contains("verify blocks are for pure") {
+    if msg.contains("has effects") && msg.contains("plain verify block") {
         (
             "verify-effectful",
             Some(
-                "Remove verify block; test via `aver run --record` + `aver replay --test`"
+                "Use `verify <fn> trace` with `given` stubs, or test stateful flows via replay"
                     .to_string(),
             ),
         )
