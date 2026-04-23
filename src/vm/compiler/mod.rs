@@ -60,6 +60,12 @@ fn compile_program_inner(
     let mut compiler = ProgramCompiler::new();
     compiler.source_file = source_file.to_string();
     compiler.sync_record_field_symbols(arena);
+    // Oracle v1: `BranchPath.Root` is a nullary value constructor
+    // (like `Option.None`). The VM symbol table needs it as a
+    // constant pointing at a pre-allocated arena record; this
+    // happens here because bootstrap_core_symbols runs before the
+    // arena is available.
+    compiler.install_branch_path_root_constant(arena);
 
     match module_source {
         ModuleSource::Disk(Some(module_root)) => {
@@ -348,6 +354,30 @@ impl ProgramCompiler {
         }
 
         Ok(())
+    }
+
+    /// Oracle v1: install `BranchPath.Root` as a nullary constant
+    /// member of the `BranchPath` namespace. The record is allocated
+    /// once in the arena; the symbol table holds a NanValue
+    /// referencing it. Follows the same pattern as `Option.None`
+    /// which is installed as an immediate constant in
+    /// `bootstrap_core_symbols`.
+    fn install_branch_path_root_constant(&mut self, arena: &mut Arena) {
+        // Guard: micro-benchmarks and unit tests often build a VM
+        // without calling `register_service_types` first. When the
+        // BranchPath arena type is absent, there's nothing Oracle-
+        // related in the program and skipping the install is safe.
+        let Some(type_id) = arena.find_type_id(crate::types::branch_path::TYPE_NAME) else {
+            return;
+        };
+        let dewey = crate::nan_value::NanValue::new_string_value("", arena);
+        let record_idx = arena.push_record(type_id, vec![dewey]);
+        let root_value = crate::nan_value::NanValue::new_record(record_idx);
+        self.symbols.intern_constant("BranchPath.Root", root_value);
+        let namespace_symbol_id = self.symbols.intern_namespace_path("BranchPath");
+        let member_symbol_id = self.symbols.intern_name("Root");
+        self.symbols
+            .add_namespace_member_by_id(namespace_symbol_id, member_symbol_id, root_value);
     }
 
     fn ensure_global(&mut self, name: &str) -> u16 {

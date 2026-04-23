@@ -3323,19 +3323,19 @@ fn assert_branch_path(value: &Value, expected_dewey: &str) {
 
 #[test]
 fn branch_path_root_is_empty_dewey() {
-    let v = eval("BranchPath.root()");
+    let v = eval("BranchPath.Root");
     assert_branch_path(&v, "");
 }
 
 #[test]
 fn branch_path_child_of_root_is_single_index() {
-    let v = eval("BranchPath.child(BranchPath.root(), 3)");
+    let v = eval("BranchPath.child(BranchPath.Root, 3)");
     assert_branch_path(&v, "3");
 }
 
 #[test]
 fn branch_path_child_nests_with_dot() {
-    let v = eval("BranchPath.child(BranchPath.child(BranchPath.root(), 2), 0)");
+    let v = eval("BranchPath.child(BranchPath.child(BranchPath.Root, 2), 0)");
     assert_branch_path(&v, "2.0");
 }
 
@@ -3359,7 +3359,7 @@ fn branch_path_parse_rejects_garbage() {
 
 #[test]
 fn branch_path_child_rejects_negative_index() {
-    let err = try_eval("BranchPath.child(BranchPath.root(), 0 - 1)").expect_err("should error");
+    let err = try_eval("BranchPath.child(BranchPath.Root, 0 - 1)").expect_err("should error");
     assert!(err.contains("non-negative"), "error was: {}", err);
 }
 

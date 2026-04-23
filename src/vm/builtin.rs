@@ -173,7 +173,6 @@ vm_builtins! {
     ByteToHex => "Byte.toHex",
     ByteFromHex => "Byte.fromHex",
 
-    BranchPathRoot => "BranchPath.root",
     BranchPathChild => "BranchPath.child",
     BranchPathParse => "BranchPath.parse",
 }
@@ -497,7 +496,7 @@ impl VmBuiltin {
             Self::ResultWithDefault => result::call_nv(self.name(), args, arena),
             Self::CharToCode | Self::CharFromCode => char::call_nv(self.name(), args, arena),
             Self::ByteToHex | Self::ByteFromHex => byte::call_nv(self.name(), args, arena),
-            Self::BranchPathRoot | Self::BranchPathChild | Self::BranchPathParse => {
+            Self::BranchPathChild | Self::BranchPathParse => {
                 branch_path::call_nv(self.name(), args, arena)
             }
 

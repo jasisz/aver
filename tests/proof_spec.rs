@@ -189,7 +189,7 @@ fn aver_verify_runs_effectful_law_with_oracle_stub() {
          \n\
          verify pickOne law consistent\n\
          \x20   given rnd: Random.int = [stubConst]\n\
-         \x20   pickOne() => pickOneSpec(BranchPath.root(), rnd)\n",
+         \x20   pickOne() => pickOneSpec(BranchPath.Root, rnd)\n",
     )
     .expect("write program.av");
 
@@ -247,7 +247,7 @@ fn aver_verify_runs_effectful_bang_group_law() {
          \n\
          verify pickPair law consistent\n\
          \x20   given rnd: Random.int = [stubByBranch]\n\
-         \x20   pickPair() => pickPairSpec(BranchPath.root(), rnd)\n",
+         \x20   pickPair() => pickPairSpec(BranchPath.Root, rnd)\n",
     )
     .expect("write program.av");
 
@@ -454,7 +454,7 @@ fn aver_verify_trace_given_alias_callable_in_case_expressions() {
          \n\
          verify pickOne trace\n\
          \x20   given rnd: Random.int = [fairDie]\n\
-         \x20   pickOne().result => rnd(BranchPath.root(), 0, 1, 6)\n",
+         \x20   pickOne().result => rnd(BranchPath.Root, 0, 1, 6)\n",
     )
     .expect("write program.av");
 
@@ -720,7 +720,7 @@ fn aver_verify_trace_end_to_end_target_shape() {
     // the raw return, `.trace.contains(...)` checks an output-only
     // event. This single test guards the whole Oracle v1 UX surface:
     //   - `given rnd: Random.int = [fairDie]` (alias + VM stub)
-    //   - `expect = rnd(BranchPath.root(), 0, 1, 6)` (local + alias
+    //   - `expect = rnd(BranchPath.Root, 0, 1, 6)` (local + alias
     //     substitution)
     //   - `hello().result => expect` (local binding in case RHS)
     //   - `hello().trace.contains(Console.print(...))` (output effect
@@ -750,7 +750,7 @@ fn aver_verify_trace_end_to_end_target_shape() {
          \n\
          verify hello trace\n\
          \x20   given rnd: Random.int = [fairDie]\n\
-         \x20   expect = rnd(BranchPath.root(), 0, 1, 6)\n\
+         \x20   expect = rnd(BranchPath.Root, 0, 1, 6)\n\
          \x20   hello().result => expect\n\
          \x20   hello().trace.contains(Console.print(\"rolled 4\")) => true\n",
     )

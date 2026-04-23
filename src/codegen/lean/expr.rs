@@ -17,6 +17,13 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
                 if type_name == "Option" && field == "None" {
                     return "none".to_string();
                 }
+                // Oracle v1: `BranchPath.Root` is a nullary value
+                // constructor defined in the Lean prelude — emit
+                // verbatim so the reference resolves to the prelude
+                // definition.
+                if type_name == "BranchPath" && field == "Root" {
+                    return "BranchPath.Root".to_string();
+                }
                 // User-defined type variant access: Shape.Point
                 if is_user_type(type_name, ctx) {
                     return format!("{}.{}", type_name, to_lower_first(field));
@@ -203,9 +210,6 @@ fn emit_fn_call(fn_expr: &Spanned<Expr>, args: &[Spanned<Expr>], ctx: &CodegenCo
         // definitions in LEAN_PRELUDE_BRANCH_PATH.
         let arg_strs_owned: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
         match name.as_str() {
-            "BranchPath.root" if arg_strs_owned.is_empty() => {
-                return "BranchPath.root".to_string();
-            }
             "BranchPath.child" if arg_strs_owned.len() == 2 => {
                 return format!(
                     "BranchPath.child {} {}",

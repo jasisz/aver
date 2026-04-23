@@ -176,9 +176,7 @@ datatype HttpResponse = HttpResponse(status: int, body: string, headers: seq<Hea
 
 datatype HttpRequest = HttpRequest(method_: string, path: string, body: string, headers: seq<Header>)
 
-function BranchPath_root(): BranchPath {
-  BranchPath("")
-}
+const BranchPath_Root: BranchPath := BranchPath("")
 
 function BranchPath_child(p: BranchPath, idx: int): BranchPath
   requires idx >= 0
@@ -311,7 +309,7 @@ mod tests {
         let out = transpile(&ctx);
         let dfy = dafny_output(&out);
         assert!(dfy.contains("datatype BranchPath"));
-        assert!(dfy.contains("function BranchPath_root()"));
+        assert!(dfy.contains("const BranchPath_Root"));
         assert!(dfy.contains("function BranchPath_child"));
         assert!(dfy.contains("function BranchPath_parse"));
     }
@@ -414,12 +412,12 @@ mod tests {
              \x20   intent = \"t\"\n\
              \n\
              fn mkPath() -> BranchPath\n\
-             \x20   BranchPath.child(BranchPath.root(), 2)\n";
+             \x20   BranchPath.child(BranchPath.Root, 2)\n";
         let ctx = ctx_from_source(src, "m");
         let out = transpile(&ctx);
         let dfy = dafny_output(&out);
         assert!(
-            dfy.contains("BranchPath_child(BranchPath_root(), 2)"),
+            dfy.contains("BranchPath_child(BranchPath_Root, 2)"),
             "expected underscore-form call; got:\n{}",
             dfy
         );

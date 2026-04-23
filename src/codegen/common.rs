@@ -356,18 +356,15 @@ fn rewrite_effectful_call(
                 });
                 if needs_path {
                     injected.push(Spanned {
-                        node: Expr::FnCall(
+                        // `BranchPath.Root` — nullary value
+                        // constructor (PascalCase, no parens),
+                        // symmetric with `Option.None`.
+                        node: Expr::Attr(
                             Box::new(Spanned {
-                                node: Expr::Attr(
-                                    Box::new(Spanned {
-                                        node: Expr::Ident("BranchPath".to_string()),
-                                        line: expr.line,
-                                    }),
-                                    "root".to_string(),
-                                ),
+                                node: Expr::Ident("BranchPath".to_string()),
                                 line: expr.line,
                             }),
-                            Vec::new(),
+                            "Root".to_string(),
                         ),
                         line: expr.line,
                     });
