@@ -1851,23 +1851,34 @@ function renderRecordingPanel() {
     header.appendChild(spacer);
 
     if (data) {
-        const reRecordTooltip = state.lastEntryExpr
-            ? `Re-run ${state.lastEntryExpr} and overwrite this recording.`
-            : "Run main() again and overwrite this recording.";
         header.appendChild(recAction("▶ Replay", "Replay the (possibly edited) recording against the current source.", () => doReplay(), "rec-primary"));
-        header.appendChild(recAction("↻ Re-record", reRecordTooltip, () => doRecord(true, state.lastEntryExpr)));
         header.appendChild(recAction("⬇ Download", "Save the current recording (with any edits) as a .replay.json.", () => {
             const base = (data.program_file || "playground").replace(/\.av$/, "") || "playground";
             triggerDownload(`${base}.replay.json`, state.lastRecording, "application/json");
         }));
-    } else {
-        header.appendChild(recAction("⏺ Record", "Run main() with effect recording on — every Console/Terminal/Time/etc. call becomes an editable event below.", () => doRecord(true), "rec-primary"));
-        header.appendChild(recAction("⏺ Record fn…", "Record a specific function call (e.g. 'area(Shape.Circle(1.0))') instead of main(). Arguments must be literals or ADT constructors.", () => {
-            const expr = prompt('Call expression to record (e.g. area(Shape.Circle(1.0))):', state.lastEntryExpr || "");
+    }
+    // Record buttons are always present so the user can capture a fresh
+    // trace — either of main() or of a specific function call — without
+    // first clearing an existing recording. When `data` is set, the new
+    // run overwrites it; no separate ↻ Re-record needed.
+    header.appendChild(recAction(
+        "⏺ Record",
+        "Run main() with effect recording on — every Console/Terminal/Time/etc. call becomes an editable event below.",
+        () => doRecord(true),
+        data ? null : "rec-primary"
+    ));
+    header.appendChild(recAction(
+        "⏺ Record fn…",
+        "Record a specific function call (e.g. 'area(Shape.Circle(1.0))') instead of main(). Arguments must be literals or ADT constructors.",
+        () => {
+            const expr = prompt(
+                "Call expression to record (e.g. area(Shape.Circle(1.0))):",
+                state.lastEntryExpr || ""
+            );
             const trimmed = expr?.trim();
             if (trimmed) doRecord(true, trimmed);
-        }));
-    }
+        }
+    ));
     panel.appendChild(header);
 
     if (!data) {
