@@ -1399,21 +1399,16 @@ pub fn emit_verify_block(
         return emit_verify_law_block(vb, law, ctx, verify_mode, case_index_start);
     }
 
-    // Oracle v1: `verify fn trace` cases-form is runtime-only. The
-    // `.result` / `.trace.*` projections are resolved by the verify
-    // runner against a collected event buffer, not modeled in proof-
-    // side lifted fns. Emitting them as `example : fn.trace.length =
-    // 2 := by native_decide` would fall through to Lean's record
-    // field access, which doesn't apply — native_decide chokes on
-    // unknown fields.  Better to skip cleanly with a documenting
-    // comment so the proof file still compiles.
+    // Oracle v1: `verify fn trace` cases-form — mix of provable and
+    // runtime-only assertions. `.result` projections reduce to
+    // `lifted_fn(path, oracle...) = expected` which IS provable;
+    // `.trace.length / .event / .contains / .group(..)` project
+    // over a runtime-only event buffer that the lifted fn doesn't
+    // carry. Emit provable ones as formal examples, comment out the
+    // rest with a pointer to docs/oracle.md. Both are checked at
+    // runtime via `aver verify` regardless.
     if vb.trace {
-        let note = format!(
-            "-- verify {} trace ({} cases): runtime-only (see docs/oracle.md)",
-            vb.fn_name,
-            vb.cases.len()
-        );
-        return (note, case_index_start + vb.cases.len());
+        return emit_verify_trace_block_proofs(vb, ctx, verify_mode, case_index_start);
     }
 
     let mut lines = Vec::new();
@@ -1448,6 +1443,122 @@ pub fn emit_verify_block(
         }
     }
     (lines.join("\n"), case_index_start + vb.cases.len())
+}
+
+/// Oracle v1: emit proof-side assertions for a `verify fn trace`
+/// cases-form block. Each case's LHS is inspected — `.result`
+/// projections become `example : lifted_fn(root, oracle...) = rhs`,
+/// which the auto-proof matcher closes via `simp [fn]` or
+/// `native_decide` on concrete samples. Trace-buffer projections
+/// (`.trace.length()`, `.event(k)`, `.contains(_)`, `.group(...)`)
+/// stay runtime-only; emitted as comments so the proof file
+/// still compiles.
+fn emit_verify_trace_block_proofs(
+    vb: &VerifyBlock,
+    ctx: &CodegenContext,
+    verify_mode: VerifyEmitMode,
+    case_index_start: usize,
+) -> (String, usize) {
+    use crate::ast::Expr;
+    let mut lines = Vec::new();
+    let case_total = vb.cases.len();
+
+    // Build a synthetic VerifyLaw for the rewriter — re-uses
+    // `rewrite_effectful_calls_in_law` which wants a law handle to
+    // look up given names. Cases-form trace blocks keep their givens
+    // on `vb.cases_givens`; the rewriter only reads `law.givens`.
+    let synthetic_law = crate::ast::VerifyLaw {
+        name: String::new(),
+        givens: vb.cases_givens.clone(),
+        when: None,
+        lhs: vb
+            .cases
+            .first()
+            .map(|(l, _)| l.clone())
+            .unwrap_or_else(|| crate::ast::Spanned {
+                node: Expr::Literal(crate::ast::Literal::Unit),
+                line: vb.line,
+            }),
+        rhs: vb
+            .cases
+            .first()
+            .map(|(_, r)| r.clone())
+            .unwrap_or_else(|| crate::ast::Spanned {
+                node: Expr::Literal(crate::ast::Literal::Unit),
+                line: vb.line,
+            }),
+        sample_guards: Vec::new(),
+    };
+
+    for (idx, (left, right)) in vb.cases.iter().enumerate() {
+        // Shape-detect the LHS. Only `.result` reduces to a formal
+        // claim; everything else is runtime-only.
+        let result_fn_call = match &left.node {
+            Expr::Attr(inner, field) if field == "result" => match &inner.node {
+                Expr::FnCall(_, _) => Some((**inner).clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+
+        let Some(fn_call) = result_fn_call else {
+            let lhs_summary = emit_expr(left, ctx);
+            lines.push(format!(
+                "-- verify {} trace case {}/{}: `{}` is runtime-only (see docs/oracle.md)",
+                vb.fn_name,
+                idx + 1,
+                case_total,
+                lhs_summary,
+            ));
+            continue;
+        };
+
+        // Per-case bindings drive the oracle arg injection — pulls the
+        // concrete stub value (e.g. `fairDie`) for each given.
+        let case_bindings = vb.case_givens.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
+        let mode = crate::codegen::common::OracleInjectionMode::SampleCaseBinding(case_bindings);
+        let lhs_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
+            &fn_call,
+            &synthetic_law,
+            ctx,
+            mode.clone(),
+        );
+        let rhs_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
+            right,
+            &synthetic_law,
+            ctx,
+            mode,
+        );
+
+        let lhs_str = emit_expr(&lhs_rw, ctx);
+        let rhs_str = emit_expr(&rhs_rw, ctx);
+
+        match verify_mode {
+            VerifyEmitMode::NativeDecide => {
+                lines.push(format!(
+                    "example : {} = {} := by native_decide",
+                    lhs_str, rhs_str
+                ));
+            }
+            VerifyEmitMode::Sorry => {
+                lines.push(format!("example : {} = {} := by sorry", lhs_str, rhs_str));
+            }
+            VerifyEmitMode::TheoremSkeleton => {
+                let theorem_name = format!(
+                    "{}_trace_{}",
+                    aver_name_to_lean(&vb.fn_name),
+                    case_index_start + idx + 1
+                );
+                lines.push(format!(
+                    "theorem {} : {} = {} := by",
+                    theorem_name, lhs_str, rhs_str
+                ));
+                lines.push("  sorry".to_string());
+            }
+        }
+    }
+
+    (lines.join("\n"), case_index_start + case_total)
 }
 
 fn emit_verify_law_block(
