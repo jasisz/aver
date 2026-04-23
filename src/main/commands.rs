@@ -2805,7 +2805,22 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
             machine.install_oracle_stubs(oracle_stubs);
         }
 
+        // Oracle v1: for trace-aware verify blocks, start per-case trace
+        // event collection. The collector lives on VmRuntime and captures
+        // every classified-effect dispatch during LHS eval. Events are
+        // taken (and cleared) before RHS eval so only LHS emissions are
+        // visible to subsequent `.trace.*` projections.
+        if block.trace {
+            machine.start_trace_collection();
+        }
+
         let left_result = vm_call_verify_helper(machine, &case_fns.left);
+        let _lhs_trace_events: Vec<Value> = if block.trace {
+            machine.take_trace_events()
+        } else {
+            Vec::new()
+        };
+
         let right_result = vm_call_verify_helper(machine, &case_fns.right);
 
         if has_stubs {
