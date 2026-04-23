@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.10.1 (unreleased)
+## 0.10.1 (2026-04-23)
 
 ### Added
 - **`aver run --expr '<call>'` / `--input-file PATH`** — record or run any function, not just `main`. Pass a call like `aver run src/tax.av -e 'loadTaxRate("PL")' --record dir/` and the recording's `entry_fn` and `input` are populated from the call; `aver replay` picks it up unchanged. Repeat `-e` to batch. Supports literal, list/tuple, and ADT-constructor arguments (`Result.Ok(5)`, `Shape.Circle(1.0)`, nested). Function calls / arithmetic / variables in arg position stay out of scope — wrap them in a helper function and call that instead. The same capability is exposed in the playground's Trace panel.
