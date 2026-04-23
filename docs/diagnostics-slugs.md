@@ -28,7 +28,7 @@ Source of truth: `src/diagnostics/classify.rs` (classifier) and `src/checker/*.r
 |---|---|---|---|
 | `missing-verify` | error | A pure, non-trivial function lacks a `verify` block. | Add a `verify` block with representative cases. |
 | `missing-description` | warning | A function lacks a `? "..."` description. | Add a `? "description"` line after the signature. |
-| `verify-effectful` | warning | A function with effects has a `verify` block. | Remove `verify`; test via `aver run --record` + `aver replay --test`. |
+| `verify-effectful` | warning | A function with effects has a `verify` block. | Remove `verify`; test via `aver run -e '<call>' --record` + `aver replay --test`. |
 | `verify-coverage` | warning | Verify block has too few cases for the return type's shape. | Add cases covering the missing shape (Err/Ok, Some/None, etc.). |
 | `verify-law` | warning | `verify law` names a function it never actually calls. | Use the named function in the law body or rename the law. |
 | `verify-rhs` | error | Case calls the target on the right-hand side of `=>`. | Right side must be the expected value, not another call to the target. |

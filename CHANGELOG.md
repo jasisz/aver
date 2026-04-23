@@ -7,6 +7,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 ### Added
 - **`aver run --expr '<call>'`** — record/replay now targets any function, not just `main`. Pass a function call with literal arguments (e.g. `aver run src/tax.av -e 'loadTaxRate("PL")' --record dir/`) and the recording's `entry_fn` and `input` are populated from the call; `aver replay` picks them up unchanged via the existing entry-args path. Repeat `-e` to batch several calls in one invocation; each produces its own recording file. `--input-file PATH` (use `-` for stdin) reads a single call expression from a file for long inputs. Conflicts with `--verify`, `--self-host`, and `--wasm`. Arguments are limited to literals (`String`, `Int`, `Float`, `Bool`, `Unit`) in this release — for complex inputs, wrap the call in a helper function and point `-e` at that.
 - **Readable recording filenames for `--expr`** — `aver run ... -e 'fn(arg)' --record dir/` writes `dir/fn-arg.json` when arguments are simple literals, falling back to a stable hash-based stem for anything else. Default `main` runs keep the existing `rec-<timestamp>.json` name.
+- **Playground: "⏺ Record fn…" button** — in the Trace panel, a second record button prompts for a call expression (e.g. `loadTaxRate("PL")`) and captures its trace instead of `main()`. Uses the same literal-arg constraint as the CLI. Replay of custom-entry recordings works directly via the existing ▶ Replay button (the playground's replay path now honours `entry_fn` / `input` from the recording instead of always re-invoking `main`).
+
+### Fixed
+- **Playground replay ignored the recording's entry point** — `aver_replay_run` always re-invoked `main()` regardless of what the recording declared, which meant non-main recordings (from drag-and-drop or CLI imports) were silently compared against the wrong program. Replay now parses `entry_fn` / `input` from the recording and calls the matching function, mirroring CLI `aver replay` semantics.
 
 ## 0.10.0 "Telltale" (2026-04-21)
 

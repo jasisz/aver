@@ -305,6 +305,42 @@ export function aver_run_record(files_json, entry) {
 }
 
 /**
+ * Record a run starting from an arbitrary call expression instead of
+ * `main`. `entry_expr` must be a function call with literal arguments
+ * (String / Int / Float / Bool / Unit) — same constraints as `aver run
+ * --expr` on the CLI. The resulting recording has `entry_fn` and
+ * `input` populated accordingly and can be replayed unchanged.
+ * @param {string} files_json
+ * @param {string} entry
+ * @param {string} entry_expr
+ * @returns {string}
+ */
+export function aver_run_record_entry(files_json, entry, entry_expr) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passStringToWasm0(files_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(entry, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(entry_expr, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.aver_run_record_entry(ptr0, len0, ptr1, len1, ptr2, len2);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
  * @param {string} source
  * @returns {string}
  */

@@ -349,10 +349,19 @@ struct RunRecordResult {
 
 #[cfg(feature = "runtime")]
 pub fn run_record_project(files: &HashMap<String, String>, entry: &str) -> String {
+    run_record_project_with_entry(files, entry, None)
+}
+
+#[cfg(feature = "runtime")]
+pub fn run_record_project_with_entry(
+    files: &HashMap<String, String>,
+    entry: &str,
+    entry_expr: Option<&str>,
+) -> String {
     let Some(entry_source) = files.get(entry).cloned() else {
         return err_json(format!("Entry '{}' not in virtual fs", entry));
     };
-    match run_record_inner(&entry_source, files, entry) {
+    match run_record_inner(&entry_source, files, entry, entry_expr) {
         Ok(res) => serde_json::to_string(&res).unwrap_or_else(|_| "{}".to_string()),
         Err(e) => err_json(e),
     }
@@ -363,10 +372,14 @@ fn run_record_inner(
     entry_source: &str,
     files: &HashMap<String, String>,
     entry: &str,
+    entry_expr: Option<&str>,
 ) -> Result<RunRecordResult, String> {
     use crate::replay::json::JsonValue;
     use crate::replay::session::{RecordedOutcome, SessionRecording};
-    use crate::replay::{session_recording_to_string_pretty, value_to_json_lossy};
+    use crate::replay::{
+        encode_entry_args, parse_entry_call, session_recording_to_string_pretty,
+        value_to_json_lossy,
+    };
 
     let (mut items, loaded) = parse_and_load(entry_source, files, entry)?;
     tco::transform_program(&mut items);
@@ -394,8 +407,27 @@ fn run_record_inner(
     machine.set_record_cap(Some(10_000));
     machine.start_recording();
 
+    // Resolve the entry: either a user-supplied call expression or `main`.
+    let entry_info: Option<(String, Vec<crate::value::Value>)> = match entry_expr {
+        Some(src) => Some(parse_entry_call(src)?),
+        None => None,
+    };
+
     let mut runtime_error: Option<String> = None;
-    let output = match machine.run() {
+    let run_result = if let Some((fn_name, args)) = &entry_info {
+        machine.run_top_level().and_then(|_| {
+            use crate::nan_value::{NanValue, NanValueConvert};
+            let nv_args: Vec<NanValue> = args
+                .iter()
+                .map(|v| NanValue::from_value(v, &mut machine.arena))
+                .collect();
+            machine.run_named_function(fn_name, &nv_args)
+        })
+    } else {
+        machine.run()
+    };
+
+    let output = match run_result {
         Ok(val) => {
             // Recorded outcome is only used by replay-validation; the
             // browser usually drives Unit out of main, so a lossy
@@ -412,14 +444,22 @@ fn run_record_inner(
         }
     };
 
+    let (entry_fn, input_json) = match &entry_info {
+        Some((name, args)) => (
+            name.clone(),
+            encode_entry_args(args).unwrap_or(JsonValue::Null),
+        ),
+        None => ("main".to_string(), JsonValue::Null),
+    };
+
     let recording = SessionRecording {
         schema_version: 1,
         request_id: "playground".to_string(),
         timestamp: String::new(),
         program_file: entry.to_string(),
         module_root: "<virtual-fs>".to_string(),
-        entry_fn: "main".to_string(),
-        input: JsonValue::Null,
+        entry_fn,
+        input: input_json,
         effects: machine.recorded_effects().to_vec(),
         output,
     };
@@ -468,7 +508,11 @@ fn replay_run_inner(
     entry: &str,
     recording_json: &str,
 ) -> Result<ReplayResult, String> {
+    use crate::nan_value::{NanValue, NanValueConvert};
+    use crate::replay::json::JsonValue;
+    use crate::replay::json_to_value;
     use crate::replay::session::parse_session_recording;
+    use crate::value::{Value, list_to_vec};
 
     let Some(entry_source) = files.get(entry).cloned() else {
         return Err(format!("Entry '{}' not in virtual fs", entry));
@@ -495,7 +539,31 @@ fn replay_run_inner(
     machine.set_silent_console(true);
     machine.start_replay(recording.effects, true);
 
-    let run_err = machine.run().err().map(|e| e.to_string());
+    // Replay respects the recording's own entry_fn and input, not just main —
+    // otherwise playground replay would miscompare recordings made with a
+    // custom entry point.
+    let run_err = if recording.entry_fn == "main" && matches!(recording.input, JsonValue::Null) {
+        machine.run().err().map(|e| e.to_string())
+    } else {
+        let top_err = machine.run_top_level().err().map(|e| e.to_string());
+        if let Some(err) = top_err {
+            Some(err)
+        } else {
+            let args: Vec<Value> = match json_to_value(&recording.input) {
+                Ok(Value::Unit) => vec![],
+                Ok(v) => list_to_vec(&v).unwrap_or_else(|| vec![v]),
+                Err(e) => return Err(e),
+            };
+            let nv_args: Vec<NanValue> = args
+                .iter()
+                .map(|v| NanValue::from_value(v, &mut machine.arena))
+                .collect();
+            machine
+                .run_named_function(&recording.entry_fn, &nv_args)
+                .err()
+                .map(|e| e.to_string())
+        }
+    };
     let consumed = machine.ensure_replay_consumed();
     let (replayed, _remaining) = machine.replay_progress();
 
@@ -663,6 +731,25 @@ mod bindgen {
     pub fn aver_run_record(files_json: &str, entry: &str) -> Result<String, JsError> {
         let files = parse_files(files_json)?;
         Ok(super::run_record_project(&files, entry))
+    }
+
+    /// Record a run starting from an arbitrary call expression instead of
+    /// `main`. `entry_expr` must be a function call with literal arguments
+    /// (String / Int / Float / Bool / Unit) — same constraints as `aver run
+    /// --expr` on the CLI. The resulting recording has `entry_fn` and
+    /// `input` populated accordingly and can be replayed unchanged.
+    #[wasm_bindgen]
+    pub fn aver_run_record_entry(
+        files_json: &str,
+        entry: &str,
+        entry_expr: &str,
+    ) -> Result<String, JsError> {
+        let files = parse_files(files_json)?;
+        Ok(super::run_record_project_with_entry(
+            &files,
+            entry,
+            Some(entry_expr),
+        ))
     }
 
     #[wasm_bindgen]

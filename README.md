@@ -104,6 +104,7 @@ aver compile  examples/core/calculator.av -o out/
 aver proof    examples/formal/law_auto.av -o proof/
 (cd proof && lake build)
 aver run      examples/services/console_demo.av --record recordings/
+aver run      examples/core/calculator.av -e 'safeDivide(10, 2)' --record recordings/
 aver replay   recordings/ --test --diff
 aver replay   recordings/ --test --check-args
 aver replay   recordings/ --test --json

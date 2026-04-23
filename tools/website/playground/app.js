@@ -1858,6 +1858,11 @@ function renderRecordingPanel() {
         }));
     } else {
         header.appendChild(recAction("⏺ Record", "Run main() with effect recording on — every Console/Terminal/Time/etc. call becomes an editable event below.", () => doRecord(true), "rec-primary"));
+        header.appendChild(recAction("⏺ Record fn…", "Record a specific function call (e.g. 'loadTaxRate(\"PL\")') instead of main(). Args must be literals.", () => {
+            const expr = prompt('Call expression to record (e.g. loadTaxRate("PL")):');
+            const trimmed = expr?.trim();
+            if (trimmed) doRecord(true, trimmed);
+        }));
     }
     panel.appendChild(header);
 
@@ -2539,7 +2544,7 @@ function currentProjectFiles() {
         : { "playground.av": getActiveSource() };
 }
 
-async function doRecord(skipDownload = true) {
+async function doRecord(skipDownload = true, entryExpr = null) {
     if (state.wasmOnly) {
         setStatus("No source — drop .av or a folder first.", "error");
         return;
@@ -2552,8 +2557,10 @@ async function doRecord(skipDownload = true) {
     }
     try {
         const comp = await loadCompiler();
-        setStatus("Recording…", "info");
-        const json = comp.aver_run_record(JSON.stringify(filesObj), entry);
+        setStatus(entryExpr ? `Recording ${entryExpr}…` : "Recording…", "info");
+        const json = entryExpr
+            ? comp.aver_run_record_entry(JSON.stringify(filesObj), entry, entryExpr)
+            : comp.aver_run_record(JSON.stringify(filesObj), entry);
         const res = JSON.parse(json);
         if (!res.ok) {
             setStatus("Record failed", "error");

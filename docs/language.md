@@ -126,6 +126,8 @@ Run with: `aver run file.av -- arg1 arg2 arg3`
 
 Arguments after `--` are available as `List<String>`. Without `--`, the list is empty. `Args.get()` requires `! [Args.get]` — argument access is visible in the signature like any other effect.
 
+`aver run` starts from `main` by default. To record or run any other top-level function, pass `-e '<call>'` (repeat for a batch) or `--input-file PATH`: `aver run file.av -e 'load("PL")' --record recordings/`. Arguments are limited to literals in 0.10.1; wrap complex inputs in a helper function.
+
 ## Functions
 
 ```aver
