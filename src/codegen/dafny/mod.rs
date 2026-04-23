@@ -102,6 +102,12 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
     // `path: BranchPath` plus one oracle / capability param per non-output
     // effect, rewriting effect-method calls in the body. Unclassified or
     // higher-order-callback effects are still skipped.
+    //
+    // Collect the helper registry first so call sites to effectful
+    // user fns in any lifted body get `(path, oracle...)` injected
+    // to match the callee's lifted arity.
+    let mut helpers: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
     for item in &ctx.items {
         if let TopLevel::FnDef(fd) = item
             && !fd.effects.is_empty()
@@ -111,7 +117,24 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
                 .effects
                 .iter()
                 .all(|e| crate::types::checker::effect_classification::is_classified(&e.node))
-            && let Ok(Some(lifted)) = crate::types::checker::effect_lifting::lift_fn_def(fd)
+        {
+            helpers.insert(
+                fd.name.clone(),
+                fd.effects.iter().map(|e| e.node.clone()).collect(),
+            );
+        }
+    }
+    for item in &ctx.items {
+        if let TopLevel::FnDef(fd) = item
+            && !fd.effects.is_empty()
+            && fd.name != "main"
+            && !body_uses_error_prop(&fd.body)
+            && fd
+                .effects
+                .iter()
+                .all(|e| crate::types::checker::effect_classification::is_classified(&e.node))
+            && let Ok(Some(lifted)) =
+                crate::types::checker::effect_lifting::lift_fn_def_with_helpers(fd, &helpers)
         {
             sections.push(toplevel::emit_fn_def(&lifted, ctx));
         }

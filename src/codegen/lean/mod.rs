@@ -2044,7 +2044,26 @@ fn emit_lifted_effectful_functions(
 ) {
     use crate::types::checker::effect_classification::is_classified;
 
-    // Collect eligible effectful fns + their lifted forms.
+    // Oracle v1: collect the effect list for every eligible
+    // effectful fn *first* — call sites to these helpers in any
+    // lifted body get `(path, oracle...)` injected so the arity
+    // matches the helper's lifted form.
+    let mut helpers: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for item in &ctx.items {
+        let TopLevel::FnDef(fd) = item else { continue };
+        if fd.effects.is_empty() || fd.name == "main" {
+            continue;
+        }
+        if !fd.effects.iter().all(|e| is_classified(&e.node)) {
+            continue;
+        }
+        helpers.insert(
+            fd.name.clone(),
+            fd.effects.iter().map(|e| e.node.clone()).collect(),
+        );
+    }
+
     let mut lifted_fns: Vec<(String, crate::ast::FnDef)> = Vec::new();
     for item in &ctx.items {
         let TopLevel::FnDef(fd) = item else { continue };
@@ -2054,7 +2073,9 @@ fn emit_lifted_effectful_functions(
         if !fd.effects.iter().all(|e| is_classified(&e.node)) {
             continue;
         }
-        let Ok(Some(lifted)) = crate::types::checker::effect_lifting::lift_fn_def(fd) else {
+        let Ok(Some(lifted)) =
+            crate::types::checker::effect_lifting::lift_fn_def_with_helpers(fd, &helpers)
+        else {
             continue;
         };
         lifted_fns.push((fd.name.clone(), lifted));
