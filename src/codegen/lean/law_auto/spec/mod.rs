@@ -60,19 +60,21 @@ fn emit_effectful_spec_equivalence_law(
         });
     }
 
-    // Fallback: one side is the impl call, the other is any inline
-    // expression (typically using the oracle directly —
-    // `rnd root 0 1 6 + rnd root 1 1 6`). Closes via `simp [impl]`
-    // which unfolds the impl's body; the RHS is already in normalised
-    // form (oracle calls + arithmetic) and Lean reduces by
-    // definitional equality. No separate spec fn needed — user can
-    // inline the assertion directly in verify.
-    let impl_name = match_impl_call_one_side(vb, law)?;
+    // Fallback: one side is the impl call, the other is any
+    // expression — may inline the oracle directly
+    // (`rnd root 0 1 6 + rnd root 1 1 6`) OR call pure helper fns
+    // like `bothSpec args env`. `simp [impl]` alone unfolds impl but
+    // leaves helper calls in the goal, and Lean can't close.
+    // `law_simp_defs` already walks lhs + rhs transitively to gather
+    // every pure user fn called — include them all so the whole RHS
+    // reduces.
+    let _impl_name = match_impl_call_one_side(vb, law)?;
+    let simp_defs: Vec<String> = law_simp_defs(ctx, vb, law).into_iter().collect();
     Some(AutoProof {
         support_lines: Vec::new(),
         proof_lines: intro_then(
             intro_names,
-            vec![format!("simp [{}]", aver_name_to_lean_ident(&impl_name))],
+            vec![format!("simp [{}]", simp_defs.join(", "))],
         ),
         replaces_theorem: false,
     })
