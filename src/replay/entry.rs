@@ -263,3 +263,195 @@ pub fn recording_stem(fn_name: &str, args: &[Value]) -> String {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(src: &str) -> (String, Vec<Value>) {
+        parse_entry_call(src).expect("should parse")
+    }
+
+    fn parse_err(src: &str) -> String {
+        parse_entry_call(src)
+            .expect_err("should reject")
+            .to_string()
+    }
+
+    #[test]
+    fn literal_args() {
+        let (name, args) = parse(r#"greet("Alice", 42, 3.14, true)"#);
+        assert_eq!(name, "greet");
+        assert_eq!(args.len(), 4);
+        assert!(matches!(args[0], Value::Str(ref s) if s == "Alice"));
+        assert!(matches!(args[1], Value::Int(42)));
+        assert!(matches!(args[2], Value::Float(f) if (f - 3.14).abs() < 1e-9));
+        assert!(matches!(args[3], Value::Bool(true)));
+    }
+
+    #[test]
+    fn negative_numeric_literals() {
+        let (_, args) = parse("loadTempBounds(-300.0, -40)");
+        assert!(matches!(args[0], Value::Float(f) if (f + 300.0).abs() < 1e-9));
+        assert!(matches!(args[1], Value::Int(-40)));
+    }
+
+    #[test]
+    fn negative_on_non_literal_is_rejected() {
+        let msg = parse_err("foo(-Shape.Circle(1.0))");
+        assert!(msg.contains("numeric literal"), "got: {}", msg);
+    }
+
+    #[test]
+    fn user_variant_single_and_multi_field() {
+        let (_, args) = parse("area(Shape.Circle(1.0))");
+        let Value::Variant {
+            type_name,
+            variant,
+            fields,
+        } = &args[0]
+        else {
+            panic!("expected Variant, got {:?}", args[0]);
+        };
+        assert_eq!(type_name, "Shape");
+        assert_eq!(variant, "Circle");
+        assert_eq!(fields.len(), 1);
+        assert!(matches!(fields[0], Value::Float(f) if (f - 1.0).abs() < 1e-9));
+
+        let (_, args) = parse("area(Shape.Rectangle(3.0, 4.0))");
+        let Value::Variant { fields, .. } = &args[0] else {
+            panic!("expected Variant");
+        };
+        assert_eq!(fields.len(), 2);
+    }
+
+    #[test]
+    fn builtin_wrapper_constructors() {
+        let (_, args) = parse(r#"handle(Result.Ok(5))"#);
+        assert!(matches!(&args[0], Value::Ok(inner) if matches!(**inner, Value::Int(5))));
+
+        let (_, args) = parse(r#"handle(Result.Err("bad"))"#);
+        assert!(
+            matches!(&args[0], Value::Err(inner) if matches!(**inner, Value::Str(ref s) if s == "bad"))
+        );
+
+        let (_, args) = parse("handle(Option.Some(1))");
+        assert!(matches!(&args[0], Value::Some(inner) if matches!(**inner, Value::Int(1))));
+
+        let (_, args) = parse("handle(Option.None)");
+        assert!(matches!(&args[0], Value::None));
+    }
+
+    #[test]
+    fn nested_constructors() {
+        let (_, args) = parse("handle(Result.Ok(Shape.Circle(2.0)))");
+        let Value::Ok(inner) = &args[0] else {
+            panic!("expected Ok");
+        };
+        let Value::Variant {
+            type_name, variant, ..
+        } = &**inner
+        else {
+            panic!("expected inner Variant");
+        };
+        assert_eq!(type_name, "Shape");
+        assert_eq!(variant, "Circle");
+    }
+
+    #[test]
+    fn list_and_tuple_args() {
+        let (_, args) = parse("sumAll([1, 2, 3])");
+        assert!(matches!(args[0], Value::List(_)));
+
+        let (_, args) = parse(r#"describe((1, "x"))"#);
+        assert!(matches!(args[0], Value::Tuple(ref items) if items.len() == 2));
+    }
+
+    #[test]
+    fn arity_mismatch_on_builtin_wrapper() {
+        let msg = parse_err("handle(Result.Ok(1, 2))");
+        assert!(msg.contains("Result.Ok"), "got: {}", msg);
+    }
+
+    #[test]
+    fn zero_arg_call_is_accepted() {
+        let (name, args) = parse("tick()");
+        assert_eq!(name, "tick");
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn top_level_must_be_a_call() {
+        let msg = parse_err("42");
+        assert!(msg.contains("function call"), "got: {}", msg);
+    }
+
+    #[test]
+    fn arithmetic_arg_rejected() {
+        let msg = parse_err("foo(1 + 2)");
+        assert!(msg.contains("arg #1"), "got: {}", msg);
+    }
+
+    #[test]
+    fn function_call_arg_rejected() {
+        // Lowercase `helper` = function ref, not constructor. Rejected.
+        let msg = parse_err("foo(helper(5))");
+        assert!(msg.contains("arg #1"), "got: {}", msg);
+    }
+
+    #[test]
+    fn variable_arg_rejected() {
+        let msg = parse_err("foo(x)");
+        assert!(msg.contains("arg #1"), "got: {}", msg);
+    }
+
+    #[test]
+    fn qualified_target_rejected() {
+        let msg = parse_err("Math.abs(-5)");
+        assert!(msg.contains("bare function name"), "got: {}", msg);
+    }
+
+    #[test]
+    fn encode_entry_args_shape() {
+        use crate::replay::JsonValue;
+
+        match encode_entry_args(&[]).unwrap() {
+            JsonValue::Null => {}
+            other => panic!("expected Null for empty, got {:?}", other),
+        }
+
+        let single = encode_entry_args(&[Value::Int(5)]).unwrap();
+        assert!(matches!(single, JsonValue::Int(5)), "got: {:?}", single);
+
+        let multi = encode_entry_args(&[Value::Int(1), Value::Str("x".into())]).unwrap();
+        assert!(
+            matches!(&multi, JsonValue::Array(v) if v.len() == 2),
+            "got: {:?}",
+            multi
+        );
+    }
+
+    #[test]
+    fn recording_stem_literal_args() {
+        assert_eq!(
+            recording_stem("loadPort", &[Value::Str("PL".into())]),
+            "loadPort-PL"
+        );
+        assert_eq!(recording_stem("fib", &[Value::Int(10)]), "fib-10");
+        assert_eq!(recording_stem("flag", &[Value::Bool(false)]), "flag-false");
+    }
+
+    #[test]
+    fn recording_stem_complex_args_fall_back_to_hash() {
+        let stem = recording_stem(
+            "area",
+            &[Value::Variant {
+                type_name: "Shape".into(),
+                variant: "Circle".into(),
+                fields: Arc::<[Value]>::from(vec![Value::Float(1.0)]),
+            }],
+        );
+        assert!(stem.starts_with("area-"), "got: {}", stem);
+        assert_eq!(stem.len(), "area-".len() + 8, "expected 8-hex suffix");
+    }
+}
