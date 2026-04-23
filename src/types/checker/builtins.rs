@@ -51,6 +51,7 @@ impl TypeChecker {
         let effect_event_fields: &[(&str, Type)] = &[
             ("method", Type::Str),
             ("args", Type::List(Box::new(Type::Unknown))),
+            ("path", Type::Str),
         ];
         for (field, ty) in effect_event_fields {
             self.record_field_types.insert(
