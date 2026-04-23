@@ -113,6 +113,27 @@ impl VM {
         self.runtime.set_allowed_effects(effects);
     }
 
+    /// Oracle v1: install the oracle-stub map for a verify-law case.
+    /// Maps classified effect method names (e.g. `"Random.int"`) to the
+    /// fn_id of an Aver stub function with signature
+    /// `(BranchPath, Int, orig_args...) -> T`. Counter resets to 0.
+    pub fn install_oracle_stubs(&mut self, stubs: std::collections::HashMap<String, u32>) {
+        self.runtime.install_oracle_stubs(stubs);
+    }
+
+    /// Clear the oracle-stub map and reset the counter. Always call this
+    /// at the end of the verify-law case so the next case (or normal
+    /// evaluation) doesn't see stale substitutions.
+    pub fn clear_oracle_stubs(&mut self) {
+        self.runtime.clear_oracle_stubs();
+    }
+
+    /// Resolve an Aver top-level function name to its VM fn_id. Used by
+    /// the verify runner when wiring stubs from a `given` clause.
+    pub fn find_fn_id(&self, name: &str) -> Option<u32> {
+        self.code.find(name)
+    }
+
     pub fn set_cancelled(&mut self, flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {
         self.cancelled = Some(flag);
     }

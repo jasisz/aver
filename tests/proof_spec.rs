@@ -157,6 +157,59 @@ fn proof_rejects_sequential_independence_mode() {
 }
 
 #[test]
+fn aver_verify_runs_effectful_law_with_oracle_stub() {
+    // End-to-end: `aver verify` runs an effectful law whose given clause
+    // supplies an oracle stub. LHS evaluation of the effectful impl must
+    // see stub values (not real Random.int), so the law's equality check
+    // holds deterministically.
+    let dir = temp_output_dir("aver-verify-oracle");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn stubConst(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always returns min\"\n\
+         \x20   min\n\
+         \n\
+         fn pickOne() -> Int\n\
+         \x20   ? \"sample one Random.int\"\n\
+         \x20   ! [Random.int]\n\
+         \x20   Random.int(7, 99)\n\
+         \n\
+         fn pickOneSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Int) -> Int\n\
+         \x20   ? \"one draw at the caller's path\"\n\
+         \x20   rnd(path, 0, 7, 99)\n\
+         \n\
+         verify pickOne law consistent\n\
+         \x20   given rnd: Random.int = [stubConst]\n\
+         \x20   pickOne() => pickOneSpec(BranchPath.root(), rnd)\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+
+    assert!(
+        output.status.success(),
+        "aver verify failed with effectful-law + oracle stub; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn proof_accepts_complete_independence_mode() {
     let dir = temp_output_dir("aver-proof-complete");
     std::fs::create_dir_all(&dir).expect("create temp dir");

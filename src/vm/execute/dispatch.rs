@@ -485,6 +485,19 @@ impl VM {
                         continue;
                     }
 
+                    // Oracle v1: redirect classified-effect calls to an
+                    // installed verify-time stub, if present. Keep the
+                    // outer execute_until's local fn_id/ip/bp untouched —
+                    // call_function uses its own nested execute_until and
+                    // returns here; the caller's state lives in these
+                    // stack-frame locals, not in self.frames (which
+                    // doesn't carry leaf-call state).
+                    if let Some(stub_fn_id) = self.runtime.oracle_stub_for(builtin.name()) {
+                        let result = self.dispatch_oracle_stub(stub_fn_id, &args)?;
+                        self.stack.push(result);
+                        continue;
+                    }
+
                     let result = self.arena.with_alloc_space(alloc_space, |arena| {
                         self.runtime.invoke_builtin_with_owned(
                             &self.code.symbols,

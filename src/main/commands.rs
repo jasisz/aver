@@ -2630,6 +2630,58 @@ fn vm_call_guard_helper(machine: &mut vm::VM, fn_name: &str) -> Result<Value, St
         .map(|value| value.to_value(&machine.arena))
 }
 
+/// Oracle v1: for a verify-law case, collect the oracle-stub mapping
+/// the VM should install before evaluating LHS/RHS.
+///
+/// For each given `name: Effect.method = [stub_expr, ...]`, the case's
+/// expansion picks one element of the list into `case_givens[idx]`. We
+/// look up the classified effect (via the law's original givens) and
+/// resolve the case-specific stub expression to a VM fn_id (must be a
+/// bare identifier). Only classified generative / snapshot / gen+output
+/// effects produce an entry; output-only / unclassified effects are
+/// skipped (they have no oracle to stub).
+fn build_case_oracle_stubs(
+    machine: &vm::VM,
+    block: &VerifyBlock,
+    case_idx: usize,
+) -> std::collections::HashMap<String, u32> {
+    let mut out = std::collections::HashMap::new();
+    let VerifyKind::Law(law) = &block.kind else {
+        return out;
+    };
+    let Some(case_bindings) = block.case_givens.get(case_idx) else {
+        return out;
+    };
+    for given in &law.givens {
+        let Some(classification) =
+            aver::types::checker::effect_classification::classify(&given.type_name)
+        else {
+            continue;
+        };
+        use aver::types::checker::effect_classification::EffectDimension;
+        if matches!(classification.dimension, EffectDimension::Output) {
+            continue;
+        }
+        // Find this case's binding for the given's name.
+        let Some((_, value_expr)) = case_bindings.iter().find(|(n, _)| n == &given.name) else {
+            continue;
+        };
+        // The sample value must be a bare identifier referring to an
+        // Aver top-level stub fn. Anything else (literal, complex expr)
+        // isn't callable as an effect redirect in this v0.
+        let stub_name = match &value_expr.node {
+            Expr::Ident(s) => s.clone(),
+            Expr::Resolved { name, .. } => name.clone(),
+            _ => continue,
+        };
+        let Some(fn_id) = machine.find_fn_id(&stub_name) else {
+            continue;
+        };
+        out.insert(given.type_name.clone(), fn_id);
+    }
+    out
+}
+
 fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
     use aver::checker::{VerifyCaseOutcome, VerifyCaseResult, VerifyLawContext};
 
@@ -2742,8 +2794,23 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
             }
         }
 
+        // Oracle v1: for each given in the law whose type is a classified
+        // effect method, install a map from the effect name to the stub
+        // fn_id chosen for this case. The VM's oracle-stub hook will
+        // intercept classified-effect calls under LHS and re-dispatch
+        // them to the stub with a prepended (BranchPath.root, counter).
+        let oracle_stubs = build_case_oracle_stubs(machine, block, idx);
+        let has_stubs = !oracle_stubs.is_empty();
+        if has_stubs {
+            machine.install_oracle_stubs(oracle_stubs);
+        }
+
         let left_result = vm_call_verify_helper(machine, &case_fns.left);
         let right_result = vm_call_verify_helper(machine, &case_fns.right);
+
+        if has_stubs {
+            machine.clear_oracle_stubs();
+        }
 
         match (left_result, right_result) {
             (Ok(VmVerifyEval::Value(left_val)), Ok(VmVerifyEval::Value(right_val))) => {

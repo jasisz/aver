@@ -159,6 +159,15 @@ impl VM {
                         .ensure_builtin_effects_allowed(&self.code.symbols, builtin)?;
                     return self.dispatch_http_server(builtin, args);
                 }
+                // Oracle v1: if the current verify-law case installed a
+                // stub for this effect method, redirect the call to the
+                // stub with prepended (BranchPath.root, counter, …).
+                // Counter increments per dispatched effect; flat bodies
+                // only — nested `!`/`?!` branches will thread path via
+                // the lifting transform in a later integration step.
+                if let Some(stub_fn_id) = self.runtime.oracle_stub_for(builtin.name()) {
+                    return self.dispatch_oracle_stub(stub_fn_id, args);
+                }
                 return self.runtime.invoke_builtin(
                     &self.code.symbols,
                     builtin,
@@ -341,6 +350,40 @@ impl VM {
                 .copy_from_slice(&roots[constant_offset..constant_offset + len]);
             constant_offset += len;
         }
+    }
+
+    /// Oracle v1: dispatch an effect call to its verify-time stub.
+    ///
+    /// The stub has the Aver signature
+    /// `(BranchPath, Int, orig_args...) -> T` — v0 threads the root
+    /// path and a per-verify-run counter; branch-aware path extension
+    /// follows once the dispatcher sees `enter_group` / `set_branch`
+    /// during lifted-body evaluation.
+    pub(super) fn dispatch_oracle_stub(
+        &mut self,
+        stub_fn_id: u32,
+        args: &[NanValue],
+    ) -> Result<NanValue, VmError> {
+        // Build BranchPath.root — a record { dewey: "" } of the BranchPath
+        // type. This matches the arena registration in
+        // vm::register_service_types.
+        let type_id = self
+            .arena
+            .find_type_id(crate::types::branch_path::TYPE_NAME)
+            .ok_or_else(|| VmError::runtime("BranchPath type not registered"))?;
+        let empty_dewey = NanValue::new_string_value("", &mut self.arena);
+        let root_idx = self.arena.push_record(type_id, vec![empty_dewey]);
+        let root_path = NanValue::new_record(root_idx);
+
+        let counter = self.runtime.take_next_oracle_counter();
+        let counter_nv = NanValue::new_int(counter as i64, &mut self.arena);
+
+        let mut new_args = Vec::with_capacity(args.len() + 2);
+        new_args.push(root_path);
+        new_args.push(counter_nv);
+        new_args.extend_from_slice(args);
+
+        self.call_function(stub_fn_id, &new_args)
     }
 
     /// Handle HttpServer.listen/listenWith with VM callback support.
