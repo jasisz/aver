@@ -2357,6 +2357,7 @@ mod tests {
             case_givens: vec![],
             kind: VerifyKind::Cases,
             trace: false,
+            cases_givens: vec![],
         }));
         ctx
     }
@@ -2374,6 +2375,7 @@ mod tests {
             case_givens: vec![],
             kind: VerifyKind::Cases,
             trace: false,
+            cases_givens: vec![],
         }));
         ctx.items.push(TopLevel::Verify(VerifyBlock {
             fn_name: "f".to_string(),
@@ -2386,6 +2388,7 @@ mod tests {
             case_givens: vec![],
             kind: VerifyKind::Cases,
             trace: false,
+            cases_givens: vec![],
         }));
         ctx
     }
@@ -2485,6 +2488,7 @@ mod tests {
                 sample_guards: vec![],
             })),
             trace: false,
+            cases_givens: vec![],
         }));
         ctx
     }
@@ -2883,6 +2887,7 @@ verify square law squareSpec
                 sample_guards: vec![],
             })),
             trace: false,
+            cases_givens: vec![],
         }));
         let out = transpile(&ctx);
         let lean = out
@@ -2935,6 +2940,7 @@ verify square law squareSpec
                 sample_guards: vec![],
             })),
             trace: false,
+            cases_givens: vec![],
         }));
         let out = transpile(&ctx);
         let lean = out
@@ -3038,6 +3044,7 @@ verify square law squareSpec
                 sample_guards: vec![],
             })),
             trace: false,
+            cases_givens: vec![],
         }));
         let out = transpile(&ctx);
         let lean = out
@@ -3109,6 +3116,7 @@ verify square law squareSpec
                 sample_guards: vec![],
             })),
             trace: false,
+            cases_givens: vec![],
         }));
         ctx.items.push(TopLevel::Verify(VerifyBlock {
             fn_name: "sub".to_string(),
@@ -3175,6 +3183,7 @@ verify square law squareSpec
                 sample_guards: vec![],
             })),
             trace: false,
+            cases_givens: vec![],
         }));
 
         let out = transpile(&ctx);
@@ -3269,6 +3278,7 @@ verify square law squareSpec
                 sample_guards: vec![],
             })),
             trace: false,
+            cases_givens: vec![],
         }));
         let out = transpile(&ctx);
         let lean = out
@@ -3386,6 +3396,7 @@ verify square law squareSpec
                 sample_guards: vec![],
             })),
             trace: false,
+            cases_givens: vec![],
         }));
 
         ctx.items.push(TopLevel::Verify(VerifyBlock {
@@ -3440,6 +3451,7 @@ verify square law squareSpec
                 sample_guards: vec![],
             })),
             trace: false,
+            cases_givens: vec![],
         }));
 
         let out = transpile(&ctx);
@@ -3669,6 +3681,7 @@ verify mirror law involutive
                 sample_guards: vec![],
             })),
             trace: false,
+            cases_givens: vec![],
         }));
 
         ctx.items.push(TopLevel::Verify(VerifyBlock {
@@ -3729,6 +3742,7 @@ verify mirror law involutive
                 sample_guards: vec![],
             })),
             trace: false,
+            cases_givens: vec![],
         }));
 
         let out = transpile(&ctx);
@@ -3826,6 +3840,7 @@ verify mirror law involutive
                 sample_guards: vec![],
             })),
             trace: false,
+            cases_givens: vec![],
         }));
 
         let out = transpile(&ctx);
@@ -3865,6 +3880,7 @@ verify mirror law involutive
             case_givens: vec![],
             kind: VerifyKind::Cases,
             trace: false,
+            cases_givens: vec![],
         }));
         ctx.items.push(TopLevel::Verify(VerifyBlock {
             fn_name: "f".to_string(),
@@ -3888,6 +3904,7 @@ verify mirror law involutive
                 sample_guards: vec![],
             })),
             trace: false,
+            cases_givens: vec![],
         }));
         let out = transpile_with_verify_mode(&ctx, VerifyEmitMode::TheoremSkeleton);
         let lean = out

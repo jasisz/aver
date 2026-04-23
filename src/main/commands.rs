@@ -2563,6 +2563,16 @@ fn build_verify_vm_plans(
             let prefix = format!("__verify_{}_{}_{}", block.fn_name, block_idx, case_idx);
             let left_name = format!("{}_left", prefix);
             let right_name = format!("{}_right", prefix);
+            // Oracle v1: in trace-aware blocks, `fn().result` projects to
+            // the fn's return value — strip the `.result` attr so the
+            // helper evaluates the raw fn call. Other `.trace.*`
+            // projections are handled by a dedicated path that queries
+            // the collected trace-events buffer (follow-up commit).
+            let left_expr = if block.trace {
+                strip_result_projection(left_expr)
+            } else {
+                left_expr
+            };
             items.push(make_verify_vm_helper(
                 left_name.clone(),
                 block.line,
@@ -2606,6 +2616,20 @@ fn build_verify_vm_plans(
     plans
 }
 
+/// Oracle v1: `fn(args).result` in a verify-trace LHS projects to
+/// `fn(args)` — the helper built for this case should evaluate the raw
+/// effectful call, and the standard value-comparison path then compares
+/// the result to the RHS. No-op for any other expression shape.
+fn strip_result_projection(expr: Spanned<Expr>) -> Spanned<Expr> {
+    if let Expr::Attr(inner, field) = &expr.node
+        && field == "result"
+        && matches!(&inner.node, Expr::FnCall(_, _))
+    {
+        return (**inner).clone();
+    }
+    expr
+}
+
 fn vm_call_verify_helper(machine: &mut vm::VM, fn_name: &str) -> Result<VmVerifyEval, String> {
     let value = machine
         .run_named_function(fn_name, &[])
@@ -2646,13 +2670,20 @@ fn build_case_oracle_stubs(
     case_idx: usize,
 ) -> std::collections::HashMap<String, u32> {
     let mut out = std::collections::HashMap::new();
-    let VerifyKind::Law(law) = &block.kind else {
-        return out;
+    // Law-form stores givens inside VerifyKind::Law; cases-form (used for
+    // `verify fn trace` with top-level givens) stores them on
+    // block.cases_givens. Both shapes funnel into the same mapping.
+    let givens_source: &[aver::ast::VerifyGiven] = match &block.kind {
+        VerifyKind::Law(law) => law.givens.as_slice(),
+        VerifyKind::Cases => block.cases_givens.as_slice(),
     };
+    if givens_source.is_empty() {
+        return out;
+    }
     let Some(case_bindings) = block.case_givens.get(case_idx) else {
         return out;
     };
-    for given in &law.givens {
+    for given in givens_source {
         let Some(classification) =
             aver::types::checker::effect_classification::classify(&given.type_name)
         else {
