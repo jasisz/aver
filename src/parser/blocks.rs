@@ -1,5 +1,83 @@
 use super::*;
 
+/// Oracle v1: walk an expression, replacing `Ident(name)` with `value`.
+/// Used by verify-trace local bindings so block-scoped aliases like
+/// `expect = rnd(...)` get inlined into each case before helper
+/// generation / typecheck. Recurses into every subtree that can hold
+/// an `Ident`; does not descend into match-arm patterns (those
+/// introduce their own bindings). Stops at `Resolved` nodes — they
+/// already bind a slot and do not need string-name substitution.
+fn substitute_ident(expr: &mut Spanned<Expr>, name: &str, value: &Spanned<Expr>) {
+    match &mut expr.node {
+        Expr::Ident(s) if s == name => {
+            *expr = value.clone();
+        }
+        Expr::Ident(_) | Expr::Literal(_) | Expr::Resolved { .. } => {}
+        Expr::Attr(inner, _) => substitute_ident(inner, name, value),
+        Expr::FnCall(callee, args) => {
+            substitute_ident(callee, name, value);
+            for a in args {
+                substitute_ident(a, name, value);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            substitute_ident(l, name, value);
+            substitute_ident(r, name, value);
+        }
+        Expr::Match { subject, arms } => {
+            substitute_ident(subject, name, value);
+            for arm in arms {
+                substitute_ident(&mut arm.body, name, value);
+            }
+        }
+        Expr::Constructor(_, payload) => {
+            if let Some(inner) = payload {
+                substitute_ident(inner, name, value);
+            }
+        }
+        Expr::ErrorProp(inner) => substitute_ident(inner, name, value),
+        Expr::InterpolatedStr(parts) => {
+            for part in parts {
+                if let StrPart::Parsed(inner) = part {
+                    substitute_ident(inner, name, value);
+                }
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) => {
+            for item in items {
+                substitute_ident(item, name, value);
+            }
+        }
+        Expr::MapLiteral(pairs) => {
+            for (k, v) in pairs {
+                substitute_ident(k, name, value);
+                substitute_ident(v, name, value);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, v) in fields {
+                substitute_ident(v, name, value);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            substitute_ident(base, name, value);
+            for (_, v) in updates {
+                substitute_ident(v, name, value);
+            }
+        }
+        Expr::TailCall(data) => {
+            for a in &mut data.args {
+                substitute_ident(a, name, value);
+            }
+        }
+        Expr::IndependentProduct(items, _) => {
+            for item in items {
+                substitute_ident(item, name, value);
+            }
+        }
+    }
+}
+
 struct ExpandedLawCases {
     cases: Vec<(Spanned<Expr>, Spanned<Expr>)>,
     sample_guards: Vec<Spanned<Expr>>,
@@ -12,6 +90,21 @@ impl Parser {
 
     fn current_ident_is(&self, expected: &str) -> bool {
         matches!(&self.current().kind, TokenKind::Ident(name) if name == expected)
+    }
+
+    /// True when current position looks like `name = expr` — an Ident
+    /// followed by `=` (Assign), not `=>` (FatArrow). Used in
+    /// verify-trace blocks to distinguish local bindings from case
+    /// assertions (`lhs => rhs`). `given` / `where` idents are
+    /// excluded so they stay handled by their own parsers.
+    fn looks_like_binding(&self) -> bool {
+        let TokenKind::Ident(name) = &self.current().kind else {
+            return false;
+        };
+        if name == "given" || name == "where" {
+            return false;
+        }
+        matches!(self.peek_skip_formatting(1).kind, TokenKind::Assign)
     }
 
     fn signed_int_at_offset(&self, offset: usize) -> Option<(i64, usize)> {
@@ -490,9 +583,35 @@ impl Parser {
                 // handles them — no cartesian expansion yet, so if the
                 // stub list has >1 element we take the first for now.
                 let mut cases_givens: Vec<crate::ast::VerifyGiven> = Vec::new();
+                let mut local_bindings: Vec<(String, Spanned<Expr>)> = Vec::new();
                 if trace_mode {
                     while self.current_ident_is("given") {
                         cases_givens.push(self.parse_verify_given()?);
+                        self.skip_newlines();
+                    }
+                    // Oracle v1: local bindings in verify-trace block —
+                    // `expect = rnd(BranchPath.root, 0, 1, 6)`. Parsed as
+                    // `name = expr` lines between `given` clauses and
+                    // case assertions. Substituted into each case's LHS
+                    // / RHS at plan-build time.
+                    while let TokenKind::Ident(_) = &self.current().kind {
+                        // Must be a binding `name = expr`, not a case
+                        // assertion `expr => expr`. Peek ahead for `=`
+                        // before the FatArrow / end-of-line.
+                        if !self.looks_like_binding() {
+                            break;
+                        }
+                        let name_tok = self.expect_kind(
+                            &TokenKind::Ident(String::new()),
+                            "Expected binding name",
+                        )?;
+                        let name = match name_tok.kind {
+                            TokenKind::Ident(s) => s,
+                            _ => unreachable!(),
+                        };
+                        self.expect_exact(&TokenKind::Assign)?;
+                        let expr = self.parse_expr()?;
+                        local_bindings.push((name, expr));
                         self.skip_newlines();
                     }
                 }
@@ -518,6 +637,21 @@ impl Parser {
                         end_col,
                     });
                     self.skip_newlines();
+                }
+
+                // Oracle v1: substitute local bindings into each case's
+                // LHS / RHS. Locals are block-scoped aliases like
+                // `expect = rnd(...)` — syntactic substitution keeps the
+                // downstream runner (helpers, projections, type-check)
+                // oblivious to them. Evaluates bound exprs per reference
+                // site; callers should bind deterministic values.
+                if !local_bindings.is_empty() {
+                    for (left, right) in cases.iter_mut() {
+                        for (name, value) in &local_bindings {
+                            substitute_ident(left, name, value);
+                            substitute_ident(right, name, value);
+                        }
+                    }
                 }
 
                 // Per-case given bindings for the verify runner: each

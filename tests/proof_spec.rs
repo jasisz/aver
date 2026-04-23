@@ -369,6 +369,62 @@ fn aver_verify_trace_contains_and_event_and_length_projections() {
 }
 
 #[test]
+fn aver_verify_trace_local_bindings_substitute_into_cases() {
+    // Oracle v1: local bindings (`name = expr`) in a verify-trace block
+    // are syntactic aliases substituted into each case's LHS / RHS
+    // before helper generation. Here `expected = 4` is used as both the
+    // `.result` RHS and — via another binding — as a shared event
+    // literal referenced by `.contains`. If substitution is wired up,
+    // the law must pass exactly like the inlined form would.
+    let dir = temp_output_dir("aver-verify-local-bindings");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn hello() -> Int\n\
+         \x20   ? \"roll + print\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   x = Random.int(1, 6)\n\
+         \x20   Console.print(\"rolled 4\")\n\
+         \x20   x\n\
+         \n\
+         verify hello trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   expected = 4\n\
+         \x20   printed = Console.print(\"rolled 4\")\n\
+         \x20   hello().result => expected\n\
+         \x20   hello().trace.contains(printed) => true\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+
+    assert!(
+        output.status.success(),
+        "aver verify failed with local bindings in trace block; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn proof_accepts_complete_independence_mode() {
     let dir = temp_output_dir("aver-proof-complete");
     std::fs::create_dir_all(&dir).expect("create temp dir");
