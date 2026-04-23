@@ -2105,6 +2105,95 @@ fn given_oracle_ref_random_int_wrong_stub_sig_is_rejected() {
 }
 
 // ---------------------------------------------------------------------------
+// Oracle v1 — effectful-recursion rejection for trace-aware laws
+// ---------------------------------------------------------------------------
+
+#[test]
+fn trace_law_on_recursive_effectful_function_is_rejected() {
+    // Recursive self-call through `rollN` + uses Random.int — should be rejected
+    // when a trace-aware law targets it.
+    let src = concat!(
+        "fn rollN(n: Int) -> Int\n",
+        "    ! [Random.int]\n",
+        "    match n\n",
+        "        0 -> 0\n",
+        "        _ -> Random.int(1, 6) + rollN(n - 1)\n",
+        "verify rollN trace law rollNSpec\n",
+        "    given rnd: Random.int = [stub]\n",
+        "    rollN(0) => 0\n",
+        "fn stub(path: BranchPath, k: Int, min: Int, max: Int) -> Int\n",
+        "    min\n",
+    );
+    assert_error_containing(src, "recursive effectful function");
+}
+
+#[test]
+fn result_only_law_on_recursive_effectful_function_is_accepted() {
+    // Same recursive effectful function, but without the `trace` keyword →
+    // must still type-check. Result-only laws for effectful recursion stay
+    // fully supported.
+    let src = concat!(
+        "fn rollN(n: Int) -> Int\n",
+        "    ! [Random.int]\n",
+        "    match n\n",
+        "        0 -> 0\n",
+        "        _ -> Random.int(1, 6) + rollN(n - 1)\n",
+        "verify rollN law rollNSpec\n",
+        "    given rnd: Random.int = [stub]\n",
+        "    rollN(0) => 0\n",
+        "fn stub(path: BranchPath, k: Int, min: Int, max: Int) -> Int\n",
+        "    min\n",
+    );
+    let errs = errors(src);
+    assert!(
+        !errs.iter().any(|e| e.contains("recursive effectful function")),
+        "result-only law should not be rejected; got: {:?}",
+        errs
+    );
+}
+
+#[test]
+fn trace_law_on_non_recursive_effectful_function_is_accepted() {
+    // Trace-aware law on a non-recursive effectful function is fine.
+    let src = concat!(
+        "fn pick() -> Int\n",
+        "    ! [Random.int]\n",
+        "    Random.int(1, 6)\n",
+        "verify pick trace law pickSpec\n",
+        "    given rnd: Random.int = [stub]\n",
+        "    pick() => stub(BranchPath.root(), 0, 1, 6)\n",
+        "fn stub(path: BranchPath, k: Int, min: Int, max: Int) -> Int\n",
+        "    min\n",
+    );
+    let errs = errors(src);
+    assert!(
+        !errs.iter().any(|e| e.contains("recursive effectful function")),
+        "non-recursive effectful function should not trigger the rejection; got: {:?}",
+        errs
+    );
+}
+
+#[test]
+fn trace_law_on_recursive_pure_function_is_accepted() {
+    // Recursion is fine when effects aren't classified — pure recursion has
+    // no caller_fn ambiguity because there are no emissions to scope.
+    let src = concat!(
+        "fn sumTo(n: Int) -> Int\n",
+        "    match n\n",
+        "        0 -> 0\n",
+        "        _ -> n + sumTo(n - 1)\n",
+        "verify sumTo trace\n",
+        "    sumTo(3) => 6\n",
+    );
+    let errs = errors(src);
+    assert!(
+        !errs.iter().any(|e| e.contains("recursive effectful function")),
+        "pure recursive function should not trigger the rejection; got: {:?}",
+        errs
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Terminal service effect & signature checking
 // ---------------------------------------------------------------------------
 

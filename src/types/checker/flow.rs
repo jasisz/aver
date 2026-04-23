@@ -229,6 +229,12 @@ impl TypeChecker {
             Box::new(Type::Unknown),
             Box::new(Type::Unknown),
         ));
+        // Oracle v1: identify recursive functions once. A `verify fn trace law`
+        // targeting an effectful recursive function is rejected because the
+        // caller_fn filter used to scope fn.trace cannot distinguish the
+        // outermost invocation from recursive self-calls. Result-only laws
+        // for the same function remain fully supported.
+        let recursive_fns = crate::call_graph::find_recursive_fns(items);
         for item in items {
             if let TopLevel::Verify(vb) = item {
                 self.current_fn_line = Some(vb.line);
@@ -238,6 +244,41 @@ impl TypeChecker {
                         vb.fn_name
                     ));
                     continue;
+                }
+                if vb.trace && recursive_fns.contains(&vb.fn_name) {
+                    let classified_effects: Vec<String> = self
+                        .fn_sigs
+                        .get(&vb.fn_name)
+                        .map(|sig| {
+                            sig.effects
+                                .iter()
+                                .filter(|e| {
+                                    super::effect_classification::is_classified(e.as_str())
+                                })
+                                .cloned()
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if !classified_effects.is_empty() {
+                        self.error_at_line(
+                            vb.line,
+                            format!(
+                                "verify '{fn_name} trace {kind}' targets a recursive effectful function \
+                                 (effects: {effects}). Trace-aware laws on effectful recursion are not \
+                                 supported in Oracle v1 — the caller_fn filter that scopes fn.trace to \
+                                 direct emissions cannot distinguish the outermost invocation from \
+                                 recursive self-calls. Drop the 'trace' keyword to use a result-only \
+                                 law, or refactor the effect-emitting work into a non-recursive helper \
+                                 and verify the helper's trace separately.",
+                                fn_name = vb.fn_name,
+                                kind = match &vb.kind {
+                                    crate::ast::VerifyKind::Law(law) => format!("law {}", law.name),
+                                    crate::ast::VerifyKind::Cases => String::new(),
+                                },
+                                effects = classified_effects.join(", "),
+                            ),
+                        );
+                    }
                 }
                 // Inherit effects from the tested function so verify blocks
                 // can call effectful functions without declaring effects.
