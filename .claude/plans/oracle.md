@@ -673,6 +673,58 @@ error: function 'writeLog' uses effect 'Disk.writeText' which is not
 - **Relay** — `?!` cancel mode with cooperative cancellation semantics; cross-branch trace ordering via merge witnesses; higher-order effectful callbacks; **user-definable effects** (the language feature — how users declare new effects) plus their classification for proof.
 - **Ledger** — stateful effects (Store<K,V>) via ghost `Map<K, V>` + refinement relation tying runtime replay trace to the abstract model. Relation-based proofs ("proved relative to trusted Store laws / host adapter").
 
+## Pre-merge blockers (discovered 2026-04-23)
+
+Runtime side of Oracle v1 ships and passes its own tests. Proof-export
+side is broken for the very thing the release is supposed to enable:
+effectful laws emit `.dfy` / `.lean` files that neither Dafny nor Lean
+accept. Tests missed it because every `proof_export_builds_*` case
+exercises pure code only (`examples/formal/law_auto.av` etc).
+
+Concrete failures on a minimal effectful law (`pickOne` with
+`Random.int`, stubbed via `given rnd: Random.int = [stubConst]`):
+
+- **Dafny** — `lemma ... pickOne_consistent(rnd: Random.int)` emits the
+  effect reference verbatim as a parameter type. Dafny fails at parse:
+  `invalid IdentOrDigits` on the `.` in `Random.int`. Must emit the
+  derived oracle signature (`(BranchPath, int, int, int) -> int`)
+  instead — `effect_classification::oracle_signature` already computes
+  it, codegen just needs to use it.
+- **Lean** — same root cause. `rnd : Random_int : Sort ?` (the effect
+  type is treated as a universe), then `pickOne = pickOneSpec ...` with
+  `pickOne` applied zero-args but defined with `(path, rnd_Random_int)`
+  → free variables in the goal. Lemma goal must be rewritten against
+  the lifted fn, not the surface fn.
+
+### Must-fix before merge
+
+1. **Oracle-param emission.** Where codegen reaches a `given` whose
+   type is a classified effect, replace the effect name in the lemma
+   signature with the computed oracle signature type. Same data flow on
+   both backends.
+2. **Goal-side lifted call.** The law statement `pickOne() => spec(…)`
+   at the surface must be elaborated against the *lifted* `pickOne(path,
+   rnd_Random_int)`. Decide whether:
+   - the surface form is rewritten pre-emission, or
+   - both backends accept the surface form and thread the lifted args at
+     emission time.
+   Either is fine; both need to pick the same answer.
+3. **CI coverage.** Add
+   `proof_export_builds_effectful_law_when_lake_is_available` (Lean) and
+   a Dafny analog — minimum: `pickOne` with a single stubbed oracle,
+   lemma that the build (not just file emission) succeeds. Without this
+   test the regression comes back the first time someone touches the
+   lift.
+4. **`?!` Result-fold.** Independent — `Expr::IndependentProduct(_, true)`
+   currently emits a plain tuple; needs a coordinated rewrite with the
+   enclosing `Result.Ok(_)` wrapper the typechecker forces. Probably a
+   day of focused work across typechecker + Dafny + Lean backends.
+
+These four are the difference between "runtime story of Oracle v1 is
+done" and "Oracle v1 is mergeable". Not autopilot work — needs a focused
+session with review, because (2) is a design decision not an
+implementation detail, and (4) coordinates three layers.
+
 ## Prior art
 
 Design draws on Effekt's "effects as capabilities" framework (Brachthäuser et al.). Credit in release notes; no claim of novelty on the elaboration technique. Novelty is the product integration: a single capability abstraction drives proof export, replay artifacts, and WASM host interface in a consistent shape.
