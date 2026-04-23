@@ -10,12 +10,117 @@ use super::super::expr::emit_expr;
 use super::shared::{body_terminal_expr, callee_matches_name, find_fn_def, law_simp_defs};
 use super::{AutoProof, intro_then};
 
+/// Oracle v1: auto-prove effectful laws of the shape
+///
+///   verify pickOne law consistent
+///       given rnd: Random.int = [stubConst]
+///       pickOne() => pickOneSpec(BranchPath.root(), rnd)
+///
+/// After the law-body rewrite both sides are direct calls with
+/// identical arguments (`pickOne(root, rnd) == pickOneSpec(root, rnd)`);
+/// unfolding both definitions gives the same `rnd(root, 0, …)` term
+/// and `simpa [pickOne, pickOneSpec]` closes the goal.
+fn emit_effectful_spec_equivalence_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+) -> Option<AutoProof> {
+    let impl_fd = find_fn_def(ctx, &vb.fn_name)?;
+    if impl_fd.effects.is_empty() {
+        return None;
+    }
+    if !impl_fd
+        .effects
+        .iter()
+        .all(|e| crate::types::checker::effect_classification::is_classified(&e.node))
+    {
+        return None;
+    }
+
+    // Both sides must be direct fn calls with matching arg lists, to
+    // two distinct fns. The impl side names `vb.fn_name`; the spec
+    // side names some other fn we can feed into `simp`.
+    let (impl_name, _impl_args, spec_name) = match_impl_spec_call_shape(vb, law)?;
+
+    let simp_defs = [
+        aver_name_to_lean_ident(&impl_name),
+        aver_name_to_lean_ident(&spec_name),
+    ];
+    Some(AutoProof {
+        support_lines: Vec::new(),
+        proof_lines: intro_then(
+            intro_names,
+            // `simp` (no-a variant) avoids the `unnecessarySimpa`
+            // linter warning when no goal is left to close after
+            // unfolding — a bare def-equality match doesn't need
+            // `simpa`'s cleanup step.
+            vec![format!("simp [{}]", simp_defs.join(", "))],
+        ),
+        replaces_theorem: false,
+    })
+}
+
+/// Return `(impl_fn_name, impl_args, spec_fn_name)` if the law body
+/// matches the `impl(args…) == spec(args…)` shape with identical arg
+/// lists and distinct fn names. Accepts either ordering (LHS/RHS).
+fn match_impl_spec_call_shape(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+) -> Option<(String, Vec<Spanned<Expr>>, String)> {
+    let try_side = |lhs: &Spanned<Expr>,
+                    rhs: &Spanned<Expr>|
+     -> Option<(String, Vec<Spanned<Expr>>, String)> {
+        let Expr::FnCall(l_callee, l_args) = &lhs.node else {
+            return None;
+        };
+        let Expr::FnCall(r_callee, r_args) = &rhs.node else {
+            return None;
+        };
+        if l_args != r_args {
+            return None;
+        }
+        let l_name = expr_fn_name(l_callee)?;
+        let r_name = expr_fn_name(r_callee)?;
+        if l_name == r_name {
+            return None;
+        }
+        if l_name != vb.fn_name {
+            return None;
+        }
+        Some((l_name, l_args.clone(), r_name))
+    };
+    try_side(&law.lhs, &law.rhs).or_else(|| try_side(&law.rhs, &law.lhs))
+}
+
+fn expr_fn_name(expr: &Spanned<Expr>) -> Option<String> {
+    match &expr.node {
+        Expr::Ident(name) | Expr::Resolved { name, .. } => Some(name.clone()),
+        _ => None,
+    }
+}
+
+fn aver_name_to_lean_ident(name: &str) -> String {
+    super::super::expr::aver_name_to_lean(name)
+}
+
 pub(super) fn emit_spec_function_equivalence_law(
     vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
     intro_names: &[String],
 ) -> Option<AutoProof> {
+    // Oracle v1: effectful laws rarely follow the "law name == spec fn
+    // name" naming convention that `canonical_spec_ref` enforces — they
+    // typically live as `verify pickOne law consistent` with a sibling
+    // `pickOneSpec` on the RHS. Match on the rewritten law's structural
+    // shape instead: both sides are direct calls with matching args to
+    // two different fns, impl has classified effects. After the lift
+    // the bodies reduce to the same term and `simpa` closes the goal.
+    if let Some(proof) = emit_effectful_spec_equivalence_law(vb, law, ctx, intro_names) {
+        return Some(proof);
+    }
+
     let spec_ref = canonical_spec_ref(&vb.fn_name, law, &ctx.fn_sigs)?;
     let impl_fd = find_fn_def(ctx, &vb.fn_name)?;
     let spec_fd = find_fn_def(ctx, &spec_ref.spec_fn_name)?;

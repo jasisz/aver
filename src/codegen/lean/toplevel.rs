@@ -1530,9 +1530,24 @@ fn emit_verify_law_block(
             &rhs_template,
             when_template.as_deref(),
         );
+        // Oracle v1: the auto-proof matchers compare law.lhs / law.rhs
+        // ASTs. For effectful laws the theorem statement has been
+        // rewritten to target the lifted fn (BranchPath.root() + oracle
+        // args injected); the matchers need to see the same rewritten
+        // form or they'll miss shapes like
+        // `pickOne(root, rnd) == pickOneSpec(root, rnd)` and fall back
+        // to `sorry`. Build a view of the law with the rewritten body.
+        let law_for_auto_proof = crate::ast::VerifyLaw {
+            name: law.name.clone(),
+            givens: law.givens.clone(),
+            when: law.when.clone(),
+            lhs: law_lhs.clone(),
+            rhs: law_rhs.clone(),
+            sample_guards: law.sample_guards.clone(),
+        };
         if let Some(auto_proof) = emit_verify_law_forall_auto_proof(
             vb,
-            law,
+            &law_for_auto_proof,
             ctx,
             verify_mode,
             &theorem_base,

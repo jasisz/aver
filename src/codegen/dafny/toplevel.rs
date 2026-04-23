@@ -560,8 +560,14 @@ pub fn emit_verify_law(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) 
     }
     law_fns.extend(transitive_fns);
 
+    // Oracle v1: fuel attrs only for names that resolve to top-level
+    // functions. Callees collected from lifted effectful bodies can
+    // include oracle / capability params (e.g. `rnd_Random_int`,
+    // `oracle`) that Dafny sees as lambda variables — emitting
+    // `{:fuel oracle, 5}` makes Dafny reject the lemma.
     let fuel_attrs: String = law_fns
         .iter()
+        .filter(|f| ctx.fn_defs.iter().any(|fd| &fd.name == *f))
         .map(|f| format!("{{:fuel {}, 5}}", aver_name_to_dafny(f)))
         .collect::<Vec<_>>()
         .join(" ");

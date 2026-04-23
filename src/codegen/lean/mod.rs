@@ -2042,7 +2042,10 @@ fn emit_lifted_effectful_functions(
     recursive_fns: &HashSet<String>,
     sections: &mut Vec<String>,
 ) {
-    use crate::types::checker::effect_classification::{EffectDimension, classify, is_classified};
+    use crate::types::checker::effect_classification::is_classified;
+
+    // Collect eligible effectful fns + their lifted forms.
+    let mut lifted_fns: Vec<(String, crate::ast::FnDef)> = Vec::new();
     for item in &ctx.items {
         let TopLevel::FnDef(fd) = item else { continue };
         if fd.effects.is_empty() || fd.name == "main" {
@@ -2051,28 +2054,121 @@ fn emit_lifted_effectful_functions(
         if !fd.effects.iter().all(|e| is_classified(&e.node)) {
             continue;
         }
-        // Skip fns whose effects are purely Output (e.g. just
-        // `Console.print`). Output effects don't bind oracles — the
-        // lifted body would still contain `Console.print(...)` calls
-        // which aren't valid Lean identifiers, and the proof doesn't
-        // model the trace side of things anyway. Pre-Oracle-v1
-        // behaviour was to skip these; keeping that here.
-        let has_non_output = fd.effects.iter().any(|e| {
-            classify(&e.node)
-                .map(|c| !matches!(c.dimension, EffectDimension::Output))
-                .unwrap_or(false)
-        });
-        if !has_non_output {
-            continue;
-        }
         let Ok(Some(lifted)) = crate::types::checker::effect_lifting::lift_fn_def(fd) else {
             continue;
         };
-        if let Some(code) = toplevel::emit_fn_def(&lifted, recursive_fns, ctx) {
+        lifted_fns.push((fd.name.clone(), lifted));
+    }
+
+    // Oracle v1: topologically sort so callees are emitted before
+    // callers. Without this, a lifted effectful fn that calls another
+    // lifted effectful helper (e.g. `handle(msg) -> printErr(msg)`)
+    // can land before the helper and Lean complains about an unknown
+    // identifier. The pure-fn emission goes through SCC analysis for
+    // the same reason — this is a cheap approximation good enough
+    // for non-mutual effectful chains.
+    let eligible_names: std::collections::HashSet<String> =
+        lifted_fns.iter().map(|(n, _)| n.clone()).collect();
+    let mut emitted: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut order: Vec<usize> = Vec::new();
+    let mut remaining: Vec<usize> = (0..lifted_fns.len()).collect();
+    while !remaining.is_empty() {
+        let before = remaining.len();
+        remaining.retain(|&idx| {
+            let body_calls = collect_called_idents_in_body(&lifted_fns[idx].1.body);
+            let ready = body_calls
+                .iter()
+                .all(|name| !eligible_names.contains(name) || emitted.contains(name));
+            if ready {
+                emitted.insert(lifted_fns[idx].0.clone());
+                order.push(idx);
+                false
+            } else {
+                true
+            }
+        });
+        if remaining.len() == before {
+            // Cycle or deadlock — fall back to source order for what's
+            // left rather than looping forever. Lean will complain at
+            // build time, which is the right signal for users.
+            order.append(&mut remaining);
+        }
+    }
+
+    for idx in order {
+        let (_, lifted) = &lifted_fns[idx];
+        if let Some(code) = toplevel::emit_fn_def(lifted, recursive_fns, ctx) {
             sections.push(code);
             sections.push(String::new());
         }
     }
+}
+
+fn collect_called_idents_in_body(body: &crate::ast::FnBody) -> std::collections::HashSet<String> {
+    use crate::ast::{Expr, Spanned, Stmt};
+    let mut out = std::collections::HashSet::new();
+    fn walk(expr: &Spanned<Expr>, out: &mut std::collections::HashSet<String>) {
+        match &expr.node {
+            Expr::FnCall(callee, args) => {
+                if let Expr::Ident(name) | Expr::Resolved { name, .. } = &callee.node {
+                    out.insert(name.clone());
+                }
+                walk(callee, out);
+                for a in args {
+                    walk(a, out);
+                }
+            }
+            Expr::BinOp(_, l, r) => {
+                walk(l, out);
+                walk(r, out);
+            }
+            Expr::Match { subject, arms } => {
+                walk(subject, out);
+                for arm in arms {
+                    walk(&arm.body, out);
+                }
+            }
+            Expr::Attr(inner, _) | Expr::ErrorProp(inner) => walk(inner, out),
+            Expr::Constructor(_, Some(inner)) => walk(inner, out),
+            Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+                for i in items {
+                    walk(i, out);
+                }
+            }
+            Expr::MapLiteral(pairs) => {
+                for (k, v) in pairs {
+                    walk(k, out);
+                    walk(v, out);
+                }
+            }
+            Expr::RecordCreate { fields, .. } => {
+                for (_, v) in fields {
+                    walk(v, out);
+                }
+            }
+            Expr::RecordUpdate { base, updates, .. } => {
+                walk(base, out);
+                for (_, v) in updates {
+                    walk(v, out);
+                }
+            }
+            Expr::InterpolatedStr(parts) => {
+                for part in parts {
+                    if let crate::ast::StrPart::Parsed(inner) = part {
+                        walk(inner, out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    for stmt in body.stmts() {
+        match stmt {
+            Stmt::Expr(e) => walk(e, &mut out),
+            Stmt::Binding(_, _, e) => walk(e, &mut out),
+        }
+    }
+    out
 }
 
 fn emit_pure_functions(

@@ -166,6 +166,16 @@ datatype Option<T> = None | Some(value: T)
 
 datatype BranchPath = BranchPath(dewey: string)
 
+// Oracle v1: HttpResponse / HttpRequest / Header are built-in Aver
+// record types that surface in `Http.*` effect signatures. Lifted
+// effectful fns using those effects reference them in oracle / result
+// types, so the proof export must know the shape.
+datatype Header = Header(name: string, value: string)
+
+datatype HttpResponse = HttpResponse(status: int, body: string, headers: seq<Header>)
+
+datatype HttpRequest = HttpRequest(method_: string, path: string, body: string, headers: seq<Header>)
+
 function BranchPath_root(): BranchPath {
   BranchPath("")
 }
