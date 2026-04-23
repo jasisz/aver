@@ -413,6 +413,7 @@ impl Parser {
         let mut cases = Vec::new();
         let mut case_spans = Vec::new();
         let mut case_givens: Vec<Vec<(String, Spanned<Expr>)>> = Vec::new();
+        let mut cases_givens_out: Vec<crate::ast::VerifyGiven> = Vec::new();
 
         if self.is_indent() {
             self.advance();
@@ -481,6 +482,21 @@ impl Parser {
                     sample_guards,
                 }));
             } else {
+                // Oracle v1: trace-aware cases-form blocks may declare
+                // `given` clauses at the top (natural extension for
+                // oracles that the trace-aware impl needs). v0: given
+                // stubs are silently accepted at parse time and their
+                // bindings become case-local in the same way law-form
+                // handles them — no cartesian expansion yet, so if the
+                // stub list has >1 element we take the first for now.
+                let mut cases_givens: Vec<crate::ast::VerifyGiven> = Vec::new();
+                if trace_mode {
+                    while self.current_ident_is("given") {
+                        cases_givens.push(self.parse_verify_given()?);
+                        self.skip_newlines();
+                    }
+                }
+
                 while !self.is_dedent() && !self.is_eof() {
                     if self.is_newline() {
                         self.advance();
@@ -503,6 +519,25 @@ impl Parser {
                     });
                     self.skip_newlines();
                 }
+
+                // Per-case given bindings for the verify runner: each
+                // case gets the same binding (single-stub slot). Law-
+                // form's cartesian expansion would produce N copies of
+                // each case; cases-form here keeps the explicit case
+                // list and just layers the given-bound values on top.
+                if !cases_givens.is_empty() {
+                    let per_case_bindings: Vec<(String, Spanned<Expr>)> = cases_givens
+                        .iter()
+                        .filter_map(|g| match &g.domain {
+                            crate::ast::VerifyGivenDomain::Explicit(vs) => {
+                                vs.first().map(|v| (g.name.clone(), v.clone()))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    case_givens = vec![per_case_bindings; cases.len()];
+                    cases_givens_out = cases_givens;
+                }
             }
 
             if self.is_dedent() {
@@ -521,6 +556,7 @@ impl Parser {
             case_givens,
             kind,
             trace: trace_mode,
+            cases_givens: cases_givens_out,
         })
     }
 

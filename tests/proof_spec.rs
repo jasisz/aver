@@ -268,6 +268,54 @@ fn aver_verify_runs_effectful_bang_group_law() {
 }
 
 #[test]
+fn aver_verify_cases_form_trace_with_result_projection() {
+    // End-to-end: trace-aware cases-form verify block with a given-
+    // bound oracle and `.result` projection. Closer to the shape a user
+    // actually wants to write for simple Oracle v1 laws.
+    let dir = temp_output_dir("aver-verify-result-projection");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4, nicely deterministic\"\n\
+         \x20   4\n\
+         \n\
+         fn pickOne() -> Int\n\
+         \x20   ? \"one roll\"\n\
+         \x20   ! [Random.int]\n\
+         \x20   Random.int(1, 6)\n\
+         \n\
+         verify pickOne trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   pickOne().result => 4\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+
+    assert!(
+        output.status.success(),
+        "aver verify failed on cases-form trace with .result projection; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn proof_accepts_complete_independence_mode() {
     let dir = temp_output_dir("aver-proof-complete");
     std::fs::create_dir_all(&dir).expect("create temp dir");

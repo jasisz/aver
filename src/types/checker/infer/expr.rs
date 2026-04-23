@@ -578,7 +578,45 @@ impl TypeChecker {
                         return Type::Unknown;
                     }
                 }
+                // Oracle v1: `.result` / `.trace` projections on a
+                // function-call expression in a verify-trace context.
+                // `.result` is an identity projection to the call's
+                // return type; `.trace` yields the opaque `Trace` type
+                // that `.contains(...)` / `.event(k)` / `.length()`
+                // operate on. We accept these universally — they're
+                // meaningful only in verify-trace blocks, but being
+                // permissive here avoids a dual-mode typechecker.
+                if matches!(&obj.node, Expr::FnCall(_, _)) {
+                    if field == "result" {
+                        return self.infer_type(obj);
+                    }
+                    if field == "trace" {
+                        return Type::Named("Trace".to_string());
+                    }
+                }
                 let obj_ty = self.infer_type(obj);
+                // Oracle v1: `.contains` / `.length` / `.event` accessors
+                // on a Trace value. Return types match the plan's API.
+                if matches!(&obj_ty, Type::Named(n) if n == "Trace") {
+                    match field.as_str() {
+                        "length" => {
+                            return Type::Fn(vec![], Box::new(Type::Int), vec![]);
+                        }
+                        "contains" => {
+                            return Type::Fn(vec![Type::Unknown], Box::new(Type::Bool), vec![]);
+                        }
+                        "event" => {
+                            return Type::Fn(
+                                vec![Type::Int],
+                                Box::new(Type::Option(Box::new(Type::Named(
+                                    "EffectEvent".to_string(),
+                                )))),
+                                vec![],
+                            );
+                        }
+                        _ => {}
+                    }
+                }
                 match obj_ty {
                     Type::Named(ref type_name) => {
                         if self.opaque_types.contains(type_name) {

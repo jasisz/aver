@@ -298,6 +298,12 @@ pub struct VerifyBlock {
     /// adding a debug print does not break proofs that do not care
     /// about traces.
     pub trace: bool,
+    /// Oracle v1: `given` clauses declared at the top of a cases-form
+    /// trace block. Law-form stores its givens inside `VerifyKind::Law`;
+    /// cases-form doesn't have that wrapper, so this field carries them
+    /// so the verify runner can build oracle-stub mappings from the
+    /// same data. Empty for non-trace or law-form blocks.
+    pub cases_givens: Vec<VerifyGiven>,
 }
 
 impl VerifyBlock {
@@ -318,6 +324,7 @@ impl VerifyBlock {
             case_givens: vec![],
             kind,
             trace: false,
+            cases_givens: vec![],
         }
     }
 
