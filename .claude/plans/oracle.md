@@ -326,6 +326,8 @@ Paths compose: `.stmt(0).branch(2).branch(1).event(0)` addresses the first event
 
 Runtime replay data carries `group_id` + `branch_path` for its own bookkeeping; a resolved structural path is additionally emitted for each event so users can copy-paste from replay view into proofs.
 
+**Recordings of any entry point use the same addressing**: a trace captured via `aver run -e 'area(Shape.Circle(1.0))' --record dir/` (0.10.1) reaches each effect at the identical `branch_path` / `effect_occurrence` that a proof law about `area` references via `.trace.stmt(i).branch(j).event(k)`. Record produces the concrete witness, proof expresses the universal claim, both speak the same structural language — user copy-pastes addresses between them without translation.
+
 ## Trust assumptions (generated header in each `.lean` / `.dfy`)
 
 ```
