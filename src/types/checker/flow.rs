@@ -348,6 +348,45 @@ impl TypeChecker {
                         })
                         .filter(|e| !given_names.contains(e.as_str()))
                         .collect();
+                    // Rejection 4: each `given <name>: <Effect.method> = [vals]`
+                    // must bind values whose inferred type matches the
+                    // oracle signature for that effect. Catches the
+                    // common footgun of authoring a snapshot stub with
+                    // a leading (BranchPath, Int) (copy-paste from a
+                    // generative stub) — at runtime those stubs silently
+                    // ignore extra params and produce bogus values.
+                    let givens_iter: Box<dyn Iterator<Item = &crate::ast::VerifyGiven>> =
+                        match &vb.kind {
+                            crate::ast::VerifyKind::Law(law) => Box::new(law.givens.iter()),
+                            crate::ast::VerifyKind::Cases => Box::new(vb.cases_givens.iter()),
+                        };
+                    for given in givens_iter {
+                        let Some(expected) =
+                            super::effect_classification::oracle_signature(&given.type_name)
+                        else {
+                            continue;
+                        };
+                        if let crate::ast::VerifyGivenDomain::Explicit(vals) = &given.domain {
+                            for v in vals {
+                                let actual = self.infer_type(v);
+                                if !Self::constraint_compatible(&actual, &expected) {
+                                    self.error_at_line(
+                                        v.line,
+                                        format!(
+                                            "given '{name}: {effect}' expects a stub of type {exp}, \
+                                             got {act}. Snapshot effects take no BranchPath / counter; \
+                                             generative effects take a leading (BranchPath, Int).",
+                                            name = given.name,
+                                            effect = given.type_name,
+                                            exp = expected.display(),
+                                            act = actual.display(),
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                    }
+
                     if !needs_stub.is_empty() {
                         self.error_at_line(
                             vb.line,
