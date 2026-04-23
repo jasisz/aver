@@ -72,11 +72,16 @@ pub(super) struct VmRuntime {
 }
 
 /// Oracle v1: structural coordinates for a recorded trace event.
-/// Both fields `None` for sequential code outside any `!`/`?!` group.
-#[derive(Debug, Clone, Copy, Default)]
+/// `group_id` / `branch_idx` are `None` for sequential code outside
+/// any `!`/`?!` group. `dewey` is the dewey-decimal path string (same
+/// form `BranchPath.parse(s)` consumes), empty at the sequential
+/// level — used by the `.path()` bridge to produce an Aver-level
+/// `BranchPath` value from a recorded event.
+#[derive(Debug, Clone, Default)]
 pub struct TraceCoord {
     pub group_id: Option<u32>,
     pub branch_idx: Option<u32>,
+    pub dewey: String,
 }
 
 impl Default for VmRuntime {
@@ -158,6 +163,7 @@ impl VmRuntime {
         if !self.trace_collecting || !self.trace_event_is_direct() {
             return;
         }
+        let dewey = self.replay_state.oracle_path_string();
         let event = crate::value::Value::Record {
             type_name: crate::types::effect_event::TYPE_NAME.to_string(),
             fields: vec![
@@ -169,16 +175,22 @@ impl VmRuntime {
                     crate::types::effect_event::FIELD_ARGS.to_string(),
                     crate::value::list_from_vec(args.to_vec()),
                 ),
+                (
+                    crate::types::effect_event::FIELD_PATH.to_string(),
+                    crate::value::Value::Str(dewey.clone()),
+                ),
             ]
             .into(),
         };
         // Oracle v1: capture structural coordinates alongside the
         // event — group_id / branch_idx read from the replay state's
         // live stacks. At the sequential level (outside any group),
-        // both are None.
+        // both are None and the dewey is the empty string (which is
+        // the canonical `BranchPath.root` representation).
         let coord = TraceCoord {
             group_id: self.replay_state.current_group_id(),
             branch_idx: self.replay_state.current_branch_idx(),
+            dewey,
         };
         self.collected_trace_events.push(event);
         self.collected_trace_coords.push(coord);

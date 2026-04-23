@@ -1081,7 +1081,7 @@ fn aver_verify_trace_event_compares_to_full_effectevent_record() {
          \n\
          verify hello trace\n\
          \x20   given rnd: Random.int = [fairDie]\n\
-         \x20   hello().trace.event(1) => Option.Some(EffectEvent(method = \"Console.print\", args = [\"rolled 4\"]))\n",
+         \x20   hello().trace.event(1) => Option.Some(EffectEvent(method = \"Console.print\", args = [\"rolled 4\"], path = \"\"))\n",
     )
     .expect("write program.av");
 
@@ -1195,7 +1195,7 @@ fn aver_verify_trace_group_navigation_filters_by_source_order() {
          \x20   given rnd: Random.int = [fairDie]\n\
          \x20   parallelRolls().trace.length() => 3\n\
          \x20   parallelRolls().trace.group(0).length() => 2\n\
-         \x20   parallelRolls().trace.group(0).event(0) => Option.Some(EffectEvent(method = \"Random.int\", args = [1, 6]))\n",
+         \x20   parallelRolls().trace.group(0).event(0) => Option.Some(EffectEvent(method = \"Random.int\", args = [1, 6], path = \"0\"))\n",
     )
     .expect("write program.av");
 
@@ -1248,8 +1248,8 @@ fn aver_verify_trace_group_branch_navigation_narrows_to_single_branch() {
          \x20   given rnd: Random.int = [fairDie]\n\
          \x20   twoBranches().trace.group(0).branch(0).length() => 1\n\
          \x20   twoBranches().trace.group(0).branch(1).length() => 1\n\
-         \x20   twoBranches().trace.group(0).branch(0).event(0) => Option.Some(EffectEvent(method = \"Random.int\", args = [1, 6]))\n\
-         \x20   twoBranches().trace.group(0).branch(1).event(0) => Option.Some(EffectEvent(method = \"Random.int\", args = [7, 12]))\n",
+         \x20   twoBranches().trace.group(0).branch(0).event(0) => Option.Some(EffectEvent(method = \"Random.int\", args = [1, 6], path = \"0\"))\n\
+         \x20   twoBranches().trace.group(0).branch(1).event(0) => Option.Some(EffectEvent(method = \"Random.int\", args = [7, 12], path = \"1\"))\n",
     )
     .expect("write program.av");
 
@@ -1263,6 +1263,64 @@ fn aver_verify_trace_group_branch_navigation_narrows_to_single_branch() {
     assert!(
         output.status.success(),
         "group.branch navigation failed; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_event_path_field_points_at_structural_position() {
+    // Oracle v1: `EffectEvent.path` is the dewey-decimal string for
+    // the structural position where the event was emitted — empty
+    // at the sequential level (canonical `BranchPath.root`) and a
+    // dot-separated branch index inside groups. Bridges recording
+    // JSON coordinates and spec-side BranchPath without a separate
+    // `.path()` accessor method.
+    let dir = temp_output_dir("aver-verify-trace-event-path-field");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn withSeqAndGroup() -> Int\n\
+         \x20   ? \"seq roll plus a parallel pair\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   Console.print(\"seq\")\n\
+         \x20   pair = (Random.int(1, 6), Random.int(7, 12))!\n\
+         \x20   match pair\n\
+         \x20       (a, b) -> a + b\n\
+         \n\
+         verify withSeqAndGroup trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   withSeqAndGroup().trace.event(0) =>\n\
+         \x20       Option.Some(EffectEvent(method = \"Console.print\", args = [\"seq\"], path = \"\"))\n\
+         \x20   withSeqAndGroup().trace.group(0).branch(0).event(0) =>\n\
+         \x20       Option.Some(EffectEvent(method = \"Random.int\", args = [1, 6], path = \"0\"))\n\
+         \x20   withSeqAndGroup().trace.group(0).branch(1).event(0) =>\n\
+         \x20       Option.Some(EffectEvent(method = \"Random.int\", args = [7, 12], path = \"1\"))\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "EffectEvent.path field assertion failed; {}",
         format_output(&output)
     );
     let _ = std::fs::remove_dir_all(&dir);

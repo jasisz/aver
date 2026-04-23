@@ -2787,7 +2787,14 @@ fn apply_trace_projection(
                             );
                         }
                     };
-                    let hit = filtered.iter().any(|ev| **ev == expected);
+                    // Match on method + args only — `path` is recorded
+                    // on every event but absent from the user-authored
+                    // literal (it expresses "I don't care where this
+                    // fired"). Users who DO care can assert on the
+                    // specific event via `.event(k)` + record compare.
+                    let hit = filtered
+                        .iter()
+                        .any(|ev| effect_event_method_args_eq(ev, &expected));
                     Ok(VmVerifyEval::Value(Value::Bool(hit)))
                 }
                 _ => Ok(helper_result),
@@ -2903,6 +2910,41 @@ fn build_trace_record(collected: &[Value]) -> Value {
 /// Currently supports literal-arg calls only (string, int, float, bool,
 /// interpolated strings with literal parts) — richer arg shapes follow
 /// when event construction has its own elaboration pass.
+/// Oracle v1: equality on EffectEvent records ignoring `path`. Used by
+/// `.trace.contains(Effect.method(...))` — the user-authored literal
+/// does not carry a structural path; matching intentionally ignores
+/// it so "this event fired somewhere" is expressible.
+fn effect_event_method_args_eq(recorded: &Value, expected: &Value) -> bool {
+    let Value::Record {
+        type_name: rt,
+        fields: rf,
+    } = recorded
+    else {
+        return false;
+    };
+    let Value::Record {
+        type_name: et,
+        fields: ef,
+    } = expected
+    else {
+        return false;
+    };
+    if rt != et {
+        return false;
+    }
+    let pick = |fields: &[(String, Value)], name: &str| -> Option<Value> {
+        fields
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.clone())
+    };
+    let r_method = pick(rf, aver::types::effect_event::FIELD_METHOD);
+    let e_method = pick(ef, aver::types::effect_event::FIELD_METHOD);
+    let r_args = pick(rf, aver::types::effect_event::FIELD_ARGS);
+    let e_args = pick(ef, aver::types::effect_event::FIELD_ARGS);
+    r_method == e_method && r_args == e_args
+}
+
 fn expr_to_effect_event(expr: &Spanned<Expr>) -> Option<Value> {
     let Expr::FnCall(callee, args) = &expr.node else {
         return None;

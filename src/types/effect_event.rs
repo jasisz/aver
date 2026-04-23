@@ -25,11 +25,20 @@ use crate::nan_value::Arena;
 pub const TYPE_NAME: &str = "EffectEvent";
 pub const FIELD_METHOD: &str = "method";
 pub const FIELD_ARGS: &str = "args";
+/// Dewey-decimal path string identifying the structural position
+/// where the event was emitted. Empty for sequential-level events
+/// (outside any `!`/`?!` group) — matches the `BranchPath.root`
+/// convention. `BranchPath.parse(event.path)` round-trips the value
+/// back to an opaque `BranchPath`.
+pub const FIELD_PATH: &str = "path";
 
 /// Construct the arena type registration. Called alongside other builtin
 /// record types from `vm::register_service_types`.
 pub fn register(arena: &mut Arena) {
-    arena.register_record_type(TYPE_NAME, vec![FIELD_METHOD.into(), FIELD_ARGS.into()]);
+    arena.register_record_type(
+        TYPE_NAME,
+        vec![FIELD_METHOD.into(), FIELD_ARGS.into(), FIELD_PATH.into()],
+    );
 }
 
 #[cfg(test)]
