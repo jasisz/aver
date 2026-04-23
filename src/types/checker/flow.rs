@@ -444,6 +444,15 @@ impl TypeChecker {
                         );
                     }
                 }
+                // Oracle v1: `.result` / `.trace.*` projections are
+                // typechecker-valid only inside verify-trace cases.
+                // Flip the flag for the whole case loop so LHS / RHS
+                // inference sees it; reset after. Applies to both
+                // cases-form `verify fn trace` and law-form (where
+                // the law body can use `.result` on `fn_name()` RHS).
+                let prev_in_verify_trace = self.in_verify_trace_context;
+                self.in_verify_trace_context =
+                    vb.trace || matches!(vb.kind, crate::ast::VerifyKind::Law(_));
                 for (idx, (left, right)) in vb.cases.iter().enumerate() {
                     // Use case-specific line if available, fall back to block line
                     let case_line = vb
@@ -488,6 +497,7 @@ impl TypeChecker {
                         }
                     }
                 }
+                self.in_verify_trace_context = prev_in_verify_trace;
             }
         }
         self.current_fn_line = None;

@@ -579,20 +579,26 @@ impl TypeChecker {
                     }
                 }
                 // Oracle v1: `.result` / `.trace` projections on a
-                // function-call expression in a verify-trace context.
-                // `.result` is an identity projection to the call's
-                // return type; `.trace` yields the opaque `Trace` type
-                // that `.contains(...)` / `.event(k)` / `.length()`
-                // operate on. We accept these universally — they're
-                // meaningful only in verify-trace blocks, but being
-                // permissive here avoids a dual-mode typechecker.
-                if matches!(&obj.node, Expr::FnCall(_, _)) {
+                // function-call expression. Only meaningful inside
+                // `verify <fn> trace` cases — outside that context
+                // they have no runtime support and would crash with
+                // a namespace lookup error. Gate strictly.
+                if matches!(&obj.node, Expr::FnCall(_, _))
+                    && (field == "result" || field == "trace")
+                {
+                    if !self.in_verify_trace_context {
+                        self.error(format!(
+                            "`.{}` projection is only available inside a \
+                             `verify <fn> trace` case body. Drop it, or move \
+                             the expression into a verify-trace block.",
+                            field
+                        ));
+                        return Type::Unknown;
+                    }
                     if field == "result" {
                         return self.infer_type(obj);
                     }
-                    if field == "trace" {
-                        return Type::Named("Trace".to_string());
-                    }
+                    return Type::Named("Trace".to_string());
                 }
                 let obj_ty = self.infer_type(obj);
                 // Oracle v1: `.contains` / `.length` / `.event` accessors

@@ -682,45 +682,138 @@ impl Parser {
                     self.skip_newlines();
                 }
 
-                // Oracle v1: substitute given-stub aliases into each
-                // case's LHS / RHS. `given rnd: Random.int = [fairDie]`
-                // already installs a VM-level stub that intercepts
-                // `Random.int` calls inside the fn under verification;
-                // substituting `rnd → fairDie` also lets users refer to
-                // the stub directly in case assertions, e.g.
-                // `hello().result => rnd(BranchPath.root, 0, 1, 6)`.
-                // Local bindings substituted afterwards so they may
-                // reference given aliases in their value expressions.
-                let given_substs: Vec<(String, Spanned<Expr>)> = cases_givens
-                    .iter()
-                    .filter_map(|g| match &g.domain {
-                        crate::ast::VerifyGivenDomain::Explicit(vs) => {
-                            vs.first().map(|v| (g.name.clone(), v.clone()))
+                // Oracle v1: cartesian expand explicit cases × given
+                // domains. A user-written case list of M entries with
+                // K givens whose domain sizes are [n_1, …, n_K] gets
+                // M·Π n_k expanded cases, each carrying its own per-
+                // given binding snapshot. This matches the law-form
+                // expansion rule and lets a single verify block cover
+                // multiple stub combinations (happy / error / edge).
+                // Locals substitute first inside each expansion because
+                // they may reference given names (e.g.
+                // `expect = rnd(root, 0, 1, 6)`).
+                if cases_givens.iter().any(|g| {
+                    matches!(
+                        &g.domain,
+                        crate::ast::VerifyGivenDomain::Explicit(_)
+                            | crate::ast::VerifyGivenDomain::IntRange { .. }
+                    )
+                }) {
+                    let mut total = cases.len();
+                    for g in &cases_givens {
+                        let len = Self::domain_len(&g.domain);
+                        if len == 0 {
+                            return Err(self.error(format!(
+                                "given '{}' has empty domain in verify trace block",
+                                g.name
+                            )));
                         }
-                        _ => None,
-                    })
-                    .collect();
-                if !given_substs.is_empty() {
-                    for (_, value) in local_bindings.iter_mut() {
-                        for (name, sub) in &given_substs {
-                            substitute_ident(value, name, sub);
-                        }
+                        total = total.checked_mul(len).ok_or_else(|| {
+                            self.error("verify trace expands to too many cases".to_string())
+                        })?;
                     }
-                    for (left, right) in cases.iter_mut() {
-                        for (name, sub) in &given_substs {
-                            substitute_ident(left, name, sub);
-                            substitute_ident(right, name, sub);
-                        }
+                    if total > Self::VERIFY_LAW_MAX_CASES {
+                        return Err(self.error(format!(
+                            "verify trace expands to {} cases (max {})",
+                            total,
+                            Self::VERIFY_LAW_MAX_CASES
+                        )));
                     }
-                }
 
-                // Oracle v1: substitute local bindings into each case's
-                // LHS / RHS. Locals are block-scoped aliases like
-                // `expect = rnd(...)` — syntactic substitution keeps the
-                // downstream runner (helpers, projections, type-check)
-                // oblivious to them. Evaluates bound exprs per reference
-                // site; callers should bind deterministic values.
-                if !local_bindings.is_empty() {
+                    let original_cases = std::mem::take(&mut cases);
+                    let original_spans = std::mem::take(&mut case_spans);
+                    let original_locals = local_bindings.clone();
+                    let mut expanded_cases: Vec<(Spanned<Expr>, Spanned<Expr>)> =
+                        Vec::with_capacity(total);
+                    let mut expanded_spans: Vec<SourceSpan> = Vec::with_capacity(total);
+                    let mut expanded_case_givens: Vec<Vec<(String, Spanned<Expr>)>> =
+                        Vec::with_capacity(total);
+
+                    #[allow(clippy::too_many_arguments)]
+                    fn expand_one(
+                        givens: &[crate::ast::VerifyGiven],
+                        idx: usize,
+                        bindings: &mut std::collections::HashMap<String, Spanned<Expr>>,
+                        base_left: &Spanned<Expr>,
+                        base_right: &Spanned<Expr>,
+                        base_span: &SourceSpan,
+                        locals: &[(String, Spanned<Expr>)],
+                        out_cases: &mut Vec<(Spanned<Expr>, Spanned<Expr>)>,
+                        out_spans: &mut Vec<SourceSpan>,
+                        out_givens: &mut Vec<Vec<(String, Spanned<Expr>)>>,
+                    ) {
+                        if idx == givens.len() {
+                            let mut left =
+                                super::blocks::Parser::substitute_expr(base_left, bindings);
+                            let mut right =
+                                super::blocks::Parser::substitute_expr(base_right, bindings);
+                            for (name, value) in locals {
+                                // Substitute bindings into the local's value
+                                // first (locals may reference givens).
+                                let mut resolved_value = value.clone();
+                                for (g_name, g_val) in bindings.iter() {
+                                    substitute_ident(&mut resolved_value, g_name, g_val);
+                                }
+                                substitute_ident(&mut left, name, &resolved_value);
+                                substitute_ident(&mut right, name, &resolved_value);
+                            }
+                            out_cases.push((left, right));
+                            out_spans.push(base_span.clone());
+                            out_givens.push(
+                                givens
+                                    .iter()
+                                    .filter_map(|g| {
+                                        bindings.get(&g.name).map(|e| (g.name.clone(), e.clone()))
+                                    })
+                                    .collect(),
+                            );
+                            return;
+                        }
+                        let given = &givens[idx];
+                        for value in super::blocks::Parser::domain_values(&given.domain) {
+                            bindings.insert(given.name.clone(), value);
+                            expand_one(
+                                givens,
+                                idx + 1,
+                                bindings,
+                                base_left,
+                                base_right,
+                                base_span,
+                                locals,
+                                out_cases,
+                                out_spans,
+                                out_givens,
+                            );
+                            bindings.remove(&given.name);
+                        }
+                    }
+
+                    for ((base_left, base_right), base_span) in
+                        original_cases.iter().zip(original_spans.iter())
+                    {
+                        let mut bindings = std::collections::HashMap::new();
+                        expand_one(
+                            &cases_givens,
+                            0,
+                            &mut bindings,
+                            base_left,
+                            base_right,
+                            base_span,
+                            &original_locals,
+                            &mut expanded_cases,
+                            &mut expanded_spans,
+                            &mut expanded_case_givens,
+                        );
+                    }
+
+                    cases = expanded_cases;
+                    case_spans = expanded_spans;
+                    case_givens = expanded_case_givens;
+                    cases_givens_out = cases_givens.clone();
+                    local_bindings.clear();
+                } else if !local_bindings.is_empty() {
+                    // No multi-value givens: legacy path, just
+                    // substitute locals (keeps tests green).
                     for (left, right) in cases.iter_mut() {
                         for (name, value) in &local_bindings {
                             substitute_ident(left, name, value);
@@ -729,12 +822,13 @@ impl Parser {
                     }
                 }
 
-                // Per-case given bindings for the verify runner: each
-                // case gets the same binding (single-stub slot). Law-
-                // form's cartesian expansion would produce N copies of
-                // each case; cases-form here keeps the explicit case
-                // list and just layers the given-bound values on top.
-                if !cases_givens.is_empty() {
+                // Per-case given bindings fallback for the verify
+                // runner: expansion above only kicks in when a given
+                // has Explicit or IntRange domain. For any other shape
+                // (or if `cases_givens` is empty after expansion
+                // cleared it), layer given-bound first-value bindings
+                // on top of each case.
+                if !cases_givens.is_empty() && case_givens.is_empty() {
                     let per_case_bindings: Vec<(String, Spanned<Expr>)> = cases_givens
                         .iter()
                         .filter_map(|g| match &g.domain {
@@ -745,6 +839,9 @@ impl Parser {
                         })
                         .collect();
                     case_givens = vec![per_case_bindings; cases.len()];
+                    cases_givens_out = cases_givens.clone();
+                }
+                if cases_givens_out.is_empty() && !cases_givens.is_empty() {
                     cases_givens_out = cases_givens;
                 }
             }

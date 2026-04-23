@@ -813,21 +813,29 @@ pub fn lift_fn_def_with_helpers(
     }
     new_params.extend(fd.params.iter().cloned());
 
-    // Build an oracles map keyed by effect method name → param binding.
+    // Build an oracles map keyed by effect method name → param
+    // binding. Dedupe the effect stream FIRST (matching what
+    // `oracle_params_for_effects` does), otherwise for a body
+    // declaring `! [Args.get, Args.get, Env.get]` the enumerated idx
+    // drifts past the deduped param list — `Env.get` maps to the
+    // `Random.int` slot that doesn't exist. Failure mode: lifted body
+    // references `both` / wrong-typed oracle that the generated
+    // Lean / Dafny can't resolve.
     let mut oracles_map: HashMap<String, String> = HashMap::new();
-    for (idx, e) in fd
-        .effects
-        .iter()
-        .filter(|e| {
-            classify(&e.node)
-                .map(|c| !matches!(c.dimension, EffectDimension::Output))
-                .unwrap_or(false)
-        })
-        .enumerate()
-    {
+    let mut seen = std::collections::HashSet::new();
+    let mut idx = 0usize;
+    for e in fd.effects.iter().filter(|e| {
+        classify(&e.node)
+            .map(|c| !matches!(c.dimension, EffectDimension::Output))
+            .unwrap_or(false)
+    }) {
+        if !seen.insert(e.node.clone()) {
+            continue;
+        }
         if let Some((name, _)) = oracle_params.get(idx) {
             oracles_map.insert(e.node.clone(), name.clone());
         }
+        idx += 1;
     }
     let cfg = LiftConfig {
         path_name,
