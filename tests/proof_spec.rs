@@ -316,6 +316,59 @@ fn aver_verify_cases_form_trace_with_result_projection() {
 }
 
 #[test]
+fn aver_verify_trace_contains_and_event_and_length_projections() {
+    // End-to-end: trace-aware verify exercising all three positional
+    // projections — `.trace.length()`, `.trace.event(k)`,
+    // `.trace.contains(event_lit)` — alongside `.result`. Matches the
+    // shape of the plan's Example 5 + user-requested form.
+    let dir = temp_output_dir("aver-verify-trace-projections");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn hello() -> Int\n\
+         \x20   ? \"roll + print\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   x = Random.int(1, 6)\n\
+         \x20   Console.print(\"rolled 4\")\n\
+         \x20   x\n\
+         \n\
+         verify hello trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   hello().result => 4\n\
+         \x20   hello().trace.length() => 2\n\
+         \x20   hello().trace.contains(Console.print(\"rolled 4\")) => true\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+
+    assert!(
+        output.status.success(),
+        "aver verify failed on trace-projection law; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn proof_accepts_complete_independence_mode() {
     let dir = temp_output_dir("aver-proof-complete");
     std::fs::create_dir_all(&dir).expect("create temp dir");

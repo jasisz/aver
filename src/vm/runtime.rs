@@ -432,15 +432,27 @@ impl VmRuntime {
         }
         for effect_id in required_effects {
             if !self.vm_effect_allowed(*effect_id, symbols) {
-                // Oracle v1: during a verify-law case, an effect that has
-                // an installed stub counts as satisfied at this call edge —
-                // the stub replaces the effect when the dispatcher gets to
-                // it, so the requirement is met even though no surrounding
-                // fn declared the effect.
-                if let Some(info) = symbols.get(*effect_id)
-                    && self.oracle_stubs.contains_key(&info.name)
-                {
-                    continue;
+                // Oracle v1: during a verify-law case, a classified
+                // effect counts as satisfied at this call edge when
+                // either:
+                //
+                //   (a) it has an installed oracle stub (the stub
+                //       replaces the effect when the dispatcher gets
+                //       to it), or
+                //   (b) trace collection is active — we're running the
+                //       effectful impl under verify, so classified
+                //       output effects (Console.print etc.) are still
+                //       legal even without a stub; they get executed
+                //       and recorded in the trace buffer.
+                if let Some(info) = symbols.get(*effect_id) {
+                    let classified =
+                        crate::types::checker::effect_classification::is_classified(&info.name);
+                    if self.oracle_stubs.contains_key(&info.name) {
+                        continue;
+                    }
+                    if classified && self.trace_collecting {
+                        continue;
+                    }
                 }
                 let effect_name = symbols
                     .get(*effect_id)
