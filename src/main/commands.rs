@@ -3111,6 +3111,22 @@ fn vm_call_guard_helper(machine: &mut vm::VM, fn_name: &str) -> Result<Value, St
 /// bare identifier). Only classified generative / snapshot / gen+output
 /// effects produce an entry; output-only / unclassified effects are
 /// skipped (they have no oracle to stub).
+/// Oracle v1: flatten a dotted `Attr(Attr(Ident, "A"), "B")` chain
+/// to the module-qualified name `"Ident.A.B"`. Returns `None` if the
+/// expression isn't a pure attr chain rooted in an Ident — anything
+/// more complex can't be a stub reference.
+fn dotted_path_from_expr(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Ident(s) => Some(s.clone()),
+        Expr::Resolved { name, .. } => Some(name.clone()),
+        Expr::Attr(obj, field) => {
+            let head = dotted_path_from_expr(&obj.node)?;
+            Some(format!("{}.{}", head, field))
+        }
+        _ => None,
+    }
+}
+
 fn build_case_oracle_stubs(
     machine: &vm::VM,
     block: &VerifyBlock,
@@ -3144,13 +3160,22 @@ fn build_case_oracle_stubs(
         let Some((_, value_expr)) = case_bindings.iter().find(|(n, _)| n == &given.name) else {
             continue;
         };
-        // The sample value must be a bare identifier referring to an
-        // Aver top-level stub fn. Anything else (literal, complex expr)
-        // isn't callable as an effect redirect in this v0.
+        // Oracle v1: the sample value must resolve to a top-level Aver
+        // fn. Accept bare Ident / Resolved (same module) AND dotted
+        // `Attr` chains like `Helpers.stubArgs` (module-qualified
+        // reference). Silently ignoring the Attr case would leave the
+        // real effect un-stubbed and the verify runner would compare
+        // against the oracle-call RHS while LHS still hit the real
+        // effect — a very subtle semantic hole.
         let stub_name = match &value_expr.node {
             Expr::Ident(s) => s.clone(),
             Expr::Resolved { name, .. } => name.clone(),
-            _ => continue,
+            _ => {
+                let Some(dotted) = dotted_path_from_expr(&value_expr.node) else {
+                    continue;
+                };
+                dotted
+            }
         };
         let Some(fn_id) = machine.find_fn_id(&stub_name) else {
             continue;

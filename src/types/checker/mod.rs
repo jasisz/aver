@@ -151,6 +151,13 @@ struct TypeChecker {
     fn_bindings: Vec<(String, usize)>,
     /// Unused binding warnings collected during checking: (binding_name, fn_name, line).
     unused_warnings: Vec<(String, String, usize)>,
+    /// Oracle v1: `.result` / `.trace` / `.trace.*` projections are
+    /// only meaningful inside `verify <fn> trace` cases. This flag is
+    /// set true while checking such a case's LHS / RHS, false
+    /// otherwise. Outside verify-trace the projections are rejected at
+    /// check time — otherwise user code would type-check then crash
+    /// at runtime with "namespace has no member 'trace'".
+    in_verify_trace_context: bool,
 }
 
 impl TypeChecker {
@@ -180,6 +187,7 @@ impl TypeChecker {
             used_names: HashSet::new(),
             fn_bindings: Vec::new(),
             unused_warnings: Vec::new(),
+            in_verify_trace_context: false,
         };
         tc.register_builtins();
         tc
