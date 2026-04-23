@@ -12,6 +12,7 @@ pub mod branch_path;
 pub mod byte;
 pub mod char;
 pub mod checker;
+pub mod effect_event;
 pub mod float;
 pub mod int;
 #[cfg(feature = "runtime")]

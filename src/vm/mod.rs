@@ -46,4 +46,9 @@ pub fn register_service_types(arena: &mut crate::nan_value::Arena) {
     // Oracle: BranchPath is an opaque builtin wrapping a dewey-decimal string.
     // Only reachable via BranchPath.root / .child / .parse constructors.
     arena.register_record_type("BranchPath", vec!["dewey".into()]);
+    // Oracle: EffectEvent represents one recorded effect emission in a
+    // verify-trace assertion's view of a function's trace. Produced by
+    // context-sensitive elaboration of effect-method calls inside trace
+    // blocks; never constructed by user code directly.
+    crate::types::effect_event::register(arena);
 }
