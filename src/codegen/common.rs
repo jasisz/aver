@@ -254,3 +254,155 @@ pub(crate) fn to_lower_first(s: &str) -> String {
 pub(crate) fn expr_to_dotted_name(expr: &Expr) -> Option<String> {
     crate::ir::expr_to_dotted_name(expr)
 }
+
+/// Oracle v1: how to materialise the oracle argument for an effectful
+/// fn call in a law body.
+///
+/// - `LemmaBinding` — use the lemma-local identifier (`rnd`), matching
+///   the `given` name. Correct for the universal lemma body.
+/// - `SampleValue` — use the first Explicit domain value (the stub
+///   fn's identifier, e.g. `stubConst`). Correct for the concrete
+///   sample assertions where there's no lemma binding in scope.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum OracleInjectionMode {
+    LemmaBinding,
+    SampleValue,
+}
+
+/// Oracle v1: rewrite any call to an effectful fn in a law body so
+/// it targets the lifted signature — prepend `BranchPath.root()` (for
+/// generative / gen+output effects) plus one argument per classified
+/// non-output effect in the callee's signature.
+///
+/// Backend-agnostic — operates on AST + `CodegenContext`. Both the
+/// Dafny and Lean backends call this before emitting the law body so
+/// the law statement matches the lifted fn shape emitted alongside.
+pub(crate) fn rewrite_effectful_calls_in_law(
+    expr: &crate::ast::Spanned<Expr>,
+    law: &crate::ast::VerifyLaw,
+    ctx: &CodegenContext,
+    mode: OracleInjectionMode,
+) -> crate::ast::Spanned<Expr> {
+    use crate::ast::{Spanned, VerifyGivenDomain};
+
+    let injection_by_effect: std::collections::HashMap<String, Spanned<Expr>> = law
+        .givens
+        .iter()
+        .filter_map(|g| {
+            let arg_expr = match mode {
+                OracleInjectionMode::LemmaBinding => Spanned {
+                    node: Expr::Ident(g.name.clone()),
+                    line: expr.line,
+                },
+                OracleInjectionMode::SampleValue => match &g.domain {
+                    VerifyGivenDomain::Explicit(vals) => vals.first().cloned()?,
+                    _ => return None,
+                },
+            };
+            Some((g.type_name.clone(), arg_expr))
+        })
+        .collect();
+    rewrite_effectful_call(expr, &injection_by_effect, ctx)
+}
+
+fn rewrite_effectful_call(
+    expr: &crate::ast::Spanned<Expr>,
+    injection_by_effect: &std::collections::HashMap<String, crate::ast::Spanned<Expr>>,
+    ctx: &CodegenContext,
+) -> crate::ast::Spanned<Expr> {
+    use crate::ast::Spanned;
+    use crate::types::checker::effect_classification::{EffectDimension, classify};
+
+    match &expr.node {
+        Expr::FnCall(callee, args) => {
+            let rewritten_args: Vec<Spanned<Expr>> = args
+                .iter()
+                .map(|a| rewrite_effectful_call(a, injection_by_effect, ctx))
+                .collect();
+            let rewritten_callee =
+                Box::new(rewrite_effectful_call(callee, injection_by_effect, ctx));
+
+            let callee_name = match &callee.node {
+                Expr::Ident(name) => Some(name.clone()),
+                Expr::Resolved { name, .. } => Some(name.clone()),
+                _ => None,
+            };
+
+            if let Some(name) = callee_name
+                && let Some(fd) = ctx.fn_defs.iter().find(|fd| fd.name == name)
+                && !fd.effects.is_empty()
+                && fd
+                    .effects
+                    .iter()
+                    .all(|e| crate::types::checker::effect_classification::is_classified(&e.node))
+            {
+                let mut injected: Vec<Spanned<Expr>> = Vec::new();
+                let needs_path = fd.effects.iter().any(|e| {
+                    matches!(
+                        classify(&e.node).map(|c| c.dimension),
+                        Some(EffectDimension::Generative | EffectDimension::GenerativeOutput)
+                    )
+                });
+                if needs_path {
+                    injected.push(Spanned {
+                        node: Expr::FnCall(
+                            Box::new(Spanned {
+                                node: Expr::Attr(
+                                    Box::new(Spanned {
+                                        node: Expr::Ident("BranchPath".to_string()),
+                                        line: expr.line,
+                                    }),
+                                    "root".to_string(),
+                                ),
+                                line: expr.line,
+                            }),
+                            Vec::new(),
+                        ),
+                        line: expr.line,
+                    });
+                }
+                let mut seen = std::collections::HashSet::new();
+                for e in &fd.effects {
+                    if !seen.insert(e.node.clone()) {
+                        continue;
+                    }
+                    let Some(c) = classify(&e.node) else { continue };
+                    if matches!(c.dimension, EffectDimension::Output) {
+                        continue;
+                    }
+                    if let Some(inj) = injection_by_effect.get(&e.node) {
+                        injected.push(inj.clone());
+                    }
+                }
+                injected.extend(rewritten_args);
+                return Spanned {
+                    node: Expr::FnCall(rewritten_callee, injected),
+                    line: expr.line,
+                };
+            }
+
+            Spanned {
+                node: Expr::FnCall(rewritten_callee, rewritten_args),
+                line: expr.line,
+            }
+        }
+        Expr::BinOp(op, l, r) => Spanned {
+            node: Expr::BinOp(
+                *op,
+                Box::new(rewrite_effectful_call(l, injection_by_effect, ctx)),
+                Box::new(rewrite_effectful_call(r, injection_by_effect, ctx)),
+            ),
+            line: expr.line,
+        },
+        Expr::Tuple(items) => Spanned {
+            node: Expr::Tuple(
+                items
+                    .iter()
+                    .map(|i| rewrite_effectful_call(i, injection_by_effect, ctx))
+                    .collect(),
+            ),
+            line: expr.line,
+        },
+        _ => expr.clone(),
+    }
+}
