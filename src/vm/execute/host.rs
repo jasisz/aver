@@ -376,12 +376,12 @@ impl VM {
             .iter()
             .find_map(|(effect, fn_id)| (*fn_id == stub_fn_id).then(|| effect.clone()));
 
-        if self.runtime.trace_collecting {
-            if let Some(effect_name) = &original_effect {
-                let arg_vals: Vec<crate::value::Value> =
-                    args.iter().map(|a| a.to_value(&self.arena)).collect();
-                self.runtime.record_trace_event(effect_name, &arg_vals);
-            }
+        if self.runtime.trace_collecting
+            && let Some(effect_name) = &original_effect
+        {
+            let arg_vals: Vec<crate::value::Value> =
+                args.iter().map(|a| a.to_value(&self.arena)).collect();
+            self.runtime.record_trace_event(effect_name, &arg_vals);
         }
 
         // Oracle v1: snapshot-dimension effects (Args.get, Env.get) are
