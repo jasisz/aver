@@ -19,29 +19,32 @@
 //!     (oracle(path, 0, 1, 100), oracle(path, 1, 1, 100), oracle(path, 2, 1, 100))
 //! ```
 //!
-//! Scope of this v0:
+//! Scope:
 //!
-//! - Generative effects: call-site replaced by `oracle(path, counter, args...)`
-//!   with a statically-assigned counter (0, 1, 2, …) along the in-order walk.
+//! - Generative effects: call-site replaced by `oracle(path, counter, args...)`.
+//!   Counter starts at 0 within a branch scope; path is a caller-provided
+//!   expression (the top-level `path_name` at the body root, extended via
+//!   `BranchPath.child(parent, idx)` when descending into a `!`/`?!`
+//!   branch).
 //! - Snapshot effects: call-site replaced by `capability(args...)` (no path,
 //!   no counter — snapshots are schedule-invariant by definition).
 //! - Output effects: **left alone** by this transform — they're asserted
 //!   about via the trace API in a separate elaboration path, not lifted to
 //!   an oracle.
+//! - `!` / `?!` groups: each branch is lifted with a fresh counter and an
+//!   extended path via `BranchPath.child`. The `IndependentProduct`
+//!   wrapper is preserved so the tuple / error-prop semantics stay
+//!   first-class in the lifted AST.
 //!
 //! Not yet handled (follow-up commits):
 //!
-//! - `!` / `?!` groups: each branch needs its own counter reset and its
-//!   path extended via `BranchPath.child`. For now, bodies that contain a
-//!   group abort with [`LiftError::GroupUnsupported`] so the caller can
-//!   fail gracefully until branch lifting lands.
 //! - User-defined helpers that also emit effects: their lifted form is
 //!   needed to close the call graph. v0 doesn't recurse into helpers.
 
 use std::collections::HashMap;
 
 use super::effect_classification::{EffectDimension, classify};
-use crate::ast::{Expr, FnBody, Literal, MatchArm, Spanned, Stmt};
+use crate::ast::{Expr, FnBody, Literal, MatchArm, SourceLine, Spanned, Stmt};
 
 /// Configuration describing how each effect maps to a lifted callable.
 #[derive(Debug, Clone)]
@@ -60,9 +63,6 @@ pub enum LiftError {
     /// binding for it. Proof export should surface this as a diagnostic
     /// pointing the user at the missing `given` clause.
     MissingOracle { method: String },
-    /// The body contains a `!` / `?!` group. Branch-aware lifting is
-    /// deferred — for now the caller treats this as "can't lift in v0".
-    GroupUnsupported,
     /// The body references an unclassified effect. `check_verify_blocks`
     /// already rejects these earlier, but the lifter re-checks to keep
     /// the invariant local.
@@ -72,25 +72,57 @@ pub enum LiftError {
 /// Lift a function body under the given configuration.
 pub fn lift_body(body: &FnBody, cfg: &LiftConfig) -> Result<FnBody, LiftError> {
     let mut counter: u32 = 0;
+    let root_path = spanned(Expr::Ident(cfg.path_name.clone()), 0);
     let mut new_stmts = Vec::with_capacity(body.stmts().len());
     for stmt in body.stmts() {
-        new_stmts.push(lift_stmt(stmt, cfg, &mut counter)?);
+        new_stmts.push(lift_stmt(stmt, cfg, &root_path, &mut counter)?);
     }
     Ok(FnBody::Block(new_stmts))
 }
 
-fn lift_stmt(stmt: &Stmt, cfg: &LiftConfig, counter: &mut u32) -> Result<Stmt, LiftError> {
+fn spanned(node: Expr, line: SourceLine) -> Spanned<Expr> {
+    Spanned { node, line }
+}
+
+/// Build the AST expression `BranchPath.child(parent_path, idx)`.
+fn branch_child_path(parent: &Spanned<Expr>, idx: u32, line: SourceLine) -> Spanned<Expr> {
+    let branch_path_ident = spanned(Expr::Ident("BranchPath".to_string()), line);
+    let child_callee = spanned(
+        Expr::Attr(Box::new(branch_path_ident), "child".to_string()),
+        line,
+    );
+    spanned(
+        Expr::FnCall(
+            Box::new(child_callee),
+            vec![
+                parent.clone(),
+                spanned(Expr::Literal(Literal::Int(idx as i64)), line),
+            ],
+        ),
+        line,
+    )
+}
+
+fn lift_stmt(
+    stmt: &Stmt,
+    cfg: &LiftConfig,
+    path_expr: &Spanned<Expr>,
+    counter: &mut u32,
+) -> Result<Stmt, LiftError> {
     Ok(match stmt {
-        Stmt::Expr(expr) => Stmt::Expr(lift_expr(expr, cfg, counter)?),
-        Stmt::Binding(name, ann, expr) => {
-            Stmt::Binding(name.clone(), ann.clone(), lift_expr(expr, cfg, counter)?)
-        }
+        Stmt::Expr(expr) => Stmt::Expr(lift_expr(expr, cfg, path_expr, counter)?),
+        Stmt::Binding(name, ann, expr) => Stmt::Binding(
+            name.clone(),
+            ann.clone(),
+            lift_expr(expr, cfg, path_expr, counter)?,
+        ),
     })
 }
 
 fn lift_expr(
     expr: &Spanned<Expr>,
     cfg: &LiftConfig,
+    path_expr: &Spanned<Expr>,
     counter: &mut u32,
 ) -> Result<Spanned<Expr>, LiftError> {
     let new_node = match &expr.node {
@@ -104,39 +136,40 @@ fn lift_expr(
             for p in parts {
                 new_parts.push(match p {
                     crate::ast::StrPart::Literal(s) => crate::ast::StrPart::Literal(s.clone()),
-                    crate::ast::StrPart::Parsed(inner) => {
-                        crate::ast::StrPart::Parsed(Box::new(lift_expr(inner, cfg, counter)?))
-                    }
+                    crate::ast::StrPart::Parsed(inner) => crate::ast::StrPart::Parsed(Box::new(
+                        lift_expr(inner, cfg, path_expr, counter)?,
+                    )),
                 });
             }
             Expr::InterpolatedStr(new_parts)
         }
 
-        Expr::Attr(obj, field) => {
-            Expr::Attr(Box::new(lift_expr(obj, cfg, counter)?), field.clone())
-        }
+        Expr::Attr(obj, field) => Expr::Attr(
+            Box::new(lift_expr(obj, cfg, path_expr, counter)?),
+            field.clone(),
+        ),
 
         Expr::FnCall(callee, args) => {
             // Resolve the callee name if it's a classified effect. Walk
             // Attr / Ident / Resolved shapes; anything else is a dynamic
             // or higher-order call we pass through after recursing args.
             if let Some(effect_name) = effect_method_name(&callee.node) {
-                lift_classified_call(expr, &effect_name, args, cfg, counter)?
+                lift_classified_call(expr, &effect_name, args, cfg, path_expr, counter)?
             } else {
-                let new_callee = lift_expr(callee, cfg, counter)?;
-                let new_args = lift_args(args, cfg, counter)?;
+                let new_callee = lift_expr(callee, cfg, path_expr, counter)?;
+                let new_args = lift_args(args, cfg, path_expr, counter)?;
                 Expr::FnCall(Box::new(new_callee), new_args)
             }
         }
 
         Expr::BinOp(op, l, r) => Expr::BinOp(
             *op,
-            Box::new(lift_expr(l, cfg, counter)?),
-            Box::new(lift_expr(r, cfg, counter)?),
+            Box::new(lift_expr(l, cfg, path_expr, counter)?),
+            Box::new(lift_expr(r, cfg, path_expr, counter)?),
         ),
 
         Expr::Match { subject, arms } => {
-            let new_subject = lift_expr(subject, cfg, counter)?;
+            let new_subject = lift_expr(subject, cfg, path_expr, counter)?;
             let mut new_arms = Vec::with_capacity(arms.len());
             for arm in arms {
                 // v0: counter continues across arms — this is correct for
@@ -146,7 +179,7 @@ fn lift_expr(
                 // under a branch-aware path extension.
                 new_arms.push(MatchArm {
                     pattern: arm.pattern.clone(),
-                    body: Box::new(lift_expr(&arm.body, cfg, counter)?),
+                    body: Box::new(lift_expr(&arm.body, cfg, path_expr, counter)?),
                 });
             }
             Expr::Match {
@@ -155,21 +188,41 @@ fn lift_expr(
             }
         }
 
-        Expr::Constructor(name, Some(arg)) => {
-            Expr::Constructor(name.clone(), Some(Box::new(lift_expr(arg, cfg, counter)?)))
+        Expr::Constructor(name, Some(arg)) => Expr::Constructor(
+            name.clone(),
+            Some(Box::new(lift_expr(arg, cfg, path_expr, counter)?)),
+        ),
+
+        Expr::ErrorProp(inner) => {
+            Expr::ErrorProp(Box::new(lift_expr(inner, cfg, path_expr, counter)?))
         }
 
-        Expr::ErrorProp(inner) => Expr::ErrorProp(Box::new(lift_expr(inner, cfg, counter)?)),
+        Expr::List(elems) => Expr::List(lift_args(elems, cfg, path_expr, counter)?),
+        Expr::Tuple(items) => Expr::Tuple(lift_args(items, cfg, path_expr, counter)?),
 
-        Expr::List(elems) => Expr::List(lift_args(elems, cfg, counter)?),
-        Expr::Tuple(items) => Expr::Tuple(lift_args(items, cfg, counter)?),
-
-        Expr::IndependentProduct(_, _) => return Err(LiftError::GroupUnsupported),
+        Expr::IndependentProduct(elements, is_error_prop) => {
+            // Each branch gets: fresh counter starting at 0, and an extended
+            // path BranchPath.child(current_path, branch_index). Schedule-
+            // invariance lemma 1 (branch locality) follows because each
+            // branch's lifted form reads only from its own (path, counter)
+            // slot of the oracle.
+            let mut new_elements = Vec::with_capacity(elements.len());
+            for (i, element) in elements.iter().enumerate() {
+                let branch_path = branch_child_path(path_expr, i as u32, element.line);
+                let mut branch_counter: u32 = 0;
+                let lifted = lift_expr(element, cfg, &branch_path, &mut branch_counter)?;
+                new_elements.push(lifted);
+            }
+            Expr::IndependentProduct(new_elements, *is_error_prop)
+        }
 
         Expr::MapLiteral(entries) => {
             let mut new_entries = Vec::with_capacity(entries.len());
             for (k, v) in entries {
-                new_entries.push((lift_expr(k, cfg, counter)?, lift_expr(v, cfg, counter)?));
+                new_entries.push((
+                    lift_expr(k, cfg, path_expr, counter)?,
+                    lift_expr(v, cfg, path_expr, counter)?,
+                ));
             }
             Expr::MapLiteral(new_entries)
         }
@@ -177,7 +230,7 @@ fn lift_expr(
         Expr::RecordCreate { type_name, fields } => {
             let mut new_fields = Vec::with_capacity(fields.len());
             for (name, value) in fields {
-                new_fields.push((name.clone(), lift_expr(value, cfg, counter)?));
+                new_fields.push((name.clone(), lift_expr(value, cfg, path_expr, counter)?));
             }
             Expr::RecordCreate {
                 type_name: type_name.clone(),
@@ -192,17 +245,17 @@ fn lift_expr(
         } => {
             let mut new_updates = Vec::with_capacity(updates.len());
             for (name, value) in updates {
-                new_updates.push((name.clone(), lift_expr(value, cfg, counter)?));
+                new_updates.push((name.clone(), lift_expr(value, cfg, path_expr, counter)?));
             }
             Expr::RecordUpdate {
                 type_name: type_name.clone(),
-                base: Box::new(lift_expr(base, cfg, counter)?),
+                base: Box::new(lift_expr(base, cfg, path_expr, counter)?),
                 updates: new_updates,
             }
         }
 
         Expr::TailCall(inner) => {
-            let new_args = lift_args(&inner.args, cfg, counter)?;
+            let new_args = lift_args(&inner.args, cfg, path_expr, counter)?;
             Expr::TailCall(Box::new(crate::ast::TailCallData {
                 target: inner.target.clone(),
                 args: new_args,
@@ -218,11 +271,12 @@ fn lift_expr(
 fn lift_args(
     args: &[Spanned<Expr>],
     cfg: &LiftConfig,
+    path_expr: &Spanned<Expr>,
     counter: &mut u32,
 ) -> Result<Vec<Spanned<Expr>>, LiftError> {
     let mut out = Vec::with_capacity(args.len());
     for a in args {
-        out.push(lift_expr(a, cfg, counter)?);
+        out.push(lift_expr(a, cfg, path_expr, counter)?);
     }
     Ok(out)
 }
@@ -232,6 +286,7 @@ fn lift_classified_call(
     effect_name: &str,
     args: &[Spanned<Expr>],
     cfg: &LiftConfig,
+    path_expr: &Spanned<Expr>,
     counter: &mut u32,
 ) -> Result<Expr, LiftError> {
     let classification = match classify(effect_name) {
@@ -240,7 +295,7 @@ fn lift_classified_call(
             // Not a classified effect — treat as a regular call. This
             // covers user-defined helper `Foo.bar` references the
             // `effect_method_name` heuristic falsely matched.
-            let new_args = lift_args(args, cfg, counter)?;
+            let new_args = lift_args(args, cfg, path_expr, counter)?;
             // Reconstruct the original callee expression (we already know
             // the shape because it matched our `Attr` heuristic).
             let callee_expr = rebuild_dotted_callee(effect_name, original);
@@ -253,7 +308,7 @@ fn lift_classified_call(
             // Output effects are not lifted in this transform; they stay
             // as-is and are handled separately by the trace-context
             // elaborator (separate commit).
-            let new_args = lift_args(args, cfg, counter)?;
+            let new_args = lift_args(args, cfg, path_expr, counter)?;
             let callee_expr = rebuild_dotted_callee(effect_name, original);
             Ok(Expr::FnCall(Box::new(callee_expr), new_args))
         }
@@ -264,7 +319,7 @@ fn lift_classified_call(
                     .ok_or_else(|| LiftError::MissingOracle {
                         method: effect_name.to_string(),
                     })?;
-            let new_args = lift_args(args, cfg, counter)?;
+            let new_args = lift_args(args, cfg, path_expr, counter)?;
             Ok(Expr::FnCall(
                 Box::new(Spanned {
                     node: Expr::Ident(oracle_name.clone()),
@@ -282,16 +337,13 @@ fn lift_classified_call(
                     })?;
             let current_counter = *counter;
             *counter += 1;
-            let path_arg = Spanned {
-                node: Expr::Ident(cfg.path_name.clone()),
-                line: original.line,
-            };
+            let path_arg = path_expr.clone();
             let counter_arg = Spanned {
                 node: Expr::Literal(Literal::Int(current_counter as i64)),
                 line: original.line,
             };
             let mut new_args = vec![path_arg, counter_arg];
-            new_args.extend(lift_args(args, cfg, counter)?);
+            new_args.extend(lift_args(args, cfg, path_expr, counter)?);
             Ok(Expr::FnCall(
                 Box::new(Spanned {
                     node: Expr::Ident(oracle_name.clone()),
@@ -496,11 +548,115 @@ mod tests {
     }
 
     #[test]
-    fn lift_independent_product_is_unsupported_in_v0() {
+    fn lift_independent_product_threads_child_paths_and_resets_counter() {
         let body = parse_body("    (Random.int(1, 6), Random.int(1, 6))!");
         let cfg = simple_cfg_with(&[("Random.int", "rnd")]);
-        let err = lift_body(&body, &cfg).unwrap_err();
-        assert_eq!(err, LiftError::GroupUnsupported);
+        let lifted = lift_body(&body, &cfg).unwrap();
+        let [Stmt::Expr(tail)] = &lifted.stmts()[..] else {
+            panic!("expected one expr stmt");
+        };
+        let Expr::IndependentProduct(elems, is_error_prop) = &tail.node else {
+            panic!("expected IndependentProduct, got {:?}", tail.node);
+        };
+        assert!(!is_error_prop, "plain `!`, not `?!`");
+        assert_eq!(elems.len(), 2);
+
+        for (i, el) in elems.iter().enumerate() {
+            let args = assert_looks_like_oracle_call(&el.node, "rnd", 4);
+            // Counter resets to 0 inside each branch (branch locality).
+            match &args[1] {
+                Expr::Literal(Literal::Int(0)) => {}
+                other => panic!("branch {} counter should be 0, got {:?}", i, other),
+            }
+            // path arg should be BranchPath.child(path, i)
+            let Expr::FnCall(callee, cargs) = &args[0] else {
+                panic!("expected BranchPath.child(...) call in path arg");
+            };
+            let Expr::Attr(head, field) = &callee.node else {
+                panic!("expected Attr callee");
+            };
+            match &head.node {
+                Expr::Ident(n) => assert_eq!(n, "BranchPath"),
+                other => panic!("expected BranchPath head, got {:?}", other),
+            }
+            assert_eq!(field, "child");
+            assert_eq!(cargs.len(), 2);
+            match &cargs[0].node {
+                Expr::Ident(n) => assert_eq!(n, "path", "parent path should be root `path`"),
+                other => panic!("expected path Ident, got {:?}", other),
+            }
+            match &cargs[1].node {
+                Expr::Literal(Literal::Int(n)) => assert_eq!(*n as usize, i),
+                other => panic!("branch idx should be {}, got {:?}", i, other),
+            }
+        }
+    }
+
+    #[test]
+    fn lift_question_bang_product_preserves_error_prop_flag() {
+        let body = parse_body("    (Http.get(\"a\"), Http.get(\"b\"))?!");
+        let cfg = simple_cfg_with(&[("Http.get", "http")]);
+        let lifted = lift_body(&body, &cfg).unwrap();
+        let [Stmt::Expr(tail)] = &lifted.stmts()[..] else {
+            panic!("expected one expr stmt");
+        };
+        let Expr::IndependentProduct(_, is_error_prop) = &tail.node else {
+            panic!("expected IndependentProduct");
+        };
+        assert!(*is_error_prop, "`?!` should set the error-prop flag");
+    }
+
+    #[test]
+    fn lift_nested_independent_product_builds_deweyish_child_path() {
+        // Outer `!` has 3 elements; branch 2 is a nested `!` with 2 elements.
+        // Effect calls inside the nested group must see a path of the shape
+        // BranchPath.child(BranchPath.child(path, 2), i).
+        let body = parse_body(
+            "    (Random.int(1, 6), Random.int(1, 6), (Random.int(1, 6), Random.int(1, 6))!)!",
+        );
+        let cfg = simple_cfg_with(&[("Random.int", "rnd")]);
+        let lifted = lift_body(&body, &cfg).unwrap();
+        let [Stmt::Expr(tail)] = &lifted.stmts()[..] else {
+            panic!("expected one expr stmt");
+        };
+        let Expr::IndependentProduct(outer, _) = &tail.node else {
+            panic!("expected outer IndependentProduct");
+        };
+        let Expr::IndependentProduct(inner, _) = &outer[2].node else {
+            panic!("expected inner IndependentProduct in branch 2");
+        };
+        assert_eq!(inner.len(), 2);
+        // The first inner branch's oracle call should have path:
+        //   BranchPath.child(BranchPath.child(path, 2), 0)
+        let args = assert_looks_like_oracle_call(&inner[0].node, "rnd", 4);
+        let Expr::FnCall(outer_child_callee, outer_child_args) = &args[0] else {
+            panic!("expected outer .child call");
+        };
+        let Expr::Attr(h, f) = &outer_child_callee.node else {
+            panic!("expected Attr callee on outer .child")
+        };
+        assert!(matches!(&h.node, Expr::Ident(n) if n == "BranchPath"));
+        assert_eq!(f, "child");
+        assert_eq!(outer_child_args.len(), 2);
+        // First arg to outer .child is the inner .child call:
+        //   BranchPath.child(path, 2)
+        let Expr::FnCall(inner_child_callee, inner_child_args) = &outer_child_args[0].node else {
+            panic!("expected inner .child call");
+        };
+        let Expr::Attr(h2, f2) = &inner_child_callee.node else {
+            panic!("expected Attr callee on inner .child");
+        };
+        assert!(matches!(&h2.node, Expr::Ident(n) if n == "BranchPath"));
+        assert_eq!(f2, "child");
+        match (&inner_child_args[0].node, &inner_child_args[1].node) {
+            (Expr::Ident(n), Expr::Literal(Literal::Int(2))) => assert_eq!(n, "path"),
+            other => panic!("unexpected inner .child args: {:?}", other),
+        }
+        // Second arg to outer .child is the inner branch index (0).
+        match &outer_child_args[1].node {
+            Expr::Literal(Literal::Int(0)) => {}
+            other => panic!("expected inner branch idx 0, got {:?}", other),
+        }
     }
 
     #[test]
