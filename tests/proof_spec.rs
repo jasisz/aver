@@ -827,6 +827,61 @@ fn aver_verify_trace_http_get_generative_output_end_to_end() {
 }
 
 #[test]
+fn aver_verify_trace_contains_event_literal_with_interpolated_local() {
+    // Oracle v1: `.trace.contains(Console.print("rolled {expect}"))`
+    // with local binding `expect = 4` must elaborate to the event
+    // literal `Console.print("rolled 4")` after the parse-time ident
+    // substitution rewrites `{expect}` to `Literal(Int(4))`. This
+    // exercises `literal_expr_to_value`'s Parsed-segment support — the
+    // interpolated string resolves to a plain String arg so the event
+    // literal round-trips to the recorded `EffectEvent`.
+    let dir = temp_output_dir("aver-verify-trace-interp-local");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn hello() -> Int\n\
+         \x20   ? \"roll + print\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   x = Random.int(1, 6)\n\
+         \x20   Console.print(\"rolled {x}\")\n\
+         \x20   x\n\
+         \n\
+         verify hello trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   expect = 4\n\
+         \x20   hello().result => expect\n\
+         \x20   hello().trace.contains(Console.print(\"rolled {expect}\")) => true\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "interpolated event literal failed; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn proof_accepts_complete_independence_mode() {
     let dir = temp_output_dir("aver-proof-complete");
     std::fs::create_dir_all(&dir).expect("create temp dir");
