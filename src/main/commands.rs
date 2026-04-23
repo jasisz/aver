@@ -2777,24 +2777,35 @@ fn apply_trace_projection(
                             args.len()
                         ));
                     }
-                    let expected = match expr_to_effect_event(&args[0]) {
-                        Some(ev) => ev,
-                        None => {
-                            return Err(
-                                "Trace.contains(x): argument must be an effect-method call like \
-                                 Console.print(\"...\") that elaborates to an event literal"
-                                    .to_string(),
-                            );
-                        }
+                    // Oracle v1: `.contains(x)` accepts two shapes:
+                    //   - `Effect.method(args…)` — full event literal,
+                    //     matches method + args.
+                    //   - `Effect.method` (no parens) — method-only
+                    //     predicate, matches any event with that method
+                    //     regardless of args. Useful for "did this
+                    //     effect fire at all" checks.
+                    let arg = &args[0];
+                    let method_only_name = effect_method_ref_name(arg);
+                    let hit = if let Some(method_name) = method_only_name {
+                        filtered
+                            .iter()
+                            .any(|ev| effect_event_has_method(ev, &method_name))
+                    } else {
+                        let expected = match expr_to_effect_event(arg) {
+                            Some(ev) => ev,
+                            None => {
+                                return Err(
+                                    "Trace.contains(x): argument must be either an effect-method \
+                                     reference (e.g. `Console.print`) or an effect-method call \
+                                     (e.g. `Console.print(\"...\")`) that elaborates to an event literal"
+                                        .to_string(),
+                                );
+                            }
+                        };
+                        filtered
+                            .iter()
+                            .any(|ev| effect_event_method_args_eq(ev, &expected))
                     };
-                    // Match on method + args only — `path` is recorded
-                    // on every event but absent from the user-authored
-                    // literal (it expresses "I don't care where this
-                    // fired"). Users who DO care can assert on the
-                    // specific event via `.event(k)` + record compare.
-                    let hit = filtered
-                        .iter()
-                        .any(|ev| effect_event_method_args_eq(ev, &expected));
                     Ok(VmVerifyEval::Value(Value::Bool(hit)))
                 }
                 _ => Ok(helper_result),
@@ -2943,6 +2954,49 @@ fn effect_event_method_args_eq(recorded: &Value, expected: &Value) -> bool {
     let r_args = pick(rf, aver::types::effect_event::FIELD_ARGS);
     let e_args = pick(ef, aver::types::effect_event::FIELD_ARGS);
     r_method == e_method && r_args == e_args
+}
+
+/// Oracle v1: recognise a bare effect-method reference like
+/// `Console.print` (no parens) and return `"Console.print"`. Only
+/// classified effect methods count — other `Namespace.name` shapes
+/// (user types, stdlib namespaces) are rejected so the method-only
+/// `.contains(X)` branch doesn't accidentally match random refs.
+fn effect_method_ref_name(expr: &Spanned<Expr>) -> Option<String> {
+    let (ns, method) = match &expr.node {
+        Expr::Attr(ns, method) => {
+            let Expr::Ident(ns_name) = &ns.node else {
+                return None;
+            };
+            (ns_name.clone(), method.clone())
+        }
+        Expr::Resolved { name, .. } => {
+            let (ns, method) = name.rsplit_once('.')?;
+            (ns.to_string(), method.to_string())
+        }
+        _ => return None,
+    };
+    let full = format!("{}.{}", ns, method);
+    if aver::types::checker::effect_classification::is_classified(&full) {
+        Some(full)
+    } else {
+        None
+    }
+}
+
+/// Oracle v1: true when the recorded EffectEvent record has
+/// `method == expected_name`. Used by `.contains(Effect.method)`'s
+/// method-only branch.
+fn effect_event_has_method(recorded: &Value, expected_name: &str) -> bool {
+    let Value::Record { type_name, fields } = recorded else {
+        return false;
+    };
+    if type_name != aver::types::effect_event::TYPE_NAME {
+        return false;
+    }
+    fields.iter().any(|(name, val)| {
+        name == aver::types::effect_event::FIELD_METHOD
+            && matches!(val, Value::Str(s) if s == expected_name)
+    })
 }
 
 fn expr_to_effect_event(expr: &Spanned<Expr>) -> Option<Value> {
