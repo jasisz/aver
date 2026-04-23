@@ -288,14 +288,21 @@ impl TypeChecker {
 
                 // Rejection 2: verify on a function using effects outside
                 // the Oracle v1 proof subset (stateful / interactive /
-                // higher-order-callback).
-                if !unclassified_effects.is_empty()
-                    && matches!(vb.kind, crate::ast::VerifyKind::Law(_))
-                {
+                // higher-order-callback). Applies to any law and to
+                // cases-form `verify fn trace` — trace-aware assertions
+                // on unclassified effects can't be lifted or emulated.
+                let enforces_proof_subset =
+                    matches!(vb.kind, crate::ast::VerifyKind::Law(_)) || vb.trace;
+                if !unclassified_effects.is_empty() && enforces_proof_subset {
+                    let kind_label = match &vb.kind {
+                        crate::ast::VerifyKind::Law(_) => "verify law",
+                        crate::ast::VerifyKind::Cases if vb.trace => "verify trace",
+                        crate::ast::VerifyKind::Cases => "verify",
+                    };
                     self.error_at_line(
                         vb.line,
                         format!(
-                            "verify law '{fn_name}' uses effect(s) outside Oracle v1's proof subset: \
+                            "{kind_label} '{fn_name}' uses effect(s) outside Oracle v1's proof subset: \
                              {effects}. These effects are stateful, interactive, or higher-order and \
                              cannot be lifted to pure form. Use 'aver record' / 'aver replay' for \
                              deterministic reproduction; stateful proof support is planned for the \
@@ -303,6 +310,7 @@ impl TypeChecker {
                              Oracle v1's classified effects: Args.get, Env.get, Random.int, \
                              Random.float, Time.now, Time.unixMs, Disk.readText, Http.get/.head/.delete, \
                              Console.print/.error/.warn.",
+                            kind_label = kind_label,
                             fn_name = vb.fn_name,
                             effects = unclassified_effects.join(", "),
                         ),
