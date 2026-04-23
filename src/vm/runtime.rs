@@ -78,12 +78,6 @@ impl VmRuntime {
         self.oracle_stubs.get(effect_name).copied()
     }
 
-    pub(super) fn take_next_oracle_counter(&mut self) -> u32 {
-        let c = self.oracle_counter;
-        self.oracle_counter += 1;
-        c
-    }
-
     pub(super) fn allowed_effects(&self) -> &[u32] {
         &self.allowed_effects
     }
@@ -198,6 +192,24 @@ impl VmRuntime {
 
     pub(super) fn replay_set_branch(&mut self, index: u32) {
         self.replay_state.set_branch(index);
+    }
+
+    /// Oracle v1: grab the current (path, counter) pair for an oracle-
+    /// stub dispatch and advance the counter. If we're inside a `!`/`?!`
+    /// group, use the replay state's branch-aware tracking; otherwise
+    /// fall back to the VM-level `oracle_counter` that covers flat
+    /// (root-level) effect calls.
+    pub(super) fn take_oracle_coordinates(&mut self) -> (String, u32) {
+        if self.replay_state.is_inside_group() {
+            let path = self.replay_state.oracle_path_string();
+            let counter = self.replay_state.oracle_branch_counter().unwrap_or(0);
+            self.replay_state.bump_oracle_branch_counter();
+            (path, counter)
+        } else {
+            let c = self.oracle_counter;
+            self.oracle_counter += 1;
+            (String::new(), c)
+        }
     }
 
     pub(super) fn ensure_replay_consumed(&self) -> Result<(), VmError> {

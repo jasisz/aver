@@ -364,22 +364,29 @@ impl VM {
         stub_fn_id: u32,
         args: &[NanValue],
     ) -> Result<NanValue, VmError> {
-        // Build BranchPath.root — a record { dewey: "" } of the BranchPath
-        // type. This matches the arena registration in
-        // vm::register_service_types.
+        // Oracle v1: read the current branch context from the VM's
+        // structural-trace state. When we're outside any `!`/`?!` group,
+        // the dewey string is empty (BranchPath.root) and the counter is
+        // the VM-level oracle_counter. Inside a group, dewey is the
+        // branch-indexed path and the counter is the per-branch slot
+        // from enter_group's effect_count_stack.
+        let (dewey, counter) = self.runtime.take_oracle_coordinates();
+
+        // Build BranchPath(dewey) record — matches the arena registration
+        // from vm::register_service_types and the Aver-source opaque
+        // builtin `{ dewey: String }`.
         let type_id = self
             .arena
             .find_type_id(crate::types::branch_path::TYPE_NAME)
             .ok_or_else(|| VmError::runtime("BranchPath type not registered"))?;
-        let empty_dewey = NanValue::new_string_value("", &mut self.arena);
-        let root_idx = self.arena.push_record(type_id, vec![empty_dewey]);
-        let root_path = NanValue::new_record(root_idx);
+        let dewey_nv = NanValue::new_string_value(&dewey, &mut self.arena);
+        let path_idx = self.arena.push_record(type_id, vec![dewey_nv]);
+        let path_nv = NanValue::new_record(path_idx);
 
-        let counter = self.runtime.take_next_oracle_counter();
         let counter_nv = NanValue::new_int(counter as i64, &mut self.arena);
 
         let mut new_args = Vec::with_capacity(args.len() + 2);
-        new_args.push(root_path);
+        new_args.push(path_nv);
         new_args.push(counter_nv);
         new_args.extend_from_slice(args);
 
