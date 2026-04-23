@@ -3223,6 +3223,79 @@ updated = User.update(u, age = 99)
 }
 
 // ---------------------------------------------------------------------------
+// Oracle v1 — trace collection during stubbed verify-law eval
+// ---------------------------------------------------------------------------
+
+#[test]
+fn vm_records_classified_effect_emissions_when_trace_collecting() {
+    // Wire a stub for Random.int, enable trace collection, run an
+    // effectful function, and read the collected events back. Verifies
+    // that both stubbed (Random.int) and unstubbed (Console.print) calls
+    // land in the buffer when collection is active.
+    let src = concat!(
+        "fn stubConst(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n",
+        "    ? \"always min\"\n",
+        "    min\n",
+        "fn hello() -> Int\n",
+        "    ? \"one draw + print\"\n",
+        "    ! [Random.int, Console.print]\n",
+        "    x = Random.int(1, 6)\n",
+        "    Console.print(\"hi\")\n",
+        "    x\n",
+    );
+    let items = parse(src);
+    let mut machine = vm_compile(&items);
+    machine.run_top_level().expect("top-level");
+    machine.set_silent_console(true);
+
+    // Install Random.int stub → stubConst.
+    let stub_fn_id = machine
+        .find_fn_id("stubConst")
+        .expect("stubConst must resolve");
+    let mut stubs = std::collections::HashMap::new();
+    stubs.insert("Random.int".to_string(), stub_fn_id);
+    machine.install_oracle_stubs(stubs);
+
+    machine.start_trace_collection();
+    let result_nv = machine
+        .run_named_function("hello", &[])
+        .expect("hello must run");
+    let events = machine.take_trace_events();
+    machine.clear_oracle_stubs();
+
+    // Stub returns min = 1; Aver Random.int(1, 6) under stubConst → 1.
+    let result = result_nv.to_value(&machine.arena);
+    assert_eq!(result, Value::Int(1));
+
+    // Two classified effects emitted: Random.int then Console.print.
+    assert_eq!(events.len(), 2, "expected 2 events, got {:?}", events);
+    match &events[0] {
+        Value::Record { type_name, fields } => {
+            assert_eq!(type_name, "EffectEvent");
+            let method = fields
+                .iter()
+                .find(|(n, _)| n == "method")
+                .map(|(_, v)| v)
+                .expect("method field");
+            assert!(matches!(method, Value::Str(s) if s == "Random.int"));
+        }
+        other => panic!("event[0] not a record: {:?}", other),
+    }
+    match &events[1] {
+        Value::Record { type_name, fields } => {
+            assert_eq!(type_name, "EffectEvent");
+            let method = fields
+                .iter()
+                .find(|(n, _)| n == "method")
+                .map(|(_, v)| v)
+                .expect("method field");
+            assert!(matches!(method, Value::Str(s) if s == "Console.print"));
+        }
+        other => panic!("event[1] not a record: {:?}", other),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // BranchPath — opaque builtin for Oracle-proof specs
 // ---------------------------------------------------------------------------
 
