@@ -1377,6 +1377,60 @@ fn aver_verify_trace_case_rhs_wraps_to_indented_next_line() {
 }
 
 #[test]
+fn aver_verify_trace_projection_edge_cases_degrade_gracefully() {
+    // Oracle v1: out-of-range indices and missing methods return the
+    // natural empty / None values instead of erroring. Lets users
+    // phrase negative assertions (`.contains(X) => false`,
+    // `.event(k) => Option.None`) without special-casing what "X
+    // never happened" looks like.
+    let dir = temp_output_dir("aver-verify-trace-edge-cases");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn hello() -> Int\n\
+         \x20   ? \"roll + print\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   x = Random.int(1, 6)\n\
+         \x20   Console.print(\"rolled 4\")\n\
+         \x20   x\n\
+         \n\
+         verify hello trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   hello().trace.group(99).length() => 0\n\
+         \x20   hello().trace.group(99).event(0) => Option.None\n\
+         \x20   hello().trace.contains(Console.error) => false\n\
+         \x20   hello().trace.event(99) => Option.None\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "trace projection edge cases failed; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn proof_accepts_complete_independence_mode() {
     let dir = temp_output_dir("aver-proof-complete");
     std::fs::create_dir_all(&dir).expect("create temp dir");
