@@ -2086,8 +2086,12 @@ fn generate_prelude() -> String {
 }
 
 fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
+    // Oracle v1: trust-assumption header first so the emitted file opens with
+    // the explicit claim block before any prelude or definitions.
+    let trust_header = crate::types::checker::proof_trust_header::generate_commented("-- ");
     let mut parts = vec![
         LEAN_PRELUDE_HEADER.to_string(),
+        trust_header,
         LEAN_PRELUDE_FLOAT_COE.to_string(),
         LEAN_PRELUDE_FLOAT_DEC_EQ.to_string(),
         LEAN_PRELUDE_EXCEPT_DEC_EQ.to_string(),
