@@ -994,6 +994,7 @@ pub(super) fn cmd_run_vm(
     record_dir: Option<&str>,
     program_args: Vec<String>,
     profile: bool,
+    entry_expression: Option<&str>,
 ) {
     use aver::replay::{
         JsonValue, session::RecordedOutcome, session::SessionRecording,
@@ -1005,6 +1006,14 @@ pub(super) fn cmd_run_vm(
             "{}",
             "Cannot combine --verify and --record in one run; record should capture only main flow."
                 .red()
+        );
+        process::exit(1);
+    }
+
+    if run_verify_blocks && entry_expression.is_some() {
+        eprintln!(
+            "{}",
+            "Cannot combine --verify with --expr / --input-file.".red()
         );
         process::exit(1);
     }
@@ -1070,14 +1079,58 @@ pub(super) fn cmd_run_vm(
         machine.start_recording();
     }
 
-    let run_result = machine.run();
+    // Resolve entry: either a user-supplied call expression or the default `main`.
+    let entry_info: Option<(String, Vec<aver::value::Value>)> = if let Some(src) = entry_expression
+    {
+        match super::shared::parse_call_expression(src) {
+            Ok(info) => Some(info),
+            Err(e) => {
+                eprintln!("{}", format!("--expr: {}", e).red());
+                process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
+
+    let entry_fn_label: String = entry_info
+        .as_ref()
+        .map(|(n, _)| n.clone())
+        .unwrap_or_else(|| "main".to_string());
+
+    let run_result = if let Some((fn_name, args)) = &entry_info {
+        // Initialise top-level globals, then invoke the requested function.
+        if let Err(e) = machine.run_top_level() {
+            eprintln!("{}", format!("{}", e).red());
+            process::exit(1);
+        }
+        let nv_args: Vec<aver::nan_value::NanValue> = args
+            .iter()
+            .map(|v| {
+                <aver::nan_value::NanValue as aver::nan_value::NanValueConvert>::from_value(
+                    v,
+                    &mut machine.arena,
+                )
+            })
+            .collect();
+        machine.run_named_function(fn_name, &nv_args)
+    } else {
+        machine.run()
+    };
 
     // Persist recording if requested.
     if let Some(dir) = record_dir {
         let request_id = generate_request_id();
         let timestamp = generate_timestamp();
         let (record_program_file, record_module_root) = recording_paths(file, &module_root);
-        let out_path = match prepare_recording_path(dir, &request_id) {
+
+        // For --expr runs, use a readable stem derived from fn + args; fall back
+        // to the timestamped request_id otherwise.
+        let file_stem = match &entry_info {
+            Some((fn_name, args)) => super::shared::entry_recording_stem(fn_name, args),
+            None => request_id.clone(),
+        };
+        let out_path = match prepare_recording_path(dir, &file_stem) {
             Ok(path) => path,
             Err(e) => {
                 eprintln!("{}", e.red());
@@ -1096,14 +1149,32 @@ pub(super) fn cmd_run_vm(
             Err(e) => RecordedOutcome::RuntimeError(format!("{}", e)),
         };
 
+        // `input` is null for the default main entry; for --expr we serialise
+        // the supplied arguments as a JSON list (or a single value if there is
+        // exactly one) so `aver replay` can feed them back into
+        // `run_named_function` via the existing `decode_entry_args` path.
+        let input = match &entry_info {
+            None => JsonValue::Null,
+            Some((_, args)) => match super::shared::encode_entry_args_json(args) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!(
+                        "{}",
+                        format!("Failed to serialise --expr arguments: {}", e).red()
+                    );
+                    process::exit(1);
+                }
+            },
+        };
+
         let recording = SessionRecording {
             schema_version: 1,
             request_id,
             timestamp,
             program_file: record_program_file,
             module_root: record_module_root,
-            entry_fn: "main".to_string(),
-            input: JsonValue::Null,
+            entry_fn: entry_fn_label.clone(),
+            input,
             effects: machine.recorded_effects().to_vec(),
             output,
         };
@@ -1180,7 +1251,10 @@ pub(super) fn cmd_run_vm(
             if result.is_err() {
                 let inner = result.wrapper_inner(&machine.arena);
                 let msg = inner.repr(&machine.arena);
-                eprintln!("{}", format!("Main returned error: {}", msg).red());
+                eprintln!(
+                    "{}",
+                    format!("{} returned error: {}", entry_fn_label, msg).red()
+                );
                 process::exit(1);
             }
         }

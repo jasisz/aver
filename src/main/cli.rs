@@ -136,6 +136,14 @@ pub(super) enum Commands {
         /// Record effect calls and persist a replay session JSON into this directory
         #[arg(long)]
         record: Option<String>,
+        /// Execute an arbitrary Aver call expression as entry point instead of main.
+        /// Example: --expr 'loadTaxRate("PL")'. Repeat the flag to record a batch.
+        #[arg(short = 'e', long = "expr", value_name = "CALL_EXPR")]
+        expr: Vec<String>,
+        /// Read the call expression from a file (use '-' for stdin).
+        /// Mutually exclusive with --expr.
+        #[arg(long = "input-file", value_name = "PATH", conflicts_with = "expr")]
+        input_file: Option<String>,
         /// Execute using the self-hosted Aver interpreter compiled to Rust
         #[arg(long, conflicts_with = "profile")]
         self_host: bool,

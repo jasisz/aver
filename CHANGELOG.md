@@ -2,6 +2,12 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.10.1 (unreleased)
+
+### Added
+- **`aver run --expr '<call>'`** — record/replay now targets any function, not just `main`. Pass a function call with literal arguments (e.g. `aver run src/tax.av -e 'loadTaxRate("PL")' --record dir/`) and the recording's `entry_fn` and `input` are populated from the call; `aver replay` picks them up unchanged via the existing entry-args path. Repeat `-e` to batch several calls in one invocation; each produces its own recording file. `--input-file PATH` (use `-` for stdin) reads a single call expression from a file for long inputs. Conflicts with `--verify`, `--self-host`, and `--wasm`. Arguments are limited to literals (`String`, `Int`, `Float`, `Bool`, `Unit`) in this release — for complex inputs, wrap the call in a helper function and point `-e` at that.
+- **Readable recording filenames for `--expr`** — `aver run ... -e 'fn(arg)' --record dir/` writes `dir/fn-arg.json` when arguments are simple literals, falling back to a stable hash-based stem for anything else. Default `main` runs keep the existing `rec-<timestamp>.json` name.
+
 ## 0.10.0 "Telltale" (2026-04-21)
 
 > _Tooling now shows its work — parse errors point at the exact token with a repair, audit runs three axes in one shot, and every program can be recorded & replayed in the browser._

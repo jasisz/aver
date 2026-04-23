@@ -35,11 +35,32 @@ fn main() {
             module_root,
             verify,
             record,
+            expr,
+            input_file,
             self_host,
             profile,
             wasm,
             program_args,
         } => {
+            let expressions = match shared::collect_entry_expressions(expr, input_file.as_deref()) {
+                Ok(list) => list,
+                Err(e) => {
+                    use colored::Colorize;
+                    eprintln!("{}", e.red());
+                    std::process::exit(1);
+                }
+            };
+
+            if !expressions.is_empty() && (*wasm || *self_host) {
+                use colored::Colorize;
+                eprintln!(
+                    "{}",
+                    "--expr / --input-file are not supported with --wasm or --self-host in this release"
+                        .red()
+                );
+                std::process::exit(1);
+            }
+
             if *wasm {
                 commands::cmd_run_wasm(file, module_root.as_deref(), program_args.clone());
             } else if *self_host {
@@ -50,7 +71,7 @@ fn main() {
                     record.as_deref(),
                     program_args.clone(),
                 );
-            } else {
+            } else if expressions.is_empty() {
                 commands::cmd_run_vm(
                     file,
                     module_root.as_deref(),
@@ -58,7 +79,22 @@ fn main() {
                     record.as_deref(),
                     program_args.clone(),
                     *profile,
+                    None,
                 );
+            } else {
+                // Batch: run each expression as its own invocation so that
+                // recording state and VM globals start fresh each time.
+                for expr_src in &expressions {
+                    commands::cmd_run_vm(
+                        file,
+                        module_root.as_deref(),
+                        *verify,
+                        record.as_deref(),
+                        program_args.clone(),
+                        *profile,
+                        Some(expr_src.as_str()),
+                    );
+                }
             }
         }
         Commands::Check {
