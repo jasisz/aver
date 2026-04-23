@@ -324,6 +324,13 @@ impl VmRuntime {
         // classified effect dispatched by the LHS impl (pre-invocation
         // snapshot of args) so `.trace.contains(...)` / `.trace.event(k)`
         // can query them after LHS returns.
+        //
+        // Output-dimension effects (Console.print / .error / .warn) are
+        // suppressed — they return Unit, and letting the real host
+        // handler fire would pollute the terminal of `aver verify`.
+        // Generative / snapshot effects still dispatch for real unless
+        // the user supplied a stub via `given` (oracle dispatch is
+        // handled earlier in the call site).
         if self.trace_collecting
             && is_effectful
             && crate::types::checker::effect_classification::is_classified(builtin_name)
@@ -331,6 +338,14 @@ impl VmRuntime {
             let arg_vals: Vec<crate::value::Value> =
                 args.iter().map(|a| a.to_value(arena)).collect();
             self.record_trace_event(builtin_name, &arg_vals);
+            if let Some(classification) =
+                crate::types::checker::effect_classification::classify(builtin_name)
+            {
+                use crate::types::checker::effect_classification::EffectDimension;
+                if matches!(classification.dimension, EffectDimension::Output) {
+                    return Ok(NanValue::UNIT);
+                }
+            }
         }
         match (is_effectful, self.execution_mode()) {
             (_, VmExecutionMode::Normal) | (false, _) => builtin

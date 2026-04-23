@@ -543,6 +543,60 @@ fn aver_verify_trace_rejects_cases_form_on_unclassified_effect() {
 }
 
 #[test]
+fn aver_verify_trace_suppresses_output_effects() {
+    // Oracle v1: under `verify fn trace`, output-dimension effects
+    // (Console.print / .error / .warn) are recorded as trace events
+    // but not actually dispatched to the host. Otherwise running
+    // `aver verify` on a fn that prints would leak its output into
+    // the terminal — noisy and confusing. The trace buffer still
+    // lets `.trace.contains(...)` / `.length()` assertions work.
+    let dir = temp_output_dir("aver-verify-trace-suppress-output");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn chatty() -> Int\n\
+         \x20   ? \"prints then returns\"\n\
+         \x20   ! [Console.print]\n\
+         \x20   Console.print(\"SENTINEL-LEAK\")\n\
+         \x20   42\n\
+         \n\
+         verify chatty trace\n\
+         \x20   chatty().result => 42\n\
+         \x20   chatty().trace.contains(Console.print(\"SENTINEL-LEAK\")) => true\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "aver verify failed on chatty trace; {}",
+        format_output(&output)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("SENTINEL-LEAK"),
+        "Console.print should be suppressed under verify trace, but SENTINEL-LEAK \
+         appeared in stdout: {}",
+        stdout
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn proof_accepts_complete_independence_mode() {
     let dir = temp_output_dir("aver-proof-complete");
     std::fs::create_dir_all(&dir).expect("create temp dir");
