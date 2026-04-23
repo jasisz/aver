@@ -1050,6 +1050,57 @@ fn aver_verify_trace_rejects_stub_with_wrong_oracle_signature() {
 }
 
 #[test]
+fn aver_verify_trace_event_compares_to_full_effectevent_record() {
+    // Oracle v1: the `.trace.event(k)` projection returns an
+    // `Option<EffectEvent>`. With EffectEvent and Trace fields now
+    // registered at the typechecker level, users can compare against a
+    // full record literal `Option.Some(EffectEvent(method = ..., args
+    // = [...]))` and the assertion passes on structural equality.
+    let dir = temp_output_dir("aver-verify-trace-event-literal");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn hello() -> Int\n\
+         \x20   ? \"roll + print\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   x = Random.int(1, 6)\n\
+         \x20   Console.print(\"rolled 4\")\n\
+         \x20   x\n\
+         \n\
+         verify hello trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   hello().trace.event(1) => Option.Some(EffectEvent(method = \"Console.print\", args = [\"rolled 4\"]))\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "EffectEvent record comparison failed; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn proof_accepts_complete_independence_mode() {
     let dir = temp_output_dir("aver-proof-complete");
     std::fs::create_dir_all(&dir).expect("create temp dir");
