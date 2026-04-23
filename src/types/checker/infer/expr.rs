@@ -614,6 +614,18 @@ impl TypeChecker {
                                 vec![],
                             );
                         }
+                        // Oracle v1: `.group(N)` returns a sub-trace
+                        // containing only events emitted inside the
+                        // N-th `!`/`?!` group in source order. Subsequent
+                        // `.length()` / `.event(k)` / `.contains(_)`
+                        // operate on that filtered buffer.
+                        "group" => {
+                            return Type::Fn(
+                                vec![Type::Int],
+                                Box::new(Type::Named("Trace".to_string())),
+                                vec![],
+                            );
+                        }
                         _ => {}
                     }
                 }

@@ -2654,13 +2654,23 @@ fn find_trace_underlying_fn_call(node: &Expr) -> Option<Spanned<Expr>> {
                 None
             }
         }
-        // fn(args).trace.contains(_) / .event(_) / .length()
+        // fn(args).trace.<method>(...)            (flat)
+        // fn(args).trace.group(N).<method>(...)   (one tree-nav stage)
         Expr::FnCall(callee, _) => {
-            if let Expr::Attr(trace_attr, _) = &callee.node
-                && let Expr::Attr(fn_call_box, trace_field) = &trace_attr.node
-                && trace_field == "trace"
-                && matches!(&fn_call_box.node, Expr::FnCall(_, _))
-            {
+            let Expr::Attr(inner_attr, _) = &callee.node else {
+                return None;
+            };
+            // Allow an optional `.group(N)` stage between `.trace` and
+            // the terminal projection method. We walk inward until we
+            // hit `.trace`, then grab the wrapped fn-call.
+            let scope = match peel_group_stage(inner_attr) {
+                Some((base, _)) => base,
+                None => inner_attr.as_ref(),
+            };
+            let Expr::Attr(fn_call_box, trace_field) = &scope.node else {
+                return None;
+            };
+            if trace_field == "trace" && matches!(&fn_call_box.node, Expr::FnCall(_, _)) {
                 return Some((**fn_call_box).clone());
             }
             None
@@ -2685,6 +2695,7 @@ fn apply_trace_projection(
     helper_result: Result<VmVerifyEval, String>,
     original_lhs: &Spanned<Expr>,
     collected: &[Value],
+    coords: &[aver::vm::runtime::TraceCoord],
     trace_mode: bool,
 ) -> Result<VmVerifyEval, String> {
     if !trace_mode {
@@ -2699,25 +2710,48 @@ fn apply_trace_projection(
         return Ok(helper_result);
     }
     match &original_lhs.node {
-        // fn(args).trace — return Trace record
+        // fn(args).trace — return Trace record (whole buffer, flat)
         Expr::Attr(inner, field)
             if field == "trace" && matches!(&inner.node, Expr::FnCall(_, _)) =>
         {
             Ok(VmVerifyEval::Value(build_trace_record(collected)))
         }
-        // fn(args).trace.contains(_) / .event(_) / .length()
+        // fn(args).trace.<method>(...) and
+        // fn(args).trace.group(N).<method>(...)
         Expr::FnCall(callee, args) => {
-            let Expr::Attr(trace_attr, method) = &callee.node else {
+            let Expr::Attr(inner_attr, method) = &callee.node else {
                 return Ok(helper_result);
             };
-            let Expr::Attr(fn_call_box, trace_field) = &trace_attr.node else {
+            // Peel the optional `.group(N)` stage: `inner_attr` may be
+            // either `fn_call.trace` directly (flat projection) or
+            // `fn_call.trace.group(N)` (tree-nav stage).
+            let (scope, group_id) = match peel_group_stage(inner_attr) {
+                Some((base, gid)) => (base, Some(gid)),
+                None => (inner_attr.as_ref(), None),
+            };
+            let Expr::Attr(fn_call_box, trace_field) = &scope.node else {
                 return Ok(helper_result);
             };
             if trace_field != "trace" || !matches!(&fn_call_box.node, Expr::FnCall(_, _)) {
                 return Ok(helper_result);
             }
+            // Filter events by group_id when a `.group(N)` stage is
+            // present. v0: N is 1-based (first `!`/`?!` in source
+            // order is 0 at the source level; the replay scope assigns
+            // internal ids starting at 1). We treat the user-visible
+            // index `N` as the 0-based position of the group in source
+            // order: group 0 → replay id 1, group 1 → replay id 2, etc.
+            let filtered: Vec<&Value> = match group_id {
+                None => collected.iter().collect(),
+                Some(n) => collected
+                    .iter()
+                    .zip(coords.iter())
+                    .filter(|(_, c)| c.group_id == Some(n + 1))
+                    .map(|(ev, _)| ev)
+                    .collect(),
+            };
             match method.as_str() {
-                "length" => Ok(VmVerifyEval::Value(Value::Int(collected.len() as i64))),
+                "length" => Ok(VmVerifyEval::Value(Value::Int(filtered.len() as i64))),
                 "event" => {
                     if args.len() != 1 {
                         return Err(format!("Trace.event(k) expects 1 arg, got {}", args.len()));
@@ -2731,8 +2765,8 @@ fn apply_trace_projection(
                             );
                         }
                     };
-                    let v = match collected.get(k) {
-                        Some(ev) => Value::Some(Box::new(ev.clone())),
+                    let v = match filtered.get(k) {
+                        Some(ev) => Value::Some(Box::new((**ev).clone())),
                         None => Value::None,
                     };
                     Ok(VmVerifyEval::Value(v))
@@ -2754,13 +2788,33 @@ fn apply_trace_projection(
                             );
                         }
                     };
-                    let hit = collected.iter().any(|ev| ev == &expected);
+                    let hit = filtered.iter().any(|ev| **ev == expected);
                     Ok(VmVerifyEval::Value(Value::Bool(hit)))
                 }
                 _ => Ok(helper_result),
             }
         }
         _ => Ok(helper_result),
+    }
+}
+
+/// Oracle v1: recognise `<scope>.group(N)` and return `(scope, N)`.
+/// The `group(N)` stage sits between `.trace` and the terminal
+/// projection method (`.length()` / `.event(k)` / `.contains(_)`).
+/// `N` must be a literal non-negative Int.
+fn peel_group_stage(expr: &Spanned<Expr>) -> Option<(&Spanned<Expr>, u32)> {
+    let Expr::FnCall(callee, args) = &expr.node else {
+        return None;
+    };
+    let Expr::Attr(base, method) = &callee.node else {
+        return None;
+    };
+    if method != "group" || args.len() != 1 {
+        return None;
+    }
+    match &args[0].node {
+        Expr::Literal(aver::ast::Literal::Int(n)) if *n >= 0 => Some((base.as_ref(), *n as u32)),
+        _ => None,
     }
 }
 
@@ -2775,13 +2829,17 @@ fn is_trace_projection_shape(expr: &Spanned<Expr>) -> bool {
             matches!(&inner.node, Expr::FnCall(_, _))
         }
         Expr::FnCall(callee, _) => {
-            let Expr::Attr(trace_attr, method) = &callee.node else {
+            let Expr::Attr(inner_attr, method) = &callee.node else {
                 return false;
             };
             if !matches!(method.as_str(), "length" | "event" | "contains") {
                 return false;
             }
-            let Expr::Attr(fn_call_box, trace_field) = &trace_attr.node else {
+            let scope = match peel_group_stage(inner_attr) {
+                Some((base, _)) => base,
+                None => inner_attr.as_ref(),
+            };
+            let Expr::Attr(fn_call_box, trace_field) = &scope.node else {
                 return false;
             };
             trace_field == "trace" && matches!(&fn_call_box.node, Expr::FnCall(_, _))
@@ -3123,20 +3181,23 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
         }
 
         let left_result = vm_call_verify_helper(machine, &case_fns.left);
-        let lhs_trace_events: Vec<Value> = if block.trace {
-            machine.take_trace_events()
-        } else {
-            Vec::new()
-        };
+        let (lhs_trace_events, lhs_trace_coords): (Vec<Value>, Vec<aver::vm::runtime::TraceCoord>) =
+            if block.trace {
+                machine.take_trace_events_with_coords()
+            } else {
+                (Vec::new(), Vec::new())
+            };
 
         // Oracle v1: if the LHS was a trace-contents projection
-        // (`fn.trace.contains(...)` / `.event(k)` / `.length()`), the
-        // helper's returned value is a sentinel — compute the real
-        // projection value here from the collected events.
+        // (`fn.trace.contains(...)` / `.event(k)` / `.length()` or a
+        // tree-nav chain `.trace.group(N).*`), the helper's returned
+        // value is a sentinel — compute the real projection value
+        // here from the collected events + coords.
         let left_result = apply_trace_projection(
             left_result,
             &block.cases[idx].0,
             &lhs_trace_events,
+            &lhs_trace_coords,
             block.trace,
         );
 
