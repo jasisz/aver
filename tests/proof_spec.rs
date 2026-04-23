@@ -713,6 +713,120 @@ fn aver_verify_trace_failure_shows_recorded_events() {
 }
 
 #[test]
+fn aver_verify_trace_end_to_end_target_shape() {
+    // Oracle v1: the end-to-end shape a user writes for a small
+    // trace-aware verification — given binds an oracle alias, a local
+    // binding factors out the expected oracle value, `.result` checks
+    // the raw return, `.trace.contains(...)` checks an output-only
+    // event. This single test guards the whole Oracle v1 UX surface:
+    //   - `given rnd: Random.int = [fairDie]` (alias + VM stub)
+    //   - `expect = rnd(BranchPath.root(), 0, 1, 6)` (local + alias
+    //     substitution)
+    //   - `hello().result => expect` (local binding in case RHS)
+    //   - `hello().trace.contains(Console.print(...))` (output effect
+    //     suppressed at runtime, still present in the trace)
+    let dir = temp_output_dir("aver-verify-target-shape");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn hello() -> Int\n\
+         \x20   ? \"roll + print\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   x = Random.int(1, 6)\n\
+         \x20   Console.print(\"rolled 4\")\n\
+         \x20   x\n\
+         \n\
+         verify hello trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   expect = rnd(BranchPath.root(), 0, 1, 6)\n\
+         \x20   hello().result => expect\n\
+         \x20   hello().trace.contains(Console.print(\"rolled 4\")) => true\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "end-to-end target-shape verify failed; {}",
+        format_output(&output)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("2/2"),
+        "expected 2/2 cases passed, got: {}",
+        stdout
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_http_get_generative_output_end_to_end() {
+    // Oracle v1: Http.get is the first generative+output effect —
+    // stubbed response comes from the oracle, request body lands in
+    // the trace. This test exercises the full path: given-bound stub
+    // returning a non-trivial Result<HttpResponse, String>, with
+    // `.trace.contains(Http.get(...))` resolving the request event.
+    let dir = temp_output_dir("aver-verify-trace-http");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fakeFetch(path: BranchPath, n: Int, url: String) -> Result<HttpResponse, String>\n\
+         \x20   ? \"deterministic fake fetch\"\n\
+         \x20   Result.Ok(HttpResponse(status = 200, body = \"hello\", headers = []))\n\
+         \n\
+         fn fetch() -> Result<HttpResponse, String>\n\
+         \x20   ? \"fetches\"\n\
+         \x20   ! [Http.get]\n\
+         \x20   Http.get(\"https://x.test/y\")\n\
+         \n\
+         verify fetch trace\n\
+         \x20   given stub: Http.get = [fakeFetch]\n\
+         \x20   fetch().trace.contains(Http.get(\"https://x.test/y\")) => true\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "Http.get verify-trace failed end-to-end; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn proof_accepts_complete_independence_mode() {
     let dir = temp_output_dir("aver-proof-complete");
     std::fs::create_dir_all(&dir).expect("create temp dir");
