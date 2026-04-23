@@ -1101,6 +1101,66 @@ fn aver_verify_trace_event_compares_to_full_effectevent_record() {
 }
 
 #[test]
+fn aver_verify_trace_helper_boundary_filter_excludes_nested_emissions() {
+    // Oracle v1: helper-boundary filter — only emissions whose
+    // immediate caller fn_id matches the verified-fn root land in
+    // the trace. Debug prints that come from functions the verified
+    // fn calls internally (helpers) stay ghost — neither recorded
+    // into the trace nor leaked to the terminal.
+    let dir = temp_output_dir("aver-verify-trace-helper-boundary");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn helper(msg: String) -> Unit\n\
+         \x20   ? \"prints from helper\"\n\
+         \x20   ! [Console.print]\n\
+         \x20   Console.print(msg)\n\
+         \n\
+         fn top() -> Int\n\
+         \x20   ? \"direct + delegated print\"\n\
+         \x20   ! [Console.print]\n\
+         \x20   Console.print(\"direct\")\n\
+         \x20   helper(\"via-helper\")\n\
+         \x20   42\n\
+         \n\
+         verify top trace\n\
+         \x20   top().trace.length() => 1\n\
+         \x20   top().trace.contains(Console.print(\"direct\")) => true\n\
+         \x20   top().trace.contains(Console.print(\"via-helper\")) => false\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "helper-boundary filter case failed; {}",
+        format_output(&output)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("via-helper"),
+        "helper Console.print must be suppressed under trace collection, \
+         got leaked via-helper in stdout: {}",
+        stdout
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn proof_accepts_complete_independence_mode() {
     let dir = temp_output_dir("aver-proof-complete");
     std::fs::create_dir_all(&dir).expect("create temp dir");

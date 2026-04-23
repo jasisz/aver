@@ -3110,8 +3110,16 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
         // every classified-effect dispatch during LHS eval. Events are
         // taken (and cleared) before RHS eval so only LHS emissions are
         // visible to subsequent `.trace.*` projections.
+        //
+        // Also set the helper-boundary root fn_id — only direct
+        // emissions by the fn under `verify <fn> trace` contribute.
+        // Emissions from helpers that fn calls are ghost state and
+        // don't clutter `.trace.contains(...)` / `.event(k)` /
+        // `.length()` queries.
         if block.trace {
             machine.start_trace_collection();
+            let root_fn_id = machine.find_fn_id(&block.fn_name);
+            machine.set_trace_root_fn_id(root_fn_id);
         }
 
         let left_result = vm_call_verify_helper(machine, &case_fns.left);
