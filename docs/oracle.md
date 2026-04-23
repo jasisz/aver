@@ -89,6 +89,28 @@ fn().trace.group(N).length()
 
 Indices are 0-based in source order. Runtime / replay-JSON coordinates (group ids starting at 1) stay invisible at this layer.
 
+### Sugar vs plain comparison — the boundary
+
+Two shapes, two jobs:
+
+- **Sugar at effect-call position** — inside `.contains(...)` the argument is elaborated as an event predicate.
+  ```
+  fn().trace.contains(Console.print("rolled 4"))  -- full event literal
+  fn().trace.contains(Console.print)              -- method-only predicate
+  ```
+  Context is unambiguous here — a `.contains(_)` argument can't mean anything else — so elaboration is contextual, not a dual-mode typechecker.
+
+- **Strict match = plain record literal** — everywhere else, comparisons are ordinary Aver.
+  ```
+  fn().trace.event(0) =>
+      Option.Some(EffectEvent(method = "Random.int",
+                              args = [1, 6],
+                              path = ""))
+  ```
+  No magic. User sees exactly what is being compared, `path` included. Destructuring goes through field access (`ev.method` / `ev.args` / `ev.path`) and nested `match`, not through pattern sugar.
+
+Match patterns on `EffectEvent` (`match ev with Console.print(msg) -> …`) are **not** in Oracle v1. They're expressible today via field access; the pattern-position sugar is scheduled for Oracle v1.1 once the VM compiler extensions can be reviewed properly.
+
 ### The `EffectEvent` record
 
 ```
