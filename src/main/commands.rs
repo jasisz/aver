@@ -3782,6 +3782,40 @@ pub(super) fn cmd_proof(
         false,
     );
 
+    // Oracle v1: aver proof only models `?!` in complete mode. If the
+    // project's aver.toml selects cancel or sequential, fail loudly —
+    // proofs emitted under a different runtime mode wouldn't transfer.
+    #[cfg(feature = "runtime")]
+    if let Some(policy) = &ctx.policy {
+        match policy.independence_mode {
+            aver::config::IndependenceMode::Complete => {}
+            aver::config::IndependenceMode::Cancel => {
+                eprintln!(
+                    "{}",
+                    "error: aver.toml has [independence] mode = \"cancel\", but aver proof \
+                     only models `?!` in complete mode. Exported proofs would describe \
+                     complete-mode semantics that do not hold under cancel at runtime. \
+                     Set [independence] mode = \"complete\" in aver.toml for proof export. \
+                     (Cancel-mode proof support is planned for the Relay release.)"
+                        .red()
+                );
+                std::process::exit(1);
+            }
+            aver::config::IndependenceMode::Sequential => {
+                eprintln!(
+                    "{}",
+                    "error: aver.toml has [independence] mode = \"sequential\", but aver proof \
+                     requires complete mode. Sequential execution is a legal schedule under \
+                     complete-mode semantics, but generating proofs under `mode = sequential` \
+                     would emit artifacts that do not describe the runtime policy consistently. \
+                     Set [independence] mode = \"complete\" in aver.toml for proof export."
+                        .red()
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+
     match backend {
         super::cli::ProofBackend::Lean => {
             cmd_proof_lean(file, output_dir, &ctx, verify_mode);
