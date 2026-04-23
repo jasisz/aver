@@ -934,6 +934,59 @@ fn aver_verify_trace_snapshot_stub_is_plain_capability_reader() {
 }
 
 #[test]
+fn aver_verify_trace_env_get_snapshot_with_args() {
+    // Oracle v1: Env.get is a snapshot effect with a String argument.
+    // The stub's runtime signature `String -> Option<String>` matches
+    // what the given-bound alias exposes — no BranchPath / counter
+    // threading since snapshot effects are deterministic and not
+    // branch-indexed.
+    let dir = temp_output_dir("aver-verify-trace-env-get");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn stubEnv(key: String) -> Option<String>\n\
+         \x20   ? \"key-aware env stub\"\n\
+         \x20   match key\n\
+         \x20       \"USER\" -> Option.Some(\"alice\")\n\
+         \x20       _ -> Option.None\n\
+         \n\
+         fn greeting() -> String\n\
+         \x20   ? \"greet\"\n\
+         \x20   ! [Env.get]\n\
+         \x20   match Env.get(\"USER\")\n\
+         \x20       Option.Some(u) -> \"hi {u}\"\n\
+         \x20       Option.None -> \"hi stranger\"\n\
+         \n\
+         verify greeting trace\n\
+         \x20   given env: Env.get = [stubEnv]\n\
+         \x20   greeting().result => \"hi alice\"\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "Env.get snapshot verify failed; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn proof_accepts_complete_independence_mode() {
     let dir = temp_output_dir("aver-proof-complete");
     std::fs::create_dir_all(&dir).expect("create temp dir");
