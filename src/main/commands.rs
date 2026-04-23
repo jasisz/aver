@@ -2764,6 +2764,45 @@ fn apply_trace_projection(
     }
 }
 
+/// Oracle v1: detect a trace-projection LHS shape — `.trace`,
+/// `.trace.length()`, `.trace.event(k)`, `.trace.contains(_)`. Used to
+/// decide whether a failing assertion should be decorated with the
+/// recorded trace events (not meaningful for `.result` or non-trace
+/// assertions).
+fn is_trace_projection_shape(expr: &Spanned<Expr>) -> bool {
+    match &expr.node {
+        Expr::Attr(inner, field) if field == "trace" => {
+            matches!(&inner.node, Expr::FnCall(_, _))
+        }
+        Expr::FnCall(callee, _) => {
+            let Expr::Attr(trace_attr, method) = &callee.node else {
+                return false;
+            };
+            if !matches!(method.as_str(), "length" | "event" | "contains") {
+                return false;
+            }
+            let Expr::Attr(fn_call_box, trace_field) = &trace_attr.node else {
+                return false;
+            };
+            trace_field == "trace" && matches!(&fn_call_box.node, Expr::FnCall(_, _))
+        }
+        _ => false,
+    }
+}
+
+/// Oracle v1: render the trace-events buffer for failure diagnostics.
+/// The suffix is appended to `actual` so a failing
+/// `.trace.contains(Http.get("/x")) => true` shows exactly which
+/// events the LHS emitted, turning the default `actual: false` into
+/// something the user can act on.
+fn format_trace_events_tail(events: &[Value]) -> String {
+    if events.is_empty() {
+        return "  (trace: [] — no effects recorded)".to_string();
+    }
+    let rendered: Vec<String> = events.iter().map(aver_repr).collect();
+    format!("  (trace: [{}])", rendered.join(", "))
+}
+
 /// Oracle v1: build a Trace record wrapping the collected events.
 fn build_trace_record(collected: &[Value]) -> Value {
     Value::Record {
@@ -3091,7 +3130,15 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                 } else {
                     failed += 1;
                     let expected = aver_repr(&right_val);
-                    let actual = aver_repr(&left_val);
+                    let mut actual = aver_repr(&left_val);
+                    // Oracle v1: for trace-projection LHS shapes, append
+                    // the recorded events so a failing
+                    // `.trace.contains(...) => true` (actual: false) is
+                    // debuggable at a glance — the user sees which events
+                    // actually fired.
+                    if block.trace && is_trace_projection_shape(&block.cases[idx].0) {
+                        actual.push_str(&format_trace_events_tail(&lhs_trace_events));
+                    }
                     failures.push((failure_case, expected.clone(), actual.clone()));
                     case_results.push(VerifyCaseResult {
                         outcome: VerifyCaseOutcome::Mismatch { expected, actual },

@@ -652,6 +652,67 @@ fn aver_verify_trace_rejects_generative_effect_without_given_stub() {
 }
 
 #[test]
+fn aver_verify_trace_failure_shows_recorded_events() {
+    // Oracle v1: when a trace-projection assertion fails (e.g.
+    // `.trace.contains(X) => true` but X wasn't emitted), the failure
+    // message must append the actually-recorded events so the user can
+    // see which events fired and fix their assertion.
+    let dir = temp_output_dir("aver-verify-trace-failure-tail");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn hello() -> Int\n\
+         \x20   ? \"roll + print\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   x = Random.int(1, 6)\n\
+         \x20   Console.print(\"different message\")\n\
+         \x20   x\n\
+         \n\
+         verify hello trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   hello().trace.contains(Console.print(\"rolled 4\")) => true\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        !output.status.success(),
+        "expected failure, got success; {}",
+        format_output(&output)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("(trace:"),
+        "expected failure output to include recorded trace tail, got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("different message"),
+        "expected failure output to list the actual emitted event, got: {}",
+        stdout
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn proof_accepts_complete_independence_mode() {
     let dir = temp_output_dir("aver-proof-complete");
     std::fs::create_dir_all(&dir).expect("create temp dir");
