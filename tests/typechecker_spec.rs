@@ -2194,6 +2194,83 @@ fn trace_law_on_recursive_pure_function_is_accepted() {
 }
 
 // ---------------------------------------------------------------------------
+// Oracle v1 — rejection for unclassified (stateful / interactive) effects
+// ---------------------------------------------------------------------------
+
+#[test]
+fn verify_law_on_stateful_disk_write_is_rejected() {
+    let src = concat!(
+        "fn saveLog(msg: String) -> Result<Unit, String>\n",
+        "    ! [Disk.writeText]\n",
+        "    Disk.writeText(\"/tmp/log\", msg)\n",
+        "verify saveLog law saveLogSpec\n",
+        "    given msg: String = [\"hi\"]\n",
+        "    saveLog(msg) => saveLog(msg)\n",
+    );
+    assert_error_containing(src, "outside Oracle v1's proof subset");
+    assert_error_containing(src, "Disk.writeText");
+}
+
+#[test]
+fn verify_law_on_interactive_tcp_is_rejected() {
+    let src = concat!(
+        "fn ping(h: String) -> Result<Unit, String>\n",
+        "    ! [Tcp.ping]\n",
+        "    Tcp.ping(h, 80)\n",
+        "verify ping law pingSpec\n",
+        "    given host: String = [\"x\"]\n",
+        "    ping(host) => ping(host)\n",
+    );
+    assert_error_containing(src, "outside Oracle v1's proof subset");
+    assert_error_containing(src, "Tcp.ping");
+}
+
+#[test]
+fn verify_law_on_classified_effects_is_accepted() {
+    // Random.int and Console.print are both in Oracle v1 — law should
+    // type-check cleanly (no "outside proof subset" error).
+    let src = concat!(
+        "fn roll() -> Int\n",
+        "    ! [Random.int, Console.print]\n",
+        "    n = Random.int(1, 6)\n",
+        "    Console.print(\"rolled\")\n",
+        "    n\n",
+        "verify roll law rollSpec\n",
+        "    given rnd: Random.int = [stubRnd]\n",
+        "    roll() => stubRnd(BranchPath.root(), 0, 1, 6)\n",
+        "fn stubRnd(path: BranchPath, k: Int, min: Int, max: Int) -> Int\n",
+        "    min\n",
+    );
+    let errs = errors(src);
+    assert!(
+        !errs.iter().any(|e| e.contains("outside Oracle v1's proof subset")),
+        "classified effects should not trigger the rejection; got: {:?}",
+        errs
+    );
+}
+
+#[test]
+fn verify_cases_on_stateful_effect_is_not_rejected_as_proof_subset() {
+    // Cases-form (`verify fn` without `law`) is unit-test flavor, not
+    // proof-subject — don't emit the "outside proof subset" diagnostic
+    // there. This test only checks that *this specific* diagnostic is
+    // absent; the block itself may have unrelated errors.
+    let src = concat!(
+        "fn saveLog(msg: String) -> Result<Unit, String>\n",
+        "    ! [Disk.writeText]\n",
+        "    Disk.writeText(\"/tmp/log\", msg)\n",
+        "verify saveLog\n",
+        "    saveLog(\"hi\") => saveLog(\"hi\")\n",
+    );
+    let errs = errors(src);
+    assert!(
+        !errs.iter().any(|e| e.contains("outside Oracle v1's proof subset")),
+        "cases-form verify should not trigger the proof-subset rejection; got: {:?}",
+        errs
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Terminal service effect & signature checking
 // ---------------------------------------------------------------------------
 
