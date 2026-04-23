@@ -139,7 +139,8 @@ Rules:
 - `verify` checks executable examples only
 - law verify expands cartesian product of `given` domains (capped at 10,000 cases)
 - `aver check` expects pure, non-trivial, non-`main` functions to carry a `verify` block
-- effectful flows should be tested through record/replay, not `verify`
+- classified effectful flows can use `verify <fn> trace` with explicit `given` stubs
+- unclassified ambient state, persistent protocols, terminal modes, and server callbacks should use record/replay
 
 ### Decision blocks
 

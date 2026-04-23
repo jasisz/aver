@@ -82,7 +82,7 @@ impl FnDetail {
         }
         if is_effectful {
             if !has_description {
-                missing.push("effectful — test via replay");
+                missing.push("effectful — verify with Oracle or replay");
             }
         } else if verify_cases == 0 {
             missing.push("no verify");

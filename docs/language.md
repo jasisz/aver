@@ -6,6 +6,8 @@ For constructor-specific rules, see [constructors.md](constructors.md).
 
 For namespaces, services, and standard library APIs, see [services.md](services.md).
 
+For trace-aware verification of classified effects, see [oracle.md](oracle.md).
+
 ## Types
 
 Primitive: `Int`, `Float`, `String`, `Bool`, `Unit`
@@ -179,7 +181,28 @@ This is an intentional style choice. In Aver, the author should usually write a 
 
 `verify` is deterministic, not random. Regular cases run exactly as written. `verify ... law ...` expands the cartesian product of explicit `given` domains, capped at `10_000` cases.
 
-`aver check` expects pure, non-trivial, non-`main` functions to carry a colocated `verify` block. Effectful flows should be tested through record/replay rather than `verify`.
+Trace-aware verify blocks cover classified effectful functions:
+
+```aver
+fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int
+    ? "Deterministic Random.int stub."
+    4
+
+fn pickOne() -> Int
+    ? "Rolls once."
+    ! [Random.int]
+    Random.int(1, 6)
+
+verify pickOne trace
+    given rnd: Random.int = [fairDie]
+    pickOne().result => rnd(BranchPath.Root, 0, 1, 6)
+```
+
+Inside `verify <fn> trace`, `.result` is the verified call's return value and `.trace` is the collected trace of classified effect emissions. `given` binds an effect method such as `Random.int` or `Http.get` to one or more Aver stub functions; multiple stubs expand into concrete cases, just like law domains.
+
+Effects outside Oracle's classified set still belong in record/replay, especially ambient state, persistent protocol sessions, terminal modes, and server callbacks. See [oracle.md](oracle.md) for the supported effect set, stub signatures, and trace API.
+
+`aver check` expects pure, non-trivial, non-`main` functions to carry a colocated `verify` block.
 
 ## Decision blocks
 

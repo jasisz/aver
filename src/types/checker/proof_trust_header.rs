@@ -2,8 +2,8 @@
 //!
 //! Each `.dfy` / `.lean` file emitted by `aver proof` for effectful code
 //! gets a short comment block at the top that tells the reader exactly
-//! which claims the proof relies on. The plan (`.claude/plans/oracle.md`)
-//! prescribes the content; this module produces it.
+//! which claims the proof relies on. This module is the source of truth for
+//! that generated text.
 //!
 //! Keeping the generator here (not in the Dafny / Lean backends) means:
 //!
@@ -30,6 +30,11 @@ pub fn generate() -> String {
     push_effect_row(&mut out, "Env.get", "snapshot: stable return within run");
     push_effect_row(
         &mut out,
+        "Console.readLine",
+        "generative: oracle; interactive line input",
+    );
+    push_effect_row(
+        &mut out,
         "Random.int, Random.float",
         "generative: oracle indexed by (BranchPath, Int, args...); fresh per call",
     );
@@ -40,7 +45,7 @@ pub fn generate() -> String {
     );
     push_effect_row(
         &mut out,
-        "Disk.readText",
+        "Disk.readText, Disk.exists, Disk.listDir",
         "generative: oracle; live FS, value may change between calls",
     );
     push_effect_row(
@@ -55,8 +60,43 @@ pub fn generate() -> String {
     );
     push_effect_row(
         &mut out,
+        "Disk.writeText, Disk.appendText,",
+        "generative + output: operation in trace, result from oracle",
+    );
+    push_effect_row(
+        &mut out,
+        "Disk.delete, Disk.deleteDir, Disk.makeDir",
+        "generative + output: no persistent FS-state claim",
+    );
+    push_effect_row(
+        &mut out,
+        "Tcp.send, Tcp.ping",
+        "generative + output: one-shot request/response only",
+    );
+    push_effect_row(
+        &mut out,
         "Console.print, Console.error, Console.warn",
         "output: per-branch trace segment appended per call",
+    );
+    push_effect_row(
+        &mut out,
+        "Time.sleep",
+        "output: duration emitted to trace; no scheduling/timing claim",
+    );
+    push_effect_row(
+        &mut out,
+        "Terminal.clear, Terminal.moveTo, Terminal.print",
+        "output: terminal drawing emitted to trace",
+    );
+    push_effect_row(
+        &mut out,
+        "Terminal.hideCursor, Terminal.showCursor, Terminal.flush",
+        "output: terminal drawing/control emitted to trace",
+    );
+    push_effect_row(
+        &mut out,
+        "Terminal.readKey",
+        "generative: oracle; key input",
     );
     out.push('\n');
 
@@ -77,7 +117,7 @@ pub fn generate() -> String {
     out.push_str("  The normalization claim above is the conjunction of three\n");
     out.push_str("  lemmas the Aver compiler enforces statically. Oracle v1 ships\n");
     out.push_str("  this as a written argument trusted at the compiler level;\n");
-    out.push_str("  mechanization (à la CompCert / Iris) is scheduled post-v1.\n");
+    out.push_str("  it is not machine-checked inside this exported artifact.\n");
     out.push('\n');
     out.push_str("  Lemma 1 — Branch locality.\n");
     out.push_str("    Every effect emission inside a `!`/`?!` branch is attributed\n");
@@ -125,13 +165,13 @@ pub fn generate() -> String {
 
     out.push_str("Effect classification (closed for Oracle v1):\n");
     out.push_str("  Only the classified built-in effects listed above are in the\n");
-    out.push_str("  proof subset. Other built-in effects (stateful or interactive:\n");
-    out.push_str("  Env.set, Disk.writeText / .appendText / .delete / .deleteDir /\n");
-    out.push_str("  .makeDir / .exists / .listDir, Time.sleep, Console.readLine,\n");
-    out.push_str("  Tcp.*, HttpServer.*, Terminal.*) are rejected by `aver proof`\n");
-    out.push_str("  and remain replay-only for Oracle v1. Aver has no user-defined\n");
-    out.push_str("  effects in the language today; adding user-definable effects\n");
-    out.push_str("  plus their classification is planned for the Relay release.\n");
+    out.push_str("  proof subset. Other built-in effects are rejected by `aver proof`:\n");
+    out.push_str("  ambient process state (Env.set), persistent TCP sessions\n");
+    out.push_str("  (Tcp.connect / .writeLine / .readLine / .close), server\n");
+    out.push_str("  lifecycle callbacks (HttpServer.*), and terminal modal state\n");
+    out.push_str("  (Terminal.enableRawMode / .disableRawMode / .setColor /\n");
+    out.push_str("  .resetColor / .size). These remain replay-only. Oracle covers\n");
+    out.push_str("  only the fixed built-in effect set listed above.\n");
     out.push('\n');
 
     out.push_str("Backend independence:\n");
@@ -152,15 +192,14 @@ pub fn generate() -> String {
     out.push_str("  Trace-aware laws for effectful recursive functions are REJECTED in\n");
     out.push_str("  Oracle v1 — the caller_fn filter for fn.trace cannot distinguish\n");
     out.push_str("  the outermost invocation from recursive self-calls without\n");
-    out.push_str("  call-instance metadata (deferred). Result-only laws for such\n");
+    out.push_str("  call-instance metadata. Result-only laws for such\n");
     out.push_str("  functions remain fully supported.\n");
     out.push('\n');
 
     out.push_str("Out of scope in this export:\n");
     out.push_str("  - Stateful effects (Store, DB, shared mutable state)\n");
     out.push_str("  - Higher-order effectful callbacks\n");
-    out.push_str("  - Interactive protocols (request-response, stdin/stdout dialogue)\n");
-    out.push_str("  - User-defined effects (Aver has none; language feature itself is deferred)\n");
+    out.push_str("  - Long-running protocols and terminal modal state\n");
     out.push_str("  - ?! cancel mode\n");
     out.push_str("  - Trace-aware laws on recursive effectful functions (result-only OK)\n");
     out
@@ -219,16 +258,34 @@ mod tests {
         for namespace in &[
             "Args.get",
             "Env.get",
+            "Console.readLine",
             "Random.int",
             "Random.float",
             "Time.now",
             "Time.unixMs",
+            "Time.sleep",
             "Disk.readText",
+            "Disk.exists",
+            "Disk.listDir",
+            "Disk.writeText",
+            "Disk.appendText",
+            "Disk.delete",
+            "Disk.deleteDir",
+            "Disk.makeDir",
             "Http.get",
             "Http.post",
+            "Tcp.send",
+            "Tcp.ping",
             "Console.print",
             "Console.error",
             "Console.warn",
+            "Terminal.clear",
+            "Terminal.moveTo",
+            "Terminal.print",
+            "Terminal.readKey",
+            "Terminal.hideCursor",
+            "Terminal.showCursor",
+            "Terminal.flush",
         ] {
             assert!(
                 header.contains(namespace),
@@ -261,8 +318,8 @@ mod tests {
         // The lemmas point at the concrete structural primitives.
         assert!(header.contains("group_id, branch_idx"));
         assert!(header.contains("group_id, branch_path, effect_occurrence"));
-        // Mechanization is called out as future work, not missing.
-        assert!(header.contains("mechanization"));
+        // The compiler invariant is called out as an explicit trust boundary.
+        assert!(header.contains("not machine-checked"));
     }
 
     #[test]
@@ -293,8 +350,7 @@ mod tests {
     fn header_mentions_classification_table_is_closed() {
         let header = generate();
         assert!(header.contains("closed for Oracle v1"));
-        assert!(header.contains("Relay release"));
-        assert!(header.contains("Aver has no user-defined"));
+        assert!(header.contains("fixed built-in"));
     }
 
     #[test]

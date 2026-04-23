@@ -303,13 +303,14 @@ impl TypeChecker {
                         vb.line,
                         format!(
                             "{kind_label} '{fn_name}' uses effect(s) outside Oracle v1's proof subset: \
-                             {effects}. These effects are stateful, interactive, or higher-order and \
-                             cannot be lifted to pure form. Use 'aver record' / 'aver replay' for \
-                             deterministic reproduction; stateful proof support is planned for the \
-                             Ledger release, interactive / higher-order-callback support for Relay. \
-                             Oracle v1's classified effects: Args.get, Env.get, Random.int, \
-                             Random.float, Time.now, Time.unixMs, Disk.readText, Http.get/.head/.delete, \
-                             Console.print/.error/.warn.",
+                             {effects}. These effects are ambient state, protocol/session state, modal \
+                             terminal state, or higher-order callbacks and cannot be lifted to pure form. \
+                             Use 'aver record' / 'aver replay' for deterministic reproduction. \
+                             Oracle v1's classified effects: Args.get, Env.get, Console.readLine, \
+                             Random.int/.float, Time.now/.unixMs/.sleep, Disk.readText/.exists/.listDir/\
+                             .writeText/.appendText/.delete/.deleteDir/.makeDir, Http.get/.head/.delete/\
+                             .post/.put/.patch, Tcp.send/.ping, Console.print/.error/.warn, \
+                             Terminal.clear/.moveTo/.print/.readKey/.hideCursor/.showCursor/.flush.",
                             kind_label = kind_label,
                             fn_name = vb.fn_name,
                             effects = unclassified_effects.join(", "),

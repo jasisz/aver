@@ -2,6 +2,15 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## Unreleased
+
+### Added
+- **Oracle trace verification docs and example** — `docs/oracle.md` now presents the practical workflow for `verify <fn> trace`, explicit `given` stubs, `.result` / `.trace`, and classified effect proof export. Added `examples/formal/oracle_trace.av` as the short runnable example.
+- **Broader Oracle effect classification** — Oracle now covers CLI input (`Console.readLine`), disk operation/result effects, one-shot TCP (`Tcp.send` / `Tcp.ping`), `Time.sleep`, and terminal trace/input calls that do not depend on modal terminal state.
+
+### Changed
+- **Effectful verification story** — README, language guide, and proof-backend docs now distinguish Oracle verification for classified effects from record/replay for ambient state, persistent protocols, terminal modes, and server callbacks.
+
 ## 0.10.1 (2026-04-23)
 
 ### Added

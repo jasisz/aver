@@ -480,7 +480,7 @@ fn aver_verify_trace_rejects_cases_form_on_unclassified_effect() {
     // effects aren't in the classified proof subset. Without the trace
     // keyword, cases-form is a plain runtime check and stays permissive;
     // but trace-aware assertions can't be lifted or emulated for
-    // stateful / interactive effects, so the user gets a clear
+    // ambient / protocol / modal effects, so the user gets a clear
     // diagnostic up front.
     let dir = temp_output_dir("aver-verify-trace-reject-unclassified");
     std::fs::create_dir_all(&dir).expect("create temp dir");
@@ -821,6 +821,72 @@ fn aver_verify_trace_http_get_generative_output_end_to_end() {
     assert!(
         output.status.success(),
         "Http.get verify-trace failed end-to-end; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_broader_oracle_effects_end_to_end() {
+    // Oracle v1 also covers line input, disk operation/result effects,
+    // output-only sleep, and one-shot TCP. This keeps the expanded
+    // classification wired through given stubs, trace event literals,
+    // and Result propagation.
+    let dir = temp_output_dir("aver-verify-trace-broader-effects");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fakeLine(path: BranchPath, n: Int) -> Result<String, String>\n\
+         \x20   ? \"deterministic console input\"\n\
+         \x20   Result.Ok(\"deploy\")\n\
+         \n\
+         fn fakeWrite(path: BranchPath, n: Int, file: String, content: String) -> Result<Unit, String>\n\
+         \x20   ? \"deterministic write\"\n\
+         \x20   Result.Ok(Unit)\n\
+         \n\
+         fn fakeSend(path: BranchPath, n: Int, host: String, port: Int, message: String) -> Result<String, String>\n\
+         \x20   ? \"deterministic one-shot tcp\"\n\
+         \x20   Result.Ok(\"ACK\")\n\
+         \n\
+         fn runAll() -> Result<String, String>\n\
+         \x20   ? \"uses broader classified effects\"\n\
+         \x20   ! [Console.readLine, Disk.writeText, Time.sleep, Tcp.send]\n\
+         \x20   cmd = Console.readLine()?\n\
+         \x20   _ = Disk.writeText(\"state.txt\", cmd)?\n\
+         \x20   Time.sleep(1)\n\
+         \x20   ack = Tcp.send(\"127.0.0.1\", 9, cmd)?\n\
+         \x20   Result.Ok(ack)\n\
+         \n\
+         verify runAll trace\n\
+         \x20   given line: Console.readLine = [fakeLine]\n\
+         \x20   given write: Disk.writeText = [fakeWrite]\n\
+         \x20   given send: Tcp.send = [fakeSend]\n\
+         \x20   runAll().result => Result.Ok(\"ACK\")\n\
+         \x20   runAll().trace.contains(Console.readLine()) => true\n\
+         \x20   runAll().trace.contains(Disk.writeText(\"state.txt\", \"deploy\")) => true\n\
+         \x20   runAll().trace.contains(Time.sleep(1)) => true\n\
+         \x20   runAll().trace.contains(Tcp.send(\"127.0.0.1\", 9, \"deploy\")) => true\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "broader Oracle effects verify-trace failed end-to-end; {}",
         format_output(&output)
     );
     let _ = std::fs::remove_dir_all(&dir);

@@ -4,6 +4,7 @@ Lean is the proof-export backend for Aver.
 
 Use it when you want:
 - Lean 4 artifacts for pure Aver code
+- proof obligations for classified effectful code via Oracle lifting
 - executable proof obligations from colocated `verify`
 - universal theorems for supported `verify law` shapes, with explicit
   sampled/domain fallback for the rest
@@ -34,8 +35,14 @@ out/
 ## Scope
 
 - exports pure core logic: types, pure functions, and decisions
-- skips effectful functions and `main`
+- emits lifted pure forms for classified effectful functions used by Oracle laws
+- skips unclassified effectful functions and `main`
 - turns colocated `verify` / `verify law` intent into Lean proof artifacts
+
+Oracle-lifted laws make effects explicit as theorem parameters. For example,
+`given rnd: Random.int = [fairDie]` becomes a proof-side oracle argument with
+the derived `Random.int` oracle signature. See [oracle.md](oracle.md) for the
+classified effect set, stub signatures, and trace-aware verify syntax.
 
 ## Verify emission
 

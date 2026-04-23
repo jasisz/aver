@@ -4408,10 +4408,9 @@ pub(super) fn cmd_proof(
                 eprintln!(
                     "{}",
                     "error: aver.toml has [independence] mode = \"cancel\", but aver proof \
-                     only models `?!` in complete mode. Exported proofs would describe \
-                     complete-mode semantics that do not hold under cancel at runtime. \
-                     Set [independence] mode = \"complete\" in aver.toml for proof export. \
-                     (Cancel-mode proof support is planned for the Relay release.)"
+	                     only models `?!` in complete mode. Exported proofs would describe \
+	                     complete-mode semantics that do not hold under cancel at runtime. \
+	                     Set [independence] mode = \"complete\" in aver.toml for proof export."
                         .red()
                 );
                 std::process::exit(1);
