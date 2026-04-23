@@ -2563,13 +2563,15 @@ fn build_verify_vm_plans(
             let prefix = format!("__verify_{}_{}_{}", block.fn_name, block_idx, case_idx);
             let left_name = format!("{}_left", prefix);
             let right_name = format!("{}_right", prefix);
-            // Oracle v1: in trace-aware blocks, `fn().result` projects to
-            // the fn's return value — strip the `.result` attr so the
-            // helper evaluates the raw fn call. Other `.trace.*`
-            // projections are handled by a dedicated path that queries
-            // the collected trace-events buffer (follow-up commit).
+            // Oracle v1: in trace-aware blocks, LHS trace-projection
+            // shapes are rewritten to the underlying fn() call so the
+            // generated helper just runs the fn (which populates the
+            // trace-events buffer via VM hooks). The projection value
+            // (contains / event / length / result) is then computed from
+            // the collected events in `apply_trace_projection` after
+            // helper eval, replacing the helper's raw return.
             let left_expr = if block.trace {
-                strip_result_projection(left_expr)
+                strip_trace_projection(left_expr)
             } else {
                 left_expr
             };
@@ -2616,18 +2618,223 @@ fn build_verify_vm_plans(
     plans
 }
 
-/// Oracle v1: `fn(args).result` in a verify-trace LHS projects to
-/// `fn(args)` — the helper built for this case should evaluate the raw
-/// effectful call, and the standard value-comparison path then compares
-/// the result to the RHS. No-op for any other expression shape.
-fn strip_result_projection(expr: Spanned<Expr>) -> Spanned<Expr> {
-    if let Expr::Attr(inner, field) = &expr.node
-        && field == "result"
-        && matches!(&inner.node, Expr::FnCall(_, _))
-    {
-        return (**inner).clone();
+/// Oracle v1: strip a trace projection from a verify-trace LHS,
+/// returning the underlying `fn(args)` call that should be evaluated to
+/// populate the trace-events buffer. Handles:
+///
+/// - `fn(args).result`
+/// - `fn(args).trace.contains(_)`
+/// - `fn(args).trace.event(_)`
+/// - `fn(args).trace.length()`
+/// - `fn(args).trace`
+///
+/// Other expression shapes pass through unchanged.
+fn strip_trace_projection(expr: Spanned<Expr>) -> Spanned<Expr> {
+    if let Some(fc) = find_trace_underlying_fn_call(&expr.node) {
+        return fc;
     }
     expr
+}
+
+fn find_trace_underlying_fn_call(node: &Expr) -> Option<Spanned<Expr>> {
+    match node {
+        // fn(args).result
+        Expr::Attr(inner, field) if field == "result" => {
+            if matches!(&inner.node, Expr::FnCall(_, _)) {
+                Some((**inner).clone())
+            } else {
+                None
+            }
+        }
+        // fn(args).trace
+        Expr::Attr(inner, field) if field == "trace" => {
+            if matches!(&inner.node, Expr::FnCall(_, _)) {
+                Some((**inner).clone())
+            } else {
+                None
+            }
+        }
+        // fn(args).trace.contains(_) / .event(_) / .length()
+        Expr::FnCall(callee, _) => {
+            if let Expr::Attr(trace_attr, _) = &callee.node
+                && let Expr::Attr(fn_call_box, trace_field) = &trace_attr.node
+                && trace_field == "trace"
+                && matches!(&fn_call_box.node, Expr::FnCall(_, _))
+            {
+                return Some((**fn_call_box).clone());
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Oracle v1: replace the helper's raw return with the projected value
+/// from the LHS's trace-API shape, if applicable.
+///
+/// - `.result` stays as-is (helper already evaluates the fn_call; its
+///   return IS the result).
+/// - `.trace.length()` → `Int` (events count).
+/// - `.trace.contains(event_lit)` → `Bool` (structural match).
+/// - `.trace.event(k)` → `Option<EffectEvent>`.
+/// - `.trace` → Trace record (wraps events list).
+///
+/// `original_lhs` is the un-stripped expression used to detect shape.
+/// `collected` is the list of EffectEvent records from the trace buffer.
+fn apply_trace_projection(
+    helper_result: Result<VmVerifyEval, String>,
+    original_lhs: &Spanned<Expr>,
+    collected: &[Value],
+    trace_mode: bool,
+) -> Result<VmVerifyEval, String> {
+    if !trace_mode {
+        return helper_result;
+    }
+    let helper_result = helper_result?;
+    // Keep raw return for .result / default path.
+    if matches!(
+        &original_lhs.node,
+        Expr::Attr(_, f) if f == "result"
+    ) {
+        return Ok(helper_result);
+    }
+    match &original_lhs.node {
+        // fn(args).trace — return Trace record
+        Expr::Attr(inner, field)
+            if field == "trace" && matches!(&inner.node, Expr::FnCall(_, _)) =>
+        {
+            Ok(VmVerifyEval::Value(build_trace_record(collected)))
+        }
+        // fn(args).trace.contains(_) / .event(_) / .length()
+        Expr::FnCall(callee, args) => {
+            let Expr::Attr(trace_attr, method) = &callee.node else {
+                return Ok(helper_result);
+            };
+            let Expr::Attr(fn_call_box, trace_field) = &trace_attr.node else {
+                return Ok(helper_result);
+            };
+            if trace_field != "trace" || !matches!(&fn_call_box.node, Expr::FnCall(_, _)) {
+                return Ok(helper_result);
+            }
+            match method.as_str() {
+                "length" => Ok(VmVerifyEval::Value(Value::Int(collected.len() as i64))),
+                "event" => {
+                    if args.len() != 1 {
+                        return Err(format!("Trace.event(k) expects 1 arg, got {}", args.len()));
+                    }
+                    let k = match &args[0].node {
+                        Expr::Literal(aver::ast::Literal::Int(i)) if *i >= 0 => *i as usize,
+                        _ => {
+                            return Err(
+                                "Trace.event(k) requires a literal non-negative Int for v0"
+                                    .to_string(),
+                            );
+                        }
+                    };
+                    let v = match collected.get(k) {
+                        Some(ev) => Value::Some(Box::new(ev.clone())),
+                        None => Value::None,
+                    };
+                    Ok(VmVerifyEval::Value(v))
+                }
+                "contains" => {
+                    if args.len() != 1 {
+                        return Err(format!(
+                            "Trace.contains(x) expects 1 arg, got {}",
+                            args.len()
+                        ));
+                    }
+                    let expected = match expr_to_effect_event(&args[0]) {
+                        Some(ev) => ev,
+                        None => {
+                            return Err(
+                                "Trace.contains(x): argument must be an effect-method call like \
+                                 Console.print(\"...\") that elaborates to an event literal"
+                                    .to_string(),
+                            );
+                        }
+                    };
+                    let hit = collected.iter().any(|ev| ev == &expected);
+                    Ok(VmVerifyEval::Value(Value::Bool(hit)))
+                }
+                _ => Ok(helper_result),
+            }
+        }
+        _ => Ok(helper_result),
+    }
+}
+
+/// Oracle v1: build a Trace record wrapping the collected events.
+fn build_trace_record(collected: &[Value]) -> Value {
+    Value::Record {
+        type_name: aver::types::trace::TYPE_NAME.to_string(),
+        fields: vec![(
+            aver::types::trace::FIELD_EVENTS.to_string(),
+            aver::value::list_from_vec(collected.to_vec()),
+        )]
+        .into(),
+    }
+}
+
+/// Oracle v1: treat an effect-method call in Trace.contains-argument
+/// position as a structural event literal. `Console.print("rolled 4")`
+/// becomes `EffectEvent{method: "Console.print", args: ["rolled 4"]}`.
+/// Currently supports literal-arg calls only (string, int, float, bool,
+/// interpolated strings with literal parts) — richer arg shapes follow
+/// when event construction has its own elaboration pass.
+fn expr_to_effect_event(expr: &Spanned<Expr>) -> Option<Value> {
+    let Expr::FnCall(callee, args) = &expr.node else {
+        return None;
+    };
+    let Expr::Attr(ns, method) = &callee.node else {
+        return None;
+    };
+    let Expr::Ident(ns_name) = &ns.node else {
+        return None;
+    };
+    let full_name = format!("{}.{}", ns_name, method);
+    let arg_vals: Vec<Value> = args.iter().filter_map(literal_expr_to_value).collect();
+    if arg_vals.len() != args.len() {
+        return None;
+    }
+    Some(Value::Record {
+        type_name: aver::types::effect_event::TYPE_NAME.to_string(),
+        fields: vec![
+            (
+                aver::types::effect_event::FIELD_METHOD.to_string(),
+                Value::Str(full_name),
+            ),
+            (
+                aver::types::effect_event::FIELD_ARGS.to_string(),
+                aver::value::list_from_vec(arg_vals),
+            ),
+        ]
+        .into(),
+    })
+}
+
+fn literal_expr_to_value(expr: &Spanned<Expr>) -> Option<Value> {
+    match &expr.node {
+        Expr::Literal(aver::ast::Literal::Int(i)) => Some(Value::Int(*i)),
+        Expr::Literal(aver::ast::Literal::Float(f)) => Some(Value::Float(*f)),
+        Expr::Literal(aver::ast::Literal::Str(s)) => Some(Value::Str(s.clone())),
+        Expr::Literal(aver::ast::Literal::Bool(b)) => Some(Value::Bool(*b)),
+        Expr::Literal(aver::ast::Literal::Unit) => Some(Value::Unit),
+        Expr::InterpolatedStr(parts) => {
+            // Only supports fully-literal interpolations (no dynamic
+            // parts) in v0. Richer shapes need verify-context evaluation
+            // of the parts.
+            let mut s = String::new();
+            for part in parts {
+                match part {
+                    aver::ast::StrPart::Literal(lit) => s.push_str(lit),
+                    aver::ast::StrPart::Parsed(_) => return None,
+                }
+            }
+            Some(Value::Str(s))
+        }
+        _ => None,
+    }
 }
 
 fn vm_call_verify_helper(machine: &mut vm::VM, fn_name: &str) -> Result<VmVerifyEval, String> {
@@ -2846,11 +3053,22 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
         }
 
         let left_result = vm_call_verify_helper(machine, &case_fns.left);
-        let _lhs_trace_events: Vec<Value> = if block.trace {
+        let lhs_trace_events: Vec<Value> = if block.trace {
             machine.take_trace_events()
         } else {
             Vec::new()
         };
+
+        // Oracle v1: if the LHS was a trace-contents projection
+        // (`fn.trace.contains(...)` / `.event(k)` / `.length()`), the
+        // helper's returned value is a sentinel — compute the real
+        // projection value here from the collected events.
+        let left_result = apply_trace_projection(
+            left_result,
+            &block.cases[idx].0,
+            &lhs_trace_events,
+            block.trace,
+        );
 
         let right_result = vm_call_verify_helper(machine, &case_fns.right);
 
