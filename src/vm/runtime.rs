@@ -37,6 +37,18 @@ pub(super) struct VmRuntime {
     /// reset when stubs are installed or cleared. Empty map ⇒ no hook.
     pub(super) oracle_stubs: std::collections::HashMap<String, u32>,
     pub(super) oracle_counter: u32,
+    /// Oracle v1: during a verify-trace case, the VM collects every
+    /// effect emission the LHS impl makes — effect method name + argument
+    /// snapshot as a JSON-ish value list. The verify runner reads this
+    /// after LHS eval and wraps it into a `Trace` record for the
+    /// `.trace.contains(...)` / `.trace.event(k)` / `.trace.length()`
+    /// projections. Empty when not in verify-trace mode.
+    pub(super) collected_trace_events: Vec<crate::value::Value>,
+    /// When true, every dispatched effect is recorded into
+    /// `collected_trace_events` regardless of whether an oracle stub
+    /// handled it. The verify runner flips this on before LHS eval and
+    /// off after RHS eval, so only LHS emissions land in the trace.
+    pub(super) trace_collecting: bool,
 }
 
 impl Default for VmRuntime {
@@ -55,7 +67,43 @@ impl VmRuntime {
             runtime_policy: None,
             oracle_stubs: std::collections::HashMap::new(),
             oracle_counter: 0,
+            collected_trace_events: Vec::new(),
+            trace_collecting: false,
         }
+    }
+
+    pub(super) fn start_trace_collection(&mut self) {
+        self.collected_trace_events.clear();
+        self.trace_collecting = true;
+    }
+
+    pub(super) fn stop_trace_collection(&mut self) {
+        self.trace_collecting = false;
+    }
+
+    pub(super) fn take_trace_events(&mut self) -> Vec<crate::value::Value> {
+        std::mem::take(&mut self.collected_trace_events)
+    }
+
+    pub(super) fn record_trace_event(&mut self, effect_name: &str, args: &[crate::value::Value]) {
+        if !self.trace_collecting {
+            return;
+        }
+        let event = crate::value::Value::Record {
+            type_name: crate::types::effect_event::TYPE_NAME.to_string(),
+            fields: vec![
+                (
+                    crate::types::effect_event::FIELD_METHOD.to_string(),
+                    crate::value::Value::Str(effect_name.to_string()),
+                ),
+                (
+                    crate::types::effect_event::FIELD_ARGS.to_string(),
+                    crate::value::list_from_vec(args.to_vec()),
+                ),
+            ]
+            .into(),
+        };
+        self.collected_trace_events.push(event);
     }
 
     /// Install the oracle-stub map for the current scope (typically a
@@ -272,6 +320,18 @@ impl VmRuntime {
             .map(|info| info.required_effects.as_slice())
             .unwrap_or(&[]);
         let is_effectful = !required_effects.is_empty();
+        // Oracle v1: when verify-trace collection is active, record every
+        // classified effect dispatched by the LHS impl (pre-invocation
+        // snapshot of args) so `.trace.contains(...)` / `.trace.event(k)`
+        // can query them after LHS returns.
+        if self.trace_collecting
+            && is_effectful
+            && crate::types::checker::effect_classification::is_classified(builtin_name)
+        {
+            let arg_vals: Vec<crate::value::Value> =
+                args.iter().map(|a| a.to_value(arena)).collect();
+            self.record_trace_event(builtin_name, &arg_vals);
+        }
         match (is_effectful, self.execution_mode()) {
             (_, VmExecutionMode::Normal) | (false, _) => builtin
                 .invoke_nv(args, arena, &self.cli_args, self.silent_console)

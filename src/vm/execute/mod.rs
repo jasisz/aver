@@ -134,6 +134,27 @@ impl VM {
         self.code.find(name)
     }
 
+    /// Oracle v1: start collecting classified-effect emissions into a
+    /// per-case trace buffer. Call before evaluating a verify-trace
+    /// case's LHS; pair with `take_trace_events` after.
+    pub fn start_trace_collection(&mut self) {
+        self.runtime.start_trace_collection();
+    }
+
+    /// Oracle v1: stop collection without consuming the buffer.
+    pub fn stop_trace_collection(&mut self) {
+        self.runtime.stop_trace_collection();
+    }
+
+    /// Oracle v1: take the collected trace events, stopping collection
+    /// and clearing the buffer. The returned list is what
+    /// `fn.trace.contains(...)` / `.event(k)` / `.length()` operate on.
+    pub fn take_trace_events(&mut self) -> Vec<crate::value::Value> {
+        let events = self.runtime.take_trace_events();
+        self.runtime.stop_trace_collection();
+        events
+    }
+
     pub fn set_cancelled(&mut self, flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {
         self.cancelled = Some(flag);
     }
