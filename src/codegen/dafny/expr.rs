@@ -160,6 +160,15 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             format!("[{}]", items.join(", "))
         }
         Expr::Tuple(elems) | Expr::IndependentProduct(elems, _) => {
+            // Oracle v1: plain `!` lifts to a Dafny tuple — schedule
+            // invariance is a compiler-level claim, no extra machinery at
+            // the expression site. `?!` also passes through the tuple form
+            // here (typechecker models `?!` as the Ok-short-circuit, so
+            // body-type is the unwrapped tuple); proper Result-fold
+            // emission for `?!` with explicit Err propagation is deferred
+            // — it needs a coordinated rewrite with the enclosing
+            // `Result.Ok(...)` wrapper the typechecker forces on function
+            // returns.
             let items: Vec<String> = elems.iter().map(|e| emit_expr(e, ctx)).collect();
             format!("({})", items.join(", "))
         }

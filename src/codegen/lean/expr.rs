@@ -83,6 +83,9 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             }
         }
         Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            // Oracle v1: passed through as a tuple; `?!` semantic fold
+            // is deferred (coordinates with the outer `Result.Ok(...)`
+            // wrapper the typechecker forces).
             let parts: Vec<String> = items.iter().map(|e| emit_expr(e, ctx)).collect();
             format!("({})", parts.join(", "))
         }
