@@ -673,6 +673,33 @@ error: function 'writeLog' uses effect 'Disk.writeText' which is not
 - **Relay** — `?!` cancel mode with cooperative cancellation semantics; cross-branch trace ordering via merge witnesses; higher-order effectful callbacks; **user-definable effects** (the language feature — how users declare new effects) plus their classification for proof.
 - **Ledger** — stateful effects (Store<K,V>) via ghost `Map<K, V>` + refinement relation tying runtime replay trace to the abstract model. Relation-based proofs ("proved relative to trusted Store laws / host adapter").
 
+## Known limitations at v1 ship (2026-04-23)
+
+After full-matrix testing, Oracle v1 ships with these genuine gaps.
+Each is explicitly scoped out so users don't hit them as surprises:
+
+1. **Effectful-helper indirection in lifted bodies.** A fn that calls
+   another user-defined effectful fn doesn't get the callee lifted
+   in-place — the callee's call site in the lifted body is emitted
+   with its surface arity, missing the injected `(path, oracle...)`
+   args. Runtime works via VM oracle-stub intercept; proof export
+   produces Lean/Dafny that fails to type-check. Lifter comment
+   already flags this as v1.1 work. Affects both `!` and `?!`
+   composition with helpers.
+2. **Nested `?!` inside `?!`.** CPS desugar is single-level. The
+   outer continuation would need a second-level rewrite whose
+   binding-scope interactions need design. Currently passes parsing
+   but produces broken proof-side code.
+3. **`.trace.*` formal proof.** Runtime-only in v1 per the sugar-
+   vs-record boundary; state-monad rewrite deferred to v1.1+.
+4. **Law-form fn names colliding with Lean / Dafny keywords or
+   stdlib identifiers** (e.g. `get` collides with `List.get`). Pre-
+   existing reserved-word-escape gap in the Lean/Dafny backends,
+   surfaces more often now that more laws exist. Workaround: rename.
+
+Items 1–2 are the only Oracle-specific v1.1 items. Items 3–4 are
+pre-existing issues surfaced by Oracle testing.
+
 ## Pre-merge blockers (discovered 2026-04-23)
 
 Runtime side of Oracle v1 ships and passes its own tests. Proof-export
