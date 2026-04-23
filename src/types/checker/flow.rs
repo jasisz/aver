@@ -316,6 +316,56 @@ impl TypeChecker {
                         ),
                     );
                 }
+                // Rejection 3: under `verify fn trace`, every generative
+                // (or generative+output) effect the fn uses must have a
+                // `given` binding. Without a stub, each verify run would
+                // dispatch the real effect and the law would check
+                // against non-deterministic values — the failure looks
+                // spooky (`expected: 4 actual: 5`) because the user
+                // didn't realise Random.int was live. A loud rejection
+                // at check time points straight at the fix.
+                if vb.trace {
+                    use super::effect_classification::{EffectDimension, classify};
+                    let given_names: std::collections::HashSet<&str> = match &vb.kind {
+                        crate::ast::VerifyKind::Law(law) => {
+                            law.givens.iter().map(|g| g.type_name.as_str()).collect()
+                        }
+                        crate::ast::VerifyKind::Cases => vb
+                            .cases_givens
+                            .iter()
+                            .map(|g| g.type_name.as_str())
+                            .collect(),
+                    };
+                    let needs_stub: Vec<String> = fn_effects
+                        .iter()
+                        .filter_map(|e| {
+                            let c = classify(e)?;
+                            matches!(
+                                c.dimension,
+                                EffectDimension::Generative | EffectDimension::GenerativeOutput
+                            )
+                            .then(|| e.clone())
+                        })
+                        .filter(|e| !given_names.contains(e.as_str()))
+                        .collect();
+                    if !needs_stub.is_empty() {
+                        self.error_at_line(
+                            vb.line,
+                            format!(
+                                "verify trace '{fn_name}' needs a `given` stub for each generative \
+                                 effect the fn uses; missing: {missing}. Without stubs the verify \
+                                 run dispatches the real effect (e.g. a live random value) and \
+                                 assertions compare against non-deterministic output. Add e.g. \
+                                 `given name: {first} = [stubFn]`, where stubFn has signature \
+                                 `(BranchPath, Int, args...) -> T`.",
+                                fn_name = vb.fn_name,
+                                missing = needs_stub.join(", "),
+                                first = needs_stub[0],
+                            ),
+                        );
+                    }
+                }
+
                 // Inherit effects from the tested function so verify blocks
                 // can call effectful functions without declaring effects.
                 let inherited_effects: Vec<String> = self
