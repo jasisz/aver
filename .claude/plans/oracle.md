@@ -675,30 +675,23 @@ error: function 'writeLog' uses effect 'Disk.writeText' which is not
 
 ## Known limitations at v1 ship (2026-04-23)
 
-After full-matrix testing, Oracle v1 ships with these genuine gaps.
-Each is explicitly scoped out so users don't hit them as surprises:
+After full-matrix testing + release-blocker fixes, Oracle v1 ships
+with the following remaining limitations:
 
-1. **Effectful-helper indirection in lifted bodies.** A fn that calls
-   another user-defined effectful fn doesn't get the callee lifted
-   in-place — the callee's call site in the lifted body is emitted
-   with its surface arity, missing the injected `(path, oracle...)`
-   args. Runtime works via VM oracle-stub intercept; proof export
-   produces Lean/Dafny that fails to type-check. Lifter comment
-   already flags this as v1.1 work. Affects both `!` and `?!`
-   composition with helpers.
-2. **Nested `?!` inside `?!`.** CPS desugar is single-level. The
-   outer continuation would need a second-level rewrite whose
-   binding-scope interactions need design. Currently passes parsing
-   but produces broken proof-side code.
-3. **`.trace.*` formal proof.** Runtime-only in v1 per the sugar-
-   vs-record boundary; state-monad rewrite deferred to v1.1+.
-4. **Law-form fn names colliding with Lean / Dafny keywords or
-   stdlib identifiers** (e.g. `get` collides with `List.get`). Pre-
+1. **`.trace.*` formal proof.** Runtime-only in v1 per the sugar-
+   vs-record boundary; state-monad rewrite for proof-side trace
+   modeling is deferred to v1.1+.
+2. **Law-form fn names colliding with target keywords or stdlib
+   identifiers** (e.g. `get` collides with `List.get` in Lean). Pre-
    existing reserved-word-escape gap in the Lean/Dafny backends,
-   surfaces more often now that more laws exist. Workaround: rename.
+   surfaces more often with Oracle. Workaround: rename. Not
+   Oracle-caused.
 
-Items 1–2 are the only Oracle-specific v1.1 items. Items 3–4 are
-pre-existing issues surfaced by Oracle testing.
+Closed release blockers (initially thought deferred):
+- ~~Effectful-helper indirection~~ — fixed via
+  `lift_fn_def_with_helpers` + call-site injection.
+- ~~Nested `?!` inside `?!`~~ — fixed by adding CPS desugar at
+  expression level (`lift_expr` for `IndependentProduct(_, true)`).
 
 ## Pre-merge blockers (discovered 2026-04-23)
 
