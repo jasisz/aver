@@ -882,6 +882,58 @@ fn aver_verify_trace_contains_event_literal_with_interpolated_local() {
 }
 
 #[test]
+fn aver_verify_trace_snapshot_stub_is_plain_capability_reader() {
+    // Oracle v1: snapshot effects (Args.get / Env.get) bind a plain
+    // capability reader — the stub signature mirrors the runtime
+    // signature with no leading (BranchPath, Int). Only generative /
+    // generative+output stubs thread path + counter. This matches the
+    // plan's "Snapshot effects → not branch-indexed" rule.
+    let dir = temp_output_dir("aver-verify-trace-snapshot");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn empty() -> List<String>\n\
+         \x20   ? \"fixed empty args\"\n\
+         \x20   []\n\
+         \n\
+         fn isEmpty() -> Bool\n\
+         \x20   ? \"no args\"\n\
+         \x20   ! [Args.get]\n\
+         \x20   args = Args.get()\n\
+         \x20   match args\n\
+         \x20       [] -> true\n\
+         \x20       _ -> false\n\
+         \n\
+         verify isEmpty trace\n\
+         \x20   given argv: Args.get = [empty]\n\
+         \x20   isEmpty().result => true\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "snapshot-dim verify failed; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn proof_accepts_complete_independence_mode() {
     let dir = temp_output_dir("aver-proof-complete");
     std::fs::create_dir_all(&dir).expect("create temp dir");

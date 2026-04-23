@@ -368,32 +368,46 @@ impl VM {
         // collector before redirecting. The recorded event uses the
         // original effect method name + pre-stub args, matching what the
         // user asserts about via `.trace.contains(Effect.method(...))`.
+        // Reverse-lookup once: the name drives both trace recording and
+        // the snapshot-dimension branch for stub-arg construction below.
+        let original_effect: Option<String> = self
+            .runtime
+            .oracle_stubs
+            .iter()
+            .find_map(|(effect, fn_id)| (*fn_id == stub_fn_id).then(|| effect.clone()));
+
         if self.runtime.trace_collecting {
-            let stub_chunk_name = self.code.get(stub_fn_id).name.clone();
-            // The "original" effect is whatever was stubbed to this fn;
-            // reverse-lookup in the stub map.
-            let mut original_effect: Option<String> = None;
-            for (effect, fn_id) in &self.runtime.oracle_stubs {
-                if *fn_id == stub_fn_id {
-                    original_effect = Some(effect.clone());
-                    break;
-                }
-            }
-            if let Some(effect_name) = original_effect {
+            if let Some(effect_name) = &original_effect {
                 let arg_vals: Vec<crate::value::Value> =
                     args.iter().map(|a| a.to_value(&self.arena)).collect();
-                self.runtime.record_trace_event(&effect_name, &arg_vals);
-            } else {
-                let _ = stub_chunk_name;
+                self.runtime.record_trace_event(effect_name, &arg_vals);
             }
         }
 
-        // Oracle v1: read the current branch context from the VM's
-        // structural-trace state. When we're outside any `!`/`?!` group,
-        // the dewey string is empty (BranchPath.root) and the counter is
-        // the VM-level oracle_counter. Inside a group, dewey is the
-        // branch-indexed path and the counter is the per-branch slot
-        // from enter_group's effect_count_stack.
+        // Oracle v1: snapshot-dimension effects (Args.get, Env.get) are
+        // capability readers — deterministic, not branch-indexed. Their
+        // stub signature mirrors the runtime signature with no leading
+        // (BranchPath, Int). Generative / generative+output stubs do
+        // take a leading (BranchPath, Int) so per-branch oracle
+        // invocations stay distinct; output effects never reach this
+        // path (they have no oracle).
+        use crate::types::checker::effect_classification::{EffectDimension, classify};
+        let is_snapshot = original_effect
+            .as_deref()
+            .and_then(classify)
+            .map(|c| matches!(c.dimension, EffectDimension::Snapshot))
+            .unwrap_or(false);
+
+        if is_snapshot {
+            return self.call_function(stub_fn_id, args);
+        }
+
+        // Generative / generative+output path: thread (BranchPath,
+        // counter) from the VM's structural-trace state. Outside any
+        // `!`/`?!` group the dewey is empty (BranchPath.root) and the
+        // counter is the VM-level oracle_counter; inside a group,
+        // dewey is the branch-indexed path and the counter is the
+        // per-branch slot from enter_group's effect_count_stack.
         let (dewey, counter) = self.runtime.take_oracle_coordinates();
 
         // Build BranchPath(dewey) record — matches the arena registration
