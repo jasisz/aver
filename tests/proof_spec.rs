@@ -1327,6 +1327,56 @@ fn aver_verify_trace_event_path_field_points_at_structural_position() {
 }
 
 #[test]
+fn aver_verify_trace_case_rhs_wraps_to_indented_next_line() {
+    // Oracle v1: verify case RHS may wrap to an indented next line —
+    // long event-literal records (Http responses, nested records)
+    // don't fit on one line, and cramming them there makes the
+    // surface feel hostile. `A =>` followed by an indented
+    // expression parses the same as the single-line form.
+    let dir = temp_output_dir("aver-verify-trace-rhs-wrap");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fakeFetch(path: BranchPath, n: Int, url: String) -> Result<HttpResponse, String>\n\
+         \x20   ? \"deterministic\"\n\
+         \x20   Result.Ok(HttpResponse(status = 200, body = \"ok\", headers = []))\n\
+         \n\
+         fn app() -> Result<HttpResponse, String>\n\
+         \x20   ? \"fetch one\"\n\
+         \x20   ! [Http.get]\n\
+         \x20   Http.get(\"https://example.test/api\")\n\
+         \n\
+         verify app trace\n\
+         \x20   given stub: Http.get = [fakeFetch]\n\
+         \x20   app().trace.event(0) =>\n\
+         \x20       Option.Some(EffectEvent(method = \"Http.get\", args = [\"https://example.test/api\"], path = \"\"))\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "multi-line case RHS failed; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn proof_accepts_complete_independence_mode() {
     let dir = temp_output_dir("aver-proof-complete");
     std::fs::create_dir_all(&dir).expect("create temp dir");

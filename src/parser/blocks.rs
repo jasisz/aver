@@ -626,7 +626,20 @@ impl Parser {
                     let start_col = self.current().col;
                     let left = self.parse_expr()?;
                     self.expect_exact(&TokenKind::FatArrow)?;
+                    // Oracle v1: allow the RHS to wrap to the next
+                    // (indented) line. Long event-literal records
+                    // (Http responses, nested records) don't fit on
+                    // one line; requiring it makes the surface feel
+                    // cramped. Skips Newline + Indent so the RHS
+                    // expression parser sees the first real token.
+                    self.skip_formatting();
                     let right = self.parse_expr()?;
+                    // Drop any trailing Dedent that belonged to the
+                    // wrapped RHS before the outer case loop's
+                    // dedent-check fires.
+                    while matches!(self.current().kind, TokenKind::Dedent) {
+                        self.advance();
+                    }
                     let end_line = self.current().line;
                     let end_col = self.current().col;
                     cases.push((left, right));
