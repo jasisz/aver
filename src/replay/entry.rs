@@ -2,7 +2,9 @@
 //! for record mode. Shared by the `aver run --expr` CLI path and the
 //! playground's custom-entry recording API.
 
-use crate::ast::{Expr, Literal};
+use std::sync::Arc;
+
+use crate::ast::{Expr, Literal, Spanned};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::replay::{JsonValue, value_to_json};
@@ -47,26 +49,154 @@ pub fn parse_entry_call(src: &str) -> Result<(String, Vec<Value>), String> {
     };
 
     let mut values = Vec::with_capacity(args.len());
-    for (idx, arg) in args.into_iter().enumerate() {
-        let Expr::Literal(lit) = &arg.node else {
-            return Err(format!(
-                "entry expression arg #{} must be a literal (String, Int, Float, Bool, Unit). \
-                 Complex arguments (records, lists, function calls) not yet supported; \
-                 wrap them in a helper function and call that instead.",
-                idx + 1
-            ));
-        };
-        let val = match lit {
-            Literal::Int(i) => Value::Int(*i),
-            Literal::Float(f) => Value::Float(*f),
-            Literal::Str(s) => Value::Str(s.clone()),
-            Literal::Bool(b) => Value::Bool(*b),
-            Literal::Unit => Value::Unit,
-        };
+    for (idx, arg) in args.iter().enumerate() {
+        let val = expr_to_value(&arg.node).map_err(|e| format!("arg #{}: {}", idx + 1, e))?;
         values.push(val);
     }
 
     Ok((fn_name, values))
+}
+
+/// Convert a parsed expression to a runtime `Value` without running the VM.
+/// Supports literals, tuples, lists, and ADT constructors (both built-in
+/// Result/Option/None and user-defined variants). Rejects arbitrary
+/// expressions (function calls, arithmetic, variables, records) so entry
+/// arguments stay round-trippable through the replay JSON schema.
+fn expr_to_value(expr: &Expr) -> Result<Value, String> {
+    match expr {
+        Expr::Literal(lit) => Ok(literal_to_value(lit)),
+        Expr::Ident(name) if is_upper_camel(name) => constructor_value(name, &[]),
+        Expr::Attr(_, _) if dotted_upper_path(expr).is_some() => {
+            let path = dotted_upper_path(expr).unwrap();
+            constructor_value(&path, &[])
+        }
+        Expr::Constructor(name, arg) => {
+            let fields = constructor_arg_fields(arg.as_deref())?;
+            constructor_value(name, &fields)
+        }
+        Expr::FnCall(target, args) if dotted_upper_path(&target.node).is_some() => {
+            let path = dotted_upper_path(&target.node).unwrap();
+            let mut fields = Vec::with_capacity(args.len());
+            for a in args {
+                fields.push(expr_to_value(&a.node)?);
+            }
+            constructor_value(&path, &fields)
+        }
+        Expr::List(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for e in items {
+                out.push(expr_to_value(&e.node)?);
+            }
+            Ok(Value::List(aver_rt::AverList::from_vec(out)))
+        }
+        Expr::Tuple(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for e in items {
+                out.push(expr_to_value(&e.node)?);
+            }
+            Ok(Value::Tuple(out))
+        }
+        _ => Err(
+            "unsupported expression shape (supported: literals, lists, tuples, \
+             ADT constructors like Shape.Circle(1.0) / Result.Ok(x) / Option.None)"
+                .to_string(),
+        ),
+    }
+}
+
+fn literal_to_value(lit: &Literal) -> Value {
+    match lit {
+        Literal::Int(i) => Value::Int(*i),
+        Literal::Float(f) => Value::Float(*f),
+        Literal::Str(s) => Value::Str(s.clone()),
+        Literal::Bool(b) => Value::Bool(*b),
+        Literal::Unit => Value::Unit,
+    }
+}
+
+fn is_upper_camel(name: &str) -> bool {
+    name.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+}
+
+fn dotted_upper_path(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Ident(name) if is_upper_camel(name) => Some(name.clone()),
+        Expr::Attr(inner, field) if is_upper_camel(field) => {
+            let base = dotted_upper_path(&inner.node)?;
+            Some(format!("{}.{}", base, field))
+        }
+        _ => None,
+    }
+}
+
+fn constructor_arg_fields(arg: Option<&Spanned<Expr>>) -> Result<Vec<Value>, String> {
+    match arg {
+        None => Ok(Vec::new()),
+        Some(inner) => match &inner.node {
+            Expr::Tuple(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for e in items {
+                    out.push(expr_to_value(&e.node)?);
+                }
+                Ok(out)
+            }
+            _ => Ok(vec![expr_to_value(&inner.node)?]),
+        },
+    }
+}
+
+fn constructor_value(path: &str, fields: &[Value]) -> Result<Value, String> {
+    // Built-in wrapper constructors: accept both qualified (`Result.Ok`)
+    // and bare (`Ok`) forms mirroring what the parser produces.
+    match path {
+        "Result.Ok" | "Ok" => {
+            require_arity(path, fields, 1)?;
+            Ok(Value::Ok(Box::new(fields[0].clone())))
+        }
+        "Result.Err" | "Err" => {
+            require_arity(path, fields, 1)?;
+            Ok(Value::Err(Box::new(fields[0].clone())))
+        }
+        "Option.Some" | "Some" => {
+            require_arity(path, fields, 1)?;
+            Ok(Value::Some(Box::new(fields[0].clone())))
+        }
+        "Option.None" | "None" => {
+            require_arity(path, fields, 0)?;
+            Ok(Value::None)
+        }
+        _ => {
+            let mut parts = path.rsplitn(2, '.');
+            let variant = parts.next().ok_or("empty constructor path")?.to_string();
+            let type_name = parts
+                .next()
+                .ok_or_else(|| {
+                    format!(
+                        "constructor '{}' needs a type prefix (e.g. 'Shape.Circle')",
+                        path
+                    )
+                })?
+                .to_string();
+            Ok(Value::Variant {
+                type_name,
+                variant,
+                fields: Arc::<[Value]>::from(fields.to_vec()),
+            })
+        }
+    }
+}
+
+fn require_arity(path: &str, fields: &[Value], expected: usize) -> Result<(), String> {
+    if fields.len() != expected {
+        return Err(format!(
+            "constructor '{}' expects {} argument{}, got {}",
+            path,
+            expected,
+            if expected == 1 { "" } else { "s" },
+            fields.len()
+        ));
+    }
+    Ok(())
 }
 
 /// Serialise entry-call arguments into the replay schema's `input` field.

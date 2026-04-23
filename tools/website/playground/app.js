@@ -1870,8 +1870,9 @@ function renderRecordingPanel() {
         const intro = document.createElement("div");
         intro.className = "recording-intro";
         intro.innerHTML = `
-            <p>A <strong>trace</strong> is the effect log of <code>main()</code> running in the VM — every <code>Console.print</code>, <code>Terminal.readKey</code>, <code>Random.int</code>… captured with its outcome.</p>
-            <p>Click <strong>⏺ Record</strong> to capture one, or drop a <code>.replay.json</code> onto the dropzone above. Then edit outcomes inline and hit <strong>▶ Replay</strong> to see how the program reacts.</p>
+            <p>A <strong>trace</strong> is the effect log of a program running in the VM — every <code>Console.print</code>, <code>Terminal.readKey</code>, <code>Random.int</code>… captured with its outcome.</p>
+            <p>Click <strong>⏺ Record</strong> to run <code>main()</code> and capture its trace, or <strong>⏺ Record fn…</strong> to aim at a specific function call like <code>area(Shape.Circle(1.0))</code> instead. You can also drop a <code>.replay.json</code> onto the dropzone above.</p>
+            <p>Once a trace is loaded, edit outcomes inline and hit <strong>▶ Replay</strong> to see how the program reacts to the modified world.</p>
         `;
         panel.appendChild(intro);
         dom.console.appendChild(panel);
