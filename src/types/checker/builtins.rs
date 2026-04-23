@@ -620,6 +620,24 @@ impl TypeChecker {
             self.insert_sig(name, params, ret.clone(), effects);
         }
 
+        // BranchPath — opaque builtin used by Oracle-proof specs for
+        // generative-effect oracles (`(BranchPath, Int, args...) -> T`).
+        // Three constructors, no other public surface.
+        let branch_path_ty = || Type::Named(crate::types::branch_path::TYPE_NAME.to_string());
+        let branch_path_sigs: &[(&str, &[Type], Type, &[&str])] = &[
+            ("BranchPath.root", &[], branch_path_ty(), &[]),
+            (
+                "BranchPath.child",
+                &[branch_path_ty(), Type::Int],
+                branch_path_ty(),
+                &[],
+            ),
+            ("BranchPath.parse", &[Type::Str], branch_path_ty(), &[]),
+        ];
+        for (name, params, ret, effects) in branch_path_sigs {
+            self.insert_sig(name, params, ret.clone(), effects);
+        }
+
         // Byte namespace
         let byte_sigs: &[(&str, &[Type], Type, &[&str])] = &[
             (

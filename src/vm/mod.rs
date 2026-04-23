@@ -43,4 +43,7 @@ pub fn register_service_types(arena: &mut crate::nan_value::Arena) {
     // every build (the playground wasm ships without `terminal` but
     // the compiler still emits field reads against the stubs).
     arena.register_record_type("Terminal.Size", vec!["width".into(), "height".into()]);
+    // Oracle: BranchPath is an opaque builtin wrapping a dewey-decimal string.
+    // Only reachable via BranchPath.root / .child / .parse constructors.
+    arena.register_record_type("BranchPath", vec!["dewey".into()]);
 }
