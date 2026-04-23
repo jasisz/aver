@@ -42,9 +42,11 @@
 //!   needed to close the call graph. v0 doesn't recurse into helpers.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use super::effect_classification::{EffectDimension, classify};
-use crate::ast::{Expr, FnBody, Literal, MatchArm, SourceLine, Spanned, Stmt};
+use super::effect_classification::{EffectDimension, classify, oracle_signature};
+use crate::ast::{Expr, FnBody, FnDef, Literal, MatchArm, SourceLine, Spanned, Stmt};
+use crate::types::Type;
 
 /// Configuration describing how each effect maps to a lifted callable.
 #[derive(Debug, Clone)]
@@ -366,6 +368,172 @@ fn effect_method_name(expr: &Expr) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// For each classified effect an original function declares, produce the
+/// oracle / capability parameter to prepend to the lifted signature.
+///
+/// Returns a list of `(binding_name, type_annotation_string)` in the order
+/// the effects appear in the input. Output-only effects are skipped (they
+/// have no oracle; trace-API assertions handle them). Unclassified effects
+/// produce an error — callers should reject effectful-law verify blocks
+/// earlier, this is a defensive layer.
+pub fn oracle_params_for_effects(
+    effects: &[Spanned<String>],
+) -> Result<Vec<(String, String)>, LiftError> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for e in effects {
+        let name = &e.node;
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let Some(classification) = classify(name) else {
+            return Err(LiftError::UnclassifiedEffect {
+                method: name.clone(),
+            });
+        };
+        match classification.dimension {
+            EffectDimension::Output => continue,
+            _ => {
+                let binding = oracle_binding_name_for(name);
+                let type_str = match oracle_signature(name) {
+                    Some(t) => type_to_annotation(&t),
+                    None => continue,
+                };
+                out.push((binding, type_str));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Deterministic default oracle binding name from an effect method.
+/// `Random.int` → `rnd_Random_int`; `Args.get` → `cap_Args_get`.
+/// Callers that use `given name: E.m = [...]` override these by passing
+/// their own [`LiftConfig::oracles`] map.
+fn oracle_binding_name_for(effect: &str) -> String {
+    let prefix = match classify(effect).map(|c| c.dimension) {
+        Some(EffectDimension::Snapshot) => "cap",
+        Some(EffectDimension::Generative | EffectDimension::GenerativeOutput) => "rnd",
+        _ => "eff",
+    };
+    let sanitized = effect.replace('.', "_");
+    format!("{}_{}", prefix, sanitized)
+}
+
+/// Render a [`Type`] as an Aver type-annotation string suitable for a
+/// `FnDef.params` entry. Only supports the shapes that appear in lifted
+/// oracle / capability signatures; richer types would need `type::display`
+/// or similar.
+pub fn type_to_annotation(ty: &Type) -> String {
+    match ty {
+        Type::Int => "Int".to_string(),
+        Type::Float => "Float".to_string(),
+        Type::Str => "String".to_string(),
+        Type::Bool => "Bool".to_string(),
+        Type::Unit => "Unit".to_string(),
+        Type::Named(n) => n.clone(),
+        Type::Option(inner) => format!("Option<{}>", type_to_annotation(inner)),
+        Type::Result(ok, err) => format!(
+            "Result<{}, {}>",
+            type_to_annotation(ok),
+            type_to_annotation(err)
+        ),
+        Type::List(inner) => format!("List<{}>", type_to_annotation(inner)),
+        Type::Vector(inner) => format!("Vector<{}>", type_to_annotation(inner)),
+        Type::Map(k, v) => format!("Map<{}, {}>", type_to_annotation(k), type_to_annotation(v)),
+        Type::Fn(params, ret, effects) => {
+            let ps = params
+                .iter()
+                .map(type_to_annotation)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let r = type_to_annotation(ret);
+            if effects.is_empty() {
+                format!("Fn({}) -> {}", ps, r)
+            } else {
+                format!("Fn({}) -> {} ! [{}]", ps, r, effects.join(", "))
+            }
+        }
+        Type::Unknown => "_".to_string(),
+        // These shapes don't appear in v1 oracle/capability signatures —
+        // if they show up we fall back to a legible-but-inexact rendering
+        // rather than panicking.
+        other => format!("/*{:?}*/", other),
+    }
+}
+
+/// Lift a full [`FnDef`] into its pure, proof-ready form.
+///
+/// - The oracle / capability parameters for the function's declared
+///   classified effects are prepended (plus a leading `path: BranchPath`
+///   when any generative / generative-output effect is used).
+/// - The body is rewritten via [`lift_body`] under a [`LiftConfig`] whose
+///   `oracles` map reflects the prepended parameter names.
+/// - The resulting `FnDef` has no effects declared — proof export treats
+///   the lifted form as a pure function.
+///
+/// Returns `None` if the function's effect list is empty (nothing to lift).
+pub fn lift_fn_def(fd: &FnDef) -> Result<Option<FnDef>, LiftError> {
+    if fd.effects.is_empty() {
+        return Ok(None);
+    }
+
+    let oracle_params = oracle_params_for_effects(&fd.effects)?;
+
+    // Decide whether we need the leading `path: BranchPath` parameter —
+    // only generative / generative-output effects depend on it.
+    let needs_path = fd.effects.iter().any(|e| {
+        matches!(
+            classify(&e.node).map(|c| c.dimension),
+            Some(EffectDimension::Generative | EffectDimension::GenerativeOutput)
+        )
+    });
+
+    let path_name = "path".to_string();
+    let mut new_params: Vec<(String, String)> = Vec::new();
+    if needs_path {
+        new_params.push((path_name.clone(), "BranchPath".to_string()));
+    }
+    for (name, ty) in &oracle_params {
+        new_params.push((name.clone(), ty.clone()));
+    }
+    new_params.extend(fd.params.iter().cloned());
+
+    // Build an oracles map keyed by effect method name → param binding.
+    let mut oracles_map: HashMap<String, String> = HashMap::new();
+    for (idx, e) in fd
+        .effects
+        .iter()
+        .filter(|e| {
+            classify(&e.node)
+                .map(|c| !matches!(c.dimension, EffectDimension::Output))
+                .unwrap_or(false)
+        })
+        .enumerate()
+    {
+        if let Some((name, _)) = oracle_params.get(idx) {
+            oracles_map.insert(e.node.clone(), name.clone());
+        }
+    }
+    let cfg = LiftConfig {
+        path_name,
+        oracles: oracles_map,
+    };
+
+    let lifted_body = lift_body(&fd.body, &cfg)?;
+
+    Ok(Some(FnDef {
+        name: fd.name.clone(),
+        line: fd.line,
+        params: new_params,
+        return_type: fd.return_type.clone(),
+        effects: Vec::new(), // lifted form is pure
+        desc: fd.desc.clone(),
+        body: Arc::new(lifted_body),
+        resolution: None,
+    }))
 }
 
 fn rebuild_dotted_callee(full_name: &str, from: &Spanned<Expr>) -> Spanned<Expr> {
@@ -717,5 +885,85 @@ mod tests {
             other => panic!("expected Foo head, got {:?}", other),
         }
         assert_eq!(field, "bar");
+    }
+
+    // ---- lift_fn_def -----------------------------------------------------
+
+    fn parse_fn(src: &str) -> FnDef {
+        let mut lexer = Lexer::new(src);
+        let tokens = lexer.tokenize().expect("lex");
+        let mut parser = Parser::new(tokens);
+        let items = parser.parse().expect("parse");
+        let crate::ast::TopLevel::FnDef(fd) = items.into_iter().next().unwrap() else {
+            panic!("expected fn def");
+        };
+        fd
+    }
+
+    #[test]
+    fn lift_fn_def_returns_none_for_pure_functions() {
+        let fd = parse_fn("fn double(x: Int) -> Int\n    x * 2\n");
+        let lifted = lift_fn_def(&fd).unwrap();
+        assert!(lifted.is_none(), "pure fn should not be lifted");
+    }
+
+    #[test]
+    fn lift_fn_def_prepends_path_and_oracle_params() {
+        let fd = parse_fn("fn roll() -> Int\n    ! [Random.int]\n    Random.int(1, 6)\n");
+        let lifted = lift_fn_def(&fd).unwrap().unwrap();
+        assert_eq!(lifted.name, "roll");
+        assert!(lifted.effects.is_empty(), "lifted fn must have no effects");
+        // Params: [path: BranchPath, rnd_Random_int: Fn(...)]
+        assert_eq!(lifted.params.len(), 2);
+        assert_eq!(lifted.params[0].0, "path");
+        assert_eq!(lifted.params[0].1, "BranchPath");
+        assert_eq!(lifted.params[1].0, "rnd_Random_int");
+        assert_eq!(lifted.params[1].1, "Fn(BranchPath, Int, Int, Int) -> Int");
+        // Body: oracle call using the prepended names.
+        let [Stmt::Expr(tail)] = &lifted.body.stmts()[..] else {
+            panic!("expected single expr stmt");
+        };
+        let args = assert_looks_like_oracle_call(&tail.node, "rnd_Random_int", 4);
+        match &args[0] {
+            Expr::Ident(n) => assert_eq!(n, "path"),
+            other => panic!("expected path ident, got {:?}", other),
+        }
+        match &args[1] {
+            Expr::Literal(Literal::Int(0)) => {}
+            other => panic!("expected counter 0, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn lift_fn_def_skips_path_param_when_only_snapshot_effects() {
+        let fd = parse_fn("fn readArgs() -> List<String>\n    ! [Args.get]\n    Args.get()\n");
+        let lifted = lift_fn_def(&fd).unwrap().unwrap();
+        // Snapshot effect → capability reader param only, no BranchPath.
+        assert_eq!(lifted.params.len(), 1);
+        assert_eq!(lifted.params[0].0, "cap_Args_get");
+        assert_eq!(lifted.params[0].1, "Fn() -> List<String>");
+    }
+
+    #[test]
+    fn lift_fn_def_skips_output_only_effects_in_oracle_params() {
+        let fd = parse_fn("fn greet() -> Unit\n    ! [Console.print]\n    Console.print(\"hi\")\n");
+        let lifted = lift_fn_def(&fd).unwrap().unwrap();
+        // Output effect: no oracle param; Console.print stays as-is in body.
+        assert!(lifted.params.is_empty(), "no oracle/path needed");
+    }
+
+    #[test]
+    fn lift_fn_def_mixed_dims_orders_params_predictably() {
+        let fd = parse_fn(
+            "fn mixed(x: Int) -> Int\n    ! [Args.get, Random.int, Console.print]\n    x\n",
+        );
+        let lifted = lift_fn_def(&fd).unwrap().unwrap();
+        // Generative effect present → path param first.
+        // Then oracles in declaration order: Args.get, Random.int (Console
+        // is output, skipped).
+        assert_eq!(lifted.params[0].0, "path");
+        assert_eq!(lifted.params[1].0, "cap_Args_get");
+        assert_eq!(lifted.params[2].0, "rnd_Random_int");
+        assert_eq!(lifted.params[3].0, "x");
     }
 }
