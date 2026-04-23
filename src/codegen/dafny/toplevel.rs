@@ -11,6 +11,15 @@ pub fn emit_type(type_str: &str) -> String {
     type_to_dafny(&parse_type_annotation(type_str))
 }
 
+/// Convert a fully-resolved Aver `Type` to a Dafny type string.
+/// Used by Oracle v1 to render oracle-signature types for effectful
+/// law lemmas where the given's declared "type" is an effect reference
+/// rather than an Aver type. The shared helper keeps this rendering in
+/// one place so it can't drift from `type_to_dafny`.
+pub fn type_ref_to_dafny(ty: &Type) -> String {
+    type_to_dafny(ty)
+}
+
 /// Convert an Aver `Type` to a Dafny type string.
 fn type_to_dafny(ty: &Type) -> String {
     match ty {
@@ -32,9 +41,17 @@ fn type_to_dafny(ty: &Type) -> String {
             format!("({})", parts.join(", "))
         }
         Type::Fn(params, ret, _) => {
-            let mut parts: Vec<String> = params.iter().map(type_to_dafny).collect();
-            parts.push(type_to_dafny(ret));
-            parts.join(" -> ")
+            // Dafny arrow types: `A -> B` is single-arg; multi-arg
+            // requires tuple form `(A, B, C) -> D`. Curry-style
+            // `A -> B -> C` would parse as `A -> (B -> C)` and break
+            // at the call site (wrong number of arguments).
+            let parts: Vec<String> = params.iter().map(type_to_dafny).collect();
+            let ret_ty = type_to_dafny(ret);
+            if parts.len() == 1 {
+                format!("{} -> {}", parts[0], ret_ty)
+            } else {
+                format!("({}) -> {}", parts.join(", "), ret_ty)
+            }
         }
         Type::Named(name) => name.clone(),
         Type::Unknown => "/* unknown type */".to_string(),
@@ -471,14 +488,24 @@ pub fn emit_law_samples(
     ));
 
     for (lhs, rhs) in &samples {
-        let l = emit_expr(lhs, ctx);
-        let r = emit_expr(rhs, ctx);
+        // Oracle v1: rewrite sample assertions the same way the lemma
+        // body is rewritten — inject `BranchPath.root()` + given
+        // bindings for effectful fns. Surface `pickOne()` can't stay
+        // literal; it must become `pickOne(BranchPath.root(), stub)`.
+        let lhs_rw =
+            rewrite_effectful_calls_in_law(lhs, law, ctx, OracleInjectionMode::SampleValue);
+        let rhs_rw =
+            rewrite_effectful_calls_in_law(rhs, law, ctx, OracleInjectionMode::SampleValue);
+        let l = emit_expr(&lhs_rw, ctx);
+        let r = emit_expr(&rhs_rw, ctx);
         lines.push(format!("  assert {} == {};", l, r));
     }
 
     lines.push("}\n".to_string());
     Some(lines.join("\n"))
 }
+
+use crate::codegen::common::{OracleInjectionMode, rewrite_effectful_calls_in_law};
 
 /// Emit a verify law as a Dafny lemma.
 pub fn emit_verify_law(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> String {
@@ -489,16 +516,35 @@ pub fn emit_verify_law(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) 
         .givens
         .iter()
         .map(|g| {
-            format!(
-                "{}: {}",
-                aver_name_to_dafny(&g.name),
-                emit_type(&g.type_name)
-            )
+            // Oracle v1: if the given's "type" is a classified effect
+            // reference (`Random.int`, `Http.get`, etc.), the param is
+            // an oracle — emit the derived oracle signature instead of
+            // the effect name as a type. `oracle_signature` gives
+            // `(BranchPath, Int, args...) -> T` for generative /
+            // generative+output and `(args...) -> T` for snapshot.
+            let type_text = match crate::types::checker::effect_classification::oracle_signature(
+                &g.type_name,
+            ) {
+                Some(oracle_ty) => type_ref_to_dafny(&oracle_ty),
+                None => emit_type(&g.type_name),
+            };
+            format!("{}: {}", aver_name_to_dafny(&g.name), type_text)
         })
         .collect();
 
-    let lhs = emit_expr(&law.lhs, ctx);
-    let rhs = emit_expr(&law.rhs, ctx);
+    // Oracle v1: rewrite calls to effectful fns in the law body so
+    // they target the lifted form. Surface source writes
+    // `pickOne() => pickOneSpec(BranchPath.root(), rnd)`, but the
+    // lifted `pickOne` takes `(path, rnd_Random_int, <orig_args>)`.
+    // Inject `BranchPath.root()` + the matching given identifier for
+    // each classified non-output effect in the callee's signature.
+    let law_lhs =
+        rewrite_effectful_calls_in_law(&law.lhs, law, ctx, OracleInjectionMode::LemmaBinding);
+    let law_rhs =
+        rewrite_effectful_calls_in_law(&law.rhs, law, ctx, OracleInjectionMode::LemmaBinding);
+
+    let lhs = emit_expr(&law_lhs, ctx);
+    let rhs = emit_expr(&law_rhs, ctx);
 
     let mut lines = Vec::new();
     // Collect all functions used in the law for fuel annotations

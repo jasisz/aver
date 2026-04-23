@@ -1899,6 +1899,13 @@ pub fn transpile_for_proof_mode(
 
     emit_pure_functions_proof(ctx, &plans, &recursive_names, &mut sections);
 
+    // Oracle v1: emit lifted form for effectful fns alongside the
+    // pure ones. Without this, law theorems reference `pickOne` (etc.)
+    // that was never defined — Lean fails with "function expected at
+    // pickOne, term has type ?m". The standard mode emits these
+    // already; proof mode had the same codegen but missed the call.
+    emit_lifted_effectful_functions(ctx, &recursive_names, &mut sections);
+
     for item in &ctx.items {
         if let TopLevel::Decision(db) = item {
             sections.push(toplevel::emit_decision(db));
@@ -2035,16 +2042,27 @@ fn emit_lifted_effectful_functions(
     recursive_fns: &HashSet<String>,
     sections: &mut Vec<String>,
 ) {
+    use crate::types::checker::effect_classification::{EffectDimension, classify, is_classified};
     for item in &ctx.items {
         let TopLevel::FnDef(fd) = item else { continue };
         if fd.effects.is_empty() || fd.name == "main" {
             continue;
         }
-        if !fd
-            .effects
-            .iter()
-            .all(|e| crate::types::checker::effect_classification::is_classified(&e.node))
-        {
+        if !fd.effects.iter().all(|e| is_classified(&e.node)) {
+            continue;
+        }
+        // Skip fns whose effects are purely Output (e.g. just
+        // `Console.print`). Output effects don't bind oracles — the
+        // lifted body would still contain `Console.print(...)` calls
+        // which aren't valid Lean identifiers, and the proof doesn't
+        // model the trace side of things anyway. Pre-Oracle-v1
+        // behaviour was to skip these; keeping that here.
+        let has_non_output = fd.effects.iter().any(|e| {
+            classify(&e.node)
+                .map(|c| !matches!(c.dimension, EffectDimension::Output))
+                .unwrap_or(false)
+        });
+        if !has_non_output {
             continue;
         }
         let Ok(Some(lifted)) = crate::types::checker::effect_lifting::lift_fn_def(fd) else {

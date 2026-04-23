@@ -1452,18 +1452,41 @@ fn emit_verify_law_block(
         ),
         None => format!("{}_law_{}", fn_name, law_name),
     };
-    let lhs_template = emit_expr(&law.lhs, ctx);
-    let rhs_template = emit_expr(&law.rhs, ctx);
+    // Oracle v1: rewrite calls to effectful fns in the law body so
+    // they target the lifted form (see commit history in
+    // `codegen/common.rs` / `codegen/dafny/toplevel.rs` for the
+    // discovery that motivated this). Lemma body uses lemma-local
+    // bindings; sample assertions use the concrete stub values.
+    let law_lhs = crate::codegen::common::rewrite_effectful_calls_in_law(
+        &law.lhs,
+        law,
+        ctx,
+        crate::codegen::common::OracleInjectionMode::LemmaBinding,
+    );
+    let law_rhs = crate::codegen::common::rewrite_effectful_calls_in_law(
+        &law.rhs,
+        law,
+        ctx,
+        crate::codegen::common::OracleInjectionMode::LemmaBinding,
+    );
+    let lhs_template = emit_expr(&law_lhs, ctx);
+    let rhs_template = emit_expr(&law_rhs, ctx);
     let when_template = law.when.as_ref().map(|expr| emit_expr(expr, ctx));
     let quant_params = law
         .givens
         .iter()
         .map(|given| {
-            format!(
-                "({} : {})",
-                aver_name_to_lean(&given.name),
-                type_annotation_to_lean(&given.type_name)
-            )
+            // Oracle v1: classified-effect givens bind oracles — the
+            // quantifier must use the derived oracle signature type,
+            // not the effect-reference name (which Lean would see as
+            // an unresolved `Random_int : Sort _`).
+            let type_text = match crate::types::checker::effect_classification::oracle_signature(
+                &given.type_name,
+            ) {
+                Some(oracle_ty) => crate::codegen::lean::types::type_to_lean(&oracle_ty),
+                None => type_annotation_to_lean(&given.type_name),
+            };
+            format!("({} : {})", aver_name_to_lean(&given.name), type_text)
         })
         .collect::<Vec<_>>()
         .join(" ");
@@ -1543,8 +1566,22 @@ fn emit_verify_law_block(
             .iter()
             .enumerate()
             .map(|(idx, (left, right))| {
-                let left_str = emit_expr(left, ctx);
-                let right_str = emit_expr(right, ctx);
+                // Oracle v1: same SampleValue rewrite as per-case
+                // sample theorems.
+                let left_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
+                    left,
+                    law,
+                    ctx,
+                    crate::codegen::common::OracleInjectionMode::SampleValue,
+                );
+                let right_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
+                    right,
+                    law,
+                    ctx,
+                    crate::codegen::common::OracleInjectionMode::SampleValue,
+                );
+                let left_str = emit_expr(&left_rw, ctx);
+                let right_str = emit_expr(&right_rw, ctx);
                 if let Some(guard) = law.sample_guards.get(idx) {
                     format!(
                         "({} = true -> {} = {})",
@@ -1583,8 +1620,23 @@ fn emit_verify_law_block(
 
     for (idx, (left, right)) in vb.cases.iter().enumerate() {
         let theorem_name = format!("{}_sample_{}", theorem_base, case_index_start + idx + 1);
-        let left_str = emit_expr(left, ctx);
-        let right_str = emit_expr(right, ctx);
+        // Oracle v1: sample theorems inject the concrete stub value
+        // (SampleValue mode) — they test the surface law at a single
+        // point, no lemma-local binding in scope.
+        let left_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
+            left,
+            law,
+            ctx,
+            crate::codegen::common::OracleInjectionMode::SampleValue,
+        );
+        let right_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
+            right,
+            law,
+            ctx,
+            crate::codegen::common::OracleInjectionMode::SampleValue,
+        );
+        let left_str = emit_expr(&left_rw, ctx);
+        let right_str = emit_expr(&right_rw, ctx);
         let sample_prop = if let Some(guard) = law.sample_guards.get(idx) {
             format!(
                 "{} = true -> {} = {}",
