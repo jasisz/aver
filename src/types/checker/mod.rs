@@ -17,6 +17,7 @@ use crate::ast::{
 
 mod builtins;
 pub mod effect_classification;
+pub mod effect_lifting;
 mod exhaustiveness;
 mod flow;
 mod infer;
