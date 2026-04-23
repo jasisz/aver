@@ -51,4 +51,8 @@ pub fn register_service_types(arena: &mut crate::nan_value::Arena) {
     // context-sensitive elaboration of effect-method calls inside trace
     // blocks; never constructed by user code directly.
     crate::types::effect_event::register(arena);
+    // Oracle: Trace wraps the list of EffectEvent values emitted during a
+    // verify-trace LHS evaluation. Only materialized via the `.trace`
+    // projection on the verified function's return.
+    crate::types::trace::register(arena);
 }
