@@ -3223,6 +3223,70 @@ updated = User.update(u, age = 99)
 }
 
 // ---------------------------------------------------------------------------
+// BranchPath — opaque builtin for Oracle-proof specs
+// ---------------------------------------------------------------------------
+
+fn assert_branch_path(value: &Value, expected_dewey: &str) {
+    match value {
+        Value::Record { type_name, fields } => {
+            assert_eq!(type_name, "BranchPath", "expected BranchPath, got {}", type_name);
+            let dewey = fields
+                .iter()
+                .find(|(n, _)| n == "dewey")
+                .map(|(_, v)| v)
+                .expect("BranchPath should carry a `dewey` field");
+            match dewey {
+                Value::Str(s) => assert_eq!(s, expected_dewey),
+                other => panic!("BranchPath.dewey should be a String, got {:?}", other),
+            }
+        }
+        other => panic!("expected Record(BranchPath), got {:?}", other),
+    }
+}
+
+#[test]
+fn branch_path_root_is_empty_dewey() {
+    let v = eval("BranchPath.root()");
+    assert_branch_path(&v, "");
+}
+
+#[test]
+fn branch_path_child_of_root_is_single_index() {
+    let v = eval("BranchPath.child(BranchPath.root(), 3)");
+    assert_branch_path(&v, "3");
+}
+
+#[test]
+fn branch_path_child_nests_with_dot() {
+    let v = eval("BranchPath.child(BranchPath.child(BranchPath.root(), 2), 0)");
+    assert_branch_path(&v, "2.0");
+}
+
+#[test]
+fn branch_path_parse_accepts_root() {
+    let v = eval("BranchPath.parse(\"\")");
+    assert_branch_path(&v, "");
+}
+
+#[test]
+fn branch_path_parse_roundtrips_dewey() {
+    let v = eval("BranchPath.parse(\"2.0\")");
+    assert_branch_path(&v, "2.0");
+}
+
+#[test]
+fn branch_path_parse_rejects_garbage() {
+    let err = try_eval("BranchPath.parse(\"not.a.path\")").expect_err("should error");
+    assert!(err.contains("BranchPath.parse"), "error was: {}", err);
+}
+
+#[test]
+fn branch_path_child_rejects_negative_index() {
+    let err = try_eval("BranchPath.child(BranchPath.root(), 0 - 1)").expect_err("should error");
+    assert!(err.contains("non-negative"), "error was: {}", err);
+}
+
+// ---------------------------------------------------------------------------
 // Terminal service runtime
 // ---------------------------------------------------------------------------
 

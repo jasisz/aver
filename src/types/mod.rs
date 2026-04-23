@@ -8,6 +8,7 @@
 /// - `checker` — static type checker
 /// - `bool`, `int`, `float`, `string`, `list`, `map`, `char`, `byte` — pure namespace helpers (no effects)
 pub mod bool;
+pub mod branch_path;
 pub mod byte;
 pub mod char;
 pub mod checker;
