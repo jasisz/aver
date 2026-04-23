@@ -38,27 +38,61 @@ fn emit_effectful_spec_equivalence_law(
         return None;
     }
 
-    // Both sides must be direct fn calls with matching arg lists, to
-    // two distinct fns. The impl side names `vb.fn_name`; the spec
-    // side names some other fn we can feed into `simp`.
-    let (impl_name, _impl_args, spec_name) = match_impl_spec_call_shape(vb, law)?;
+    // Try the full `impl(args) == spec(args)` shape first — both
+    // sides fn calls, identical args, distinct fns. Closes via
+    // `simp [impl, spec]` since both unfold to the same oracle call.
+    if let Some((impl_name, _impl_args, spec_name)) = match_impl_spec_call_shape(vb, law) {
+        let simp_defs = [
+            aver_name_to_lean_ident(&impl_name),
+            aver_name_to_lean_ident(&spec_name),
+        ];
+        return Some(AutoProof {
+            support_lines: Vec::new(),
+            proof_lines: intro_then(
+                intro_names,
+                // `simp` (no-a variant) avoids the `unnecessarySimpa`
+                // linter warning when no goal is left to close after
+                // unfolding — a bare def-equality match doesn't need
+                // `simpa`'s cleanup step.
+                vec![format!("simp [{}]", simp_defs.join(", "))],
+            ),
+            replaces_theorem: false,
+        });
+    }
 
-    let simp_defs = [
-        aver_name_to_lean_ident(&impl_name),
-        aver_name_to_lean_ident(&spec_name),
-    ];
+    // Fallback: one side is the impl call, the other is any inline
+    // expression (typically using the oracle directly —
+    // `rnd root 0 1 6 + rnd root 1 1 6`). Closes via `simp [impl]`
+    // which unfolds the impl's body; the RHS is already in normalised
+    // form (oracle calls + arithmetic) and Lean reduces by
+    // definitional equality. No separate spec fn needed — user can
+    // inline the assertion directly in verify.
+    let impl_name = match_impl_call_one_side(vb, law)?;
     Some(AutoProof {
         support_lines: Vec::new(),
         proof_lines: intro_then(
             intro_names,
-            // `simp` (no-a variant) avoids the `unnecessarySimpa`
-            // linter warning when no goal is left to close after
-            // unfolding — a bare def-equality match doesn't need
-            // `simpa`'s cleanup step.
-            vec![format!("simp [{}]", simp_defs.join(", "))],
+            vec![format!("simp [{}]", aver_name_to_lean_ident(&impl_name))],
         ),
         replaces_theorem: false,
     })
+}
+
+/// Return the impl fn name if one side of the law is a direct fn
+/// call to `vb.fn_name`. The other side can be any expression —
+/// typically an inline spec using the oracle ident directly.
+fn match_impl_call_one_side(vb: &VerifyBlock, law: &VerifyLaw) -> Option<String> {
+    let side_calls_vb = |e: &Spanned<Expr>| -> bool {
+        let Expr::FnCall(callee, _) = &e.node else {
+            return false;
+        };
+        expr_fn_name(callee).as_deref() == Some(vb.fn_name.as_str())
+    };
+    if side_calls_vb(&law.lhs) || side_calls_vb(&law.rhs) {
+        Some(vb.fn_name.clone())
+    } else {
+        None
+    }
 }
 
 /// Return `(impl_fn_name, impl_args, spec_fn_name)` if the law body
