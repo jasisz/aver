@@ -49,6 +49,17 @@ pub(super) struct VmRuntime {
     /// handled it. The verify runner flips this on before LHS eval and
     /// off after RHS eval, so only LHS emissions land in the trace.
     pub(super) trace_collecting: bool,
+    /// Oracle v1: the fn under `verify <fn> trace` — set by the verify
+    /// runner before the LHS helper runs. Trace events whose immediate
+    /// caller fn_id != this root are helper emissions and get filtered
+    /// out of `.trace.*` projections. When `None`, no filter applies
+    /// (every classified effect is collected — used by non-verify
+    /// tests that drive trace collection directly).
+    pub(super) trace_root_fn_id: Option<u32>,
+    /// Updated by VmExecute on entry to every effect dispatch with the
+    /// `fn_id` of the frame that issued the call. Used by
+    /// `record_trace_event` to apply the helper-boundary filter.
+    pub(super) trace_caller_fn_id: u32,
 }
 
 impl Default for VmRuntime {
@@ -69,6 +80,8 @@ impl VmRuntime {
             oracle_counter: 0,
             collected_trace_events: Vec::new(),
             trace_collecting: false,
+            trace_root_fn_id: None,
+            trace_caller_fn_id: 0,
         }
     }
 
@@ -79,6 +92,26 @@ impl VmRuntime {
 
     pub(super) fn stop_trace_collection(&mut self) {
         self.trace_collecting = false;
+        self.trace_root_fn_id = None;
+    }
+
+    pub(super) fn set_trace_root_fn_id(&mut self, fn_id: Option<u32>) {
+        self.trace_root_fn_id = fn_id;
+    }
+
+    pub(super) fn sync_caller_fn_id(&mut self, fn_id: u32) {
+        self.trace_caller_fn_id = fn_id;
+    }
+
+    /// Oracle v1: should this effect emission land in the user-visible
+    /// trace? Filters out helper-boundary emissions — if a root fn is
+    /// set, only direct emissions by that fn count. When no root is
+    /// set (tests driving trace directly), every event counts.
+    fn trace_event_is_direct(&self) -> bool {
+        match self.trace_root_fn_id {
+            Some(root) => self.trace_caller_fn_id == root,
+            None => true,
+        }
     }
 
     pub(super) fn take_trace_events(&mut self) -> Vec<crate::value::Value> {
@@ -86,7 +119,7 @@ impl VmRuntime {
     }
 
     pub(super) fn record_trace_event(&mut self, effect_name: &str, args: &[crate::value::Value]) {
-        if !self.trace_collecting {
+        if !self.trace_collecting || !self.trace_event_is_direct() {
             return;
         }
         let event = crate::value::Value::Record {
@@ -335,6 +368,11 @@ impl VmRuntime {
             && is_effectful
             && crate::types::checker::effect_classification::is_classified(builtin_name)
         {
+            // Recording is filtered by helper-boundary
+            // (record_trace_event checks trace_event_is_direct);
+            // suppression of output effects is NOT filtered, so a
+            // helper's `Console.print` call doesn't leak to the
+            // terminal of `aver verify` either.
             let arg_vals: Vec<crate::value::Value> =
                 args.iter().map(|a| a.to_value(arena)).collect();
             self.record_trace_event(builtin_name, &arg_vals);

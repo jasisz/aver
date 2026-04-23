@@ -320,6 +320,10 @@ impl VM {
                                 continue;
                             }
 
+                            // Oracle v1: record who issued this effect
+                            // call so trace_event_is_direct can filter
+                            // helper-boundary emissions.
+                            self.runtime.sync_caller_fn_id(fn_id);
                             let result = self.arena.with_alloc_space(alloc_space, |arena| {
                                 self.runtime.invoke_builtin(
                                     &self.code.symbols,
@@ -492,6 +496,10 @@ impl VM {
                     // returns here; the caller's state lives in these
                     // stack-frame locals, not in self.frames (which
                     // doesn't carry leaf-call state).
+                    // Oracle v1: record caller fn_id before effect
+                    // dispatch — used by trace_event_is_direct to filter
+                    // helper-boundary emissions under verify-trace.
+                    self.runtime.sync_caller_fn_id(fn_id);
                     if let Some(stub_fn_id) = self.runtime.oracle_stub_for(builtin.name()) {
                         let result = self.dispatch_oracle_stub(stub_fn_id, &args)?;
                         self.stack.push(result);

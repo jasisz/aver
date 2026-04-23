@@ -141,6 +141,15 @@ impl VM {
         self.runtime.start_trace_collection();
     }
 
+    /// Oracle v1: set (or clear) the root fn_id used by the helper-
+    /// boundary filter — only emissions whose immediate caller fn_id
+    /// matches the root count towards `.trace.*` projections. Pass
+    /// `None` (or don't call it) to disable filtering, so every
+    /// classified effect lands in the trace.
+    pub fn set_trace_root_fn_id(&mut self, fn_id: Option<u32>) {
+        self.runtime.set_trace_root_fn_id(fn_id);
+    }
+
     /// Oracle v1: stop collection without consuming the buffer.
     pub fn stop_trace_collection(&mut self) {
         self.runtime.stop_trace_collection();
