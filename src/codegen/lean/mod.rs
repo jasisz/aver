@@ -2271,7 +2271,16 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
         LEAN_PRELUDE_BRANCH_PATH.to_string(),
     ];
 
-    if include_all_helpers || needs_builtin_named_type(body, "Header") {
+    // `HttpResponse` / `HttpRequest` have `headers : List Header`; if
+    // either is emitted, `Header` must come first so the derive chain
+    // for `DecidableEq / BEq / Repr` sees the instance for the nested
+    // list's element type. Without this guard the body can reference
+    // HttpResponse without directly naming Header, and Lean bails with
+    // a stuck `Repr (List ?m)` typeclass instance.
+    let needs_header = needs_builtin_named_type(body, "Header")
+        || needs_builtin_named_type(body, "HttpResponse")
+        || needs_builtin_named_type(body, "HttpRequest");
+    if include_all_helpers || needs_header {
         parts.push(LEAN_PRELUDE_HEADER_TYPE.to_string());
     }
     if include_all_helpers || needs_builtin_named_type(body, "HttpResponse") {
