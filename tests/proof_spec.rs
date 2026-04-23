@@ -425,6 +425,56 @@ fn aver_verify_trace_local_bindings_substitute_into_cases() {
 }
 
 #[test]
+fn aver_verify_trace_given_alias_callable_in_case_expressions() {
+    // Oracle v1: `given rnd: Random.int = [fairDie]` installs a VM
+    // stub that intercepts Random.int inside `hello()`. The same alias
+    // is also substituted syntactically into case LHS / RHS, so users
+    // can write `rnd(BranchPath.root, 0, 1, 6)` as a value expression
+    // — which becomes a direct call to `fairDie` after substitution.
+    let dir = temp_output_dir("aver-verify-given-alias");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn pickOne() -> Int\n\
+         \x20   ? \"one roll\"\n\
+         \x20   ! [Random.int]\n\
+         \x20   Random.int(1, 6)\n\
+         \n\
+         verify pickOne trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   pickOne().result => rnd(BranchPath.root(), 0, 1, 6)\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+
+    assert!(
+        output.status.success(),
+        "aver verify failed when using given-alias as callable in case; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn proof_accepts_complete_independence_mode() {
     let dir = temp_output_dir("aver-proof-complete");
     std::fs::create_dir_all(&dir).expect("create temp dir");
