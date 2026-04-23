@@ -639,6 +639,38 @@ impl Parser {
                     self.skip_newlines();
                 }
 
+                // Oracle v1: substitute given-stub aliases into each
+                // case's LHS / RHS. `given rnd: Random.int = [fairDie]`
+                // already installs a VM-level stub that intercepts
+                // `Random.int` calls inside the fn under verification;
+                // substituting `rnd → fairDie` also lets users refer to
+                // the stub directly in case assertions, e.g.
+                // `hello().result => rnd(BranchPath.root, 0, 1, 6)`.
+                // Local bindings substituted afterwards so they may
+                // reference given aliases in their value expressions.
+                let given_substs: Vec<(String, Spanned<Expr>)> = cases_givens
+                    .iter()
+                    .filter_map(|g| match &g.domain {
+                        crate::ast::VerifyGivenDomain::Explicit(vs) => {
+                            vs.first().map(|v| (g.name.clone(), v.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if !given_substs.is_empty() {
+                    for (_, value) in local_bindings.iter_mut() {
+                        for (name, sub) in &given_substs {
+                            substitute_ident(value, name, sub);
+                        }
+                    }
+                    for (left, right) in cases.iter_mut() {
+                        for (name, sub) in &given_substs {
+                            substitute_ident(left, name, sub);
+                            substitute_ident(right, name, sub);
+                        }
+                    }
+                }
+
                 // Oracle v1: substitute local bindings into each case's
                 // LHS / RHS. Locals are block-scoped aliases like
                 // `expect = rnd(...)` — syntactic substitution keeps the
