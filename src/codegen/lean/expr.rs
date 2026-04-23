@@ -275,29 +275,32 @@ fn emit_fn_call(fn_expr: &Spanned<Expr>, args: &[Spanned<Expr>], ctx: &CodegenCo
 }
 
 fn emit_constructor(name: &str, arg: &Option<Box<Spanned<Expr>>>, ctx: &CodegenContext) -> String {
+    // Accept both bare and qualified forms — parser / lifter may
+    // produce either. Aver's `Result.Ok(x)` and `Ok(x)` are the same
+    // wrapper semantically; same for Option.
     match name {
-        "Ok" => {
+        "Ok" | "Result.Ok" => {
             let inner = arg
                 .as_ref()
                 .map(|a| emit_expr_atom(a, ctx))
                 .unwrap_or_else(|| "()".to_string());
             format!("Except.ok {}", inner)
         }
-        "Err" => {
+        "Err" | "Result.Err" => {
             let inner = arg
                 .as_ref()
                 .map(|a| emit_expr_atom(a, ctx))
                 .unwrap_or_else(|| "()".to_string());
             format!("Except.error {}", inner)
         }
-        "Some" => {
+        "Some" | "Option.Some" => {
             let inner = arg
                 .as_ref()
                 .map(|a| emit_expr_atom(a, ctx))
                 .unwrap_or_else(|| "()".to_string());
             format!("some {}", inner)
         }
-        "None" => "none".to_string(),
+        "None" | "Option.None" => "none".to_string(),
         _ => {
             let inner = arg
                 .as_ref()
