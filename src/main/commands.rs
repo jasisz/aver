@@ -2660,13 +2660,11 @@ fn find_trace_underlying_fn_call(node: &Expr) -> Option<Spanned<Expr>> {
             let Expr::Attr(inner_attr, _) = &callee.node else {
                 return None;
             };
-            // Allow an optional `.group(N)` stage between `.trace` and
-            // the terminal projection method. We walk inward until we
-            // hit `.trace`, then grab the wrapped fn-call.
-            let scope = match peel_group_stage(inner_attr) {
-                Some((base, _)) => base,
-                None => inner_attr.as_ref(),
-            };
+            // Allow optional `.group(N)` / `.branch(idx)` tree-nav
+            // stages between `.trace` and the terminal projection
+            // method. We walk inward until we hit `.trace`, then grab
+            // the wrapped fn-call.
+            let (scope, _, _) = peel_tree_nav_stages(inner_attr);
             let Expr::Attr(fn_call_box, trace_field) = &scope.node else {
                 return None;
             };
@@ -2722,34 +2720,35 @@ fn apply_trace_projection(
             let Expr::Attr(inner_attr, method) = &callee.node else {
                 return Ok(helper_result);
             };
-            // Peel the optional `.group(N)` stage: `inner_attr` may be
-            // either `fn_call.trace` directly (flat projection) or
-            // `fn_call.trace.group(N)` (tree-nav stage).
-            let (scope, group_id) = match peel_group_stage(inner_attr) {
-                Some((base, gid)) => (base, Some(gid)),
-                None => (inner_attr.as_ref(), None),
-            };
+            // Peel the optional tree-nav stages. `inner_attr` may be:
+            //   fn_call.trace                       — flat
+            //   fn_call.trace.group(N)              — one stage
+            //   fn_call.trace.group(N).branch(idx)  — two stages
+            let (scope, group_id, branch_idx) = peel_tree_nav_stages(inner_attr);
             let Expr::Attr(fn_call_box, trace_field) = &scope.node else {
                 return Ok(helper_result);
             };
             if trace_field != "trace" || !matches!(&fn_call_box.node, Expr::FnCall(_, _)) {
                 return Ok(helper_result);
             }
-            // Filter events by group_id when a `.group(N)` stage is
-            // present. v0: N is 1-based (first `!`/`?!` in source
-            // order is 0 at the source level; the replay scope assigns
-            // internal ids starting at 1). We treat the user-visible
-            // index `N` as the 0-based position of the group in source
-            // order: group 0 → replay id 1, group 1 → replay id 2, etc.
-            let filtered: Vec<&Value> = match group_id {
-                None => collected.iter().collect(),
-                Some(n) => collected
-                    .iter()
-                    .zip(coords.iter())
-                    .filter(|(_, c)| c.group_id == Some(n + 1))
-                    .map(|(ev, _)| ev)
-                    .collect(),
-            };
+            // Filter events by group + branch when each stage is
+            // present. User-visible `N` is 0-based in source order;
+            // the replay scope assigns internal group ids starting at
+            // 1, so source index 0 → replay group_id 1. Branch idx
+            // maps directly (0-based in both source and runtime).
+            let filtered: Vec<&Value> = collected
+                .iter()
+                .zip(coords.iter())
+                .filter(|(_, c)| match group_id {
+                    Some(n) => c.group_id == Some(n + 1),
+                    None => true,
+                })
+                .filter(|(_, c)| match branch_idx {
+                    Some(b) => c.branch_idx == Some(b),
+                    None => true,
+                })
+                .map(|(ev, _)| ev)
+                .collect();
             match method.as_str() {
                 "length" => Ok(VmVerifyEval::Value(Value::Int(filtered.len() as i64))),
                 "event" => {
@@ -2798,24 +2797,52 @@ fn apply_trace_projection(
     }
 }
 
-/// Oracle v1: recognise `<scope>.group(N)` and return `(scope, N)`.
-/// The `group(N)` stage sits between `.trace` and the terminal
-/// projection method (`.length()` / `.event(k)` / `.contains(_)`).
-/// `N` must be a literal non-negative Int.
-fn peel_group_stage(expr: &Spanned<Expr>) -> Option<(&Spanned<Expr>, u32)> {
+/// Oracle v1: recognise one `<scope>.<method>(N)` stage where method
+/// must match `expected` — used by the generic tree-nav peeler to
+/// strip `.group(N)` / `.branch(idx)` stages. Argument must be a
+/// literal non-negative Int.
+fn peel_named_int_stage<'a>(
+    expr: &'a Spanned<Expr>,
+    expected: &str,
+) -> Option<(&'a Spanned<Expr>, u32)> {
     let Expr::FnCall(callee, args) = &expr.node else {
         return None;
     };
     let Expr::Attr(base, method) = &callee.node else {
         return None;
     };
-    if method != "group" || args.len() != 1 {
+    if method != expected || args.len() != 1 {
         return None;
     }
     match &args[0].node {
         Expr::Literal(aver::ast::Literal::Int(n)) if *n >= 0 => Some((base.as_ref(), *n as u32)),
         _ => None,
     }
+}
+
+/// Oracle v1: peel the optional `.group(N).branch(idx)` tree-nav
+/// stages sitting between `.trace` and a terminal projection method.
+/// Returns the remaining expression (pointing at `fn_call.trace`)
+/// plus the group / branch indices the user requested.
+///
+/// Supported shapes:
+///   fn_call.trace                        → (expr, None, None)
+///   fn_call.trace.group(N)               → (expr, Some(N), None)
+///   fn_call.trace.group(N).branch(idx)   → (expr, Some(N), Some(idx))
+///
+/// `.branch(idx)` without a preceding `.group(N)` is rejected by the
+/// normal projection path — branches only make sense inside a group.
+fn peel_tree_nav_stages(expr: &Spanned<Expr>) -> (&Spanned<Expr>, Option<u32>, Option<u32>) {
+    // Try `.branch(idx)` first (innermost if present).
+    if let Some((after_branch, idx)) = peel_named_int_stage(expr, "branch")
+        && let Some((after_group, gid)) = peel_named_int_stage(after_branch, "group")
+    {
+        return (after_group, Some(gid), Some(idx));
+    }
+    if let Some((after_group, gid)) = peel_named_int_stage(expr, "group") {
+        return (after_group, Some(gid), None);
+    }
+    (expr, None, None)
 }
 
 /// Oracle v1: detect a trace-projection LHS shape — `.trace`,
@@ -2835,10 +2862,7 @@ fn is_trace_projection_shape(expr: &Spanned<Expr>) -> bool {
             if !matches!(method.as_str(), "length" | "event" | "contains") {
                 return false;
             }
-            let scope = match peel_group_stage(inner_attr) {
-                Some((base, _)) => base,
-                None => inner_attr.as_ref(),
-            };
+            let (scope, _, _) = peel_tree_nav_stages(inner_attr);
             let Expr::Attr(fn_call_box, trace_field) = &scope.node else {
                 return false;
             };

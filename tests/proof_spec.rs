@@ -1215,6 +1215,60 @@ fn aver_verify_trace_group_navigation_filters_by_source_order() {
 }
 
 #[test]
+fn aver_verify_trace_group_branch_navigation_narrows_to_single_branch() {
+    // Oracle v1: `.trace.group(N).branch(idx)` narrows the trace to
+    // emissions from branch `idx` of the N-th `!`/`?!` group. Branches
+    // are 0-based in both source and runtime; combined with `.group(N)`
+    // (also 0-based in source order) users can target any single cell
+    // of the branch-witness tree without knowing runtime ids.
+    let dir = temp_output_dir("aver-verify-trace-branch-nav");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn twoBranches() -> Int\n\
+         \x20   ? \"two rolls in parallel\"\n\
+         \x20   ! [Random.int]\n\
+         \x20   pair = (Random.int(1, 6), Random.int(7, 12))!\n\
+         \x20   match pair\n\
+         \x20       (a, b) -> a + b\n\
+         \n\
+         verify twoBranches trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   twoBranches().trace.group(0).branch(0).length() => 1\n\
+         \x20   twoBranches().trace.group(0).branch(1).length() => 1\n\
+         \x20   twoBranches().trace.group(0).branch(0).event(0) => Option.Some(EffectEvent(method = \"Random.int\", args = [1, 6]))\n\
+         \x20   twoBranches().trace.group(0).branch(1).event(0) => Option.Some(EffectEvent(method = \"Random.int\", args = [7, 12]))\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "group.branch navigation failed; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn proof_accepts_complete_independence_mode() {
     let dir = temp_output_dir("aver-proof-complete");
     std::fs::create_dir_all(&dir).expect("create temp dir");
