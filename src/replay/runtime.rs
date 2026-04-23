@@ -127,6 +127,19 @@ impl EffectReplayState {
         Ok(())
     }
 
+    /// Oracle v1: reset the structural-scope counters (`next_group_id`,
+    /// `group_stack`, `branch_stack`, `effect_count_stack`) without
+    /// touching recorded effects or replay state. Used by the verify-
+    /// trace runner so each case starts at group id 1 — otherwise the
+    /// counter accumulates across cases and user-visible indices like
+    /// `.trace.group(0)` stop matching after the first case.
+    pub fn reset_scope(&mut self) {
+        self.next_group_id = 0;
+        self.group_stack.clear();
+        self.branch_stack.clear();
+        self.effect_count_stack.clear();
+    }
+
     /// Enter an independent product group for recording. Returns the group id.
     pub fn enter_group(&mut self) -> u32 {
         self.next_group_id += 1;
@@ -142,6 +155,20 @@ impl EffectReplayState {
         self.group_stack.pop();
         self.branch_stack.pop();
         self.effect_count_stack.pop();
+    }
+
+    /// Oracle v1: id of the innermost `!`/`?!` group currently being
+    /// evaluated, as assigned by enter_group (monotonic per run, starts
+    /// at 1). `None` when outside any group — i.e. sequential code.
+    pub fn current_group_id(&self) -> Option<u32> {
+        self.group_stack.last().copied()
+    }
+
+    /// Oracle v1: index of the current branch within the innermost
+    /// group. `None` at the sequential level. Ordinal: first branch of
+    /// a `!`/`?!` group is 0 (set by enter_group), bumped by set_branch.
+    pub fn current_branch_idx(&self) -> Option<u32> {
+        self.branch_stack.last().copied()
     }
 
     /// Set the current branch index within the current (innermost) product.

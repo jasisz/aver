@@ -44,6 +44,15 @@ pub(super) struct VmRuntime {
     /// `.trace.contains(...)` / `.trace.event(k)` / `.trace.length()`
     /// projections. Empty when not in verify-trace mode.
     pub(super) collected_trace_events: Vec<crate::value::Value>,
+    /// Oracle v1: per-event structural coordinates captured at record
+    /// time. `group_id` is the `!`/`?!` group index in source order
+    /// (None when the emission is outside any group). `branch_idx` is
+    /// the current branch inside that group (None at the sequential
+    /// level). Parallel to `collected_trace_events` — same length.
+    /// Used to project `.trace.group(N).branch(idx).event(k)` chains
+    /// without embedding tree metadata inside the Value-level
+    /// `EffectEvent` record.
+    pub(super) collected_trace_coords: Vec<TraceCoord>,
     /// When true, every dispatched effect is recorded into
     /// `collected_trace_events` regardless of whether an oracle stub
     /// handled it. The verify runner flips this on before LHS eval and
@@ -60,6 +69,14 @@ pub(super) struct VmRuntime {
     /// `fn_id` of the frame that issued the call. Used by
     /// `record_trace_event` to apply the helper-boundary filter.
     pub(super) trace_caller_fn_id: u32,
+}
+
+/// Oracle v1: structural coordinates for a recorded trace event.
+/// Both fields `None` for sequential code outside any `!`/`?!` group.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TraceCoord {
+    pub group_id: Option<u32>,
+    pub branch_idx: Option<u32>,
 }
 
 impl Default for VmRuntime {
@@ -79,6 +96,7 @@ impl VmRuntime {
             oracle_stubs: std::collections::HashMap::new(),
             oracle_counter: 0,
             collected_trace_events: Vec::new(),
+            collected_trace_coords: Vec::new(),
             trace_collecting: false,
             trace_root_fn_id: None,
             trace_caller_fn_id: 0,
@@ -87,6 +105,12 @@ impl VmRuntime {
 
     pub(super) fn start_trace_collection(&mut self) {
         self.collected_trace_events.clear();
+        self.collected_trace_coords.clear();
+        // Reset the replay scope so `!`/`?!` group ids start at 1 for
+        // each verify-trace case. Without this, the ids accumulate
+        // across cases and user-visible indices like `.trace.group(0)`
+        // stop matching after the first case.
+        self.replay_state.reset_scope();
         self.trace_collecting = true;
     }
 
@@ -115,7 +139,19 @@ impl VmRuntime {
     }
 
     pub(super) fn take_trace_events(&mut self) -> Vec<crate::value::Value> {
+        self.collected_trace_coords.clear();
         std::mem::take(&mut self.collected_trace_events)
+    }
+
+    /// Oracle v1: take both the events and their structural coordinates
+    /// together. Coords are parallel to events (same length, same
+    /// ordering). Used by `.trace.group(N).*` projections.
+    pub(super) fn take_trace_events_with_coords(
+        &mut self,
+    ) -> (Vec<crate::value::Value>, Vec<TraceCoord>) {
+        let events = std::mem::take(&mut self.collected_trace_events);
+        let coords = std::mem::take(&mut self.collected_trace_coords);
+        (events, coords)
     }
 
     pub(super) fn record_trace_event(&mut self, effect_name: &str, args: &[crate::value::Value]) {
@@ -136,7 +172,16 @@ impl VmRuntime {
             ]
             .into(),
         };
+        // Oracle v1: capture structural coordinates alongside the
+        // event — group_id / branch_idx read from the replay state's
+        // live stacks. At the sequential level (outside any group),
+        // both are None.
+        let coord = TraceCoord {
+            group_id: self.replay_state.current_group_id(),
+            branch_idx: self.replay_state.current_branch_idx(),
+        };
         self.collected_trace_events.push(event);
+        self.collected_trace_coords.push(coord);
     }
 
     /// Install the oracle-stub map for the current scope (typically a

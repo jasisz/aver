@@ -159,9 +159,14 @@ impl VM {
                         .ensure_builtin_effects_allowed(&self.code.symbols, builtin)?;
                     return self.dispatch_http_server(builtin, args);
                 }
-                // Oracle v1: if the current verify-law case installed a
-                // stub for this effect method, redirect the call to the
-                // stub with prepended (BranchPath.root, counter, …).
+                // Oracle v1: sync caller fn_id so the trace-collector's
+                // helper-boundary filter sees the right origin for
+                // calls routed through `invoke_callable_value` (e.g.
+                // parallel-product branches).
+                self.runtime.sync_caller_fn_id(caller_fn_id);
+                // If the current verify-law case installed a stub for
+                // this effect method, redirect the call to the stub
+                // with prepended (BranchPath.root, counter, …).
                 // Counter increments per dispatched effect; flat bodies
                 // only — nested `!`/`?!` branches will thread path via
                 // the lifting transform in a later integration step.

@@ -1161,6 +1161,60 @@ fn aver_verify_trace_helper_boundary_filter_excludes_nested_emissions() {
 }
 
 #[test]
+fn aver_verify_trace_group_navigation_filters_by_source_order() {
+    // Oracle v1: `.trace.group(N)` narrows the trace to emissions from
+    // the N-th `!`/`?!` group in source order (0-based). Subsequent
+    // `.length()` / `.event(k)` / `.contains(_)` operate on the
+    // filtered sub-trace. Group ids reset per verify-trace case so
+    // `.group(0)` points at the first group in every case.
+    let dir = temp_output_dir("aver-verify-trace-group-nav");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn parallelRolls() -> Int\n\
+         \x20   ? \"two rolls in parallel, sum\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   Console.print(\"pre\")\n\
+         \x20   pair = (Random.int(1, 6), Random.int(1, 6))!\n\
+         \x20   match pair\n\
+         \x20       (a, b) -> a + b\n\
+         \n\
+         verify parallelRolls trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   parallelRolls().trace.length() => 3\n\
+         \x20   parallelRolls().trace.group(0).length() => 2\n\
+         \x20   parallelRolls().trace.group(0).event(0) => Option.Some(EffectEvent(method = \"Random.int\", args = [1, 6]))\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "trace.group(N) navigation failed; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn proof_accepts_complete_independence_mode() {
     let dir = temp_output_dir("aver-proof-complete");
     std::fs::create_dir_all(&dir).expect("create temp dir");

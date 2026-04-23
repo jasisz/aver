@@ -3,7 +3,7 @@ mod compiler;
 mod execute;
 pub mod opcode;
 mod profile;
-mod runtime;
+pub mod runtime;
 mod symbol;
 mod types;
 

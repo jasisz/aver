@@ -164,6 +164,21 @@ impl VM {
         events
     }
 
+    /// Oracle v1: take both events and structural coordinates
+    /// together. Used by tree-navigation projections like
+    /// `.trace.group(N).event(k)` — the coords identify which
+    /// `!`/`?!` group each event came from in source order.
+    pub fn take_trace_events_with_coords(
+        &mut self,
+    ) -> (
+        Vec<crate::value::Value>,
+        Vec<crate::vm::runtime::TraceCoord>,
+    ) {
+        let out = self.runtime.take_trace_events_with_coords();
+        self.runtime.stop_trace_collection();
+        out
+    }
+
     pub fn set_cancelled(&mut self, flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {
         self.cancelled = Some(flag);
     }
