@@ -535,11 +535,41 @@ impl Parser {
                     None
                 };
 
+                // Oracle v1: local bindings in law form — symmetric
+                // with trace-form. `expected = rnd(root(), 0, 1, 6) + ...`
+                // between givens and the single `lhs => rhs` assertion.
+                // Substituted into lhs / rhs before case expansion so
+                // downstream (auto-proof matcher, emit) doesn't see
+                // the binding at all — it's a textual shortcut.
+                let mut law_locals: Vec<(String, Spanned<Expr>)> = Vec::new();
+                while let TokenKind::Ident(_) = &self.current().kind {
+                    if !self.looks_like_binding() {
+                        break;
+                    }
+                    let name_tok = self
+                        .expect_kind(&TokenKind::Ident(String::new()), "Expected binding name")?;
+                    let name = match name_tok.kind {
+                        TokenKind::Ident(s) => s,
+                        _ => unreachable!(),
+                    };
+                    self.expect_exact(&TokenKind::Assign)?;
+                    let expr = self.parse_expr()?;
+                    law_locals.push((name, expr));
+                    self.skip_newlines();
+                }
+
                 let law_start_line = self.current().line;
                 let law_start_col = self.current().col;
-                let left = self.parse_expr()?;
+                let mut left = self.parse_expr()?;
                 self.expect_exact(&TokenKind::FatArrow)?;
-                let right = self.parse_expr()?;
+                self.skip_formatting();
+                let mut right = self.parse_expr()?;
+
+                // Substitute locals into the single assertion.
+                for (name, value) in &law_locals {
+                    substitute_ident(&mut left, name, value);
+                    substitute_ident(&mut right, name, value);
+                }
                 let law_end_line = self.current().line;
                 let law_end_col = self.current().col;
                 self.skip_newlines();
