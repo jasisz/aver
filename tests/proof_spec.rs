@@ -597,6 +597,61 @@ fn aver_verify_trace_suppresses_output_effects() {
 }
 
 #[test]
+fn aver_verify_trace_rejects_generative_effect_without_given_stub() {
+    // Oracle v1: under `verify fn trace`, every generative / gen+output
+    // effect the fn uses must have a `given` stub. Without one, the
+    // verify run would dispatch the real effect (e.g. live Random.int)
+    // and assertions would compare against non-deterministic output —
+    // a confusing failure. The check-time rejection points straight at
+    // the fix.
+    let dir = temp_output_dir("aver-verify-trace-missing-given");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn roll() -> Int\n\
+         \x20   ? \"rolls\"\n\
+         \x20   ! [Random.int]\n\
+         \x20   Random.int(1, 6)\n\
+         \n\
+         verify roll trace\n\
+         \x20   roll().result => 4\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let check = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("check")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver check` to run");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&check.stderr),
+        String::from_utf8_lossy(&check.stdout)
+    );
+    assert!(
+        combined.contains("needs a `given` stub"),
+        "expected missing-given diagnostic, got: {}",
+        combined
+    );
+    assert!(
+        combined.contains("Random.int"),
+        "expected diagnostic to mention Random.int, got: {}",
+        combined
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn proof_accepts_complete_independence_mode() {
     let dir = temp_output_dir("aver-proof-complete");
     std::fs::create_dir_all(&dir).expect("create temp dir");
