@@ -953,6 +953,88 @@ mod tests {
     }
 
     #[test]
+    fn lift_fn_def_on_plan_example_3_pick_three() {
+        // Example 3 from .claude/plans/oracle.md: sequential Random.int
+        // calls. Lifting should produce oracle calls with counter 0, 1, 2.
+        let fd = parse_fn(
+            "fn pickThree() -> (Int, Int, Int)\n\
+             \x20   ! [Random.int]\n\
+             \x20   (Random.int(1, 100), Random.int(1, 100), Random.int(1, 100))\n",
+        );
+        let lifted = lift_fn_def(&fd).unwrap().unwrap();
+        assert_eq!(lifted.params.len(), 2);
+        assert_eq!(lifted.params[0].0, "path");
+        assert_eq!(lifted.params[1].0, "rnd_Random_int");
+        let [Stmt::Expr(tail)] = &lifted.body.stmts()[..] else {
+            panic!("expected single expr stmt");
+        };
+        let Expr::Tuple(elems) = &tail.node else {
+            panic!("expected tuple body");
+        };
+        assert_eq!(elems.len(), 3);
+        for (i, elem) in elems.iter().enumerate() {
+            let args = assert_looks_like_oracle_call(&elem.node, "rnd_Random_int", 4);
+            // path arg is the bare `path` ident (flat body, no branches).
+            match &args[0] {
+                Expr::Ident(n) => assert_eq!(n, "path"),
+                other => panic!("slot {} path ident; got {:?}", i, other),
+            }
+            match &args[1] {
+                Expr::Literal(Literal::Int(n)) => assert_eq!(*n as usize, i),
+                other => panic!("slot {} counter; got {:?}", i, other),
+            }
+        }
+    }
+
+    #[test]
+    fn lift_fn_def_on_plan_example_7_fetch_both() {
+        // Example 7: `(Http.get(urlA), Http.get(urlB))?!`. Lifting should
+        // preserve IndependentProduct (error-prop flag set) and give each
+        // branch its own counter + BranchPath.child(path, i).
+        let fd = parse_fn(
+            "fn fetchBoth(urlA: String, urlB: String) -> Result<(String, String), String>\n\
+             \x20   ! [Http.get]\n\
+             \x20   (Http.get(urlA), Http.get(urlB))?!\n",
+        );
+        let lifted = lift_fn_def(&fd).unwrap().unwrap();
+        // params: path, http oracle, urlA, urlB
+        assert_eq!(lifted.params.len(), 4);
+        assert_eq!(lifted.params[0].0, "path");
+        assert_eq!(lifted.params[1].0, "rnd_Http_get");
+        assert_eq!(lifted.params[2].0, "urlA");
+        assert_eq!(lifted.params[3].0, "urlB");
+        let [Stmt::Expr(tail)] = &lifted.body.stmts()[..] else {
+            panic!("expected single expr stmt");
+        };
+        let Expr::IndependentProduct(branches, is_err_prop) = &tail.node else {
+            panic!("expected IndependentProduct, got {:?}", tail.node);
+        };
+        assert!(*is_err_prop, "?! should preserve error-prop flag");
+        assert_eq!(branches.len(), 2);
+        for i in 0..2 {
+            let args = assert_looks_like_oracle_call(&branches[i].node, "rnd_Http_get", 3);
+            // Each branch's counter resets to 0 (branch locality).
+            match &args[1] {
+                Expr::Literal(Literal::Int(0)) => {}
+                other => panic!("branch {} counter should be 0, got {:?}", i, other),
+            }
+            // Path: BranchPath.child(path, i).
+            let Expr::FnCall(callee, child_args) = &args[0] else {
+                panic!("branch {} path should be BranchPath.child call", i);
+            };
+            let Expr::Attr(h, f) = &callee.node else {
+                panic!("branch {} child callee should be Attr", i);
+            };
+            assert!(matches!(&h.node, Expr::Ident(n) if n == "BranchPath"));
+            assert_eq!(f, "child");
+            match &child_args[1].node {
+                Expr::Literal(Literal::Int(n)) => assert_eq!(*n as usize, i),
+                other => panic!("branch {} idx should be {}, got {:?}", i, i, other),
+            }
+        }
+    }
+
+    #[test]
     fn lift_fn_def_mixed_dims_orders_params_predictably() {
         let fd = parse_fn(
             "fn mixed(x: Int) -> Int\n    ! [Args.get, Random.int, Console.print]\n    x\n",
