@@ -1399,6 +1399,23 @@ pub fn emit_verify_block(
         return emit_verify_law_block(vb, law, ctx, verify_mode, case_index_start);
     }
 
+    // Oracle v1: `verify fn trace` cases-form is runtime-only. The
+    // `.result` / `.trace.*` projections are resolved by the verify
+    // runner against a collected event buffer, not modeled in proof-
+    // side lifted fns. Emitting them as `example : fn.trace.length =
+    // 2 := by native_decide` would fall through to Lean's record
+    // field access, which doesn't apply — native_decide chokes on
+    // unknown fields.  Better to skip cleanly with a documenting
+    // comment so the proof file still compiles.
+    if vb.trace {
+        let note = format!(
+            "-- verify {} trace ({} cases): runtime-only (see docs/oracle.md)",
+            vb.fn_name,
+            vb.cases.len()
+        );
+        return (note, case_index_start + vb.cases.len());
+    }
+
     let mut lines = Vec::new();
     for (idx, (left, right)) in vb.cases.iter().enumerate() {
         let left_str = emit_expr(left, ctx);
