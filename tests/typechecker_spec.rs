@@ -2204,31 +2204,38 @@ fn trace_law_on_recursive_pure_function_is_accepted() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn verify_law_on_stateful_disk_write_is_rejected() {
+fn verify_law_on_ambient_env_set_is_rejected() {
+    // Env.set mutates ambient process state — outside Oracle v1's
+    // single-call/oracle model because read-after-write depends on the
+    // whole ambient map, not a per-call oracle response.
     let src = concat!(
-        "fn saveLog(msg: String) -> Result<Unit, String>\n",
-        "    ! [Disk.writeText]\n",
-        "    Disk.writeText(\"/tmp/log\", msg)\n",
-        "verify saveLog law saveLogSpec\n",
-        "    given msg: String = [\"hi\"]\n",
-        "    saveLog(msg) => saveLog(msg)\n",
+        "fn configure(k: String, v: String) -> Unit\n",
+        "    ! [Env.set]\n",
+        "    Env.set(k, v)\n",
+        "verify configure law configureSpec\n",
+        "    given k: String = [\"K\"]\n",
+        "    given v: String = [\"V\"]\n",
+        "    configure(k, v) => configure(k, v)\n",
     );
     assert_error_containing(src, "outside Oracle v1's proof subset");
-    assert_error_containing(src, "Disk.writeText");
+    assert_error_containing(src, "Env.set");
 }
 
 #[test]
-fn verify_law_on_interactive_tcp_is_rejected() {
+fn verify_law_on_modal_terminal_set_color_is_rejected() {
+    // Terminal.setColor flips modal TTY state that persists across
+    // calls and affects every subsequent Terminal.* render — not
+    // modellable as a single-shot oracle response.
     let src = concat!(
-        "fn ping(h: String) -> Result<Unit, String>\n",
-        "    ! [Tcp.ping]\n",
-        "    Tcp.ping(h, 80)\n",
-        "verify ping law pingSpec\n",
-        "    given host: String = [\"x\"]\n",
-        "    ping(host) => ping(host)\n",
+        "fn paint(c: String) -> Unit\n",
+        "    ! [Terminal.setColor]\n",
+        "    Terminal.setColor(c)\n",
+        "verify paint law paintSpec\n",
+        "    given c: String = [\"red\"]\n",
+        "    paint(c) => paint(c)\n",
     );
     assert_error_containing(src, "outside Oracle v1's proof subset");
-    assert_error_containing(src, "Tcp.ping");
+    assert_error_containing(src, "Terminal.setColor");
 }
 
 #[test]

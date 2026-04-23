@@ -382,19 +382,21 @@ mod tests {
 
     #[test]
     fn effectful_fn_with_unclassified_effect_is_still_skipped() {
-        // Disk.writeText is stateful — not in the v1 proof subset. The fn
-        // must not appear in the emitted Dafny output.
+        // Env.set is ambient stateful — not in the v1 proof subset (process
+        // env is global and read-after-write depends on the whole ambient
+        // map, not a per-call oracle). The fn must not appear in the emitted
+        // Dafny output.
         let src = "module M\n\
              \x20   intent = \"t\"\n\
              \n\
-             fn save(msg: String) -> Result<Unit, String>\n\
-             \x20   ! [Disk.writeText]\n\
-             \x20   Disk.writeText(\"log\", msg)\n";
+             fn configure(key: String, value: String) -> Unit\n\
+             \x20   ! [Env.set]\n\
+             \x20   Env.set(key, value)\n";
         let ctx = ctx_from_source(src, "m");
         let out = transpile(&ctx);
         let dfy = dafny_output(&out);
         assert!(
-            !dfy.contains("function save"),
+            !dfy.contains("function configure"),
             "stateful effectful fn should be skipped; got:\n{}",
             dfy
         );
