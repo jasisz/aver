@@ -292,6 +292,12 @@ pub struct VerifyBlock {
     /// Per-case given bindings for law verify (empty for Cases kind).
     pub case_givens: Vec<Vec<(String, Spanned<Expr>)>>,
     pub kind: VerifyKind,
+    /// Oracle v1: `trace` keyword enables trace-aware assertions
+    /// (`.trace.*`, `.result`, event literals in `.contains` / match
+    /// patterns). Without it, a law checks only the return value, so
+    /// adding a debug print does not break proofs that do not care
+    /// about traces.
+    pub trace: bool,
 }
 
 impl VerifyBlock {
@@ -311,6 +317,7 @@ impl VerifyBlock {
             case_spans,
             case_givens: vec![],
             kind,
+            trace: false,
         }
     }
 
