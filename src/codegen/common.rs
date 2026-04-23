@@ -262,11 +262,18 @@ pub(crate) fn expr_to_dotted_name(expr: &Expr) -> Option<String> {
 ///   the `given` name. Correct for the universal lemma body.
 /// - `SampleValue` — use the first Explicit domain value (the stub
 ///   fn's identifier, e.g. `stubConst`). Correct for the concrete
-///   sample assertions where there's no lemma binding in scope.
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum OracleInjectionMode {
+///   sample assertions where there's no lemma binding in scope and a
+///   single domain value.
+/// - `SampleCaseBinding(case_bindings)` — use the per-case binding
+///   value (by `given.name`). Correct for sample theorems when the
+///   domain has multiple values and each case substitutes a
+///   different one (`given stub: Http.get = [httpDown, httpOk]`).
+#[derive(Debug, Clone)]
+pub(crate) enum OracleInjectionMode<'a> {
     LemmaBinding,
+    #[allow(dead_code)]
     SampleValue,
+    SampleCaseBinding(&'a [(String, crate::ast::Spanned<Expr>)]),
 }
 
 /// Oracle v1: rewrite any call to an effectful fn in a law body so
@@ -289,7 +296,7 @@ pub(crate) fn rewrite_effectful_calls_in_law(
         .givens
         .iter()
         .filter_map(|g| {
-            let arg_expr = match mode {
+            let arg_expr = match &mode {
                 OracleInjectionMode::LemmaBinding => Spanned {
                     node: Expr::Ident(g.name.clone()),
                     line: expr.line,
@@ -298,6 +305,10 @@ pub(crate) fn rewrite_effectful_calls_in_law(
                     VerifyGivenDomain::Explicit(vals) => vals.first().cloned()?,
                     _ => return None,
                 },
+                OracleInjectionMode::SampleCaseBinding(case_bindings) => case_bindings
+                    .iter()
+                    .find(|(name, _)| name == &g.name)
+                    .map(|(_, v)| v.clone())?,
             };
             Some((g.type_name.clone(), arg_expr))
         })

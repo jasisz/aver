@@ -487,15 +487,19 @@ pub fn emit_law_samples(
         fn_name, law_name, suffix
     ));
 
-    for (lhs, rhs) in &samples {
+    for (idx, (lhs, rhs)) in samples.iter().enumerate() {
         // Oracle v1: rewrite sample assertions the same way the lemma
         // body is rewritten — inject `BranchPath.root()` + given
         // bindings for effectful fns. Surface `pickOne()` can't stay
         // literal; it must become `pickOne(BranchPath.root(), stub)`.
-        let lhs_rw =
-            rewrite_effectful_calls_in_law(lhs, law, ctx, OracleInjectionMode::SampleValue);
-        let rhs_rw =
-            rewrite_effectful_calls_in_law(rhs, law, ctx, OracleInjectionMode::SampleValue);
+        // Each case carries its own per-given binding (e.g. one case
+        // with `stub = httpDown`, another with `stub = httpOk`), so
+        // use the case-specific map rather than the law-level domain
+        // `.first()` which would emit `httpDown = httpOk` mismatches.
+        let case_bindings = vb.case_givens.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
+        let mode = OracleInjectionMode::SampleCaseBinding(case_bindings);
+        let lhs_rw = rewrite_effectful_calls_in_law(lhs, law, ctx, mode.clone());
+        let rhs_rw = rewrite_effectful_calls_in_law(rhs, law, ctx, mode);
         let l = emit_expr(&lhs_rw, ctx);
         let r = emit_expr(&rhs_rw, ctx);
         lines.push(format!("  assert {} == {};", l, r));
