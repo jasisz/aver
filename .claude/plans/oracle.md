@@ -38,7 +38,7 @@ This model is the foundation of generative oracle signatures, trace addressing, 
 - **Effectful `!`** (parallel independence) → branch-witness tree with structural branch paths.
 - **Effectful `?!`** in `complete` mode → same witness tree, plus left-to-right error priority aggregation.
 - **`Result` / `?` preservation** — ghost state (counter, trace) survives early return.
-- **Structural tree trace API** indexed by source path, not runtime IDs. Replay tooling maps runtime IDs to structural paths for display.
+- **Trace API** using the same three coordinates as the replay JSON (`group_id`, `branch_path`, `effect_occurrence`) so proof laws and recordings speak the same addressing.
 
 ### Out (with clear rejection)
 
@@ -169,45 +169,58 @@ verify greetAll trace law greetAllSpec
 
 The effect call `Console.print("Hello, Alice!")` used as a value inside `.trace.contains(...)` is the event literal — no separate event ADT for users to learn.
 
-### 6. Parallel `!` — structural tree trace API
+### 6. Parallel `!` — trace API mirrors replay JSON
 
 Source:
 ```aver
 fn fanOut(a: String, b: String) -> Unit
     ! [Console.print]
-    Console.print("fetch outer-" + a) !     // stmt 0, branch 0
-    Console.print("fetch outer-" + b) !     // stmt 0, branch 1
-    {                                        // stmt 0, branch 2 — nested group
-        Console.print("fetch inner-A") !    //   branch 0
-        Console.print("fetch inner-B") !    //   branch 1
+    Console.print("fetch outer-" + a) !     // group 1, branch "0"
+    Console.print("fetch outer-" + b) !     // group 1, branch "1"
+    {                                        // group 1, branch 2 contains nested group
+        Console.print("fetch inner-A") !    //   group 2, branch "2.0"
+        Console.print("fetch inner-B") !    //   group 2, branch "2.1"
     }
-    Console.print("all fan-outs completed") // stmt 1 (sequential, root continuation)
+    Console.print("all fan-outs completed") // sequential, no group
 ```
 
-Law uses tree-navigation API:
+Replay JSON (from playground Trace view) looks like:
+```json
+{"group_id":1,"branch_path":"0",  "effect_occurrence":0,"args":["fetch outer-1"]}
+{"group_id":1,"branch_path":"1",  "effect_occurrence":0,"args":["fetch outer-2"]}
+{"group_id":2,"branch_path":"2.0","effect_occurrence":0,"args":["fetch inner-A"]}
+{"group_id":2,"branch_path":"2.1","effect_occurrence":0,"args":["fetch inner-B"]}
+{                                                        "args":["all fan-outs completed"]}
+```
+
+Law uses the same three coordinates — copy-paste from the JSON:
 ```aver
 verify fanOut trace
     given a: String = ["1"], b: String = ["2"]
     
-    fanOut(a, b).trace.stmt(0).branch(0).event(0)
+    fanOut(a, b).trace.group(1).branch("0").event(0)
         => Some(Console.print("fetch outer-1"))
     
-    fanOut(a, b).trace.stmt(0).branch(1).event(0)
+    fanOut(a, b).trace.group(1).branch("1").event(0)
         => Some(Console.print("fetch outer-2"))
     
-    fanOut(a, b).trace.stmt(0).branch(2).branch(0).event(0)
+    fanOut(a, b).trace.group(2).branch("2.0").event(0)
         => Some(Console.print("fetch inner-A"))
     
-    fanOut(a, b).trace.stmt(0).branch(2).branch(1).event(0)
+    fanOut(a, b).trace.group(2).branch("2.1").event(0)
         => Some(Console.print("fetch inner-B"))
     
-    fanOut(a, b).trace.stmt(1).event(0)
+    fanOut(a, b).trace.event(4)
         => Some(Console.print("all fan-outs completed"))
 ```
 
-Navigation mirrors source structure: `stmt(i)` for top-level statement, `branch(j)` for entering a `!` / `?!` branch, `event(k)` for the k-th effect occurrence at the current node. Sequential events are addressed by `stmt(i).event(k)` with no intervening `branch`. Uniform — no `.sequential()` special case for non-parallel events.
+Three addressing primitives matching the replay schema 1:1:
+- `.group(N)` — enter the `!`/`?!` group with `group_id: N` (structurally assigned: first group encountered in the function body is 1, second is 2, …).
+- `.branch("path")` — select a branch by its dewey-decimal `branch_path` from the replay JSON; nested groups give paths like `"2.0"`.
+- `.event(k)` — the k-th `effect_occurrence` at the current node.
+- `.event(k)` at the trace root addresses sequential events outside any group (no `.group()` prefix needed).
 
-**Replay tooling** (playground Trace view, `aver replay`) displays the structural path alongside any runtime IDs so users can copy-paste paths directly into verify blocks.
+**Structural, not runtime**. `group_id` numbering reflects source-order-of-encounter in the function body, not a global runtime counter. The same source compiled at any time gives the same IDs, so proofs remain stable across runs.
 
 ### 7. Fork-join `?!` complete mode
 
@@ -259,7 +272,7 @@ verify report trace law reportSpec
     given Args.get: Int -> String               = [argsStub]
     given Random.next: (BranchPath, Int) -> Int = [randStub]
     report(region).result                       => reportSpec(region, Args.get, Random.next)
-    report(region).trace.stmt(2).length()       => 1
+    report(region).trace.event(0).is(Console.print) => true
 ```
 
 (Return value of `report` is `Unit`, so `reportSpec` trivially returns `Unit`. Real content of this law is in the trace assertion — exactly one event emitted at statement 2.)
@@ -311,22 +324,19 @@ where `normalize` produces the structural trace indexed by `(BranchPath, occurre
 
 This is a theorem, not an axiom. It must be proven (either as a meta-lemma in the compiler, or emitted as a lemma-scheme that each generated proof references). A user inspecting an exported `.lean` / `.dfy` can either trust or mechanically verify it.
 
-### Trace addressing (tree API)
+### Trace addressing
 
-The trace is a tree mirroring source structure:
+Three primitives matching the replay schema 1:1 (`group_id`, `branch_path`, `effect_occurrence`):
 
-- `.stmt(i)` — i-th top-level statement in the function body.
-- `.branch(j)` — enter the j-th branch of a `!` / `?!` group at the current tree node.
-- `.event(k)` — the k-th effect occurrence at the current tree node.
-- `.length()` — number of events at the current tree node (flat count at that node, not recursive).
+- `.group(N)` — enter the `!` / `?!` group whose `group_id` is `N` (source-structural: 1 for the first group encountered in the body, 2 for the second, …; unaffected by runtime).
+- `.branch("path")` — select a branch by its dewey-decimal `branch_path` as it appears in replay JSON (e.g. `"0"`, `"1"`, `"2.0"` for nested).
+- `.event(k)` — the k-th `effect_occurrence` at the current node.
+- `.event(k)` at the trace root addresses sequential events outside any group.
+- `.length()` — number of events at the current node (not recursive).
 
-Paths compose: `.stmt(0).branch(2).branch(1).event(0)` addresses the first event of the second sub-branch of the third branch of the first-statement's group.
+**Structural, not runtime**. `group_id` in the proof API means "order of encounter in source", so the same program recompiled gives the same IDs and proofs stay stable. Recursion — where one source group produces multiple runtime instances — is an open concern tracked with the other recursion-related risks.
 
-**No `group_id` in the user API**. Source structure alone disambiguates. For the rare case of multiple sibling groups at a single statement (e.g. tuple of groups), the API reserves `.group(g)` infix.
-
-Runtime replay data carries `group_id` + `branch_path` for its own bookkeeping; a resolved structural path is additionally emitted for each event so users can copy-paste from replay view into proofs.
-
-**Recordings of any entry point use the same addressing**: a trace captured via `aver run -e 'area(Shape.Circle(1.0))' --record dir/` (0.10.1) reaches each effect at the identical `branch_path` / `effect_occurrence` that a proof law about `area` references via `.trace.stmt(i).branch(j).event(k)`. Record produces the concrete witness, proof expresses the universal claim, both speak the same structural language — user copy-pastes addresses between them without translation.
+**Recordings of any entry point share the addressing**: a trace captured via `aver run -e 'area(Shape.Circle(1.0))' --record dir/` (0.10.1) populates `group_id` / `branch_path` / `effect_occurrence` by exactly the same rules a proof law about `area` references via `.group(N).branch("path").event(k)`. User copy-pastes three numbers from the recording JSON into the verify block — no translation, no mental mapping. Record produces the concrete witness, proof expresses the universal claim, both speak the same three-coordinate structural language.
 
 ## Trust assumptions (generated header in each `.lean` / `.dfy`)
 
@@ -384,7 +394,7 @@ error: project uses mode = cancel in aver.toml, but aver proof only
           transfer to execution).
 
 error: cross-branch ordering assertion at line N:
-         foo().trace.stmt(0).branch(0).event(0) < foo().trace.stmt(0).branch(1).event(0)
+         foo().trace.group(1).branch("0").event(0) < foo().trace.group(1).branch("1").event(0)
        Global ordering across independent ! branches is not observable.
        Assert per-branch, or sequentialize the operations with ';'.
 
@@ -405,7 +415,7 @@ error: function 'customThing' uses unclassified effect 'MyEffect.do'
 | Branch witness tree construction for `!` and `?!` complete | 1 week |
 | Aggregation rule for `?!` at join point | 2 days |
 | `verify fn trace` keyword + trace-aware law parser | 3 days |
-| Tree trace API (stmt / branch / event navigation) | 4 days |
+| Trace API (group / branch / event addressing matching replay) | 4 days |
 | Dafny emission | 1 week |
 | Lean emission | 1 week |
 | Rejection diagnostics + trust-assumption header generator | 3 days |
