@@ -157,7 +157,8 @@ fn is_valid_dewey(s: &str) -> bool {
     if s.is_empty() {
         return true;
     }
-    s.split('.').all(|seg| !seg.is_empty() && seg.bytes().all(|b| b.is_ascii_digit()))
+    s.split('.')
+        .all(|seg| !seg.is_empty() && seg.bytes().all(|b| b.is_ascii_digit()))
 }
 
 #[cfg(test)]

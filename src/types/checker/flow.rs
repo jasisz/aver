@@ -254,23 +254,17 @@ impl TypeChecker {
                     .unwrap_or_default();
                 let classified_effects: Vec<String> = fn_effects
                     .iter()
-                    .filter(|e| {
-                        super::effect_classification::is_classified(e.as_str())
-                    })
+                    .filter(|e| super::effect_classification::is_classified(e.as_str()))
                     .cloned()
                     .collect();
                 let unclassified_effects: Vec<String> = fn_effects
                     .iter()
-                    .filter(|e| {
-                        !super::effect_classification::is_classified(e.as_str())
-                    })
+                    .filter(|e| !super::effect_classification::is_classified(e.as_str()))
                     .cloned()
                     .collect();
 
                 // Rejection 1: trace-aware law on a recursive effectful function.
-                if vb.trace
-                    && recursive_fns.contains(&vb.fn_name)
-                    && !classified_effects.is_empty()
+                if vb.trace && recursive_fns.contains(&vb.fn_name) && !classified_effects.is_empty()
                 {
                     self.error_at_line(
                         vb.line,

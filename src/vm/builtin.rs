@@ -6,9 +6,7 @@ use crate::services::http;
 #[cfg(feature = "terminal")]
 use crate::services::terminal;
 use crate::services::{console, disk, env, random, tcp, time};
-use crate::types::{
-    bool, branch_path, byte, char, float, int, list, map, option, result, string,
-};
+use crate::types::{bool, branch_path, byte, char, float, int, list, map, option, result, string};
 use crate::value::RuntimeError;
 
 macro_rules! vm_builtins {
