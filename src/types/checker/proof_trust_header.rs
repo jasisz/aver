@@ -63,17 +63,55 @@ pub fn generate() -> String {
     out.push_str("Concurrency and schedule invariance:\n");
     out.push_str("  ! (independent parallel): proof holds for any legal schedule,\n");
     out.push_str("       relying on the Aver compiler invariant \"schedule-invariance\n");
-    out.push_str("       of structural trace normalization\" (branch locality +\n");
-    out.push_str("       deterministic aggregation + runtime-provenance correspondence;\n");
-    out.push_str("       informally proved in the Oracle v1 plan, mechanized meta-proof\n");
-    out.push_str("       is future work). This is a compiler-level trusted claim,\n");
-    out.push_str("       not emitted as a per-artifact axiom.\n");
+    out.push_str("       of structural trace normalization\". This is a compiler-level\n");
+    out.push_str("       trusted claim, not emitted as a per-artifact axiom.\n");
     out.push_str("  ?! in complete mode: all branches run; error aggregated\n");
     out.push_str("       left-to-right in source order (not completion order) — this is\n");
     out.push_str("       what makes ?! complete aggregation schedule-invariant.\n");
     out.push_str("  ?! in cancel mode: NOT COVERED by this export. Project must set\n");
     out.push_str("       [independence] mode = \"complete\" in aver.toml; exports under\n");
     out.push_str("       cancel semantics are rejected by `aver proof`.\n");
+    out.push('\n');
+
+    out.push_str("Schedule-invariance argument (informal, three lemmas):\n");
+    out.push_str("  The normalization claim above is the conjunction of three\n");
+    out.push_str("  lemmas the Aver compiler enforces statically. Oracle v1 ships\n");
+    out.push_str("  this as a written argument trusted at the compiler level;\n");
+    out.push_str("  mechanization (à la CompCert / Iris) is scheduled post-v1.\n");
+    out.push('\n');
+    out.push_str("  Lemma 1 — Branch locality.\n");
+    out.push_str("    Every effect emission inside a `!`/`?!` branch is attributed\n");
+    out.push_str("    to that branch's structural position (group_id, branch_idx).\n");
+    out.push_str("    No emission can leak between sibling branches — the replay\n");
+    out.push_str("    scope enters / exits groups in source order and a branch's\n");
+    out.push_str("    events are recorded only while its branch_idx is current.\n");
+    out.push_str("    Corollary: the trace of one branch is a function of that\n");
+    out.push_str("    branch's source alone, not of sibling scheduling.\n");
+    out.push('\n');
+    out.push_str("  Lemma 2 — Deterministic aggregation.\n");
+    out.push_str("    The trace of a group is the concatenation of its branches'\n");
+    out.push_str("    traces in source-order branch index (0, 1, …, n-1). The `?!`\n");
+    out.push_str("    complete mode aggregates the first Result.Err in the same\n");
+    out.push_str("    left-to-right order, not wall-clock completion order. Both\n");
+    out.push_str("    the trace concatenation and the error aggregation are pure\n");
+    out.push_str("    functions of the source tree + per-branch results, so any\n");
+    out.push_str("    two legal schedules produce identical normalized output.\n");
+    out.push('\n');
+    out.push_str("  Lemma 3 — Runtime-provenance correspondence.\n");
+    out.push_str("    Every emission in a recording JSON carries the same\n");
+    out.push_str("    (group_id, branch_path, effect_occurrence) triple that the\n");
+    out.push_str("    proof-side BranchPath / counter mechanism threads into\n");
+    out.push_str("    oracle calls. Recordings and proofs therefore address the\n");
+    out.push_str("    same events through the same structural coordinates —\n");
+    out.push_str("    `trace.replay(path)` / `trace.replaySeq(seq)` bridges between\n");
+    out.push_str("    these coordinate systems without widening the trusted base.\n");
+    out.push('\n');
+    out.push_str("  Conjunction: from (1) branches are independently determined\n");
+    out.push_str("  by source, (2) their composition is a pure function of\n");
+    out.push_str("  source + per-branch results, (3) recordings and proofs\n");
+    out.push_str("  address the same structural events — so the normalized trace\n");
+    out.push_str("  and the aggregated result are invariants of the program,\n");
+    out.push_str("  not of any particular schedule.\n");
     out.push('\n');
 
     out.push_str("Structural trace addressing:\n");
@@ -204,8 +242,27 @@ mod tests {
     fn header_mentions_concurrency_invariant() {
         let header = generate();
         assert!(header.contains("schedule-invariance"));
-        assert!(header.contains("branch locality"));
+        assert!(header.contains("Branch locality"));
         assert!(header.contains("source order"));
+    }
+
+    #[test]
+    fn header_states_three_normalization_lemmas_explicitly() {
+        // Oracle v1 plan requires the informal three-lemma argument to
+        // be written out so reviewers can cite it when vetting an
+        // export. The numbered lemmas must appear together with a
+        // one-liner conjunction claim tying them to the compiler-level
+        // schedule-invariance invariant.
+        let header = generate();
+        assert!(header.contains("Lemma 1 — Branch locality."));
+        assert!(header.contains("Lemma 2 — Deterministic aggregation."));
+        assert!(header.contains("Lemma 3 — Runtime-provenance correspondence."));
+        assert!(header.contains("Conjunction:"));
+        // The lemmas point at the concrete structural primitives.
+        assert!(header.contains("group_id, branch_idx"));
+        assert!(header.contains("group_id, branch_path, effect_occurrence"));
+        // Mechanization is called out as future work, not missing.
+        assert!(header.contains("mechanization"));
     }
 
     #[test]
