@@ -892,6 +892,7 @@ mod tests {
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
+            effectful_helpers: HashMap::new(),
         }
     }
 
@@ -1354,9 +1355,9 @@ mod tests {
         assert_eq!(items.len(), 2);
     }
 
-    fn assert_path_child_idx(expr: &Spanned<Expr>, expected_idx: i64) {
-        let Expr::FnCall(callee, child_args) = &expr.node else {
-            panic!("expected BranchPath.child call, got {:?}", expr.node);
+    fn assert_path_child_idx(expr: &Expr, expected_idx: i64) {
+        let Expr::FnCall(callee, child_args) = expr else {
+            panic!("expected BranchPath.child call, got {:?}", expr);
         };
         let Expr::Attr(h, f) = &callee.node else {
             panic!("expected Attr callee");
