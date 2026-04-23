@@ -196,6 +196,25 @@ fn emit_fn_call(fn_expr: &Spanned<Expr>, args: &[Spanned<Expr>], ctx: &CodegenCo
             return lean_code;
         }
 
+        // Oracle v1: BranchPath constructors render through the structure
+        // definitions in LEAN_PRELUDE_BRANCH_PATH.
+        let arg_strs_owned: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
+        match name.as_str() {
+            "BranchPath.root" if arg_strs_owned.is_empty() => {
+                return "BranchPath.root".to_string();
+            }
+            "BranchPath.child" if arg_strs_owned.len() == 2 => {
+                return format!(
+                    "BranchPath.child {} {}",
+                    arg_strs_owned[0], arg_strs_owned[1]
+                );
+            }
+            "BranchPath.parse" if arg_strs_owned.len() == 1 => {
+                return format!("BranchPath.parse {}", arg_strs_owned[0]);
+            }
+            _ => {}
+        }
+
         // Module-qualified call
         if let Some((_, bare)) = resolve_module_call(name, ctx) {
             if let Some(dot_pos) = bare.find('.') {

@@ -1977,6 +1977,12 @@ pub fn transpile_with_verify_mode(
     // callees first, then callers; SCCs as `mutual` blocks.
     emit_pure_functions(ctx, &recursive_fns, &mut sections);
 
+    // Oracle v1: emit lifted form for effectful functions whose effects are
+    // all classified. lift_fn_def returns a pure FnDef (effects cleared,
+    // path + oracle params prepended), which emit_fn_def handles via the
+    // standard pure-fn path.
+    emit_lifted_effectful_functions(ctx, &recursive_fns, &mut sections);
+
     // Decision blocks (as comments)
     for item in &ctx.items {
         if let TopLevel::Decision(db) = item {
@@ -2013,6 +2019,41 @@ pub fn transpile_with_verify_mode(
             ("lean-toolchain".to_string(), toolchain),
             (format!("{}.lean", project_name), lean_source),
         ],
+    }
+}
+
+/// Oracle v1: for each effectful FnDef whose effects are all classified,
+/// run effect_lifting::lift_fn_def to produce a pure (lifted) FnDef and
+/// emit it via the standard pure-fn path. Effectful functions that use
+/// unclassified (stateful / interactive / higher-order-callback) effects
+/// are still skipped entirely — matches the pre-Oracle behavior.
+///
+/// Mutual recursion among effectful fns is out of scope for v0: this
+/// emits each lifted fn independently.
+fn emit_lifted_effectful_functions(
+    ctx: &CodegenContext,
+    recursive_fns: &HashSet<String>,
+    sections: &mut Vec<String>,
+) {
+    for item in &ctx.items {
+        let TopLevel::FnDef(fd) = item else { continue };
+        if fd.effects.is_empty() || fd.name == "main" {
+            continue;
+        }
+        if !fd
+            .effects
+            .iter()
+            .all(|e| crate::types::checker::effect_classification::is_classified(&e.node))
+        {
+            continue;
+        }
+        let Ok(Some(lifted)) = crate::types::checker::effect_lifting::lift_fn_def(fd) else {
+            continue;
+        };
+        if let Some(code) = toplevel::emit_fn_def(&lifted, recursive_fns, ctx) {
+            sections.push(code);
+            sections.push(String::new());
+        }
     }
 }
 
