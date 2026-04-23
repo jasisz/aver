@@ -23,6 +23,7 @@ pub mod option;
 pub mod result;
 #[cfg(feature = "runtime")]
 pub mod string;
+pub mod trace;
 #[cfg(feature = "runtime")]
 pub mod vector;
 
