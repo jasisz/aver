@@ -111,6 +111,21 @@ const LEAN_PRELUDE_OPTION_TO_EXCEPT: &str = r#"def Option.toExcept (o : Option �
 
 const LEAN_PRELUDE_STRING_HADD: &str = r#"instance : HAdd String String String := ⟨String.append⟩"#;
 
+/// Oracle v1: BranchPath mirrors the Aver-source opaque builtin. The
+/// dewey-decimal string under the hood is not user-observable — users
+/// construct paths through `.root`, `.child`, `.parse`.
+const LEAN_PRELUDE_BRANCH_PATH: &str = r#"structure BranchPath where
+  dewey : String
+  deriving Repr, BEq, DecidableEq
+
+def BranchPath.root : BranchPath := { dewey := "" }
+
+def BranchPath.child (p : BranchPath) (idx : Int) : BranchPath :=
+  if p.dewey.isEmpty then { dewey := toString idx }
+  else { dewey := p.dewey ++ "." ++ toString idx }
+
+def BranchPath.parse (s : String) : BranchPath := { dewey := s }"#;
+
 const LEAN_PRELUDE_PROOF_FUEL: &str = r#"def averStringPosFuel (s : String) (pos : Int) (rankBudget : Nat) : Nat :=
   (((s.data.length) - pos.toNat) + 1) * rankBudget"#;
 
@@ -2098,6 +2113,7 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
         LEAN_PRELUDE_EXCEPT_NS.to_string(),
         LEAN_PRELUDE_OPTION_TO_EXCEPT.to_string(),
         LEAN_PRELUDE_STRING_HADD.to_string(),
+        LEAN_PRELUDE_BRANCH_PATH.to_string(),
     ];
 
     if include_all_helpers || needs_builtin_named_type(body, "Header") {

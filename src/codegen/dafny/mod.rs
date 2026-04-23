@@ -138,6 +138,29 @@ datatype Result<T, E> = Ok(value: T) | Err(error: E)
 
 datatype Option<T> = None | Some(value: T)
 
+// Oracle v1: BranchPath is the proof-side representation of a position
+// in the structural tree of `!`/`?!` groups. Dewey-decimal under the hood
+// ("", "0", "2.0", …); constructors mirror the Aver-source BranchPath
+// opaque builtin (`.root`, `.child`, `.parse`) so the lifted bodies can
+// reference them directly without case-splitting at the call site.
+
+datatype BranchPath = BranchPath(dewey: string)
+
+function BranchPath_root(): BranchPath {
+  BranchPath("")
+}
+
+function BranchPath_child(p: BranchPath, idx: int): BranchPath
+  requires idx >= 0
+{
+  if |p.dewey| == 0 then BranchPath(IntToString(idx))
+  else BranchPath(p.dewey + "." + IntToString(idx))
+}
+
+function BranchPath_parse(s: string): BranchPath {
+  BranchPath(s)
+}
+
 function ResultWithDefault<T, E>(r: Result<T, E>, d: T): T {
   match r
   case Ok(v) => v
