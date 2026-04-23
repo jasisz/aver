@@ -22,6 +22,7 @@ mod flow;
 mod infer;
 mod memo;
 mod modules;
+pub mod proof_trust_header;
 
 #[cfg(test)]
 mod tests;
