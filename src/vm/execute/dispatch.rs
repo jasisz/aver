@@ -771,11 +771,15 @@ impl VM {
                     }
 
                     // Check if recording/replaying — if so, run sequentially
-                    // (replay state is thread_local, can't share across threads)
-                    // Check if recording/replaying — if so, sequential
+                    // (replay state is thread_local, can't share across threads).
+                    // Also sequential when an oracle-stub map is installed
+                    // (verify-time substitution): the stubs + counter state
+                    // live on the parent VM's runtime, which can't be shared
+                    // across child VMs spawned in the parallel path.
                     let is_tracking = self.runtime.is_effect_tracking();
+                    let has_oracle_stubs = !self.runtime.oracle_stubs.is_empty();
                     let mut had_vm_error: Option<VmError> = None;
-                    let results = if is_tracking || count <= 1 {
+                    let results = if is_tracking || has_oracle_stubs || count <= 1 {
                         let mut results = Vec::with_capacity(count);
                         for (i, (callable, args)) in element_calls.iter().enumerate() {
                             self.runtime.replay_set_branch(i as u32);

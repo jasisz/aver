@@ -366,6 +366,30 @@ impl EffectReplayState {
             *last += 1;
         }
     }
+
+    /// Oracle v1: dewey-decimal path string for the current branch
+    /// context. Empty string if we're outside any group.
+    pub fn oracle_path_string(&self) -> String {
+        self.current_branch_path()
+    }
+
+    /// Oracle v1: current per-branch effect-occurrence counter, or `None`
+    /// if outside any group (caller should use a VM-level root counter).
+    pub fn oracle_branch_counter(&self) -> Option<u32> {
+        self.current_effect_occurrence()
+    }
+
+    /// Oracle v1: bump the current per-branch counter (no-op outside any
+    /// group — caller tracks the root counter separately).
+    pub fn bump_oracle_branch_counter(&mut self) {
+        self.bump_effect_occurrence();
+    }
+
+    /// Oracle v1: is the runtime currently inside at least one `!`/`?!`
+    /// group?
+    pub fn is_inside_group(&self) -> bool {
+        !self.branch_stack.is_empty()
+    }
 }
 
 #[cfg(test)]

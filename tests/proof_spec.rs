@@ -210,6 +210,64 @@ fn aver_verify_runs_effectful_law_with_oracle_stub() {
 }
 
 #[test]
+fn aver_verify_runs_effectful_bang_group_law() {
+    // End-to-end: `aver verify` on an effectful law whose impl uses
+    // `(Random.int(1, 6), Random.int(1, 6))!` — a two-branch `!` group.
+    // The runtime should thread each branch's BranchPath.child(root, i)
+    // and reset the counter to 0 per branch, so the stub returns
+    // deterministic values that match the RHS spec.
+    let dir = temp_output_dir("aver-verify-bang-group");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        // Stub: returns the branch index of the path (0 or 1) as the
+        // random value. This makes each branch's oracle output distinct,
+        // so a correct path-threading implementation gives (0, 1) while
+        // an incorrect one (root path on both branches) would give (0, 0).
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn stubByBranch(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"return counter so each branch's call is distinguishable\"\n\
+         \x20   n\n\
+         \n\
+         fn pickPair() -> (Int, Int)\n\
+         \x20   ? \"two parallel draws\"\n\
+         \x20   ! [Random.int]\n\
+         \x20   (Random.int(1, 6), Random.int(1, 6))!\n\
+         \n\
+         fn pickPairSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Int) -> (Int, Int)\n\
+         \x20   ? \"two draws, each at its own branch\"\n\
+         \x20   (rnd(BranchPath.child(path, 0), 0, 1, 6), rnd(BranchPath.child(path, 1), 0, 1, 6))\n\
+         \n\
+         verify pickPair law consistent\n\
+         \x20   given rnd: Random.int = [stubByBranch]\n\
+         \x20   pickPair() => pickPairSpec(BranchPath.root(), rnd)\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+
+    assert!(
+        output.status.success(),
+        "aver verify failed on `!` group law; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn proof_accepts_complete_independence_mode() {
     let dir = temp_output_dir("aver-proof-complete");
     std::fs::create_dir_all(&dir).expect("create temp dir");
