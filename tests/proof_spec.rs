@@ -987,6 +987,69 @@ fn aver_verify_trace_env_get_snapshot_with_args() {
 }
 
 #[test]
+fn aver_verify_trace_rejects_stub_with_wrong_oracle_signature() {
+    // Oracle v1: each `given <name>: <Effect.method> = [stub]` must
+    // bind a stub whose inferred type matches the oracle signature for
+    // that effect. Most common footgun: copy-pasting a (BranchPath,
+    // Int)-prefixed generative stub into a snapshot `given` — at
+    // runtime those extra params get ignored and the verify produces
+    // bogus values. Now caught at check time.
+    let dir = temp_output_dir("aver-verify-trace-wrong-stub-sig");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn wrong(_p: BranchPath, _n: Int) -> List<String>\n\
+         \x20   ? \"wrong snapshot stub signature\"\n\
+         \x20   []\n\
+         \n\
+         fn isEmpty() -> Bool\n\
+         \x20   ? \"no args\"\n\
+         \x20   ! [Args.get]\n\
+         \x20   args = Args.get()\n\
+         \x20   match args\n\
+         \x20       [] -> true\n\
+         \x20       _ -> false\n\
+         \n\
+         verify isEmpty trace\n\
+         \x20   given argv: Args.get = [wrong]\n\
+         \x20   isEmpty().result => true\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let check = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("check")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver check` to run");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&check.stderr),
+        String::from_utf8_lossy(&check.stdout)
+    );
+    assert!(
+        combined.contains("expects a stub of type"),
+        "expected oracle-signature mismatch diagnostic, got: {}",
+        combined
+    );
+    assert!(
+        combined.contains("Args.get"),
+        "expected diagnostic to mention Args.get, got: {}",
+        combined
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn proof_accepts_complete_independence_mode() {
     let dir = temp_output_dir("aver-proof-complete");
     std::fs::create_dir_all(&dir).expect("create temp dir");
