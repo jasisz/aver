@@ -2860,18 +2860,41 @@ fn literal_expr_to_value(expr: &Spanned<Expr>) -> Option<Value> {
         Expr::Literal(aver::ast::Literal::Bool(b)) => Some(Value::Bool(*b)),
         Expr::Literal(aver::ast::Literal::Unit) => Some(Value::Unit),
         Expr::InterpolatedStr(parts) => {
-            // Only supports fully-literal interpolations (no dynamic
-            // parts) in v0. Richer shapes need verify-context evaluation
-            // of the parts.
+            // Supports interpolations whose Parsed segments resolve to
+            // scalar literals (direct or via local-binding substitution
+            // at parse time). E.g. with local `x = 4`, the string
+            // `"rolled {x}"` becomes `"rolled 4"` — the Parsed segment
+            // carries `Literal(Int(4))` after substitution. Richer
+            // shapes (calls, record access, etc.) still defer to
+            // verify-context evaluation.
             let mut s = String::new();
             for part in parts {
                 match part {
                     aver::ast::StrPart::Literal(lit) => s.push_str(lit),
-                    aver::ast::StrPart::Parsed(_) => return None,
+                    aver::ast::StrPart::Parsed(inner) => {
+                        let v = literal_expr_to_value(inner)?;
+                        s.push_str(&interp_value_to_str(&v)?);
+                    }
                 }
             }
             Some(Value::Str(s))
         }
+        _ => None,
+    }
+}
+
+/// Oracle v1: render a scalar Value as it would appear in an Aver
+/// string interpolation (`"x = {v}"`). Mirrors the runtime's
+/// interp rendering for Int / Float / Bool / Str / Unit. Used only
+/// from `literal_expr_to_value` for trace event-literal strings; more
+/// complex Values aren't expected here.
+fn interp_value_to_str(value: &Value) -> Option<String> {
+    match value {
+        Value::Str(s) => Some(s.clone()),
+        Value::Int(i) => Some(i.to_string()),
+        Value::Float(f) => Some(f.to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        Value::Unit => Some(String::new()),
         _ => None,
     }
 }
