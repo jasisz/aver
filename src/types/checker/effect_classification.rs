@@ -67,9 +67,8 @@ pub enum RuntimeType {
     ListStr,
     ResultStrStr,
     HttpResponseResult,
-    /// `(url, body, content-type, headers)` tuple for `Http.post/put/patch`.
-    /// Expanded at signature construction time.
-    _Placeholder,
+    /// `List<Header>` — the headers argument on `Http.post/put/patch`.
+    ListHeader,
 }
 
 impl RuntimeType {
@@ -87,7 +86,7 @@ impl RuntimeType {
                 Box::new(Type::Named("HttpResponse".to_string())),
                 Box::new(Type::Str),
             ),
-            RuntimeType::_Placeholder => Type::Unknown,
+            RuntimeType::ListHeader => Type::List(Box::new(Type::Named("Header".to_string()))),
         }
     }
 }
@@ -161,6 +160,40 @@ const CLASSIFICATIONS: &[EffectClassification] = &[
         runtime_params: &[RuntimeType::Str],
         runtime_return: RuntimeType::HttpResponseResult,
     },
+    // Http.post/.put/.patch — four-arg form `(url, body, contentType, headers)`.
+    EffectClassification {
+        method: "Http.post",
+        dimension: EffectDimension::GenerativeOutput,
+        runtime_params: &[
+            RuntimeType::Str,
+            RuntimeType::Str,
+            RuntimeType::Str,
+            RuntimeType::ListHeader,
+        ],
+        runtime_return: RuntimeType::HttpResponseResult,
+    },
+    EffectClassification {
+        method: "Http.put",
+        dimension: EffectDimension::GenerativeOutput,
+        runtime_params: &[
+            RuntimeType::Str,
+            RuntimeType::Str,
+            RuntimeType::Str,
+            RuntimeType::ListHeader,
+        ],
+        runtime_return: RuntimeType::HttpResponseResult,
+    },
+    EffectClassification {
+        method: "Http.patch",
+        dimension: EffectDimension::GenerativeOutput,
+        runtime_params: &[
+            RuntimeType::Str,
+            RuntimeType::Str,
+            RuntimeType::Str,
+            RuntimeType::ListHeader,
+        ],
+        runtime_return: RuntimeType::HttpResponseResult,
+    },
     // Output-only — no oracle signature, but classified for completeness.
     EffectClassification {
         method: "Console.print",
@@ -200,12 +233,6 @@ pub fn is_classified(method: &str) -> bool {
 ///   `(BranchPath, Int, <runtime_params...>) -> <runtime_return>`.
 /// - Output: `None` — output effects don't bind oracles (trace API
 ///   handles assertions about emissions).
-///
-/// `Http.post` / `.put` / `.patch` are omitted from the table for v1 (their
-/// four-argument signature pulls in `List<Header>` and `Header` records
-/// which are user-visible but tangential to the core lifting story).
-/// These extensions are straightforward to add once the core pipeline is in
-/// place.
 pub fn oracle_signature(method: &str) -> Option<Type> {
     let c = classify(method)?;
     match c.dimension {
@@ -364,11 +391,44 @@ mod tests {
             "Http.get",
             "Http.head",
             "Http.delete",
+            "Http.post",
+            "Http.put",
+            "Http.patch",
             "Console.print",
             "Console.error",
             "Console.warn",
         ] {
             assert!(is_classified(name), "{} should be classified", name);
+        }
+    }
+
+    #[test]
+    fn oracle_signature_for_http_post_has_four_runtime_params() {
+        let sig = oracle_signature("Http.post").unwrap();
+        // (BranchPath, Int, Str, Str, Str, List<Header>) -> Result<HttpResponse, String>
+        match sig {
+            Type::Fn(params, ret, _) => {
+                assert_eq!(params.len(), 6);
+                assert!(matches!(params[0], Type::Named(ref n) if n == "BranchPath"));
+                assert_eq!(params[1], Type::Int);
+                assert_eq!(params[2], Type::Str);
+                assert_eq!(params[3], Type::Str);
+                assert_eq!(params[4], Type::Str);
+                match &params[5] {
+                    Type::List(inner) => {
+                        assert!(matches!(&**inner, Type::Named(n) if n == "Header"));
+                    }
+                    other => panic!("expected List<Header>, got {:?}", other),
+                }
+                match *ret {
+                    Type::Result(ok, err) => {
+                        assert!(matches!(*ok, Type::Named(ref n) if n == "HttpResponse"));
+                        assert_eq!(*err, Type::Str);
+                    }
+                    other => panic!("expected Result, got {:?}", other),
+                }
+            }
+            other => panic!("expected Fn, got {:?}", other),
         }
     }
 
