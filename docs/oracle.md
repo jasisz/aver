@@ -109,14 +109,14 @@ Two shapes, two jobs:
   ```
   No magic. User sees exactly what is being compared, `path` included. Destructuring goes through field access (`ev.method` / `ev.args` / `ev.path`) and nested `match`, not through pattern sugar.
 
-Match patterns on `EffectEvent` (`match ev with Console.print(msg) -> …`) are **not** in Oracle v1. They're expressible today via field access; the pattern-position sugar is scheduled for Oracle v1.1 once the VM compiler extensions can be reviewed properly.
+Match patterns on `EffectEvent` (`match ev with Console.print(msg) -> …`) are **not** going into Oracle, full stop. Aver's design stance is explicit over implicit — field access on the record (`ev.method`, `ev.args`, `ev.path`) says exactly what you're reading, no pattern-position elaboration magic. Destructuring via nested `match` on those fields is the idiomatic shape.
 
-**Why the sugar is load-bearing, not ornamental.** It might look like `.contains(Console.print("x"))` is just a shortcut for a record literal. It isn't. `.contains` and `.event(k)` have genuinely different matching semantics:
+**Why the `.contains` sugar is the right form.** The obvious question is whether `.contains(Console.print("x"))` is just a shortcut users could avoid by writing a record literal. Two reasons it's the right tool:
 
-- `.event(k) => Option.Some(EffectEvent(...))` is full structural equality — **path included**.
-- `.contains(x) => Bool` is a predicate — **path is deliberately ignored**, so "did this method fire, with these args, anywhere" is expressible.
+- `.contains` and `.event(k)` have intentionally different semantics. `.event(k) => Option.Some(EffectEvent(...))` is full structural equality — **path included**. `.contains(x) => Bool` is a predicate that **ignores path**, so "did this fire anywhere" is expressible. The sugar's path-insensitivity is the feature, not a workaround for missing wildcards.
+- Sugar mirrors the emit site. Inside the body under verification you write `Console.print("rolled 4")`; inside `.contains(...)` you assert against the same shape. The eye doesn't re-parse the structure — it recognises the emission.
 
-Aver record literals don't support wildcards, so there's no record form that means "this method + these args, any path". The sugar is the only way to express that shape in v0. If Aver ever gets pattern-like wildcards in record literals (`path = _`), the sugar becomes redundant. Until then it carries real semantic weight, not syntactic polish.
+Record wildcards (`path = _`) aren't on the roadmap — they'd solve a problem Oracle doesn't have. The two forms coexist by design: sugar at effect-call position, record literal for strict match.
 
 ### The `EffectEvent` record
 
