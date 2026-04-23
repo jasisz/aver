@@ -364,6 +364,30 @@ impl VM {
         stub_fn_id: u32,
         args: &[NanValue],
     ) -> Result<NanValue, VmError> {
+        // Oracle v1: record the effect emission into the verify-trace
+        // collector before redirecting. The recorded event uses the
+        // original effect method name + pre-stub args, matching what the
+        // user asserts about via `.trace.contains(Effect.method(...))`.
+        if self.runtime.trace_collecting {
+            let stub_chunk_name = self.code.get(stub_fn_id).name.clone();
+            // The "original" effect is whatever was stubbed to this fn;
+            // reverse-lookup in the stub map.
+            let mut original_effect: Option<String> = None;
+            for (effect, fn_id) in &self.runtime.oracle_stubs {
+                if *fn_id == stub_fn_id {
+                    original_effect = Some(effect.clone());
+                    break;
+                }
+            }
+            if let Some(effect_name) = original_effect {
+                let arg_vals: Vec<crate::value::Value> =
+                    args.iter().map(|a| a.to_value(&self.arena)).collect();
+                self.runtime.record_trace_event(&effect_name, &arg_vals);
+            } else {
+                let _ = stub_chunk_name;
+            }
+        }
+
         // Oracle v1: read the current branch context from the VM's
         // structural-trace state. When we're outside any `!`/`?!` group,
         // the dewey string is empty (BranchPath.root) and the counter is

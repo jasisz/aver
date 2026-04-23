@@ -25,3 +25,15 @@ pub const FIELD_EVENTS: &str = "events";
 pub fn register(arena: &mut Arena) {
     arena.register_record_type(TYPE_NAME, vec![FIELD_EVENTS.into()]);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trace_type_registers_with_events_field() {
+        let mut arena = Arena::new();
+        register(&mut arena);
+        assert!(arena.find_type_id(TYPE_NAME).is_some());
+    }
+}
