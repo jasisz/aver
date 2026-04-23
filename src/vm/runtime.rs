@@ -28,6 +28,15 @@ pub(super) struct VmRuntime {
     silent_console: bool,
     replay_state: EffectReplayState,
     runtime_policy: Option<crate::config::ProjectConfig>,
+    /// Oracle v1: during `aver verify` for an effectful law, install a map
+    /// from effect method name (`"Random.int"`) to the fn_id of a stub
+    /// function supplied via `given name: Effect.method = [stub]`. When
+    /// the VM dispatches a classified effect that has a stub installed,
+    /// it calls the stub with `(BranchPath.root, counter, orig_args...)`
+    /// instead of invoking the real effect. Counter increments per call;
+    /// reset when stubs are installed or cleared. Empty map ⇒ no hook.
+    pub(super) oracle_stubs: std::collections::HashMap<String, u32>,
+    pub(super) oracle_counter: u32,
 }
 
 impl Default for VmRuntime {
@@ -44,7 +53,35 @@ impl VmRuntime {
             silent_console: false,
             replay_state: EffectReplayState::default(),
             runtime_policy: None,
+            oracle_stubs: std::collections::HashMap::new(),
+            oracle_counter: 0,
         }
+    }
+
+    /// Install the oracle-stub map for the current scope (typically a
+    /// single verify-law case). `stubs` maps classified effect method
+    /// names (e.g. `"Random.int"`) to the fn_id of an Aver stub function
+    /// with signature `(BranchPath, Int, orig_args...) -> T`.
+    pub(super) fn install_oracle_stubs(&mut self, stubs: std::collections::HashMap<String, u32>) {
+        self.oracle_stubs = stubs;
+        self.oracle_counter = 0;
+    }
+
+    /// Clear the oracle-stub map and reset the counter. Called at the end
+    /// of each verify-law case and on any mode transition.
+    pub(super) fn clear_oracle_stubs(&mut self) {
+        self.oracle_stubs.clear();
+        self.oracle_counter = 0;
+    }
+
+    pub(super) fn oracle_stub_for(&self, effect_name: &str) -> Option<u32> {
+        self.oracle_stubs.get(effect_name).copied()
+    }
+
+    pub(super) fn take_next_oracle_counter(&mut self) -> u32 {
+        let c = self.oracle_counter;
+        self.oracle_counter += 1;
+        c
     }
 
     pub(super) fn allowed_effects(&self) -> &[u32] {
@@ -323,6 +360,16 @@ impl VmRuntime {
         }
         for effect_id in required_effects {
             if !self.vm_effect_allowed(*effect_id, symbols) {
+                // Oracle v1: during a verify-law case, an effect that has
+                // an installed stub counts as satisfied at this call edge —
+                // the stub replaces the effect when the dispatcher gets to
+                // it, so the requirement is met even though no surrounding
+                // fn declared the effect.
+                if let Some(info) = symbols.get(*effect_id)
+                    && self.oracle_stubs.contains_key(&info.name)
+                {
+                    continue;
+                }
                 let effect_name = symbols
                     .get(*effect_id)
                     .map(|info| info.name.as_str())
