@@ -40,6 +40,38 @@ impl TypeChecker {
             self.record_field_types
                 .insert(crate::visibility::member_key("Header", field), ty.clone());
         }
+
+        // Oracle v1: EffectEvent = { method: String, args: List<Unknown> }.
+        // `args` element type is heterogeneous across effects (Int for
+        // Random.int, Str for Console.print<T=Str>, etc.) — v0 types it
+        // as `List<Unknown>` so users can inspect events without the
+        // checker blocking on a polymorphic arg element type. Richer
+        // typing ties args to the effect method's runtime_params once
+        // we thread method-dispatch-driven arg types into the checker.
+        let effect_event_fields: &[(&str, Type)] = &[
+            ("method", Type::Str),
+            ("args", Type::List(Box::new(Type::Unknown))),
+        ];
+        for (field, ty) in effect_event_fields {
+            self.record_field_types.insert(
+                crate::visibility::member_key(crate::types::effect_event::TYPE_NAME, field),
+                ty.clone(),
+            );
+        }
+
+        // Oracle v1: Trace = { events: List<EffectEvent> }.
+        let trace_fields: &[(&str, Type)] = &[(
+            "events",
+            Type::List(Box::new(Type::Named(
+                crate::types::effect_event::TYPE_NAME.to_string(),
+            ))),
+        )];
+        for (field, ty) in trace_fields {
+            self.record_field_types.insert(
+                crate::visibility::member_key(crate::types::trace::TYPE_NAME, field),
+                ty.clone(),
+            );
+        }
         let tcp_conn_fields: &[(&str, Type)] =
             &[("id", Type::Str), ("host", Type::Str), ("port", Type::Int)];
         for (field, ty) in tcp_conn_fields {
