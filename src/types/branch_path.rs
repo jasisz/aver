@@ -26,9 +26,13 @@ pub const TYPE_NAME: &str = "BranchPath";
 const FIELD: &str = "dewey";
 
 pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
-    let methods = &["root", "child", "parse"];
-    let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
-    for method in methods {
+    // `BranchPath.Root` is a nullary value constructor (like
+    // `Option.None`) — PascalCase, no parens. `.child` / `.parse`
+    // are methods that take arguments and stay lowercase with parens.
+    let root_value = make_path("", arena);
+    let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(3);
+    members.push((Rc::from("Root"), root_value));
+    for method in &["child", "parse"] {
         let idx = arena.push_builtin(&format!("{}.{}", TYPE_NAME, method));
         members.push((Rc::from(*method), NanValue::new_builtin(idx)));
     }
@@ -45,7 +49,6 @@ pub fn call_nv(
     arena: &mut Arena,
 ) -> Option<Result<NanValue, RuntimeError>> {
     match name {
-        "BranchPath.root" => Some(root_nv(args, arena)),
         "BranchPath.child" => Some(child_nv(args, arena)),
         "BranchPath.parse" => Some(parse_nv(args, arena)),
         _ => None,
@@ -91,16 +94,6 @@ fn read_dewey(value: NanValue, arena: &Arena, method: &str) -> Result<String, Ru
         )));
     }
     Ok(arena.get_string_value(*field).to_string())
-}
-
-fn root_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if !args.is_empty() {
-        return Err(RuntimeError::Error(format!(
-            "BranchPath.root() takes 0 arguments, got {}",
-            args.len()
-        )));
-    }
-    Ok(make_path("", arena))
 }
 
 fn child_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -174,7 +167,7 @@ mod tests {
     #[test]
     fn root_is_empty_dewey() {
         let mut arena = fresh_arena();
-        let path = root_nv(&[], &mut arena).unwrap();
+        let path = make_path("", &mut arena);
         let dewey = read_dewey(path, &arena, "test").unwrap();
         assert_eq!(dewey, "");
     }
@@ -182,7 +175,7 @@ mod tests {
     #[test]
     fn child_of_root_is_index() {
         let mut arena = fresh_arena();
-        let root = root_nv(&[], &mut arena).unwrap();
+        let root = make_path("", &mut arena);
         let idx = NanValue::new_int(3, &mut arena);
         let child = child_nv(&[root, idx], &mut arena).unwrap();
         let dewey = read_dewey(child, &arena, "test").unwrap();
@@ -192,7 +185,7 @@ mod tests {
     #[test]
     fn nested_child_joins_with_dot() {
         let mut arena = fresh_arena();
-        let root = root_nv(&[], &mut arena).unwrap();
+        let root = make_path("", &mut arena);
         let two = NanValue::new_int(2, &mut arena);
         let branch2 = child_nv(&[root, two], &mut arena).unwrap();
         let zero = NanValue::new_int(0, &mut arena);
@@ -225,7 +218,7 @@ mod tests {
     #[test]
     fn child_rejects_negative_idx() {
         let mut arena = fresh_arena();
-        let root = root_nv(&[], &mut arena).unwrap();
+        let root = make_path("", &mut arena);
         let neg = NanValue::new_int(-1, &mut arena);
         let result = child_nv(&[root, neg], &mut arena);
         assert!(result.is_err());

@@ -118,7 +118,7 @@ const LEAN_PRELUDE_BRANCH_PATH: &str = r#"structure BranchPath where
   dewey : String
   deriving Repr, BEq, DecidableEq
 
-def BranchPath.root : BranchPath := { dewey := "" }
+def BranchPath.Root : BranchPath := { dewey := "" }
 
 def BranchPath.child (p : BranchPath) (idx : Int) : BranchPath :=
   if p.dewey.isEmpty then { dewey := toString idx }

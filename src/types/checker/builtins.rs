@@ -657,8 +657,11 @@ impl TypeChecker {
         // generative-effect oracles (`(BranchPath, Int, args...) -> T`).
         // Three constructors, no other public surface.
         let branch_path_ty = || Type::Named(crate::types::branch_path::TYPE_NAME.to_string());
+        // `BranchPath.Root` is a nullary value (like `Option.None`) —
+        // PascalCase, no parens. `.child` / `.parse` are methods.
+        self.value_members
+            .insert("BranchPath.Root".to_string(), branch_path_ty());
         let branch_path_sigs: &[(&str, &[Type], Type, &[&str])] = &[
-            ("BranchPath.root", &[], branch_path_ty(), &[]),
             (
                 "BranchPath.child",
                 &[branch_path_ty(), Type::Int],

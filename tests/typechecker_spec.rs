@@ -2048,7 +2048,7 @@ fn given_oracle_ref_random_int_binds_branch_indexed_sig() {
         "    Random.int(0, 10)\n",
         "verify caller law consistent\n",
         "    given rnd: Random.int = [stub]\n",
-        "    caller() => rnd(BranchPath.root(), 0, 0, 10)\n",
+        "    caller() => rnd(BranchPath.Root, 0, 0, 10)\n",
     );
     assert_no_errors(src);
 }
@@ -2098,7 +2098,7 @@ fn given_oracle_ref_random_int_wrong_stub_sig_is_rejected() {
         "    Random.int(0, 10)\n",
         "verify caller law consistent\n",
         "    given rnd: Random.int = [stub]\n",
-        "    caller() => rnd(BranchPath.root(), 0, 0, 10)\n",
+        "    caller() => rnd(BranchPath.Root, 0, 0, 10)\n",
     );
     let errs = errors(src);
     assert!(!errs.is_empty(), "expected a signature error, got none");
@@ -2163,7 +2163,7 @@ fn trace_law_on_non_recursive_effectful_function_is_accepted() {
         "    Random.int(1, 6)\n",
         "verify pick trace law pickSpec\n",
         "    given rnd: Random.int = [stub]\n",
-        "    pick() => stub(BranchPath.root(), 0, 1, 6)\n",
+        "    pick() => stub(BranchPath.Root, 0, 1, 6)\n",
         "fn stub(path: BranchPath, k: Int, min: Int, max: Int) -> Int\n",
         "    min\n",
     );
@@ -2243,7 +2243,7 @@ fn verify_law_on_classified_effects_is_accepted() {
         "    n\n",
         "verify roll law rollSpec\n",
         "    given rnd: Random.int = [stubRnd]\n",
-        "    roll() => stubRnd(BranchPath.root(), 0, 1, 6)\n",
+        "    roll() => stubRnd(BranchPath.Root, 0, 1, 6)\n",
         "fn stubRnd(path: BranchPath, k: Int, min: Int, max: Int) -> Int\n",
         "    min\n",
     );

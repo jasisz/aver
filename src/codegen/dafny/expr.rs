@@ -103,6 +103,11 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
                 if type_name == "Option" && field == "None" {
                     return "Option.None".to_string();
                 }
+                // Oracle v1: `BranchPath.Root` — nullary value,
+                // matches the `const BranchPath_Root` in the prelude.
+                if type_name == "BranchPath" && field == "Root" {
+                    return "BranchPath_Root".to_string();
+                }
                 if is_user_type(type_name, ctx) {
                     return format!("{}.{}", type_name, field);
                 }
@@ -274,7 +279,6 @@ fn emit_fn_call(fn_expr: &Spanned<Expr>, args: &[Spanned<Expr>], ctx: &CodegenCo
     if let Some(name) = dotted.as_deref() {
         let a: Vec<String> = args.iter().map(|e| emit_expr(e, ctx)).collect();
         match name {
-            "BranchPath.root" if a.is_empty() => return "BranchPath_root()".to_string(),
             "BranchPath.child" if a.len() == 2 => {
                 return format!("BranchPath_child({}, {})", a[0], a[1]);
             }
