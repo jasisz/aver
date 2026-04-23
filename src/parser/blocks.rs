@@ -286,6 +286,36 @@ impl Parser {
         Ok(out)
     }
 
+    /// Parse a `given` clause's type annotation.
+    ///
+    /// Accepts two forms:
+    /// - Regular type annotation (`Int`, `String`, `List<Int>`, `Tcp.Connection`).
+    /// - Effect-method reference (`Random.int`, `Console.print`) — lowercase
+    ///   second segment. Oracle v1 treats these as type-like annotations
+    ///   meaning "the oracle signature of this classified effect method".
+    ///   The typechecker resolves the method name to its lifted signature
+    ///   via `types::checker::effect_classification::oracle_signature`.
+    fn parse_given_type_annotation(&mut self) -> Result<String, ParseError> {
+        // Look ahead for `Upper.lower` effect-method ref (`Random.int` etc.).
+        // `parse_type` expects uppercase on both sides of the dot, which
+        // is the right check for regular dotted types like `Tcp.Connection`
+        // but rejects classified effect methods.
+        if let TokenKind::Ident(head) = &self.current().kind
+            && head.chars().next().is_some_and(|c| c.is_uppercase())
+            && matches!(self.peek(1).kind, TokenKind::Dot)
+            && let TokenKind::Ident(tail) = &self.peek(2).kind
+            && tail.chars().next().is_some_and(|c| c.is_lowercase())
+        {
+            let head = head.clone();
+            let tail = tail.clone();
+            self.advance(); // head
+            self.advance(); // dot
+            self.advance(); // tail
+            return Ok(format!("{}.{}", head, tail));
+        }
+        self.parse_type()
+    }
+
     fn parse_verify_given(&mut self) -> Result<VerifyGiven, ParseError> {
         if !self.current_ident_is("given") {
             return Err(self.error("Expected 'given'".to_string()));
@@ -300,7 +330,7 @@ impl Parser {
             _ => unreachable!(),
         };
         self.expect_exact(&TokenKind::Colon)?;
-        let type_name = self.parse_type()?;
+        let type_name = self.parse_given_type_annotation()?;
         self.expect_exact(&TokenKind::Assign)?;
 
         let domain = if self.int_range_domain_ahead() {

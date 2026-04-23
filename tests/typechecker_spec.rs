@@ -2031,6 +2031,80 @@ fn apply(d: Discount) -> Float
 }
 
 // ---------------------------------------------------------------------------
+// Oracle v1 — `given name: EffectRef = [stubs]` syntax
+// ---------------------------------------------------------------------------
+
+#[test]
+fn given_oracle_ref_random_int_binds_branch_indexed_sig() {
+    // `given rnd: Random.int = [stub]` should bind `rnd` to the oracle
+    // signature `(BranchPath, Int, Int, Int) -> Int`. The stub function
+    // matches that signature, and the law body uses `rnd` with args of
+    // that shape on the RHS, so the law must type-check cleanly.
+    let src = concat!(
+        "fn stub(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n",
+        "    min\n",
+        "fn caller() -> Int\n",
+        "    ! [Random.int]\n",
+        "    Random.int(0, 10)\n",
+        "verify caller law consistent\n",
+        "    given rnd: Random.int = [stub]\n",
+        "    caller() => rnd(BranchPath.root(), 0, 0, 10)\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn given_oracle_ref_args_get_binds_capability_reader() {
+    // Args.get is snapshot → capability reader `() -> List<String>`.
+    // The stub returns a List<String>, matching.
+    let src = concat!(
+        "fn stub() -> List<String>\n",
+        "    [\"one\"]\n",
+        "fn caller() -> List<String>\n",
+        "    ! [Args.get]\n",
+        "    Args.get()\n",
+        "verify caller law consistent\n",
+        "    given args: Args.get = [stub]\n",
+        "    caller() => args()\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn given_oracle_ref_output_effect_is_rejected() {
+    // Console.print is output-only — no oracle. `given` for it should
+    // produce a clear rejection pointing at the trace API.
+    let src = concat!(
+        "fn stub() -> Unit\n",
+        "    Unit\n",
+        "fn caller() -> Unit\n",
+        "    ! [Console.print]\n",
+        "    Console.print(\"hi\")\n",
+        "verify caller law consistent\n",
+        "    given log: Console.print = [stub]\n",
+        "    caller() => caller()\n",
+    );
+    assert_error_containing(src, "output-only");
+}
+
+#[test]
+fn given_oracle_ref_random_int_wrong_stub_sig_is_rejected() {
+    // Stub missing BranchPath prefix — should mismatch oracle signature.
+    let src = concat!(
+        "fn stub(min: Int, max: Int) -> Int\n",
+        "    min\n",
+        "fn caller() -> Int\n",
+        "    ! [Random.int]\n",
+        "    Random.int(0, 10)\n",
+        "verify caller law consistent\n",
+        "    given rnd: Random.int = [stub]\n",
+        "    caller() => rnd(BranchPath.root(), 0, 0, 10)\n",
+    );
+    let errs = errors(src);
+    assert!(!errs.is_empty(), "expected a signature error, got none");
+}
+
+// ---------------------------------------------------------------------------
 // Terminal service effect & signature checking
 // ---------------------------------------------------------------------------
 

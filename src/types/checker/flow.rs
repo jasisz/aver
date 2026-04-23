@@ -8,6 +8,27 @@ impl TypeChecker {
     ) -> T {
         let prev_locals = self.locals.clone();
         for given in givens {
+            // Oracle v1: `given rnd: Random.int = [...]` — the type annotation
+            // is a classified effect method reference, not a type. Substitute
+            // the effect's oracle signature (branch-indexed for generative,
+            // capability reader for snapshot). Output effects have no oracle
+            // and are rejected with a clear message.
+            if let Some(c) = super::effect_classification::classify(&given.type_name) {
+                match super::effect_classification::oracle_signature(&given.type_name) {
+                    Some(sig) => {
+                        self.locals.insert(given.name.clone(), sig);
+                    }
+                    None => {
+                        self.error(format!(
+                            "given '{}': effect '{}' is output-only (dimension {:?}) \
+                             and has no oracle — output effects are asserted about via \
+                             the trace API, not bound via `given`",
+                            given.name, given.type_name, c.dimension
+                        ));
+                    }
+                }
+                continue;
+            }
             match parse_type_str_strict(&given.type_name) {
                 Ok(ty) => {
                     self.locals.insert(given.name.clone(), ty);
