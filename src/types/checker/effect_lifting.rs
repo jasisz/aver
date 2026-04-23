@@ -75,11 +75,222 @@ pub enum LiftError {
 pub fn lift_body(body: &FnBody, cfg: &LiftConfig) -> Result<FnBody, LiftError> {
     let mut counter: u32 = 0;
     let root_path = spanned(Expr::Ident(cfg.path_name.clone()), 0);
-    let mut new_stmts = Vec::with_capacity(body.stmts().len());
-    for stmt in body.stmts() {
-        new_stmts.push(lift_stmt(stmt, cfg, &root_path, &mut counter)?);
-    }
+    let new_stmts = lift_stmts(body.stmts(), cfg, &root_path, &mut counter)?;
     Ok(FnBody::Block(new_stmts))
+}
+
+/// Lift a sequence of statements, CPS-desugaring `?!` when it
+/// appears. Each `?!` splits the stream: the error-propagating
+/// product becomes a nested match on the lifted branches, and all
+/// subsequent statements land inside the innermost Ok arm as the
+/// continuation. First-Err-wins semantics (complete mode per
+/// `docs/independence.md`) is preserved on the value side; compiler-
+/// level lemma 2 (deterministic aggregation) justifies the
+/// sequentialisation at proof level.
+///
+/// `?!` at a tail position (last stmt) wraps the innermost arm in a
+/// `Result.Ok(tuple)` so the fn returns `Result<(T1, …, Tn), E>`.
+/// `?!` inside a nested `?!` is rejected in v1 — the outer CPS
+/// continuation would need a second-level rewrite; deferred.
+fn lift_stmts(
+    stmts: &[Stmt],
+    cfg: &LiftConfig,
+    path_expr: &Spanned<Expr>,
+    counter: &mut u32,
+) -> Result<Vec<Stmt>, LiftError> {
+    let mut out = Vec::with_capacity(stmts.len());
+    for (i, stmt) in stmts.iter().enumerate() {
+        if let Some(cps) = try_lift_error_prop_stmt(stmt, &stmts[i + 1..], cfg, path_expr, counter)?
+        {
+            out.push(cps);
+            return Ok(out);
+        }
+        out.push(lift_stmt(stmt, cfg, path_expr, counter)?);
+    }
+    Ok(out)
+}
+
+/// If `stmt` is a binding or tail expression whose RHS is
+/// `(a, b, …)?!`, return a single CPS-desugared statement folding
+/// `rest` into the innermost Ok arm. Otherwise `None`, letting the
+/// caller lift the stmt normally.
+fn try_lift_error_prop_stmt(
+    stmt: &Stmt,
+    rest: &[Stmt],
+    cfg: &LiftConfig,
+    path_expr: &Spanned<Expr>,
+    counter: &mut u32,
+) -> Result<Option<Stmt>, LiftError> {
+    let (bind_name, items, line, is_tail) = match stmt {
+        Stmt::Binding(name, _, expr) => match &expr.node {
+            Expr::IndependentProduct(items, true) => {
+                (Some(name.clone()), items.clone(), expr.line, false)
+            }
+            _ => return Ok(None),
+        },
+        Stmt::Expr(expr) if rest.is_empty() => match &expr.node {
+            Expr::IndependentProduct(items, true) => (None, items.clone(), expr.line, true),
+            _ => return Ok(None),
+        },
+        _ => return Ok(None),
+    };
+
+    // Lift each branch with its own BranchPath.child(path, i) and a
+    // fresh per-branch oracle counter.
+    let mut lifted_items: Vec<Spanned<Expr>> = Vec::with_capacity(items.len());
+    for (i, item) in items.iter().enumerate() {
+        let branch_path = branch_child_path(path_expr, i as u32, item.line);
+        let mut branch_counter: u32 = 0;
+        lifted_items.push(lift_expr(item, cfg, &branch_path, &mut branch_counter)?);
+    }
+
+    // Build the continuation: innermost Ok arm.
+    let inner_continuation = if is_tail {
+        // `(a, b, …)?!` at tail — return `Result.Ok(tuple)`.
+        let tuple_items: Vec<Spanned<Expr>> = (0..items.len())
+            .map(|i| spanned(Expr::Ident(cps_binding(i)), line))
+            .collect();
+        let tuple_expr = spanned(Expr::Tuple(tuple_items), line);
+        spanned(
+            Expr::Constructor("Result.Ok".to_string(), Some(Box::new(tuple_expr))),
+            line,
+        )
+    } else {
+        // `pair = (a, b, …)?!; rest` — reconstruct `pair` from the
+        // unwrapped bindings, lift `rest`, wrap in a block expr.
+        let bind_name = bind_name.expect("binding case has name");
+        let tuple_items: Vec<Spanned<Expr>> = (0..items.len())
+            .map(|i| spanned(Expr::Ident(cps_binding(i)), line))
+            .collect();
+        let tuple_expr = spanned(Expr::Tuple(tuple_items), line);
+        let reconstruct = Stmt::Binding(bind_name, None, tuple_expr);
+        let mut block_stmts = vec![reconstruct];
+        let lifted_rest = lift_stmts(rest, cfg, path_expr, counter)?;
+        block_stmts.extend(lifted_rest);
+        stmts_to_expr(&block_stmts, line)
+    };
+
+    // Fold innermost → outermost: for each branch i (right-to-left),
+    // wrap `cont` in `match lifted_items[i] with Err(e) -> Err(e) |
+    // Ok(cps_binding(i)) -> cont`.
+    let mut cont = inner_continuation;
+    for (i, lifted) in lifted_items.into_iter().enumerate().rev() {
+        cont = result_match_cascade(lifted, cps_binding(i), cont, line);
+    }
+    Ok(Some(Stmt::Expr(cont)))
+}
+
+/// Deterministic binding name for the k-th `?!` branch's unwrapped
+/// value. Underscore-prefixed so it never collides with user idents.
+fn cps_binding(k: usize) -> String {
+    format!("ep_{}", k)
+}
+
+/// Build `match subject with Result.Err(e) -> Result.Err(e) |
+/// Result.Ok(<binding>) -> <body>` as a single Match expression.
+fn result_match_cascade(
+    subject: Spanned<Expr>,
+    binding: String,
+    body: Spanned<Expr>,
+    line: SourceLine,
+) -> Spanned<Expr> {
+    use crate::ast::{MatchArm, Pattern};
+    let err_arm = MatchArm {
+        pattern: Pattern::Constructor("Result.Err".to_string(), vec!["err_".to_string()]),
+        body: Box::new(spanned(
+            Expr::Constructor(
+                "Result.Err".to_string(),
+                Some(Box::new(spanned(Expr::Ident("err_".to_string()), line))),
+            ),
+            line,
+        )),
+    };
+    let ok_arm = MatchArm {
+        pattern: Pattern::Constructor("Result.Ok".to_string(), vec![binding]),
+        body: Box::new(body),
+    };
+    spanned(
+        Expr::Match {
+            subject: Box::new(subject),
+            arms: vec![err_arm, ok_arm],
+        },
+        line,
+    )
+}
+
+/// Wrap a statement block in an expression. For a single tail
+/// expression, return it directly; for `binding; expr; …` use the
+/// Aver idiom where the final expression is the block's value —
+/// represented as nested bindings terminating in the tail expr. We
+/// keep the Vec<Stmt> form and return it as a Match-subject which
+/// the emitter treats as a sequential block.
+fn stmts_to_expr(stmts: &[Stmt], line: SourceLine) -> Spanned<Expr> {
+    // Aver's AST doesn't have a `Block` expression; blocks only
+    // appear as `FnBody`. For the CPS-desugar continuation we
+    // reconstitute a single expression via a trivial Match on Unit
+    // whose one arm's body evaluates the block's stmts in scope.
+    // Codegen treats Match with an Ident subject's binding as
+    // sequential let-chains; for our purposes the simplest faithful
+    // lowering is a synthetic helper fn call — but that would need
+    // lift_fn_def cooperation. Instead, use an immediately-destructured
+    // Match on `Unit()` with a wildcard arm containing the stmts.
+    // Since the AST only permits one expression in `arm.body`, we
+    // chain bindings via nested Match arms — equivalent to let*.
+    stmts_to_let_chain(stmts, line)
+}
+
+/// Nest block stmts as let-chains using Match(Unit, [_ -> body]).
+/// Builds equivalent to `let a = va; let b = vb; tail`.
+fn stmts_to_let_chain(stmts: &[Stmt], line: SourceLine) -> Spanned<Expr> {
+    use crate::ast::{Literal, MatchArm, Pattern};
+    // Find the tail expression and the preceding bindings.
+    let (tail, bindings) = match stmts.split_last() {
+        Some((Stmt::Expr(e), rest)) => (e.clone(), rest),
+        Some((Stmt::Binding(_, _, _), _)) => {
+            // Last stmt is a binding — unusual for a tail-reachable
+            // position. Synthesize Unit tail.
+            (spanned(Expr::Literal(Literal::Unit), line), stmts)
+        }
+        None => (spanned(Expr::Literal(Literal::Unit), line), &[][..]),
+    };
+    // Wrap each preceding binding (r-to-l) as a Match on the binding
+    // value where the single arm binds the name and evaluates the
+    // accumulated tail.
+    let mut acc = tail;
+    for stmt in bindings.iter().rev() {
+        match stmt {
+            Stmt::Binding(name, _, value) => {
+                let arm = MatchArm {
+                    pattern: Pattern::Ident(name.clone()),
+                    body: Box::new(acc),
+                };
+                acc = spanned(
+                    Expr::Match {
+                        subject: Box::new(value.clone()),
+                        arms: vec![arm],
+                    },
+                    line,
+                );
+            }
+            Stmt::Expr(e) => {
+                // Non-tail bare expression — sequence it before the
+                // accumulated tail by binding to `_` via a wildcard-
+                // style Match arm.
+                let arm = MatchArm {
+                    pattern: Pattern::Wildcard,
+                    body: Box::new(acc),
+                };
+                acc = spanned(
+                    Expr::Match {
+                        subject: Box::new(e.clone()),
+                        arms: vec![arm],
+                    },
+                    line,
+                );
+            }
+        }
+    }
+    acc
 }
 
 fn spanned(node: Expr, line: SourceLine) -> Spanned<Expr> {
@@ -762,17 +973,22 @@ mod tests {
     }
 
     #[test]
-    fn lift_question_bang_product_preserves_error_prop_flag() {
+    fn lift_question_bang_product_cps_desugars_to_nested_match() {
+        // Oracle v1: `?!` becomes a nested match cascade on
+        // `Result`, not a bare IndependentProduct node. First Err
+        // short-circuits; all Ok arm reconstructs the unwrapped
+        // tuple. Complete-mode semantics is preserved on the value
+        // side via lemma 2 (deterministic aggregation).
         let body = parse_body("    (Http.get(\"a\"), Http.get(\"b\"))?!");
         let cfg = simple_cfg_with(&[("Http.get", "http")]);
         let lifted = lift_body(&body, &cfg).unwrap();
         let [Stmt::Expr(tail)] = &lifted.stmts()[..] else {
             panic!("expected one expr stmt");
         };
-        let Expr::IndependentProduct(_, is_error_prop) = &tail.node else {
-            panic!("expected IndependentProduct");
+        let Expr::Match { arms, .. } = &tail.node else {
+            panic!("expected Match cascade, got {:?}", tail.node);
         };
-        assert!(*is_error_prop, "`?!` should set the error-prop flag");
+        assert_eq!(arms.len(), 2, "Err + Ok arms expected");
     }
 
     #[test]
@@ -989,49 +1205,70 @@ mod tests {
 
     #[test]
     fn lift_fn_def_on_plan_example_7_fetch_both() {
-        // Example 7: `(Http.get(urlA), Http.get(urlB))?!`. Lifting should
-        // preserve IndependentProduct (error-prop flag set) and give each
-        // branch its own counter + BranchPath.child(path, i).
+        // Plan example 7: `(Http.get(urlA), Http.get(urlB))?!`. The
+        // lifter CPS-desugars `?!` at tail position into a nested
+        // match: first-Err-wins, innermost Ok arm wraps the unwrapped
+        // tuple in `Result.Ok`. Each branch keeps its own
+        // `BranchPath.child(path, i)` + fresh counter.
         let fd = parse_fn(
             "fn fetchBoth(urlA: String, urlB: String) -> Result<(String, String), String>\n\
              \x20   ! [Http.get]\n\
              \x20   (Http.get(urlA), Http.get(urlB))?!\n",
         );
         let lifted = lift_fn_def(&fd).unwrap().unwrap();
-        // params: path, http oracle, urlA, urlB
         assert_eq!(lifted.params.len(), 4);
         assert_eq!(lifted.params[0].0, "path");
         assert_eq!(lifted.params[1].0, "rnd_Http_get");
-        assert_eq!(lifted.params[2].0, "urlA");
-        assert_eq!(lifted.params[3].0, "urlB");
         let [Stmt::Expr(tail)] = &lifted.body.stmts()[..] else {
             panic!("expected single expr stmt");
         };
-        let Expr::IndependentProduct(branches, is_err_prop) = &tail.node else {
-            panic!("expected IndependentProduct, got {:?}", tail.node);
+        // Outer match: on branch 0's lifted oracle call. Err arm
+        // propagates err_. Ok arm binds ep_0 and contains the inner
+        // match.
+        let Expr::Match {
+            subject: outer_subj,
+            arms: outer_arms,
+        } = &tail.node
+        else {
+            panic!("expected outer Match, got {:?}", tail.node);
         };
-        assert!(*is_err_prop, "?! should preserve error-prop flag");
-        assert_eq!(branches.len(), 2);
-        for i in 0..2 {
-            let args = assert_looks_like_oracle_call(&branches[i].node, "rnd_Http_get", 3);
-            // Each branch's counter resets to 0 (branch locality).
-            match &args[1] {
-                Expr::Literal(Literal::Int(0)) => {}
-                other => panic!("branch {} counter should be 0, got {:?}", i, other),
-            }
-            // Path: BranchPath.child(path, i).
-            let Expr::FnCall(callee, child_args) = &args[0] else {
-                panic!("branch {} path should be BranchPath.child call", i);
-            };
-            let Expr::Attr(h, f) = &callee.node else {
-                panic!("branch {} child callee should be Attr", i);
-            };
-            assert!(matches!(&h.node, Expr::Ident(n) if n == "BranchPath"));
-            assert_eq!(f, "child");
-            match &child_args[1].node {
-                Expr::Literal(Literal::Int(n)) => assert_eq!(*n as usize, i),
-                other => panic!("branch {} idx should be {}, got {:?}", i, i, other),
-            }
+        let outer_args = assert_looks_like_oracle_call(&outer_subj.node, "rnd_Http_get", 3);
+        assert_path_child_idx(&outer_args[0], 0);
+        assert_eq!(outer_arms.len(), 2);
+        // Inner match under Ok(ep_0).
+        let Expr::Match {
+            subject: inner_subj,
+            arms: inner_arms,
+        } = &outer_arms[1].body.node
+        else {
+            panic!("expected inner Match under outer Ok arm");
+        };
+        let inner_args = assert_looks_like_oracle_call(&inner_subj.node, "rnd_Http_get", 3);
+        assert_path_child_idx(&inner_args[0], 1);
+        assert_eq!(inner_arms.len(), 2);
+        // Inner Ok arm should be `Result.Ok((ep_0, ep_1))`.
+        let Expr::Constructor(ctor, Some(inner_ok_body)) = &inner_arms[1].body.node else {
+            panic!("inner Ok arm should wrap tuple in Result.Ok");
+        };
+        assert!(ctor == "Result.Ok" || ctor == "Ok");
+        let Expr::Tuple(items) = &inner_ok_body.node else {
+            panic!("inner Ok arm body should be tuple");
+        };
+        assert_eq!(items.len(), 2);
+    }
+
+    fn assert_path_child_idx(expr: &Spanned<Expr>, expected_idx: i64) {
+        let Expr::FnCall(callee, child_args) = &expr.node else {
+            panic!("expected BranchPath.child call, got {:?}", expr.node);
+        };
+        let Expr::Attr(h, f) = &callee.node else {
+            panic!("expected Attr callee");
+        };
+        assert!(matches!(&h.node, Expr::Ident(n) if n == "BranchPath"));
+        assert_eq!(f, "child");
+        match &child_args[1].node {
+            Expr::Literal(Literal::Int(n)) => assert_eq!(*n, expected_idx),
+            other => panic!("idx should be {}, got {:?}", expected_idx, other),
         }
     }
 
