@@ -1047,6 +1047,51 @@ verify f law law1
 }
 
 #[test]
+fn verify_cases_parses_trace_keyword() {
+    // `verify fn trace` — cases form with trace-awareness enabled.
+    let src = r#"
+verify f trace
+    f(1) => 1
+"#;
+    let items = parse(src);
+    let TopLevel::Verify(vb) = &items[0] else {
+        panic!("expected Verify");
+    };
+    assert!(vb.trace, "expected trace=true");
+    assert!(matches!(vb.kind, VerifyKind::Cases));
+}
+
+#[test]
+fn verify_law_parses_trace_keyword_before_law() {
+    // `verify fn trace law name` — law form with trace-awareness.
+    let src = r#"
+verify f trace law consistent
+    given x: Int = [1]
+    f(x) => f(x)
+"#;
+    let items = parse(src);
+    let TopLevel::Verify(vb) = &items[0] else {
+        panic!("expected Verify");
+    };
+    assert!(vb.trace, "expected trace=true");
+    assert!(matches!(vb.kind, VerifyKind::Law(_)));
+}
+
+#[test]
+fn verify_law_without_trace_keeps_trace_false() {
+    let src = r#"
+verify f law consistent
+    given x: Int = [1]
+    f(x) => f(x)
+"#;
+    let items = parse(src);
+    let TopLevel::Verify(vb) = &items[0] else {
+        panic!("expected Verify");
+    };
+    assert!(!vb.trace, "expected trace=false");
+}
+
+#[test]
 fn verify_law_given_preserves_regular_type_annotations() {
     // Sanity: Upper.Upper still works, lowercase-after-dot doesn't clobber
     // the existing `given urlA: String = [...]` and dotted-type paths.

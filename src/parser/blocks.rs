@@ -388,6 +388,15 @@ impl Parser {
         let line = fn_name_tok.line;
         let mut kind = VerifyKind::Cases;
         let mut law_name = None;
+        // Oracle v1: optional `trace` keyword after fn name enables
+        // trace-aware assertions (`.result`, `.trace.*`, event literals).
+        // Parses both `verify fn trace` (cases) and `verify fn trace law fnSpec`.
+        let trace_mode = if self.current_ident_is("trace") {
+            self.advance(); // trace
+            true
+        } else {
+            false
+        };
         if self.current_ident_is("law") {
             self.advance(); // law
             let law_name_tok = self.expect_kind(
@@ -511,6 +520,7 @@ impl Parser {
             case_spans,
             case_givens,
             kind,
+            trace: trace_mode,
         })
     }
 

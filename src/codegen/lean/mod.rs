@@ -2295,6 +2295,7 @@ mod tests {
             case_spans: vec![],
             case_givens: vec![],
             kind: VerifyKind::Cases,
+        trace: false,
         }));
         ctx
     }
@@ -2311,6 +2312,7 @@ mod tests {
             case_spans: vec![],
             case_givens: vec![],
             kind: VerifyKind::Cases,
+        trace: false,
         }));
         ctx.items.push(TopLevel::Verify(VerifyBlock {
             fn_name: "f".to_string(),
@@ -2322,6 +2324,7 @@ mod tests {
             case_spans: vec![],
             case_givens: vec![],
             kind: VerifyKind::Cases,
+        trace: false,
         }));
         ctx
     }
@@ -2420,6 +2423,7 @@ mod tests {
                 )),
                 sample_guards: vec![],
             })),
+        trace: false,
         }));
         ctx
     }
@@ -2817,6 +2821,7 @@ verify square law squareSpec
                 rhs: sb(Expr::Ident("x".to_string())),
                 sample_guards: vec![],
             })),
+        trace: false,
         }));
         let out = transpile(&ctx);
         let lean = out
@@ -2868,6 +2873,7 @@ verify square law squareSpec
                 rhs: sb(Expr::Ident("a".to_string())),
                 sample_guards: vec![],
             })),
+        trace: false,
         }));
         let out = transpile(&ctx);
         let lean = out
@@ -2970,6 +2976,7 @@ verify square law squareSpec
                 )),
                 sample_guards: vec![],
             })),
+        trace: false,
         }));
         let out = transpile(&ctx);
         let lean = out
@@ -3040,6 +3047,7 @@ verify square law squareSpec
                 rhs: sb(Expr::Ident("a".to_string())),
                 sample_guards: vec![],
             })),
+        trace: false,
         }));
         ctx.items.push(TopLevel::Verify(VerifyBlock {
             fn_name: "sub".to_string(),
@@ -3105,6 +3113,7 @@ verify square law squareSpec
                 )),
                 sample_guards: vec![],
             })),
+        trace: false,
         }));
 
         let out = transpile(&ctx);
@@ -3198,6 +3207,7 @@ verify square law squareSpec
                 )),
                 sample_guards: vec![],
             })),
+        trace: false,
         }));
         let out = transpile(&ctx);
         let lean = out
@@ -3314,6 +3324,7 @@ verify square law squareSpec
                 rhs: sb(Expr::Literal(Literal::Bool(true))),
                 sample_guards: vec![],
             })),
+        trace: false,
         }));
 
         ctx.items.push(TopLevel::Verify(VerifyBlock {
@@ -3367,6 +3378,7 @@ verify square law squareSpec
                 rhs: some(sb(Expr::Ident("v".to_string()))),
                 sample_guards: vec![],
             })),
+        trace: false,
         }));
 
         let out = transpile(&ctx);
@@ -3595,6 +3607,7 @@ verify mirror law involutive
                 rhs: sb(Expr::Literal(Literal::Bool(true))),
                 sample_guards: vec![],
             })),
+        trace: false,
         }));
 
         ctx.items.push(TopLevel::Verify(VerifyBlock {
@@ -3654,6 +3667,7 @@ verify mirror law involutive
                 ))),
                 sample_guards: vec![],
             })),
+        trace: false,
         }));
 
         let out = transpile(&ctx);
@@ -3750,6 +3764,7 @@ verify mirror law involutive
                 )),
                 sample_guards: vec![],
             })),
+        trace: false,
         }));
 
         let out = transpile(&ctx);
@@ -3788,6 +3803,7 @@ verify mirror law involutive
             case_spans: vec![],
             case_givens: vec![],
             kind: VerifyKind::Cases,
+        trace: false,
         }));
         ctx.items.push(TopLevel::Verify(VerifyBlock {
             fn_name: "f".to_string(),
@@ -3810,6 +3826,7 @@ verify mirror law involutive
                 rhs: sb(Expr::Ident("x".to_string())),
                 sample_guards: vec![],
             })),
+        trace: false,
         }));
         let out = transpile_with_verify_mode(&ctx, VerifyEmitMode::TheoremSkeleton);
         let lean = out
