@@ -111,6 +111,13 @@ Two shapes, two jobs:
 
 Match patterns on `EffectEvent` (`match ev with Console.print(msg) -> …`) are **not** in Oracle v1. They're expressible today via field access; the pattern-position sugar is scheduled for Oracle v1.1 once the VM compiler extensions can be reviewed properly.
 
+**Why the sugar is load-bearing, not ornamental.** It might look like `.contains(Console.print("x"))` is just a shortcut for a record literal. It isn't. `.contains` and `.event(k)` have genuinely different matching semantics:
+
+- `.event(k) => Option.Some(EffectEvent(...))` is full structural equality — **path included**.
+- `.contains(x) => Bool` is a predicate — **path is deliberately ignored**, so "did this method fire, with these args, anywhere" is expressible.
+
+Aver record literals don't support wildcards, so there's no record form that means "this method + these args, any path". The sugar is the only way to express that shape in v0. If Aver ever gets pattern-like wildcards in record literals (`path = _`), the sugar becomes redundant. Until then it carries real semantic weight, not syntactic polish.
+
 ### The `EffectEvent` record
 
 ```
