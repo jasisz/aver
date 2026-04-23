@@ -370,6 +370,33 @@ mod tests {
     }
 
     #[test]
+    fn bang_product_emits_lifted_tuple_with_child_paths() {
+        // Plain `!` lifts to a tuple in the emitted Dafny — the parallel
+        // claim is captured by the meta-level schedule-invariance
+        // invariant. Verifies that each branch threads BranchPath.child
+        // and resets its counter to 0.
+        let src = "module M\n\
+             \x20   intent = \"t\"\n\
+             \n\
+             fn pair() -> (Int, Int)\n\
+             \x20   ! [Random.int]\n\
+             \x20   (Random.int(1, 6), Random.int(1, 6))!\n";
+        let ctx = ctx_from_source(src, "m");
+        let out = transpile(&ctx);
+        let dfy = dafny_output(&out);
+        assert!(
+            dfy.contains("BranchPath_child(path, 0)"),
+            "branch 0 path missing:\n{}",
+            dfy
+        );
+        assert!(
+            dfy.contains("BranchPath_child(path, 1)"),
+            "branch 1 path missing:\n{}",
+            dfy
+        );
+    }
+
+    #[test]
     fn branch_path_call_renders_with_underscore_names() {
         // Verify the expression-emission bridge: Aver-source BranchPath
         // constructor calls map onto the Dafny underscore-named helpers.
