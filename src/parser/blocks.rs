@@ -469,6 +469,20 @@ impl Parser {
                     let start_line = self.current().line;
                     let start_col = self.current().col;
                     let left = self.parse_expr()?;
+                    // Misplaced local binding (verify-trace only):
+                    // `name = expr` inside the cases area parses `name`
+                    // as the case LHS and then chokes on `=` where it
+                    // expects `=>`. The raw "Expected '=>', found '='"
+                    // message doesn't tell the user what to do. Detect
+                    // the shape and surface a pointed repair.
+                    if trace_mode && matches!(self.current().kind, TokenKind::Assign) {
+                        return Err(self.error(
+                            "verify-trace local bindings (`name = expr`) must come before \
+                             any `lhs => rhs` case. Move this binding above the cases, \
+                             then reference it by name in the cases."
+                                .to_string(),
+                        ));
+                    }
                     self.expect_exact(&TokenKind::FatArrow)?;
                     // Oracle v1: allow the RHS to wrap to the next
                     // (indented) line. Long event-literal records
