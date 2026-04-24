@@ -31,17 +31,23 @@ pub fn analyze_plans(
 /// Classification for a single recursive fn (or a whole mutual-recursion
 /// SCC, in which case every fn in the SCC gets its own plan from the
 /// same family).
-#[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// `Eq` is deliberately omitted — `IntAscending` holds an AST expression
+/// which only implements `PartialEq` (float literals inside it are
+/// partially ordered). `PartialEq` still works for the uses this enum
+/// sees (pattern matching, `matches!`, equality via `.eq`).
+#[derive(Clone, Debug, PartialEq)]
 pub enum RecursionPlan {
     /// Single-fn recursion where an `Int` parameter decreases by 1.
     /// The wrapper supplies `n.natAbs + 1` fuel so the helper terminates.
     IntCountdown { param_index: usize },
     /// Single-fn recursion where an `Int` param increases by 1 up to a
-    /// bound expressed as a backend-neutral expression string. The
-    /// wrapper supplies `(bound - n).natAbs + 1` fuel.
+    /// bound. The bound is kept as an Aver AST expression so each
+    /// backend renders it in its own idiom; the wrapper supplies
+    /// `(bound - n).natAbs + 1` fuel.
     IntAscending {
         param_index: usize,
-        bound_lean: String,
+        bound: Spanned<Expr>,
     },
     /// Affine second-order recurrence like `fib(n) = fib(n-1) + fib(n-2)`
     /// with `0 / 1` bases and an `n < 0` guard. Emitted through a
