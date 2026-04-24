@@ -103,6 +103,11 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
     // effect, rewriting effect-method calls in the body. Unclassified or
     // higher-order-callback effects are still skipped.
     //
+    // Only fns reachable from some verify block are emitted — otherwise
+    // a non-terminating effectful fn (e.g. a REPL loop) would force
+    // Dafny to demand a decreases clause for a fn nobody asked to prove.
+    let reachable = crate::codegen::common::verify_reachable_fn_names(&ctx.items);
+    //
     // Collect the helper registry first so call sites to effectful
     // user fns in any lifted body get `(path, oracle...)` injected
     // to match the callee's lifted arity.
@@ -113,6 +118,7 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
             && !fd.effects.is_empty()
             && fd.name != "main"
             && !body_uses_error_prop(&fd.body)
+            && reachable.contains(&fd.name)
             && fd
                 .effects
                 .iter()
@@ -129,6 +135,7 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
             && !fd.effects.is_empty()
             && fd.name != "main"
             && !body_uses_error_prop(&fd.body)
+            && reachable.contains(&fd.name)
             && fd
                 .effects
                 .iter()
@@ -339,13 +346,17 @@ mod tests {
 
     #[test]
     fn effectful_generative_fn_emits_lifted_form() {
-        // Plan Example 3 analog: pickOne() ! [Random.int] Random.int(1, 6)
+        // Plan Example 3 analog: pickOne() ! [Random.int] Random.int(1, 6).
+        // Verify block makes pickOne reachable — without it the proof
+        // backend skips the fn (nothing to prove about it).
         let src = "module M\n\
              \x20   intent = \"t\"\n\
              \n\
              fn pickOne() -> Int\n\
              \x20   ! [Random.int]\n\
-             \x20   Random.int(1, 6)\n";
+             \x20   Random.int(1, 6)\n\
+             verify pickOne\n\
+             \x20   pickOne() => 1\n";
         let ctx = ctx_from_source(src, "m");
         let out = transpile(&ctx);
         let dfy = dafny_output(&out);
@@ -407,13 +418,16 @@ mod tests {
         // Plain `!` lifts to a tuple in the emitted Dafny — the parallel
         // claim is captured by the meta-level schedule-invariance
         // invariant. Verifies that each branch threads BranchPath.child
-        // and resets its counter to 0.
+        // and resets its counter to 0. Verify block makes `pair`
+        // reachable for the proof backend.
         let src = "module M\n\
              \x20   intent = \"t\"\n\
              \n\
              fn pair() -> (Int, Int)\n\
              \x20   ! [Random.int]\n\
-             \x20   (Random.int(1, 6), Random.int(1, 6))!\n";
+             \x20   (Random.int(1, 6), Random.int(1, 6))!\n\
+             verify pair\n\
+             \x20   pair() => (1, 1)\n";
         let ctx = ctx_from_source(src, "m");
         let out = transpile(&ctx);
         let dfy = dafny_output(&out);

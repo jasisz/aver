@@ -2044,6 +2044,13 @@ fn emit_lifted_effectful_functions(
 ) {
     use crate::types::checker::effect_classification::is_classified;
 
+    // Oracle v1: only emit effectful fns reachable from some verify
+    // block. Non-terminating effectful fns (e.g. REPL loops that loop
+    // forever on `Console.readLine`) would otherwise make Lean reject
+    // the whole module — and if nobody is proving anything about them,
+    // that's dead code in the proof output.
+    let reachable = crate::codegen::common::verify_reachable_fn_names(&ctx.items);
+
     // Oracle v1: collect the effect list for every eligible
     // effectful fn *first* — call sites to these helpers in any
     // lifted body get `(path, oracle...)` injected so the arity
@@ -2056,6 +2063,9 @@ fn emit_lifted_effectful_functions(
             continue;
         }
         if !fd.effects.iter().all(|e| is_classified(&e.node)) {
+            continue;
+        }
+        if !reachable.contains(&fd.name) {
             continue;
         }
         helpers.insert(
@@ -2071,6 +2081,9 @@ fn emit_lifted_effectful_functions(
             continue;
         }
         if !fd.effects.iter().all(|e| is_classified(&e.node)) {
+            continue;
+        }
+        if !reachable.contains(&fd.name) {
             continue;
         }
         let Ok(Some(lifted)) =
