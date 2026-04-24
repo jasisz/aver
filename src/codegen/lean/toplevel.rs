@@ -1023,14 +1023,15 @@ pub fn emit_fn_def_proof(
 
     if let Some(RecursionPlan::IntAscending {
         param_index,
-        ref bound_lean,
+        ref bound,
     }) = recursion_plan
     {
+        let bound_lean = super::bound_expr_to_lean(bound);
         return Some(emit_fuelized_int_ascending_fn(
             fd,
             ctx,
             param_index,
-            bound_lean,
+            &bound_lean,
         ));
     }
 

@@ -1195,9 +1195,9 @@ fn has_negative_guarded_ascent(fd: &FnDef, param_name: &str) -> bool {
             .all(|(name, _)| !call_matches(name, &fd.name))
 }
 
-/// Detect ascending-index recursion and extract the bound expression.
-/// Returns (param_index, bound_lean_string) if found.
-fn single_int_ascending_param(fd: &FnDef) -> Option<(usize, String)> {
+/// Detect ascending-index recursion and extract the bound expression
+/// as an Aver AST (`Spanned<Expr>`). Returns `(param_index, bound)`.
+fn single_int_ascending_param(fd: &FnDef) -> Option<(usize, Spanned<Expr>)> {
     let recursive_calls: Vec<Vec<&Spanned<Expr>>> = collect_calls_from_body(fd.body.as_ref())
         .into_iter()
         .filter(|(name, _)| call_matches(name, &fd.name))
@@ -1219,15 +1219,17 @@ fn single_int_ascending_param(fd: &FnDef) -> Option<(usize, String)> {
         if !ascent_ok {
             continue;
         }
-        if let Some(bound_lean) = extract_equality_bound_lean(fd, param_name) {
-            return Some((idx, bound_lean));
+        if let Some(bound) = extract_equality_bound_expr(fd, param_name) {
+            return Some((idx, bound));
         }
     }
     None
 }
 
-/// Extract the bound expression from `match param == BOUND` as a Lean string.
-fn extract_equality_bound_lean(fd: &FnDef, param_name: &str) -> Option<String> {
+/// Extract the bound expression from `match param == BOUND` as an
+/// Aver AST node. Each backend renders this into its own idiom (Lean
+/// via `bound_expr_to_lean`, Dafny via its own `emit_expr` path).
+fn extract_equality_bound_expr(fd: &FnDef, param_name: &str) -> Option<Spanned<Expr>> {
     let tail = fd.body.tail_expr()?;
     let Expr::Match { subject, arms, .. } = &tail.node else {
         return None;
@@ -1259,11 +1261,10 @@ fn extract_equality_bound_lean(fd: &FnDef, param_name: &str) -> Option<String> {
     if true_has_self || !false_has_self {
         return None;
     }
-    // Convert bound expr to Lean string — works for literals and simple expressions
-    Some(bound_expr_to_lean(right))
+    Some((**right).clone())
 }
 
-fn bound_expr_to_lean(expr: &Spanned<Expr>) -> String {
+pub(super) fn bound_expr_to_lean(expr: &Spanned<Expr>) -> String {
     match &expr.node {
         Expr::Literal(crate::ast::Literal::Int(n)) => format!("{}", n),
         Expr::Ident(name) => expr::aver_name_to_lean(name),
@@ -1769,13 +1770,10 @@ pub fn proof_mode_recursion_analysis(
         let fd = component[0];
         if recurrence::detect_second_order_int_linear_recurrence(fd).is_some() {
             plans.insert(fd.name.clone(), RecursionPlan::LinearRecurrence2);
-        } else if let Some((param_index, bound_lean)) = single_int_ascending_param(fd) {
+        } else if let Some((param_index, bound)) = single_int_ascending_param(fd) {
             plans.insert(
                 fd.name.clone(),
-                RecursionPlan::IntAscending {
-                    param_index,
-                    bound_lean,
-                },
+                RecursionPlan::IntAscending { param_index, bound },
             );
         } else if let Some(param_index) = single_int_countdown_param_index(fd) {
             plans.insert(fd.name.clone(), RecursionPlan::IntCountdown { param_index });
