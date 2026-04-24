@@ -2,7 +2,9 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## Unreleased
+## 0.11.0 "Oracle" (2026-04-24)
+
+> _Effectful functions get verified now — bind an oracle with `given`, check the trace, or export the universal law to Lean & Dafny. Dafny caught up with Lean across every recursive shape._
 
 ### Added
 - **Oracle law and trace docs/example** — `docs/oracle.md` now separates proof-oriented `verify <fn> law` over explicit oracles from cases-form `verify <fn> trace` for `.result` / `.trace.*` assertions. Added `examples/formal/oracle_trace.av` as the short runnable example.
