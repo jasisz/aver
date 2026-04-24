@@ -104,6 +104,39 @@ pub fn emit_type_def(td: &TypeDef) -> Option<String> {
     }
 }
 
+/// Emit a recursive fn whose shape is outside the proof subset
+/// (mutual recursion with no termination measure the classifier
+/// recognises, non-structural nested recursion, etc.) as a Dafny
+/// axiom — a `function {:axiom}` declaration with a signature and no
+/// body. Dafny treats it as an opaque total function: callers can
+/// reference it, but the verifier won't unfold it, so soundness-
+/// sensitive downstream reasoning about its value becomes user-
+/// supplied lemmas. Mirrors Lean's `partial def` fallback.
+pub fn emit_fn_def_axiom(fd: &FnDef) -> String {
+    let name = aver_name_to_dafny(&fd.name);
+    let params: Vec<String> = fd
+        .params
+        .iter()
+        .map(|(pname, ptype)| format!("{}: {}", aver_name_to_dafny(pname), emit_type(ptype)))
+        .collect();
+    let ret_type = emit_type(&fd.return_type);
+
+    let mut lines = Vec::new();
+    if let Some(desc) = &fd.desc {
+        lines.push(format!("// {}", desc));
+    }
+    lines.push(
+        "// Axiom: recursion pattern outside Dafny proof subset (emitted opaque)".to_string(),
+    );
+    lines.push(format!(
+        "function {{:axiom}} {}({}): {}\n",
+        name,
+        params.join(", "),
+        ret_type,
+    ));
+    lines.join("\n")
+}
+
 /// Emit a Dafny function from a FnDef.
 pub fn emit_fn_def(fd: &FnDef, ctx: &CodegenContext) -> String {
     let name = aver_name_to_dafny(&fd.name);

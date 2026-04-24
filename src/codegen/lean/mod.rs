@@ -1708,7 +1708,7 @@ fn supports_mutual_sizeof_ranked(component: &[&FnDef]) -> Option<HashMap<String,
     Some(out)
 }
 
-fn proof_mode_recursion_analysis(
+pub fn proof_mode_recursion_analysis(
     ctx: &CodegenContext,
 ) -> (HashMap<String, RecursionPlan>, Vec<ProofModeIssue>) {
     let mut plans = HashMap::new();

@@ -9,7 +9,7 @@
 mod expr;
 mod toplevel;
 
-use crate::ast::{TopLevel, VerifyKind};
+use crate::ast::{FnDef, TopLevel, VerifyKind};
 use crate::codegen::{CodegenContext, ProjectOutput};
 
 /// Check if a function body uses the `?` (ErrorProp) operator.
@@ -61,6 +61,48 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
         DAFNY_PRELUDE.to_string(),
     ];
 
+    // Recursion classifier — same detector the Lean backend uses. Fns
+    // with a supported plan emit through the usual `decreases`-guarded
+    // path; recursive fns outside the supported patterns (mutual without
+    // a termination measure the classifier recognises, non-structural
+    // nested recursion, etc.) fall back to a `function {:axiom}`
+    // declaration so the whole file still type-checks. This parallels
+    // Lean's `partial def` fallback for unsupported shapes.
+    let (recursion_plans, _recursion_issues) = crate::codegen::recursion::analyze_plans(ctx);
+    // Axiom fallback for mutual-recursion SCCs the classifier detected.
+    // Dafny's port of the mutual fuel-guarded emission (`fn__fuel(fuel,
+    // …)` + wrapper) that Lean uses is still pending, so treat these as
+    // opaque `function {:axiom}` declarations — callers can reference
+    // them, the verifier won't unfold them. Matches Lean's `partial def`
+    // fallback, letting `aver proof --backend dafny` on programs with
+    // mutual recursion type-check without needing the full port.
+    //
+    // Single-fn recursion outside the classifier's supported patterns
+    // (ProofModeIssue) goes through Dafny's own structural-recursion
+    // inference (list length, String position, decreases n for
+    // countdown), which frequently succeeds where Lean's classifier
+    // abstains — so we don't axiomize those.
+    use crate::codegen::recursion::RecursionPlan;
+    let axiom_fn_names: std::collections::HashSet<String> = recursion_plans
+        .iter()
+        .filter(|(_, plan)| {
+            matches!(
+                plan,
+                RecursionPlan::MutualIntCountdown
+                    | RecursionPlan::MutualStringPosAdvance { .. }
+                    | RecursionPlan::MutualSizeOfRanked { .. }
+            )
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    let emit_pure_fn = |fd: &FnDef| -> String {
+        if axiom_fn_names.contains(&fd.name) {
+            toplevel::emit_fn_def_axiom(fd)
+        } else {
+            toplevel::emit_fn_def(fd, ctx)
+        }
+    };
+
     // Emit type definitions from dependent modules
     for module in &ctx.modules {
         for td in &module.type_defs {
@@ -81,7 +123,7 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
     for module in &ctx.modules {
         for fd in &module.fn_defs {
             if fd.effects.is_empty() && !body_uses_error_prop(&fd.body) {
-                sections.push(toplevel::emit_fn_def(fd, ctx));
+                sections.push(emit_pure_fn(fd));
             }
         }
     }
@@ -93,7 +135,7 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
             && fd.name != "main"
             && !body_uses_error_prop(&fd.body)
         {
-            sections.push(toplevel::emit_fn_def(fd, ctx));
+            sections.push(emit_pure_fn(fd));
         }
     }
 
