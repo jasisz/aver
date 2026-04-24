@@ -88,7 +88,7 @@
 
         <div class="feature-card">
             <h3>Intent is explicit</h3>
-            <p>Every function carries a prose description. The <em>why</em> stays with the code.</p>
+            <p>Every function carries a prose description. The <em>why</em> stays with the code. <a href="playground/?example=calculator">Try in playground →</a></p>
             <pre class="code-block code-sm"><span class="hl-keyword">fn</span> <span class="hl-fn">classify</span>(c: <span class="hl-type">Float</span>) <span class="hl-operator">-></span> <span class="hl-type">String</span>
     <span class="hl-effect">?</span> <span class="hl-desc">"Human-readable category."</span>
     <span class="hl-keyword">match</span> c &lt;= <span class="hl-number">0.0</span>
@@ -98,7 +98,7 @@
 
         <div class="feature-card">
             <h3>Effects are tracked</h3>
-            <p>I/O, network, disk — declared on every function. No hidden side effects.</p>
+            <p>I/O, network, disk — declared on every function. No hidden side effects. <a href="playground/?example=hello">Try in playground →</a></p>
             <pre class="code-block code-sm"><span class="hl-keyword">fn</span> <span class="hl-fn">greet</span>(name: <span class="hl-type">String</span>) <span class="hl-operator">-></span> <span class="hl-type">Unit</span>
     <span class="hl-effect">?</span> <span class="hl-desc">"Greeting to stdout."</span>
     <span class="hl-effect">!</span> <span class="hl-effect">[Console.print]</span>
@@ -107,7 +107,7 @@
 
         <div class="feature-card">
             <h3>Verify blocks are specs</h3>
-            <p>Tests live next to the function. Checks, docs, and regression guards — in one place.</p>
+            <p>Tests live next to the function. Checks, docs, and regression guards — in one place. <a href="playground/?example=verify-first">Try in playground →</a></p>
             <pre class="code-block code-sm"><span class="hl-keyword">verify</span> <span class="hl-fn">divide</span>
     divide(<span class="hl-number">10</span>, <span class="hl-number">2</span>) <span class="hl-operator">=></span> Result.Ok(<span class="hl-number">5</span>)
     divide(<span class="hl-number">7</span>, <span class="hl-number">0</span>)  <span class="hl-operator">=></span> Result.Err(<span class="hl-string">"zero"</span>)
@@ -116,7 +116,7 @@
 
         <div class="feature-card">
             <h3>Decisions are first-class</h3>
-            <p>Architectural choices live in the code, not a wiki. Searchable and exportable.</p>
+            <p>Architectural choices live in the code, not a wiki. Searchable and exportable. <a href="playground/?example=decision-block">Try in playground →</a></p>
             <pre class="code-block code-sm"><span class="hl-keyword">decision</span> <span class="hl-fn">UseResult</span>
     chosen = <span class="hl-string">"Result"</span>
     rejected = [<span class="hl-string">"Exceptions"</span>]
@@ -160,13 +160,12 @@ paths = [<span class="hl-string">"./data/**"</span>]</pre>
 
         <div class="feature-card">
             <h3>Formal verification</h3>
-            <p>Verify blocks export to <em>Lean 4</em> proofs and <em>Dafny</em> lemmas. Specs become machine-checked. Run verify locally or <a href="playground/?example=verify-first">in-browser</a>.</p>
-            <pre class="code-block code-sm"><span class="hl-comment">-- Generated Lean 4:</span>
-<span class="hl-keyword">example</span> :
-  fromString <span class="hl-string">"[1,2]"</span> =
-    Except.ok (jsonList
-      [jsonInt <span class="hl-number">1</span>, jsonInt <span class="hl-number">2</span>])
-  := <span class="hl-keyword">by</span> native_decide</pre>
+            <p>Verify blocks export to <em>Lean 4</em> proofs and <em>Dafny</em> lemmas — including effectful functions via <em>Oracle verify-trace</em> with explicit stubs. Try a <a href="playground/?example=verify-first">pure spec</a> or an <a href="playground/?example=oracle">Oracle trace</a> in-browser.</p>
+            <pre class="code-block code-sm"><span class="hl-keyword">verify</span> roll <span class="hl-keyword">trace</span>
+    <span class="hl-keyword">given</span> rnd: Random.int = [highDie]
+    rolled = roll()
+    rolled.result <span class="hl-operator">=></span> <span class="hl-number">6</span>
+    rolled.trace.contains(Random.int) <span class="hl-operator">=></span> <span class="hl-constant">true</span></pre>
         </div>
 
         <div class="feature-card">
