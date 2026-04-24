@@ -1157,7 +1157,12 @@ pub fn emit_fn_def(
         "{}def {} {} : {} :=",
         prefix, fn_name, params, ret_type
     ));
-    lines.push(emit_fn_body_for(fd, &fd.body, ctx));
+    let lowered = lower_pure_question_bang_for_emit(fd);
+    let body = lowered
+        .as_ref()
+        .map(|lowered_fd| lowered_fd.body.as_ref())
+        .unwrap_or(fd.body.as_ref());
+    lines.push(emit_fn_body_for(fd, body, ctx));
 
     Some(lines.join("\n"))
 }
@@ -1217,7 +1222,12 @@ pub fn emit_fn_def_proof(
         type_annotation_to_lean(&fd.return_type)
     };
     lines.push(format!("def {} {} : {} :=", fn_name, params, ret_type));
-    lines.push(emit_fn_body_for(fd, &fd.body, ctx));
+    let lowered = lower_pure_question_bang_for_emit(fd);
+    let body = lowered
+        .as_ref()
+        .map(|lowered_fd| lowered_fd.body.as_ref())
+        .unwrap_or(fd.body.as_ref());
+    lines.push(emit_fn_body_for(fd, body, ctx));
 
     if let Some(plan) = recursion_plan {
         match plan {
@@ -1262,6 +1272,12 @@ fn emit_fn_params(params: &[(String, String)]) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn lower_pure_question_bang_for_emit(fd: &FnDef) -> Option<FnDef> {
+    crate::types::checker::effect_lifting::lower_pure_question_bang_fn(fd)
+        .ok()
+        .flatten()
 }
 
 fn expr_uses_error_prop(expr: &Spanned<Expr>) -> bool {

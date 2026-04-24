@@ -89,6 +89,123 @@ fn proof_export_builds_grok_s_language_when_lake_is_available() {
     assert_proof_builds("examples/core/grok_s_language.av", "aver-proof-grok");
 }
 
+#[test]
+fn proof_export_builds_pure_question_bang_when_backends_are_available() {
+    let source = "module Prog\n\
+        \x20   intent = \"stress pure ?! proof export\"\n\
+        \n\
+        fn okOne() -> Result<Int, String>\n\
+        \x20   ? \"one\"\n\
+        \x20   Result.Ok(1)\n\
+        \n\
+        fn okTwo() -> Result<Int, String>\n\
+        \x20   ? \"two\"\n\
+        \x20   Result.Ok(2)\n\
+        \n\
+        fn errLeft() -> Result<Int, String>\n\
+        \x20   ? \"left error\"\n\
+        \x20   Result.Err(\"left\")\n\
+        \n\
+        fn errRight() -> Result<Int, String>\n\
+        \x20   ? \"right error\"\n\
+        \x20   Result.Err(\"right\")\n\
+        \n\
+        fn pairOk() -> Result<(Int, Int), String>\n\
+        \x20   ? \"unwrap two successful Result branches\"\n\
+        \x20   pair = (okOne(), okTwo())?!\n\
+        \x20   match pair\n\
+        \x20       (a, b) -> Result.Ok((a, b))\n\
+        \n\
+        fn pairErr() -> Result<(Int, Int), String>\n\
+        \x20   ? \"propagate the leftmost Result.Err\"\n\
+        \x20   pair = (errLeft(), errRight())?!\n\
+        \x20   match pair\n\
+        \x20       (a, b) -> Result.Ok((a, b))\n\
+        \n\
+        verify pairOk\n\
+        \x20   pairOk() => Result.Ok((1, 2))\n\
+        \n\
+        verify pairErr\n\
+        \x20   pairErr() => Result.Err(\"left\")\n";
+
+    let dir = temp_output_dir("aver-proof-pure-qbang");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(dir.join("program.av"), source).expect("write program.av");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    if Command::new("lake").arg("--version").output().is_ok() {
+        let lean_dir = dir.join("lean");
+        let proof = Command::new(aver_bin)
+            .current_dir(&dir)
+            .arg("proof")
+            .arg("program.av")
+            .arg("--backend")
+            .arg("lean")
+            .arg("--verify-mode")
+            .arg("auto")
+            .arg("-o")
+            .arg(&lean_dir)
+            .output()
+            .expect("expected `aver proof --backend lean` to run");
+        assert!(
+            proof.status.success(),
+            "Lean proof export failed:\n{}",
+            format_output(&proof)
+        );
+
+        let build = Command::new("lake")
+            .current_dir(&lean_dir)
+            .arg("build")
+            .output()
+            .expect("expected `lake build` to run");
+        assert!(
+            build.status.success(),
+            "Lean pure ?! proof build failed:\n{}",
+            format_output(&build)
+        );
+    }
+
+    if Command::new("dafny").arg("--version").output().is_ok() {
+        let dafny_dir = dir.join("dafny");
+        let proof = Command::new(aver_bin)
+            .current_dir(&dir)
+            .arg("proof")
+            .arg("program.av")
+            .arg("--backend")
+            .arg("dafny")
+            .arg("--verify-mode")
+            .arg("auto")
+            .arg("-o")
+            .arg(&dafny_dir)
+            .output()
+            .expect("expected `aver proof --backend dafny` to run");
+        assert!(
+            proof.status.success(),
+            "Dafny proof export failed:\n{}",
+            format_output(&proof)
+        );
+
+        let verify = Command::new("dafny")
+            .current_dir(&dafny_dir)
+            .arg("verify")
+            .arg("program.dfy")
+            .output()
+            .expect("expected `dafny verify` to run");
+        assert!(
+            verify.status.success(),
+            "Dafny pure ?! proof verification failed:\n{}",
+            format_output(&verify)
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // ---------------------------------------------------------------------------
 // Oracle v1 — aver.toml mode rejection in aver proof
 // ---------------------------------------------------------------------------
