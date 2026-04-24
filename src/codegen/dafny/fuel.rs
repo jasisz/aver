@@ -31,7 +31,6 @@
 use std::collections::HashSet;
 
 use super::expr::aver_name_to_dafny;
-use super::toplevel::emit_fn_def_axiom;
 use crate::ast::{FnDef, TypeDef};
 use crate::codegen::CodegenContext;
 use crate::codegen::common::parse_type_annotation;
@@ -80,7 +79,7 @@ pub fn emit_mutual_fuel_group(
         let metric = emit_fuel_metric(fd, &plan, scc_size);
 
         let rewritten_body = rewrite_recursive_calls_body(&fd.body, &targets, "fuel'");
-        let body_str = super::toplevel::emit_fn_body_pub(&rewritten_body, ctx);
+        let body_str = super::toplevel::emit_fn_body(&rewritten_body, ctx);
 
         if let Some(desc) = &fd.desc {
             helper_lines.push(format!("// {}", desc));
@@ -103,11 +102,6 @@ pub fn emit_mutual_fuel_group(
         wrapper_lines.push(format!("  {}({}, {})", helper_name, metric, arg_names));
         wrapper_lines.push("}\n".to_string());
     }
-
-    // Anything that fell through here means the totality guard above
-    // accepted it; emit_fn_def_axiom is still imported for the caller's
-    // fallback path in mod.rs.
-    let _ = emit_fn_def_axiom;
 
     Some(
         [helper_lines, wrapper_lines]
