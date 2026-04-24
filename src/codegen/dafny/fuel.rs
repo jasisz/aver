@@ -78,7 +78,18 @@ pub fn emit_mutual_fuel_group(
         let arg_names = emit_dafny_arg_names(&fd.params);
         let metric = emit_fuel_metric(fd, &plan, scc_size);
 
-        let rewritten_body = rewrite_recursive_calls_body(&fd.body, &targets, "fuel'");
+        // Apply `?!` lowering first (same step the non-fuel pure-fn
+        // emission runs), then rewrite intra-SCC calls to reference
+        // the fuel helper. Without the lowering, `pair = (f(x),
+        // g(rest))?!` stays an `IndependentProduct` node in the AST
+        // and Dafny sees raw tuples instead of the match-unwrapped
+        // Result shape.
+        let lowered_body = crate::types::checker::effect_lifting::lower_pure_question_bang_fn(fd)
+            .ok()
+            .flatten()
+            .map(|lowered| lowered.body.as_ref().clone())
+            .unwrap_or_else(|| fd.body.as_ref().clone());
+        let rewritten_body = rewrite_recursive_calls_body(&lowered_body, &targets, "fuel'");
         let body_str = super::toplevel::emit_fn_body(&rewritten_body, ctx);
 
         if let Some(desc) = &fd.desc {
@@ -248,13 +259,7 @@ fn find_type_def<'a>(ctx: &'a CodegenContext, target: &str) -> Option<&'a TypeDe
     ctx.type_defs
         .iter()
         .chain(ctx.modules.iter().flat_map(|m| m.type_defs.iter()))
-        .find(|td| type_def_name(td) == target)
-}
-
-fn type_def_name(td: &TypeDef) -> &str {
-    match td {
-        TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name,
-    }
+        .find(|td| crate::codegen::common::type_def_name(td) == target)
 }
 
 fn type_def_default(

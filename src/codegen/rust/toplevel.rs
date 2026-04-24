@@ -71,11 +71,7 @@ fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContex
     }
 }
 
-fn type_def_name(td: &TypeDef) -> &str {
-    match td {
-        TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name,
-    }
-}
+use crate::codegen::common::type_def_name;
 
 fn find_type_def<'a>(name: &str, ctx: &'a CodegenContext) -> Option<&'a TypeDef> {
     ctx.type_defs

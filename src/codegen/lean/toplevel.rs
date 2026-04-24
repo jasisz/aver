@@ -23,36 +23,13 @@ pub fn emit_type_def(td: &TypeDef) -> String {
 }
 
 /// Check if a sum type is self-referencing (any variant field mentions the type name).
-fn is_recursive_type(name: &str, variants: &[TypeVariant]) -> bool {
-    for v in variants {
-        for field in &v.fields {
-            if field_type_contains(field, name) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Check if a product type is self-referencing.
-fn is_recursive_product(name: &str, fields: &[(String, String)]) -> bool {
-    for (_, field_type) in fields {
-        if field_type_contains(field_type, name) {
-            return true;
-        }
-    }
-    false
-}
-
-/// Check if a type annotation string references a given type name.
-fn field_type_contains(field_type: &str, type_name: &str) -> bool {
-    // Check for exact match or as part of generic: List<Foo>, Option<Foo>, etc.
-    field_type == type_name
-        || field_type.contains(&format!("<{}", type_name))
-        || field_type.contains(&format!("{}>", type_name))
-        || field_type.contains(&format!(", {}", type_name))
-        || field_type.contains(&format!("{},", type_name))
-}
+// Recursive-type / field-type predicates moved to `codegen::common` so
+// all three backends share a single source of truth. Re-exported below
+// as pub(crate) for existing call sites in this backend.
+pub(crate) use crate::codegen::common::{
+    is_pure_fn, is_recursive_product, is_recursive_sum as is_recursive_type, is_recursive_type_def,
+    type_def_name,
+};
 
 fn emit_sum_type(name: &str, variants: &[TypeVariant]) -> String {
     let mut lines = Vec::new();
@@ -409,22 +386,6 @@ pub fn emit_recursive_measure(td: &TypeDef, recursive_types: &HashSet<String>) -
             emit_recursive_product_measure(name, fields, recursive_types),
         ),
         _ => None,
-    }
-}
-
-/// Check if a type definition is self-referencing (#18).
-pub fn is_recursive_type_def(td: &TypeDef) -> bool {
-    match td {
-        TypeDef::Sum { name, variants, .. } => is_recursive_type(name, variants),
-        TypeDef::Product { name, fields, .. } => is_recursive_product(name, fields),
-    }
-}
-
-/// Get the name of a type definition.
-pub fn type_def_name(td: &TypeDef) -> &str {
-    match td {
-        TypeDef::Sum { name, .. } => name,
-        TypeDef::Product { name, .. } => name,
     }
 }
 
@@ -945,11 +906,6 @@ fn emit_fuelized_mutual_sizeof_group(
         .flatten()
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-/// Check if a function is pure (no effects) and not main.
-pub fn is_pure_fn(fd: &FnDef) -> bool {
-    fd.effects.is_empty() && fd.name != "main"
 }
 
 /// Emit a Lean 4 function definition from an Aver FnDef.
