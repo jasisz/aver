@@ -1,12 +1,76 @@
 use super::*;
 
+/// Names introduced by a match-arm pattern. Used to avoid substituting
+/// into an arm body where the pattern already shadows the binding —
+/// `let x = 1; match Option.Some(2) { Option.Some(x) -> x }` must keep
+/// `x` bound to the pattern, not the outer `1`.
+fn pattern_binding_names(pattern: &Pattern) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_pattern_bindings(pattern, &mut out);
+    out
+}
+
+fn collect_pattern_bindings(pattern: &Pattern, out: &mut Vec<String>) {
+    match pattern {
+        Pattern::Ident(name) => out.push(name.clone()),
+        Pattern::Cons(head, tail) => {
+            out.push(head.clone());
+            out.push(tail.clone());
+        }
+        Pattern::Tuple(items) => {
+            for item in items {
+                collect_pattern_bindings(item, out);
+            }
+        }
+        Pattern::Constructor(_, binders) => {
+            for name in binders {
+                out.push(name.clone());
+            }
+        }
+        Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => {}
+    }
+}
+
+fn pattern_binds_name(pattern: &Pattern, name: &str) -> bool {
+    let mut found = false;
+    check_pattern_binds(pattern, name, &mut found);
+    found
+}
+
+fn check_pattern_binds(pattern: &Pattern, name: &str, found: &mut bool) {
+    if *found {
+        return;
+    }
+    match pattern {
+        Pattern::Ident(bind) if bind == name => *found = true,
+        Pattern::Ident(_) => {}
+        Pattern::Cons(head, tail) => {
+            if head == name || tail == name {
+                *found = true;
+            }
+        }
+        Pattern::Tuple(items) => {
+            for item in items {
+                check_pattern_binds(item, name, found);
+            }
+        }
+        Pattern::Constructor(_, binders) => {
+            if binders.iter().any(|b| b == name) {
+                *found = true;
+            }
+        }
+        Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => {}
+    }
+}
+
 /// Oracle v1: walk an expression, replacing `Ident(name)` with `value`.
 /// Used by verify-trace local bindings so block-scoped aliases like
 /// `expect = rnd(...)` get inlined into each case before helper
 /// generation / typecheck. Recurses into every subtree that can hold
-/// an `Ident`; does not descend into match-arm patterns (those
-/// introduce their own bindings). Stops at `Resolved` nodes — they
-/// already bind a slot and do not need string-name substitution.
+/// an `Ident`; respects pattern-bound shadowing in match arms — if a
+/// pattern binds `name`, that arm's body is left alone because the
+/// inner binding shadows the outer one. Stops at `Resolved` nodes —
+/// they already bind a slot and do not need string-name substitution.
 fn substitute_ident(expr: &mut Spanned<Expr>, name: &str, value: &Spanned<Expr>) {
     match &mut expr.node {
         Expr::Ident(s) if s == name => {
@@ -27,6 +91,9 @@ fn substitute_ident(expr: &mut Spanned<Expr>, name: &str, value: &Spanned<Expr>)
         Expr::Match { subject, arms } => {
             substitute_ident(subject, name, value);
             for arm in arms {
+                if pattern_binds_name(&arm.pattern, name) {
+                    continue;
+                }
                 substitute_ident(&mut arm.body, name, value);
             }
         }
@@ -206,9 +273,29 @@ impl Parser {
                 subject: Box::new(Self::substitute_expr(subject, bindings)),
                 arms: arms
                     .iter()
-                    .map(|arm| MatchArm {
-                        pattern: arm.pattern.clone(),
-                        body: Box::new(Self::substitute_expr(&arm.body, bindings)),
+                    .map(|arm| {
+                        // Pattern bindings shadow outer bindings — drop
+                        // any domain entry with the same name before
+                        // recursing into the arm body. Otherwise a
+                        // local like `x = 1` would be substituted into
+                        // an arm whose pattern re-binds `x`, replacing
+                        // the pattern-bound value with the outer one.
+                        let shadowed = pattern_binding_names(&arm.pattern);
+                        if shadowed.is_empty() {
+                            MatchArm {
+                                pattern: arm.pattern.clone(),
+                                body: Box::new(Self::substitute_expr(&arm.body, bindings)),
+                            }
+                        } else {
+                            let mut scoped = bindings.clone();
+                            for name in &shadowed {
+                                scoped.remove(name);
+                            }
+                            MatchArm {
+                                pattern: arm.pattern.clone(),
+                                body: Box::new(Self::substitute_expr(&arm.body, &scoped)),
+                            }
+                        }
                     })
                     .collect(),
             },
@@ -1104,5 +1191,125 @@ impl Parser {
             }
         }
         name
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bare(e: Expr) -> Spanned<Expr> {
+        Spanned::new(e, 1)
+    }
+
+    fn int(n: i64) -> Spanned<Expr> {
+        bare(Expr::Literal(Literal::Int(n)))
+    }
+
+    fn ident(s: &str) -> Spanned<Expr> {
+        bare(Expr::Ident(s.to_string()))
+    }
+
+    #[test]
+    fn substitute_ident_respects_pattern_shadowing_constructor() {
+        // let x = 1; match Option.Some(2) { Option.Some(x) -> x, None -> 0 }
+        // The pattern arm binds `x` to 2, so the outer `x = 1`
+        // substitution must NOT rewrite `x` in that arm's body.
+        let mut expr = bare(Expr::Match {
+            subject: Box::new(bare(Expr::Constructor(
+                "Option.Some".to_string(),
+                Some(Box::new(int(2))),
+            ))),
+            arms: vec![
+                MatchArm {
+                    pattern: Pattern::Constructor("Option.Some".to_string(), vec!["x".to_string()]),
+                    body: Box::new(ident("x")),
+                },
+                MatchArm {
+                    pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
+                    body: Box::new(int(0)),
+                },
+            ],
+        });
+        substitute_ident(&mut expr, "x", &int(1));
+        let Expr::Match { arms, .. } = &expr.node else {
+            panic!("expected match");
+        };
+        // The Some(x) arm body must still be `Ident("x")`, not `Literal(1)`.
+        match &arms[0].body.node {
+            Expr::Ident(s) => assert_eq!(s, "x"),
+            other => panic!(
+                "pattern-bound x was clobbered by outer substitution: {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn substitute_ident_still_rewrites_non_shadowed_arm() {
+        // match Option.Some(2) { Option.Some(_) -> x, _ -> 0 }
+        // None arm binds nothing; outer `x` should be rewritten there.
+        let mut expr = bare(Expr::Match {
+            subject: Box::new(bare(Expr::Constructor(
+                "Option.Some".to_string(),
+                Some(Box::new(int(2))),
+            ))),
+            arms: vec![
+                MatchArm {
+                    pattern: Pattern::Wildcard,
+                    body: Box::new(ident("x")),
+                },
+                MatchArm {
+                    pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
+                    body: Box::new(ident("x")),
+                },
+            ],
+        });
+        substitute_ident(&mut expr, "x", &int(7));
+        let Expr::Match { arms, .. } = &expr.node else {
+            panic!("expected match");
+        };
+        for arm in arms {
+            assert!(
+                matches!(&arm.body.node, Expr::Literal(Literal::Int(7))),
+                "non-shadowing arm body should be substituted; got {:?}",
+                arm.body.node
+            );
+        }
+    }
+
+    #[test]
+    fn substitute_expr_respects_pattern_shadowing_tuple() {
+        // match (1, 2) { (a, b) -> a + b }
+        // Outer `a = 99` must NOT overwrite the pattern's a.
+        let input = bare(Expr::Match {
+            subject: Box::new(bare(Expr::Tuple(vec![int(1), int(2)]))),
+            arms: vec![MatchArm {
+                pattern: Pattern::Tuple(vec![
+                    Pattern::Ident("a".to_string()),
+                    Pattern::Ident("b".to_string()),
+                ]),
+                body: Box::new(bare(Expr::BinOp(
+                    BinOp::Add,
+                    Box::new(ident("a")),
+                    Box::new(ident("b")),
+                ))),
+            }],
+        });
+        let mut bindings = std::collections::HashMap::new();
+        bindings.insert("a".to_string(), int(99));
+        let out = Parser::substitute_expr(&input, &bindings);
+        let Expr::Match { arms, .. } = &out.node else {
+            panic!("expected match");
+        };
+        let Expr::BinOp(_, left, _) = &arms[0].body.node else {
+            panic!("expected BinOp body");
+        };
+        assert!(
+            matches!(&left.node, Expr::Ident(s) if s == "a"),
+            "pattern-bound `a` shadowed outer binding but substitute_expr \
+             clobbered it: {:?}",
+            left.node
+        );
     }
 }

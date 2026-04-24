@@ -85,6 +85,16 @@ pub fn collect_verify_coverage_warnings_in(
         if !verify_cases_block_is_well_formed(&block) {
             continue;
         }
+        // Verify-trace blocks route RHS through oracle-bound stubs:
+        // `target().result => stub(path, k, args)`. Syntactically the RHS
+        // is a FnCall to the stub, not a Result.Ok/.Err or Option
+        // constructor — but the stub *does* produce those values at run
+        // time. Coverage heuristics here are pure syntactic shape checks,
+        // so skip them for trace blocks to avoid spurious "no Result.Ok"
+        // warnings on correctly-written verify-trace examples.
+        if block.trace {
+            continue;
+        }
         let Some(f) = fn_defs.get(block.fn_name.as_str()).copied() else {
             continue;
         };

@@ -610,9 +610,18 @@ fn lift_classified_call(
             // to drop non-tail Unit statements; Lean does not, so
             // without this replacement `Console.print(x)` leaks into
             // the emitted proof as an unresolved identifier).
-            // The runtime side of trace assertions is handled by the
-            // verify-trace collector, not by lifted proofs.
-            let _ = (args, cfg, path_expr, counter);
+            //
+            // Still walk the args so any generative effects nested
+            // inside them (e.g. `Console.print(Random.int(1,6))`)
+            // advance the oracle counter. The VM evaluates args eagerly
+            // and charges oracle reads against the surrounding branch
+            // before the output emission; if the proof skipped that
+            // counter bump, a subsequent `Random.int(...)` would claim
+            // counter 0 while replay recorded it at counter 1, and the
+            // theorem would fail to unify.
+            for arg in args {
+                lift_expr(arg, cfg, path_expr, counter)?;
+            }
             Ok(Expr::Literal(crate::ast::Literal::Unit))
         }
         EffectDimension::Snapshot => {
@@ -1375,6 +1384,38 @@ mod tests {
         match &child_args[1].node {
             Expr::Literal(Literal::Int(n)) => assert_eq!(*n, expected_idx),
             other => panic!("idx should be {}, got {:?}", expected_idx, other),
+        }
+    }
+
+    #[test]
+    fn lift_output_call_walks_args_to_bump_counter() {
+        // Regression: `Console.print(Random.int(1,6))` is an Output
+        // call but its args contain a generative effect that the VM
+        // evaluates eagerly, bumping the oracle counter before the
+        // output emission. The lifter must walk output-call args so
+        // the trailing `Random.int(...)` gets counter 1 (not 0),
+        // matching VM / replay semantics.
+        let fd = parse_fn(
+            "fn twoRolls() -> Int\n\
+             \x20   ! [Random.int, Console.print]\n\
+             \x20   Console.print(\"rolling {Random.int(1, 6)}\")\n\
+             \x20   Random.int(1, 6)\n",
+        );
+        let lifted = lift_fn_def(&fd).unwrap().unwrap();
+        let stmts = lifted.body.stmts();
+        // Last stmt is the tail Random.int(1, 6) → oracle call with
+        // counter 1 (the one inside Console.print bumped it from 0).
+        let Stmt::Expr(tail) = stmts.last().expect("non-empty body") else {
+            panic!("tail should be expression");
+        };
+        let args = assert_looks_like_oracle_call(&tail.node, "rnd_Random_int", 4);
+        match &args[1] {
+            Expr::Literal(Literal::Int(n)) => assert_eq!(
+                *n, 1,
+                "tail Random.int should see counter 1 after the output-nested call; got {}",
+                n
+            ),
+            other => panic!("expected Int counter, got {:?}", other),
         }
     }
 
