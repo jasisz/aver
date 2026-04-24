@@ -63,12 +63,34 @@ A single `.dfy` file containing:
 
 ## Termination
 
-Recursive functions get automatic `decreases` clauses:
-- Int parameter → `decreases if n >= 0 then n else 0`
+Recursive functions fall into three buckets based on the shared classifier in `codegen::recursion::detect`:
+
+**Direct-recursion patterns** — emitted as normal Dafny `function`s with inferred `decreases` clauses:
 - List parameter → `decreases |xs|`
 - String parameter → `decreases |s|`
+- Int countdown (`match n { 0 -> …; _ -> recur(n-1, …) }`) → `requires n >= 0` + `decreases n`
+- Int countdown with explicit `match n < 0` base → `decreases if n >= 0 then n else 0`
 
-Scalar `match` arms are emitted as if-then-else chains so Dafny's verifier can see branch guards. Dafny may report "decreases clause might not decrease" for functions where the recursive branch is reachable with negative inputs — this is correct, as those functions genuinely don't terminate for all inputs.
+**Mutual-recursion SCCs** — emitted as fuel-guarded pairs, parallel to Lean's `def fn__fuel (fuel : Nat) …`:
+
+```dafny
+function fn__fuel(fuel: nat, args): T
+  decreases fuel
+{
+  if fuel == 0 then <total default for T>
+  else var fuel' := fuel - 1; <body with intra-SCC calls → g__fuel(fuel', …)>
+}
+
+function fn(args): T { fn__fuel(<plan metric>, args) }
+```
+
+Fuel metric depends on the plan: `natAbs(n) + 1` for `MutualIntCountdown`, `(|s| + 1) * (rank * scc_size + 1)` for `MutualStringPosAdvance` / `MutualSizeOfRanked`. A per-type default-value generator handles scalars, Option/Result/Tuple/List, and walks the first variant for Named ADTs (visiting set prevents divergence on left-recursive types).
+
+**Axiom fallback** (`function {:axiom} fn(args): T` — signature without body) — for:
+- SCCs whose return type admits no obvious total default (left-recursive Named ADTs, function types).
+- Single fns whose body uses `?` that the lowering pass can't elaborate into a pure match — keeps the name in scope for downstream references instead of silently dropping the fn.
+
+Lemmas whose `ensures` references an opaque fn (axiom or fuel-guarded) short-circuit their body to `assume {:axiom} <ensures>;` — parallel to Lean's `sorry`, accepted on trust rather than derived from unfolding. Dafny still type-checks the whole file; users add their own lemma proofs where the axiom fallback bites.
 
 ## Inductive lemma hints
 

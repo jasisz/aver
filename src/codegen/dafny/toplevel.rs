@@ -191,14 +191,10 @@ fn lower_pure_question_bang_for_emit(fd: &FnDef) -> Option<FnDef> {
         .flatten()
 }
 
-/// Pub re-export of `emit_fn_body` so the Dafny fuel-emission module can
-/// render the rewritten body for a mutual SCC helper.
-pub fn emit_fn_body_pub(body: &FnBody, ctx: &CodegenContext) -> String {
-    emit_fn_body(body, ctx)
-}
-
-/// Emit the body of a function.
-fn emit_fn_body(body: &FnBody, ctx: &CodegenContext) -> String {
+/// Emit the body of a function. Visible to sibling modules in the
+/// Dafny backend — the fuel emitter needs it to render the rewritten
+/// body inside a mutual SCC helper.
+pub(super) fn emit_fn_body(body: &FnBody, ctx: &CodegenContext) -> String {
     match body {
         FnBody::Block(stmts) => emit_block_as_expr(stmts, ctx),
     }

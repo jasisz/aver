@@ -7,9 +7,11 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 ### Added
 - **Oracle trace verification docs and example** — `docs/oracle.md` now presents the practical workflow for `verify <fn> trace`, explicit `given` stubs, `.result` / `.trace`, and classified effect proof export. Added `examples/formal/oracle_trace.av` as the short runnable example.
 - **Broader Oracle effect classification** — Oracle now covers CLI input (`Console.readLine`), disk operation/result effects, one-shot TCP (`Tcp.send` / `Tcp.ping`), `Time.sleep`, and terminal trace/input calls that do not depend on modal terminal state.
+- **Dafny proof backend reaches feature parity with Lean on recursion.** Shared recursion classifier (`codegen::recursion::detect`) + AST transform now feed both backends. Dafny emits mutual-recursion SCCs as fuel-guarded `function fn__fuel(fuel: nat, …) decreases fuel { … }` pairs with plan-specific metrics, parallel to Lean's `def fn__fuel (fuel : Nat) …`. Shapes that admit no total default or use `?` that doesn't lower fall back to `function {:axiom}` — the Dafny analogue of Lean's `partial def`. Lemmas over opaque fns short-circuit to `assume {:axiom} <ensures>;`, the Dafny analogue of Lean's `sorry`. Across the 23 canonical examples: 12 are clean on both backends (full proof), 9 have matching proof gaps (Dafny axiom/assume vs. Lean sorry), 2 are pre-existing codegen gaps orthogonal to the recursion story.
 
 ### Changed
 - **Effectful verification story** — README, language guide, and proof-backend docs now distinguish Oracle verification for classified effects from record/replay for ambient state, persistent protocols, terminal modes, and server callbacks.
+- **`codegen::recursion` module** — `RecursionPlan` enum, `ProofModeIssue`, recursion classifier, and `rewrite_recursive_calls_{body,expr}` AST transform pulled out of `codegen::lean` into the shared module. Lean and Dafny both consume it. `RecursionPlan::IntAscending` now holds the bound as an Aver AST node (`Spanned<Expr>`) instead of a Lean-rendered string — each backend renders it in its own idiom.
 
 ## 0.10.1 (2026-04-23)
 
