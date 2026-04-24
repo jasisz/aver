@@ -10,23 +10,14 @@
 //! AST transform that rewrites recursive calls into helper calls are
 //! shared.
 
-use std::collections::{HashMap, HashSet};
+pub mod detect;
+
+use std::collections::HashSet;
 
 use crate::ast::{Expr, FnBody, MatchArm, Spanned, Stmt, StrPart, TailCallData};
-use crate::codegen::CodegenContext;
 use crate::codegen::common::expr_to_dotted_name;
 
-/// Classify every recursive pure fn in `ctx` into a [`RecursionPlan`],
-/// surfacing a [`ProofModeIssue`] for each recursive fn that falls
-/// outside the supported patterns. The classifier is backend-neutral;
-/// the detector implementation currently lives in
-/// `codegen::lean::proof_mode_recursion_analysis` and is wrapped here so
-/// the Dafny backend (and future backends) call the same API.
-pub fn analyze_plans(
-    ctx: &CodegenContext,
-) -> (HashMap<String, RecursionPlan>, Vec<ProofModeIssue>) {
-    crate::codegen::lean::proof_mode_recursion_analysis(ctx)
-}
+pub use detect::analyze_plans;
 
 /// Classification for a single recursive fn (or a whole mutual-recursion
 /// SCC, in which case every fn in the SCC gets its own plan from the
