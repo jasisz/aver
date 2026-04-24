@@ -14,7 +14,9 @@
 //! module in a later pass.
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{BinOp, Expr, FnBody, FnDef, MatchArm, Pattern, Spanned, Stmt, TailCallData, TypeDef};
+use crate::ast::{
+    BinOp, Expr, FnBody, FnDef, MatchArm, Pattern, Spanned, Stmt, TailCallData, TypeDef,
+};
 use crate::call_graph;
 use crate::codegen::CodegenContext;
 use crate::codegen::lean::{
@@ -500,10 +502,7 @@ pub(crate) fn single_int_ascending_param(fd: &FnDef) -> Option<(usize, Spanned<E
 /// Extract the bound expression from `match param == BOUND` as an
 /// Aver AST node. Each backend renders this into its own idiom (Lean
 /// via `bound_expr_to_lean`, Dafny via its own `emit_expr` path).
-pub(crate) fn extract_equality_bound_expr(
-    fd: &FnDef,
-    param_name: &str,
-) -> Option<Spanned<Expr>> {
+pub(crate) fn extract_equality_bound_expr(fd: &FnDef, param_name: &str) -> Option<Spanned<Expr>> {
     let tail = fd.body.tail_expr()?;
     let Expr::Match { subject, arms, .. } = &tail.node else {
         return None;
@@ -668,11 +667,7 @@ pub(crate) fn is_skip_ws_advance(
     is_ident(&args[0], string_param) && is_int_plus_positive(&args[1], pos_param)
 }
 
-pub(crate) fn is_skip_ws_same(
-    expr: &Spanned<Expr>,
-    string_param: &str,
-    pos_param: &str,
-) -> bool {
+pub(crate) fn is_skip_ws_same(expr: &Spanned<Expr>, string_param: &str, pos_param: &str) -> bool {
     let Expr::FnCall(callee, args) = &expr.node else {
         return false;
     };
