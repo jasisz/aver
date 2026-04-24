@@ -210,6 +210,63 @@ fn aver_verify_runs_effectful_law_with_oracle_stub() {
 }
 
 #[test]
+fn aver_verify_result_only_law_allows_output_effect_without_stub() {
+    // Regression: a result-only law on a fn whose effect list includes
+    // both an oracle-stubbed effect (Random.int) and an Output-only
+    // effect (Console.print) used to pass typecheck + proof export but
+    // fail at runtime verify with "Runtime effect violation: cannot
+    // call 'Console.print'". The VM's verify helper declares no
+    // effects, so the Output emission was ungated. Fix: the verify
+    // runner always enables trace collection (not just for trace
+    // blocks) so classified effects without stubs go through the
+    // usual suppression path.
+    let dir = temp_output_dir("aver-verify-output-without-stub");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn stubConst(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always min\"\n\
+         \x20   min\n\
+         \n\
+         fn noisyRoll() -> Int\n\
+         \x20   ? \"rolls and logs.\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   n = Random.int(1, 6)\n\
+         \x20   Console.print(\"rolled\")\n\
+         \x20   n\n\
+         \n\
+         verify noisyRoll law noisyRollSpec\n\
+         \x20   given rnd: Random.int = [stubConst]\n\
+         \x20   noisyRoll() => rnd(BranchPath.Root, 0, 1, 6)\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+
+    assert!(
+        output.status.success(),
+        "aver verify must not report an effect violation for an \
+         Output effect (Console.print) in a result-only law; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn aver_verify_runs_effectful_bang_group_law() {
     // End-to-end: `aver verify` on an effectful law whose impl uses
     // `(Random.int(1, 6), Random.int(1, 6))!` — a two-branch `!` group.
