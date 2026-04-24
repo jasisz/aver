@@ -2265,6 +2265,80 @@ fn verify_law_on_classified_effects_is_accepted() {
 }
 
 #[test]
+fn verify_law_with_duplicate_given_for_same_effect_is_rejected() {
+    // Two `given` bindings for the same effect method have no sensible
+    // mapping — lifted fn has one oracle param per unique effect, so the
+    // second stub has no slot to bind to. The emitted theorem quantifies
+    // both stubs and asserts stubA = stubB, which is false.
+    let src = concat!(
+        "fn roll() -> Int\n",
+        "    ! [Random.int]\n",
+        "    Random.int(1, 6)\n",
+        "verify roll law rollSpec\n",
+        "    given rnd: Random.int = [stubA]\n",
+        "    given rnd2: Random.int = [stubB]\n",
+        "    roll() => rnd(BranchPath.Root, 0, 1, 6)\n",
+        "fn stubA(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int\n",
+        "    lo\n",
+        "fn stubB(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int\n",
+        "    hi\n",
+    );
+    assert_error_containing(src, "2 `given` bindings for the same effect 'Random.int'");
+    assert_error_containing(src, "rnd, rnd2");
+    assert_error_containing(src, "multi-value domain");
+}
+
+#[test]
+fn verify_law_with_single_given_for_effect_is_accepted() {
+    // Control — same shape as the duplicate-given test, minus the second
+    // given. Confirms the rejection targets duplicates specifically.
+    let src = concat!(
+        "fn roll() -> Int\n",
+        "    ! [Random.int]\n",
+        "    Random.int(1, 6)\n",
+        "verify roll law rollSpec\n",
+        "    given rnd: Random.int = [stubA]\n",
+        "    roll() => rnd(BranchPath.Root, 0, 1, 6)\n",
+        "fn stubA(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int\n",
+        "    lo\n",
+    );
+    let errs = errors(src);
+    assert!(
+        !errs
+            .iter()
+            .any(|e| e.contains("`given` bindings for the same effect")),
+        "single given should not trigger duplicate-given rejection; got: {:?}",
+        errs
+    );
+}
+
+#[test]
+fn verify_law_multi_value_given_is_not_duplicate_given() {
+    // A single `given` with a multi-value domain is the correct way to
+    // test multiple stubs — must not be conflated with duplicate givens.
+    let src = concat!(
+        "fn roll() -> Int\n",
+        "    ! [Random.int]\n",
+        "    Random.int(1, 6)\n",
+        "verify roll law rollSpec\n",
+        "    given rnd: Random.int = [stubA, stubB]\n",
+        "    roll() => rnd(BranchPath.Root, 0, 1, 6)\n",
+        "fn stubA(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int\n",
+        "    lo\n",
+        "fn stubB(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int\n",
+        "    hi\n",
+    );
+    let errs = errors(src);
+    assert!(
+        !errs
+            .iter()
+            .any(|e| e.contains("`given` bindings for the same effect")),
+        "multi-value given must not be flagged as duplicate; got: {:?}",
+        errs
+    );
+}
+
+#[test]
 fn verify_cases_on_stateful_effect_is_not_rejected_as_proof_subset() {
     // Cases-form (`verify fn` without `law`) is unit-test flavor, not
     // proof-subject — don't emit the "outside proof subset" diagnostic

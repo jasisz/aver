@@ -317,6 +317,57 @@ impl TypeChecker {
                         ),
                     );
                 }
+                // Rejection 2b: duplicate `given` bindings for the same
+                // effect method. Lifted fns carry one oracle param per
+                // unique effect, so two givens with the same effect
+                // `type_name` have no sensible mapping — the lifter's
+                // `oracles_map` keys by effect name and the second
+                // given silently overwrites the first. The emitted
+                // theorem still quantifies both binding names and
+                // asserts `stubA(...) = stubB(...)`, which is false
+                // for any two distinct stubs. Only classifies as
+                // duplicate when `type_name` names a built-in effect
+                // (e.g. `Random.int`) — plain-type givens like
+                // `given a: Int = [1]` and `given b: Int = [2]` are
+                // independent domain bindings, not oracle stubs.
+                {
+                    let mut given_effects: std::collections::HashMap<&str, Vec<&str>> =
+                        std::collections::HashMap::new();
+                    let givens: Box<dyn Iterator<Item = &crate::ast::VerifyGiven>> = match &vb.kind
+                    {
+                        crate::ast::VerifyKind::Law(law) => Box::new(law.givens.iter()),
+                        crate::ast::VerifyKind::Cases => Box::new(vb.cases_givens.iter()),
+                    };
+                    for given in givens {
+                        if super::effect_classification::classify(&given.type_name).is_some() {
+                            given_effects
+                                .entry(given.type_name.as_str())
+                                .or_default()
+                                .push(given.name.as_str());
+                        }
+                    }
+                    for (effect, names) in &given_effects {
+                        if names.len() > 1 {
+                            self.error_at_line(
+                                vb.line,
+                                format!(
+                                    "verify '{fn_name}' has {count} `given` bindings for the same \
+                                     effect '{effect}': {names}. Each effect method has one oracle \
+                                     parameter in the lifted form, so a second stub has no slot to \
+                                     bind to. To test multiple stub behaviours, use a multi-value \
+                                     domain: `given {first}: {effect} = [stub1, stub2, ...]`, which \
+                                     expands into a separate sample theorem per stub.",
+                                    fn_name = vb.fn_name,
+                                    count = names.len(),
+                                    effect = effect,
+                                    names = names.join(", "),
+                                    first = names[0],
+                                ),
+                            );
+                        }
+                    }
+                }
+
                 // Rejection 3: under `verify fn trace`, every generative
                 // (or generative+output) effect the fn uses must have a
                 // `given` binding. Without a stub, each verify run would
