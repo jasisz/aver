@@ -7,6 +7,7 @@
 /// - `lemma` stubs for verify-law blocks
 /// - `assert` examples for verify-cases blocks
 mod expr;
+mod fuel;
 mod toplevel;
 
 use crate::ast::{FnDef, TopLevel, VerifyKind};
@@ -69,21 +70,16 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
     // declaration so the whole file still type-checks. This parallels
     // Lean's `partial def` fallback for unsupported shapes.
     let (recursion_plans, _recursion_issues) = crate::codegen::recursion::analyze_plans(ctx);
-    // Axiom fallback for mutual-recursion SCCs the classifier detected.
-    // Dafny's port of the mutual fuel-guarded emission (`fn__fuel(fuel,
-    // …)` + wrapper) that Lean uses is still pending, so treat these as
-    // opaque `function {:axiom}` declarations — callers can reference
-    // them, the verifier won't unfold them. Matches Lean's `partial def`
-    // fallback, letting `aver proof --backend dafny` on programs with
-    // mutual recursion type-check without needing the full port.
-    //
-    // Single-fn recursion outside the classifier's supported patterns
-    // (ProofModeIssue) goes through Dafny's own structural-recursion
-    // inference (list length, String position, decreases n for
-    // countdown), which frequently succeeds where Lean's classifier
-    // abstains — so we don't axiomize those.
+
+    // Mutual-recursion SCCs get Lean's mutual fuel-guarded emission
+    // ported to Dafny: each fn in the SCC gets a `fn__fuel(fuel: nat,
+    // …)` helper with `decreases fuel` and a wrapper supplying a
+    // plan-specific fuel metric. Fns whose return type has no obvious
+    // total default (Named ADTs without an inferred zero-inhabitant)
+    // fall back to `function {:axiom}` — parallel to Lean's
+    // `partial def`.
     use crate::codegen::recursion::RecursionPlan;
-    let axiom_fn_names: std::collections::HashSet<String> = recursion_plans
+    let mutual_planned: std::collections::HashSet<String> = recursion_plans
         .iter()
         .filter(|(_, plan)| {
             matches!(
@@ -95,8 +91,47 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
         })
         .map(|(name, _)| name.clone())
         .collect();
+
+    let mutual_fns_all: Vec<&FnDef> = ctx
+        .items
+        .iter()
+        .filter_map(|it| {
+            if let TopLevel::FnDef(fd) = it {
+                Some(fd)
+            } else {
+                None
+            }
+        })
+        .chain(ctx.modules.iter().flat_map(|m| m.fn_defs.iter()))
+        .filter(|fd| mutual_planned.contains(&fd.name))
+        .collect();
+    let mutual_components =
+        crate::call_graph::ordered_fn_components(&mutual_fns_all, &ctx.module_prefixes);
+
+    let mut mutual_fuel_sections: Vec<String> = Vec::new();
+    let mut fuel_emitted: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut axiom_fn_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for component in &mutual_components {
+        let scc_fns: Vec<&FnDef> = component.iter().map(|fd| &**fd).collect();
+        match fuel::emit_mutual_fuel_group(&scc_fns, ctx, &recursion_plans) {
+            Some(code) => {
+                mutual_fuel_sections.push(code);
+                for fd in &scc_fns {
+                    fuel_emitted.insert(fd.name.clone());
+                }
+            }
+            None => {
+                for fd in &scc_fns {
+                    axiom_fn_names.insert(fd.name.clone());
+                }
+            }
+        }
+    }
+
     let emit_pure_fn = |fd: &FnDef| -> String {
-        if axiom_fn_names.contains(&fd.name) {
+        if fuel_emitted.contains(&fd.name) {
+            String::new() // emitted through mutual fuel group below
+        } else if axiom_fn_names.contains(&fd.name) {
             toplevel::emit_fn_def_axiom(fd)
         } else {
             toplevel::emit_fn_def(fd, ctx)
@@ -137,6 +172,14 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
         {
             sections.push(emit_pure_fn(fd));
         }
+    }
+
+    // Mutual fuel-guarded helpers and wrappers — one block per SCC.
+    // Emitted after the non-mutual pure fns so the axiom fallback block
+    // (if any SCC couldn't be defaulted) sits near the other opaque
+    // definitions in the output.
+    for section in mutual_fuel_sections {
+        sections.push(section);
     }
 
     // Oracle v1: emit lifted form for effectful functions whose effects are
