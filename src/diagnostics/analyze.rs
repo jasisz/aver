@@ -229,9 +229,7 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
     }
 
     if options.include_verify_effectful_warnings {
-        for w in
-            collect_plain_cases_effectful_warnings_in(&transformed, &tc_result.fn_sigs, None)
-        {
+        for w in collect_plain_cases_effectful_warnings_in(&transformed, &tc_result.fn_sigs, None) {
             diagnostics.push(from_check_finding(
                 Severity::Warning,
                 &w,
