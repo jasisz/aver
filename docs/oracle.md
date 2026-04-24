@@ -202,9 +202,10 @@ fn top() -> Int
     42
 
 verify top trace
-    top().trace.length() => 1
-    top().trace.contains(Console.print("direct")) => true
-    top().trace.contains(Console.print("via-helper")) => false
+    traced = top()
+    traced.trace.length() => 1
+    traced.trace.contains(Console.print("direct")) => true
+    traced.trace.contains(Console.print("via-helper")) => false
 ```
 
 Verify a helper's trace separately when the helper's own emissions matter.

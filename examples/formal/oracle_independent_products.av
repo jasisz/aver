@@ -25,9 +25,10 @@ verify pickPair law branchPathLaw
 
 verify pickPair trace
     given rnd: Random.int = [counterStub]
-    pickPair().trace.group(0).length() => 2
-    pickPair().trace.group(0).branch(0).event(0) => Option.Some(EffectEvent(method = "Random.int", args = [1, 6], path = "0"))
-    pickPair().trace.group(0).branch(1).event(0) => Option.Some(EffectEvent(method = "Random.int", args = [7, 12], path = "1"))
+    picked = pickPair()
+    picked.trace.group(0).length() => 2
+    picked.trace.group(0).branch(0).event(0) => Option.Some(EffectEvent(method = "Random.int", args = [1, 6], path = "0"))
+    picked.trace.group(0).branch(1).event(0) => Option.Some(EffectEvent(method = "Random.int", args = [7, 12], path = "1"))
 
 fn fakeReadByFile(path: BranchPath, n: Int, file: String) -> Result<String, String>
     ? "Return deterministic file content or deterministic file errors."
@@ -51,9 +52,11 @@ fn readPair(leftFile: String, rightFile: String) -> Result<(String, String), Str
 
 verify readPair trace
     given read: Disk.readText = [fakeReadByFile]
-    readPair("left.txt", "right.txt").result => Result.Ok(("left", "right"))
-    readPair("left.txt", "right.txt").trace.group(0).length() => 2
-    readPair("left.txt", "right.txt").trace.group(0).branch(0).event(0) => Option.Some(EffectEvent(method = "Disk.readText", args = ["left.txt"], path = "0"))
-    readPair("left.txt", "right.txt").trace.group(0).branch(1).event(0) => Option.Some(EffectEvent(method = "Disk.readText", args = ["right.txt"], path = "1"))
-    readPair("fail-left.txt", "fail-right.txt").result => Result.Err("left failed")
-    readPair("fail-left.txt", "fail-right.txt").trace.group(0).length() => 2
+    ok = readPair("left.txt", "right.txt")
+    fails = readPair("fail-left.txt", "fail-right.txt")
+    ok.result => Result.Ok(("left", "right"))
+    ok.trace.group(0).length() => 2
+    ok.trace.group(0).branch(0).event(0) => Option.Some(EffectEvent(method = "Disk.readText", args = ["left.txt"], path = "0"))
+    ok.trace.group(0).branch(1).event(0) => Option.Some(EffectEvent(method = "Disk.readText", args = ["right.txt"], path = "1"))
+    fails.result => Result.Err("left failed")
+    fails.trace.group(0).length() => 2
