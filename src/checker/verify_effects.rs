@@ -121,7 +121,11 @@ mod tests {
              \x20   roll() => 4\n";
         let ws = warnings_for(src);
         assert_eq!(ws.len(), 1, "expected 1 warning, got: {:?}", ws);
-        assert!(ws[0].message.contains("Random.int"), "msg: {}", ws[0].message);
+        assert!(
+            ws[0].message.contains("Random.int"),
+            "msg: {}",
+            ws[0].message
+        );
         assert!(ws[0].message.contains("law"), "msg suggests law form");
         assert!(ws[0].message.contains("trace"), "msg suggests trace form");
     }
