@@ -7,9 +7,9 @@ use crate::ast::{
 use crate::codegen::CodegenContext;
 use crate::types::Type;
 
-/// Backend-neutral predicates on AST items — all three codegen backends
-/// (Lean, Dafny, Rust) want the same view of "is this pure?",
-/// "self-referencing type?", and "what's the name of this type def?".
+// Backend-neutral predicates on AST items — all three codegen backends
+// (Lean, Dafny, Rust) want the same view of "is this pure?",
+// "self-referencing type?", and "what's the name of this type def?".
 
 /// A function is pure if it declares no effects and isn't `main`.
 pub fn is_pure_fn(fd: &FnDef) -> bool {
