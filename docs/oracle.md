@@ -216,6 +216,54 @@ Verify a helper's trace separately when the helper's own emissions matter.
 
 Supported law shapes can become universal theorems. Concrete `given` domains still produce executable/sample checks. Unsupported proof shapes should fail clearly or remain as checked-domain/sample obligations, depending on backend and verify mode.
 
+## Research context
+
+Oracle is not a full algebraic-effects language and does not claim novelty for
+typed effects, effect handlers, or capability tracking themselves. It combines a
+small, closed effect classification with explicit stubs, structured traces, and
+proof export for Aver programs.
+
+Closest prior work:
+
+- John M. Lucassen and David K. Gifford, **Polymorphic Effect Systems**
+  (POPL 1988): effects as statically tracked parts of program types.
+  https://doi.org/10.1145/73560.73564
+- Gordon Plotkin and John Power, **Algebraic Operations and Generic Effects**
+  (Applied Categorical Structures, 2003): effects as algebraic operations.
+  https://doi.org/10.1023/A:1023064908962
+- Gordon Plotkin and Matija Pretnar, **Handlers of Algebraic Effects**
+  (ESOP 2009) and **Handling Algebraic Effects** (LMCS 2013): handlers as
+  interpretations of effectful computations.
+  https://doi.org/10.1007/978-3-642-00590-9_7
+  https://doi.org/10.2168/LMCS-9(4:23)2013
+- Andrej Bauer and Matija Pretnar, **Programming with Algebraic Effects and
+  Handlers** (JLAMP 2015): a practical language model for first-class effects
+  and handlers.
+  https://doi.org/10.1016/j.jlamp.2014.02.001
+- Daan Leijen, **Koka: Programming with Row-Polymorphic Effect Types**
+  (MSFP 2014): practical effect typing where effects are visible in function
+  types.
+  https://doi.org/10.4204/EPTCS.153.8
+- Li-yao Xia, Yannick Zakowski, Paul He, Chung-Kil Hur, Gregory Malecha,
+  Benjamin C. Pierce, and Steve Zdancewic, **Interaction Trees: Representing
+  Recursive and Impure Programs in Coq** (POPL 2020): event-based models of
+  impure programs for proof-assistant reasoning.
+  https://doi.org/10.1145/3371119
+- Jonathan Immanuel Brachthäuser, Philipp Schuster, Edward Lee, and Aleksander
+  Boruch-Gruszecki, **Effects, Capabilities, and Boxes: From Scope-Based
+  Reasoning to Type-Based Reasoning and Back** (OOPSLA 2022), and Aleksander
+  Boruch-Gruszecki, Martin Odersky, Edward Lee, Ondrej Lhotak, and Jonathan
+  Immanuel Brachthäuser, **Capturing Types** (TOPLAS 2023): capabilities,
+  capture tracking, and effect reasoning for external resources.
+  https://doi.org/10.1145/3527320
+  https://doi.org/10.1145/3618003
+
+Oracle's specific design point is narrower: effects are named explicitly in Aver
+signatures, classified built-ins get deterministic oracle signatures, output
+effects become structured trace events, and `aver proof` lifts supported laws to
+Lean or Dafny artifacts. This keeps the proof boundary auditable without exposing
+user-defined handlers as a general language feature.
+
 ## Current limits
 
 Oracle does not try to model every side effect.
