@@ -742,10 +742,7 @@ fn lean_project_name(ctx: &CodegenContext) -> String {
         .unwrap_or_else(|| capitalize_first(&ctx.project_name))
 }
 
-pub(crate) fn find_type_def<'a>(
-    ctx: &'a CodegenContext,
-    type_name: &str,
-) -> Option<&'a TypeDef> {
+pub(crate) fn find_type_def<'a>(ctx: &'a CodegenContext, type_name: &str) -> Option<&'a TypeDef> {
     ctx.modules
         .iter()
         .flat_map(|m| m.type_defs.iter())
