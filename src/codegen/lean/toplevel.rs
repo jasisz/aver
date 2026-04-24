@@ -9,9 +9,9 @@ use super::recurrence::{
 use super::shared::to_lower_first;
 use super::types::type_annotation_to_lean;
 use super::{RecursionPlan, VerifyEmitMode, sizeof_measure_param_indices};
-use crate::ast::{self, TailCallData, *};
+use crate::ast::*;
 use crate::codegen::CodegenContext;
-use crate::codegen::common::expr_to_dotted_name;
+use crate::codegen::recursion::rewrite_recursive_calls_body;
 use crate::verify_law::canonical_spec_ref;
 
 /// Emit a Lean 4 type definition from an Aver TypeDef.
@@ -453,7 +453,11 @@ const STRING_POS_FUEL_VAR: &str = "fuel'";
 const PROOF_FUEL_EXHAUSTED: &str = "panic! \"Aver proof fuel exhausted\"";
 
 fn fuel_helper_name(name: &str) -> String {
-    format!("{}__fuel", aver_name_to_lean(name))
+    // Use the shared helper so the name matches what the shared AST
+    // rewrite emits into `Expr::Ident(...)` call sites. The `__fuel`
+    // suffix keeps the result a plain ASCII identifier regardless of
+    // the source name, so no Lean-specific escaping is needed.
+    crate::codegen::recursion::fuel_helper_name(name)
 }
 
 fn emit_fn_param_names(params: &[(String, String)]) -> String {
@@ -616,177 +620,6 @@ fn emit_mutual_sizeof_wrapper(
         format!("def {} {} : {} :=", fn_name, params, ret_type),
         format!("  {} ({}) {}", helper_name, fuel_expr, arg_names),
     ]
-}
-
-fn rewrite_recursive_calls_expr(
-    expr: &Spanned<Expr>,
-    targets: &HashSet<String>,
-    fuel_var: &str,
-) -> Spanned<Expr> {
-    let line = expr.line;
-    let new_node = match &expr.node {
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => return expr.clone(),
-        Expr::Attr(obj, field) => Expr::Attr(
-            Box::new(rewrite_recursive_calls_expr(obj, targets, fuel_var)),
-            field.clone(),
-        ),
-        Expr::FnCall(callee, args) => {
-            let rewritten_args: Vec<Spanned<Expr>> = args
-                .iter()
-                .map(|arg| rewrite_recursive_calls_expr(arg, targets, fuel_var))
-                .collect();
-            if let Some(name) = expr_to_dotted_name(&callee.node)
-                && targets.contains(&name)
-            {
-                let mut call_args = Vec::with_capacity(rewritten_args.len() + 1);
-                call_args.push(Spanned::new(Expr::Ident(fuel_var.to_string()), line));
-                call_args.extend(rewritten_args);
-                Expr::FnCall(
-                    Box::new(Spanned::new(Expr::Ident(fuel_helper_name(&name)), line)),
-                    call_args,
-                )
-            } else {
-                Expr::FnCall(
-                    Box::new(rewrite_recursive_calls_expr(callee, targets, fuel_var)),
-                    rewritten_args,
-                )
-            }
-        }
-        Expr::BinOp(op, left, right) => Expr::BinOp(
-            *op,
-            Box::new(rewrite_recursive_calls_expr(left, targets, fuel_var)),
-            Box::new(rewrite_recursive_calls_expr(right, targets, fuel_var)),
-        ),
-        Expr::Match { subject, arms } => Expr::Match {
-            subject: Box::new(rewrite_recursive_calls_expr(subject, targets, fuel_var)),
-            arms: arms
-                .iter()
-                .map(|arm| MatchArm {
-                    pattern: arm.pattern.clone(),
-                    body: Box::new(rewrite_recursive_calls_expr(&arm.body, targets, fuel_var)),
-                })
-                .collect(),
-        },
-        Expr::Constructor(name, arg) => Expr::Constructor(
-            name.clone(),
-            arg.as_ref()
-                .map(|inner| Box::new(rewrite_recursive_calls_expr(inner, targets, fuel_var))),
-        ),
-        Expr::ErrorProp(inner) => Expr::ErrorProp(Box::new(rewrite_recursive_calls_expr(
-            inner, targets, fuel_var,
-        ))),
-        Expr::InterpolatedStr(parts) => Expr::InterpolatedStr(
-            parts
-                .iter()
-                .map(|part| match part {
-                    StrPart::Literal(_) => part.clone(),
-                    StrPart::Parsed(inner) => StrPart::Parsed(Box::new(
-                        rewrite_recursive_calls_expr(inner, targets, fuel_var),
-                    )),
-                })
-                .collect(),
-        ),
-        Expr::List(items) => Expr::List(
-            items
-                .iter()
-                .map(|item| rewrite_recursive_calls_expr(item, targets, fuel_var))
-                .collect(),
-        ),
-        Expr::Tuple(items) => Expr::Tuple(
-            items
-                .iter()
-                .map(|item| rewrite_recursive_calls_expr(item, targets, fuel_var))
-                .collect(),
-        ),
-        Expr::IndependentProduct(items, flag) => Expr::IndependentProduct(
-            items
-                .iter()
-                .map(|item| rewrite_recursive_calls_expr(item, targets, fuel_var))
-                .collect(),
-            *flag,
-        ),
-        Expr::MapLiteral(entries) => Expr::MapLiteral(
-            entries
-                .iter()
-                .map(|(k, v)| {
-                    (
-                        rewrite_recursive_calls_expr(k, targets, fuel_var),
-                        rewrite_recursive_calls_expr(v, targets, fuel_var),
-                    )
-                })
-                .collect(),
-        ),
-        Expr::RecordCreate { type_name, fields } => Expr::RecordCreate {
-            type_name: type_name.clone(),
-            fields: fields
-                .iter()
-                .map(|(name, value)| {
-                    (
-                        name.clone(),
-                        rewrite_recursive_calls_expr(value, targets, fuel_var),
-                    )
-                })
-                .collect(),
-        },
-        Expr::RecordUpdate {
-            type_name,
-            base,
-            updates,
-        } => Expr::RecordUpdate {
-            type_name: type_name.clone(),
-            base: Box::new(rewrite_recursive_calls_expr(base, targets, fuel_var)),
-            updates: updates
-                .iter()
-                .map(|(name, value)| {
-                    (
-                        name.clone(),
-                        rewrite_recursive_calls_expr(value, targets, fuel_var),
-                    )
-                })
-                .collect(),
-        },
-        Expr::TailCall(boxed) => {
-            let TailCallData { target, args, .. } = boxed.as_ref();
-            let rewritten_args: Vec<Spanned<Expr>> = args
-                .iter()
-                .map(|arg| rewrite_recursive_calls_expr(arg, targets, fuel_var))
-                .collect();
-            if targets.contains(target) {
-                let mut call_args = Vec::with_capacity(rewritten_args.len() + 1);
-                call_args.push(Spanned::new(Expr::Ident(fuel_var.to_string()), line));
-                call_args.extend(rewritten_args);
-                Expr::FnCall(
-                    Box::new(Spanned::new(Expr::Ident(fuel_helper_name(target)), line)),
-                    call_args,
-                )
-            } else {
-                Expr::TailCall(Box::new(TailCallData::new(target.clone(), rewritten_args)))
-            }
-        }
-    };
-    Spanned::new(new_node, line)
-}
-
-fn rewrite_recursive_calls_body(
-    body: &FnBody,
-    targets: &HashSet<String>,
-    fuel_var: &str,
-) -> FnBody {
-    ast::FnBody::Block(
-        body.stmts()
-            .iter()
-            .map(|stmt| match stmt {
-                Stmt::Binding(name, ty, expr) => Stmt::Binding(
-                    name.clone(),
-                    ty.clone(),
-                    rewrite_recursive_calls_expr(expr, targets, fuel_var),
-                ),
-                Stmt::Expr(expr) => {
-                    Stmt::Expr(rewrite_recursive_calls_expr(expr, targets, fuel_var))
-                }
-            })
-            .collect(),
-    )
 }
 
 fn emit_fuelized_string_pos_fn(fd: &FnDef, ctx: &CodegenContext) -> String {

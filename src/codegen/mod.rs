@@ -9,6 +9,8 @@ pub mod dafny;
 #[cfg(feature = "runtime")]
 pub mod lean;
 #[cfg(feature = "runtime")]
+pub mod recursion;
+#[cfg(feature = "runtime")]
 pub mod rust;
 #[cfg(feature = "wasm-compile")]
 pub mod wasm;
