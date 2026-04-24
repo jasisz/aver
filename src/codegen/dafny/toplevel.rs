@@ -629,7 +629,46 @@ pub fn emit_law_samples(
 use crate::codegen::common::{OracleInjectionMode, rewrite_effectful_calls_in_law};
 
 /// Emit a verify law as a Dafny lemma.
-pub fn emit_verify_law(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> String {
+fn law_refs_opaque_fn(expr: &Spanned<Expr>, opaque: &std::collections::HashSet<String>) -> bool {
+    match &expr.node {
+        Expr::FnCall(callee, args) => {
+            let hits_callee = crate::codegen::common::expr_to_dotted_name(&callee.node)
+                .is_some_and(|n| opaque.contains(&n));
+            hits_callee
+                || law_refs_opaque_fn(callee, opaque)
+                || args.iter().any(|a| law_refs_opaque_fn(a, opaque))
+        }
+        Expr::BinOp(_, l, r) => law_refs_opaque_fn(l, opaque) || law_refs_opaque_fn(r, opaque),
+        Expr::Match { subject, arms } => {
+            law_refs_opaque_fn(subject, opaque)
+                || arms.iter().any(|a| law_refs_opaque_fn(&a.body, opaque))
+        }
+        Expr::Attr(inner, _) | Expr::ErrorProp(inner) => law_refs_opaque_fn(inner, opaque),
+        Expr::Constructor(_, Some(inner)) => law_refs_opaque_fn(inner, opaque),
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            items.iter().any(|i| law_refs_opaque_fn(i, opaque))
+        }
+        Expr::RecordCreate { fields, .. } => {
+            fields.iter().any(|(_, v)| law_refs_opaque_fn(v, opaque))
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            law_refs_opaque_fn(base, opaque)
+                || updates.iter().any(|(_, v)| law_refs_opaque_fn(v, opaque))
+        }
+        Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
+            StrPart::Parsed(inner) => law_refs_opaque_fn(inner, opaque),
+            _ => false,
+        }),
+        _ => false,
+    }
+}
+
+pub fn emit_verify_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    opaque_fns: &std::collections::HashSet<String>,
+) -> String {
     let fn_name = aver_name_to_dafny(&vb.fn_name);
     let law_name = aver_name_to_dafny(&law.name);
 
@@ -718,6 +757,18 @@ pub fn emit_verify_law(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) 
 
     lines.push(format!("  ensures {} == {}", lhs, rhs));
     lines.push("{".to_string());
+
+    // Short-circuit: if the law's two sides reference any fn Dafny
+    // emitted as opaque (axiom fallback or mutual fuel-guarded
+    // declaration), the verifier has no body to unfold and the
+    // ensures can't be proved from Dafny's side. Match Lean's
+    // `sorry` fallback by emitting `assume` over the ensures —
+    // users get the same "this lemma is accepted on trust" signal.
+    if law_refs_opaque_fn(&law.lhs, opaque_fns) || law_refs_opaque_fn(&law.rhs, opaque_fns) {
+        lines.push(format!("  assume {} == {};", lhs, rhs));
+        lines.push("}\n".to_string());
+        return lines.join("\n");
+    }
 
     // Generate inductive proof body for Int-parameterized laws
     if law.givens.len() == 1 && law.givens[0].type_name == "Int" {
