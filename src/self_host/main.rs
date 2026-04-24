@@ -4,7 +4,6 @@
     unused_mut,
     dead_code,
     unused_imports,
-    unused_braces,
     unused_parens,
     non_snake_case,
     non_camel_case_types,
