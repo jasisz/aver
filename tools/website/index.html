@@ -160,12 +160,11 @@ paths = [<span class="hl-string">"./data/**"</span>]</pre>
 
         <div class="feature-card">
             <h3>Formal verification</h3>
-            <p>Verify blocks export to <em>Lean 4</em> proofs and <em>Dafny</em> lemmas — including effectful functions via <em>Oracle verify-trace</em> with explicit stubs. Try a <a href="playground/?example=verify-first">pure spec</a> or an <a href="playground/?example=oracle">Oracle trace</a> in-browser.</p>
-            <pre class="code-block code-sm"><span class="hl-keyword">verify</span> roll <span class="hl-keyword">trace</span>
-    <span class="hl-keyword">given</span> rnd: Random.int = [highDie]
-    rolled = roll()
-    rolled.result <span class="hl-operator">=></span> <span class="hl-number">6</span>
-    rolled.trace.contains(Random.int) <span class="hl-operator">=></span> <span class="hl-constant">true</span></pre>
+            <p>Verify blocks state laws the compiler checks and exports to <em>Lean 4</em> proofs and <em>Dafny</em> lemmas. Effectful functions get proofs too via <em>Oracle verify-trace</em>. Try a <a href="playground/?example=verify-first">pure law</a> or an <a href="playground/?example=oracle">Oracle trace</a> in-browser.</p>
+            <pre class="code-block code-sm"><span class="hl-keyword">verify</span> add <span class="hl-keyword">law</span> commutative
+    <span class="hl-keyword">given</span> a: <span class="hl-type">Int</span> = -<span class="hl-number">10</span>..<span class="hl-number">10</span>
+    <span class="hl-keyword">given</span> b: <span class="hl-type">Int</span> = -<span class="hl-number">10</span>..<span class="hl-number">10</span>
+    add(a, b) <span class="hl-operator">=></span> add(b, a)</pre>
         </div>
 
         <div class="feature-card">
