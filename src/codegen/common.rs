@@ -1,11 +1,60 @@
 use std::collections::HashSet;
 
 use crate::ast::{
-    Expr, FnBody, Spanned, Stmt, StrPart, TailCallData, TopLevel, TypeDef, VerifyBlock,
-    VerifyGivenDomain, VerifyKind,
+    Expr, FnBody, FnDef, Spanned, Stmt, StrPart, TailCallData, TopLevel, TypeDef, TypeVariant,
+    VerifyBlock, VerifyGivenDomain, VerifyKind,
 };
 use crate::codegen::CodegenContext;
 use crate::types::Type;
+
+/// Backend-neutral predicates on AST items — all three codegen backends
+/// (Lean, Dafny, Rust) want the same view of "is this pure?",
+/// "self-referencing type?", and "what's the name of this type def?".
+
+/// A function is pure if it declares no effects and isn't `main`.
+pub fn is_pure_fn(fd: &FnDef) -> bool {
+    fd.effects.is_empty() && fd.name != "main"
+}
+
+/// True when the type definition mentions its own name somewhere in a
+/// field or variant payload (recursive ADT).
+pub fn is_recursive_type_def(td: &TypeDef) -> bool {
+    match td {
+        TypeDef::Sum { name, variants, .. } => is_recursive_sum(name, variants),
+        TypeDef::Product { name, fields, .. } => is_recursive_product(name, fields),
+    }
+}
+
+/// The declared name of a type definition.
+pub fn type_def_name(td: &TypeDef) -> &str {
+    match td {
+        TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name,
+    }
+}
+
+/// Granular variant of [`is_recursive_type_def`] taking a sum's
+/// `(name, variants)` split — some backends already have the parts
+/// separated and don't want to rebuild a `TypeDef` just to query.
+pub fn is_recursive_sum(name: &str, variants: &[TypeVariant]) -> bool {
+    variants
+        .iter()
+        .any(|v| v.fields.iter().any(|f| type_ref_contains(f, name)))
+}
+
+/// Granular variant of [`is_recursive_type_def`] for products.
+pub fn is_recursive_product(name: &str, fields: &[(String, String)]) -> bool {
+    fields.iter().any(|(_, ty)| type_ref_contains(ty, name))
+}
+
+fn type_ref_contains(annotation: &str, type_name: &str) -> bool {
+    // Direct match or any generic position: List<Foo>, Option<Foo>,
+    // Map<K, Foo>, (Foo, Bar), etc.
+    annotation == type_name
+        || annotation.contains(&format!("<{}", type_name))
+        || annotation.contains(&format!("{}>", type_name))
+        || annotation.contains(&format!(", {}", type_name))
+        || annotation.contains(&format!("{},", type_name))
+}
 
 /// Check if a name is a user-defined type (sum or product), including modules.
 pub(crate) fn is_user_type(name: &str, ctx: &CodegenContext) -> bool {

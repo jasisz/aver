@@ -126,7 +126,7 @@ pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
 
         // Int
         "Int.abs" => Builtin::IntAbs,
-        "Int.toFloat" => Builtin::IntToFloat,
+        "Int.toFloat" | "Float.fromInt" => Builtin::IntToFloat,
         "Int.toString" => Builtin::IntToString,
         "Int.fromString" => Builtin::IntFromString,
         "Int.parse" => Builtin::IntParse,
