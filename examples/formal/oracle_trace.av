@@ -63,13 +63,15 @@ fn rollAndReport() -> Int
 verify rollAndReport trace
     given rnd: Random.int = [lowDie, highDie]
     expected = rnd(BranchPath.Root, 0, 1, 6)
-    rollAndReport().result => expected
-    rollAndReport().trace.contains(Console.print) => true
-    rollAndReport().trace.length() => 2
+    report = rollAndReport()
+    report.result => expected
+    report.trace.contains(Console.print) => true
+    report.trace.length() => 2
 
 verify rollAndReport trace
     given rnd: Random.int = [lowDie]
-    rollAndReport().trace.contains(Console.print("rolled 1")) => true
+    report = rollAndReport()
+    report.trace.contains(Console.print("rolled 1")) => true
 
 fn readCommand() -> Result<String, String>
     ? "Reads one command from the console."
@@ -78,8 +80,9 @@ fn readCommand() -> Result<String, String>
 
 verify readCommand trace
     given line: Console.readLine = [fakeLine, fakeLineErr]
-    readCommand().result => line(BranchPath.Root, 0)
-    readCommand().trace.contains(Console.readLine()) => true
+    command = readCommand()
+    command.result => line(BranchPath.Root, 0)
+    command.trace.contains(Console.readLine()) => true
 
 fn configExists(file: String) -> Bool
     ? "Checks whether a config file exists."
@@ -88,10 +91,12 @@ fn configExists(file: String) -> Bool
 
 verify configExists trace
     given exists: Disk.exists = [fakeConfigExists]
-    configExists("aver.toml").result => exists(BranchPath.Root, 0, "aver.toml")
-    configExists("aver.toml").trace.contains(Disk.exists("aver.toml")) => true
-    configExists("missing.toml").result => exists(BranchPath.Root, 0, "missing.toml")
-    configExists("missing.toml").trace.contains(Disk.exists("missing.toml")) => true
+    aver = configExists("aver.toml")
+    missing = configExists("missing.toml")
+    aver.result => exists(BranchPath.Root, 0, "aver.toml")
+    aver.trace.contains(Disk.exists("aver.toml")) => true
+    missing.result => exists(BranchPath.Root, 0, "missing.toml")
+    missing.trace.contains(Disk.exists("missing.toml")) => true
 
 fn writeConfig() -> Result<Unit, String>
     ? "Writes config as an operation/result effect."
@@ -100,8 +105,9 @@ fn writeConfig() -> Result<Unit, String>
 
 verify writeConfig trace
     given write: Disk.writeText = [fakeWrite, fakeWriteErr]
-    writeConfig().result => write(BranchPath.Root, 0, "aver.toml", "mode=oracle")
-    writeConfig().trace.contains(Disk.writeText("aver.toml", "mode=oracle")) => true
+    written = writeConfig()
+    written.result => write(BranchPath.Root, 0, "aver.toml", "mode=oracle")
+    written.trace.contains(Disk.writeText("aver.toml", "mode=oracle")) => true
 
 fn pauseThenAnswer() -> Int
     ? "Sleeps and returns a value; sleep is output-only in Oracle."
@@ -110,8 +116,9 @@ fn pauseThenAnswer() -> Int
     42
 
 verify pauseThenAnswer trace
-    pauseThenAnswer().result => 42
-    pauseThenAnswer().trace.contains(Time.sleep(5)) => true
+    paused = pauseThenAnswer()
+    paused.result => 42
+    paused.trace.contains(Time.sleep(5)) => true
 
 fn readKeyOrEmpty() -> String
     ? "Reads one terminal key."
@@ -122,8 +129,9 @@ fn readKeyOrEmpty() -> String
 
 verify readKeyOrEmpty trace
     given key: Terminal.readKey = [fakeKey]
-    readKeyOrEmpty().result => "q"
-    readKeyOrEmpty().trace.contains(Terminal.readKey()) => true
+    typed = readKeyOrEmpty()
+    typed.result => "q"
+    typed.trace.contains(Terminal.readKey()) => true
 
 fn sendPing() -> Result<String, String>
     ? "Sends one TCP message; this is one-shot request/result, not a session."
@@ -132,8 +140,9 @@ fn sendPing() -> Result<String, String>
 
 verify sendPing trace
     given send: Tcp.send = [fakeTcpSend, fakeTcpSendErr]
-    sendPing().result => send(BranchPath.Root, 0, "127.0.0.1", 6379, "PING")
-    sendPing().trace.contains(Tcp.send("127.0.0.1", 6379, "PING")) => true
+    pinged = sendPing()
+    pinged.result => send(BranchPath.Root, 0, "127.0.0.1", 6379, "PING")
+    pinged.trace.contains(Tcp.send("127.0.0.1", 6379, "PING")) => true
 
 fn main() -> Unit
     ! [Console.print]
