@@ -129,10 +129,6 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
         }
         Expr::FnCall(fn_expr, args) => emit_fn_call(fn_expr, args, ctx),
         Expr::BinOp(op, left, right) => {
-            if matches!(op, BinOp::Sub) && matches!(left.node, Expr::Literal(Literal::Int(0))) {
-                let r = emit_expr(right, ctx);
-                return format!("(-{})", r);
-            }
             let l = emit_expr(left, ctx);
             let r = emit_expr(right, ctx);
             let op_str = match op {
@@ -363,7 +359,17 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
         ByteFromHex => format!("ByteFromHex({})", a[0]),
 
         // List
-        ListLen => format!("|{}|", a[0]),
+        // An empty-list literal has no element-type context in Dafny
+        // (seq<?>), which makes `|[]|` fail resolver with "type of this
+        // expression is underspecified". The length is trivially 0
+        // regardless of element type, so short-circuit the emission.
+        ListLen => {
+            if a[0].trim() == "[]" {
+                "0".to_string()
+            } else {
+                format!("|{}|", a[0])
+            }
+        }
         ListHead => format!("ListHead({})", a[0]),
         ListTail => format!("ListTail({})", a[0]),
         ListPrepend => format!("[{}] + {}", a[0], a[1]),

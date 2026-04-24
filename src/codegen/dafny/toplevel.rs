@@ -301,16 +301,13 @@ fn infer_decreases(fd: &FnDef) -> Option<DecreasesInfo> {
         });
     }
 
-    // Single Int param or Int-first: countdown pattern.
-    for (pname, ptype) in &fd.params {
-        if ptype == "Int" {
-            let dname = aver_name_to_dafny(pname);
-            return Some(DecreasesInfo {
-                expr: format!("if {} >= 0 then {} else 0", dname, dname),
-                requires: vec![],
-            });
-        }
-    }
+    // Prefer structural recursion over a List/String param — it
+    // matches the common "walk the collection" shape. An Int that
+    // isn't an explicit index/countdown is usually a passive
+    // argument (pivot, bound, threshold), so picking it for
+    // `decreases` emits nonsense like `decreases pivot` on a fn
+    // that actually iterates over the list. Fall back to Int only
+    // when there's no collection param.
     for (pname, ptype) in &fd.params {
         if ptype.starts_with("List<") {
             return Some(DecreasesInfo {
@@ -327,7 +324,72 @@ fn infer_decreases(fd: &FnDef) -> Option<DecreasesInfo> {
             });
         }
     }
+    // Countdown pattern: Int param, no collection to walk.
+    //
+    // Two shapes to distinguish:
+    // (a) Source handles the n<0 branch itself via `match n < 0 { true
+    //     -> base; false -> … recur(n-1, …) }` — the recursive call
+    //     never fires for negative n, so `decreases if n >= 0 then n
+    //     else 0` suffices without any precondition.
+    // (b) Source only discriminates by `match n { 0 -> base; _ -> recur
+    //     (n-1, …) }`. The wildcard arm catches negative n too, and
+    //     Dafny reasons that path would step from n = -1 to n = -2
+    //     (0 → 0 in the guarded decreases expr — doesn't decrease).
+    //     Pin the termination argument with `requires n >= 0`; real
+    //     callers already guard negative values.
+    for (pname, ptype) in &fd.params {
+        if ptype == "Int" {
+            let dname = aver_name_to_dafny(pname);
+            if fn_handles_negative_first(fd, pname) {
+                return Some(DecreasesInfo {
+                    expr: format!("if {} >= 0 then {} else 0", dname, dname),
+                    requires: vec![],
+                });
+            }
+            return Some(DecreasesInfo {
+                expr: dname.clone(),
+                requires: vec![format!("{} >= 0", dname)],
+            });
+        }
+    }
     None
+}
+
+/// True when the Aver body opens with a guard that explicitly handles
+/// `<pname> < 0` (or equivalent) before any recursive call — i.e. the
+/// author took care of the negative case themselves. Only a top-level
+/// shape check: `match pname < 0` with a base arm for `true`, or an
+/// initial stmt of the same shape. Anything deeper is conservative
+/// (defaults to "doesn't handle", which emits a `requires`).
+fn fn_handles_negative_first(fd: &FnDef, pname: &str) -> bool {
+    let Some(first) = fd.body.stmts().first() else {
+        return false;
+    };
+    let expr = match first {
+        Stmt::Expr(e) => e,
+        Stmt::Binding(_, _, _) => return false,
+    };
+    // `match pname < 0 { true -> …; false -> … }` elaborates to a
+    // Match with a BinOp(Lt, pname, Literal::Int(0)) subject. The
+    // resolver rewrites `Ident(pname)` to `Resolved { name: pname }`
+    // before codegen, so accept both shapes.
+    let Expr::Match { subject, .. } = &expr.node else {
+        return false;
+    };
+    let Expr::BinOp(op, lhs, rhs) = &subject.node else {
+        return false;
+    };
+    if !matches!(op, crate::ast::BinOp::Lt) {
+        return false;
+    }
+    let lhs_name = match &lhs.node {
+        Expr::Ident(n) | Expr::Resolved { name: n, .. } => n,
+        _ => return false,
+    };
+    if lhs_name != pname {
+        return false;
+    }
+    matches!(&rhs.node, Expr::Literal(crate::ast::Literal::Int(0)))
 }
 
 /// Collect all function names called in an expression (top-level only).
@@ -513,7 +575,12 @@ pub fn emit_law_samples(
         let rhs_rw = rewrite_effectful_calls_in_law(rhs, law, ctx, mode);
         let l = emit_expr(&lhs_rw, ctx);
         let r = emit_expr(&rhs_rw, ctx);
-        lines.push(format!("  assert {} == {};", l, r));
+        // `{:split_here}` tells Dafny to check the preceding assert as
+        // its own VC — without it, Z3 accumulates hypothesis state
+        // across all samples in the method and occasionally times out
+        // on otherwise-trivial arithmetic (e.g. `sub(a, b) == 0 -
+        // sub(b, a)` over 5 samples). Splitting isolates each sample.
+        lines.push(format!("  assert {{:split_here}} {} == {};", l, r));
     }
 
     lines.push("}\n".to_string());
