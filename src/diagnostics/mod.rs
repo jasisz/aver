@@ -15,6 +15,8 @@ pub mod factories;
 pub mod model;
 #[cfg(feature = "runtime")]
 pub mod verify_run;
+#[cfg(feature = "runtime")]
+pub mod vm_verify;
 pub mod why;
 
 pub use analyze::{AnalyzeOptions, analyze_source};
