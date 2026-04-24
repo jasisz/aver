@@ -55,7 +55,7 @@ fn fakeTcpSendErr(path: BranchPath, n: Int, host: String, port: Int, message: St
 
 fn rollAndReport() -> Int
     ? "Rolls a die and reports the result."
-    ! [Random.int, Console.print]
+    ! [Console.print, Random.int]
     roll = Random.int(1, 6)
     Console.print("rolled {roll}")
     roll
