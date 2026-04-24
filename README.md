@@ -389,7 +389,7 @@ verify add law commutative
 
 For the proof-oriented style where a law relates an implementation to a pure spec function, see [docs/language.md](docs/language.md) and [docs/lean.md](docs/lean.md).
 
-Trace-aware verify for classified effects:
+Oracle laws for classified effects:
 
 ```aver
 fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int
@@ -401,12 +401,12 @@ fn pickOne() -> Int
     ! [Random.int]
     Random.int(1, 6)
 
-verify pickOne trace
+verify pickOne law usesOracle
     given rnd: Random.int = [fairDie]
-    pickOne().result => rnd(BranchPath.Root, 0, 1, 6)
+    pickOne() => rnd(BranchPath.Root, 0, 1, 6)
 ```
 
-`verify <fn> trace` runs the function under explicit `given` stubs, exposes `.result` for the return value, and exposes `.trace` for classified emissions such as `Console.print(...)` or `Http.get(...)`. See [docs/oracle.md](docs/oracle.md) for the full model.
+`verify <fn> law <name>` is the proof-oriented Oracle form: `aver proof` lifts the effectful function to a pure function with explicit oracle parameters and can emit a universal theorem over that oracle. Use cases-form `verify <fn> trace` when you want runtime assertions over `.result` and `.trace.*`, such as `trace.contains(Random.int(1, 6))`. See [docs/oracle.md](docs/oracle.md) for the full model.
 
 ### Replay
 
@@ -422,7 +422,7 @@ aver replay recordings/rec-123.json --diff
 aver replay recordings/ --test --diff
 ```
 
-Use `verify <fn> trace` when the effects are classified and can be replaced by explicit stubs. Use replay when the flow depends on ambient state, persistent TCP sessions, terminal modes, or server callbacks.
+Use Oracle laws when classified effects should become proof obligations over explicit stubs. Use `verify <fn> trace` when you need runtime assertions over `.result` or `.trace.*`. Use replay when the flow depends on ambient state, persistent TCP sessions, terminal modes, or server callbacks.
 
 ---
 
@@ -510,7 +510,7 @@ For backend-specific details, see:
 - [docs/rust.md](docs/rust.md) for Cargo generation and deployment flow
 - [docs/lean.md](docs/lean.md) for proof export, formal-verification path, and current Lean examples
 - [docs/dafny.md](docs/dafny.md) for Dafny verification and Z3-powered law checking
-- [docs/oracle.md](docs/oracle.md) for verifying classified effects with stubs and traces
+- [docs/oracle.md](docs/oracle.md) for Oracle laws, classified-effect stubs, and trace assertions
 
 ---
 
@@ -549,7 +549,7 @@ Curated shared examples:
 | `data/fibonacci.av` | Tail recursion, records, decision blocks |
 | `formal/law_auto.av` | Lean proof export, `verify law`, conservative universal auto-proofs plus sampled/domain fallback |
 | `formal/spec_laws.av` | Implementation-vs-spec laws (`verify foo law fooSpec`) and Lean spec theorems for supported shapes |
-| `formal/oracle_trace.av` | Oracle trace verification for classified effects with explicit stubs |
+| `formal/oracle_trace.av` | Oracle laws and trace assertions for classified effects with explicit stubs |
 | `apps/mission_control.av` | Command parser, pure state machine, effectful shell |
 | `games/wumpus.av` | Hunt the Wumpus: cave exploration, match-driven control flow |
 | `modules/app.av` | Module imports via `depends [Data.Fibonacci]` |
@@ -585,7 +585,7 @@ For repository self-documentation via decision exports, see `decisions/architect
 | [docs/constructors.md](docs/constructors.md) | Constructor rules and parsing contract |
 | [editors/README.md](editors/README.md) | VS Code + LSP setup and Sublime Text support |
 | [docs/services.md](docs/services.md) | Full API reference for all namespaces (signatures, effects, notes) |
-| [docs/oracle.md](docs/oracle.md) | Oracle: trace-aware verify and proof export for classified effects |
+| [docs/oracle.md](docs/oracle.md) | Oracle: effectful laws, trace assertions, and proof export for classified effects |
 | [docs/vm.md](docs/vm.md) | Bytecode VM design note: execution model, `NanValue`, opcodes, effects |
 | [docs/types.md](docs/types.md) | Key data types (compiler, AST, runtime) |
 | [docs/extending.md](docs/extending.md) | How to add keywords, namespace functions, expression types |
@@ -595,5 +595,6 @@ For repository self-documentation via decision exports, see `decisions/architect
 | [docs/lean.md](docs/lean.md) | Lean backend: proof export and formal-verification path |
 | [docs/dafny.md](docs/dafny.md) | Dafny backend: Z3-powered automated law verification |
 | [docs/independence.md](docs/independence.md) | Independent products: the semantic model behind `?!` and `!` |
+| [docs/research.md](docs/research.md) | Narrow related work for effects, Oracle, independent products, and proof targets |
 | [docs/pushback.md](docs/pushback.md) | Common pushback: questions, objections, and honest answers |
 | [docs/decisions.md](docs/decisions.md) | Decision export generated via `aver context --decisions-only` |

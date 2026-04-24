@@ -866,9 +866,39 @@ const EXAMPLES = {
     "rec-fanout": `module RecFanout\n    intent =\n        "Recursive fan-out: a list of N items becomes N concurrent leaves"\n        "via \`?!\` pairing head against the recursion on the tail. Ten items"\n        "expand into a cascade of nested \`?!\` — every leaf is independent."\n        "Record to see the cascade; Replay works up to depth 2 today."\n\nfn fetch(tag: String) -> Result<Int, String>\n    ? "one independent leaf call"\n    ! [Console.print]\n    Console.print("fetch {tag}")\n    Result.Ok(String.len(tag))\n\nfn fanoutStep(x: String, rest: List<String>) -> Result<Int, String>\n    ? "pair head with recursive tail under ?!"\n    ! [Console.print]\n    pair = (fetch(x), fanout(rest))?!\n    match pair\n        (h, t) -> Result.Ok(h + t)\n\nfn fanout(items: List<String>) -> Result<Int, String>\n    ? "recursive fan-out over a list"\n    ! [Console.print]\n    match items\n        [] -> Result.Ok(0)\n        [x, ..rest] -> fanoutStep(x, rest)\n\nfn main() -> Unit\n    ! [Console.print]\n    result = fanout(["01", "02", "03", "04", "05", "06", "07", "08", "09", "10"])\n    match result\n        Result.Ok(n) -> Console.print("total = {n}")\n        Result.Err(e) -> Console.print("error: {e}")\n`,
 
     // Oracle v1: effectful fns become first-class in aver proof.
-    // `verify … trace` stubs classified effects via `given`, asserts
-    // on .result (return value) and .trace.* (emissions).
-    oracle: `module OracleDemo\n    intent =\n        "Showcase Aver Oracle v1 — effectful fns become first-class in aver proof."\n        "roll() hits Random.int live at runtime; verify-trace stubs it and asserts"\n        "on both the return value (.result) and the effect trace (.trace.*)."\n\nfn roll() -> Int\n    ? "roll a six-sided die."\n    ! [Random.int]\n    Random.int(1, 6)\n\nverify roll trace\n    given rnd: Random.int = [highDie]\n    rolled = roll()\n    rolled.result => 6\n    rolled.trace.length() => 1\n    rolled.trace.contains(Random.int) => true\n\nfn highDie(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int\n    ? "stub oracle: always max of the range."\n    hi\n\nfn main() -> Unit\n    ! [Console.print, Random.int]\n    Console.print("live roll: {roll()}")\n    Console.print("live roll: {roll()}")\n`,
+    // `verify … law` quantifies over the oracle; `verify … trace`
+    // stays for concrete .result / .trace.* runtime checks.
+    oracle: `module OracleDemo
+    intent =
+        "Showcase Aver Oracle v1: effectful fns become first-class in proof."
+        "The law exports as a theorem over every Random.int oracle."
+        "The trace block checks one concrete runtime trace."
+
+fn roll() -> Int
+    ? "Roll a six-sided die."
+    ! [Random.int]
+    Random.int(1, 6)
+
+fn highDie(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int
+    ? "Stub oracle: always max of the range."
+    hi
+
+verify roll law usesOracle
+    given rnd: Random.int = [highDie]
+    roll() => rnd(BranchPath.Root, 0, 1, 6)
+
+verify roll trace
+    given rnd: Random.int = [highDie]
+    rolled = roll()
+    rolled.result => rnd(BranchPath.Root, 0, 1, 6)
+    rolled.trace.length() => 1
+    rolled.trace.contains(Random.int(1, 6)) => true
+
+fn main() -> Unit
+    ! [Console.print, Random.int]
+    Console.print("live roll: {roll()}")
+    Console.print("live roll: {roll()}")
+`,
 };
 
 const codeEditor = document.querySelector("[data-code-editor]");
@@ -1157,9 +1187,10 @@ function exampleTabName(key) {
     return `${pascal || "Playground"}.av`;
 }
 
-function loadExampleAsTab(key) {
+function loadExampleAsTab(key, options = {}) {
     const source = EXAMPLES[key];
     if (!source) return;
+    const writeUrl = options.writeUrl !== false;
     leaveWasmOnlyMode();
     state.files.clear();
     state.activeFile = null;
@@ -1171,7 +1202,7 @@ function loadExampleAsTab(key) {
     // it so the new example starts with a fresh panel.
     if (typeof clearRecording === "function") clearRecording();
     openFile(exampleTabName(key), source);
-    setUrlParam("example", key);
+    if (writeUrl) setUrlParam("example", key);
 }
 
 // Compare the virtual fs against the pristine snapshot (set when a
@@ -1225,7 +1256,7 @@ if (codeEditor) {
     });
     // Bootstrap with the hello example as the initial tab so new
     // visitors see a tab bar + editable source from first paint.
-    loadExampleAsTab("hello");
+    loadExampleAsTab("hello", { writeUrl: false });
 }
 
 if (examplesSelect) {

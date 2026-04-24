@@ -6,7 +6,7 @@ For constructor-specific rules, see [constructors.md](constructors.md).
 
 For namespaces, services, and standard library APIs, see [services.md](services.md).
 
-For trace-aware verification of classified effects, see [oracle.md](oracle.md).
+For Oracle laws and trace assertions over classified effects, see [oracle.md](oracle.md).
 
 ## Types
 
@@ -181,7 +181,7 @@ This is an intentional style choice. In Aver, the author should usually write a 
 
 `verify` is deterministic, not random. Regular cases run exactly as written. `verify ... law ...` expands the cartesian product of explicit `given` domains, capped at `10_000` cases.
 
-Trace-aware verify blocks cover classified effectful functions:
+Oracle laws cover classified effectful functions:
 
 ```aver
 fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int
@@ -193,12 +193,12 @@ fn pickOne() -> Int
     ! [Random.int]
     Random.int(1, 6)
 
-verify pickOne trace
+verify pickOne law usesOracle
     given rnd: Random.int = [fairDie]
-    pickOne().result => rnd(BranchPath.Root, 0, 1, 6)
+    pickOne() => rnd(BranchPath.Root, 0, 1, 6)
 ```
 
-Inside `verify <fn> trace`, `.result` is the verified call's return value and `.trace` is the collected trace of classified effect emissions. `given` binds an effect method such as `Random.int` or `Http.get` to one or more Aver stub functions; multiple stubs expand into concrete cases, just like law domains.
+Inside `verify <fn> law <name>`, `given` binds an effect method such as `Random.int` or `Http.get` to one or more Aver stub functions for checked samples, while proof export can quantify over the oracle itself. Use cases-form `verify <fn> trace` when you want `.result` and `.trace.*` assertions over the collected trace of classified effect emissions.
 
 Effects outside Oracle's classified set still belong in record/replay, especially ambient state, persistent protocol sessions, terminal modes, and server callbacks. See [oracle.md](oracle.md) for the supported effect set, stub signatures, and trace API.
 

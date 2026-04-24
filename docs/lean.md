@@ -42,7 +42,7 @@ out/
 Oracle-lifted laws make effects explicit as theorem parameters. For example,
 `given rnd: Random.int = [fairDie]` becomes a proof-side oracle argument with
 the derived `Random.int` oracle signature. See [oracle.md](oracle.md) for the
-classified effect set, stub signatures, and trace-aware verify syntax.
+classified effect set, stub signatures, Oracle law syntax, and trace assertions.
 
 ## Verify emission
 
