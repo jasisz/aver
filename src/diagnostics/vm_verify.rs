@@ -777,11 +777,24 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
             machine.install_oracle_stubs(oracle_stubs);
         }
 
-        if block.trace {
-            machine.start_trace_collection();
-            let root_fn_id = machine.find_fn_id(&block.fn_name);
-            machine.set_trace_root_fn_id(root_fn_id);
-        }
+        // Always start trace collection, not just for `block.trace`.
+        // The generated verify helper (`__verify_foo_left`) declares
+        // no effects, so calling an effectful user fn from it would
+        // trip the VM's effect gate for any classified effect that
+        // isn't stubbed — e.g. a result-only law on a fn with
+        // `! [Random.int, Console.print]` has a stub for Random.int
+        // but Console.print is Output (no oracle), and the helper
+        // would fail with a runtime effect violation on what the
+        // typechecker / proof export both accept.
+        // `trace_collecting` is exactly the suppression the runtime
+        // uses for classified effects (src/vm/runtime.rs:563), so
+        // enabling it here keeps non-trace law evaluation consistent
+        // with typecheck + proof. We discard the buffered events for
+        // non-trace blocks — they're only consumed by the trace
+        // projection path below.
+        machine.start_trace_collection();
+        let root_fn_id = machine.find_fn_id(&block.fn_name);
+        machine.set_trace_root_fn_id(root_fn_id);
 
         let left_result = vm_call_verify_helper(machine, &case_fns.left);
         let (lhs_trace_events, lhs_trace_coords): (
@@ -790,6 +803,9 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
         ) = if block.trace {
             machine.take_trace_events_with_coords()
         } else {
+            // Drain and discard so the buffer stays clean between
+            // cases and nothing leaks into the next plan.
+            let _ = machine.take_trace_events_with_coords();
             (Vec::new(), Vec::new())
         };
 
