@@ -1,4 +1,9 @@
-use crate::ast::{Expr, TypeDef};
+use std::collections::HashSet;
+
+use crate::ast::{
+    Expr, FnBody, Spanned, Stmt, StrPart, TailCallData, TopLevel, TypeDef, VerifyBlock,
+    VerifyGivenDomain, VerifyKind,
+};
 use crate::codegen::CodegenContext;
 use crate::types::Type;
 
@@ -412,5 +417,152 @@ fn rewrite_effectful_call(
             line: expr.line,
         },
         _ => expr.clone(),
+    }
+}
+
+/// Oracle v1: set of user fn names that are reachable from any verify
+/// block — directly (`verify f ...`) or through the call graph (fn
+/// body of a reachable fn mentions them). Used by proof backends to
+/// skip emission of effectful fns that nobody verifies. Dead code in
+/// a proof output isn't just ugly — a non-terminating effectful fn
+/// (e.g. a REPL loop) will make Lean reject the whole module because
+/// it can't prove termination for a fn with no decreasing argument.
+/// If the user never asked for a proof about that fn, don't force
+/// the backend to invent one.
+pub(crate) fn verify_reachable_fn_names(items: &[TopLevel]) -> HashSet<String> {
+    let mut reachable: HashSet<String> = HashSet::new();
+    for item in items {
+        if let TopLevel::Verify(vb) = item {
+            collect_verify_block_refs(vb, &mut reachable);
+        }
+    }
+    // Fixed-point closure through the call graph.
+    loop {
+        let mut changed = false;
+        for item in items {
+            if let TopLevel::FnDef(fd) = item
+                && reachable.contains(&fd.name)
+            {
+                let mut called = HashSet::new();
+                collect_called_idents_in_body(&fd.body, &mut called);
+                for name in called {
+                    if reachable.insert(name) {
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    reachable
+}
+
+fn collect_verify_block_refs(vb: &VerifyBlock, out: &mut HashSet<String>) {
+    out.insert(vb.fn_name.clone());
+    for (lhs, rhs) in &vb.cases {
+        collect_called_idents(lhs, out);
+        collect_called_idents(rhs, out);
+    }
+    if let VerifyKind::Law(law) = &vb.kind {
+        collect_called_idents(&law.lhs, out);
+        collect_called_idents(&law.rhs, out);
+        if let Some(when) = &law.when {
+            collect_called_idents(when, out);
+        }
+        for given in &law.givens {
+            if let VerifyGivenDomain::Explicit(values) = &given.domain {
+                for v in values {
+                    collect_called_idents(v, out);
+                }
+            }
+        }
+    }
+    for given in &vb.cases_givens {
+        if let VerifyGivenDomain::Explicit(values) = &given.domain {
+            for v in values {
+                collect_called_idents(v, out);
+            }
+        }
+    }
+}
+
+fn collect_called_idents_in_body(body: &FnBody, out: &mut HashSet<String>) {
+    for stmt in body.stmts() {
+        match stmt {
+            Stmt::Binding(_, _, e) | Stmt::Expr(e) => collect_called_idents(e, out),
+        }
+    }
+}
+
+fn collect_called_idents(expr: &Spanned<Expr>, out: &mut HashSet<String>) {
+    match &expr.node {
+        Expr::FnCall(callee, args) => {
+            if let Expr::Ident(name) | Expr::Resolved { name, .. } = &callee.node {
+                out.insert(name.clone());
+            } else {
+                collect_called_idents(callee, out);
+            }
+            for a in args {
+                collect_called_idents(a, out);
+            }
+        }
+        Expr::TailCall(boxed) => {
+            let TailCallData { target, args, .. } = boxed.as_ref();
+            out.insert(target.clone());
+            for a in args {
+                collect_called_idents(a, out);
+            }
+        }
+        Expr::Ident(name) | Expr::Resolved { name, .. } => {
+            out.insert(name.clone());
+        }
+        Expr::BinOp(_, l, r) => {
+            collect_called_idents(l, out);
+            collect_called_idents(r, out);
+        }
+        Expr::Match { subject, arms, .. } => {
+            collect_called_idents(subject, out);
+            for arm in arms {
+                collect_called_idents(&arm.body, out);
+            }
+        }
+        Expr::ErrorProp(inner) | Expr::Attr(inner, _) => {
+            collect_called_idents(inner, out);
+        }
+        Expr::Constructor(_, Some(inner)) => {
+            collect_called_idents(inner, out);
+        }
+        Expr::InterpolatedStr(parts) => {
+            for part in parts {
+                if let StrPart::Parsed(inner) = part {
+                    collect_called_idents(inner, out);
+                }
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for i in items {
+                collect_called_idents(i, out);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                collect_called_idents(k, out);
+                collect_called_idents(v, out);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, v) in fields {
+                collect_called_idents(v, out);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_called_idents(base, out);
+            for (_, v) in updates {
+                collect_called_idents(v, out);
+            }
+        }
+        Expr::Literal(_) | Expr::Constructor(_, None) => {}
     }
 }
