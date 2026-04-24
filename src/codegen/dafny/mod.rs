@@ -154,23 +154,40 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
         }
     }
 
-    // Emit function definitions from dependent modules (pure only, no ? operator)
+    // Emit function definitions. Pure fns go through the normal
+    // `emit_fn_def` path (which already lowers `?` via
+    // `lower_pure_question_bang_fn` when possible). When the body uses
+    // `?` and the lowering doesn't apply, emit an axiom declaration so
+    // the callee is still in scope for other Dafny output — without
+    // this, a fuel helper in a mutual SCC can reference the fn by name
+    // and the whole file loses resolution.
+    let needs_axiom_for_error_prop = |fd: &FnDef| -> bool {
+        body_uses_error_prop(&fd.body)
+            && crate::types::checker::effect_lifting::lower_pure_question_bang_fn(fd)
+                .ok()
+                .flatten()
+                .is_none()
+    };
+    let emit_pure_or_axiom = |fd: &FnDef| -> String {
+        if needs_axiom_for_error_prop(fd) {
+            toplevel::emit_fn_def_axiom(fd)
+        } else {
+            emit_pure_fn(fd)
+        }
+    };
     for module in &ctx.modules {
         for fd in &module.fn_defs {
-            if fd.effects.is_empty() && !body_uses_error_prop(&fd.body) {
-                sections.push(emit_pure_fn(fd));
+            if fd.effects.is_empty() {
+                sections.push(emit_pure_or_axiom(fd));
             }
         }
     }
-
-    // Emit function definitions from the main module (pure only, no ? operator)
     for item in &ctx.items {
         if let TopLevel::FnDef(fd) = item
             && fd.effects.is_empty()
             && fd.name != "main"
-            && !body_uses_error_prop(&fd.body)
         {
-            sections.push(emit_pure_fn(fd));
+            sections.push(emit_pure_or_axiom(fd));
         }
     }
 

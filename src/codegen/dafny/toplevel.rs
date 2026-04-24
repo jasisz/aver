@@ -765,7 +765,11 @@ pub fn emit_verify_law(
     // `sorry` fallback by emitting `assume` over the ensures —
     // users get the same "this lemma is accepted on trust" signal.
     if law_refs_opaque_fn(&law.lhs, opaque_fns) || law_refs_opaque_fn(&law.rhs, opaque_fns) {
-        lines.push(format!("  assume {} == {};", lhs, rhs));
+        // `{:axiom}` on the assume silences Dafny's
+        // "assume statement has no {:axiom} annotation" warning, since
+        // we're explicitly treating this as an axiom on trust (same
+        // shape as Lean's `sorry`).
+        lines.push(format!("  assume {{:axiom}} {} == {};", lhs, rhs));
         lines.push("}\n".to_string());
         return lines.join("\n");
     }
