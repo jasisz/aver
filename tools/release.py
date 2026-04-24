@@ -132,6 +132,27 @@ def read_crate_version(crate: str) -> str:
     return m.group(1)
 
 
+def bump_website_version(new_version: str, dry_run: bool) -> None:
+    """Bump the version badge shown in the landing hero (tools/website/index.html)."""
+    path = REPO_ROOT / "tools" / "website" / "index.html"
+    major_minor = ".".join(new_version.split(".")[:2])
+    short = f"v{major_minor}"
+
+    text = path.read_text()
+    pattern = r"(MIT licensed &middot; Written in Rust &middot; )v\d+(?:\.\d+)+( &middot;)"
+    new_text, count = re.subn(pattern, lambda m: f"{m.group(1)}{short}{m.group(2)}", text)
+
+    if count == 0:
+        print("  WARN: hero-proof version badge not found, skipping")
+        return
+
+    if dry_run:
+        print(f"  [dry-run] website hero badge -> {short}")
+    else:
+        path.write_text(new_text)
+        print(f"  Updated website hero badge -> {short}")
+
+
 def regenerate_self_host(dry_run: bool) -> None:
     print("Regenerating self-host...")
     if dry_run:
@@ -287,6 +308,11 @@ def main() -> int:
         print(f"  {crate}: {ver}{changed}")
     print("\nBumping versions...")
     bump_all_versions(old_versions, new_versions, dry_run)
+    print()
+
+    # 2.5 Bump landing-page version badge
+    print("Bumping website badge...")
+    bump_website_version(new_version, dry_run)
     print()
 
     # 3. Regenerate self-host
