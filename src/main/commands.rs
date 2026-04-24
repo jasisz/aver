@@ -2386,6 +2386,22 @@ fn render_audit_tty(
                     block.passed,
                     block.total
                 );
+            } else if block.failed == 0 {
+                // Skipped cases aren't failures — typically law-form
+                // guards (`when`) that didn't hit on some samples, or
+                // proof obligations that the auto-prover deferred.
+                // Marking them `✗` red made the block look broken at
+                // a glance even with 0 failures. Use a neutral circle
+                // in yellow to signal "partial / some obligations
+                // skipped, nothing failed".
+                println!(
+                    "  {} verify {}  {}/{} passed, {} skipped",
+                    "○".yellow(),
+                    block.name,
+                    block.passed,
+                    block.total,
+                    block.skipped
+                );
             } else {
                 println!(
                     "  {} verify {}  {}/{} passed, {} failed, {} skipped",
