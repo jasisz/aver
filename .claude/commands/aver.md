@@ -139,8 +139,48 @@ Rules:
 - `verify` checks executable examples only
 - law verify expands cartesian product of `given` domains (capped at 10,000 cases)
 - `aver check` expects pure, non-trivial, non-`main` functions to carry a `verify` block
-- classified effectful flows can use `verify <fn> trace` with explicit `given` stubs
+- plain `verify fn` on a fn with a generative effect (Random, Http, Time.now, etc.) warns — the case RHS is compared against a freshly-produced value and flaps. Use `verify fn law …` with `given` stubs or `verify fn trace` instead
 - unclassified ambient state, persistent protocols, terminal modes, and server callbacks should use record/replay
+
+#### Oracle verify-trace (effectful functions)
+
+Classified effectful fns get formal proof export via `verify <fn> trace`. Stubs bind oracles at verify time so the fn produces deterministic values and the trace can be asserted about.
+
+```aver
+fn roll() -> Int
+    ? "roll a d6."
+    ! [Random.int]
+    Random.int(1, 6)
+
+verify roll trace
+    given rnd: Random.int = [highDie]
+    rolled = roll()
+    rolled.result => 6
+    rolled.trace.length() => 1
+    rolled.trace.contains(Random.int) => true
+
+fn highDie(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int
+    ? "stub oracle: always max."
+    hi
+```
+
+Rules:
+- `given name: Effect.method = [stubFn, ...]` binds a stub for the classified effect. Multi-value list expands cartesian with cases; one `given` per effect — duplicates are rejected
+- Stub signature for generative effects (`Random.*`, `Http.*`, `Disk.*`, `Tcp.send/.ping`, `Console.readLine`, `Terminal.readKey`, `Time.now/.unixMs`): `(path: BranchPath, k: Int, args...) -> ReturnType`
+- Stub signature for snapshot effects (`Args.get`, `Env.get`): `(args...) -> ReturnType` — no path/counter prefix
+- Output-only effects (`Console.print/.error/.warn`, `Time.sleep`, `Terminal.clear/.moveTo/.print/.hideCursor/.showCursor/.flush`) don't need stubs; they append to the trace directly
+- `BranchPath.Root` is a nullary value constructor — no parens, PascalCase. `BranchPath.child(parent, idx)` and `BranchPath.parse(str)` are the constructors for nested paths
+- Case LHS projections:
+  - `fn(args).result` — return value
+  - `fn(args).trace` — full trace as a `Trace` record
+  - `fn(args).trace.length()` — Int, event count
+  - `fn(args).trace.event(k)` — `Option<EffectEvent>` at 0-based index
+  - `fn(args).trace.contains(Effect.method)` — Bool, method-only predicate (ignores args)
+  - `fn(args).trace.contains(Effect.method("arg"))` — Bool, exact event-literal match
+  - `fn(args).trace.group(N).branch(idx).*` — tree-nav into `!`/`?!` independent products (0-based N, idx)
+- Local bindings with `name = expr` go between `given` clauses and case assertions; they're substituted into every case (so each case still runs its own fresh `fn()` invocation)
+- Every generative/gen+output effect the fn uses must have a `given` stub under `trace`; missing stubs are rejected with a pointer at the fix
+- Unclassified effects (`Env.set`, `Tcp.connect/writeLine/readLine/close`, `Terminal.enableRawMode/setColor/resetColor/size`, `HttpServer.listen`) are rejected by `verify trace` — use record/replay for those
 
 ### Decision blocks
 
@@ -259,6 +299,9 @@ match Map.get(ages, "alice")
 7. Pipe `|>` — not supported
 8. Positional record destructuring in match — bind record, use field access
 9. Multi-line match arms — body must follow `->` on the same line; extract complex logic into a named function
+10. `BranchPath.Root()` / `BranchPath.root()` — it's a nullary value constructor, no parens: just `BranchPath.Root`
+11. Two `given` for the same effect — rejected. Use a multi-value domain `given rnd: Random.int = [stubA, stubB]` for varied samples
+12. Plain `verify fn` on a fn with generative effects — you get a lint warning, use `verify fn law …` with `given` stubs or `verify fn trace` instead
 
 ### Style
 

@@ -24,7 +24,7 @@ If you only remember one section, make it this one:
 - Functions do not have type parameters — write `fn sum(xs: List<Int>) -> Int`, not `fn sum<T>(xs: List<T>) -> T`
 - Effects are explicit: `! [Console.print]`, `! [Http.get]`
 - Pure functions get colocated `verify` blocks
-- Effectful flows should usually be tested through record/replay, not `verify`
+- Classified effectful fns (Random, Disk, Http, Tcp one-shot, Time, Console.readLine, Terminal non-modal, all output) get `verify fn trace` with `given` stubs; unclassified ambient / session / modal flows go through record/replay
 - Parse integers with `Int.fromString`, which returns `Result<Int, String>`
 - `Console.readLine()` returns `Result<String, String>`, not plain `String`
 
@@ -294,12 +294,38 @@ Law verify rules:
 - exactly one assertion line (`lhs => rhs`)
 - the assertion must be a single expression, not a boolean chain — if you need multiple conditions, extract a helper function
 
-Use `verify` for pure logic. Use replay for effectful flows.
+Use `verify` for pure logic, `verify … trace` for classified effectful fns, `aver record` / `aver replay` for unclassified (ambient / session / modal) flows.
 
 ```text
 aver run app.av --record recordings/
 aver replay recordings/ --test --diff
 ```
+
+Oracle verify-trace (effectful fns — `Random.*`, `Disk.*`, `Http.*`, `Tcp.send/.ping`, `Time.*`, `Console.readLine`, `Terminal.readKey`, and the output-only trace effects):
+
+```aver
+fn roll() -> Int
+    ? "roll a d6."
+    ! [Random.int]
+    Random.int(1, 6)
+
+verify roll trace
+    given rnd: Random.int = [highDie]
+    rolled = roll()
+    rolled.result => 6
+    rolled.trace.length() => 1
+    rolled.trace.contains(Random.int) => true
+
+fn highDie(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int
+    ? "stub oracle: always max."
+    hi
+```
+
+- `given name: Effect.method = [stubFn, ...]` binds a stub for a classified effect; stub signature for generative effects is `(path: BranchPath, k: Int, args...) -> T`, snapshot effects skip the path/k prefix
+- `BranchPath.Root` is a nullary value constructor (no parens); nested paths via `BranchPath.child(parent, idx)`
+- Projections on case LHS: `.result`, `.trace`, `.trace.length()`, `.trace.event(k)`, `.trace.contains(Effect.method)` (method-only) or `.trace.contains(Effect.method("arg"))` (event literal), `.trace.group(N).branch(idx).*` for `!` / `?!` products
+- `aver proof <file>.av --backend lean|dafny` exports the verify blocks as Lean 4 `theorem` / Dafny `lemma` with a shared trust header
+- Unclassified effects (`Env.set`, `Tcp.connect`/`writeLine`/`readLine`/`close`, `HttpServer.listen`, modal terminal state) are rejected by `verify trace` — stay on record/replay for those
 
 ### Decisions
 
@@ -428,7 +454,7 @@ Then zoom in with `--focus <symbol>` or a larger budget.
 5. Assuming `Console.readLine()` returns `String` instead of `Result<String, String>`
 6. Using `if` / `else` instead of `match`
 7. Writing multi-line match arms instead of extracting a helper
-8. Putting `verify` on effectful flows instead of using replay
+8. Putting plain `verify` on a fn with generative effects — the RHS compares against a fresh value and flaps. Use `verify fn trace` with `given` stubs (classified effects) or record/replay (unclassified)
 9. Expecting closures or lambdas — not supported
 10. Expecting mutable variables — not supported
 11. Expecting `List.map`, `List.filter`, or `List.fold` to exist
