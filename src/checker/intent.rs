@@ -165,11 +165,19 @@ fn collect_used_effects_expr(expr: &Spanned<Expr>, fn_sigs: &FnSigMap, out: &mut
             }
         }
         Expr::Constructor(_, Some(inner)) => collect_used_effects_expr(inner, fn_sigs, out),
-        Expr::Literal(_)
-        | Expr::Ident(_)
-        | Expr::InterpolatedStr(_)
-        | Expr::Resolved { .. }
-        | Expr::Constructor(_, None) => {}
+        Expr::InterpolatedStr(parts) => {
+            // `"x = {fn_call()}"` must descend into the parsed segment
+            // so transitive effects of `fn_call` count as used by the
+            // enclosing fn. Otherwise the unused-effect lint false-
+            // positives whenever a declared effect propagates only
+            // through a string interpolation call site.
+            for part in parts {
+                if let StrPart::Parsed(inner) = part {
+                    collect_used_effects_expr(inner, fn_sigs, out);
+                }
+            }
+        }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {}
     }
 }
 

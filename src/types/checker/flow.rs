@@ -722,6 +722,18 @@ impl TypeChecker {
                     self.check_effects_in_expr(arg, caller_name, caller_effects);
                 }
             }
+            Expr::InterpolatedStr(parts) => {
+                // `"x = {fn_call()}"` — interpolated call sites must
+                // propagate their effects to the enclosing fn. Without
+                // this, `Console.print("{roll()}")` type-checks even
+                // though main lacks Random.int; the VM then crashes at
+                // runtime when roll() actually emits Random.int.
+                for part in parts {
+                    if let crate::ast::StrPart::Parsed(inner) = part {
+                        self.check_effects_in_expr(inner, caller_name, caller_effects);
+                    }
+                }
+            }
             _ => {}
         }
     }
