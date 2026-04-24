@@ -10,7 +10,7 @@ use super::model::{AnalysisReport, Diagnostic, Severity, Span};
 use crate::checker::{
     CheckFinding, check_module_intent_with_sigs_in, collect_cse_warnings_in,
     collect_independence_warnings_in, collect_naming_warnings_in, collect_perf_warnings_in,
-    collect_verify_coverage_warnings_in,
+    collect_plain_cases_effectful_warnings_in, collect_verify_coverage_warnings_in,
 };
 #[cfg(feature = "runtime")]
 use crate::checker::{FindingSpan, collect_verify_law_dependency_warnings_in};
@@ -39,6 +39,10 @@ pub struct AnalyzeOptions {
     pub include_naming_warnings: bool,
     pub include_non_tail_warnings: bool,
     pub include_unused_bindings: bool,
+    /// Plain cases-form `verify fn` on an effectful fn whose effect list
+    /// includes at least one generative effect. The test runs with real
+    /// effects and the RHS is compared against a non-deterministic value.
+    pub include_verify_effectful_warnings: bool,
     /// When `true` **and** the `runtime` feature is enabled, execute every
     /// verify block found in the source and emit a diagnostic per failing
     /// case. Off by default: analysis should stay pure static checks;
@@ -67,6 +71,7 @@ impl Default for AnalyzeOptions {
             include_naming_warnings: true,
             include_non_tail_warnings: true,
             include_unused_bindings: true,
+            include_verify_effectful_warnings: true,
             include_verify_run: false,
             include_why_summary: false,
             include_context_summary: false,
@@ -214,6 +219,19 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
 
     if options.include_independence_warnings {
         for w in collect_independence_warnings_in(&transformed, &tc_result.fn_sigs, None) {
+            diagnostics.push(from_check_finding(
+                Severity::Warning,
+                &w,
+                source,
+                &options.file_label,
+            ));
+        }
+    }
+
+    if options.include_verify_effectful_warnings {
+        for w in
+            collect_plain_cases_effectful_warnings_in(&transformed, &tc_result.fn_sigs, None)
+        {
             diagnostics.push(from_check_finding(
                 Severity::Warning,
                 &w,

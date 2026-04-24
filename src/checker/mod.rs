@@ -7,6 +7,7 @@ mod law;
 mod naming;
 mod perf;
 mod verify;
+mod verify_effects;
 
 use crate::ast::{
     Expr, Literal, Pattern, SourceSpan, Spanned, TopLevel, TypeDef, VerifyBlock, VerifyKind,
@@ -235,3 +236,6 @@ pub use law::{collect_verify_law_dependency_warnings, collect_verify_law_depende
 pub use naming::{collect_naming_warnings, collect_naming_warnings_in};
 pub use perf::{collect_perf_warnings, collect_perf_warnings_in};
 pub use verify::{expr_to_str, merge_verify_blocks};
+pub use verify_effects::{
+    collect_plain_cases_effectful_warnings, collect_plain_cases_effectful_warnings_in,
+};
