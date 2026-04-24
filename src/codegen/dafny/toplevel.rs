@@ -116,9 +116,14 @@ pub fn emit_fn_def(fd: &FnDef, ctx: &CodegenContext) -> String {
 
     let ret_type = emit_type(&fd.return_type);
 
-    let body = emit_fn_body(&fd.body, ctx);
+    let lowered = lower_pure_question_bang_for_emit(fd);
+    let body_ast = lowered
+        .as_ref()
+        .map(|lowered_fd| lowered_fd.body.as_ref())
+        .unwrap_or(fd.body.as_ref());
+    let body = emit_fn_body(body_ast, ctx);
 
-    let needs_decreases = body_has_recursive_call(&fd.body, &fd.name);
+    let needs_decreases = body_has_recursive_call(body_ast, &fd.name);
 
     let mut lines = Vec::new();
 
@@ -145,6 +150,12 @@ pub fn emit_fn_def(fd: &FnDef, ctx: &CodegenContext) -> String {
     lines.push("}\n".to_string());
 
     lines.join("\n")
+}
+
+fn lower_pure_question_bang_for_emit(fd: &FnDef) -> Option<FnDef> {
+    crate::types::checker::effect_lifting::lower_pure_question_bang_fn(fd)
+        .ok()
+        .flatten()
 }
 
 /// Emit the body of a function.

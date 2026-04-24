@@ -789,6 +789,79 @@ pub fn lift_fn_def(fd: &FnDef) -> Result<Option<FnDef>, LiftError> {
     lift_fn_def_with_helpers(fd, &HashMap::new())
 }
 
+/// Lower pure `?!` products to explicit Result matches for proof backends.
+///
+/// Effectful functions use [`lift_fn_def_with_helpers`], which already does
+/// this while replacing classified effects with oracle calls. Pure functions
+/// can still contain `?!` over ordinary `Result`-returning helpers; proof
+/// backends need the same value-level desugaring even though there are no
+/// effects to lift.
+pub fn lower_pure_question_bang_fn(fd: &FnDef) -> Result<Option<FnDef>, LiftError> {
+    if !fd.effects.is_empty() || !body_contains_question_bang(&fd.body) {
+        return Ok(None);
+    }
+
+    let cfg = LiftConfig {
+        path_name: "path".to_string(),
+        oracles: HashMap::new(),
+        effectful_helpers: HashMap::new(),
+    };
+    let lowered_body = lift_body(&fd.body, &cfg)?;
+    let mut lowered = fd.clone();
+    lowered.body = Arc::new(lowered_body);
+    Ok(Some(lowered))
+}
+
+fn body_contains_question_bang(body: &FnBody) -> bool {
+    body.stmts().iter().any(|stmt| match stmt {
+        Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => expr_contains_question_bang(expr),
+    })
+}
+
+fn expr_contains_question_bang(expr: &Spanned<Expr>) -> bool {
+    match &expr.node {
+        Expr::IndependentProduct(_, true) => true,
+        Expr::IndependentProduct(items, false) | Expr::List(items) | Expr::Tuple(items) => {
+            items.iter().any(expr_contains_question_bang)
+        }
+        Expr::FnCall(callee, args) => {
+            expr_contains_question_bang(callee) || args.iter().any(expr_contains_question_bang)
+        }
+        Expr::Attr(base, _) | Expr::Constructor(_, Some(base)) | Expr::ErrorProp(base) => {
+            expr_contains_question_bang(base)
+        }
+        Expr::BinOp(_, left, right) => {
+            expr_contains_question_bang(left) || expr_contains_question_bang(right)
+        }
+        Expr::Match { subject, arms } => {
+            expr_contains_question_bang(subject)
+                || arms
+                    .iter()
+                    .any(|arm| expr_contains_question_bang(&arm.body))
+        }
+        Expr::InterpolatedStr(parts) => parts.iter().any(|part| match part {
+            crate::ast::StrPart::Parsed(expr) => expr_contains_question_bang(expr),
+            crate::ast::StrPart::Literal(_) => false,
+        }),
+        Expr::MapLiteral(entries) => entries.iter().any(|(key, value)| {
+            expr_contains_question_bang(key) || expr_contains_question_bang(value)
+        }),
+        Expr::RecordCreate { fields, .. } => fields
+            .iter()
+            .any(|(_, value)| expr_contains_question_bang(value)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_contains_question_bang(base)
+                || updates
+                    .iter()
+                    .any(|(_, value)| expr_contains_question_bang(value))
+        }
+        Expr::TailCall(data) => data.args.iter().any(expr_contains_question_bang),
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {
+            false
+        }
+    }
+}
+
 /// Oracle v1: lift an effectful fn with a known set of sibling
 /// effectful helpers. Call sites to any helper in `helpers` get
 /// `(path, oracle...)` args injected so their lifted arity matches.
@@ -936,7 +1009,7 @@ mod tests {
         let body = parse_body("    Random.int(1, 6)");
         let cfg = simple_cfg_with(&[("Random.int", "rnd")]);
         let lifted = lift_body(&body, &cfg).unwrap();
-        let [Stmt::Expr(tail)] = &lifted.stmts()[..] else {
+        let [Stmt::Expr(tail)] = lifted.stmts() else {
             panic!("expected one expr stmt");
         };
         let args = assert_looks_like_oracle_call(&tail.node, "rnd", 4);
@@ -963,7 +1036,7 @@ mod tests {
         let body = parse_body("    (Random.int(1, 6), Random.int(1, 6), Random.int(1, 6))");
         let cfg = simple_cfg_with(&[("Random.int", "rnd")]);
         let lifted = lift_body(&body, &cfg).unwrap();
-        let [Stmt::Expr(tail)] = &lifted.stmts()[..] else {
+        let [Stmt::Expr(tail)] = lifted.stmts() else {
             panic!("expected one expr stmt");
         };
         let Expr::Tuple(elems) = &tail.node else {
@@ -984,7 +1057,7 @@ mod tests {
         let body = parse_body("    Args.get()");
         let cfg = simple_cfg_with(&[("Args.get", "args")]);
         let lifted = lift_body(&body, &cfg).unwrap();
-        let [Stmt::Expr(tail)] = &lifted.stmts()[..] else {
+        let [Stmt::Expr(tail)] = lifted.stmts() else {
             panic!("expected one expr stmt");
         };
         // Snapshot: capability reader — no BranchPath, no counter.
@@ -997,7 +1070,7 @@ mod tests {
         let body = parse_body("    Console.print(\"hi\")");
         let cfg = simple_cfg_with(&[]);
         let lifted = lift_body(&body, &cfg).unwrap();
-        let [Stmt::Expr(tail)] = &lifted.stmts()[..] else {
+        let [Stmt::Expr(tail)] = lifted.stmts() else {
             panic!("expected one expr stmt");
         };
         // Oracle v1: output effects have no semantic contribution to
@@ -1016,7 +1089,7 @@ mod tests {
         let body = parse_body("    someHelper(1, 2, 3)");
         let cfg = simple_cfg_with(&[]);
         let lifted = lift_body(&body, &cfg).unwrap();
-        let [Stmt::Expr(tail)] = &lifted.stmts()[..] else {
+        let [Stmt::Expr(tail)] = lifted.stmts() else {
             panic!("expected one expr stmt");
         };
         let Expr::FnCall(callee, args) = &tail.node else {
@@ -1047,7 +1120,7 @@ mod tests {
         let body = parse_body("    (Random.int(1, 6), Random.int(1, 6))!");
         let cfg = simple_cfg_with(&[("Random.int", "rnd")]);
         let lifted = lift_body(&body, &cfg).unwrap();
-        let [Stmt::Expr(tail)] = &lifted.stmts()[..] else {
+        let [Stmt::Expr(tail)] = lifted.stmts() else {
             panic!("expected one expr stmt");
         };
         let Expr::IndependentProduct(elems, is_error_prop) = &tail.node else {
@@ -1097,7 +1170,7 @@ mod tests {
         let body = parse_body("    (Http.get(\"a\"), Http.get(\"b\"))?!");
         let cfg = simple_cfg_with(&[("Http.get", "http")]);
         let lifted = lift_body(&body, &cfg).unwrap();
-        let [Stmt::Expr(tail)] = &lifted.stmts()[..] else {
+        let [Stmt::Expr(tail)] = lifted.stmts() else {
             panic!("expected one expr stmt");
         };
         let Expr::Match { arms, .. } = &tail.node else {
@@ -1116,7 +1189,7 @@ mod tests {
         );
         let cfg = simple_cfg_with(&[("Random.int", "rnd")]);
         let lifted = lift_body(&body, &cfg).unwrap();
-        let [Stmt::Expr(tail)] = &lifted.stmts()[..] else {
+        let [Stmt::Expr(tail)] = lifted.stmts() else {
             panic!("expected one expr stmt");
         };
         let Expr::IndependentProduct(outer, _) = &tail.node else {
@@ -1203,7 +1276,7 @@ mod tests {
         let body = parse_body("    Foo.bar(3)");
         let cfg = simple_cfg_with(&[]);
         let lifted = lift_body(&body, &cfg).unwrap();
-        let [Stmt::Expr(tail)] = &lifted.stmts()[..] else {
+        let [Stmt::Expr(tail)] = lifted.stmts() else {
             panic!("expected one expr stmt");
         };
         let Expr::FnCall(callee, _) = &tail.node else {
@@ -1252,7 +1325,7 @@ mod tests {
         assert_eq!(lifted.params[1].0, "rnd_Random_int");
         assert_eq!(lifted.params[1].1, "Fn(BranchPath, Int, Int, Int) -> Int");
         // Body: oracle call using the prepended names.
-        let [Stmt::Expr(tail)] = &lifted.body.stmts()[..] else {
+        let [Stmt::Expr(tail)] = lifted.body.stmts() else {
             panic!("expected single expr stmt");
         };
         let args = assert_looks_like_oracle_call(&tail.node, "rnd_Random_int", 4);
@@ -1297,7 +1370,7 @@ mod tests {
         assert_eq!(lifted.params.len(), 2);
         assert_eq!(lifted.params[0].0, "path");
         assert_eq!(lifted.params[1].0, "rnd_Random_int");
-        let [Stmt::Expr(tail)] = &lifted.body.stmts()[..] else {
+        let [Stmt::Expr(tail)] = lifted.body.stmts() else {
             panic!("expected single expr stmt");
         };
         let Expr::Tuple(elems) = &tail.node else {
@@ -1334,7 +1407,7 @@ mod tests {
         assert_eq!(lifted.params.len(), 4);
         assert_eq!(lifted.params[0].0, "path");
         assert_eq!(lifted.params[1].0, "rnd_Http_get");
-        let [Stmt::Expr(tail)] = &lifted.body.stmts()[..] else {
+        let [Stmt::Expr(tail)] = lifted.body.stmts() else {
             panic!("expected single expr stmt");
         };
         // Outer match: on branch 0's lifted oracle call. Err arm

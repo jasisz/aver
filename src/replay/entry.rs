@@ -285,7 +285,8 @@ mod tests {
         assert_eq!(args.len(), 4);
         assert!(matches!(args[0], Value::Str(ref s) if s == "Alice"));
         assert!(matches!(args[1], Value::Int(42)));
-        assert!(matches!(args[2], Value::Float(f) if (f - 3.14).abs() < 1e-9));
+        let expected = 314.0 / 100.0;
+        assert!(matches!(args[2], Value::Float(f) if (f - expected).abs() < 1e-9));
         assert!(matches!(args[3], Value::Bool(true)));
     }
 

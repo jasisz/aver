@@ -1,0 +1,59 @@
+module OracleIndependentProducts
+    intent =
+        "Demonstrates Oracle verification for independent products."
+        "Covers bare ! branch traces and ?! Result unwrapping with leftmost-error priority."
+
+fn counterStub(path: BranchPath, n: Int, min: Int, max: Int) -> Int
+    ? "Return the per-branch oracle counter."
+    n
+
+verify counterStub
+    counterStub(BranchPath.Root, 0, 1, 6) => 0
+
+fn pairSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Int) -> (Int, Int)
+    ? "Expected pair for a two-branch independent product."
+    (rnd(BranchPath.child(path, 0), 0, 1, 6), rnd(BranchPath.child(path, 1), 0, 7, 12))
+
+fn pickPair() -> (Int, Int)
+    ? "Draw two values in one independent product."
+    ! [Random.int]
+    (Random.int(1, 6), Random.int(7, 12))!
+
+verify pickPair law branchPathLaw
+    given rnd: Random.int = [counterStub]
+    pickPair() => pairSpec(BranchPath.Root, rnd)
+
+verify pickPair trace
+    given rnd: Random.int = [counterStub]
+    pickPair().trace.group(0).length() => 2
+    pickPair().trace.group(0).branch(0).event(0) => Option.Some(EffectEvent(method = "Random.int", args = [1, 6], path = "0"))
+    pickPair().trace.group(0).branch(1).event(0) => Option.Some(EffectEvent(method = "Random.int", args = [7, 12], path = "1"))
+
+fn fakeReadByFile(path: BranchPath, n: Int, file: String) -> Result<String, String>
+    ? "Return deterministic file content or deterministic file errors."
+    match file
+        "left.txt" -> Result.Ok("left")
+        "right.txt" -> Result.Ok("right")
+        "fail-left.txt" -> Result.Err("left failed")
+        "fail-right.txt" -> Result.Err("right failed")
+        _ -> Result.Err("unknown file")
+
+verify fakeReadByFile
+    fakeReadByFile(BranchPath.Root, 0, "left.txt") => Result.Ok("left")
+    fakeReadByFile(BranchPath.Root, 0, "fail-left.txt") => Result.Err("left failed")
+
+fn readPair(leftFile: String, rightFile: String) -> Result<(String, String), String>
+    ? "Read two files with ?!, unwrapping both Ok values or propagating the leftmost Err."
+    ! [Disk.readText]
+    pair = (Disk.readText(leftFile), Disk.readText(rightFile))?!
+    match pair
+        (left, right) -> Result.Ok((left, right))
+
+verify readPair trace
+    given read: Disk.readText = [fakeReadByFile]
+    readPair("left.txt", "right.txt").result => Result.Ok(("left", "right"))
+    readPair("left.txt", "right.txt").trace.group(0).length() => 2
+    readPair("left.txt", "right.txt").trace.group(0).branch(0).event(0) => Option.Some(EffectEvent(method = "Disk.readText", args = ["left.txt"], path = "0"))
+    readPair("left.txt", "right.txt").trace.group(0).branch(1).event(0) => Option.Some(EffectEvent(method = "Disk.readText", args = ["right.txt"], path = "1"))
+    readPair("fail-left.txt", "fail-right.txt").result => Result.Err("left failed")
+    readPair("fail-left.txt", "fail-right.txt").trace.group(0).length() => 2
