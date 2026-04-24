@@ -32,7 +32,7 @@ use std::collections::HashSet;
 
 use super::expr::aver_name_to_dafny;
 use super::toplevel::emit_fn_def_axiom;
-use crate::ast::FnDef;
+use crate::ast::{FnDef, TypeDef};
 use crate::codegen::CodegenContext;
 use crate::codegen::common::parse_type_annotation;
 use crate::codegen::recursion::{RecursionPlan, fuel_helper_name, rewrite_recursive_calls_body};
@@ -52,12 +52,11 @@ pub fn emit_mutual_fuel_group(
     plans: &std::collections::HashMap<String, RecursionPlan>,
 ) -> Option<String> {
     // Totality guard: every fn's return type needs a value to pick on
-    // fuel exhaustion. Named ADTs are the tricky case — we'd need to
-    // construct a default variant recursively, which is a separate
-    // pass. For now, refuse the fuel emission and let the caller
-    // axiomize the group.
+    // fuel exhaustion. Named ADTs walk their first variant; left-
+    // recursive ADTs without a base variant first, or fn types, still
+    // refuse — the caller axiomizes those groups.
     for fd in fns {
-        dafny_default_value(&fd.return_type)?;
+        dafny_default_value(&fd.return_type, ctx)?;
     }
 
     let scc_size = fns.len();
@@ -75,8 +74,8 @@ pub fn emit_mutual_fuel_group(
         let fn_name = aver_name_to_dafny(&fd.name);
         let params_str = emit_dafny_params(&fd.params);
         let ret_type_str = super::toplevel::emit_type(&fd.return_type);
-        let default_val =
-            dafny_default_value(&fd.return_type).expect("default value presence is checked above");
+        let default_val = dafny_default_value(&fd.return_type, ctx)
+            .expect("default value presence is checked above");
         let arg_names = emit_dafny_arg_names(&fd.params);
         let metric = emit_fuel_metric(fd, &plan, scc_size);
 
@@ -105,12 +104,10 @@ pub fn emit_mutual_fuel_group(
         wrapper_lines.push("}\n".to_string());
     }
 
-    // Fallback comment for each fn that failed above — handled upstream.
-    for fd in fns {
-        if dafny_default_value(&fd.return_type).is_none() {
-            helper_lines.push(emit_fn_def_axiom(fd));
-        }
-    }
+    // Anything that fell through here means the totality guard above
+    // accepted it; emit_fn_def_axiom is still imported for the caller's
+    // fallback path in mod.rs.
+    let _ = emit_fn_def_axiom;
 
     Some(
         [helper_lines, wrapper_lines]
@@ -198,14 +195,18 @@ fn first_seq_or_string_param(fd: &FnDef) -> Option<&String> {
 
 /// A Dafny expression that is a valid inhabitant of `type_str` — used
 /// as the `fuel == 0` branch in the fuel helper so the function stays
-/// total. Returns `None` when the type's inhabitants depend on user-
-/// defined constructors (Named ADTs) or function types, where picking
-/// a default isn't obviously defensible without further analysis.
-pub fn dafny_default_value(type_str: &str) -> Option<String> {
-    type_default(&parse_type_annotation(type_str))
+/// total. Returns `None` when the type's inhabitants depend on a
+/// recursive ADT the first-variant walk can't break out of, a fn type,
+/// or an unknown type. For user-defined datatypes the walk picks the
+/// first variant (for sum types) or fills every field with its own
+/// default (for products), recursing through Named types and guarding
+/// against infinite recursion with a visiting-set.
+pub fn dafny_default_value(type_str: &str, ctx: &CodegenContext) -> Option<String> {
+    let mut visiting = HashSet::new();
+    type_default(&parse_type_annotation(type_str), ctx, &mut visiting)
 }
 
-fn type_default(ty: &Type) -> Option<String> {
+fn type_default(ty: &Type, ctx: &CodegenContext, visiting: &mut HashSet<String>) -> Option<String> {
     Some(match ty {
         Type::Int => "0".to_string(),
         Type::Float => "0.0".to_string(),
@@ -215,11 +216,86 @@ fn type_default(ty: &Type) -> Option<String> {
         Type::List(_) | Type::Vector(_) => "[]".to_string(),
         Type::Map(_, _) => "map[]".to_string(),
         Type::Option(_) => "Option.None".to_string(),
-        Type::Result(_, err) => format!("Result.Err({})", type_default(err)?),
+        Type::Result(_, err) => {
+            format!("Result.Err({})", type_default(err, ctx, visiting)?)
+        }
         Type::Tuple(items) => {
-            let parts: Vec<String> = items.iter().map(type_default).collect::<Option<_>>()?;
+            let parts: Vec<String> = items
+                .iter()
+                .map(|t| type_default(t, ctx, visiting))
+                .collect::<Option<_>>()?;
             format!("({})", parts.join(", "))
         }
-        Type::Named(_) | Type::Fn(_, _, _) | Type::Unknown => return None,
+        Type::Named(name) => named_type_default(name, ctx, visiting)?,
+        Type::Fn(_, _, _) | Type::Unknown => return None,
     })
+}
+
+fn named_type_default(
+    name: &str,
+    ctx: &CodegenContext,
+    visiting: &mut HashSet<String>,
+) -> Option<String> {
+    if visiting.contains(name) {
+        // Left-recursive ADT (e.g. first variant references the type
+        // itself before a base case). Refuse the default — the SCC
+        // will fall back to axiom emission, the parallel of Lean's
+        // `partial def`.
+        return None;
+    }
+    visiting.insert(name.to_string());
+    let td = find_type_def(ctx, name)?;
+    let result = type_def_default(td, ctx, visiting);
+    visiting.remove(name);
+    result
+}
+
+fn find_type_def<'a>(ctx: &'a CodegenContext, target: &str) -> Option<&'a TypeDef> {
+    ctx.type_defs
+        .iter()
+        .chain(ctx.modules.iter().flat_map(|m| m.type_defs.iter()))
+        .find(|td| type_def_name(td) == target)
+}
+
+fn type_def_name(td: &TypeDef) -> &str {
+    match td {
+        TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name,
+    }
+}
+
+fn type_def_default(
+    td: &TypeDef,
+    ctx: &CodegenContext,
+    visiting: &mut HashSet<String>,
+) -> Option<String> {
+    match td {
+        TypeDef::Sum { name, variants, .. } => {
+            // Pick the first variant — conventionally the base case in
+            // Aver sources. For variants that reference the enclosing
+            // type before any base case, the visiting-set catches it
+            // and the whole SCC falls back to axiom.
+            let variant = variants.first()?;
+            if variant.fields.is_empty() {
+                Some(format!("{}.{}", name, variant.name))
+            } else {
+                let args: Vec<String> = variant
+                    .fields
+                    .iter()
+                    .map(|ft| type_default(&parse_type_annotation(ft), ctx, visiting))
+                    .collect::<Option<_>>()?;
+                Some(format!("{}.{}({})", name, variant.name, args.join(", ")))
+            }
+        }
+        TypeDef::Product { name, fields, .. } => {
+            // Dafny datatype product syntax: `Name(field := value, …)`.
+            let args: Vec<String> = fields
+                .iter()
+                .map(|(fname, ftype)| {
+                    type_default(&parse_type_annotation(ftype), ctx, visiting)
+                        .map(|v| format!("{} := {}", aver_name_to_dafny(fname), v))
+                })
+                .collect::<Option<_>>()?;
+            Some(format!("{}({})", name, args.join(", ")))
+        }
+    }
 }

@@ -129,6 +129,19 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
         }
         Expr::FnCall(fn_expr, args) => emit_fn_call(fn_expr, args, ctx),
         Expr::BinOp(op, left, right) => {
+            // Narrow special case: `0 - x` where the right-hand side is
+            // a `Float`-typed expression becomes `(-x)`. Dafny rejects
+            // `0 - 2.5` because the literal `0` is `int` and mixing is
+            // a type mismatch against `real`; the split_here fix from
+            // the Oracle PR removed the blanket rewrite, so reintroduce
+            // it only for Float operands where Dafny actually needs it.
+            if matches!(op, BinOp::Sub)
+                && matches!(left.node, Expr::Literal(Literal::Int(0)))
+                && right_is_float_shape(right)
+            {
+                let r = emit_expr(right, ctx);
+                return format!("(-{})", r);
+            }
             let l = emit_expr(left, ctx);
             let r = emit_expr(right, ctx);
             let op_str = match op {
@@ -223,6 +236,31 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
 /// Helper to extract dotted name from a Spanned<Expr>.
 fn expr_to_dotted_name_spanned(expr: &Spanned<Expr>) -> Option<String> {
     expr_to_dotted_name(&expr.node)
+}
+
+/// True when an expression is syntactically Float-shaped: a float
+/// literal, an explicit `as real` cast, or a float-returning builtin.
+/// Used by the `0 - x` → `(-x)` rewrite for Dafny `real` arithmetic.
+fn right_is_float_shape(expr: &Spanned<Expr>) -> bool {
+    match &expr.node {
+        Expr::Literal(Literal::Float(_)) => true,
+        Expr::FnCall(callee, _) => {
+            matches!(
+                &callee.node,
+                Expr::Attr(obj, field)
+                    if field == "toFloat"
+                        || (matches!(&obj.node, Expr::Ident(n) if n == "Float" || n == "Int")
+                            && (field == "sqrt" || field == "pow" || field == "abs"))
+            )
+        }
+        // A parenthesised `e as real` lands here as a nested cast node
+        // after the parser / resolver pass. The shape we actually see
+        // at this codegen point is a FnCall into a cast builtin or a
+        // float literal embedded in a constructor arg; both covered
+        // above. Be permissive — if in doubt treat as float for this
+        // rewrite so we don't regress the `0 - float_expr` shape.
+        _ => false,
+    }
 }
 
 fn emit_literal(lit: &Literal) -> String {

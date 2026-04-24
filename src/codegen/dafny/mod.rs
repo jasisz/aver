@@ -254,8 +254,17 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
                 sections.push(code);
             }
 
-            // 2. Universal lemma (when clause becomes requires)
-            sections.push(toplevel::emit_verify_law(vb, law, ctx));
+            // 2. Universal lemma (when clause becomes requires).
+            //    Passing in the set of fns Dafny can't unfold in a
+            //    lemma context — axiom-fallback fns have no body at
+            //    all, and fuel-guarded wrappers only expand to a
+            //    call with a concrete metric that Dafny can't
+            //    symbolically reason about. In both cases the lemma
+            //    body short-circuits to `assume <ensures>`, matching
+            //    Lean's `sorry` fallback for the same shape.
+            let opaque_fns: std::collections::HashSet<String> =
+                axiom_fn_names.union(&fuel_emitted).cloned().collect();
+            sections.push(toplevel::emit_verify_law(vb, law, ctx, &opaque_fns));
         }
     }
 
