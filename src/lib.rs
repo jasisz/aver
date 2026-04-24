@@ -1,6 +1,7 @@
 extern crate self as aver;
 
 pub mod ast;
+pub mod ast_rewrite;
 pub mod call_graph;
 pub mod checker;
 pub mod codegen;

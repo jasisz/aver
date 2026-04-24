@@ -1,9 +1,8 @@
 use std::collections::BTreeSet;
 
 use super::super::expr::aver_name_to_lean;
-use crate::ast::{
-    BinOp, Expr, FnBody, FnDef, Literal, Spanned, Stmt, TailCallData, VerifyBlock, VerifyLaw,
-};
+use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, Spanned, Stmt, VerifyBlock, VerifyLaw};
+use crate::ast_rewrite::rewrite_idents_scoped;
 use crate::codegen::CodegenContext;
 
 pub(super) fn body_terminal_expr(body: &FnBody) -> Option<&Spanned<Expr>> {
@@ -13,120 +12,16 @@ pub(super) fn body_terminal_expr(body: &FnBody) -> Option<&Spanned<Expr>> {
     }
 }
 
+/// Substitute bare `Ident`/`Resolved` occurrences with mapped
+/// expressions. Match-arm pattern bindings shadow the outer
+/// substitution via [`rewrite_idents_scoped`] — the same traversal the
+/// parser uses, so the law-auto sample expansion and verify-trace
+/// local bindings handle shadowing identically.
 pub(super) fn substitute_expr(
     expr: &Spanned<Expr>,
     bindings: &std::collections::HashMap<&str, &Spanned<Expr>>,
 ) -> Spanned<Expr> {
-    let line = expr.line;
-    let new_node = match &expr.node {
-        Expr::Literal(lit) => Expr::Literal(lit.clone()),
-        Expr::Ident(name) | Expr::Resolved { name, .. } => {
-            return bindings.get(name.as_str()).map_or_else(
-                || Spanned::new(expr.node.clone(), line),
-                |bound| (*bound).clone(),
-            );
-        }
-        Expr::Attr(base, field) => {
-            Expr::Attr(Box::new(substitute_expr(base, bindings)), field.clone())
-        }
-        Expr::FnCall(callee, args) => Expr::FnCall(
-            Box::new(substitute_expr(callee, bindings)),
-            args.iter()
-                .map(|arg| substitute_expr(arg, bindings))
-                .collect(),
-        ),
-        Expr::BinOp(op, left, right) => Expr::BinOp(
-            *op,
-            Box::new(substitute_expr(left, bindings)),
-            Box::new(substitute_expr(right, bindings)),
-        ),
-        Expr::Match { subject, arms } => Expr::Match {
-            subject: Box::new(substitute_expr(subject, bindings)),
-            arms: arms
-                .iter()
-                .map(|arm| crate::ast::MatchArm {
-                    pattern: arm.pattern.clone(),
-                    body: Box::new(substitute_expr(&arm.body, bindings)),
-                })
-                .collect(),
-        },
-        Expr::Constructor(name, inner) => Expr::Constructor(
-            name.clone(),
-            inner
-                .as_ref()
-                .map(|expr| Box::new(substitute_expr(expr, bindings))),
-        ),
-        Expr::ErrorProp(inner) => Expr::ErrorProp(Box::new(substitute_expr(inner, bindings))),
-        Expr::InterpolatedStr(parts) => Expr::InterpolatedStr(
-            parts
-                .iter()
-                .map(|part| match part {
-                    crate::ast::StrPart::Literal(s) => crate::ast::StrPart::Literal(s.clone()),
-                    crate::ast::StrPart::Parsed(expr) => {
-                        crate::ast::StrPart::Parsed(Box::new(substitute_expr(expr, bindings)))
-                    }
-                })
-                .collect(),
-        ),
-        Expr::List(items) => Expr::List(
-            items
-                .iter()
-                .map(|item| substitute_expr(item, bindings))
-                .collect(),
-        ),
-        Expr::Tuple(items) => Expr::Tuple(
-            items
-                .iter()
-                .map(|item| substitute_expr(item, bindings))
-                .collect(),
-        ),
-        Expr::IndependentProduct(items, flag) => Expr::IndependentProduct(
-            items
-                .iter()
-                .map(|item| substitute_expr(item, bindings))
-                .collect(),
-            *flag,
-        ),
-        Expr::MapLiteral(entries) => Expr::MapLiteral(
-            entries
-                .iter()
-                .map(|(key, value)| {
-                    (
-                        substitute_expr(key, bindings),
-                        substitute_expr(value, bindings),
-                    )
-                })
-                .collect(),
-        ),
-        Expr::RecordCreate { type_name, fields } => Expr::RecordCreate {
-            type_name: type_name.clone(),
-            fields: fields
-                .iter()
-                .map(|(name, value)| (name.clone(), substitute_expr(value, bindings)))
-                .collect(),
-        },
-        Expr::RecordUpdate {
-            type_name,
-            base,
-            updates,
-        } => Expr::RecordUpdate {
-            type_name: type_name.clone(),
-            base: Box::new(substitute_expr(base, bindings)),
-            updates: updates
-                .iter()
-                .map(|(name, value)| (name.clone(), substitute_expr(value, bindings)))
-                .collect(),
-        },
-        Expr::TailCall(call) => Expr::TailCall(Box::new(TailCallData::new(
-            call.target.clone(),
-            call.args
-                .iter()
-                .map(|arg| substitute_expr(arg, bindings))
-                .collect(),
-        ))),
-        // Resolved is handled in the Ident | Resolved arm above (early return)
-    };
-    Spanned::new(new_node, line)
+    rewrite_idents_scoped(expr, |name| bindings.get(name).map(|v| (*v).clone()))
 }
 
 pub(super) fn law_simp_defs(
