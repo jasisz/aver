@@ -164,7 +164,7 @@ pub(crate) fn collect_declared_effects(ctx: &CodegenContext) -> DeclaredEffects 
 /// path-as-module-name convention forces this for Lean — Dafny doesn't
 /// strictly need it but the same basename keeps the two backends
 /// aligned (no more `playground.dfy` vs `OracleTrace.lean`).
-pub(crate) fn entry_basename(ctx: &CodegenContext) -> String {
+pub fn entry_basename(ctx: &CodegenContext) -> String {
     ctx.items
         .iter()
         .find_map(|item| match item {

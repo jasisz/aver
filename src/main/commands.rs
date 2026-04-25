@@ -3557,7 +3557,11 @@ fn cmd_proof_dafny(file: &str, output_dir: &str, ctx: &codegen::CodegenContext) 
     use aver::codegen::dafny as dafny_codegen;
 
     let output = dafny_codegen::transpile(ctx);
-    let build_hint = format!("cd {} && dafny verify {}.dfy", output_dir, ctx.project_name);
+    let build_hint = format!(
+        "cd {} && dafny verify {}.dfy",
+        output_dir,
+        aver::codegen::common::entry_basename(ctx)
+    );
     write_codegen_output(file, output_dir, "Dafny", &build_hint, &output);
 }
 
