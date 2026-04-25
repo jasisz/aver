@@ -193,7 +193,7 @@ fn proof_export_builds_pure_question_bang_when_backends_are_available() {
         let verify = Command::new("dafny")
             .current_dir(&dafny_dir)
             .arg("verify")
-            .arg("program.dfy")
+            .arg("Prog.dfy")
             .output()
             .expect("expected `dafny verify` to run");
         assert!(
