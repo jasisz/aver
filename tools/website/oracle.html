@@ -260,7 +260,7 @@
     <section class="oracle-section">
         <h2>What conventional Z3 verification doesn't reach</h2>
         <p>Most contract-verification systems built on Z3 prove pre/post conditions on pure functions, then stop at the effect boundary. Random results are unconstrained for the solver — there are no useful axioms about them beyond range. Contracts that depend on specific random values fall to runtime checking, not static rejection. Same shape for HTTP responses, disk reads, time, network: the SMT model has no symbolic handle on them, so the proof obligation evaporates.</p>
-        <p>Aver's Oracle export does the extra step. Classified effects &mdash; <code>Random</code>, <code>Http</code>, <code>Disk</code> read-side, <code>Tcp.send</code>, <code>Time.now</code>, <code>Console.readLine</code>, non-modal <code>Terminal</code>, <code>Args</code>, <code>Env</code> read-side &mdash; are lifted into the proof artifact as explicit function parameters with structured call addressing (<code>BranchPath</code> + per-branch counter). The exported theorem quantifies over them. Universal claims about effectful code become provable, and rejectable when they're false. The two-rolls paradox is what that gap looks like, in 30 lines.</p>
+        <p>Aver's Oracle export does the extra step. Classified effects &mdash; <code>Random</code>, <code>Http</code>, <code>Disk</code> read-side, <code>Tcp.send</code>, <code>Time.now</code>, <code>Console.readLine</code>, non-modal <code>Terminal</code>, <code>Args</code>, <code>Env</code> read-side &mdash; are lifted into the proof artifact as explicit function parameters with structured call addressing (<code>BranchPath</code> + per-branch counter). The exported theorem quantifies over them. Universal claims about effectful code become provable, and rejectable when they're false. The randomness paradox is what that gap looks like, in 30 lines.</p>
     </section>
 
     <section class="oracle-section">
@@ -270,23 +270,23 @@ git clone https://github.com/jasisz/aver
 cd aver
 
 <span class="hl-comment"># 1. Sample passes</span>
-aver verify examples/formal/two_rolls_paradox.av
+aver verify examples/formal/randomness_paradox.av
 <span class="hl-green">  ✓ 3/3 cases passed</span>
 
 <span class="hl-comment"># 2. Lean rejects</span>
-aver proof examples/formal/two_rolls_paradox.av --backend lean --output out
+aver proof examples/formal/randomness_paradox.av --backend lean --output out
 <span class="hl-muted">cd out && lake build</span>
 <span class="hl-red">  ✖ unsolved goals</span>
 
 <span class="hl-comment"># 3. Dafny rejects</span>
-aver proof examples/formal/two_rolls_paradox.av --backend dafny --output out
+aver proof examples/formal/randomness_paradox.av --backend dafny --output out
 <span class="hl-muted">dafny verify out/*.dfy</span>
 <span class="hl-red">  ✖ postcondition could not be proved</span></pre>
     </section>
 
     <footer class="footer-spacer">
         <p>
-            <a href="https://github.com/jasisz/aver/blob/main/examples/formal/two_rolls_paradox.av">examples/formal/two_rolls_paradox.av</a>
+            <a href="https://github.com/jasisz/aver/blob/main/examples/formal/randomness_paradox.av">examples/formal/randomness_paradox.av</a>
             &nbsp;&middot;&nbsp;
             <a href="https://github.com/jasisz/aver/blob/main/docs/oracle.md">docs/oracle.md</a>
             &nbsp;&middot;&nbsp;
