@@ -2,13 +2,14 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## Unreleased
+## 0.11.1 (2026-04-25)
 
 ### Added
-- **`Terminal.size` joins the snapshot oracle set.** Previously rejected by `aver proof` as modal terminal state, now classified as a Snapshot effect with oracle signature `() -> Terminal.Size` — the same shape as `Args.get` and `Env.get`. The non-modal half of `Terminal` is in scope for proof export; only `enableRawMode`, `disableRawMode`, `setColor`, and `resetColor` remain unclassified. Lean and Dafny preludes ship `Terminal_Size` as a built-in record so generated proofs reference it without per-program declarations. Canonical example: `examples/formal/terminal_size_snapshot.av`.
+- **`Terminal.size` is now a classified Snapshot effect.** Oracle signature `() -> Terminal.Size`, same shape as `Args.get` / `Env.get`. Example: `examples/formal/terminal_size_snapshot.av`.
 
 ### Changed
-- **Generated proof files are now significantly smaller.** Lean and Dafny preludes used to ship every helper block (BranchPath constructors, AverList recursion, String/Char utilities, AverDigits numeric parsing, Char/Byte hex helpers, AverMeasure, AverMap, ProofFuel) regardless of whether the program used them. The trust-assumption header (~120 lines documenting the Oracle effect model) was emitted even on pure-math files that lifted no effects. Two shared decision modules now drive emission across all backends: `codegen::builtin_records` for HTTP/Tcp/Terminal record shapes and `codegen::builtin_helpers` for prelude helper blocks. Adding a new built-in record or helper means touching one declarative table; Lean, Dafny, and the WASM compiler all consume it. Measured impact on canonical examples: pure-math files (`calculator.av`, `spec_laws.av`) shrank ~85% in Lean and ~70-80% in Dafny; effectful examples with Oracle lifting (`randomness_paradox.av`, `oracle_trace.av`) shrank 25-40%. WASM emitter and field-type inference now pull built-in record layouts from the same shared table, removing hand-coded `Terminal.Size` special cases.
+- **Generated proof files shrank dramatically.** Lean and Dafny preludes are now conditional on actual usage (built-in records, namespace helper blocks, trust-assumption header). Calculator and pure-laws examples shrank ~85-90% in Lean and ~70-90% in Dafny; effectful examples 25-40%.
+- **Shared `codegen::builtin_records` and `codegen::builtin_helpers`.** Single source of truth for built-in record shapes (Header, HttpResponse, HttpRequest, Tcp.Connection, Terminal.Size) and prelude helper blocks; Lean, Dafny, and WASM all consume the same table.
 
 ## 0.11.0 "Oracle" (2026-04-24)
 

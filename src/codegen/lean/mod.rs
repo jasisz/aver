@@ -1286,33 +1286,6 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
     parts.join("\n\n")
 }
 
-fn needs_builtin_named_type(body: &str, type_name: &str) -> bool {
-    references_named_type(body, type_name) && !declares_named_type(body, type_name)
-}
-
-fn references_named_type(body: &str, type_name: &str) -> bool {
-    let mut token = String::new();
-    for ch in body.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' {
-            token.push(ch);
-            continue;
-        }
-        if token == type_name {
-            return true;
-        }
-        token.clear();
-    }
-    token == type_name
-}
-
-fn declares_named_type(body: &str, type_name: &str) -> bool {
-    let structure_decl = format!("structure {} where", type_name);
-    let inductive_decl = format!("inductive {} where", type_name);
-    body.lines()
-        .map(str::trim_start)
-        .any(|line| line == structure_decl || line == inductive_decl)
-}
-
 fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
     let mut parts = vec![AVER_MAP_PRELUDE_BASE.to_string()];
 

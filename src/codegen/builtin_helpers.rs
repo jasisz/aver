@@ -38,7 +38,8 @@ pub struct BuiltinHelper {
     pub body_tokens: &'static [&'static str],
     /// Other helpers this one depends on; emitted before this one.
     pub depends_on: &'static [&'static str],
-    /// Human-readable note for maintainers.
+    /// Maintainer-facing description; not consumed by codegen.
+    #[allow(dead_code)]
     pub doc: &'static str,
 }
 
@@ -241,7 +242,9 @@ pub fn needed_helpers(body: &str, force_all: bool) -> Vec<&'static BuiltinHelper
     selected
 }
 
-/// Convenience: just the keys, in emission order.
+/// Convenience: just the keys, in emission order. Currently used
+/// only by tests; backends call `needed_helpers` directly.
+#[allow(dead_code)]
 pub fn needed_keys(body: &str, force_all: bool) -> Vec<&'static str> {
     needed_helpers(body, force_all)
         .iter()

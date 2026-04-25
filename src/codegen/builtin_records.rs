@@ -22,6 +22,7 @@ pub struct BuiltinField {
 
 /// Element types we currently need for built-in records. Add variants
 /// as more shapes show up.
+#[allow(dead_code)] // Bool/Float reserved for future record shapes; fields used by rendering paths.
 pub enum BuiltinType {
     Int,
     Str,
@@ -57,6 +58,9 @@ pub struct BuiltinRecord {
     /// can be emitted before this one — e.g. `Header` before
     /// `HttpResponse`).
     pub depends_on: &'static [&'static str],
+    /// Maintainer-facing description; not consumed by codegen, but
+    /// kept as documentation alongside the table.
+    #[allow(dead_code)]
     pub doc: &'static str,
 }
 
@@ -66,8 +70,10 @@ impl BuiltinRecord {
         self.aver_name.replace('.', "_")
     }
 
-    /// Position of a field in the declaration order. Used by the WASM
-    /// backend for record field offset tables.
+    /// Position of a field in the declaration order. Currently
+    /// unused (WASM iterates `fields` directly), but kept available
+    /// for future per-key WASM/Dafny offset lookups.
+    #[allow(dead_code)]
     pub fn field_index(&self, name: &str) -> Option<u32> {
         self.fields
             .iter()
