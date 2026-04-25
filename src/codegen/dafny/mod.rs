@@ -164,10 +164,10 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
         },
     );
 
-    let mut module_files: Vec<(String, String)> = Vec::new();
+    let mut tree = crate::codegen::multi_file::ModuleTree::default();
     let mut union_body = String::new();
 
-    // ---- Per-module files ----
+    // ---- Per-module files (collected into the shared module tree) ----
     for module in &ctx.modules {
         let mut sections: Vec<String> = Vec::new();
         for td in &module.type_defs {
@@ -239,7 +239,8 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             dafny_module_name(&module.prefix),
             module_inner
         );
-        module_files.push((module.prefix.clone(), content));
+        let segments: Vec<String> = module.prefix.split('.').map(String::from).collect();
+        tree.insert(&segments, content);
     }
 
     // ---- Entry sections ----
@@ -356,15 +357,37 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     // ---- common.dfy ----
     let common_content = build_common_dafny(&union_body);
 
-    crate::codegen::multi_file::package_multi_file_output(
-        "dfy",
-        "common",
-        common_content,
-        &ctx.project_name,
-        entry_content,
-        module_files,
-        Vec::new(),
-    )
+    tree.insert(&[], entry_content);
+
+    let renderer = DafnyModuleRenderer {
+        project_name: &ctx.project_name,
+    };
+    let mut files = crate::codegen::multi_file::walk_module_tree(&tree, &renderer);
+    files.push(("common.dfy".to_string(), common_content));
+    ProjectOutput { files }
+}
+
+struct DafnyModuleRenderer<'a> {
+    project_name: &'a str,
+}
+
+impl<'a> crate::codegen::multi_file::ModuleTreeRenderer for DafnyModuleRenderer<'a> {
+    fn render_node(
+        &self,
+        path_segments: &[String],
+        content: Option<&str>,
+        _child_names: &[String],
+    ) -> Vec<(String, String)> {
+        let Some(body) = content else {
+            return Vec::new();
+        };
+        let basename = if path_segments.is_empty() {
+            self.project_name.to_string()
+        } else {
+            path_segments.join("/")
+        };
+        vec![(format!("{}.dfy", basename), body.to_string())]
+    }
 }
 
 fn build_common_dafny(union_body: &str) -> String {

@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::ast::FnDef;
-use crate::codegen::{CodegenContext, ProjectOutput};
+use crate::codegen::CodegenContext;
 
 /// A node in the module tree. `content` carries the rendered body for
 /// modules that exist in the source (and the entry root, when a backend
@@ -155,31 +155,4 @@ where
     process(entry_pure, String::new(), &mut by_scope);
 
     PerScopeSections { by_scope }
-}
-
-/// Package the four file groups (common + entry + per-module + extras)
-/// into a `ProjectOutput`. `module_files` is `Vec<(prefix, content)>`;
-/// the path is derived from the prefix via `module_prefix_to_filename`.
-pub(crate) fn package_multi_file_output(
-    file_ext: &str,
-    common_basename: &str,
-    common_content: String,
-    entry_basename: &str,
-    entry_content: String,
-    module_files: Vec<(String, String)>,
-    extra_files: Vec<(String, String)>,
-) -> ProjectOutput {
-    let mut files: Vec<(String, String)> = Vec::new();
-    for (prefix, content) in module_files {
-        let path = format!(
-            "{}.{}",
-            crate::codegen::common::module_prefix_to_filename(&prefix),
-            file_ext
-        );
-        files.push((path, content));
-    }
-    files.push((format!("{}.{}", entry_basename, file_ext), entry_content));
-    files.push((format!("{}.{}", common_basename, file_ext), common_content));
-    files.extend(extra_files);
-    ProjectOutput { files }
 }
