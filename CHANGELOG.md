@@ -6,6 +6,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Added
 - **`Terminal.size` is now a classified Snapshot effect.** Oracle signature `() -> Terminal.Size`, same shape as `Args.get` / `Env.get`. Example: `examples/formal/terminal_size_snapshot.av`.
+- **Playground download menu:** the ⬇ button now expands into Aver source / WASM binary / Rust project / Lean 4 proof / Dafny proof. The current source is fed through the in-browser compiler and the chosen format ships as `.av` / `.wasm` / `.zip`.
 
 ### Changed
 - **Generated proof files shrank dramatically.** Lean and Dafny preludes are now conditional on actual usage (built-in records, namespace helper blocks, trust-assumption header). Calculator and pure-laws examples shrank ~85-90% in Lean and ~70-90% in Dafny; effectful examples 25-40%.

@@ -1822,6 +1822,111 @@ function downloadProject() {
 
 document.querySelector("[data-download]")?.addEventListener("click", downloadProject);
 
+// ── Download dropdown: aver / wasm / rust / lean / dafny ────────────
+//
+// Toggle button next to ⬇ Download opens a small menu; each entry
+// runs the relevant compile/proof binding through the in-browser
+// Aver WASM and packages the result into a single file or .zip.
+const downloadMenu = document.querySelector("[data-download-menu]");
+const downloadToggle = document.querySelector("[data-download-toggle]");
+if (downloadToggle && downloadMenu) {
+    downloadToggle.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        downloadMenu.toggleAttribute("hidden");
+    });
+    document.addEventListener("click", () => downloadMenu.setAttribute("hidden", ""));
+    downloadMenu.addEventListener("click", (ev) => ev.stopPropagation());
+}
+
+function projectName() {
+    return state.activeGame
+        || (state.activeFile ? state.activeFile.replace(/\.av$/, "") : "playground");
+}
+
+function downloadFilesAsZip(filesObj, baseName) {
+    const entries = Object.entries(filesObj).map(([name, data]) => ({ name, data }));
+    if (entries.length === 0) {
+        setStatus("Nothing to download.", "info");
+        return;
+    }
+    const blob = buildZip(entries);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${baseName}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 100);
+    setStatus(`Downloaded ${baseName}.zip (${entries.length} files).`, "success");
+}
+
+async function downloadAs(format) {
+    if (downloadMenu) downloadMenu.setAttribute("hidden", "");
+    const name = projectName();
+
+    if (format === "aver") {
+        downloadProject();
+        return;
+    }
+
+    if (format === "wasm") {
+        try {
+            const comp = await loadCompiler();
+            const entry = pickEntryFile();
+            const source = entry ? state.files.get(entry) : getActiveSource();
+            if (!source || !source.trim()) { setStatus("Nothing to compile.", "info"); return; }
+            setStatus("Compiling to WASM…", "info");
+            const wasmBytes = state.files.size > 1 && entry
+                ? comp.aver_compile_project(JSON.stringify(Object.fromEntries(state.files)), entry)
+                : comp.aver_compile(source);
+            const blob = new Blob([wasmBytes], { type: "application/wasm" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `${name}.wasm`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 100);
+            setStatus(`Downloaded ${name}.wasm.`, "success");
+        } catch (err) {
+            setStatus(`WASM compile failed: ${err.message || err}`, "error");
+        }
+        return;
+    }
+
+    const fnName = {
+        rust:  { single: "aver_compile_rust", project: "aver_compile_rust_project" },
+        lean:  { single: "aver_proof_lean",   project: "aver_proof_lean_project" },
+        dafny: { single: "aver_proof_dafny",  project: "aver_proof_dafny_project" },
+    }[format];
+    const label = { rust: "Rust", lean: "Lean", dafny: "Dafny" }[format];
+    if (!fnName) return;
+
+    try {
+        const comp = await loadCompiler();
+        const entry = pickEntryFile();
+        const source = entry ? state.files.get(entry) : getActiveSource();
+        if (!source || !source.trim()) { setStatus("Nothing to compile.", "info"); return; }
+        setStatus(`Generating ${label} project…`, "info");
+        // Multi-file projects (depends [Types, Map, …]) must go through
+        // the project binding so dependencies resolve against the
+        // virtual fs instead of erroring on "Unknown identifier".
+        const json = state.files.size > 1 && entry
+            ? comp[fnName.project](JSON.stringify(Object.fromEntries(state.files)), entry)
+            : comp[fnName.single](source);
+        const filesObj = JSON.parse(json);
+        downloadFilesAsZip(filesObj, `${name}-${format}`);
+    } catch (err) {
+        setStatus(`${label} export failed: ${err.message || err}`, "error");
+    }
+}
+
+document.querySelectorAll("[data-download-format]").forEach((btn) => {
+    btn.addEventListener("click", () => downloadAs(btn.dataset.downloadFormat));
+});
+
 // ── Record ↔ Replay (one button, two modes) ─────────────────────────
 // First press records main() through the VM-in-wasm and caches the
 // .replay.json. Every press after that replays the program and checks

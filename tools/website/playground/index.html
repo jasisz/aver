@@ -95,8 +95,19 @@
                 </optgroup>
             </select>
             <span class="toolbar-spacer"></span>
-            <button type="button" data-download class="btn-download"
-                title="Download the current project. Single file → .av, multi-file → .zip. Everything editable offline: `aver compile main.av --target wasm`.">⬇ Download</button>
+            <div class="download-group" data-download-group>
+                <button type="button" data-download class="btn-download"
+                    title="Download the current Aver source. Single file → .av, multi-file → .zip.">⬇ Download</button>
+                <button type="button" data-download-toggle class="btn-download-toggle"
+                    title="Choose export format: Aver source, WASM binary, Rust project, Lean 4 proof, or Dafny proof.">▾</button>
+                <ul class="download-menu" data-download-menu hidden>
+                    <li><button type="button" data-download-format="aver">Aver source <span class="dl-ext">.av</span></button></li>
+                    <li><button type="button" data-download-format="wasm">WASM binary <span class="dl-ext">.wasm</span></button></li>
+                    <li><button type="button" data-download-format="rust">Rust project <span class="dl-ext">.zip</span></button></li>
+                    <li><button type="button" data-download-format="lean">Lean 4 proof <span class="dl-ext">.zip</span></button></li>
+                    <li><button type="button" data-download-format="dafny">Dafny proof <span class="dl-ext">.zip</span></button></li>
+                </ul>
+            </div>
             <div class="dropzone-inline" data-dropzone data-drag="false">
                 <!-- accepts .wasm (run it), .av (single tab), folder (many tabs).
                      webkitdirectory is toggled from JS when the user drags. -->

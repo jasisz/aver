@@ -73,6 +73,121 @@ pub fn compile_project_to_wasm(
     codegen::wasm::emit_wasm(&ctx)
 }
 
+// ── Proof export & Rust compile entry points ────────────────────────
+//
+// Single-file source → backend project files (path → content map).
+// JS receives `{ "<path>": "<content>", ... }` as JSON and zips it
+// in the browser via `buildZip`. Same as what `aver proof --backend
+// {lean,dafny}` and `aver compile --target rust` produce on disk.
+
+#[cfg(feature = "runtime")]
+fn build_ctx(source: &str) -> Result<codegen::CodegenContext, String> {
+    let mut items = parse_source(source)?;
+    tco::transform_program(&mut items);
+    let tc_result = run_type_check_full(&items, None);
+    if !tc_result.errors.is_empty() {
+        return Err(format_tc_errors(&tc_result.errors));
+    }
+    Ok(codegen::build_context(
+        items,
+        &tc_result,
+        HashSet::new(),
+        "playground".to_string(),
+        vec![],
+    ))
+}
+
+/// Single-file Aver source → Lean 4 project files.
+#[cfg(feature = "runtime")]
+pub fn proof_lean_files(source: &str) -> Result<HashMap<String, String>, String> {
+    let ctx = build_ctx(source)?;
+    let output = codegen::lean::transpile(&ctx);
+    Ok(output.files.into_iter().collect())
+}
+
+/// Single-file Aver source → Dafny project files.
+#[cfg(feature = "runtime")]
+pub fn proof_dafny_files(source: &str) -> Result<HashMap<String, String>, String> {
+    let ctx = build_ctx(source)?;
+    let output = codegen::dafny::transpile(&ctx);
+    Ok(output.files.into_iter().collect())
+}
+
+/// Single-file Aver source → Rust/Cargo project files.
+#[cfg(feature = "runtime")]
+pub fn compile_rust_files(source: &str) -> Result<HashMap<String, String>, String> {
+    let mut ctx = build_ctx(source)?;
+    let output = codegen::rust::transpile(&mut ctx);
+    Ok(output.files.into_iter().collect())
+}
+
+/// Build a `CodegenContext` for a multi-file project — same semantics
+/// as `compile_project_to_wasm`, refactored so the proof and Rust
+/// exports can reuse it.
+#[cfg(feature = "runtime")]
+fn build_project_ctx(
+    files: &HashMap<String, String>,
+    entry: &str,
+) -> Result<codegen::CodegenContext, String> {
+    let entry_source = files
+        .get(entry)
+        .ok_or_else(|| format!("Entry '{}' not present in file map", entry))?;
+    let mut entry_items = parse_source(entry_source)?;
+    tco::transform_program(&mut entry_items);
+
+    let root_depends = module_depends(&entry_items);
+    let loaded = load_module_tree_from_map(&root_depends, files)?;
+
+    let tc_result = run_type_check_with_loaded(&entry_items, &loaded);
+    if !tc_result.errors.is_empty() {
+        return Err(format_tc_errors(&tc_result.errors));
+    }
+
+    resolver::resolve_program(&mut entry_items);
+    let modules: Vec<codegen::ModuleInfo> = loaded.into_iter().map(loaded_to_module_info).collect();
+
+    Ok(codegen::build_context(
+        entry_items,
+        &tc_result,
+        HashSet::new(),
+        "playground".to_string(),
+        modules,
+    ))
+}
+
+/// Multi-file Aver project → Lean 4 project files.
+#[cfg(feature = "runtime")]
+pub fn proof_lean_files_project(
+    files: &HashMap<String, String>,
+    entry: &str,
+) -> Result<HashMap<String, String>, String> {
+    let ctx = build_project_ctx(files, entry)?;
+    let output = codegen::lean::transpile(&ctx);
+    Ok(output.files.into_iter().collect())
+}
+
+/// Multi-file Aver project → Dafny project files.
+#[cfg(feature = "runtime")]
+pub fn proof_dafny_files_project(
+    files: &HashMap<String, String>,
+    entry: &str,
+) -> Result<HashMap<String, String>, String> {
+    let ctx = build_project_ctx(files, entry)?;
+    let output = codegen::dafny::transpile(&ctx);
+    Ok(output.files.into_iter().collect())
+}
+
+/// Multi-file Aver project → Rust/Cargo project files.
+#[cfg(feature = "runtime")]
+pub fn compile_rust_files_project(
+    files: &HashMap<String, String>,
+    entry: &str,
+) -> Result<HashMap<String, String>, String> {
+    let mut ctx = build_project_ctx(files, entry)?;
+    let output = codegen::rust::transpile(&mut ctx);
+    Ok(output.files.into_iter().collect())
+}
+
 fn module_depends(items: &[TopLevel]) -> Vec<String> {
     items
         .iter()
@@ -672,6 +787,58 @@ mod bindgen {
         super::format_source(source)
     }
 
+    /// Aver source → Lean 4 project files (JSON `{path: content}`).
+    /// JS zips the result in the browser. Maps to `aver proof
+    /// --backend lean` on the CLI.
+    #[wasm_bindgen]
+    pub fn aver_proof_lean(source: &str) -> Result<String, JsError> {
+        let files = super::proof_lean_files(source).map_err(|e| JsError::new(&e))?;
+        serde_json::to_string(&files).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Aver source → Dafny project files (JSON `{path: content}`).
+    /// Maps to `aver proof --backend dafny` on the CLI.
+    #[wasm_bindgen]
+    pub fn aver_proof_dafny(source: &str) -> Result<String, JsError> {
+        let files = super::proof_dafny_files(source).map_err(|e| JsError::new(&e))?;
+        serde_json::to_string(&files).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Aver source → Rust/Cargo project files (JSON `{path: content}`).
+    /// Maps to `aver compile --target rust` on the CLI.
+    #[wasm_bindgen]
+    pub fn aver_compile_rust(source: &str) -> Result<String, JsError> {
+        let files = super::compile_rust_files(source).map_err(|e| JsError::new(&e))?;
+        serde_json::to_string(&files).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Multi-file Aver project → Lean 4 project files (JSON).
+    #[wasm_bindgen]
+    pub fn aver_proof_lean_project(files_json: &str, entry: &str) -> Result<String, JsError> {
+        let files: std::collections::HashMap<String, String> =
+            serde_json::from_str(files_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let out = super::proof_lean_files_project(&files, entry).map_err(|e| JsError::new(&e))?;
+        serde_json::to_string(&out).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Multi-file Aver project → Dafny project files (JSON).
+    #[wasm_bindgen]
+    pub fn aver_proof_dafny_project(files_json: &str, entry: &str) -> Result<String, JsError> {
+        let files: std::collections::HashMap<String, String> =
+            serde_json::from_str(files_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let out = super::proof_dafny_files_project(&files, entry).map_err(|e| JsError::new(&e))?;
+        serde_json::to_string(&out).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Multi-file Aver project → Rust/Cargo project files (JSON).
+    #[wasm_bindgen]
+    pub fn aver_compile_rust_project(files_json: &str, entry: &str) -> Result<String, JsError> {
+        let files: std::collections::HashMap<String, String> =
+            serde_json::from_str(files_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let out = super::compile_rust_files_project(&files, entry).map_err(|e| JsError::new(&e))?;
+        serde_json::to_string(&out).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     // ── Project (multi-file) analysis bindings ─────────────────────
     // Same semantics as the single-file siblings above, but deps
     // referenced via `depends [...]` resolve against the supplied
@@ -787,6 +954,79 @@ mod tests {
             files.insert(format!("{}.av", f), read(&format!("{}/{}.av", root, f)));
         }
         files
+    }
+
+    #[test]
+    fn proof_lean_emits_files_for_simple_source() {
+        let src = "module M\n    intent = \"t\"\n\n\
+                   fn add(a: Int, b: Int) -> Int\n    a + b\n\n\
+                   verify add\n    add(2, 3) => 5\n";
+        let files = proof_lean_files(src).expect("lean files");
+        assert!(!files.is_empty(), "Lean export should produce files");
+        let lean_main = files
+            .iter()
+            .find(|(k, _)| k.ends_with(".lean") && !k.starts_with("lakefile"))
+            .expect("at least one .lean file");
+        assert!(
+            lean_main.1.contains("def add") || lean_main.1.contains("add ("),
+            "generated Lean should mention `add`: {}",
+            lean_main.1.lines().take(5).collect::<Vec<_>>().join("\n")
+        );
+    }
+
+    #[test]
+    fn proof_dafny_emits_files_for_simple_source() {
+        let src = "module M\n    intent = \"t\"\n\n\
+                   fn add(a: Int, b: Int) -> Int\n    a + b\n\n\
+                   verify add\n    add(2, 3) => 5\n";
+        let files = proof_dafny_files(src).expect("dafny files");
+        assert!(!files.is_empty(), "Dafny export should produce files");
+        assert!(
+            files.iter().any(|(k, _)| k.ends_with(".dfy")),
+            "should include a .dfy"
+        );
+    }
+
+    #[test]
+    fn compile_rust_emits_cargo_project() {
+        let src = "module M\n    intent = \"t\"\n\n\
+                   fn add(a: Int, b: Int) -> Int\n    a + b\n\n\
+                   fn main() -> Unit\n    ! [Console.print]\n    Console.print(\"ok\")\n";
+        let files = compile_rust_files(src).expect("rust files");
+        assert!(
+            files.contains_key("Cargo.toml"),
+            "Rust export should include Cargo.toml"
+        );
+        assert!(
+            files.iter().any(|(k, _)| k.starts_with("src/") && k.ends_with(".rs")),
+            "Rust export should include at least one src/*.rs file"
+        );
+    }
+
+    #[test]
+    fn proof_lean_project_handles_multi_file() {
+        let files = load_rogue_files();
+        let out = proof_lean_files_project(&files, "main.av")
+            .expect("multi-file Lean export should succeed");
+        assert!(!out.is_empty(), "Lean project export should produce files");
+        assert!(out.iter().any(|(k, _)| k.ends_with(".lean")));
+    }
+
+    #[test]
+    fn proof_dafny_project_handles_multi_file() {
+        let files = load_rogue_files();
+        let out = proof_dafny_files_project(&files, "main.av")
+            .expect("multi-file Dafny export should succeed");
+        assert!(!out.is_empty(), "Dafny project export should produce files");
+        assert!(out.iter().any(|(k, _)| k.ends_with(".dfy")));
+    }
+
+    #[test]
+    fn compile_rust_project_handles_multi_file() {
+        let files = load_rogue_files();
+        let out = compile_rust_files_project(&files, "main.av")
+            .expect("multi-file Rust export should succeed");
+        assert!(out.contains_key("Cargo.toml"));
     }
 
     #[test]

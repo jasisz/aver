@@ -547,6 +547,75 @@ body {
     color: var(--text) !important;
     border-color: var(--accent) !important;
 }
+
+/* Download dropdown — small caret button glued to the main download
+ * button, plus a popup list below with the four export formats. */
+.download-group {
+    position: relative;
+    display: inline-flex;
+}
+.download-group .btn-download {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+    margin-right: 0;
+}
+.btn-download-toggle {
+    color: var(--muted);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-left: none;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
+    padding: 0.32rem 0.5rem;
+    font-size: 0.78rem;
+    cursor: pointer;
+    line-height: 1;
+}
+.btn-download-toggle:hover {
+    color: var(--text);
+    border-color: var(--accent);
+}
+.download-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 20;
+    list-style: none;
+    margin: 0;
+    padding: 0.25rem 0;
+    background: var(--surface, #1e293b);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+    min-width: 180px;
+}
+.download-menu li { margin: 0; }
+.download-menu button {
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font: inherit;
+    padding: 0.4rem 0.7rem;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.6rem;
+}
+.download-menu button:hover {
+    background: rgba(148, 163, 184, 0.08);
+    color: var(--accent);
+}
+.download-menu .dl-ext {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--muted);
+}
+.download-menu button:hover .dl-ext { color: var(--accent); }
 .btn-subtle { opacity: 0.6; }
 .btn-subtle:hover { opacity: 1; }
 .toolbar-spacer { flex: 1; }
