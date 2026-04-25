@@ -247,7 +247,7 @@ def publish(new_versions: dict[str, str], old_versions: dict[str, str], dry_run:
 
 
 def git_commit_tag_push(version: str, dry_run: bool) -> None:
-    msg = f"Release {version} \u2014 pre-compiled self-host, release script"
+    msg = f"Release {version}"
     tag = f"v{version}"
 
     if dry_run:

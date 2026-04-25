@@ -1065,7 +1065,19 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
     // any of the trust claims, so emitting the block would just add noise.
     let mut parts = vec![LEAN_PRELUDE_HEADER.to_string()];
     if include_all_helpers || crate::codegen::builtin_records::needs_trust_header(body) {
-        parts.push(crate::types::checker::proof_trust_header::generate_commented("-- "));
+        // This branch is only reachable from #[cfg(test)] code that
+        // calls `generate_prelude` without a real ctx; pass an empty
+        // declared_effects set so the test fixture exercises the
+        // "no effects" rendering. Production calls go through the
+        // ctx-aware path in `transpile_unified`.
+        let empty = crate::codegen::common::DeclaredEffects {
+            bare_namespaces: std::collections::HashSet::new(),
+            methods: std::collections::HashSet::new(),
+        };
+        let has_ip = body.contains("BranchPath");
+        parts.push(
+            crate::types::checker::proof_trust_header::generate_commented("-- ", &empty, has_ip),
+        );
     }
     // Built-in record types — shared decision module decides which ones.
     for record in crate::codegen::builtin_records::needed_records(body, include_all_helpers) {
@@ -1369,8 +1381,16 @@ fn transpile_unified(
     if !entry_opens.is_empty() {
         entry_parts.push(entry_opens.join("\n"));
     }
-    if crate::codegen::builtin_records::needs_trust_header(&union_body) {
-        entry_parts.push(crate::types::checker::proof_trust_header::generate_commented("-- "));
+    let declared = crate::codegen::common::collect_declared_effects(ctx);
+    let has_ip = union_body.contains("BranchPath");
+    let has_classified =
+        crate::types::checker::effect_classification::classifications_for_proof_subset()
+            .iter()
+            .any(|c| declared.includes(c.method));
+    if has_ip || has_classified {
+        entry_parts.push(
+            crate::types::checker::proof_trust_header::generate_commented("-- ", &declared, has_ip),
+        );
     }
     entry_parts.push(entry_body);
     let entry_content = entry_parts.join("\n\n");

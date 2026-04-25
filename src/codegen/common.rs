@@ -94,6 +94,69 @@ pub(crate) fn module_prefix_to_filename(prefix: &str) -> String {
     prefix.replace('.', "/")
 }
 
+/// Effects declared in fn signatures, preserving the distinction
+/// between namespace-level and method-level declarations.
+///
+/// - `bare_namespaces`: e.g. `! [Console]` ⇒ permits every classified
+///   `Console.*` method.
+/// - `methods`: e.g. `! [Console.print]` ⇒ permits only that one
+///   specific method (not the whole namespace).
+///
+/// Aver source allows both forms — we keep them separate so a single
+/// `! [Random.int]` does not pull every `Random.*` method into the
+/// trust header (or any other consumer that maps method-by-method).
+pub(crate) struct DeclaredEffects {
+    pub bare_namespaces: HashSet<String>,
+    pub methods: HashSet<String>,
+}
+
+impl DeclaredEffects {
+    /// True if `c_method` (e.g. `"Random.int"`) is declared either as
+    /// an explicit method or via its bare namespace (`"Random"`).
+    pub fn includes(&self, c_method: &str) -> bool {
+        if self.methods.contains(c_method) {
+            return true;
+        }
+        if let Some((ns, _)) = c_method.split_once('.') {
+            return self.bare_namespaces.contains(ns);
+        }
+        false
+    }
+}
+
+/// Collect declared effects across `ctx` (entry + dependent modules).
+/// Single source of truth for the proof-side trust header and the
+/// runtime-dependency detector in the Rust backend.
+pub(crate) fn collect_declared_effects(ctx: &CodegenContext) -> DeclaredEffects {
+    let mut bare_namespaces: HashSet<String> = HashSet::new();
+    let mut methods: HashSet<String> = HashSet::new();
+    let mut record = |effect: &str| {
+        if effect.contains('.') {
+            methods.insert(effect.to_string());
+        } else {
+            bare_namespaces.insert(effect.to_string());
+        }
+    };
+    for item in &ctx.items {
+        if let TopLevel::FnDef(fd) = item {
+            for eff in &fd.effects {
+                record(&eff.node);
+            }
+        }
+    }
+    for module in &ctx.modules {
+        for fd in &module.fn_defs {
+            for eff in &fd.effects {
+                record(&eff.node);
+            }
+        }
+    }
+    DeclaredEffects {
+        bare_namespaces,
+        methods,
+    }
+}
+
 /// Map every fn name in the program to its owning scope: the dependent
 /// module's prefix, or `""` for the entry. Used by the multi-file Lean
 /// and Dafny paths to route SCC components and fuel groups to the right

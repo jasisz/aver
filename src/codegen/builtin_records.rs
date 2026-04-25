@@ -275,6 +275,8 @@ pub fn needs_in_body(body: &str, backend_name: &str) -> bool {
 /// is the strongest signal — Oracle's lifting always introduces it
 /// as an explicit parameter on lifted functions and as a constant
 /// in their theorem statements.
+#[cfg(test)]
+#[allow(dead_code)]
 pub fn needs_trust_header(body: &str) -> bool {
     needs_in_body(body, "BranchPath")
 }

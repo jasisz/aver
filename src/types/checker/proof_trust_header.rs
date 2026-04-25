@@ -19,86 +19,50 @@
 
 use super::effect_classification::EffectDimension;
 
-/// Build the trust-assumption header text. Caller prefixes each line with
-/// the target language's comment marker.
-pub fn generate() -> String {
+/// Build the trust-assumption header text scoped to:
+/// - `declared_effects`: the set of effect references actually declared
+///   in the program's fn signatures (collected by
+///   [`crate::codegen::common::collect_declared_effects`]). Aver allows
+///   both namespace-level (`! [Console]`) and method-level
+///   (`! [Console.print]`) declarations — both forms are honoured: a
+///   namespace declaration pulls in every classified `Console.*`
+///   method, an explicit method pulls in just that one.
+/// - `has_independent_products`: whether the source uses `!` / `?!`
+///   anywhere; without that the schedule-invariance argument and
+///   three-lemma block are irrelevant and skipped entirely.
+pub(crate) fn generate_for_effects(
+    declared_effects: &crate::codegen::common::DeclaredEffects,
+    has_independent_products: bool,
+) -> String {
+    use super::effect_classification::classifications_for_proof_subset;
+
+    let used: Vec<&'static super::effect_classification::EffectClassification> =
+        classifications_for_proof_subset()
+            .iter()
+            .filter(|c| declared_effects.includes(c.method))
+            .collect();
+
     let mut out = String::new();
     out.push_str("Trusted model assumptions for this Aver proof export:\n");
     out.push('\n');
-    out.push_str("Effects and dimensions:\n");
-    push_effect_row(&mut out, "Args.get", "snapshot: stable return within run");
-    push_effect_row(&mut out, "Env.get", "snapshot: stable return within run");
-    push_effect_row(
-        &mut out,
-        "Console.readLine",
-        "generative: oracle; interactive line input",
-    );
-    push_effect_row(
-        &mut out,
-        "Random.int, Random.float",
-        "generative: oracle indexed by (BranchPath, Int, args...); fresh per call",
-    );
-    push_effect_row(
-        &mut out,
-        "Time.now, Time.unixMs",
-        "generative: oracle; non-deterministic between runs",
-    );
-    push_effect_row(
-        &mut out,
-        "Disk.readText, Disk.exists, Disk.listDir",
-        "generative: oracle; live FS, value may change between calls",
-    );
-    push_effect_row(
-        &mut out,
-        "Http.get, Http.head, Http.delete,",
-        "generative + output: request emitted to trace, response from oracle",
-    );
-    push_effect_row(
-        &mut out,
-        "Http.post, Http.put, Http.patch",
-        "generative + output: `(url, body, contentType, headers)` in request",
-    );
-    push_effect_row(
-        &mut out,
-        "Disk.writeText, Disk.appendText,",
-        "generative + output: operation in trace, result from oracle",
-    );
-    push_effect_row(
-        &mut out,
-        "Disk.delete, Disk.deleteDir, Disk.makeDir",
-        "generative + output: no persistent FS-state claim",
-    );
-    push_effect_row(
-        &mut out,
-        "Tcp.send, Tcp.ping",
-        "generative + output: one-shot request/response only",
-    );
-    push_effect_row(
-        &mut out,
-        "Console.print, Console.error, Console.warn",
-        "output: per-branch trace segment appended per call",
-    );
-    push_effect_row(
-        &mut out,
-        "Time.sleep",
-        "output: duration emitted to trace; no scheduling/timing claim",
-    );
-    push_effect_row(
-        &mut out,
-        "Terminal.clear, Terminal.moveTo, Terminal.print",
-        "output: terminal drawing emitted to trace",
-    );
-    push_effect_row(
-        &mut out,
-        "Terminal.hideCursor, Terminal.showCursor, Terminal.flush",
-        "output: terminal drawing/control emitted to trace",
-    );
-    push_effect_row(
-        &mut out,
-        "Terminal.readKey",
-        "generative: oracle; key input",
-    );
-    out.push('\n');
+
+    if !used.is_empty() {
+        out.push_str("Effects and dimensions:\n");
+        for c in &used {
+            push_effect_row(&mut out, c.method, dimension_blurb(c.dimension));
+        }
+        out.push('\n');
+    }
+
+    if !has_independent_products {
+        // Pure / sequential-only proof — concurrency claims and the
+        // schedule-invariance argument don't apply, skip entirely.
+        out.push_str("Backend independence:\n");
+        out.push_str("  Exported proofs hold uniformly across Aver backends (VM, compiled\n");
+        out.push_str("  Rust, WASM). No concurrency primitives (`!` / `?!`) are used in\n");
+        out.push_str("  this artifact, so schedule-invariance claims do not apply here.\n");
+        return out;
+    }
 
     out.push_str("Concurrency and schedule invariance:\n");
     out.push_str("  ! (independent parallel): proof holds for any legal schedule,\n");
@@ -206,11 +170,15 @@ pub fn generate() -> String {
 }
 
 /// Emit the trust header with each line prefixed by the given comment
-/// marker (typically `"// "` for Dafny/Lean 4). An empty / whitespace-only
-/// input line is still commented so the block reads as one consistent
-/// comment region in the generated file.
-pub fn generate_commented(prefix: &str) -> String {
-    generate()
+/// marker (typically `"// "` for Dafny / `"-- "` for Lean 4). An empty /
+/// whitespace-only input line is still commented so the block reads as
+/// one consistent comment region in the generated file.
+pub(crate) fn generate_commented(
+    prefix: &str,
+    declared_effects: &crate::codegen::common::DeclaredEffects,
+    has_independent_products: bool,
+) -> String {
+    generate_for_effects(declared_effects, has_independent_products)
         .lines()
         .map(|line| {
             if line.is_empty() {
@@ -221,6 +189,15 @@ pub fn generate_commented(prefix: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn dimension_blurb(dim: EffectDimension) -> &'static str {
+    match dim {
+        EffectDimension::Snapshot => "snapshot reader",
+        EffectDimension::Generative => "branch-indexed generative oracle",
+        EffectDimension::Output => "trace output only",
+        EffectDimension::GenerativeOutput => "trace output + branch-indexed oracle",
+    }
 }
 
 /// Sanity helper — for each classified effect, assert the header names
@@ -240,17 +217,32 @@ fn push_effect_row(out: &mut String, names: &str, dimension_note: &str) {
 /// compile and force the header author to decide how to render it.
 #[allow(dead_code)]
 fn _dimension_coverage(dim: EffectDimension) -> &'static str {
-    match dim {
-        EffectDimension::Snapshot => "snapshot",
-        EffectDimension::Generative => "generative",
-        EffectDimension::Output => "output",
-        EffectDimension::GenerativeOutput => "generative + output",
-    }
+    dimension_blurb(dim)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
+    fn generate() -> String {
+        let declared = crate::codegen::common::DeclaredEffects {
+            bare_namespaces: HashSet::new(),
+            methods: super::super::effect_classification::classifications_for_proof_subset()
+                .iter()
+                .map(|c| c.method)
+                .map(str::to_string)
+                .collect(),
+        };
+        generate_for_effects(&declared, true)
+    }
+
+    fn args_get_effects() -> crate::codegen::common::DeclaredEffects {
+        crate::codegen::common::DeclaredEffects {
+            bare_namespaces: HashSet::new(),
+            methods: ["Args.get".to_string()].into_iter().collect(),
+        }
+    }
 
     #[test]
     fn header_mentions_all_classified_effect_namespaces() {
@@ -355,7 +347,7 @@ mod tests {
 
     #[test]
     fn generate_commented_prefixes_every_line_including_blanks() {
-        let out = generate_commented("// ");
+        let out = generate_commented("// ", &args_get_effects(), true);
         for (i, line) in out.lines().enumerate() {
             assert!(
                 line.starts_with("//"),
@@ -368,7 +360,7 @@ mod tests {
 
     #[test]
     fn generate_commented_respects_trimmed_prefix_for_empty_lines() {
-        let out = generate_commented("// ");
+        let out = generate_commented("// ", &args_get_effects(), true);
         // An empty line in the source renders as `//` without trailing
         // whitespace (rustfmt convention for comment blocks).
         assert!(out.lines().any(|l| l == "//"));
@@ -377,6 +369,9 @@ mod tests {
     #[test]
     fn generate_is_deterministic() {
         assert_eq!(generate(), generate());
-        assert_eq!(generate_commented("// "), generate_commented("// "));
+        assert_eq!(
+            generate_commented("// ", &args_get_effects(), true),
+            generate_commented("// ", &args_get_effects(), true)
+        );
     }
 }

@@ -353,8 +353,16 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
         opens.push(format!("import opened {}", dafny_module_name(&m.prefix)));
     }
     entry_parts.push(opens.join("\n"));
-    if crate::codegen::builtin_records::needs_trust_header(&union_body) {
-        entry_parts.push(crate::types::checker::proof_trust_header::generate_commented("// "));
+    let declared = crate::codegen::common::collect_declared_effects(ctx);
+    let has_ip = union_body.contains("BranchPath");
+    let has_classified =
+        crate::types::checker::effect_classification::classifications_for_proof_subset()
+            .iter()
+            .any(|c| declared.includes(c.method));
+    if has_ip || has_classified {
+        entry_parts.push(
+            crate::types::checker::proof_trust_header::generate_commented("// ", &declared, has_ip),
+        );
     }
     entry_parts.push(entry_body);
     let entry_content = entry_parts.join("\n\n");

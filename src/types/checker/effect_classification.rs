@@ -352,6 +352,12 @@ pub fn classify(method: &str) -> Option<&'static EffectClassification> {
     CLASSIFICATIONS.iter().find(|c| c.method == method)
 }
 
+/// Closed Oracle v1 proof-subset table, exposed for proof metadata
+/// generation. Callers must treat the returned slice as read-only metadata.
+pub fn classifications_for_proof_subset() -> &'static [EffectClassification] {
+    CLASSIFICATIONS
+}
+
 /// Return `true` if the given name refers to an effect covered by Oracle v1.
 pub fn is_classified(method: &str) -> bool {
     classify(method).is_some()
