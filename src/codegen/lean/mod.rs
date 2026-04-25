@@ -101,6 +101,11 @@ example : AverFloat.floor 3.7 = 3                                := by native_de
 example : AverFloat.floor (-3.7) = -4                            := by native_decide
 example : AverFloat.ceil  3.2 = 4                                := by native_decide
 example : AverFloat.ceil  (-3.2) = -3                            := by native_decide
+-- Rounding mode (half-away-from-zero, matching Rust's `f64::round`):
+example : AverFloat.round 0.5 = 1                                := by native_decide
+example : AverFloat.round (-0.5) = -1                            := by native_decide
+example : AverFloat.round 2.5 = 3                                := by native_decide
+example : AverFloat.round (-2.5) = -3                            := by native_decide
 end AverFloat"#;
 
 const LEAN_PRELUDE_FLOAT_DEC_EQ: &str = r#"private unsafe def Float.unsafeDecEq (a b : Float) : Decidable (a = b) :=
