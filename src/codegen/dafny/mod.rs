@@ -457,12 +457,19 @@ fn transpile_multi_file(ctx: &CodegenContext) -> ProjectOutput {
         union_body.push_str(&body);
         union_body.push('\n');
 
+        // Submodules (`Models.User` → `Models/User.dfy`) live inside
+        // subdirectories, so `include` paths need `../` prefixes to reach
+        // the project root where `common.dfy` and sibling-module files
+        // live. Depth = number of segments minus one.
+        let depth = module.prefix.chars().filter(|c| *c == '.').count();
+        let up = "../".repeat(depth);
         let depends_includes: String = module
             .depends
             .iter()
             .map(|d| {
                 format!(
-                    "include \"{}.dfy\"",
+                    "include \"{}{}.dfy\"",
+                    up,
                     crate::codegen::common::module_prefix_to_filename(d)
                 )
             })
@@ -476,8 +483,8 @@ fn transpile_multi_file(ctx: &CodegenContext) -> ProjectOutput {
             .join("\n");
 
         let mut header = format!(
-            "// Aver-generated module: {}\ninclude \"common.dfy\"\n",
-            module.prefix
+            "// Aver-generated module: {}\ninclude \"{}common.dfy\"\n",
+            module.prefix, up
         );
         if !depends_includes.is_empty() {
             header.push_str(&depends_includes);
