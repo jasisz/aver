@@ -1,11 +1,9 @@
 /// Aver → Dafny transpiler.
 ///
-/// Generates a single `.dfy` file with:
-/// - `datatype` declarations for sum types
-/// - `datatype` wrappers for product types (records)
-/// - `function` definitions for pure functions
-/// - `lemma` stubs for verify-law blocks
-/// - `assert` examples for verify-cases blocks
+/// Single-module sources emit one `.dfy` file. Multi-module sources emit
+/// one file per dependent module wrapped in `module M { ... }`, plus a
+/// shared `common.dfy` with built-in records/helpers, plus the entry
+/// file holding the trust header, top-level items, and verify lemmas.
 mod expr;
 mod fuel;
 mod toplevel;
@@ -51,6 +49,13 @@ fn expr_uses_error_prop(expr: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
 
 /// Transpile an Aver program into a Dafny project.
 pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
+    if ctx.modules.is_empty() {
+        return transpile_single_file(ctx);
+    }
+    transpile_multi_file(ctx)
+}
+
+fn transpile_single_file(ctx: &CodegenContext) -> ProjectOutput {
     // Oracle v1: emit the trust-assumption header block at the top of the
     // file so any downstream reviewer sees exactly which claims the proof
     // relies on. The generator lives in the checker layer and is shared
@@ -339,6 +344,313 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
     ProjectOutput {
         files: vec![(file_name, content)],
     }
+}
+
+/// Multi-file Dafny output: one file per dependent module wrapped in
+/// `module M { ... }`, a shared `common.dfy` carrying built-in records
+/// and helpers under `module AverCommon`, and an entry `<project>.dfy`
+/// with the trust header, top-level items, and verify lemmas.
+fn transpile_multi_file(ctx: &CodegenContext) -> ProjectOutput {
+    use crate::codegen::recursion::RecursionPlan;
+    use std::collections::{HashMap, HashSet};
+
+    let (recursion_plans, _recursion_issues) = crate::codegen::recursion::analyze_plans(ctx);
+    let mutual_planned: HashSet<String> = recursion_plans
+        .iter()
+        .filter(|(_, plan)| {
+            matches!(
+                plan,
+                RecursionPlan::MutualIntCountdown
+                    | RecursionPlan::MutualStringPosAdvance { .. }
+                    | RecursionPlan::MutualSizeOfRanked { .. }
+            )
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+
+    let fn_scope = crate::codegen::common::fn_owning_scope(ctx);
+
+    let mutual_fns_all: Vec<&FnDef> = ctx
+        .items
+        .iter()
+        .filter_map(|it| if let TopLevel::FnDef(fd) = it { Some(fd) } else { None })
+        .chain(ctx.modules.iter().flat_map(|m| m.fn_defs.iter()))
+        .filter(|fd| mutual_planned.contains(&fd.name))
+        .collect();
+    let mutual_components =
+        crate::call_graph::ordered_fn_components(&mutual_fns_all, &ctx.module_prefixes);
+
+    let mut fuel_per_scope: HashMap<String, Vec<String>> = HashMap::new();
+    let mut fuel_emitted: HashSet<String> = HashSet::new();
+    let mut axiom_fn_names: HashSet<String> = HashSet::new();
+
+    for component in &mutual_components {
+        let scc_fns: Vec<&FnDef> = component.iter().map(|fd| &**fd).collect();
+        let scope = scc_fns
+            .first()
+            .and_then(|fd| fn_scope.get(&fd.name))
+            .cloned()
+            .unwrap_or_default();
+        match fuel::emit_mutual_fuel_group(&scc_fns, ctx, &recursion_plans) {
+            Some(code) => {
+                fuel_per_scope.entry(scope).or_default().push(code);
+                for fd in &scc_fns {
+                    fuel_emitted.insert(fd.name.clone());
+                }
+            }
+            None => {
+                for fd in &scc_fns {
+                    axiom_fn_names.insert(fd.name.clone());
+                }
+            }
+        }
+    }
+
+    let needs_axiom_for_error_prop = |fd: &FnDef| -> bool {
+        body_uses_error_prop(&fd.body)
+            && crate::types::checker::effect_lifting::lower_pure_question_bang_fn(fd)
+                .ok()
+                .flatten()
+                .is_none()
+    };
+    let emit_pure_or_axiom = |fd: &FnDef| -> String {
+        if needs_axiom_for_error_prop(fd) {
+            toplevel::emit_fn_def_axiom(fd)
+        } else if fuel_emitted.contains(&fd.name) {
+            String::new()
+        } else if axiom_fn_names.contains(&fd.name) {
+            toplevel::emit_fn_def_axiom(fd)
+        } else {
+            toplevel::emit_fn_def(fd, ctx)
+        }
+    };
+
+    let mut files: Vec<(String, String)> = Vec::new();
+    let mut union_body = String::new();
+
+    // ---- Per-module files ----
+    for module in &ctx.modules {
+        let mut sections: Vec<String> = Vec::new();
+        for td in &module.type_defs {
+            if let Some(code) = toplevel::emit_type_def(td) {
+                sections.push(code);
+            }
+        }
+        for fd in &module.fn_defs {
+            if fd.effects.is_empty() {
+                let code = emit_pure_or_axiom(fd);
+                if !code.is_empty() {
+                    sections.push(code);
+                }
+            }
+        }
+        if let Some(fuel) = fuel_per_scope.get(&module.prefix) {
+            sections.extend(fuel.clone());
+        }
+        let body = sections.join("\n");
+        union_body.push_str(&body);
+        union_body.push('\n');
+
+        let depends_includes: String = module
+            .depends
+            .iter()
+            .map(|d| format!("include \"{}.dfy\"", crate::codegen::common::module_prefix_to_filename(d)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let depends_imports: String = module
+            .depends
+            .iter()
+            .map(|d| format!("  import opened {}", d))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let mut header = format!(
+            "// Aver-generated module: {}\ninclude \"common.dfy\"\n",
+            module.prefix
+        );
+        if !depends_includes.is_empty() {
+            header.push_str(&depends_includes);
+            header.push('\n');
+        }
+
+        let mut module_inner = String::from("  import opened AverCommon\n");
+        if !depends_imports.is_empty() {
+            module_inner.push_str(&depends_imports);
+            module_inner.push('\n');
+        }
+        module_inner.push('\n');
+        for line in body.lines() {
+            if line.is_empty() {
+                module_inner.push('\n');
+            } else {
+                module_inner.push_str("  ");
+                module_inner.push_str(line);
+                module_inner.push('\n');
+            }
+        }
+
+        let content = format!(
+            "{}\nmodule {} {{\n{}}}\n",
+            header, module.prefix, module_inner
+        );
+        files.push((
+            format!("{}.dfy", crate::codegen::common::module_prefix_to_filename(&module.prefix)),
+            content,
+        ));
+    }
+
+    // ---- Entry sections ----
+    let mut entry_sections: Vec<String> = Vec::new();
+    for td in &ctx.type_defs {
+        if let Some(code) = toplevel::emit_type_def(td) {
+            entry_sections.push(code);
+        }
+    }
+    for item in &ctx.items {
+        if let TopLevel::FnDef(fd) = item
+            && fd.effects.is_empty()
+            && fd.name != "main"
+        {
+            let code = emit_pure_or_axiom(fd);
+            if !code.is_empty() {
+                entry_sections.push(code);
+            }
+        }
+    }
+    if let Some(fuel) = fuel_per_scope.get("") {
+        entry_sections.extend(fuel.clone());
+    }
+
+    // Lifted effectful fns (entry only — modules don't host effectful fns
+    // in the v1 emitter).
+    let reachable = crate::codegen::common::verify_reachable_fn_names(&ctx.items);
+    let mut helpers: HashMap<String, Vec<String>> = HashMap::new();
+    for item in &ctx.items {
+        if let TopLevel::FnDef(fd) = item
+            && !fd.effects.is_empty()
+            && fd.name != "main"
+            && !body_uses_error_prop(&fd.body)
+            && reachable.contains(&fd.name)
+            && fd.effects.iter().all(|e| {
+                crate::types::checker::effect_classification::is_classified(&e.node)
+            })
+        {
+            helpers.insert(
+                fd.name.clone(),
+                fd.effects.iter().map(|e| e.node.clone()).collect(),
+            );
+        }
+    }
+    for item in &ctx.items {
+        if let TopLevel::FnDef(fd) = item
+            && !fd.effects.is_empty()
+            && fd.name != "main"
+            && !body_uses_error_prop(&fd.body)
+            && reachable.contains(&fd.name)
+            && fd.effects.iter().all(|e| {
+                crate::types::checker::effect_classification::is_classified(&e.node)
+            })
+            && let Ok(Some(lifted)) =
+                crate::types::checker::effect_lifting::lift_fn_def_with_helpers(fd, &helpers)
+        {
+            entry_sections.push(toplevel::emit_fn_def(&lifted, ctx));
+        }
+    }
+
+    // Verify lemmas
+    let mut law_counter: HashMap<String, usize> = HashMap::new();
+    for item in &ctx.items {
+        if let TopLevel::Verify(vb) = item
+            && let VerifyKind::Law(law) = &vb.kind
+        {
+            let count = law_counter.entry(vb.fn_name.clone()).or_insert(0);
+            *count += 1;
+            let suffix = if *count > 1 {
+                format!("_{}", count)
+            } else {
+                String::new()
+            };
+            if !vb.cases.is_empty()
+                && let Some(code) = toplevel::emit_law_samples(vb, law, ctx, &suffix)
+            {
+                entry_sections.push(code);
+            }
+            let opaque_fns: HashSet<String> =
+                axiom_fn_names.union(&fuel_emitted).cloned().collect();
+            entry_sections.push(toplevel::emit_verify_law(vb, law, ctx, &opaque_fns));
+        }
+    }
+
+    let entry_body = entry_sections.join("\n");
+    union_body.push_str(&entry_body);
+    union_body.push('\n');
+
+    let entry_includes: String = ctx
+        .modules
+        .iter()
+        .map(|m| format!("include \"{}.dfy\"", crate::codegen::common::module_prefix_to_filename(&m.prefix)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut entry_parts: Vec<String> = vec![format!(
+        "// Aver-generated entry: {}\ninclude \"common.dfy\"\n{}",
+        ctx.project_name, entry_includes
+    )];
+    // Open every dependent module + AverCommon so unqualified type names
+    // (`Point`, `Tile`) and helpers stay in scope at the top level.
+    let mut opens = vec!["import opened AverCommon".to_string()];
+    for m in &ctx.modules {
+        opens.push(format!("import opened {}", m.prefix));
+    }
+    entry_parts.push(opens.join("\n"));
+    if crate::codegen::builtin_records::needs_trust_header(&union_body) {
+        entry_parts.push(
+            crate::types::checker::proof_trust_header::generate_commented("// "),
+        );
+    }
+    entry_parts.push(entry_body);
+    let entry_content = entry_parts.join("\n\n");
+    files.push((format!("{}.dfy", ctx.project_name), entry_content));
+
+    // ---- common.dfy ----
+    let common_content = build_common_dafny(&union_body);
+    files.push(("common.dfy".to_string(), common_content));
+
+    ProjectOutput { files }
+}
+
+fn build_common_dafny(union_body: &str) -> String {
+    let mut sections: Vec<String> = vec![
+        "// Aver-generated shared library: built-in records and helpers".to_string(),
+        "module AverCommon {".to_string(),
+        DAFNY_PRELUDE_HEAD.to_string(),
+    ];
+    for record in crate::codegen::builtin_records::needed_records(union_body, false) {
+        sections.push(crate::codegen::builtin_records::render_dafny(record));
+    }
+    sections.push(DAFNY_PRELUDE_CORE_HELPERS.to_string());
+    for helper in crate::codegen::builtin_helpers::needed_helpers(union_body, false) {
+        match helper.key {
+            "BranchPath" => sections.push(DAFNY_HELPER_BRANCH_PATH.to_string()),
+            "AverList" => sections.push(DAFNY_HELPER_AVER_LIST.to_string()),
+            "StringHelpers" => sections.push(DAFNY_HELPER_STRING_HELPERS.to_string()),
+            "NumericParse" => sections.push(DAFNY_HELPER_NUMERIC_PARSE.to_string()),
+            "CharByte" => sections.push(DAFNY_HELPER_CHAR_BYTE.to_string()),
+            "AverMap" => sections.push(DAFNY_HELPER_AVER_MAP.to_string()),
+            "AverMeasure" | "ProofFuel" => {}
+            "FloatInstances" | "ExceptInstances" | "StringHadd" => {}
+            "ResultDatatype" => sections.push(DAFNY_HELPER_RESULT_DATATYPE.to_string()),
+            "OptionDatatype" => sections.push(DAFNY_HELPER_OPTION_DATATYPE.to_string()),
+            "OptionToResult" => sections.push(DAFNY_HELPER_OPTION_TO_RESULT.to_string()),
+            "BranchPathDatatype" => sections.push(DAFNY_HELPER_BRANCH_PATH_DATATYPE.to_string()),
+            other => panic!(
+                "Dafny backend has no implementation for builtin helper key '{}'. \
+                 Add a match arm in build_common_dafny or remove the key from BUILTIN_HELPERS.",
+                other
+            ),
+        }
+    }
+    sections.push("}".to_string());
+    sections.join("\n")
 }
 
 const DAFNY_PRELUDE_HEAD: &str = r#"// --- Prelude: standard types and helpers ---

@@ -2,15 +2,19 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.11.1 (2026-04-25)
+## 0.12.0 "Atlas" (2026-04-25)
+
+> _Multi-module proofs split into per-module Lean namespaces and Dafny modules — each module its own file, shared `AverCommon` carrying only what's actually referenced._
 
 ### Added
 - **`Terminal.size` is now a classified Snapshot effect.** Oracle signature `() -> Terminal.Size`, same shape as `Args.get` / `Env.get`. Example: `examples/formal/terminal_size_snapshot.av`.
 - **Playground download menu:** the ⬇ button now expands into Aver source / WASM binary / Rust project / Lean 4 proof / Dafny proof. The current source is fed through the in-browser compiler and the chosen format ships as `.av` / `.wasm` / `.zip`.
+- **Multi-file Lean & Dafny proof export.** Multi-module Aver projects (`depends [...]`) now emit one file per dependent module — `<Module>.lean` wrapped in `namespace M ... end M`, `<Module>.dfy` wrapped in `module M { ... }` — plus a shared `AverCommon.lean` / `common.dfy` carrying built-in records & helpers (UNION-conditional across all bodies, never always-on), plus an entry file with the trust header (entry only), top-level items, and verify lemmas. Submodule paths like `Models.User` land at `Models/User.lean`. Single-module sources keep the existing single-file output. Fixes rogue-style collisions (`Map.getT` vs `Fov.getT`, `Combat.entityAtPos` vs `Pathfinding.entityAtPos`) by giving each module its own namespace.
 
 ### Changed
 - **Generated proof files shrank dramatically.** Lean and Dafny preludes are now conditional on actual usage (built-in records, namespace helper blocks, trust-assumption header). Calculator and pure-laws examples shrank ~85-90% in Lean and ~70-90% in Dafny; effectful examples 25-40%.
 - **Shared `codegen::builtin_records` and `codegen::builtin_helpers`.** Single source of truth for built-in record shapes (Header, HttpResponse, HttpRequest, Tcp.Connection, Terminal.Size) and prelude helper blocks; Lean, Dafny, and WASM all consume the same table.
+- **Shared multi-file routing helpers (`codegen::common::module_prefix_to_filename`, `fn_owning_scope`).** Lean and Dafny no longer copy-paste the path-mangling and fn→scope mapping logic.
 
 ## 0.11.0 "Oracle" (2026-04-24)
 

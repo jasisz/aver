@@ -86,6 +86,31 @@ pub(crate) fn module_prefix_to_rust_segments(prefix: &str) -> Vec<String> {
     prefix.split('.').map(module_segment_to_rust).collect()
 }
 
+/// Translate an Aver module prefix (`Models.User`, `Combat`) into a relative
+/// filesystem path stem with `/` separators. Lean's path-as-module convention
+/// and Dafny's `include "..."` paths both use this — same shape, no
+/// backend-specific escaping.
+pub(crate) fn module_prefix_to_filename(prefix: &str) -> String {
+    prefix.replace('.', "/")
+}
+
+/// Map every fn name in the program to its owning scope: the dependent
+/// module's prefix, or `""` for the entry. Used by the multi-file Lean
+/// and Dafny paths to route SCC components and fuel groups to the right
+/// per-scope file.
+pub(crate) fn fn_owning_scope(ctx: &CodegenContext) -> std::collections::HashMap<String, String> {
+    let mut scope = std::collections::HashMap::new();
+    for m in &ctx.modules {
+        for fd in &m.fn_defs {
+            scope.insert(fd.name.clone(), m.prefix.clone());
+        }
+    }
+    for fd in &ctx.fn_defs {
+        scope.insert(fd.name.clone(), String::new());
+    }
+    scope
+}
+
 pub(crate) fn module_prefix_to_rust_path(prefix: &str) -> String {
     format!(
         "crate::aver_generated::{}",

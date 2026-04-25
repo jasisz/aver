@@ -31,7 +31,7 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             }
             // Check module-qualified reference
             if let Some(full_dotted) = expr_to_dotted_name(&expr.node)
-                && let Some((_, bare)) = resolve_module_call(&full_dotted, ctx)
+                && let Some((prefix, bare)) = resolve_module_call(&full_dotted, ctx)
             {
                 if let Some(dot_pos) = bare.find('.') {
                     let type_name = &bare[..dot_pos];
@@ -40,7 +40,11 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
                         return format!("{}.{}", type_name, to_lower_first(variant));
                     }
                 }
-                return aver_name_to_lean(bare);
+                let bare_lean = aver_name_to_lean(bare);
+                if !ctx.modules.is_empty() {
+                    return format!("{}.{}", prefix, bare_lean);
+                }
+                return bare_lean;
             }
             let obj_str = emit_expr(obj, ctx);
             let needs_parens = !matches!(&obj.node, Expr::Ident(_) | Expr::Attr(_, _));
@@ -227,7 +231,7 @@ fn emit_fn_call(fn_expr: &Spanned<Expr>, args: &[Spanned<Expr>], ctx: &CodegenCo
         }
 
         // Module-qualified call
-        if let Some((_, bare)) = resolve_module_call(name, ctx) {
+        if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
             if let Some(dot_pos) = bare.find('.') {
                 let type_name = &bare[..dot_pos];
                 let variant_name = &bare[dot_pos + 1..];
@@ -243,10 +247,15 @@ fn emit_fn_call(fn_expr: &Spanned<Expr>, args: &[Spanned<Expr>], ctx: &CodegenCo
                 }
             }
             let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
+            let qualified = if !ctx.modules.is_empty() {
+                format!("{}.{}", prefix, aver_name_to_lean(bare))
+            } else {
+                aver_name_to_lean(bare)
+            };
             if arg_strs.is_empty() {
-                return aver_name_to_lean(bare);
+                return qualified;
             }
-            return format!("{} {}", aver_name_to_lean(bare), arg_strs.join(" "));
+            return format!("{} {}", qualified, arg_strs.join(" "));
         }
 
         // User-defined type constructor: Shape.Circle(r)

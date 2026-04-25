@@ -113,7 +113,7 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
                 }
             }
             if let Some(full_dotted) = expr_to_dotted_name_spanned(expr)
-                && let Some((_, bare)) = resolve_module_call(&full_dotted, ctx)
+                && let Some((prefix, bare)) = resolve_module_call(&full_dotted, ctx)
             {
                 if let Some(dot_pos) = bare.find('.') {
                     let type_name = &bare[..dot_pos];
@@ -122,7 +122,11 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
                         return format!("{}.{}", type_name, variant);
                     }
                 }
-                return aver_name_to_dafny(bare);
+                let bare_dafny = aver_name_to_dafny(bare);
+                if !ctx.modules.is_empty() {
+                    return format!("{}.{}", prefix, bare_dafny);
+                }
+                return bare_dafny;
             }
             let obj_str = emit_expr(obj, ctx);
             format!("{}.{}", obj_str, aver_name_to_dafny(field))

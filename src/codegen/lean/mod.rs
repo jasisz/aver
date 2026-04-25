@@ -801,6 +801,9 @@ pub fn transpile_for_proof_mode(
     ctx: &CodegenContext,
     verify_mode: VerifyEmitMode,
 ) -> ProjectOutput {
+    if !ctx.modules.is_empty() {
+        return transpile_multi_file_lean(ctx, verify_mode, LeanEmitMode::Proof);
+    }
     let (plans, _issues) = crate::codegen::recursion::analyze_plans(ctx);
     let recursive_names = recursive_pure_fn_names(ctx);
     let recursive_types = recursive_type_names(ctx);
@@ -887,6 +890,9 @@ pub fn transpile_with_verify_mode(
     ctx: &CodegenContext,
     verify_mode: VerifyEmitMode,
 ) -> ProjectOutput {
+    if !ctx.modules.is_empty() {
+        return transpile_multi_file_lean(ctx, verify_mode, LeanEmitMode::Standard);
+    }
     let mut sections = Vec::new();
 
     // Detect recursive functions for `partial` annotation
@@ -1314,6 +1320,15 @@ fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
 }
 
 fn generate_lakefile(project_name: &str) -> String {
+    generate_lakefile_with_roots(project_name, &[])
+}
+
+fn generate_lakefile_with_roots(project_name: &str, extra_roots: &[String]) -> String {
+    let mut roots: Vec<String> = vec![format!("`{}", project_name)];
+    for r in extra_roots {
+        roots.push(format!("`{}", r));
+    }
+    let roots_str = roots.join(", ");
     format!(
         r#"import Lake
 open Lake DSL
@@ -1324,14 +1339,300 @@ package «{}» where
 @[default_target]
 lean_lib «{}» where
   srcDir := "."
+  roots := #[{}]
 "#,
         project_name.to_lowercase(),
-        project_name
+        project_name,
+        roots_str
     )
 }
 
 fn generate_toolchain() -> String {
     "leanprover/lean4:v4.15.0\n".to_string()
+}
+
+#[derive(Clone, Copy)]
+enum LeanEmitMode {
+    Standard,
+    Proof,
+}
+
+/// Multi-file Lean output for multi-module Aver projects:
+/// - `AverCommon.lean` carries built-in helpers + records (UNION decision
+///   over every module + entry body, so a helper is included only if
+///   something actually references it).
+/// - `<Module>.lean` (one per `depends [...]` entry) wraps that module's
+///   types and pure fns in `namespace M ... end M`. Submodules like
+///   `Models.User` land at `Models/User.lean` to match Lean's path-as-
+///   module-name convention.
+/// - `<ProjectName>.lean` is the entry: trust header (here only),
+///   top-level entry items, lifted effectful fns, decisions, verify
+///   blocks. Imports `AverCommon` plus every dependent module.
+fn transpile_multi_file_lean(
+    ctx: &CodegenContext,
+    verify_mode: VerifyEmitMode,
+    emit_mode: LeanEmitMode,
+) -> ProjectOutput {
+    use crate::codegen::recursion::RecursionPlan;
+
+    let recursive_fns = call_graph::find_recursive_fns(&ctx.items);
+    let recursive_names = recursive_pure_fn_names(ctx);
+    let recursive_types = recursive_type_names(ctx);
+    let (plans, _proof_issues) = match emit_mode {
+        LeanEmitMode::Proof => crate::codegen::recursion::analyze_plans(ctx),
+        LeanEmitMode::Standard => (HashMap::<String, RecursionPlan>::new(), Vec::new()),
+    };
+
+    let fn_scope = crate::codegen::common::fn_owning_scope(ctx);
+
+    // Pure fn SCCs computed globally; for DAG inputs each component lives
+    // in a single scope, so we route it to that scope's section list.
+    let all_pure_fns: Vec<&FnDef> = ctx
+        .modules
+        .iter()
+        .flat_map(|m| m.fn_defs.iter())
+        .chain(ctx.fn_defs.iter())
+        .filter(|fd| toplevel::is_pure_fn(fd))
+        .collect();
+    let components = call_graph::ordered_fn_components(&all_pure_fns, &ctx.module_prefixes);
+
+    let mut pure_per_scope: HashMap<String, Vec<String>> = HashMap::new();
+    for fns in components {
+        if fns.is_empty() {
+            continue;
+        }
+        let scope = fns
+            .first()
+            .and_then(|fd| fn_scope.get(&fd.name))
+            .cloned()
+            .unwrap_or_default();
+        let bucket = pure_per_scope.entry(scope).or_default();
+        if fns.len() > 1 {
+            let code = match emit_mode {
+                LeanEmitMode::Proof => {
+                    let all_supported = fns.iter().all(|fd| plans.contains_key(&fd.name));
+                    if all_supported {
+                        toplevel::emit_mutual_group_proof(&fns, ctx, &plans)
+                    } else {
+                        toplevel::emit_mutual_group(&fns, ctx)
+                    }
+                }
+                LeanEmitMode::Standard => toplevel::emit_mutual_group(&fns, ctx),
+            };
+            bucket.push(code);
+            bucket.push(String::new());
+            continue;
+        }
+        let fd = fns[0];
+        let emitted = match emit_mode {
+            LeanEmitMode::Proof => {
+                let is_recursive = recursive_names.contains(&fd.name);
+                if is_recursive && !plans.contains_key(&fd.name) {
+                    toplevel::emit_fn_def(fd, &recursive_names, ctx)
+                } else {
+                    toplevel::emit_fn_def_proof(fd, plans.get(&fd.name).cloned(), ctx)
+                }
+            }
+            LeanEmitMode::Standard => toplevel::emit_fn_def(fd, &recursive_fns, ctx),
+        };
+        if let Some(code) = emitted {
+            bucket.push(code);
+            bucket.push(String::new());
+        }
+    }
+
+    // Lifted effectful fns + decisions + verifies remain entry-only.
+    let mut entry_lifted_sections: Vec<String> = Vec::new();
+    let lifted_recursive_names = match emit_mode {
+        LeanEmitMode::Proof => &recursive_names,
+        LeanEmitMode::Standard => &recursive_fns,
+    };
+    emit_lifted_effectful_functions(ctx, lifted_recursive_names, &mut entry_lifted_sections);
+
+    let mut entry_decision_sections: Vec<String> = Vec::new();
+    for item in &ctx.items {
+        if let TopLevel::Decision(db) = item {
+            entry_decision_sections.push(toplevel::emit_decision(db));
+            entry_decision_sections.push(String::new());
+        }
+    }
+
+    let mut entry_verify_sections: Vec<String> = Vec::new();
+    let mut verify_case_counters: HashMap<String, usize> = HashMap::new();
+    for item in &ctx.items {
+        if let TopLevel::Verify(vb) = item {
+            let key = verify_counter_key(vb);
+            let start_idx = *verify_case_counters.get(&key).unwrap_or(&0);
+            let (emitted, next_idx) =
+                toplevel::emit_verify_block(vb, ctx, verify_mode, start_idx);
+            verify_case_counters.insert(key, next_idx);
+            entry_verify_sections.push(emitted);
+            entry_verify_sections.push(String::new());
+        }
+    }
+
+    // ---- Per-module file bodies ----
+    let mut files: Vec<(String, String)> = Vec::new();
+    let mut union_body = String::new();
+
+    for module in &ctx.modules {
+        let mut body_sections: Vec<String> = Vec::new();
+        for td in &module.type_defs {
+            body_sections.push(toplevel::emit_type_def(td));
+            if toplevel::is_recursive_type_def(td) {
+                body_sections.push(toplevel::emit_recursive_decidable_eq(
+                    toplevel::type_def_name(td),
+                ));
+                if matches!(emit_mode, LeanEmitMode::Proof)
+                    && let Some(measure) =
+                        toplevel::emit_recursive_measure(td, &recursive_types)
+                {
+                    body_sections.push(measure);
+                }
+            }
+            body_sections.push(String::new());
+        }
+        if let Some(scope_sections) = pure_per_scope.get(&module.prefix) {
+            body_sections.extend(scope_sections.clone());
+        }
+        let body = body_sections.join("\n");
+        union_body.push_str(&body);
+        union_body.push('\n');
+
+        let mut imports = vec!["import AverCommon".to_string()];
+        for d in &module.depends {
+            imports.push(format!("import {}", d));
+        }
+        // AverCommon has no surrounding namespace (top-level helpers / instances),
+        // so `import` already brings them into scope. We `open` only the
+        // user-defined dependent modules.
+        let opens: Vec<String> = module
+            .depends
+            .iter()
+            .map(|d| format!("open {}", d))
+            .collect();
+
+        let opens_str = if opens.is_empty() {
+            String::new()
+        } else {
+            format!("\n{}\n", opens.join("\n"))
+        };
+        let content = format!(
+            "{}\n{}\nnamespace {}\n\n{}\nend {}\n",
+            imports.join("\n"),
+            opens_str,
+            module.prefix,
+            body,
+            module.prefix
+        );
+        files.push((
+            format!("{}.lean", crate::codegen::common::module_prefix_to_filename(&module.prefix)),
+            content,
+        ));
+    }
+
+    // ---- Entry sections ----
+    let mut entry_body_sections: Vec<String> = Vec::new();
+    for td in &ctx.type_defs {
+        entry_body_sections.push(toplevel::emit_type_def(td));
+        if toplevel::is_recursive_type_def(td) {
+            entry_body_sections.push(toplevel::emit_recursive_decidable_eq(
+                toplevel::type_def_name(td),
+            ));
+            if matches!(emit_mode, LeanEmitMode::Proof)
+                && let Some(measure) = toplevel::emit_recursive_measure(td, &recursive_types)
+            {
+                entry_body_sections.push(measure);
+            }
+        }
+        entry_body_sections.push(String::new());
+    }
+    if let Some(entry_pure) = pure_per_scope.get("") {
+        entry_body_sections.extend(entry_pure.clone());
+    }
+    entry_body_sections.extend(entry_lifted_sections);
+    entry_body_sections.extend(entry_decision_sections);
+    entry_body_sections.extend(entry_verify_sections);
+
+    let entry_body = entry_body_sections.join("\n");
+    union_body.push_str(&entry_body);
+    union_body.push('\n');
+
+    let project_name = lean_project_name(ctx);
+    let mut entry_imports = vec!["import AverCommon".to_string()];
+    for m in &ctx.modules {
+        entry_imports.push(format!("import {}", m.prefix));
+    }
+    let entry_opens: Vec<String> = ctx
+        .modules
+        .iter()
+        .map(|m| format!("open {}", m.prefix))
+        .collect();
+    let mut entry_parts = vec![entry_imports.join("\n")];
+    if !entry_opens.is_empty() {
+        entry_parts.push(entry_opens.join("\n"));
+    }
+    if crate::codegen::builtin_records::needs_trust_header(&union_body) {
+        entry_parts.push(crate::types::checker::proof_trust_header::generate_commented(
+            "-- ",
+        ));
+    }
+    entry_parts.push(entry_body);
+    let entry_content = entry_parts.join("\n\n");
+    files.push((format!("{}.lean", project_name), entry_content));
+
+    // ---- AverCommon.lean ----
+    let common_content = build_common_lean(&union_body);
+    files.push(("AverCommon.lean".to_string(), common_content));
+
+    // Project files
+    let mut extra_roots: Vec<String> = vec!["AverCommon".to_string()];
+    for m in &ctx.modules {
+        extra_roots.push(m.prefix.clone());
+    }
+    let lakefile = generate_lakefile_with_roots(&project_name, &extra_roots);
+    let toolchain = generate_toolchain();
+    files.push(("lakefile.lean".to_string(), lakefile));
+    files.push(("lean-toolchain".to_string(), toolchain));
+
+    ProjectOutput { files }
+}
+
+fn build_common_lean(union_body: &str) -> String {
+    let mut parts = vec![LEAN_PRELUDE_HEADER.to_string()];
+    for record in crate::codegen::builtin_records::needed_records(union_body, false) {
+        parts.push(crate::codegen::builtin_records::render_lean(record));
+    }
+    for helper in crate::codegen::builtin_helpers::needed_helpers(union_body, false) {
+        match helper.key {
+            "BranchPath" => parts.push(LEAN_PRELUDE_BRANCH_PATH.to_string()),
+            "AverList" => parts.push(LEAN_PRELUDE_AVER_LIST.to_string()),
+            "StringHelpers" => parts.push(LEAN_PRELUDE_STRING_HELPERS.to_string()),
+            "NumericParse" => parts.push(LEAN_PRELUDE_NUMERIC_PARSE.to_string()),
+            "CharByte" => parts.push(LEAN_PRELUDE_CHAR_BYTE.to_string()),
+            "AverMeasure" => parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string()),
+            "AverMap" => parts.push(generate_map_prelude(union_body, false)),
+            "ProofFuel" => parts.push(LEAN_PRELUDE_PROOF_FUEL.to_string()),
+            "FloatInstances" => parts.extend([
+                LEAN_PRELUDE_FLOAT_COE.to_string(),
+                LEAN_PRELUDE_FLOAT_DEC_EQ.to_string(),
+            ]),
+            "ExceptInstances" => parts.extend([
+                LEAN_PRELUDE_EXCEPT_DEC_EQ.to_string(),
+                LEAN_PRELUDE_EXCEPT_NS.to_string(),
+                LEAN_PRELUDE_OPTION_TO_EXCEPT.to_string(),
+            ]),
+            "StringHadd" => parts.push(LEAN_PRELUDE_STRING_HADD.to_string()),
+            "ResultDatatype" | "OptionDatatype" | "OptionToResult"
+            | "BranchPathDatatype" => {}
+            other => panic!(
+                "Lean backend has no implementation for builtin helper key '{}'. \
+                 Add a match arm in build_common_lean or remove the key from BUILTIN_HELPERS.",
+                other
+            ),
+        }
+    }
+    parts.join("\n\n")
 }
 
 fn capitalize_first(s: &str) -> String {
