@@ -48,17 +48,24 @@ const LEAN_PRELUDE_FLOAT_COE: &str = r#"instance : Coe Int Float := ⟨fun n => 
 
 def Float.fromInt (n : Int) : Float := Float.ofInt n
 
--- Aver's Float.{floor,round,ceil,toInt,pow} have no direct Lean equivalent
--- with matching return types (Lean's Float.floor returns Float, not Int).
--- `opaque` declarations let proof-side references type-check while
--- leaving concrete values to the runtime backend (axiom would force
--- callers to be `noncomputable`).
+-- Aver's Float-to-Int operations match the runtime semantics
+-- (`f64::floor() as i64` in VM/Rust/WASM): IEEE 754 floor/round/ceil
+-- followed by saturating cast — finite values truncate, NaN → 0,
+-- ±Inf saturate to Int64 min/max. Lean's `Float.floor : Float → Float`
+-- doesn't fit Aver's `Float.floor : Float → Int` directly, so we
+-- synthesize via Float.toUInt64 (saturating, 0 for NaN/negative)
+-- with sign handling.
 namespace AverFloat
-opaque floor : Float → Int := fun _ => 0
-opaque round : Float → Int := fun _ => 0
-opaque ceil : Float → Int := fun _ => 0
-opaque toInt : Float → Int := fun _ => 0
-opaque pow : Float → Float → Float := fun _ _ => 0.0
+def toInt (x : Float) : Int :=
+  if x.isNaN then 0
+  else if x ≥ 0.0 then Int.ofNat x.toUInt64.toNat
+  else -(Int.ofNat (-x).toUInt64.toNat)
+
+def floor (x : Float) : Int := toInt x.floor
+def ceil (x : Float) : Int := toInt x.ceil
+def round (x : Float) : Int := toInt (Float.ofInt (toInt (x + (if x ≥ 0.0 then 0.5 else -0.5))))
+
+def pow (x y : Float) : Float := x ^ y
 end AverFloat"#;
 
 const LEAN_PRELUDE_FLOAT_DEC_EQ: &str = r#"private unsafe def Float.unsafeDecEq (a b : Float) : Decidable (a = b) :=
