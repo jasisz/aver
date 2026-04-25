@@ -53,12 +53,17 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
 }
 
 /// Translate an Aver module prefix into a Dafny module identifier.
-/// Dafny treats `module A.B.C` as nested (`A` containing `B` containing
-/// `C`), which forms a parent→child dependency cycle as soon as a
-/// sibling submodule imports another. Flattening to underscore form
-/// (`A_B_C`) keeps every emitted module at the top level.
+/// Two transformations:
+/// - Dotted Aver prefixes (`Models.User`) flatten to underscore form
+///   so Dafny doesn't treat them as nested-module cycles when sibling
+///   submodules import each other.
+/// - Every emitted module name is prefixed with `Aver_` so that
+///   user-source `module Foo` (the Aver namespace of fns operating on
+///   a record) cannot collide with a `record Foo` declared in some
+///   other Aver module — Dafny resolves type and module names in the
+///   same namespace, so `Aver_Foo` (module) ≠ `Foo` (datatype).
 pub(crate) fn dafny_module_name(prefix: &str) -> String {
-    prefix.replace('.', "_")
+    format!("Aver_{}", prefix.replace('.', "_"))
 }
 
 /// Multi-file Dafny output: one file per dependent module wrapped in

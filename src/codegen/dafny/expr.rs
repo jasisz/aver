@@ -121,10 +121,11 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
                 if type_name == "BranchPath" && field == "Root" {
                     return "BranchPath_Root".to_string();
                 }
-                if is_user_type(type_name, ctx) {
-                    return format!("{}.{}", type_name, field);
-                }
             }
+            // Module-qualified call/access: must be checked before
+            // `is_user_type` because Aver allows `module Enemy` to coexist
+            // with `record Enemy`. If the head is a known module prefix,
+            // route through the renamed Dafny module (`Aver_Enemy.fn`).
             if let Some(full_dotted) = expr_to_dotted_name_spanned(expr)
                 && let Some((prefix, bare)) = resolve_module_call(&full_dotted, ctx)
             {
@@ -140,6 +141,11 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
                     return format!("{}.{}", super::dafny_module_name(prefix), bare_dafny);
                 }
                 return bare_dafny;
+            }
+            if let Expr::Ident(type_name) = &obj.node
+                && is_user_type(type_name, ctx)
+            {
+                return format!("{}.{}", type_name, field);
             }
             let obj_str = emit_expr(obj, ctx);
             format!("{}.{}", obj_str, aver_name_to_dafny(field))
@@ -668,13 +674,16 @@ fn emit_pattern(pattern: &Pattern) -> String {
 }
 
 fn emit_constructor(name: &str, arg: Option<&Spanned<Expr>>, ctx: &CodegenContext) -> String {
-    // In Dafny expression context, qualify constructors to avoid ambiguity.
-    // "Shape.Circle" → "Shape.Circle", "Foo" → "Foo"
+    // In Dafny expression context, qualify constructors to avoid
+    // ambiguity. User-defined types and the built-in `Result` /
+    // `Option` are kept fully qualified — the latter because user code
+    // can declare its own `enum ParseResult { Ok, Err }` with the same
+    // variant names, and Dafny needs the discriminator to pick the
+    // right datatype.
     let qualified = if let Some(dot_pos) = name.rfind('.') {
         let type_name = &name[..dot_pos];
         let variant = &name[dot_pos + 1..];
-        // Check if it's a user-defined type — qualify to avoid clashes
-        if is_user_type(type_name, ctx) {
+        if is_user_type(type_name, ctx) || type_name == "Result" || type_name == "Option" {
             format!("{}.{}", type_name, variant)
         } else {
             variant.to_string()

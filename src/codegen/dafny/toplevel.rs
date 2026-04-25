@@ -56,13 +56,17 @@ fn type_to_dafny(ty: &Type) -> String {
         // Built-in records with dotted names (`Terminal.Size`,
         // `Tcp.Connection`) flatten to underscore form because the
         // prelude declares them as `Terminal_Size` / `Tcp_Connection`.
-        // User-defined module-qualified types (`Level.Room`) keep the
-        // dotted form because in multi-file output they live in a
-        // `module Level { datatype Room ... }` and Dafny resolves
-        // `Level.Room` directly when `Level` is `import opened`.
+        // User-defined types: bare names rely on `import opened` of
+        // the dependent module; already-qualified user types
+        // (`Level.Room`) need the module-segment prefixed with `Aver_`
+        // so the qualifier matches the renamed Dafny module.
         Type::Named(name) => {
             if crate::codegen::builtin_records::find(name).is_some() {
                 name.replace('.', "_")
+            } else if let Some(dot) = name.rfind('.') {
+                let module_part = &name[..dot];
+                let local = &name[dot + 1..];
+                format!("Aver_{}.{}", module_part.replace('.', "_"), local)
             } else {
                 name.to_string()
             }

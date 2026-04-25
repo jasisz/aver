@@ -113,9 +113,89 @@ fn lift_stmts(
             out.push(cps);
             return Ok(out);
         }
+        if let Some(cps) =
+            try_lift_question_op_stmt(stmt, &stmts[i + 1..], cfg, path_expr, counter)?
+        {
+            out.push(cps);
+            return Ok(out);
+        }
         out.push(lift_stmt(stmt, cfg, path_expr, counter)?);
     }
     Ok(out)
+}
+
+/// Lower a bare `?` operator at statement position into a `match` on
+/// the inner expression's `Result` value. Two shapes:
+///   `cmd = parseCommand(line)?; <rest>` becomes
+///     `match parseCommand(line) { Ok(cmd) -> <rest>; Err(e) -> Err(e) }`
+///   `parseCommand(line)?` (tail) becomes
+///     `match parseCommand(line) { Ok(_v) -> Ok(_v); Err(e) -> Err(e) }`
+/// (the tail form is equivalent to the inner expression itself but
+/// going through the match keeps the Result wrapping uniform regardless
+/// of how the surrounding emitter renders it).
+fn try_lift_question_op_stmt(
+    stmt: &Stmt,
+    rest: &[Stmt],
+    cfg: &LiftConfig,
+    path_expr: &Spanned<Expr>,
+    counter: &mut u32,
+) -> Result<Option<Stmt>, LiftError> {
+    use crate::ast::{MatchArm, Pattern};
+
+    let (bind_name, inner, line, is_tail) = match stmt {
+        Stmt::Binding(name, _, expr) => match &expr.node {
+            Expr::ErrorProp(inner) => (Some(name.clone()), inner.clone(), expr.line, false),
+            _ => return Ok(None),
+        },
+        Stmt::Expr(expr) if rest.is_empty() => match &expr.node {
+            Expr::ErrorProp(inner) => (None, inner.clone(), expr.line, true),
+            _ => return Ok(None),
+        },
+        _ => return Ok(None),
+    };
+
+    let lifted_inner = lift_expr(&inner, cfg, path_expr, counter)?;
+
+    let ok_value_name = bind_name.unwrap_or_else(|| "__qm_value".to_string());
+    let err_name = format!("__qm_err_{}", *counter);
+    *counter += 1;
+
+    let continuation = if is_tail {
+        spanned(
+            Expr::Constructor(
+                "Result.Ok".to_string(),
+                Some(Box::new(spanned(Expr::Ident(ok_value_name.clone()), line))),
+            ),
+            line,
+        )
+    } else {
+        let lifted_rest = lift_stmts(rest, cfg, path_expr, counter)?;
+        stmts_to_let_chain(&lifted_rest, line)
+    };
+
+    let ok_arm = MatchArm {
+        pattern: Pattern::Constructor("Result.Ok".to_string(), vec![ok_value_name]),
+        body: Box::new(continuation),
+    };
+    let err_arm = MatchArm {
+        pattern: Pattern::Constructor("Result.Err".to_string(), vec![err_name.clone()]),
+        body: Box::new(spanned(
+            Expr::Constructor(
+                "Result.Err".to_string(),
+                Some(Box::new(spanned(Expr::Ident(err_name), line))),
+            ),
+            line,
+        )),
+    };
+
+    let match_expr = spanned(
+        Expr::Match {
+            subject: Box::new(lifted_inner),
+            arms: vec![ok_arm, err_arm],
+        },
+        line,
+    );
+    Ok(Some(Stmt::Expr(match_expr)))
 }
 
 /// If `stmt` is a binding or tail expression whose RHS is
@@ -821,15 +901,14 @@ fn body_contains_question_bang(body: &FnBody) -> bool {
 fn expr_contains_question_bang(expr: &Spanned<Expr>) -> bool {
     match &expr.node {
         Expr::IndependentProduct(_, true) => true,
+        Expr::ErrorProp(_) => true,
         Expr::IndependentProduct(items, false) | Expr::List(items) | Expr::Tuple(items) => {
             items.iter().any(expr_contains_question_bang)
         }
         Expr::FnCall(callee, args) => {
             expr_contains_question_bang(callee) || args.iter().any(expr_contains_question_bang)
         }
-        Expr::Attr(base, _) | Expr::Constructor(_, Some(base)) | Expr::ErrorProp(base) => {
-            expr_contains_question_bang(base)
-        }
+        Expr::Attr(base, _) | Expr::Constructor(_, Some(base)) => expr_contains_question_bang(base),
         Expr::BinOp(_, left, right) => {
             expr_contains_question_bang(left) || expr_contains_question_bang(right)
         }
