@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <title>The two-rolls paradox — Aver Oracle</title>
+    <title>The randomness paradox — Aver Oracle</title>
     <meta name="description" content="One verify block. Three tools. Two answers. How Aver Oracle exposes the gap between sample-based testing and universal proof — and what conventional Z3 verification can't reach.">
     <link rel="stylesheet" href="style.css">
     <style>
@@ -178,28 +178,28 @@
 <main class="oracle-page">
 
     <header class="oracle-hero">
-        <div class="eyebrow">Oracle &middot; the two-rolls paradox</div>
+        <div class="eyebrow">Oracle &middot; the randomness paradox</div>
         <h1>One <code>verify</code> block. Three tools. <span class="accent">Two answers.</span></h1>
-        <p class="subhead">A 30-line example that passes <code>aver verify</code> and fails <code>aver proof</code> — on identical source. The same gap that conventional Z3 verification can't reach for effectful code.</p>
+        <p class="subhead">A 30-line example that passes <code>aver verify</code> and fails <code>aver proof</code> &mdash; on identical source. The same gap that conventional Z3 verification can't reach for effectful code.</p>
     </header>
 
     <section class="oracle-section">
         <h2>The code</h2>
-        <p>A function rolls a die twice and returns whether the two rolls were different. The <code>verify</code> block declares that, under a stub <code>distinctStub</code> returning <code>n + 1</code>, the function holds <code>=&gt; true</code>.</p>
-<pre class="code-block"><span class="hl-keyword">fn</span> <span class="hl-fn">distinctStub</span>(path: <span class="hl-type">BranchPath</span>, n: <span class="hl-type">Int</span>, lo: <span class="hl-type">Int</span>, hi: <span class="hl-type">Int</span>) <span class="hl-operator">-&gt;</span> <span class="hl-type">Int</span>
-    <span class="hl-effect">?</span> <span class="hl-desc">"Stub returning n+1 — different value per call counter."</span>
-    n <span class="hl-operator">+</span> <span class="hl-number">1</span>
+        <p>A function samples two random floats and returns whether they were different. The <code>verify</code> block declares that, under a stub <code>distinctStub</code> returning <code>n + 1</code>, the function holds <code>=&gt; true</code>.</p>
+<pre class="code-block"><span class="hl-keyword">fn</span> <span class="hl-fn">distinctStub</span>(path: <span class="hl-type">BranchPath</span>, n: <span class="hl-type">Int</span>) <span class="hl-operator">-&gt;</span> <span class="hl-type">Float</span>
+    <span class="hl-effect">?</span> <span class="hl-desc">"Stub returning n+1 as a Float — different value per call counter."</span>
+    Float.fromInt(n) <span class="hl-operator">+</span> <span class="hl-number">1.0</span>
 
-<span class="hl-keyword">fn</span> <span class="hl-fn">twoRollsDistinct</span>() <span class="hl-operator">-&gt;</span> <span class="hl-type">Bool</span>
-    <span class="hl-effect">?</span> <span class="hl-desc">"Roll a die twice; return whether the two rolls were different."</span>
-    <span class="hl-effect">!</span> <span class="hl-effect">[Random.int]</span>
-    a <span class="hl-operator">=</span> Random.int(<span class="hl-number">1</span>, <span class="hl-number">6</span>)
-    b <span class="hl-operator">=</span> Random.int(<span class="hl-number">1</span>, <span class="hl-number">6</span>)
+<span class="hl-keyword">fn</span> <span class="hl-fn">twoFloatsDistinct</span>() <span class="hl-operator">-&gt;</span> <span class="hl-type">Bool</span>
+    <span class="hl-effect">?</span> <span class="hl-desc">"Sample two random floats; return whether they were different."</span>
+    <span class="hl-effect">!</span> <span class="hl-effect">[Random.float]</span>
+    a <span class="hl-operator">=</span> Random.float()
+    b <span class="hl-operator">=</span> Random.float()
     a <span class="hl-operator">!=</span> b
 
-<span class="hl-keyword">verify</span> twoRollsDistinct <span class="hl-keyword">law</span> alwaysDistinct
-    <span class="hl-keyword">given</span> rnd: Random.int <span class="hl-operator">=</span> [distinctStub]
-    twoRollsDistinct() <span class="hl-operator">=&gt;</span> <span class="hl-constant">true</span>
+<span class="hl-keyword">verify</span> twoFloatsDistinct <span class="hl-keyword">law</span> alwaysDistinct
+    <span class="hl-keyword">given</span> rnd: Random.float <span class="hl-operator">=</span> [distinctStub]
+    twoFloatsDistinct() <span class="hl-operator">=&gt;</span> <span class="hl-constant">true</span>
 </pre>
     </section>
 
@@ -209,11 +209,11 @@
         <div class="panels">
 
             <div class="panel">
-                <div class="panel-cmd"><span class="prompt">$</span> aver verify two_rolls_paradox.av</div>
+                <div class="panel-cmd"><span class="prompt">$</span> aver verify randomness_paradox.av</div>
                 <div class="verdict pass">PASSES</div>
-<pre class="panel-out"><span class="muted">Verify:</span> two_rolls_paradox.av
-  <span class="green">✓</span> verify distinctStub      2/2
-  <span class="green">✓</span> verify twoRollsDistinct  1/1
+<pre class="panel-out"><span class="muted">Verify:</span> randomness_paradox.av
+  <span class="green">✓</span> verify distinctStub        2/2
+  <span class="green">✓</span> verify twoFloatsDistinct   1/1
 
 <span class="green">Summary:</span> 3/3 cases passed</pre>
             </div>
@@ -221,27 +221,30 @@
             <div class="panel">
                 <div class="panel-cmd"><span class="prompt">$</span> aver proof <span class="flag">--backend lean</span> &amp;&amp; lake build</div>
                 <div class="verdict fail">REJECTS</div>
-<pre class="panel-out"><span class="muted">⚒ Building TwoRollsParadox.lean</span>
+<pre class="panel-out"><span class="muted">✖ Building RandomnessParadox</span>
 <span class="red">error: unsolved goals</span>
-<span class="muted">  rnd : BranchPath →
-        Int → Int → Int → Int</span>
-<span class="yellow">  ⊢ ¬rnd Root 0 1 6
-        = rnd Root 1 1 6</span>
+<span class="muted">  rnd : BranchPath
+        → Int → Float</span>
+<span class="yellow">  ⊢ (rnd BranchPath.Root 0
+     != rnd BranchPath.Root 1)
+     = true</span>
 
-<span class="red">build failed</span></pre>
+<span class="red">error: build failed</span></pre>
             </div>
 
             <div class="panel">
                 <div class="panel-cmd"><span class="prompt">$</span> aver proof <span class="flag">--backend dafny</span> &amp;&amp; dafny verify</div>
                 <div class="verdict fail">REJECTS</div>
-<pre class="panel-out"><span class="muted">Dafny program verifier:</span>
-<span class="red">error: postcondition could
-       not be proved</span>
-<span class="muted">  ensures twoRollsDistinct(
-    Root, rnd
+<pre class="panel-out"><span class="muted">randomness_paradox.dfy(262,0):</span>
+<span class="red">Error: a postcondition could
+       not be proved on this
+       return path</span>
+<span class="muted">  ensures twoFloatsDistinct(
+    BranchPath_Root, rnd
   )</span> <span class="yellow">== true</span>
 
-<span class="red">11 verified, 1 error</span></pre>
+<span class="red">finished with 11 verified,
+1 error</span></pre>
             </div>
 
         </div>
@@ -249,8 +252,8 @@
 
     <section class="oracle-section">
         <h2>Why one block has two answers</h2>
-        <p><strong><code>aver verify</code></strong> evaluates the law as a finite sample. The cartesian product of <code>given</code> domains is enumerated and run against the law's RHS. With <code>distinctStub</code> returning <code>n + 1</code>, the two calls produce <code>1</code> and <code>2</code>; <code>1 != 2</code> holds; the sample case passes. This is the &mdash; familiar &mdash; testing path: assert against a chosen implementation, run, verify equality.</p>
-        <p><strong><code>aver proof</code></strong> takes the same block and lifts it. Every classified effect call (here <code>Random.int</code>) becomes an explicit function parameter. The exported theorem says <em>for every possible such function</em> &mdash; not just the stub you supplied &mdash; the law's RHS holds. That's a strictly stronger claim. There exist oracles (e.g. one that always returns 5) for which the two calls return the same value and the law fails. Lean and Dafny independently reject the export for this reason.</p>
+        <p><strong><code>aver verify</code></strong> evaluates the law as a finite sample. The cartesian product of <code>given</code> domains is enumerated and run against the law's RHS. With <code>distinctStub</code> returning <code>n + 1</code>, the two calls produce <code>1.0</code> and <code>2.0</code>; <code>1.0 != 2.0</code> holds; the sample case passes. This is the &mdash; familiar &mdash; testing path: assert against a chosen implementation, run, verify equality.</p>
+        <p><strong><code>aver proof</code></strong> takes the same block and lifts it. Every classified effect call (here <code>Random.float</code>) becomes an explicit function parameter. The exported theorem says <em>for every possible such function</em> &mdash; not just the stub you supplied &mdash; the law's RHS holds. That's a strictly stronger claim. There exist oracles (e.g. one that always returns <code>0.5</code>) for which the two calls return the same value and the law fails. Lean and Dafny independently reject the export for this reason.</p>
         <p>The block is unchanged between runs. Only the question being asked changes: <em>"does this hold for the stub I wrote?"</em> versus <em>"does this hold for every implementation of this signature?"</em>. The first question is sample testing; the second is verification. Aver lets you ask both with one block, and tells you when they disagree.</p>
     </section>
 

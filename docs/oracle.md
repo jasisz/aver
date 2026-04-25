@@ -233,29 +233,29 @@ A `verify <fn> law` block does double duty:
 - `aver verify` runs it as a **finite sample check**: the cartesian product of the `given` domains is enumerated (capped at 10,000 cases) and evaluated against the law's RHS using whatever stubs you supplied.
 - `aver proof` exports the same block as a **universally quantified theorem** in Lean / Dafny, where every classified effect becomes a function parameter and the law is asserted *for every possible such function* — not just for the stubs in `given`.
 
-These two questions can have different answers on the same block. The canonical example is `examples/formal/two_rolls_paradox.av`:
+These two questions can have different answers on the same block. The canonical example is `examples/formal/randomness_paradox.av`:
 
 ```aver
-fn distinctStub(path: BranchPath, n: Int, lo: Int, hi: Int) -> Int
-    n + 1
+fn distinctStub(path: BranchPath, n: Int) -> Float
+    Float.fromInt(n) + 1.0
 
-fn twoRollsDistinct() -> Bool
-    ! [Random.int]
-    a = Random.int(1, 6)
-    b = Random.int(1, 6)
+fn twoFloatsDistinct() -> Bool
+    ! [Random.float]
+    a = Random.float()
+    b = Random.float()
     a != b
 
-verify twoRollsDistinct law alwaysDistinct
-    given rnd: Random.int = [distinctStub]
-    twoRollsDistinct() => true
+verify twoFloatsDistinct law alwaysDistinct
+    given rnd: Random.float = [distinctStub]
+    twoFloatsDistinct() => true
 ```
 
-`aver verify` passes — under `distinctStub` the two calls return `1` and `2`, the law's RHS holds.
+`aver verify` passes — under `distinctStub` the two calls return `1.0` and `2.0`, the law's RHS holds.
 
-`aver proof` exports a theorem of shape `∀ rnd, twoRollsDistinct rnd = true`, and both backends reject it for the same reason: there exist oracles (e.g. `fun _ _ _ _ => 5`) for which both calls return the same value, making the law false.
+`aver proof` exports a theorem of shape `∀ rnd, twoFloatsDistinct rnd = true`, and both backends reject it for the same reason: there exist oracles (e.g. `fun _ _ => 0.5`) for which both calls return the same value, making the law false.
 
-- `--backend lean` + `lake build` → `unsolved goals: ¬rnd BranchPath.Root 0 1 6 = rnd BranchPath.Root 1 1 6`
-- `--backend dafny` + `dafny verify` → `a postcondition could not be proved on this return path: ensures twoRollsDistinct(BranchPath_Root, rnd) == true`
+- `--backend lean` + `lake build` → `unsolved goals: (rnd BranchPath.Root 0 != rnd BranchPath.Root 1) = true`
+- `--backend dafny` + `dafny verify` → `a postcondition could not be proved on this return path: ensures twoFloatsDistinct(BranchPath_Root, rnd) == true`
 
 This is not a bug — it's the design. `verify` answers "does this hold for the stubs I wrote down?". `proof` answers "does this hold for every classified-effect implementation that has the right signature?". The second is strictly stronger and catches what the first cannot.
 

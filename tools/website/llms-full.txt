@@ -31,7 +31,7 @@
 - [Console Demo](https://raw.githubusercontent.com/jasisz/aver/main/examples/services/console_demo.av) — effectful code, Console namespace
 - [Oracle Trace](https://raw.githubusercontent.com/jasisz/aver/main/examples/formal/oracle_trace.av) — `verify fn trace` with `given` stubs for classified effects (Random, Disk, Console.readLine, Tcp, Time.sleep, Terminal.*)
 - [Oracle Independent Products](https://raw.githubusercontent.com/jasisz/aver/main/examples/formal/oracle_independent_products.av) — per-branch trace assertions for `!`/`?!` products
-- [Two Rolls Paradox](https://raw.githubusercontent.com/jasisz/aver/main/examples/formal/two_rolls_paradox.av) — `verify` passes, `aver proof` rejects: sample-vs-universal divergence on the same law
+- [Randomness Paradox](https://raw.githubusercontent.com/jasisz/aver/main/examples/formal/randomness_paradox.av) — `verify` passes, `aver proof` rejects: sample-vs-universal divergence on the same law over `Random.float`
 - [Snake](https://raw.githubusercontent.com/jasisz/aver/main/examples/games/snake.av) — single-file game with Terminal effects
 - [Game of Life](https://raw.githubusercontent.com/jasisz/aver/main/examples/games/life.av) — cellular automata, FPS counter
 
