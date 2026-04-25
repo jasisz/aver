@@ -5,35 +5,199 @@
     "depth_mode": "auto",
     "budget_bytes": 24576,
     "included_depth": 0,
-    "next_element_cost": 386,
-    "elements_selected": 66,
+    "next_element_cost": 164,
+    "elements_selected": 47,
     "elements_total": 131,
     "truncated": false,
-    "used_bytes": 23989
+    "used_bytes": 23739
   },
   "modules": [
     {
       "source_file": "main.av",
       "module": "Main",
       "intent": "Workflow engine argv entrypoint. Keeps the top-level module thin so the CLI and application core stay in their own modules and `aver context` has a stable root to resume from.",
-      "depends": ["App.Cli"]
+      "depends": [
+        "App.Cli"
+      ]
     },
     {
       "source_file": "app/commands.av",
       "module": "Commands",
       "intent": "Effectful command handlers for workflow mutations. The app layer is intentionally small: it decides a plan from persisted state, derives follow-up rule effects as data, then commits and dispatches that plan.",
-      "depends": ["Domain.Types", "Domain.Projects", "Domain.Tasks", "Domain.Events", "Domain.Rules", "Domain.Validation", "Infra.Store", "Infra.Clock", "Infra.Notify", "Infra.Audit"],
-      "effects": ["Console.warn", "Disk.appendText", "Disk.readText", "Disk.writeText", "Time.now"],
+      "depends": [
+        "Domain.Types",
+        "Domain.Projects",
+        "Domain.Tasks",
+        "Domain.Events",
+        "Domain.Rules",
+        "Domain.Validation",
+        "Infra.Store",
+        "Infra.Clock",
+        "Infra.Notify",
+        "Infra.Audit"
+      ],
+      "effects": [
+        "Console.warn",
+        "Disk.appendText",
+        "Disk.readText",
+        "Disk.writeText",
+        "Time.now"
+      ],
       "types": [
-        {"name": "Command", "variants": [{"name": "CreateProject", "fields": ["String", "String"]}, {"name": "ArchiveProject", "fields": ["String"]}, {"name": "CreateTask", "fields": ["String", "String", "String", "Priority", "List<String>", "Option<String>"]}, {"name": "RenameTask", "fields": ["String", "String"]}, {"name": "StartTask", "fields": ["String"]}, {"name": "BlockTask", "fields": ["String", "String"]}, {"name": "CompleteTask", "fields": ["String"]}, {"name": "ReopenTask", "fields": ["String", "String"]}, {"name": "ChangePriority", "fields": ["String", "Priority"]}, {"name": "AddTag", "fields": ["String", "String"]}, {"name": "RemoveTag", "fields": ["String", "String"]}, {"name": "AddComment", "fields": ["String", "String", "String"]}, {"name": "SetDeadline", "fields": ["String", "String"]}, {"name": "ClearDeadline", "fields": ["String"]}, {"name": "ArchiveTask", "fields": ["String"]}, {"name": "RunRules", "fields": ["Option<String>"]}]}
+        {
+          "name": "Command",
+          "variants": [
+            {
+              "name": "CreateProject",
+              "fields": [
+                "String",
+                "String"
+              ]
+            },
+            {
+              "name": "ArchiveProject",
+              "fields": [
+                "String"
+              ]
+            },
+            {
+              "name": "CreateTask",
+              "fields": [
+                "String",
+                "String",
+                "String",
+                "Priority",
+                "List<String>",
+                "Option<String>"
+              ]
+            },
+            {
+              "name": "RenameTask",
+              "fields": [
+                "String",
+                "String"
+              ]
+            },
+            {
+              "name": "StartTask",
+              "fields": [
+                "String"
+              ]
+            },
+            {
+              "name": "BlockTask",
+              "fields": [
+                "String",
+                "String"
+              ]
+            },
+            {
+              "name": "CompleteTask",
+              "fields": [
+                "String"
+              ]
+            },
+            {
+              "name": "ReopenTask",
+              "fields": [
+                "String",
+                "String"
+              ]
+            },
+            {
+              "name": "ChangePriority",
+              "fields": [
+                "String",
+                "Priority"
+              ]
+            },
+            {
+              "name": "AddTag",
+              "fields": [
+                "String",
+                "String"
+              ]
+            },
+            {
+              "name": "RemoveTag",
+              "fields": [
+                "String",
+                "String"
+              ]
+            },
+            {
+              "name": "AddComment",
+              "fields": [
+                "String",
+                "String",
+                "String"
+              ]
+            },
+            {
+              "name": "SetDeadline",
+              "fields": [
+                "String",
+                "String"
+              ]
+            },
+            {
+              "name": "ClearDeadline",
+              "fields": [
+                "String"
+              ]
+            },
+            {
+              "name": "ArchiveTask",
+              "fields": [
+                "String"
+              ]
+            },
+            {
+              "name": "RunRules",
+              "fields": [
+                "Option<String>"
+              ]
+            }
+          ]
+        }
       ],
       "records": [
-        {"name": "CommandReport", "fields": [{"name": "summary", "type": "String"}, {"name": "subjectId", "type": "String"}, {"name": "events", "type": "List<TaskEventRecord>"}, {"name": "notifications", "type": "List<Notification>"}, {"name": "audits", "type": "List<AuditEntry>"}]}
+        {
+          "name": "CommandReport",
+          "fields": [
+            {
+              "name": "summary",
+              "type": "String"
+            },
+            {
+              "name": "subjectId",
+              "type": "String"
+            },
+            {
+              "name": "events",
+              "type": "List<TaskEventRecord>"
+            },
+            {
+              "name": "notifications",
+              "type": "List<Notification>"
+            },
+            {
+              "name": "audits",
+              "type": "List<AuditEntry>"
+            }
+          ]
+        }
       ],
       "functions": [
         {
           "sig": "execute(command: Command) -> Result<CommandReport, String>",
-          "effects": ["Console.warn", "Disk.appendText", "Disk.readText", "Disk.writeText", "Time.now"],
+          "effects": [
+            "Console.warn",
+            "Disk.appendText",
+            "Disk.readText",
+            "Disk.writeText",
+            "Time.now"
+          ],
           "desc": "Executes one workflow command through decide, commit, and dispatch."
         }
       ]
@@ -43,27 +207,297 @@
       "module": "Types",
       "intent": "Shared domain types for the workflow engine. Keeps records and enums in one place so command, rule, and store modules can speak about the same application core without repeating shapes.",
       "types": [
-        {"name": "TaskStatus", "variants": ["Todo", "InProgress", "Blocked", "Done", "Archived"]},
-        {"name": "Priority", "variants": ["Low", "Normal", "High", "Urgent"]},
-        {"name": "TaskEvent", "variants": [{"name": "TaskCreated", "fields": ["String", "Priority", "List<String>", "Option<String>", "String"]}, {"name": "TaskRenamed", "fields": ["String", "String"]}, {"name": "TaskStarted", "fields": ["String"]}, {"name": "TaskBlocked", "fields": ["String", "String"]}, {"name": "TaskCompleted", "fields": ["String"]}, {"name": "TaskReopened", "fields": ["String", "String"]}, {"name": "PriorityChanged", "fields": ["Priority", "String"]}, {"name": "TagAdded", "fields": ["String", "String"]}, {"name": "TagRemoved", "fields": ["String", "String"]}, {"name": "CommentAdded", "fields": ["Comment"]}, {"name": "DeadlineSet", "fields": ["String", "String"]}, {"name": "DeadlineCleared", "fields": ["String"]}, {"name": "TaskArchived", "fields": ["String"]}]}
+        {
+          "name": "TaskStatus",
+          "variants": [
+            "Todo",
+            "InProgress",
+            "Blocked",
+            "Done",
+            "Archived"
+          ]
+        },
+        {
+          "name": "Priority",
+          "variants": [
+            "Low",
+            "Normal",
+            "High",
+            "Urgent"
+          ]
+        },
+        {
+          "name": "TaskEvent",
+          "variants": [
+            {
+              "name": "TaskCreated",
+              "fields": [
+                "String",
+                "Priority",
+                "List<String>",
+                "Option<String>",
+                "String"
+              ]
+            },
+            {
+              "name": "TaskRenamed",
+              "fields": [
+                "String",
+                "String"
+              ]
+            },
+            {
+              "name": "TaskStarted",
+              "fields": [
+                "String"
+              ]
+            },
+            {
+              "name": "TaskBlocked",
+              "fields": [
+                "String",
+                "String"
+              ]
+            },
+            {
+              "name": "TaskCompleted",
+              "fields": [
+                "String"
+              ]
+            },
+            {
+              "name": "TaskReopened",
+              "fields": [
+                "String",
+                "String"
+              ]
+            },
+            {
+              "name": "PriorityChanged",
+              "fields": [
+                "Priority",
+                "String"
+              ]
+            },
+            {
+              "name": "TagAdded",
+              "fields": [
+                "String",
+                "String"
+              ]
+            },
+            {
+              "name": "TagRemoved",
+              "fields": [
+                "String",
+                "String"
+              ]
+            },
+            {
+              "name": "CommentAdded",
+              "fields": [
+                "Comment"
+              ]
+            },
+            {
+              "name": "DeadlineSet",
+              "fields": [
+                "String",
+                "String"
+              ]
+            },
+            {
+              "name": "DeadlineCleared",
+              "fields": [
+                "String"
+              ]
+            },
+            {
+              "name": "TaskArchived",
+              "fields": [
+                "String"
+              ]
+            }
+          ]
+        }
       ],
       "records": [
-        {"name": "Project", "fields": [{"name": "id", "type": "String"}, {"name": "name", "type": "String"}, {"name": "archived", "type": "Bool"}, {"name": "createdAt", "type": "String"}, {"name": "updatedAt", "type": "String"}]},
-        {"name": "Comment", "fields": [{"name": "id", "type": "String"}, {"name": "body", "type": "String"}, {"name": "author", "type": "String"}, {"name": "createdAt", "type": "String"}]},
-        {"name": "TaskEventRecord", "fields": [{"name": "taskId", "type": "String"}, {"name": "projectId", "type": "String"}, {"name": "seq", "type": "Int"}, {"name": "event", "type": "TaskEvent"}]},
-        {"name": "Task", "fields": [{"name": "id", "type": "String"}, {"name": "projectId", "type": "String"}, {"name": "title", "type": "String"}, {"name": "status", "type": "TaskStatus"}, {"name": "priority", "type": "Priority"}, {"name": "tags", "type": "List<String>"}, {"name": "deadline", "type": "Option<String>"}, {"name": "comments", "type": "List<Comment>"}, {"name": "createdAt", "type": "String"}, {"name": "updatedAt", "type": "String"}, {"name": "statusChangedAt", "type": "String"}]},
-        {"name": "TaskView", "fields": [{"name": "taskId", "type": "String"}, {"name": "projectId", "type": "String"}, {"name": "title", "type": "String"}, {"name": "status", "type": "TaskStatus"}, {"name": "priority", "type": "Priority"}, {"name": "tags", "type": "List<String>"}, {"name": "deadline", "type": "Option<String>"}, {"name": "overdue", "type": "Bool"}, {"name": "deadlineSoon", "type": "Bool"}, {"name": "derivedUrgent", "type": "Bool"}, {"name": "stalled", "type": "Bool"}, {"name": "missingClosingComment", "type": "Bool"}, {"name": "needsReview", "type": "Bool"}]},
-        {"name": "TaskSummary", "fields": [{"name": "taskId", "type": "String"}, {"name": "title", "type": "String"}, {"name": "projectId", "type": "String"}, {"name": "status", "type": "TaskStatus"}, {"name": "priority", "type": "Priority"}, {"name": "derivedUrgent", "type": "Bool"}, {"name": "overdue", "type": "Bool"}, {"name": "stalled", "type": "Bool"}, {"name": "tagSummary", "type": "String"}, {"name": "deadlineText", "type": "String"}]},
-        {"name": "Notification", "fields": [{"name": "key", "type": "String"}, {"name": "taskId", "type": "String"}, {"name": "kind", "type": "String"}, {"name": "message", "type": "String"}, {"name": "createdAt", "type": "String"}]},
-        {"name": "AuditEntry", "fields": [{"name": "key", "type": "String"}, {"name": "taskId", "type": "String"}, {"name": "action", "type": "String"}, {"name": "message", "type": "String"}, {"name": "createdAt", "type": "String"}]},
-        {"name": "RuleResult", "fields": [{"name": "taskId", "type": "String"}, {"name": "events", "type": "List<TaskEventRecord>"}, {"name": "notifications", "type": "List<Notification>"}, {"name": "audits", "type": "List<AuditEntry>"}, {"name": "notes", "type": "List<String>"}]}
+        {
+          "name": "Project",
+          "fields": [
+            {
+              "name": "id",
+              "type": "String"
+            },
+            {
+              "name": "name",
+              "type": "String"
+            },
+            {
+              "name": "archived",
+              "type": "Bool"
+            },
+            {
+              "name": "createdAt",
+              "type": "String"
+            },
+            {
+              "name": "updatedAt",
+              "type": "String"
+            }
+          ]
+        },
+        {
+          "name": "Comment",
+          "fields": [
+            {
+              "name": "id",
+              "type": "String"
+            },
+            {
+              "name": "body",
+              "type": "String"
+            },
+            {
+              "name": "author",
+              "type": "String"
+            },
+            {
+              "name": "createdAt",
+              "type": "String"
+            }
+          ]
+        },
+        {
+          "name": "TaskEventRecord",
+          "fields": [
+            {
+              "name": "taskId",
+              "type": "String"
+            },
+            {
+              "name": "projectId",
+              "type": "String"
+            },
+            {
+              "name": "seq",
+              "type": "Int"
+            },
+            {
+              "name": "event",
+              "type": "TaskEvent"
+            }
+          ]
+        },
+        {
+          "name": "Task",
+          "fields": [
+            {
+              "name": "id",
+              "type": "String"
+            },
+            {
+              "name": "projectId",
+              "type": "String"
+            },
+            {
+              "name": "title",
+              "type": "String"
+            },
+            {
+              "name": "status",
+              "type": "TaskStatus"
+            },
+            {
+              "name": "priority",
+              "type": "Priority"
+            },
+            {
+              "name": "tags",
+              "type": "List<String>"
+            },
+            {
+              "name": "deadline",
+              "type": "Option<String>"
+            },
+            {
+              "name": "comments",
+              "type": "List<Comment>"
+            },
+            {
+              "name": "createdAt",
+              "type": "String"
+            },
+            {
+              "name": "updatedAt",
+              "type": "String"
+            },
+            {
+              "name": "statusChangedAt",
+              "type": "String"
+            }
+          ]
+        },
+        {
+          "name": "Notification",
+          "fields": [
+            {
+              "name": "key",
+              "type": "String"
+            },
+            {
+              "name": "taskId",
+              "type": "String"
+            },
+            {
+              "name": "kind",
+              "type": "String"
+            },
+            {
+              "name": "message",
+              "type": "String"
+            },
+            {
+              "name": "createdAt",
+              "type": "String"
+            }
+          ]
+        },
+        {
+          "name": "AuditEntry",
+          "fields": [
+            {
+              "name": "key",
+              "type": "String"
+            },
+            {
+              "name": "taskId",
+              "type": "String"
+            },
+            {
+              "name": "action",
+              "type": "String"
+            },
+            {
+              "name": "message",
+              "type": "String"
+            },
+            {
+              "name": "createdAt",
+              "type": "String"
+            }
+          ]
+        }
       ]
     },
     {
       "source_file": "domain/projects.av",
       "module": "Projects",
       "intent": "Pure project creation, lookup, and update helpers. Projects stay deliberately shallow: the task engine is event-sourced, but project lifecycle is simple enough to keep as direct state.",
-      "depends": ["Domain.Types", "Domain.Validation"],
+      "depends": [
+        "Domain.Types",
+        "Domain.Validation"
+      ],
       "functions": [
         {
           "sig": "putProject(projects: List<Project>, project: Project) -> List<Project>",
@@ -74,7 +508,9 @@
           "sig": "createProject(id: String, name: String, now: String) -> Result<Project, String>",
           "desc": "Creates a project after field validation.",
           "verify_count": 2,
-          "verify": ["createProject(\"bad id\", \"Alpha\", \"2026-03-08T12:00:00Z\") -> Result.Err(\"Project ID must use letters, numbers, dash, or underscore\")"]
+          "verify": [
+            "createProject(\"bad id\", \"Alpha\", \"2026-03-08T12:00:00Z\") => Result.Err(\"Project ID must use letters, numbers, dash, or underscore\")"
+          ]
         },
         {
           "sig": "archiveProject(project: Project, now: String) -> Result<Project, String>",
@@ -84,35 +520,13 @@
       ]
     },
     {
-      "source_file": "domain/validation.av",
-      "module": "Validation",
-      "intent": "Pure validation rules for command inputs and state transitions. Keeps task and project invariants inspectable without touching the store or clock.",
-      "depends": ["Domain.Types", "Domain.Time"],
-      "functions": [
-        {
-          "sig": "validateDeadline(deadline: Option<String>) -> Result<Option<String>, String>",
-          "desc": "Validates an optional ISO deadline.",
-          "verify_count": 3,
-          "verify": ["validateDeadline(Option.None) -> Result.Ok(Option.None)", "validateDeadline(Option.Some(\"bad\")) -> Result.Err(\"Invalid deadline: Timestamp must start with YYYY-MM-DDTHH:MM:SS\")", "validateDeadline(Option.Some(\"2026-03-09T12:00:00Z\")) -> Result.Ok(Option.Some(\"2026-03-09T12:00:00Z\"))"]
-        },
-        {
-          "sig": "validateTaskCreate(id: String, title: String, tags: List<String>, deadline: Option<String>) -> Result<Unit, String>",
-          "desc": "Checks fields needed to create a task.",
-          "verify_count": 5,
-          "verify": ["validateTaskCreate(\"task_1\", \"  \", [], Option.None) -> Result.Err(\"Task title cannot be blank\")", "validateTaskCreate(\"bad id\", \"Write notes\", [], Option.None) -> Result.Err(\"Task ID must use letters, numbers, dash, or underscore\")", "validateTaskCreate(\"task_1\", \"Write notes\", [\"ops\", \"ops\"], Option.None) -> Result.Err(\"Tags must not repeat\")"]
-        },
-        {
-          "sig": "ensureProjectActive(project: Project) -> Result<Unit, String>",
-          "desc": "Rejects task mutation when the parent project is archived.",
-          "verify_count": 2
-        }
-      ]
-    },
-    {
       "source_file": "domain/tasks.av",
       "module": "Tasks",
       "intent": "Pure task command logic that produces explicit events. Command handlers stay thin because this module converts validated user intent into domain events without touching persistence or notifications.",
-      "depends": ["Domain.Types", "Domain.Validation"],
+      "depends": [
+        "Domain.Types",
+        "Domain.Validation"
+      ],
       "functions": [
         {
           "sig": "createTask(taskId: String, projectId: String, title: String, priority: Priority, tags: List<String>, deadline: Option<String>, now: String) -> Result<TaskEventRecord, String>",
@@ -133,7 +547,9 @@
           "sig": "reopenTask(task: Task, seq: Int, reason: String, now: String) -> Result<TaskEventRecord, String>",
           "desc": "Reopens a done task into active work.",
           "verify_count": 2,
-          "verify": ["reopenTask(sampleTask(), 4, \"Regression found\", \"2026-03-11T12:00:00Z\") -> Result.Err(\"Task 't1' can only be reopened from done\")"]
+          "verify": [
+            "reopenTask(sampleTask(), 4, \"Regression found\", \"2026-03-11T12:00:00Z\") => Result.Err(\"Task 't1' can only be reopened from done\")"
+          ]
         }
       ]
     },
@@ -141,13 +557,18 @@
       "source_file": "domain/events.av",
       "module": "Events",
       "intent": "Pure event application and replay logic for workflow tasks. With typed sum payload matching now working across the toolchain, replay can live in the domain again instead of reconstructing state from serialized event fields.",
-      "depends": ["Domain.Types", "Domain.Validation"],
+      "depends": [
+        "Domain.Types",
+        "Domain.Validation"
+      ],
       "functions": [
         {
           "sig": "replayTask(events: List<TaskEventRecord>) -> Result<Task, String>",
           "desc": "Replays one task stream into its current projection.",
           "verify_count": 2,
-          "verify": ["replayTask([]) -> Result.Err(\"No events for task\")"]
+          "verify": [
+            "replayTask([]) => Result.Err(\"No events for task\")"
+          ]
         },
         {
           "sig": "replayAll(events: List<TaskEventRecord>) -> Result<List<Task>, String>",
@@ -160,54 +581,52 @@
       "source_file": "domain/rules.av",
       "module": "Rules",
       "intent": "Explicit workflow rule functions over replayed task state. Rules stay as plain functions rather than a hidden mini-language so reviewers can see which business pressure caused each follow-up event or notification.",
-      "depends": ["Domain.Types", "Domain.Views"],
-      "functions": [
-        {
-          "sig": "runRules(project: Project, task: Task, latest: Option<TaskEventRecord>, now: String, nextSeq: Int) -> Result<RuleResult, String>",
-          "desc": "Runs all explicit workflow rules for one task.",
-          "verify_count": 1
-        }
+      "depends": [
+        "Domain.Types",
+        "Domain.Views"
       ]
     },
     {
       "source_file": "infra/store.av",
       "module": "Store",
       "intent": "Flat-file persistence for projects and append-only task events. This module owns file formats and append/write primitives; replay stays in the domain so the app core reads like event sourcing instead of storage magic.",
-      "depends": ["Domain.Types", "Infra.Codec"],
-      "effects": ["Disk.appendText", "Disk.readText", "Disk.writeText"],
+      "depends": [
+        "Domain.Types",
+        "Infra.Codec"
+      ],
+      "effects": [
+        "Disk.appendText",
+        "Disk.readText",
+        "Disk.writeText"
+      ],
       "functions": [
         {
           "sig": "loadProjects() -> Result<List<Project>, String>",
-          "effects": ["Disk.readText"],
+          "effects": [
+            "Disk.readText"
+          ],
           "desc": "Reads all projects from disk."
         },
         {
           "sig": "saveProjects(projects: List<Project>) -> Result<Unit, String>",
-          "effects": ["Disk.writeText"],
+          "effects": [
+            "Disk.writeText"
+          ],
           "desc": "Rewrites project state as one whole file."
         },
         {
           "sig": "loadTaskEvents() -> Result<List<TaskEventRecord>, String>",
-          "effects": ["Disk.readText"],
+          "effects": [
+            "Disk.readText"
+          ],
           "desc": "Reads the append-only task event log."
         },
         {
           "sig": "appendTaskEvents(entries: List<TaskEventRecord>) -> Result<Unit, String>",
-          "effects": ["Disk.appendText"],
+          "effects": [
+            "Disk.appendText"
+          ],
           "desc": "Appends many serialized task events in one write."
-        }
-      ]
-    },
-    {
-      "source_file": "infra/clock.av",
-      "module": "Clock",
-      "intent": "Thin time adapter for the workflow engine. Keeping Time.now behind one module makes orchestration explicit about where time enters the system without contaminating pure domain logic.",
-      "effects": ["Time.now"],
-      "functions": [
-        {
-          "sig": "now() -> String",
-          "effects": ["Time.now"],
-          "desc": "Returns the current timestamp as the orchestration layer sees it."
         }
       ]
     },
@@ -215,17 +634,31 @@
       "source_file": "infra/notify.av",
       "module": "Notify",
       "intent": "Notification delivery and persistence for workflow rules. Notifications are stored so queries can inspect them later, but they are also emitted immediately to the console to make the CLI feel alive.",
-      "depends": ["Domain.Types", "Infra.Codec", "Infra.Store"],
-      "effects": ["Console.warn", "Disk.appendText", "Disk.readText"],
+      "depends": [
+        "Domain.Types",
+        "Infra.Codec",
+        "Infra.Store"
+      ],
+      "effects": [
+        "Console.warn",
+        "Disk.appendText",
+        "Disk.readText"
+      ],
       "functions": [
         {
           "sig": "loadNotifications() -> Result<List<Notification>, String>",
-          "effects": ["Disk.readText"],
+          "effects": [
+            "Disk.readText"
+          ],
           "desc": "Reads all persisted notifications."
         },
         {
           "sig": "emitNotifications(entries: List<Notification>) -> Result<Unit, String>",
-          "effects": ["Console.warn", "Disk.appendText", "Disk.readText"],
+          "effects": [
+            "Console.warn",
+            "Disk.appendText",
+            "Disk.readText"
+          ],
           "desc": "Persists and prints only new notifications."
         }
       ]
@@ -234,39 +667,30 @@
       "source_file": "infra/audit.av",
       "module": "Audit",
       "intent": "Audit trail persistence for workflow actions and rule follow-ups. Audit entries stay outside the task event log because some audit records explain why a decision happened rather than representing state reconstruction inputs.",
-      "depends": ["Domain.Types", "Infra.Codec", "Infra.Store"],
-      "effects": ["Disk.appendText", "Disk.readText"],
+      "depends": [
+        "Domain.Types",
+        "Infra.Codec",
+        "Infra.Store"
+      ],
+      "effects": [
+        "Disk.appendText",
+        "Disk.readText"
+      ],
       "functions": [
         {
           "sig": "loadEntries() -> Result<List<AuditEntry>, String>",
-          "effects": ["Disk.readText"],
+          "effects": [
+            "Disk.readText"
+          ],
           "desc": "Reads all persisted audit entries."
         },
         {
           "sig": "recordEntries(entries: List<AuditEntry>) -> Result<Unit, String>",
-          "effects": ["Disk.appendText", "Disk.readText"],
+          "effects": [
+            "Disk.appendText",
+            "Disk.readText"
+          ],
           "desc": "Appends only new audit entries, preserving the existing log."
-        }
-      ]
-    },
-    {
-      "source_file": "app/queries.av",
-      "module": "Queries",
-      "intent": "Effectful read-model assembly for the workflow engine CLI. Queries load persisted state, replay tasks, and derive views without mixing those concerns into the parser or the pure domain modules.",
-      "depends": ["Domain.Types", "Domain.Projects", "Domain.Views", "Domain.Events", "Infra.Store", "Infra.Audit", "Infra.Notify", "Infra.Clock"],
-      "effects": ["Disk.readText", "Time.now"],
-      "types": [
-        {"name": "Query", "variants": [{"name": "ListTasks", "fields": ["Option<String>"]}, {"name": "ShowTask", "fields": ["String"]}, {"name": "ShowAudit", "fields": ["Option<String>"]}]},
-        {"name": "QueryOutput", "variants": [{"name": "TaskList", "fields": ["List<TaskSummary>"]}, {"name": "TaskDetail", "fields": ["TaskDetails"]}, {"name": "AuditTrail", "fields": ["List<AuditEntry>"]}]}
-      ],
-      "records": [
-        {"name": "TaskDetails", "fields": [{"name": "project", "type": "Project"}, {"name": "task", "type": "Task"}, {"name": "view", "type": "TaskView"}, {"name": "history", "type": "List<TaskEventRecord>"}, {"name": "audits", "type": "List<AuditEntry>"}, {"name": "notifications", "type": "List<Notification>"}]}
-      ],
-      "functions": [
-        {
-          "sig": "run(query: Query) -> Result<QueryOutput, String>",
-          "effects": ["Disk.readText", "Time.now"],
-          "desc": "Executes one read-only query over persisted workflow state."
         }
       ]
     }
@@ -276,108 +700,131 @@
       "name": "OneRulePassPerCommand",
       "date": "2026-03-08",
       "chosen": "SingleExplicitRulePass",
-      "rejected": ["LoopUntilNoRulesFire", "HideRulesInsideStoreWrites"],
+      "rejected": [
+        "LoopUntilNoRulesFire",
+        "HideRulesInsideStoreWrites"
+      ],
       "reason": "Workflow rules should stay reviewable, not turn into an implicit fixpoint engine. A single pass after each user mutation keeps command flow explicit even if it leaves some second-order derivations for a later manual `run_rules` call.",
-      "impacts": ["execute", "decide", "planTaskCommand", "deriveRuleEffectsAfterPrimaryEvent", "commit", "dispatch"],
+      "impacts": [
+        "execute",
+        "decide",
+        "planTaskCommand",
+        "deriveRuleEffectsAfterPrimaryEvent",
+        "commit",
+        "dispatch"
+      ],
       "author": "Codex"
     },
     {
       "name": "ProjectsStayStateBased",
       "date": "2026-03-08",
       "chosen": "StateRecordsForProjects",
-      "rejected": ["ProjectEventSourcing", "SingleGlobalAggregate"],
+      "rejected": [
+        "ProjectEventSourcing",
+        "SingleGlobalAggregate"
+      ],
       "reason": "Project transitions are shallow compared with task lifecycle. A separate project event log would add ceremony without revealing new pressure. Keeping projects as direct state lets the task event stream stay focused on richer behavior.",
-      "impacts": ["createProject", "archiveProject", "putProject"],
-      "author": "Codex"
-    },
-    {
-      "name": "ArchivedProjectsRejectTaskChanges",
-      "date": "2026-03-08",
-      "chosen": "RejectTaskMutationWhenProjectArchived",
-      "rejected": ["SoftWarningOnly", "ImplicitOverride"],
-      "reason": "Archived projects are an operational boundary, not only a display state. Once a project is archived, task mutation should stop unless a future command makes that exception explicit.",
-      "impacts": ["ensureProjectActive"],
+      "impacts": [
+        "createProject",
+        "archiveProject",
+        "putProject"
+      ],
       "author": "Codex"
     },
     {
       "name": "CommandsProduceEventsNotMutatedTasks",
       "date": "2026-03-08",
       "chosen": "CommandFunctionsEmitEvents",
-      "rejected": ["MutateTaskRecordsDirectly", "HideStateChangeInsideStore"],
+      "rejected": [
+        "MutateTaskRecordsDirectly",
+        "HideStateChangeInsideStore"
+      ],
       "reason": "A task workflow engine should make state transitions reviewable at the event level. Returning events instead of directly mutated tasks keeps replay and audit aligned.",
-      "impacts": ["createTask", "renameTask", "completeTask", "reopenTask"],
+      "impacts": [
+        "createTask",
+        "renameTask",
+        "completeTask",
+        "reopenTask"
+      ],
       "author": "Codex"
     },
     {
       "name": "ReplayReturnsToDomain",
       "date": "2026-03-08",
       "chosen": "TypedReplayInDomain",
-      "rejected": ["KeepReplayInInfraStore", "DeleteReplayHelpers"],
+      "rejected": [
+        "KeepReplayInInfraStore",
+        "DeleteReplayHelpers"
+      ],
       "reason": "Replay belongs with the domain semantics, not inside the storage adapter. Now that constructor payload matching is reliable enough, the natural typed version is clearer than the old serialized-payload workaround.",
-      "impacts": ["replayTask", "replayAll", "applyEvent"],
-      "author": "Codex"
-    },
-    {
-      "name": "RulesStayAsFunctions",
-      "date": "2026-03-08",
-      "chosen": "PlainRuleFunctions",
-      "rejected": ["RuleDsl", "RulesInsideCommandHandlers"],
-      "reason": "The rule count is small enough that a DSL would mostly hide branching. Explicit functions keep rule-specific edge cases near the code they affect.",
-      "impacts": ["runRules"],
+      "impacts": [
+        "replayTask",
+        "replayAll",
+        "applyEvent"
+      ],
       "author": "Codex"
     },
     {
       "name": "DeadlinesProjectUrgencyInsteadOfMutatingPriority",
       "date": "2026-03-08",
       "chosen": "DerivedUrgencyAndNotifications",
-      "rejected": ["RewritePriorityToUrgent", "IgnoreDeadlinePressure"],
+      "rejected": [
+        "RewritePriorityToUrgent",
+        "IgnoreDeadlinePressure"
+      ],
       "reason": "Stored priority represents intent; deadline pressure is situational. Mutating priority during rule evaluation would erase who set the original priority.",
-      "impacts": ["ruleDeadlineSoon", "ruleOverdue"],
+      "impacts": [
+        "ruleDeadlineSoon",
+        "ruleOverdue"
+      ],
       "author": "Codex"
     },
     {
       "name": "AppendOnlyTaskEventsWithFlatProjectState",
       "date": "2026-03-08",
       "chosen": "TaskEventsPlusProjectState",
-      "rejected": ["EverythingAsMutableState", "EverythingEventSourced", "InMemoryOnly"],
+      "rejected": [
+        "EverythingAsMutableState",
+        "EverythingEventSourced",
+        "InMemoryOnly"
+      ],
       "reason": "Task lifecycle is where reviewable history matters, so an append-only event log pays for itself. Projects are much shallower, and storing them as current state avoids a second event system. This keeps the storage model simple while still exercising replay in a realistic place.",
-      "impacts": ["loadProjects", "saveProjects", "loadTaskEvents", "appendTaskEvents"],
-      "author": "Codex"
-    },
-    {
-      "name": "TimeEntersThroughClockModule",
-      "date": "2026-03-08",
-      "chosen": "SingleClockAdapter",
-      "rejected": ["CallTimeNowEverywhere", "ThreadNowAsUntypedStringByConvention"],
-      "reason": "Deadline and stalled rules depend on the current time, but that dependency should remain visible at the app boundary instead of leaking into pure domain modules.",
-      "impacts": ["now"],
+      "impacts": [
+        "loadProjects",
+        "saveProjects",
+        "loadTaskEvents",
+        "appendTaskEvents"
+      ],
       "author": "Codex"
     },
     {
       "name": "NotificationsDeduplicateByKey",
       "date": "2026-03-08",
       "chosen": "PersistAndSkipKnownKeys",
-      "rejected": ["AlwaysEmitAgain", "NoNotificationHistory"],
+      "rejected": [
+        "AlwaysEmitAgain",
+        "NoNotificationHistory"
+      ],
       "reason": "Deadline and overdue rules can be re-run manually, so delivery needs a stable idempotency key or the CLI will drown in repeated warnings.",
-      "impacts": ["emitNotifications", "loadNotifications"],
+      "impacts": [
+        "emitNotifications",
+        "loadNotifications"
+      ],
       "author": "Codex"
     },
     {
       "name": "AuditsStayAdjacentToEventsNotInsideThem",
       "date": "2026-03-08",
       "chosen": "SeparateAuditLog",
-      "rejected": ["EncodeAllAuditNarrativeAsTaskEvents", "NoAuditTrail"],
+      "rejected": [
+        "EncodeAllAuditNarrativeAsTaskEvents",
+        "NoAuditTrail"
+      ],
       "reason": "Reopen reasons and command traces are valuable to reviewers, but they should not change replay semantics for task state.",
-      "impacts": ["recordEntries", "loadEntries"],
-      "author": "Codex"
-    },
-    {
-      "name": "QueriesReplayInsteadOfReadingMutableTaskTables",
-      "date": "2026-03-08",
-      "chosen": "ReplayForReadModel",
-      "rejected": ["DedicatedMutableTaskProjectionFile", "AdHocTaskCacheOnly"],
-      "reason": "The whole point of the workflow engine is to see whether replay stays readable. If queries bypass replay with a separate mutable task table, that test becomes fake.",
-      "impacts": ["run"],
+      "impacts": [
+        "recordEntries",
+        "loadEntries"
+      ],
       "author": "Codex"
     }
   ]

@@ -26,7 +26,7 @@ main_effects: `[Args.get, Console.print, Console.warn, Disk.appendText, Disk.exi
 
 ### `parseArgs(args: List<String>) -> Result<Input, String>`
 > Parses argv-style input into a command, query, or help action.
-verify: `parseArgs([]) -> Result.Ok(Input.ShowHelp)`, `parseArgs(["list_tasks"]) -> Result.Ok(Input.RunQuery(Query.ListTasks(Option.None)))`, `parseArgs(["help"]) -> Result.Ok(Input.ShowHelp)`
+verify: `parseArgs([]) => Result.Ok(Input.ShowHelp)`, `parseArgs(["list_tasks"]) => Result.Ok(Input.RunQuery(Query.ListTasks(Option.None)))`, `parseArgs(["help"]) => Result.Ok(Input.ShowHelp)`
 
 ---
 
@@ -99,14 +99,14 @@ effects: `[Console.warn, Disk.appendText, Disk.readText, Disk.writeText, Time.no
 ### `findProject(projects: List<Project>, projectId: String) -> Option<Project>`
 tco: `true`  
 > Linear lookup is sufficient for this intentionally small application core.
-verify: `findProject([], "p1") -> Option.None`
+verify: `findProject([], "p1") => Option.None`
 
 ### `putProject(projects: List<Project>, project: Project) -> List<Project>`
 > Replaces an existing project by ID or appends a new one.
 
 ### `createProject(id: String, name: String, now: String) -> Result<Project, String>`
 > Creates a project after field validation.
-verify: `createProject("bad id", "Alpha", "2026-03-08T12:00:00Z") -> Result.Err("Project ID must use letters, numbers, dash, or underscore")`
+verify: `createProject("bad id", "Alpha", "2026-03-08T12:00:00Z") => Result.Err("Project ID must use letters, numbers, dash, or underscore")`
 
 ### `archiveProject(project: Project, now: String) -> Result<Project, String>`
 > Archives a project exactly once.
@@ -120,23 +120,23 @@ verify: `createProject("bad id", "Alpha", "2026-03-08T12:00:00Z") -> Result.Err(
 
 ### `validTag(tag: String) -> Bool`
 > Tags use the same restricted shape as IDs.
-verify: `validTag("waiting") -> true`, `validTag("bad tag") -> false`, `validTag("needs_review") -> true`
+verify: `validTag("waiting") => true`, `validTag("bad tag") => false`, `validTag("needs_review") => true`
 
 ### `validateProjectCreate(id: String, name: String) -> Result<Unit, String>`
 > Checks fields needed to create a project.
-verify: `validateProjectCreate("alpha", "   ") -> Result.Err("Project name cannot be blank")`, `validateProjectCreate("bad id", "Alpha") -> Result.Err("Project ID must use letters, numbers, dash, or underscore")`, `validateProjectCreate("alpha_1", "Alpha") -> Result.Ok(Unit)`
+verify: `validateProjectCreate("alpha", "   ") => Result.Err("Project name cannot be blank")`, `validateProjectCreate("bad id", "Alpha") => Result.Err("Project ID must use letters, numbers, dash, or underscore")`, `validateProjectCreate("alpha_1", "Alpha") => Result.Ok(Unit)`
 
 ### `validateDeadline(deadline: Option<String>) -> Result<Option<String>, String>`
 > Validates an optional ISO deadline.
-verify: `validateDeadline(Option.None) -> Result.Ok(Option.None)`, `validateDeadline(Option.Some("bad")) -> Result.Err("Invalid deadline: Timestamp must start with YYYY-MM-DDTHH:MM:SS")`, `validateDeadline(Option.Some("2026-03-09T12:00:00Z")) -> Result.Ok(Option.Some("2026-03-09T12:00:00Z"))`
+verify: `validateDeadline(Option.None) => Result.Ok(Option.None)`, `validateDeadline(Option.Some("bad")) => Result.Err("Invalid deadline: Timestamp must start with YYYY-MM-DDTHH:MM:SS")`, `validateDeadline(Option.Some("2026-03-09T12:00:00Z")) => Result.Ok(Option.Some("2026-03-09T12:00:00Z"))`
 
 ### `validateTaskCreate(id: String, title: String, tags: List<String>, deadline: Option<String>) -> Result<Unit, String>`
 > Checks fields needed to create a task.
-verify: `validateTaskCreate("task_1", "  ", [], Option.None) -> Result.Err("Task title cannot be blank")`, `validateTaskCreate("bad id", "Write notes", [], Option.None) -> Result.Err("Task ID must use letters, numbers, dash, or underscore")`, `validateTaskCreate("task_1", "Write notes", ["ops", "ops"], Option.None) -> Result.Err("Tags must not repeat")`
+verify: `validateTaskCreate("task_1", "  ", [], Option.None) => Result.Err("Task title cannot be blank")`, `validateTaskCreate("bad id", "Write notes", [], Option.None) => Result.Err("Task ID must use letters, numbers, dash, or underscore")`, `validateTaskCreate("task_1", "Write notes", ["ops", "ops"], Option.None) => Result.Err("Tags must not repeat")`
 
 ### `validateComment(author: String, body: String) -> Result<Unit, String>`
 > Comments need both author and body.
-verify: `validateComment("", "Looks good") -> Result.Err("Comment author cannot be blank")`, `validateComment("alice", " ") -> Result.Err("Comment body cannot be blank")`, `validateComment("alice", "Looks good") -> Result.Ok(Unit)`
+verify: `validateComment("", "Looks good") => Result.Err("Comment author cannot be blank")`, `validateComment("alice", " ") => Result.Err("Comment body cannot be blank")`, `validateComment("alice", "Looks good") => Result.Ok(Unit)`
 
 ### `ensureProjectActive(project: Project) -> Result<Unit, String>`
 > Rejects task mutation when the parent project is archived.
@@ -153,11 +153,11 @@ verify: `validateComment("", "Looks good") -> Result.Err("Comment author cannot 
 
 ### `parseIso(s: String) -> Result<Timestamp, String>`
 > Parses YYYY-MM-DDTHH:MM:SS and ignores any trailing fractional or zone suffix.
-verify: `parseIso("bad") -> Result.Err("Timestamp must start with YYYY-MM-DDTHH:MM:SS")`, `parseIso("2025-02-29T05:00:00Z") -> Result.Err("Invalid calendar timestamp: 2025-02-29T05:00:00")`, `parseIso("2026-03-08T12:30:00Z") -> Result.Ok(Timestamp(year = 2026, month = 3, day = 8, hour = 12, minute = 30, second = 0))`
+verify: `parseIso("bad") => Result.Err("Timestamp must start with YYYY-MM-DDTHH:MM:SS")`, `parseIso("2025-02-29T05:00:00Z") => Result.Err("Invalid calendar timestamp: 2025-02-29T05:00:00")`, `parseIso("2026-03-08T12:30:00Z") => Result.Ok(Timestamp(year = 2026, month = 3, day = 8, hour = 12, minute = 30, second = 0))`
 
 ### `withinNextHours(now: String, target: String, hours: Int) -> Result<Bool, String>`
 > True when target is in the future and inside the requested hour window.
-verify: `withinNextHours("2026-03-08T12:00:00Z", "2026-03-10T12:00:00Z", 24) -> Result.Ok(false)`, `withinNextHours("2026-03-08T12:00:00Z", "2026-03-08T23:00:00Z", 24) -> Result.Ok(true)`, `withinNextHours("2026-03-08T12:00:00Z", "2026-03-08T11:00:00Z", 24) -> Result.Ok(false)`
+verify: `withinNextHours("2026-03-08T12:00:00Z", "2026-03-10T12:00:00Z", 24) => Result.Ok(false)`, `withinNextHours("2026-03-08T12:00:00Z", "2026-03-08T23:00:00Z", 24) => Result.Ok(true)`, `withinNextHours("2026-03-08T12:00:00Z", "2026-03-08T11:00:00Z", 24) => Result.Ok(false)`
 
 ---
 
@@ -177,11 +177,11 @@ verify: `withinNextHours("2026-03-08T12:00:00Z", "2026-03-10T12:00:00Z", 24) -> 
 
 ### `reopenTask(task: Task, seq: Int, reason: String, now: String) -> Result<TaskEventRecord, String>`
 > Reopens a done task into active work.
-verify: `reopenTask(sampleTask(), 4, "Regression found", "2026-03-11T12:00:00Z") -> Result.Err("Task 't1' can only be reopened from done")`
+verify: `reopenTask(sampleTask(), 4, "Regression found", "2026-03-11T12:00:00Z") => Result.Err("Task 't1' can only be reopened from done")`
 
 ### `clearDeadline(task: Task, seq: Int, now: String) -> Result<TaskEventRecord, String>`
 > Clears an existing deadline.
-verify: `clearDeadline(sampleTask(), 2, "2026-03-09T12:00:00Z") -> Result.Err("Task 't1' has no deadline to clear")`
+verify: `clearDeadline(sampleTask(), 2, "2026-03-09T12:00:00Z") => Result.Err("Task 't1' has no deadline to clear")`
 
 ### `archiveTask(task: Task, seq: Int, now: String) -> Result<TaskEventRecord, String>`
 > Moves a task into its final archived state.
@@ -195,33 +195,33 @@ verify: `clearDeadline(sampleTask(), 2, "2026-03-09T12:00:00Z") -> Result.Err("T
 
 ### `eventName(event: TaskEvent) -> String`
 > Stable event kind label for rendering and audit helpers.
-verify: `eventName(Domain.Types.TaskEvent.TaskReopened("Regression found", "2026-03-10T12:00:00Z")) -> "TaskReopened"`, `eventName(Domain.Types.TaskEvent.TaskCreated("Plan release", Domain.Types.Priority.High, ["ops"], Option.None, "2026-03-08T12:00:00Z")) -> "TaskCreated"`
+verify: `eventName(Domain.Types.TaskEvent.TaskReopened("Regression found", "2026-03-10T12:00:00Z")) => "TaskReopened"`, `eventName(Domain.Types.TaskEvent.TaskCreated("Plan release", Domain.Types.Priority.High, ["ops"], Option.None, "2026-03-08T12:00:00Z")) => "TaskCreated"`
 
 ### `recordedAt(event: TaskEvent) -> String`
 > Extracts the effective timestamp from each event.
-verify: `recordedAt(Domain.Types.TaskEvent.TaskCompleted("2026-03-09T12:00:00Z")) -> "2026-03-09T12:00:00Z"`
+verify: `recordedAt(Domain.Types.TaskEvent.TaskCompleted("2026-03-09T12:00:00Z")) => "2026-03-09T12:00:00Z"`
 
 ### `latestEvent(events: List<TaskEventRecord>) -> Option<TaskEventRecord>`
 > Reads the last event in a task stream or flat log.
-verify: `latestEvent([]) -> Option.None`, `latestEvent([sampleCreatedEvent(), sampleCompletedEvent()]) -> Option.Some(sampleCompletedEvent())`
+verify: `latestEvent([]) => Option.None`, `latestEvent([sampleCreatedEvent(), sampleCompletedEvent()]) => Option.Some(sampleCompletedEvent())`
 
 ### `eventsForTask(events: List<TaskEventRecord>, taskId: String) -> List<TaskEventRecord>`
 > Filters a flat event log down to one task without growing the runtime stack with the log size.
-verify: `eventsForTask([sampleCreatedEvent()], "t2") -> []`
+verify: `eventsForTask([sampleCreatedEvent()], "t2") => []`
 
 ### `hasTaskEvents(events: List<TaskEventRecord>, taskId: String) -> Bool`
 tco: `true`  
 > True when the flat event log contains at least one event for the given task.
-verify: `hasTaskEvents([sampleCreatedEvent()], "t1") -> true`, `hasTaskEvents([sampleCreatedEvent()], "t2") -> false`
+verify: `hasTaskEvents([sampleCreatedEvent()], "t1") => true`, `hasTaskEvents([sampleCreatedEvent()], "t2") => false`
 
 ### `findTask(tasks: List<Task>, taskId: String) -> Option<Task>`
 tco: `true`  
 > Linear lookup for replayed tasks.
-verify: `findTask([], "t1") -> Option.None`, `findTask([sampleTask()], "t1") -> Option.Some(sampleTask())`
+verify: `findTask([], "t1") => Option.None`, `findTask([sampleTask()], "t1") => Option.Some(sampleTask())`
 
 ### `replayTask(events: List<TaskEventRecord>) -> Result<Task, String>`
 > Replays one task stream into its current projection.
-verify: `replayTask([]) -> Result.Err("No events for task")`
+verify: `replayTask([]) => Result.Err("No events for task")`
 
 ### `replayAll(events: List<TaskEventRecord>) -> Result<List<Task>, String>`
 > Replays the flat task event log into current task projections.
@@ -245,11 +245,11 @@ verify: `replayTask([]) -> Result.Err("No events for task")`
 
 ### `statusText(status: TaskStatus) -> String`
 > Readable task status label.
-verify: `statusText(Domain.Types.TaskStatus.Done) -> "done"`, `statusText(Domain.Types.TaskStatus.Blocked) -> "blocked"`
+verify: `statusText(Domain.Types.TaskStatus.Done) => "done"`, `statusText(Domain.Types.TaskStatus.Blocked) => "blocked"`
 
 ### `priorityText(priority: Priority) -> String`
 > Readable priority label.
-verify: `priorityText(Domain.Types.Priority.High) -> "high"`, `priorityText(Domain.Types.Priority.Urgent) -> "urgent"`
+verify: `priorityText(Domain.Types.Priority.High) => "high"`, `priorityText(Domain.Types.Priority.Urgent) => "urgent"`
 
 ### `deriveView(task: Task, now: String) -> Result<TaskView, String>`
 > Builds derived flags without mutating stored priority or tags.
@@ -264,7 +264,7 @@ effects: `[Disk.appendText, Disk.readText, Disk.writeText]`
 
 ### `dataDir() -> String`
 > Base directory for workflow engine files.
-verify: `dataDir() -> "/tmp/aver_workflow_engine"`
+verify: `dataDir() => "/tmp/aver_workflow_engine"`
 
 ### `loadProjects() -> Result<List<Project>, String>`
 effects: `[Disk.readText]`  
@@ -291,38 +291,38 @@ effects: `[Disk.appendText]`
 
 ### `escapeField(text: String) -> String`
 > Escapes percent, pipe, and newline for one flat-file field.
-verify: `escapeField("a|b") -> "a%7Cb"`, `escapeField("plain") -> "plain"`, `escapeField("line
-break") -> "line%0Abreak"`
+verify: `escapeField("a|b") => "a%7Cb"`, `escapeField("plain") => "plain"`, `escapeField("line
+break") => "line%0Abreak"`
 
 ### `serializeBool(value: Bool) -> String`
 > Stable file representation for booleans.
-verify: `serializeBool(true) -> "true"`, `serializeBool(false) -> "false"`
+verify: `serializeBool(true) => "true"`, `serializeBool(false) => "false"`
 
 ### `parseBool(raw: String) -> Result<Bool, String>`
 > Parses one stored boolean field.
-verify: `parseBool("x") -> Result.Err("Invalid bool: x")`, `parseBool("true") -> Result.Ok(true)`, `parseBool("false") -> Result.Ok(false)`
+verify: `parseBool("x") => Result.Err("Invalid bool: x")`, `parseBool("true") => Result.Ok(true)`, `parseBool("false") => Result.Ok(false)`
 
 ### `fieldAt(parts: List<String>, index: Int, label: String) -> Result<String, String>`
 > Reads and unescapes one required field from a split line.
-verify: `fieldAt([], 0, "project") -> Result.Err("Corrupt project: missing field 0")`, `fieldAt(["a%7Cb"], 0, "project") -> Result.Ok("a|b")`, `fieldAt(["a", "b"], 1, "project") -> Result.Ok("b")`
+verify: `fieldAt([], 0, "project") => Result.Err("Corrupt project: missing field 0")`, `fieldAt(["a%7Cb"], 0, "project") => Result.Ok("a|b")`, `fieldAt(["a", "b"], 1, "project") => Result.Ok("b")`
 
 ### `optionalFieldAt(parts: List<String>, index: Int) -> String`
 > Returns one optional raw field or '-' when it is missing.
-verify: `optionalFieldAt(["a"], 1) -> "-"`, `optionalFieldAt(["a", "b"], 1) -> "b"`
+verify: `optionalFieldAt(["a"], 1) => "-"`, `optionalFieldAt(["a", "b"], 1) => "b"`
 
 ### `encodeOption(value: Option<String>) -> String`
 > Stores optional text as '-' or an escaped field.
-verify: `encodeOption(Option.None) -> "-"`, `encodeOption(Option.Some("a|b")) -> "a%7Cb"`
+verify: `encodeOption(Option.None) => "-"`, `encodeOption(Option.Some("a|b")) => "a%7Cb"`
 
 ### `decodeOption(raw: String) -> Option<String>`
 > Reads optional text stored by encodeOption.
-verify: `decodeOption("-") -> Option.None`, `decodeOption("a%7Cb") -> Option.Some("a|b")`
+verify: `decodeOption("-") => Option.None`, `decodeOption("a%7Cb") => Option.Some("a|b")`
 
 ### `splitNonEmptyLines(content: String) -> List<String>`
 > Splits text into lines and drops empty ones.
-verify: `splitNonEmptyLines("") -> []`, `splitNonEmptyLines("a
+verify: `splitNonEmptyLines("") => []`, `splitNonEmptyLines("a
 b
-") -> ["a", "b"]`
+") => ["a", "b"]`
 
 ---
 
@@ -401,11 +401,11 @@ effects: `[Disk.readText, Time.now]`
 
 ### `renderCommand(result: Result<CommandReport, String>) -> Result<List<String>, String>`
 > Maps command execution into rendered output.
-verify: `renderCommand(Result.Err("boom")) -> Result.Err("boom")`
+verify: `renderCommand(Result.Err("boom")) => Result.Err("boom")`
 
 ### `renderQuery(result: Result<QueryOutput, String>) -> Result<List<String>, String>`
 > Maps query execution into rendered output.
-verify: `renderQuery(Result.Err("boom")) -> Result.Err("boom")`, `renderQuery(Result.Ok(QueryOutput.AuditTrail([]))) -> Result.Ok(["audits: 0"])`
+verify: `renderQuery(Result.Err("boom")) => Result.Err("boom")`, `renderQuery(Result.Ok(QueryOutput.AuditTrail([]))) => Result.Ok(["audits: 0"])`
 
 ---
 
