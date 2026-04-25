@@ -49,23 +49,58 @@ const LEAN_PRELUDE_FLOAT_COE: &str = r#"instance : Coe Int Float := ⟨fun n => 
 def Float.fromInt (n : Int) : Float := Float.ofInt n
 
 -- Aver's Float-to-Int operations match the runtime semantics
--- (`f64::floor() as i64` in VM/Rust/WASM): IEEE 754 floor/round/ceil
--- followed by saturating cast — finite values truncate, NaN → 0,
--- ±Inf saturate to Int64 min/max. Lean's `Float.floor : Float → Float`
--- doesn't fit Aver's `Float.floor : Float → Int` directly, so we
--- synthesize via Float.toUInt64 (saturating, 0 for NaN/negative)
--- with sign handling.
+-- (`f64::floor() as i64` in VM, Rust codegen, WASM — all three use the
+-- same IEEE 754 floor/round/ceil followed by Rust's saturating
+-- `f64 as i64` cast):
+--   * finite values within [i64::MIN, i64::MAX]: truncate toward zero
+--   * finite > i64::MAX:              saturate to i64::MAX
+--   * finite < i64::MIN:              saturate to i64::MIN
+--   * +Inf:                           saturate to i64::MAX
+--   * -Inf:                           saturate to i64::MIN
+--   * NaN:                            0 (Rust 1.45+ defined behavior)
+--
+-- Lean's `Float.floor : Float → Float` doesn't directly satisfy Aver's
+-- `Float.floor : Float → Int`, so we synthesize via the saturating
+-- `Float.toUInt64` (returns 0 for NaN/negative) with sign handling and
+-- explicit bounds. Per-case correctness is asserted by `native_decide`
+-- examples below; total semantic agreement with `f64 as i64` would
+-- need a formal IEEE spec in Lean, which is out of scope.
+--
+-- Asymmetry with the Dafny backend: Lean has IEEE 754 `Float` natively
+-- (`double` at runtime), so we use it. Dafny only offers mathematical
+-- `real` (Cauchy-style, no NaN/Inf/overflow), which is a fundamental
+-- type mismatch with Aver's IEEE Float — Dafny operations stay opaque
+-- (`function FloatPi(): real` etc.) rather than synthesizing IEEE on
+-- top of `bv64`, which would mean implementing the entire IEEE
+-- arithmetic in Dafny by hand.
 namespace AverFloat
 def toInt (x : Float) : Int :=
   if x.isNaN then 0
+  -- 2^63 is exactly representable in f64; values ≥ that saturate up.
+  else if x ≥ 9223372036854775808.0 then 9223372036854775807
+  -- -2^63 is exactly representable; values strictly below saturate down.
+  else if x < -9223372036854775808.0 then -9223372036854775808
   else if x ≥ 0.0 then Int.ofNat x.toUInt64.toNat
   else -(Int.ofNat (-x).toUInt64.toNat)
 
 def floor (x : Float) : Int := toInt x.floor
-def ceil (x : Float) : Int := toInt x.ceil
-def round (x : Float) : Int := toInt (Float.ofInt (toInt (x + (if x ≥ 0.0 then 0.5 else -0.5))))
+def ceil  (x : Float) : Int := toInt x.ceil
+def round (x : Float) : Int := toInt x.round
 
 def pow (x y : Float) : Float := x ^ y
+
+-- Edge-case smoke checks: each `example` is discharged by reduction,
+-- so any drift from these documented values fails Lake build.
+example : AverFloat.toInt 0.0 = 0                                := by native_decide
+example : AverFloat.toInt 3.7 = 3                                := by native_decide
+example : AverFloat.toInt (-3.7) = -3                            := by native_decide
+example : AverFloat.toInt (1.0 / 0.0) = 9223372036854775807      := by native_decide
+example : AverFloat.toInt (-1.0 / 0.0) = -9223372036854775808    := by native_decide
+example : AverFloat.toInt (0.0 / 0.0) = 0                        := by native_decide
+example : AverFloat.floor 3.7 = 3                                := by native_decide
+example : AverFloat.floor (-3.7) = -4                            := by native_decide
+example : AverFloat.ceil  3.2 = 4                                := by native_decide
+example : AverFloat.ceil  (-3.2) = -3                            := by native_decide
 end AverFloat"#;
 
 const LEAN_PRELUDE_FLOAT_DEC_EQ: &str = r#"private unsafe def Float.unsafeDecEq (a b : Float) : Decidable (a = b) :=
