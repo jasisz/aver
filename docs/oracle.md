@@ -252,7 +252,10 @@ verify twoRollsDistinct law alwaysDistinct
 
 `aver verify` passes — under `distinctStub` the two calls return `1` and `2`, the law's RHS holds.
 
-`aver proof` exports a theorem of shape `∀ rnd, twoRollsDistinct rnd = true`, and `lake build` rejects it: there exist oracles (e.g. `fun _ _ _ _ => 5`) for which both calls return the same value, making the law false.
+`aver proof` exports a theorem of shape `∀ rnd, twoRollsDistinct rnd = true`, and both backends reject it for the same reason: there exist oracles (e.g. `fun _ _ _ _ => 5`) for which both calls return the same value, making the law false.
+
+- `--backend lean` + `lake build` → `unsolved goals: ¬rnd BranchPath.Root 0 1 6 = rnd BranchPath.Root 1 1 6`
+- `--backend dafny` + `dafny verify` → `a postcondition could not be proved on this return path: ensures twoRollsDistinct(BranchPath_Root, rnd) == true`
 
 This is not a bug — it's the design. `verify` answers "does this hold for the stubs I wrote down?". `proof` answers "does this hold for every classified-effect implementation that has the right signature?". The second is strictly stronger and catches what the first cannot.
 

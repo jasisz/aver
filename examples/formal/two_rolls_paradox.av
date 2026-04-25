@@ -1,7 +1,7 @@
 module TwoRollsParadox
     intent =
         "Demonstrates the difference between sample-based verify and universal proof."
-        "Same verify block: aver verify passes, aver proof + lake build fails."
+        "Same verify block: aver verify passes, aver proof rejects on both Lean and Dafny."
         "Reason: verify samples laws against the given stubs (here: distinctStub returns n+1)."
         "Proof exports a universal theorem quantified over every oracle — including const oracles."
 
@@ -26,6 +26,6 @@ verify twoRollsDistinct law alwaysDistinct
 
 fn main() -> Unit
     ! [Console.print]
-    Console.print("aver verify: passes (sample under distinctStub: 1 != 2)")
-    Console.print("aver proof:  exports forall-quantified theorem")
-    Console.print("lake build:  fails — const oracle counter-example invalidates the law")
+    Console.print("aver verify:                passes (sample under distinctStub: 1 != 2)")
+    Console.print("aver proof --backend lean:  exports forall-quantified theorem; lake build rejects")
+    Console.print("aver proof --backend dafny: exports the same lemma; dafny verify rejects")
