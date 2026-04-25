@@ -544,10 +544,15 @@ impl<'a> ExprEmitter<'a> {
             _ => None,
         };
 
+        // Built-in record types (Header, HttpResponse, HttpRequest,
+        // Tcp.Connection, Terminal.Size) — pulled from the shared
+        // `builtin_records` table so adding a record only requires
+        // touching one place.
         if let Some(type_name) = type_name
-            && type_name == "Terminal.Size"
+            && let Some(record) = crate::codegen::builtin_records::find(type_name)
+            && let Some(field_ty) = record.field_type(field_name)
         {
-            return WasmType::I64;
+            return self.builtin_field_to_wasm(field_ty);
         }
 
         if let Some(type_name) = type_name
@@ -584,13 +589,13 @@ impl<'a> ExprEmitter<'a> {
             _ => None,
         };
 
+        // Built-in record types — pulled from the shared
+        // `builtin_records` table.
         if let Some(type_name) = base_type_name.as_deref()
-            && type_name == "Terminal.Size"
+            && let Some(record) = crate::codegen::builtin_records::find(type_name)
+            && let Some(field_ty) = record.field_type(field_name)
         {
-            return match field_name {
-                "width" | "height" => Some(Type::Int),
-                _ => None,
-            };
+            return Some(field_ty.as_aver_type());
         }
 
         if let Some(type_name) = base_type_name.as_deref()
@@ -625,6 +630,22 @@ impl<'a> ExprEmitter<'a> {
             "Unit" => WasmType::I32,
             // User-defined types and unknown types are heap-allocated -> I32
             _ => WasmType::I32,
+        }
+    }
+
+    /// Map a shared `BuiltinType` to its WASM representation. Used by
+    /// field-type inference for built-in record types.
+    pub(super) fn builtin_field_to_wasm(
+        &self,
+        ty: &crate::codegen::builtin_records::BuiltinType,
+    ) -> WasmType {
+        use crate::codegen::builtin_records::BuiltinType;
+        match ty {
+            BuiltinType::Int => WasmType::I64,
+            BuiltinType::Float => WasmType::F64,
+            BuiltinType::Bool => WasmType::I32,
+            // Strings and lists are heap handles → I32 in WASM ABI.
+            BuiltinType::Str | BuiltinType::ListOf(_) => WasmType::I32,
         }
     }
 

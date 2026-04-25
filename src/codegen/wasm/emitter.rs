@@ -1231,7 +1231,17 @@ fn build_type_fields(ctx: &CodegenContext) -> HashMap<(String, String), u32> {
             }
         }
     }
-    map.insert(("Terminal.Size".to_string(), "width".to_string()), 0);
-    map.insert(("Terminal.Size".to_string(), "height".to_string()), 1);
+    // Built-in record types (Header, HttpResponse, HttpRequest,
+    // Tcp.Connection, Terminal.Size) — same shared `builtin_records`
+    // table the proof backends use. Adding a new built-in record
+    // automatically gets its field offsets registered here.
+    for record in crate::codegen::builtin_records::BUILTIN_RECORDS {
+        for (i, field) in record.fields.iter().enumerate() {
+            map.insert(
+                (record.aver_name.to_string(), field.name.to_string()),
+                i as u32,
+            );
+        }
+    }
     map
 }

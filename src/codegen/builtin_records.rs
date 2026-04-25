@@ -31,6 +31,21 @@ pub enum BuiltinType {
     ListOf(&'static str),
 }
 
+impl BuiltinType {
+    /// Convert to the Aver type-system representation (used by the
+    /// WASM and proof backends for type inference of field accesses).
+    pub fn as_aver_type(&self) -> crate::types::Type {
+        use crate::types::Type;
+        match self {
+            BuiltinType::Int => Type::Int,
+            BuiltinType::Str => Type::Str,
+            BuiltinType::Bool => Type::Bool,
+            BuiltinType::Float => Type::Float,
+            BuiltinType::ListOf(name) => Type::List(Box::new(Type::Named((*name).to_string()))),
+        }
+    }
+}
+
 /// Description of a built-in record type. `aver_name` is the dotted
 /// or undotted name as it appears in Aver source (`Terminal.Size`,
 /// `HttpResponse`). Backends derive their identifier by replacing
@@ -49,6 +64,25 @@ impl BuiltinRecord {
     /// The identifier the backends use (dots → underscores).
     pub fn backend_name(&self) -> String {
         self.aver_name.replace('.', "_")
+    }
+
+    /// Position of a field in the declaration order. Used by the WASM
+    /// backend for record field offset tables.
+    pub fn field_index(&self, name: &str) -> Option<u32> {
+        self.fields
+            .iter()
+            .position(|f| f.name == name)
+            .map(|i| i as u32)
+    }
+
+    /// Field type lookup (returns the backend-neutral `BuiltinType`).
+    pub fn field_type(&self, name: &str) -> Option<&'static BuiltinType> {
+        for f in self.fields {
+            if f.name == name {
+                return Some(&f.ty);
+            }
+        }
+        None
     }
 }
 
