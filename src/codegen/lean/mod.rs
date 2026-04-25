@@ -1444,14 +1444,6 @@ fn build_common_lean(union_body: &str) -> String {
     parts.join("\n\n")
 }
 
-fn capitalize_first(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
