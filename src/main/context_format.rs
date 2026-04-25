@@ -30,7 +30,7 @@ fn decision_ref_json_text(reference: &Spanned<DecisionImpact>) -> &str {
     reference.node.text()
 }
 
-const CONTEXT_SCHEMA_VERSION: u32 = 6;
+const CONTEXT_SCHEMA_VERSION: u32 = 7;
 
 #[derive(Serialize)]
 struct JsonSelection<'a> {
@@ -813,7 +813,7 @@ mod tests {
     fn json_context_renders_specs_array() {
         let out = format_context_json(&[file_context_with_spec()], "examples/spec.av", None);
         let json: serde_json::Value = serde_json::from_str(&out).expect("valid context JSON");
-        assert_eq!(json["schema_version"], 6);
+        assert_eq!(json["schema_version"], 7);
         assert_eq!(json["modules"][0]["depends"][0], "Math.Core");
         assert_eq!(
             json["modules"][0]["functions"][0]["sig"],

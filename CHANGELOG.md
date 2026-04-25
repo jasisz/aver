@@ -17,6 +17,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 ### Changed
 - **Generated proof files shrank dramatically.** Lean and Dafny now emit only the helpers, records, and trust-assumption headers your code actually references — no more 1500-line preamble for a 20-line pure-math file. Calculator and pure-laws examples shrank ~85-90% in Lean, ~70-90% in Dafny; effectful examples 25-40%.
 - **Shared backend infrastructure.** Built-in records, helpers, and per-module emission logic live in single shared modules consumed by Lean / Dafny / WASM. Adding a new built-in record shape is one line in `codegen::builtin_records`.
+- **`aver context` output is denser (schema_version: 7, breaking).** Markdown signatures now use the Aver source form `name(args) -> Ret ! [Effects]` instead of a separate `effects:` line. JSON `records.fields` and `types.variants` are pre-formatted strings (`["id: String", ...]`, `["IngestWebhooks(String, String)", ...]`) instead of nested objects, and arrays are rendered inline (`[a, b, c]`) while objects stay multi-line. Net effect on the showcase projects: workflow_engine fits 78/131 elements at 24kb (was 47/131); payment_ops fits 98/98 at 32kb with room to spare. Anything parsing CONTEXT.json should switch from `fields[i].name` / `fields[i].type` access to `split(": ")` on the string.
 
 ## 0.11.0 "Oracle" (2026-04-24)
 
