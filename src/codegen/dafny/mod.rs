@@ -153,7 +153,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     // skip-and-stub cases, so multi-fn SCCs that aren't fuel-handled
     // emit each fn as an axiom and the SCC topology is otherwise
     // ignored at this layer.
-    let mut pure_per_scope = crate::codegen::multi_file::route_pure_components_per_scope(
+    let mut pure_per_scope = crate::codegen::common::route_pure_components_per_scope(
         ctx,
         |fd| fd.effects.is_empty() && fd.name != "main",
         |comp| {
@@ -534,6 +534,21 @@ function StringJoin(sep: string, parts: seq<string>): string
   else if |parts| == 1 then parts[0]
   else parts[0] + sep + StringJoin(sep, parts[1..])
 }
+
+function StringSplit(s: string, sep: string): seq<string>
+function StringContains(s: string, sub: string): bool
+function StringStartsWith(s: string, prefix: string): bool
+function StringEndsWith(s: string, suffix: string): bool
+function StringTrim(s: string): string
+function StringReplace(s: string, from_: string, to_: string): string
+function StringRepeat(s: string, n: int): string
+function StringIndexOf(s: string, sub: string): int
+function StringToUpper(s: string): string
+function StringToLower(s: string): string
+function StringFromBool(b: bool): string
+function StringByteLength(s: string): int
+
+function ListReverseStr(xs: seq<string>): seq<string>
 "#;
 
 const DAFNY_HELPER_NUMERIC_PARSE: &str = r#"
@@ -541,6 +556,10 @@ function IntToString(n: int): string
 function IntFromString(s: string): Result<int, string>
 function FloatToString(r: real): string
 function FloatFromString(s: string): Result<real, string>
+function FloatPi(): real
+function FloatSqrt(r: real): real
+function FloatPow(base: real, exp: real): real
+function FloatToInt(r: real): int
 "#;
 
 const DAFNY_HELPER_CHAR_BYTE: &str = r#"

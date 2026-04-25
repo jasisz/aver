@@ -84,13 +84,25 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
             "StringCharAt(",
             "StringChars(",
             "StringJoin(",
+            "StringSplit(",
+            "StringContains(",
+            "StringStartsWith(",
+            "StringEndsWith(",
+            "StringTrim(",
+            "StringReplace(",
+            "StringRepeat(",
+            "StringIndexOf(",
+            "StringToUpper(",
+            "StringToLower(",
+            "StringFromBool(",
+            "StringByteLength(",
             "AverString",
         ],
         // Dafny's `StringCharAt` returns `Option<string>`.
         depends_on: &["OptionDatatype"],
-        doc: "Character/slice/intercalate utilities. Lean: `String.charAt`, `String.slice`, \
-              `String.chars`, `AverString.split`. Dafny: opaque `StringCharAt`, `StringChars`, \
-              `StringJoin`.",
+        doc: "Character/slice/intercalate + split/contains/replace/etc. \
+              Lean: native `String.*`. Dafny: opaque `StringCharAt`, `StringChars`, \
+              `StringJoin`, `StringSplit`, `StringContains`, etc.",
     },
     BuiltinHelper {
         key: "NumericParse",
@@ -104,6 +116,10 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
             "IntFromString(",
             "FloatToString(",
             "FloatFromString(",
+            "FloatPi(",
+            "FloatSqrt(",
+            "FloatPow(",
+            "FloatToInt(",
         ],
         // Dafny's `IntFromString` / `FloatFromString` declarations
         // return `Result<int, string>` / `Result<real, string>`, so

@@ -46,7 +46,20 @@ set_option linter.unusedVariables false
 
 const LEAN_PRELUDE_FLOAT_COE: &str = r#"instance : Coe Int Float := ⟨fun n => Float.ofInt n⟩
 
-def Float.fromInt (n : Int) : Float := Float.ofInt n"#;
+def Float.fromInt (n : Int) : Float := Float.ofInt n
+
+-- Aver's Float.{floor,round,ceil,toInt,pow} have no direct Lean equivalent
+-- with matching return types (Lean's Float.floor returns Float, not Int).
+-- `opaque` declarations let proof-side references type-check while
+-- leaving concrete values to the runtime backend (axiom would force
+-- callers to be `noncomputable`).
+namespace AverFloat
+opaque floor : Float → Int := fun _ => 0
+opaque round : Float → Int := fun _ => 0
+opaque ceil : Float → Int := fun _ => 0
+opaque toInt : Float → Int := fun _ => 0
+opaque pow : Float → Float → Float := fun _ _ => 0.0
+end AverFloat"#;
 
 const LEAN_PRELUDE_FLOAT_DEC_EQ: &str = r#"private unsafe def Float.unsafeDecEq (a b : Float) : Decidable (a = b) :=
   if a == b then isTrue (unsafeCast ()) else isFalse (unsafeCast ())
@@ -1142,7 +1155,7 @@ fn transpile_unified(
     // independently — shared `route_pure_components_per_scope` handles
     // the loop. A global SCC pass would conflate same-bare-name fns from
     // different modules (rogue's `Map.getT` vs `Fov.getT`).
-    let pure_per_scope = crate::codegen::multi_file::route_pure_components_per_scope(
+    let pure_per_scope = crate::codegen::common::route_pure_components_per_scope(
         ctx,
         toplevel::is_pure_fn,
         |comp| {

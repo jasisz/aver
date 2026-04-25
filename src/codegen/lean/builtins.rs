@@ -55,9 +55,14 @@ pub fn emit_builtin_call(
         FloatSqrt => format!("Float.sqrt {}", p(&a[0])),
         FloatToString => format!("toString {}", p(&a[0])),
         FloatFromString | FloatParse => format!("Float.fromString {}", p(&a[0])),
-        FloatPow | FloatRound | FloatFloor | FloatCeil | FloatToInt => {
-            return None; // no direct Lean equivalent
-        }
+        FloatPow => format!("AverFloat.pow {} {}", p(&a[0]), p(&a[1])),
+        FloatRound => format!("AverFloat.round {}", p(&a[0])),
+        FloatFloor => format!("AverFloat.floor {}", p(&a[0])),
+        FloatCeil => format!("AverFloat.ceil {}", p(&a[0])),
+        FloatToInt => format!("AverFloat.toInt {}", p(&a[0])),
+        FloatPi => "(3.141592653589793 : Float)".to_string(),
+        FloatMin => format!("min {} {}", p(&a[0]), p(&a[1])),
+        FloatMax => format!("max {} {}", p(&a[0]), p(&a[1])),
 
         // ---- Bool ----
         BoolOr => format!("({} || {})", a[0], a[1]),

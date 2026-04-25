@@ -640,3 +640,57 @@ fn collect_called_idents(expr: &Spanned<Expr>, out: &mut HashSet<String>) {
         Expr::Literal(_) | Expr::Constructor(_, None) => {}
     }
 }
+
+/// Sections gathered per emission scope ("" for entry, module prefix
+/// otherwise). Each backend appends to the bucket for the scope a fn
+/// (or its SCC component) belongs to.
+pub(crate) struct PerScopeSections {
+    pub by_scope: std::collections::HashMap<String, Vec<String>>,
+}
+
+impl PerScopeSections {
+    pub(crate) fn take(&mut self, scope: &str) -> Vec<String> {
+        self.by_scope.remove(scope).unwrap_or_default()
+    }
+}
+
+/// Run SCC analysis on each scope's pure fns independently and route the
+/// rendered output through the supplied closure. Lean and Dafny share
+/// this — each scope (entry or dependent module) is SCC-analyzed in
+/// isolation so a `def foo` in one module and an unrelated `def foo` in
+/// another module don't get conflated.
+///
+/// `is_pure` filters which fns participate; `emit` renders one SCC
+/// component (>= 1 fn) into the lines to append to that scope's bucket.
+pub(crate) fn route_pure_components_per_scope<F, G>(
+    ctx: &CodegenContext,
+    is_pure: F,
+    mut emit: G,
+) -> PerScopeSections
+where
+    F: Fn(&FnDef) -> bool,
+    G: FnMut(&[&FnDef]) -> Vec<String>,
+{
+    let mut by_scope: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+
+    let mut process =
+        |fns: Vec<&FnDef>,
+         scope: String,
+         by_scope: &mut std::collections::HashMap<String, Vec<String>>| {
+            let comps = crate::call_graph::ordered_fn_components(&fns, &ctx.module_prefixes);
+            let bucket = by_scope.entry(scope).or_default();
+            for comp in comps {
+                bucket.extend(emit(&comp));
+            }
+        };
+
+    for module in &ctx.modules {
+        let pure: Vec<&FnDef> = module.fn_defs.iter().filter(|fd| is_pure(fd)).collect();
+        process(pure, module.prefix.clone(), &mut by_scope);
+    }
+    let entry_pure: Vec<&FnDef> = ctx.fn_defs.iter().filter(|fd| is_pure(fd)).collect();
+    process(entry_pure, String::new(), &mut by_scope);
+
+    PerScopeSections { by_scope }
+}

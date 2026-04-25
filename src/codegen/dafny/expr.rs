@@ -372,6 +372,9 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
         FloatRound | FloatFloor | FloatCeil | FloatToInt => format!("FloatToInt({})", a[0]),
         FloatToString | StringFromFloat => format!("FloatToString({})", a[0]),
         FloatFromString | FloatParse => format!("FloatFromString({})", a[0]),
+        FloatPi => "FloatPi()".to_string(),
+        FloatMin => format!("(if {} <= {} then {} else {})", a[0], a[1], a[0], a[1]),
+        FloatMax => format!("(if {} >= {} then {} else {})", a[0], a[1], a[0], a[1]),
 
         // String
         StringLen => format!("|{}|", a[0]),

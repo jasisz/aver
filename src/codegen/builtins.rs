@@ -37,6 +37,9 @@ pub(crate) enum Builtin {
     FloatToString,
     FloatFromString,
     FloatParse,
+    FloatPi,
+    FloatMin,
+    FloatMax,
 
     // --- String ---
     StringLen,
@@ -146,6 +149,9 @@ pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
         "Float.toString" => Builtin::FloatToString,
         "Float.fromString" => Builtin::FloatFromString,
         "Float.parse" => Builtin::FloatParse,
+        "Float.pi" => Builtin::FloatPi,
+        "Float.min" => Builtin::FloatMin,
+        "Float.max" => Builtin::FloatMax,
 
         // String
         "String.len" => Builtin::StringLen,
