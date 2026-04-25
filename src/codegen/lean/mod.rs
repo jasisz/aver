@@ -801,84 +801,7 @@ pub fn transpile_for_proof_mode(
     ctx: &CodegenContext,
     verify_mode: VerifyEmitMode,
 ) -> ProjectOutput {
-    if !ctx.modules.is_empty() {
-        return transpile_multi_file_lean(ctx, verify_mode, LeanEmitMode::Proof);
-    }
-    let (plans, _issues) = crate::codegen::recursion::analyze_plans(ctx);
-    let recursive_names = recursive_pure_fn_names(ctx);
-    let recursive_types = recursive_type_names(ctx);
-
-    let mut sections = Vec::new();
-
-    // Reuse the same type emission as standard mode.
-    for module in &ctx.modules {
-        for td in &module.type_defs {
-            sections.push(toplevel::emit_type_def(td));
-            if toplevel::is_recursive_type_def(td) {
-                sections.push(toplevel::emit_recursive_decidable_eq(
-                    toplevel::type_def_name(td),
-                ));
-                if let Some(measure) = toplevel::emit_recursive_measure(td, &recursive_types) {
-                    sections.push(measure);
-                }
-            }
-            sections.push(String::new());
-        }
-    }
-    for td in &ctx.type_defs {
-        sections.push(toplevel::emit_type_def(td));
-        if toplevel::is_recursive_type_def(td) {
-            sections.push(toplevel::emit_recursive_decidable_eq(
-                toplevel::type_def_name(td),
-            ));
-            if let Some(measure) = toplevel::emit_recursive_measure(td, &recursive_types) {
-                sections.push(measure);
-            }
-        }
-        sections.push(String::new());
-    }
-
-    emit_pure_functions_proof(ctx, &plans, &recursive_names, &mut sections);
-
-    // Oracle v1: emit lifted form for effectful fns alongside the
-    // pure ones. Without this, law theorems reference `pickOne` (etc.)
-    // that was never defined — Lean fails with "function expected at
-    // pickOne, term has type ?m". The standard mode emits these
-    // already; proof mode had the same codegen but missed the call.
-    emit_lifted_effectful_functions(ctx, &recursive_names, &mut sections);
-
-    for item in &ctx.items {
-        if let TopLevel::Decision(db) = item {
-            sections.push(toplevel::emit_decision(db));
-            sections.push(String::new());
-        }
-    }
-
-    let mut verify_case_counters: HashMap<String, usize> = HashMap::new();
-    for item in &ctx.items {
-        if let TopLevel::Verify(vb) = item {
-            let key = verify_counter_key(vb);
-            let start_idx = *verify_case_counters.get(&key).unwrap_or(&0);
-            let (emitted, next_idx) = toplevel::emit_verify_block(vb, ctx, verify_mode, start_idx);
-            verify_case_counters.insert(key, next_idx);
-            sections.push(emitted);
-            sections.push(String::new());
-        }
-    }
-
-    let lean_body = sections.join("\n");
-    let prelude = generate_prelude_for_body(&lean_body, false);
-    let lean_source = format!("{prelude}\n\n{lean_body}");
-    let project_name = lean_project_name(ctx);
-    let lakefile = generate_lakefile(&project_name);
-    let toolchain = generate_toolchain();
-    ProjectOutput {
-        files: vec![
-            ("lakefile.lean".to_string(), lakefile),
-            ("lean-toolchain".to_string(), toolchain),
-            (format!("{}.lean", project_name), lean_source),
-        ],
-    }
+    transpile_unified(ctx, verify_mode, LeanEmitMode::Proof)
 }
 
 /// Transpile an Aver program to a Lean 4 project with configurable verify proof mode.
@@ -890,87 +813,7 @@ pub fn transpile_with_verify_mode(
     ctx: &CodegenContext,
     verify_mode: VerifyEmitMode,
 ) -> ProjectOutput {
-    if !ctx.modules.is_empty() {
-        return transpile_multi_file_lean(ctx, verify_mode, LeanEmitMode::Standard);
-    }
-    let mut sections = Vec::new();
-
-    // Detect recursive functions for `partial` annotation
-    let recursive_fns = call_graph::find_recursive_fns(&ctx.items);
-
-    // Module type definitions (from depends)
-    for module in &ctx.modules {
-        for td in &module.type_defs {
-            sections.push(toplevel::emit_type_def(td));
-            // #18: Recursive types need unsafe DecidableEq instance
-            if toplevel::is_recursive_type_def(td) {
-                sections.push(toplevel::emit_recursive_decidable_eq(
-                    toplevel::type_def_name(td),
-                ));
-            }
-            sections.push(String::new());
-        }
-    }
-
-    // Type definitions
-    for td in &ctx.type_defs {
-        sections.push(toplevel::emit_type_def(td));
-        // #18: Recursive types need unsafe DecidableEq instance
-        if toplevel::is_recursive_type_def(td) {
-            sections.push(toplevel::emit_recursive_decidable_eq(
-                toplevel::type_def_name(td),
-            ));
-        }
-        sections.push(String::new());
-    }
-
-    // Emit pure functions in SCC-topological order:
-    // callees first, then callers; SCCs as `mutual` blocks.
-    emit_pure_functions(ctx, &recursive_fns, &mut sections);
-
-    // Oracle v1: emit lifted form for effectful functions whose effects are
-    // all classified. lift_fn_def returns a pure FnDef (effects cleared,
-    // path + oracle params prepended), which emit_fn_def handles via the
-    // standard pure-fn path.
-    emit_lifted_effectful_functions(ctx, &recursive_fns, &mut sections);
-
-    // Decision blocks (as comments)
-    for item in &ctx.items {
-        if let TopLevel::Decision(db) = item {
-            sections.push(toplevel::emit_decision(db));
-            sections.push(String::new());
-        }
-    }
-
-    // Verify blocks → proof items (`native_decide` by default, optional `sorry`/theorem stubs).
-    let mut verify_case_counters: HashMap<String, usize> = HashMap::new();
-    for item in &ctx.items {
-        if let TopLevel::Verify(vb) = item {
-            let key = verify_counter_key(vb);
-            let start_idx = *verify_case_counters.get(&key).unwrap_or(&0);
-            let (emitted, next_idx) = toplevel::emit_verify_block(vb, ctx, verify_mode, start_idx);
-            verify_case_counters.insert(key, next_idx);
-            sections.push(emitted);
-            sections.push(String::new());
-        }
-    }
-
-    let lean_body = sections.join("\n");
-    let prelude = generate_prelude_for_body(&lean_body, false);
-    let lean_source = format!("{prelude}\n\n{lean_body}");
-
-    // Project files
-    let project_name = lean_project_name(ctx);
-    let lakefile = generate_lakefile(&project_name);
-    let toolchain = generate_toolchain();
-
-    ProjectOutput {
-        files: vec![
-            ("lakefile.lean".to_string(), lakefile),
-            ("lean-toolchain".to_string(), toolchain),
-            (format!("{}.lean", project_name), lean_source),
-        ],
-    }
+    transpile_unified(ctx, verify_mode, LeanEmitMode::Standard)
 }
 
 /// Oracle v1: for each effectful FnDef whose effects are all classified,
@@ -1149,90 +992,12 @@ fn collect_called_idents_in_body(body: &crate::ast::FnBody) -> std::collections:
     out
 }
 
-fn emit_pure_functions(
-    ctx: &CodegenContext,
-    recursive_fns: &HashSet<String>,
-    sections: &mut Vec<String>,
-) {
-    let all_fns: Vec<&FnDef> = ctx
-        .modules
-        .iter()
-        .flat_map(|m| m.fn_defs.iter())
-        .chain(ctx.fn_defs.iter())
-        .filter(|fd| toplevel::is_pure_fn(fd))
-        .collect();
-    if all_fns.is_empty() {
-        return;
-    }
-
-    let components = call_graph::ordered_fn_components(&all_fns, &ctx.module_prefixes);
-    for fns in components {
-        if fns.is_empty() {
-            continue;
-        }
-
-        // Multi-node SCC => emit `mutual ... end`.
-        if fns.len() > 1 {
-            sections.push(toplevel::emit_mutual_group(&fns, ctx));
-            sections.push(String::new());
-            continue;
-        }
-
-        // Singleton SCC => regular `def` (recursive singletons still get `partial`
-        // via `recursive_fns` in emit_fn_def).
-        if let Some(code) = toplevel::emit_fn_def(fns[0], recursive_fns, ctx) {
-            sections.push(code);
-            sections.push(String::new());
-        }
-    }
-}
-
-fn emit_pure_functions_proof(
-    ctx: &CodegenContext,
-    plans: &HashMap<String, RecursionPlan>,
-    recursive_names: &HashSet<String>,
-    sections: &mut Vec<String>,
-) {
-    let all_fns: Vec<&FnDef> = pure_fns(ctx);
-    if all_fns.is_empty() {
-        return;
-    }
-
-    let components = call_graph::ordered_fn_components(&all_fns, &ctx.module_prefixes);
-    for fns in components {
-        if fns.is_empty() {
-            continue;
-        }
-        if fns.len() > 1 {
-            let all_supported = fns.iter().all(|fd| plans.contains_key(&fd.name));
-            if all_supported {
-                sections.push(toplevel::emit_mutual_group_proof(&fns, ctx, plans));
-            } else {
-                sections.push(toplevel::emit_mutual_group(&fns, ctx));
-            }
-            sections.push(String::new());
-            continue;
-        }
-
-        let fd = fns[0];
-        let is_recursive = recursive_names.contains(&fd.name);
-        let emitted = if is_recursive && !plans.contains_key(&fd.name) {
-            toplevel::emit_fn_def(fd, recursive_names, ctx)
-        } else {
-            toplevel::emit_fn_def_proof(fd, plans.get(&fd.name).cloned(), ctx)
-        };
-        if let Some(code) = emitted {
-            sections.push(code);
-            sections.push(String::new());
-        }
-    }
-}
-
 #[cfg(test)]
 fn generate_prelude() -> String {
     generate_prelude_for_body("", true)
 }
 
+#[cfg(test)]
 fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
     // Oracle v1: trust-assumption header first so the emitted file opens with
     // the explicit claim block before any prelude or definitions. Skipped when
@@ -1313,10 +1078,6 @@ fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
     parts.join("\n\n")
 }
 
-fn generate_lakefile(project_name: &str) -> String {
-    generate_lakefile_with_roots(project_name, &[])
-}
-
 fn generate_lakefile_with_roots(project_name: &str, extra_roots: &[String]) -> String {
     let mut roots: Vec<String> = vec![format!("`{}", project_name)];
     for r in extra_roots {
@@ -1362,7 +1123,7 @@ enum LeanEmitMode {
 /// - `<ProjectName>.lean` is the entry: trust header (here only),
 ///   top-level entry items, lifted effectful fns, decisions, verify
 ///   blocks. Imports `AverCommon` plus every dependent module.
-fn transpile_multi_file_lean(
+fn transpile_unified(
     ctx: &CodegenContext,
     verify_mode: VerifyEmitMode,
     emit_mode: LeanEmitMode,
@@ -1682,13 +1443,21 @@ mod tests {
         build_context(items, &tc, HashSet::new(), project_name.to_string(), vec![])
     }
 
-    fn generated_lean_file(out: &crate::codegen::ProjectOutput) -> &str {
+    /// Concatenate every emitted `.lean` source (entry + per-module +
+    /// `AverCommon`) into a single string for content assertions. The
+    /// unified emitter splits prelude (`AverCommon.lean`) and body
+    /// (`<Project>.lean`) into separate files; tests originally checked
+    /// for substrings against the legacy single-file output, so the
+    /// helper now returns the concatenation so those substring assertions
+    /// keep working regardless of which file the content lands in.
+    fn generated_lean_file(out: &crate::codegen::ProjectOutput) -> String {
         out.files
             .iter()
-            .find_map(|(name, content)| {
+            .filter_map(|(name, content)| {
                 (name.ends_with(".lean") && name != "lakefile.lean").then_some(content.as_str())
             })
-            .expect("expected generated Lean file")
+            .collect::<Vec<&str>>()
+            .join("\n")
     }
 
     fn empty_ctx_with_verify_case() -> CodegenContext {

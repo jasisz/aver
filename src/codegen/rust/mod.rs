@@ -14,17 +14,45 @@ mod syntax;
 mod toplevel;
 mod types;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 
 use crate::ast::{FnDef, TopLevel, TypeDef};
 use crate::codegen::common::module_prefix_to_rust_segments;
+use crate::codegen::multi_file::{ModuleTree, ModuleTreeRenderer, walk_module_tree};
 use crate::codegen::{CodegenContext, ProjectOutput};
 use crate::types::Type;
 
-#[derive(Default)]
-struct ModuleTreeNode {
-    content: Option<String>,
-    children: BTreeMap<String, ModuleTreeNode>,
+struct RustModuleRenderer<'a> {
+    rel_dir: &'a str,
+}
+
+impl<'a> ModuleTreeRenderer for RustModuleRenderer<'a> {
+    fn render_node(
+        &self,
+        path_segments: &[String],
+        content: Option<&str>,
+        child_names: &[String],
+    ) -> Vec<(String, String)> {
+        let dir = if path_segments.is_empty() {
+            self.rel_dir.to_string()
+        } else {
+            format!("{}/{}", self.rel_dir, path_segments.join("/"))
+        };
+        let mut parts = Vec::new();
+        if let Some(c) = content
+            && !c.trim().is_empty()
+        {
+            parts.push(c.trim_end().to_string());
+        }
+        for name in child_names {
+            parts.push(format!("pub mod {};", name));
+        }
+        let mut mod_rs = parts.join("\n\n");
+        if !mod_rs.is_empty() {
+            mod_rs.push('\n');
+        }
+        vec![(format!("{}/mod.rs", dir), mod_rs)]
+    }
 }
 
 /// Transpile an Aver program to a Rust project.
@@ -146,9 +174,8 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
         ));
     }
 
-    let mut module_tree = ModuleTreeNode::default();
-    insert_module_content(
-        &mut module_tree,
+    let mut module_tree = ModuleTree::default();
+    module_tree.insert(
         &[String::from("entry")],
         render_generated_module(
             root_module_depends(&ctx.items),
@@ -162,15 +189,17 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
         ctx.extra_fn_defs = ctx.modules[i].fn_defs.clone();
         let module = &ctx.modules[i];
         let path = module_prefix_to_rust_segments(&module.prefix);
-        insert_module_content(
-            &mut module_tree,
+        module_tree.insert(
             &path,
             render_generated_module(module.depends.clone(), module_sections(module, ctx)),
         );
     }
     ctx.extra_fn_defs.clear();
 
-    emit_module_tree_files(&module_tree, "src/aver_generated", &mut files);
+    let renderer = RustModuleRenderer {
+        rel_dir: "src/aver_generated",
+    };
+    files.extend(walk_module_tree(&module_tree, &renderer));
     files.sort_by(|left, right| left.0.cmp(&right.0));
 
     ProjectOutput { files }
@@ -435,39 +464,6 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
     sections
 }
 
-fn insert_module_content(node: &mut ModuleTreeNode, segments: &[String], content: String) {
-    let child = node.children.entry(segments[0].clone()).or_default();
-    if segments.len() == 1 {
-        child.content = Some(content);
-    } else {
-        insert_module_content(child, &segments[1..], content);
-    }
-}
-
-fn emit_module_tree_files(node: &ModuleTreeNode, rel_dir: &str, files: &mut Vec<(String, String)>) {
-    let mut parts = Vec::new();
-
-    if let Some(content) = &node.content
-        && !content.trim().is_empty()
-    {
-        parts.push(content.trim_end().to_string());
-    }
-
-    for child_name in node.children.keys() {
-        parts.push(format!("pub mod {};", child_name));
-    }
-
-    let mut mod_rs = parts.join("\n\n");
-    if !mod_rs.is_empty() {
-        mod_rs.push('\n');
-    }
-    files.push((format!("{}/mod.rs", rel_dir), mod_rs));
-
-    for (child_name, child) in &node.children {
-        emit_module_tree_files(child, &format!("{}/{}", rel_dir, child_name), files);
-    }
-}
-
 fn root_module_depends(items: &[TopLevel]) -> Vec<String> {
     items
         .iter()
@@ -542,11 +538,9 @@ fn type_contains_named(ty: &Type, wanted: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ModuleTreeNode, emit_module_tree_files, insert_module_content, render_generated_module,
-        transpile,
-    };
+    use super::{RustModuleRenderer, render_generated_module, transpile};
     use crate::codegen::build_context;
+    use crate::codegen::multi_file::{ModuleTree, walk_module_tree};
     use crate::source::parse_source;
     use crate::tco;
     use crate::types::checker::run_type_check_full;
@@ -612,15 +606,16 @@ fn main() -> Int
 
     #[test]
     fn module_tree_files_do_not_reexport_children() {
-        let mut tree = ModuleTreeNode::default();
-        insert_module_content(
-            &mut tree,
+        let mut tree = ModuleTree::default();
+        tree.insert(
             &["app".to_string(), "cli".to_string()],
             "pub fn run() {}".to_string(),
         );
 
-        let mut files = Vec::new();
-        emit_module_tree_files(&tree, "src/aver_generated", &mut files);
+        let renderer = RustModuleRenderer {
+            rel_dir: "src/aver_generated",
+        };
+        let files = walk_module_tree(&tree, &renderer);
 
         let root_mod = files
             .iter()

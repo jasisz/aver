@@ -963,14 +963,15 @@ mod tests {
                    verify add\n    add(2, 3) => 5\n";
         let files = proof_lean_files(src).expect("lean files");
         assert!(!files.is_empty(), "Lean export should produce files");
-        let lean_main = files
-            .iter()
-            .find(|(k, _)| k.ends_with(".lean") && !k.starts_with("lakefile"))
-            .expect("at least one .lean file");
+        let any_lean_with_add = files.iter().any(|(k, v)| {
+            k.ends_with(".lean")
+                && k != "lakefile.lean"
+                && (v.contains("def add") || v.contains("add ("))
+        });
         assert!(
-            lean_main.1.contains("def add") || lean_main.1.contains("add ("),
-            "generated Lean should mention `add`: {}",
-            lean_main.1.lines().take(5).collect::<Vec<_>>().join("\n")
+            any_lean_with_add,
+            "generated Lean should mention `add` somewhere; files: {:?}",
+            files.keys().collect::<Vec<_>>()
         );
     }
 
