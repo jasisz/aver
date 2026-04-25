@@ -226,6 +226,38 @@ Verify a helper's trace separately when the helper's own emissions matter.
 
 Supported law shapes can become universal theorems. Concrete `given` domains still produce executable/sample checks. Unsupported proof shapes should fail clearly or remain as checked-domain/sample obligations, depending on backend and verify mode.
 
+### `aver verify` vs `aver proof` — the same `verify` block, two different questions
+
+A `verify <fn> law` block does double duty:
+
+- `aver verify` runs it as a **finite sample check**: the cartesian product of the `given` domains is enumerated (capped at 10,000 cases) and evaluated against the law's RHS using whatever stubs you supplied.
+- `aver proof` exports the same block as a **universally quantified theorem** in Lean / Dafny, where every classified effect becomes a function parameter and the law is asserted *for every possible such function* — not just for the stubs in `given`.
+
+These two questions can have different answers on the same block. The canonical example is `examples/formal/two_rolls_paradox.av`:
+
+```aver
+fn distinctStub(path: BranchPath, n: Int, lo: Int, hi: Int) -> Int
+    n + 1
+
+fn twoRollsDistinct() -> Bool
+    ! [Random.int]
+    a = Random.int(1, 6)
+    b = Random.int(1, 6)
+    a != b
+
+verify twoRollsDistinct law alwaysDistinct
+    given rnd: Random.int = [distinctStub]
+    twoRollsDistinct() => true
+```
+
+`aver verify` passes — under `distinctStub` the two calls return `1` and `2`, the law's RHS holds.
+
+`aver proof` exports a theorem of shape `∀ rnd, twoRollsDistinct rnd = true`, and `lake build` rejects it: there exist oracles (e.g. `fun _ _ _ _ => 5`) for which both calls return the same value, making the law false.
+
+This is not a bug — it's the design. `verify` answers "does this hold for the stubs I wrote down?". `proof` answers "does this hold for every classified-effect implementation that has the right signature?". The second is strictly stronger and catches what the first cannot.
+
+When a `verify` passes but `aver proof` rejects, the law is **stub-specific** — true under the chosen stubs, not universal. Either rewrite the law so it doesn't depend on hidden stub structure (e.g. assert against `rnd(...)` directly instead of a constant), or keep it as a sample-only check and don't export. `verify <fn> trace` is the cases form when the goal is "given this concrete stub, here's what I expect"; it doesn't export and doesn't pretend to.
+
 ## Current limits
 
 Oracle does not try to model every side effect.
