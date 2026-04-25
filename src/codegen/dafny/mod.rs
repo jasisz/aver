@@ -342,9 +342,10 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
         })
         .collect::<Vec<_>>()
         .join("\n");
+    let entry_name = crate::codegen::common::entry_basename(ctx);
     let mut entry_parts: Vec<String> = vec![format!(
         "// Aver-generated entry: {}\ninclude \"common.dfy\"\n{}",
-        ctx.project_name, entry_includes
+        entry_name, entry_includes
     )];
     // Open every dependent module + AverCommon so unqualified type names
     // (`Point`, `Tile`) and helpers stay in scope at the top level.
@@ -371,7 +372,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     let common_content = build_common_dafny(&union_body);
 
     let mut files = module_files;
-    files.push((format!("{}.dfy", ctx.project_name), entry_content));
+    files.push((format!("{}.dfy", entry_name), entry_content));
     files.push(("common.dfy".to_string(), common_content));
     ProjectOutput { files }
 }

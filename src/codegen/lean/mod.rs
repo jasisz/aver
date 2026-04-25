@@ -776,13 +776,7 @@ fn verify_counter_key(vb: &crate::ast::VerifyBlock) -> String {
 }
 
 fn lean_project_name(ctx: &CodegenContext) -> String {
-    ctx.items
-        .iter()
-        .find_map(|item| match item {
-            TopLevel::Module(m) => Some(m.name.clone()),
-            _ => None,
-        })
-        .unwrap_or_else(|| capitalize_first(&ctx.project_name))
+    crate::codegen::common::entry_basename(ctx)
 }
 
 pub(crate) fn find_type_def<'a>(ctx: &'a CodegenContext, type_name: &str) -> Option<&'a TypeDef> {

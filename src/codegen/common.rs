@@ -157,6 +157,29 @@ pub(crate) fn collect_declared_effects(ctx: &CodegenContext) -> DeclaredEffects 
     }
 }
 
+/// Basename for the entry file emitted by Lean / Dafny. Prefer the
+/// source-declared module name (`module Foo` → `Foo`) so the entry
+/// file's name matches what the user wrote; fall back to a capitalised
+/// project name when no `module` declaration is present. Lake's
+/// path-as-module-name convention forces this for Lean — Dafny doesn't
+/// strictly need it but the same basename keeps the two backends
+/// aligned (no more `playground.dfy` vs `OracleTrace.lean`).
+pub(crate) fn entry_basename(ctx: &CodegenContext) -> String {
+    ctx.items
+        .iter()
+        .find_map(|item| match item {
+            TopLevel::Module(m) => Some(m.name.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| {
+            let mut chars = ctx.project_name.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(c) => c.to_uppercase().chain(chars).collect(),
+            }
+        })
+}
+
 /// Map every fn name in the program to its owning scope: the dependent
 /// module's prefix, or `""` for the entry. Used by the multi-file Lean
 /// and Dafny paths to route SCC components and fuel groups to the right
