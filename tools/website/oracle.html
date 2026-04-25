@@ -179,9 +179,13 @@
 
     <header class="oracle-hero">
         <div class="eyebrow">Oracle &middot; the randomness paradox</div>
-        <h1>One <code>verify</code> block. Three tools. <span class="accent">Two answers.</span></h1>
-        <p class="subhead">A 30-line example that passes <code>aver verify</code> and fails <code>aver proof</code> &mdash; on identical source. The same gap that conventional Z3 verification can't reach for effectful code.</p>
+        <h1>One <code>verify</code> block. Three tools. <span class="accent">Two verdicts.</span></h1>
+        <p class="subhead">A 30-line example that passes <code>aver verify</code> and fails <code>aver proof</code> on identical source &mdash; exposing the gap between sampled effects and universal proof.</p>
     </header>
+
+    <section class="oracle-section">
+        <p>The block doesn't change between runs. Only the question being asked changes: <em>"does this hold for the stub I wrote?"</em> versus <em>"does this hold for every implementation of this signature?"</em>. The first is sample testing. The second is universal proof. Aver lets you ask both with one source &mdash; and tells you when they disagree.</p>
+    </section>
 
     <section class="oracle-section">
         <h2>The code</h2>
@@ -251,10 +255,9 @@
     </section>
 
     <section class="oracle-section">
-        <h2>Why one block has two answers</h2>
+        <h2>How the two readings work</h2>
         <p><strong><code>aver verify</code></strong> evaluates the law as a finite sample. The cartesian product of <code>given</code> domains is enumerated and run against the law's RHS. With <code>distinctStub</code> returning <code>n + 1</code>, the two calls produce <code>1.0</code> and <code>2.0</code>; <code>1.0 != 2.0</code> holds; the sample case passes. This is the &mdash; familiar &mdash; testing path: assert against a chosen implementation, run, verify equality.</p>
-        <p><strong><code>aver proof</code></strong> takes the same block and lifts it. Every classified effect call (here <code>Random.float</code>) becomes an explicit function parameter. The exported theorem says <em>for every possible such function</em> &mdash; not just the stub you supplied &mdash; the law's RHS holds. That's a strictly stronger claim. There exist oracles (e.g. one that always returns <code>0.5</code>) for which the two calls return the same value and the law fails. Lean and Dafny independently reject the export for this reason.</p>
-        <p>The block is unchanged between runs. Only the question being asked changes: <em>"does this hold for the stub I wrote?"</em> versus <em>"does this hold for every implementation of this signature?"</em>. The first question is sample testing; the second is verification. Aver lets you ask both with one block, and tells you when they disagree.</p>
+        <p><strong><code>aver proof</code></strong> takes the same block and lifts it. Every classified effect call (here <code>Random.float</code>) becomes an explicit function parameter. The exported theorem says the law's RHS holds <em>for every possible such function</em> &mdash; not just the stub you supplied. That's a strictly stronger claim. There exist oracles (e.g. one that always returns <code>0.5</code>) for which the two calls return the same value and the law fails. Lean and Dafny independently reject the export for this reason.</p>
     </section>
 
     <section class="oracle-section">
