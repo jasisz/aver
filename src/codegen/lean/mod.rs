@@ -1270,6 +1270,10 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
                 LEAN_PRELUDE_OPTION_TO_EXCEPT.to_string(),
             ]),
             "StringHadd" => parts.push(LEAN_PRELUDE_STRING_HADD.to_string()),
+            // Dafny-side datatype declarations — Lean has Result/Option
+            // natively (`Except`/`Option`) and BranchPath ships as part
+            // of the BranchPath helper key, so all four are no-ops here.
+            "ResultDatatype" | "OptionDatatype" | "OptionToResult" | "BranchPathDatatype" => {}
             other => panic!(
                 "Lean backend has no implementation for builtin helper key '{}'. \
                  Add a match arm in generate_prelude_for_body or remove the key \

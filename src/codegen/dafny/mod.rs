@@ -318,6 +318,13 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
             // typeclass instance bundles. Dafny's type system doesn't
             // need analogues; nothing to emit.
             "FloatInstances" | "ExceptInstances" | "StringHadd" => {}
+            // Dafny-side built-in datatypes. Lean has these natively.
+            "ResultDatatype" => prelude_sections.push(DAFNY_HELPER_RESULT_DATATYPE.to_string()),
+            "OptionDatatype" => prelude_sections.push(DAFNY_HELPER_OPTION_DATATYPE.to_string()),
+            "OptionToResult" => prelude_sections.push(DAFNY_HELPER_OPTION_TO_RESULT.to_string()),
+            "BranchPathDatatype" => {
+                prelude_sections.push(DAFNY_HELPER_BRANCH_PATH_DATATYPE.to_string())
+            }
             other => panic!(
                 "Dafny backend has no implementation for builtin helper key '{}'. \
                  Add a match arm in emit_project or remove the key from BUILTIN_HELPERS.",
@@ -335,11 +342,37 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
 }
 
 const DAFNY_PRELUDE_HEAD: &str = r#"// --- Prelude: standard types and helpers ---
+"#;
 
+const DAFNY_HELPER_RESULT_DATATYPE: &str = r#"
 datatype Result<T, E> = Ok(value: T) | Err(error: E)
 
+function ResultWithDefault<T, E>(r: Result<T, E>, d: T): T {
+  match r
+  case Ok(v) => v
+  case Err(_) => d
+}
+"#;
+
+const DAFNY_HELPER_OPTION_DATATYPE: &str = r#"
 datatype Option<T> = None | Some(value: T)
 
+function OptionWithDefault<T>(o: Option<T>, d: T): T {
+  match o
+  case Some(v) => v
+  case None => d
+}
+"#;
+
+const DAFNY_HELPER_OPTION_TO_RESULT: &str = r#"
+function OptionToResult<T, E>(o: Option<T>, err: E): Result<T, E> {
+  match o
+  case Some(v) => Result.Ok(v)
+  case None => Result.Err(err)
+}
+"#;
+
+const DAFNY_HELPER_BRANCH_PATH_DATATYPE: &str = r#"
 // Oracle v1: BranchPath is the proof-side representation of a position
 // in the structural tree of `!`/`?!` groups. Dewey-decimal under the hood
 // ("", "0", "2.0", …); constructors mirror the Aver-source BranchPath
@@ -349,27 +382,10 @@ datatype Option<T> = None | Some(value: T)
 datatype BranchPath = BranchPath(dewey: string)
 "#;
 
-/// Always-included Result/Option destructuring + the universal
-/// `ToString<T>` opaque (small, ubiquitous, not worth gating).
+/// Universal `ToString<T>` opaque — small (1 line), used by interpolation
+/// machinery in many shapes, kept always-on to avoid token-detection edge
+/// cases for things like `ToString(x)` showing up in nested type args.
 const DAFNY_PRELUDE_CORE_HELPERS: &str = r#"
-function ResultWithDefault<T, E>(r: Result<T, E>, d: T): T {
-  match r
-  case Ok(v) => v
-  case Err(_) => d
-}
-
-function OptionWithDefault<T>(o: Option<T>, d: T): T {
-  match o
-  case Some(v) => v
-  case None => d
-}
-
-function OptionToResult<T, E>(o: Option<T>, err: E): Result<T, E> {
-  match o
-  case Some(v) => Result.Ok(v)
-  case None => Result.Err(err)
-}
-
 function ToString<T>(v: T): string
 "#;
 
@@ -506,22 +522,21 @@ mod tests {
     }
 
     #[test]
-    fn prelude_carries_branch_path_datatype_always_helpers_only_when_used() {
-        // Pure fn — body has no BranchPath, so the constructor helpers
-        // are omitted (the bare datatype declaration always ships from
-        // DAFNY_PRELUDE_HEAD).
+    fn prelude_emits_branch_path_only_when_used() {
+        // Pure fn — body has no BranchPath, so neither the datatype
+        // declaration nor the constructor helpers are emitted.
         let src = "module M\n    intent = \"t\"\n\nfn pure(x: Int) -> Int\n    x\n";
         let ctx = ctx_from_source(src, "m");
         let out = transpile(&ctx);
         let dfy = dafny_output(&out);
-        assert!(dfy.contains("datatype BranchPath"));
+        assert!(!dfy.contains("datatype BranchPath"));
         assert!(!dfy.contains("const BranchPath_Root"));
         assert!(!dfy.contains("function BranchPath_child"));
         assert!(!dfy.contains("function BranchPath_parse"));
 
         // Effectful fn with a verify block — Oracle lifting reaches the
-        // proof body and introduces `BranchPath` references, pulling
-        // the constructor helpers in.
+        // proof body and introduces `BranchPath` references, pulling in
+        // both the datatype declaration and the constructor helpers.
         let src_eff = "module M\n    intent = \"t\"\n\n\
                        fn rollMax(path: BranchPath, n: Int, lo: Int, hi: Int) -> Int\n    hi\n\n\
                        fn roll() -> Int\n    ! [Random.int]\n    Random.int(1, 6)\n\n\
