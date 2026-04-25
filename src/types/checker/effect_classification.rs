@@ -72,6 +72,8 @@ pub enum RuntimeType {
     HttpResponseResult,
     /// `List<Header>` — the headers argument on `Http.post/put/patch`.
     ListHeader,
+    /// `Terminal.Size` record — the return of `Terminal.size`.
+    TerminalSize,
 }
 
 impl RuntimeType {
@@ -96,6 +98,7 @@ impl RuntimeType {
                 Box::new(Type::Str),
             ),
             RuntimeType::ListHeader => Type::List(Box::new(Type::Named("Header".to_string()))),
+            RuntimeType::TerminalSize => Type::Named("Terminal.Size".to_string()),
         }
     }
 }
@@ -118,6 +121,14 @@ const CLASSIFICATIONS: &[EffectClassification] = &[
         dimension: EffectDimension::Snapshot,
         runtime_params: &[RuntimeType::Str],
         runtime_return: RuntimeType::OptionStr,
+    },
+    // Terminal.size: stable within a verify scope (a resize while
+    // proving is not modelled). Snapshot-shape oracle: () -> Terminal.Size.
+    EffectClassification {
+        method: "Terminal.size",
+        dimension: EffectDimension::Snapshot,
+        runtime_params: &[],
+        runtime_return: RuntimeType::TerminalSize,
     },
     // Generative
     EffectClassification {
@@ -688,9 +699,27 @@ mod tests {
             "Terminal.disableRawMode",
             "Terminal.setColor",
             "Terminal.resetColor",
-            "Terminal.size",
         ] {
             assert!(!is_classified(name), "{} should NOT be classified", name);
+        }
+    }
+
+    #[test]
+    fn terminal_size_is_snapshot() {
+        let c = classify("Terminal.size").expect("Terminal.size should be classified");
+        assert_eq!(c.dimension, EffectDimension::Snapshot);
+        assert!(c.runtime_params.is_empty());
+        assert_eq!(c.runtime_return, RuntimeType::TerminalSize);
+
+        // Oracle signature: () -> Terminal.Size
+        let sig = oracle_signature("Terminal.size").unwrap();
+        match sig {
+            Type::Fn(params, ret, effects) => {
+                assert!(params.is_empty());
+                assert_eq!(*ret, Type::Named("Terminal.Size".to_string()));
+                assert!(effects.is_empty());
+            }
+            other => panic!("expected Fn, got {:?}", other),
         }
     }
 }

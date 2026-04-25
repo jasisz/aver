@@ -317,6 +317,9 @@ datatype HttpResponse = HttpResponse(status: int, body: string, headers: seq<Hea
 
 datatype HttpRequest = HttpRequest(method_: string, path: string, body: string, headers: seq<Header>)
 
+// Terminal.size return record (snapshot effect — stable within a verify scope).
+datatype Terminal_Size = Terminal_Size(width: int, height: int)
+
 const BranchPath_Root: BranchPath := BranchPath("")
 
 function BranchPath_child(p: BranchPath, idx: int): BranchPath

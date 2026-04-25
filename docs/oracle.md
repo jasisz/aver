@@ -274,7 +274,9 @@ Not supported:
 - `HttpServer.listen` / `listenWith`. Server lifecycle and callbacks are
   long-running protocols, not one call/result effects.
 - Terminal modal state: `Terminal.enableRawMode`, `disableRawMode`, `setColor`,
-  `resetColor`, and `size`. Drawing calls and `readKey` are classified.
+  and `resetColor`. Drawing calls (`clear`, `moveTo`, `print`, `hideCursor`,
+  `showCursor`, `flush`), `readKey`, and `size` are classified — `size` as a
+  snapshot oracle `() -> Terminal.Size` (added 0.11.1).
 - Proof export for `?!` cancel mode. Oracle proof export expects complete independence mode so every branch has a stable trace position.
 - Higher-order effectful callbacks. Oracle works best when the effect surface is visible in the verified function's signature.
 - Trace-aware laws on recursive effectful functions. Use `verify <fn> law ...` without `trace`, or move the effect-emitting step into a non-recursive function and verify that trace.

@@ -211,7 +211,11 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
                     format!("{} := {}", aver_name_to_dafny(name), emit_expr(expr, ctx))
                 })
                 .collect();
-            format!("{}({})", type_name, field_strs.join(", "))
+            // Dotted names (`Terminal.Size`, `Tcp.Connection`) are
+            // rendered as underscored datatype names in Dafny — same
+            // mapping `toplevel::render_type` applies for `Type::Named`.
+            let dafny_type_name = type_name.replace('.', "_");
+            format!("{}({})", dafny_type_name, field_strs.join(", "))
         }
         Expr::RecordUpdate { base, updates, .. } => {
             let base_str = emit_expr(base, ctx);

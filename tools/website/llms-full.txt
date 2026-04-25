@@ -32,6 +32,7 @@
 - [Oracle Trace](https://raw.githubusercontent.com/jasisz/aver/main/examples/formal/oracle_trace.av) — `verify fn trace` with `given` stubs for classified effects (Random, Disk, Console.readLine, Tcp, Time.sleep, Terminal.*)
 - [Oracle Independent Products](https://raw.githubusercontent.com/jasisz/aver/main/examples/formal/oracle_independent_products.av) — per-branch trace assertions for `!`/`?!` products
 - [Randomness Paradox](https://raw.githubusercontent.com/jasisz/aver/main/examples/formal/randomness_paradox.av) — `verify` passes, `aver proof` rejects: sample-vs-universal divergence on the same law over `Random.float`
+- [Terminal Size Snapshot](https://raw.githubusercontent.com/jasisz/aver/main/examples/formal/terminal_size_snapshot.av) — proof over `Terminal.size` as a snapshot oracle `() -> Terminal.Size` (newly classified in 0.11.1)
 - [Snake](https://raw.githubusercontent.com/jasisz/aver/main/examples/games/snake.av) — single-file game with Terminal effects
 - [Game of Life](https://raw.githubusercontent.com/jasisz/aver/main/examples/games/life.av) — cellular automata, FPS counter
 

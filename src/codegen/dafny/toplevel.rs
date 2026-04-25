@@ -53,7 +53,10 @@ fn type_to_dafny(ty: &Type) -> String {
                 format!("({}) -> {}", parts.join(", "), ret_ty)
             }
         }
-        Type::Named(name) => name.clone(),
+        // Dafny doesn't accept dotted identifiers for datatypes/records
+        // (`Terminal.Size`, `Tcp.Connection`); the prelude defines them
+        // as `Terminal_Size` etc., so map names accordingly.
+        Type::Named(name) => name.replace('.', "_"),
         Type::Unknown => "/* unknown type */".to_string(),
     }
 }

@@ -238,6 +238,11 @@ const LEAN_PRELUDE_TCP_CONNECTION_TYPE: &str = r#"structure Tcp_Connection where
   port : Int
   deriving Repr, BEq, Inhabited, DecidableEq"#;
 
+const LEAN_PRELUDE_TERMINAL_SIZE_TYPE: &str = r#"structure Terminal_Size where
+  width : Int
+  height : Int
+  deriving Repr, BEq, Inhabited, DecidableEq"#;
+
 const LEAN_PRELUDE_STRING_HELPERS: &str = r#"def String.charAt (s : String) (i : Int) : Option String :=
   if i < 0 then none
   else (s.toList.get? i.toNat).map Char.toString
@@ -1280,6 +1285,9 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
     }
     if include_all_helpers || needs_builtin_named_type(body, "Tcp_Connection") {
         parts.push(LEAN_PRELUDE_TCP_CONNECTION_TYPE.to_string());
+    }
+    if include_all_helpers || needs_builtin_named_type(body, "Terminal_Size") {
+        parts.push(LEAN_PRELUDE_TERMINAL_SIZE_TYPE.to_string());
     }
 
     if include_all_helpers || body.contains("averStringPosFuel") {

@@ -2,6 +2,11 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## Unreleased
+
+### Added
+- **`Terminal.size` joins the snapshot oracle set.** Previously rejected by `aver proof` as modal terminal state, now classified as a Snapshot effect with oracle signature `() -> Terminal.Size` — the same shape as `Args.get` and `Env.get`. The non-modal half of `Terminal` is in scope for proof export; only `enableRawMode`, `disableRawMode`, `setColor`, and `resetColor` remain unclassified. Lean and Dafny preludes ship `Terminal_Size` as a built-in record so generated proofs reference it without per-program declarations. Canonical example: `examples/formal/terminal_size_snapshot.av`.
+
 ## 0.11.0 "Oracle" (2026-04-24)
 
 > _Effectful functions get verified now — bind an oracle with `given`, check the trace, or export the universal law to Lean & Dafny. Dafny caught up with Lean across every recursive shape._

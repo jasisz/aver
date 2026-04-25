@@ -121,7 +121,11 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
                     format!("{} := {}", aver_name_to_lean(name), emit_expr(expr, ctx))
                 })
                 .collect();
-            format!("{{ {} : {} }}", parts.join(", "), type_name)
+            // Dotted type names (e.g. `Terminal.Size`, `Tcp.Connection`)
+            // map to underscored Lean structure names — same translation
+            // as `lean::types`'s `Type::Named` rendering.
+            let lean_type_name = type_name.replace('.', "_");
+            format!("{{ {} : {} }}", parts.join(", "), lean_type_name)
         }
         Expr::RecordUpdate {
             type_name: _,
