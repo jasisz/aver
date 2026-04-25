@@ -256,11 +256,7 @@
 
     <section class="oracle-section">
         <h2>What conventional Z3 verification doesn't reach</h2>
-        <p>Other languages use Z3 for contract verification &mdash; Vera, Dafny standalone, F* in some configurations. They prove pre/post conditions on functions, but draw a line at effects. Random results are unconstrained for Z3. Contracts that depend on specific random values fall to runtime checking, not static rejection.</p>
-        <div class="quote-box">
-            <em>Random results are unconstrained in Z3 (no useful axioms beyond the explicit range bound on <code>random_int</code>); contracts that depend on specific random values fall to runtime checking.</em>
-            <span class="source-link">— veralang spec/07-effects.md, §7.7.4 (a peer language built on the same Z3 engine Aver's Dafny backend uses)</span>
-        </div>
+        <p>Most contract-verification systems built on Z3 prove pre/post conditions on pure functions, then stop at the effect boundary. Random results are unconstrained for the solver — there are no useful axioms about them beyond range. Contracts that depend on specific random values fall to runtime checking, not static rejection. Same shape for HTTP responses, disk reads, time, network: the SMT model has no symbolic handle on them, so the proof obligation evaporates.</p>
         <p>Aver's Oracle export does the extra step. Classified effects &mdash; <code>Random</code>, <code>Http</code>, <code>Disk</code> read-side, <code>Tcp.send</code>, <code>Time.now</code>, <code>Console.readLine</code>, non-modal <code>Terminal</code>, <code>Args</code>, <code>Env</code> read-side &mdash; are lifted into the proof artifact as explicit function parameters with structured call addressing (<code>BranchPath</code> + per-branch counter). The exported theorem quantifies over them. Universal claims about effectful code become provable, and rejectable when they're false. The two-rolls paradox is what that gap looks like, in 30 lines.</p>
     </section>
 
