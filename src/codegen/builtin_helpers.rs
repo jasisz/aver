@@ -62,7 +62,14 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
     },
     BuiltinHelper {
         key: "AverList",
-        body_tokens: &["AverList.", "ListReverse(", "ListHead(", "ListTail(", "ListTake(", "ListDrop("],
+        body_tokens: &[
+            "AverList.",
+            "ListReverse(",
+            "ListHead(",
+            "ListTail(",
+            "ListTake(",
+            "ListDrop(",
+        ],
         // Dafny's `ListHead` returns `Option<T>`. Lean has native Option.
         depends_on: &["OptionDatatype"],
         doc: "Recursion helpers and structural list utilities (Lean's `AverList.` namespace; \
@@ -71,8 +78,12 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
     BuiltinHelper {
         key: "StringHelpers",
         body_tokens: &[
-            "String.charAt", "String.slice", "String.chars",
-            "StringCharAt(", "StringChars(", "StringJoin(",
+            "String.charAt",
+            "String.slice",
+            "String.chars",
+            "StringCharAt(",
+            "StringChars(",
+            "StringJoin(",
             "AverString",
         ],
         // Dafny's `StringCharAt` returns `Option<string>`.
@@ -85,9 +96,14 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
         key: "NumericParse",
         body_tokens: &[
             "AverDigits.",
-            "String.fromInt", "Int.fromString",
-            "Float.fromString", "Float.fromInt",
-            "IntToString(", "IntFromString(", "FloatToString(", "FloatFromString(",
+            "String.fromInt",
+            "Int.fromString",
+            "Float.fromString",
+            "Float.fromInt",
+            "IntToString(",
+            "IntFromString(",
+            "FloatToString(",
+            "FloatFromString(",
         ],
         // Dafny's `IntFromString` / `FloatFromString` declarations
         // return `Result<int, string>` / `Result<real, string>`, so
@@ -101,9 +117,14 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
     BuiltinHelper {
         key: "CharByte",
         body_tokens: &[
-            "Char.toCode", "Char.fromCode",
-            "byteToHex", "AverByte.",
-            "CharToCode(", "CharFromCode(", "ByteToHex(", "ByteFromHex(",
+            "Char.toCode",
+            "Char.fromCode",
+            "byteToHex",
+            "AverByte.",
+            "CharToCode(",
+            "CharFromCode(",
+            "ByteToHex(",
+            "ByteFromHex(",
         ],
         // Dafny's `CharFromCode` returns `Option<string>` and
         // `ByteToHex`/`ByteFromHex` return `Result<...>`.
@@ -120,10 +141,7 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
     },
     BuiltinHelper {
         key: "AverMap",
-        body_tokens: &[
-            "AverMap.",
-            "MapGet(", "MapEntries(", "MapFromList(",
-        ],
+        body_tokens: &["AverMap.", "MapGet(", "MapEntries(", "MapFromList("],
         // Dafny's `MapGet` returns `Option<V>`.
         depends_on: &["OptionDatatype"],
         doc: "Map helper namespace. Lean: `AverMap.has_set_self` / `.get_set_self` / etc. \
@@ -217,10 +235,7 @@ fn any_token_in_body(body: &str, tokens: &[&str]) -> bool {
 pub fn needed_helpers(body: &str, force_all: bool) -> Vec<&'static BuiltinHelper> {
     let mut selected: Vec<&'static BuiltinHelper> = Vec::new();
 
-    fn include_with_deps(
-        helper: &'static BuiltinHelper,
-        out: &mut Vec<&'static BuiltinHelper>,
-    ) {
+    fn include_with_deps(helper: &'static BuiltinHelper, out: &mut Vec<&'static BuiltinHelper>) {
         if out.iter().any(|h| h.key == helper.key) {
             return;
         }
@@ -276,10 +291,7 @@ mod tests {
         // StringHelpers also depends on OptionDatatype, which is emitted
         // before StringHelpers (deps go first).
         let keys = needed_keys("...String.charAt s 0...", false);
-        assert_eq!(
-            keys,
-            vec!["OptionDatatype", "StringHelpers", "StringHadd"]
-        );
+        assert_eq!(keys, vec!["OptionDatatype", "StringHelpers", "StringHadd"]);
     }
 
     #[test]

@@ -373,7 +373,13 @@ fn transpile_multi_file(ctx: &CodegenContext) -> ProjectOutput {
     let mutual_fns_all: Vec<&FnDef> = ctx
         .items
         .iter()
-        .filter_map(|it| if let TopLevel::FnDef(fd) = it { Some(fd) } else { None })
+        .filter_map(|it| {
+            if let TopLevel::FnDef(fd) = it {
+                Some(fd)
+            } else {
+                None
+            }
+        })
         .chain(ctx.modules.iter().flat_map(|m| m.fn_defs.iter()))
         .filter(|fd| mutual_planned.contains(&fd.name))
         .collect();
@@ -454,7 +460,12 @@ fn transpile_multi_file(ctx: &CodegenContext) -> ProjectOutput {
         let depends_includes: String = module
             .depends
             .iter()
-            .map(|d| format!("include \"{}.dfy\"", crate::codegen::common::module_prefix_to_filename(d)))
+            .map(|d| {
+                format!(
+                    "include \"{}.dfy\"",
+                    crate::codegen::common::module_prefix_to_filename(d)
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n");
         let depends_imports: String = module
@@ -494,7 +505,10 @@ fn transpile_multi_file(ctx: &CodegenContext) -> ProjectOutput {
             header, module.prefix, module_inner
         );
         files.push((
-            format!("{}.dfy", crate::codegen::common::module_prefix_to_filename(&module.prefix)),
+            format!(
+                "{}.dfy",
+                crate::codegen::common::module_prefix_to_filename(&module.prefix)
+            ),
             content,
         ));
     }
@@ -531,9 +545,10 @@ fn transpile_multi_file(ctx: &CodegenContext) -> ProjectOutput {
             && fd.name != "main"
             && !body_uses_error_prop(&fd.body)
             && reachable.contains(&fd.name)
-            && fd.effects.iter().all(|e| {
-                crate::types::checker::effect_classification::is_classified(&e.node)
-            })
+            && fd
+                .effects
+                .iter()
+                .all(|e| crate::types::checker::effect_classification::is_classified(&e.node))
         {
             helpers.insert(
                 fd.name.clone(),
@@ -547,9 +562,10 @@ fn transpile_multi_file(ctx: &CodegenContext) -> ProjectOutput {
             && fd.name != "main"
             && !body_uses_error_prop(&fd.body)
             && reachable.contains(&fd.name)
-            && fd.effects.iter().all(|e| {
-                crate::types::checker::effect_classification::is_classified(&e.node)
-            })
+            && fd
+                .effects
+                .iter()
+                .all(|e| crate::types::checker::effect_classification::is_classified(&e.node))
             && let Ok(Some(lifted)) =
                 crate::types::checker::effect_lifting::lift_fn_def_with_helpers(fd, &helpers)
         {
@@ -588,7 +604,12 @@ fn transpile_multi_file(ctx: &CodegenContext) -> ProjectOutput {
     let entry_includes: String = ctx
         .modules
         .iter()
-        .map(|m| format!("include \"{}.dfy\"", crate::codegen::common::module_prefix_to_filename(&m.prefix)))
+        .map(|m| {
+            format!(
+                "include \"{}.dfy\"",
+                crate::codegen::common::module_prefix_to_filename(&m.prefix)
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
     let mut entry_parts: Vec<String> = vec![format!(
@@ -603,9 +624,7 @@ fn transpile_multi_file(ctx: &CodegenContext) -> ProjectOutput {
     }
     entry_parts.push(opens.join("\n"));
     if crate::codegen::builtin_records::needs_trust_header(&union_body) {
-        entry_parts.push(
-            crate::types::checker::proof_trust_header::generate_commented("// "),
-        );
+        entry_parts.push(crate::types::checker::proof_trust_header::generate_commented("// "));
     }
     entry_parts.push(entry_body);
     let entry_content = entry_parts.join("\n\n");

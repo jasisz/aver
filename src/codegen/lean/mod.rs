@@ -1239,17 +1239,11 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
     // the body has no Oracle lifting at all — pure-math files don't depend on
     // any of the trust claims, so emitting the block would just add noise.
     let mut parts = vec![LEAN_PRELUDE_HEADER.to_string()];
-    if include_all_helpers
-        || crate::codegen::builtin_records::needs_trust_header(body)
-    {
-        parts.push(crate::types::checker::proof_trust_header::generate_commented(
-            "-- ",
-        ));
+    if include_all_helpers || crate::codegen::builtin_records::needs_trust_header(body) {
+        parts.push(crate::types::checker::proof_trust_header::generate_commented("-- "));
     }
     // Built-in record types — shared decision module decides which ones.
-    for record in
-        crate::codegen::builtin_records::needed_records(body, include_all_helpers)
-    {
+    for record in crate::codegen::builtin_records::needed_records(body, include_all_helpers) {
         parts.push(crate::codegen::builtin_records::render_lean(record));
     }
 
@@ -1463,8 +1457,7 @@ fn transpile_multi_file_lean(
         if let TopLevel::Verify(vb) = item {
             let key = verify_counter_key(vb);
             let start_idx = *verify_case_counters.get(&key).unwrap_or(&0);
-            let (emitted, next_idx) =
-                toplevel::emit_verify_block(vb, ctx, verify_mode, start_idx);
+            let (emitted, next_idx) = toplevel::emit_verify_block(vb, ctx, verify_mode, start_idx);
             verify_case_counters.insert(key, next_idx);
             entry_verify_sections.push(emitted);
             entry_verify_sections.push(String::new());
@@ -1484,8 +1477,7 @@ fn transpile_multi_file_lean(
                     toplevel::type_def_name(td),
                 ));
                 if matches!(emit_mode, LeanEmitMode::Proof)
-                    && let Some(measure) =
-                        toplevel::emit_recursive_measure(td, &recursive_types)
+                    && let Some(measure) = toplevel::emit_recursive_measure(td, &recursive_types)
                 {
                     body_sections.push(measure);
                 }
@@ -1526,7 +1518,10 @@ fn transpile_multi_file_lean(
             module.prefix
         );
         files.push((
-            format!("{}.lean", crate::codegen::common::module_prefix_to_filename(&module.prefix)),
+            format!(
+                "{}.lean",
+                crate::codegen::common::module_prefix_to_filename(&module.prefix)
+            ),
             content,
         ));
     }
@@ -1573,9 +1568,7 @@ fn transpile_multi_file_lean(
         entry_parts.push(entry_opens.join("\n"));
     }
     if crate::codegen::builtin_records::needs_trust_header(&union_body) {
-        entry_parts.push(crate::types::checker::proof_trust_header::generate_commented(
-            "-- ",
-        ));
+        entry_parts.push(crate::types::checker::proof_trust_header::generate_commented("-- "));
     }
     entry_parts.push(entry_body);
     let entry_content = entry_parts.join("\n\n");
@@ -1623,8 +1616,7 @@ fn build_common_lean(union_body: &str) -> String {
                 LEAN_PRELUDE_OPTION_TO_EXCEPT.to_string(),
             ]),
             "StringHadd" => parts.push(LEAN_PRELUDE_STRING_HADD.to_string()),
-            "ResultDatatype" | "OptionDatatype" | "OptionToResult"
-            | "BranchPathDatatype" => {}
+            "ResultDatatype" | "OptionDatatype" | "OptionToResult" | "BranchPathDatatype" => {}
             other => panic!(
                 "Lean backend has no implementation for builtin helper key '{}'. \
                  Add a match arm in build_common_lean or remove the key from BUILTIN_HELPERS.",

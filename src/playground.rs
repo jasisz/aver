@@ -998,7 +998,9 @@ mod tests {
             "Rust export should include Cargo.toml"
         );
         assert!(
-            files.iter().any(|(k, _)| k.starts_with("src/") && k.ends_with(".rs")),
+            files
+                .iter()
+                .any(|(k, _)| k.starts_with("src/") && k.ends_with(".rs")),
             "Rust export should include at least one src/*.rs file"
         );
     }

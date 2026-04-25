@@ -97,8 +97,14 @@ pub const BUILTIN_RECORDS: &[BuiltinRecord] = &[
     BuiltinRecord {
         aver_name: "Header",
         fields: &[
-            BuiltinField { name: "name", ty: BuiltinType::Str },
-            BuiltinField { name: "value", ty: BuiltinType::Str },
+            BuiltinField {
+                name: "name",
+                ty: BuiltinType::Str,
+            },
+            BuiltinField {
+                name: "value",
+                ty: BuiltinType::Str,
+            },
         ],
         depends_on: &[],
         doc: "HTTP header pair shared by `HttpResponse` / `HttpRequest`.",
@@ -106,9 +112,18 @@ pub const BUILTIN_RECORDS: &[BuiltinRecord] = &[
     BuiltinRecord {
         aver_name: "HttpResponse",
         fields: &[
-            BuiltinField { name: "status", ty: BuiltinType::Int },
-            BuiltinField { name: "body", ty: BuiltinType::Str },
-            BuiltinField { name: "headers", ty: BuiltinType::ListOf("Header") },
+            BuiltinField {
+                name: "status",
+                ty: BuiltinType::Int,
+            },
+            BuiltinField {
+                name: "body",
+                ty: BuiltinType::Str,
+            },
+            BuiltinField {
+                name: "headers",
+                ty: BuiltinType::ListOf("Header"),
+            },
         ],
         depends_on: &["Header"],
         doc: "Returned by classified `Http.get`/`.head`/`.delete`/`.post`/`.put`/`.patch`.",
@@ -116,10 +131,22 @@ pub const BUILTIN_RECORDS: &[BuiltinRecord] = &[
     BuiltinRecord {
         aver_name: "HttpRequest",
         fields: &[
-            BuiltinField { name: "method", ty: BuiltinType::Str },
-            BuiltinField { name: "path", ty: BuiltinType::Str },
-            BuiltinField { name: "body", ty: BuiltinType::Str },
-            BuiltinField { name: "headers", ty: BuiltinType::ListOf("Header") },
+            BuiltinField {
+                name: "method",
+                ty: BuiltinType::Str,
+            },
+            BuiltinField {
+                name: "path",
+                ty: BuiltinType::Str,
+            },
+            BuiltinField {
+                name: "body",
+                ty: BuiltinType::Str,
+            },
+            BuiltinField {
+                name: "headers",
+                ty: BuiltinType::ListOf("Header"),
+            },
         ],
         depends_on: &["Header"],
         doc: "Server-side request record (used by lifted server-handler proofs).",
@@ -127,9 +154,18 @@ pub const BUILTIN_RECORDS: &[BuiltinRecord] = &[
     BuiltinRecord {
         aver_name: "Tcp.Connection",
         fields: &[
-            BuiltinField { name: "id", ty: BuiltinType::Str },
-            BuiltinField { name: "host", ty: BuiltinType::Str },
-            BuiltinField { name: "port", ty: BuiltinType::Int },
+            BuiltinField {
+                name: "id",
+                ty: BuiltinType::Str,
+            },
+            BuiltinField {
+                name: "host",
+                ty: BuiltinType::Str,
+            },
+            BuiltinField {
+                name: "port",
+                ty: BuiltinType::Int,
+            },
         ],
         depends_on: &[],
         doc: "Returned by `Tcp.connect`; consumed by the rest of `Tcp.*`.",
@@ -137,8 +173,14 @@ pub const BUILTIN_RECORDS: &[BuiltinRecord] = &[
     BuiltinRecord {
         aver_name: "Terminal.Size",
         fields: &[
-            BuiltinField { name: "width", ty: BuiltinType::Int },
-            BuiltinField { name: "height", ty: BuiltinType::Int },
+            BuiltinField {
+                name: "width",
+                ty: BuiltinType::Int,
+            },
+            BuiltinField {
+                name: "height",
+                ty: BuiltinType::Int,
+            },
         ],
         depends_on: &[],
         doc: "Returned by classified `Terminal.size` (snapshot effect).",
@@ -248,10 +290,7 @@ pub fn needs_trust_header(body: &str) -> bool {
 pub fn needed_records(body: &str, force_all: bool) -> Vec<&'static BuiltinRecord> {
     let mut selected: Vec<&'static BuiltinRecord> = Vec::new();
 
-    fn include_with_deps(
-        record: &'static BuiltinRecord,
-        out: &mut Vec<&'static BuiltinRecord>,
-    ) {
+    fn include_with_deps(record: &'static BuiltinRecord, out: &mut Vec<&'static BuiltinRecord>) {
         if out.iter().any(|r| r.aver_name == record.aver_name) {
             return;
         }
