@@ -11,6 +11,8 @@ pub mod dafny;
 #[cfg(feature = "runtime")]
 pub mod lean;
 #[cfg(feature = "runtime")]
+pub(crate) mod multi_file;
+#[cfg(feature = "runtime")]
 pub mod recursion;
 #[cfg(feature = "runtime")]
 pub mod rust;

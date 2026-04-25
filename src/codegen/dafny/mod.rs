@@ -346,6 +346,15 @@ fn transpile_single_file(ctx: &CodegenContext) -> ProjectOutput {
     }
 }
 
+/// Translate an Aver module prefix into a Dafny module identifier.
+/// Dafny treats `module A.B.C` as nested (`A` containing `B` containing
+/// `C`), which forms a parent→child dependency cycle as soon as a
+/// sibling submodule imports another. Flattening to underscore form
+/// (`A_B_C`) keeps every emitted module at the top level.
+pub(crate) fn dafny_module_name(prefix: &str) -> String {
+    prefix.replace('.', "_")
+}
+
 /// Multi-file Dafny output: one file per dependent module wrapped in
 /// `module M { ... }`, a shared `common.dfy` carrying built-in records
 /// and helpers under `module AverCommon`, and an entry `<project>.dfy`
@@ -431,7 +440,25 @@ fn transpile_multi_file(ctx: &CodegenContext) -> ProjectOutput {
         }
     };
 
-    let mut files: Vec<(String, String)> = Vec::new();
+    // SCC-route pure fns through the shared per-scope router (each scope
+    // independently — same reasoning as Lean). For DAG inputs each
+    // component is a singleton emitted via `emit_pure_or_axiom`; the
+    // `_or_axiom` half also handles the fuel-emitted/axiom-fallback
+    // skip-and-stub cases, so multi-fn SCCs that aren't fuel-handled
+    // emit each fn as an axiom and the SCC topology is otherwise
+    // ignored at this layer.
+    let mut pure_per_scope = crate::codegen::multi_file::route_pure_components_per_scope(
+        ctx,
+        |fd| fd.effects.is_empty() && fd.name != "main",
+        |comp| {
+            comp.iter()
+                .map(|fd| emit_pure_or_axiom(fd))
+                .filter(|s| !s.is_empty())
+                .collect()
+        },
+    );
+
+    let mut module_files: Vec<(String, String)> = Vec::new();
     let mut union_body = String::new();
 
     // ---- Per-module files ----
@@ -442,14 +469,7 @@ fn transpile_multi_file(ctx: &CodegenContext) -> ProjectOutput {
                 sections.push(code);
             }
         }
-        for fd in &module.fn_defs {
-            if fd.effects.is_empty() {
-                let code = emit_pure_or_axiom(fd);
-                if !code.is_empty() {
-                    sections.push(code);
-                }
-            }
-        }
+        sections.extend(pure_per_scope.take(&module.prefix));
         if let Some(fuel) = fuel_per_scope.get(&module.prefix) {
             sections.extend(fuel.clone());
         }
@@ -478,7 +498,7 @@ fn transpile_multi_file(ctx: &CodegenContext) -> ProjectOutput {
         let depends_imports: String = module
             .depends
             .iter()
-            .map(|d| format!("  import opened {}", d))
+            .map(|d| format!("  import opened {}", dafny_module_name(d)))
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -509,15 +529,11 @@ fn transpile_multi_file(ctx: &CodegenContext) -> ProjectOutput {
 
         let content = format!(
             "{}\nmodule {} {{\n{}}}\n",
-            header, module.prefix, module_inner
+            header,
+            dafny_module_name(&module.prefix),
+            module_inner
         );
-        files.push((
-            format!(
-                "{}.dfy",
-                crate::codegen::common::module_prefix_to_filename(&module.prefix)
-            ),
-            content,
-        ));
+        module_files.push((module.prefix.clone(), content));
     }
 
     // ---- Entry sections ----
@@ -527,17 +543,12 @@ fn transpile_multi_file(ctx: &CodegenContext) -> ProjectOutput {
             entry_sections.push(code);
         }
     }
-    for item in &ctx.items {
-        if let TopLevel::FnDef(fd) = item
-            && fd.effects.is_empty()
-            && fd.name != "main"
-        {
-            let code = emit_pure_or_axiom(fd);
-            if !code.is_empty() {
-                entry_sections.push(code);
-            }
-        }
-    }
+    // Pure fns from entry came out of the shared per-scope router. The
+    // closure above already filtered `main` (it has `effects.is_empty()`
+    // == false because it lives under `! [...]` in practice; if a `main`
+    // ever lands as a pure fn the per-scope router will pick it up like
+    // any other and the verify lemmas below will simply not reference it).
+    entry_sections.extend(pure_per_scope.take(""));
     if let Some(fuel) = fuel_per_scope.get("") {
         entry_sections.extend(fuel.clone());
     }
@@ -627,7 +638,7 @@ fn transpile_multi_file(ctx: &CodegenContext) -> ProjectOutput {
     // (`Point`, `Tile`) and helpers stay in scope at the top level.
     let mut opens = vec!["import opened AverCommon".to_string()];
     for m in &ctx.modules {
-        opens.push(format!("import opened {}", m.prefix));
+        opens.push(format!("import opened {}", dafny_module_name(&m.prefix)));
     }
     entry_parts.push(opens.join("\n"));
     if crate::codegen::builtin_records::needs_trust_header(&union_body) {
@@ -635,13 +646,19 @@ fn transpile_multi_file(ctx: &CodegenContext) -> ProjectOutput {
     }
     entry_parts.push(entry_body);
     let entry_content = entry_parts.join("\n\n");
-    files.push((format!("{}.dfy", ctx.project_name), entry_content));
 
     // ---- common.dfy ----
     let common_content = build_common_dafny(&union_body);
-    files.push(("common.dfy".to_string(), common_content));
 
-    ProjectOutput { files }
+    crate::codegen::multi_file::package_multi_file_output(
+        "dfy",
+        "common",
+        common_content,
+        &ctx.project_name,
+        entry_content,
+        module_files,
+        Vec::new(),
+    )
 }
 
 fn build_common_dafny(union_body: &str) -> String {

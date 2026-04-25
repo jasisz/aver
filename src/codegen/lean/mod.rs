@@ -1378,70 +1378,48 @@ fn transpile_multi_file_lean(
     };
 
     // Pure fns are SCC-routed per scope (per dependent module + entry)
-    // independently. A global SCC analysis would conflate same-bare-name
-    // fns from different modules (e.g. rogue's `Map.getT` and `Fov.getT`)
-    // and emit only one of them. Cross-module mutual recursion is detected
-    // separately (deferred fallback for 0.13).
-    let mut pure_per_scope: HashMap<String, Vec<String>> = HashMap::new();
-    let emit_component = |fns: &Vec<&FnDef>, bucket: &mut Vec<String>| {
-        if fns.is_empty() {
-            return;
-        }
-        if fns.len() > 1 {
-            let code = match emit_mode {
-                LeanEmitMode::Proof => {
-                    let all_supported = fns.iter().all(|fd| plans.contains_key(&fd.name));
-                    if all_supported {
-                        toplevel::emit_mutual_group_proof(fns, ctx, &plans)
-                    } else {
-                        toplevel::emit_mutual_group(fns, ctx)
+    // independently — shared `route_pure_components_per_scope` handles
+    // the loop. A global SCC pass would conflate same-bare-name fns from
+    // different modules (rogue's `Map.getT` vs `Fov.getT`).
+    let pure_per_scope = crate::codegen::multi_file::route_pure_components_per_scope(
+        ctx,
+        toplevel::is_pure_fn,
+        |comp| {
+            let mut out: Vec<String> = Vec::new();
+            if comp.len() > 1 {
+                let code = match emit_mode {
+                    LeanEmitMode::Proof => {
+                        let all_supported = comp.iter().all(|fd| plans.contains_key(&fd.name));
+                        if all_supported {
+                            toplevel::emit_mutual_group_proof(comp, ctx, &plans)
+                        } else {
+                            toplevel::emit_mutual_group(comp, ctx)
+                        }
                     }
-                }
-                LeanEmitMode::Standard => toplevel::emit_mutual_group(fns, ctx),
-            };
-            bucket.push(code);
-            bucket.push(String::new());
-            return;
-        }
-        let fd = fns[0];
-        let emitted = match emit_mode {
-            LeanEmitMode::Proof => {
-                let is_recursive = recursive_names.contains(&fd.name);
-                if is_recursive && !plans.contains_key(&fd.name) {
-                    toplevel::emit_fn_def(fd, &recursive_names, ctx)
-                } else {
-                    toplevel::emit_fn_def_proof(fd, plans.get(&fd.name).cloned(), ctx)
+                    LeanEmitMode::Standard => toplevel::emit_mutual_group(comp, ctx),
+                };
+                out.push(code);
+                out.push(String::new());
+            } else if let Some(fd) = comp.first() {
+                let emitted = match emit_mode {
+                    LeanEmitMode::Proof => {
+                        let is_recursive = recursive_names.contains(&fd.name);
+                        if is_recursive && !plans.contains_key(&fd.name) {
+                            toplevel::emit_fn_def(fd, &recursive_names, ctx)
+                        } else {
+                            toplevel::emit_fn_def_proof(fd, plans.get(&fd.name).cloned(), ctx)
+                        }
+                    }
+                    LeanEmitMode::Standard => toplevel::emit_fn_def(fd, &recursive_fns, ctx),
+                };
+                if let Some(code) = emitted {
+                    out.push(code);
+                    out.push(String::new());
                 }
             }
-            LeanEmitMode::Standard => toplevel::emit_fn_def(fd, &recursive_fns, ctx),
-        };
-        if let Some(code) = emitted {
-            bucket.push(code);
-            bucket.push(String::new());
-        }
-    };
-    for module in &ctx.modules {
-        let module_pure: Vec<&FnDef> = module
-            .fn_defs
-            .iter()
-            .filter(|fd| toplevel::is_pure_fn(fd))
-            .collect();
-        let comps = call_graph::ordered_fn_components(&module_pure, &ctx.module_prefixes);
-        let bucket = pure_per_scope.entry(module.prefix.clone()).or_default();
-        for fns in comps {
-            emit_component(&fns, bucket);
-        }
-    }
-    let entry_pure: Vec<&FnDef> = ctx
-        .fn_defs
-        .iter()
-        .filter(|fd| toplevel::is_pure_fn(fd))
-        .collect();
-    let entry_comps = call_graph::ordered_fn_components(&entry_pure, &ctx.module_prefixes);
-    let entry_bucket = pure_per_scope.entry(String::new()).or_default();
-    for fns in entry_comps {
-        emit_component(&fns, entry_bucket);
-    }
+            out
+        },
+    );
 
     // Lifted effectful fns + decisions + verifies remain entry-only.
     let mut entry_lifted_sections: Vec<String> = Vec::new();
@@ -1473,7 +1451,7 @@ fn transpile_multi_file_lean(
     }
 
     // ---- Per-module file bodies ----
-    let mut files: Vec<(String, String)> = Vec::new();
+    let mut module_files: Vec<(String, String)> = Vec::new();
     let mut union_body = String::new();
 
     for module in &ctx.modules {
@@ -1492,7 +1470,7 @@ fn transpile_multi_file_lean(
             }
             body_sections.push(String::new());
         }
-        if let Some(scope_sections) = pure_per_scope.get(&module.prefix) {
+        if let Some(scope_sections) = pure_per_scope.by_scope.get(&module.prefix) {
             body_sections.extend(scope_sections.clone());
         }
         let body = body_sections.join("\n");
@@ -1525,13 +1503,7 @@ fn transpile_multi_file_lean(
             body,
             module.prefix
         );
-        files.push((
-            format!(
-                "{}.lean",
-                crate::codegen::common::module_prefix_to_filename(&module.prefix)
-            ),
-            content,
-        ));
+        module_files.push((module.prefix.clone(), content));
     }
 
     // ---- Entry sections ----
@@ -1550,7 +1522,7 @@ fn transpile_multi_file_lean(
         }
         entry_body_sections.push(String::new());
     }
-    if let Some(entry_pure) = pure_per_scope.get("") {
+    if let Some(entry_pure) = pure_per_scope.by_scope.get("") {
         entry_body_sections.extend(entry_pure.clone());
     }
     entry_body_sections.extend(entry_lifted_sections);
@@ -1580,11 +1552,9 @@ fn transpile_multi_file_lean(
     }
     entry_parts.push(entry_body);
     let entry_content = entry_parts.join("\n\n");
-    files.push((format!("{}.lean", project_name), entry_content));
 
     // ---- AverCommon.lean ----
     let common_content = build_common_lean(&union_body);
-    files.push(("AverCommon.lean".to_string(), common_content));
 
     // Project files
     let mut extra_roots: Vec<String> = vec!["AverCommon".to_string()];
@@ -1593,10 +1563,19 @@ fn transpile_multi_file_lean(
     }
     let lakefile = generate_lakefile_with_roots(&project_name, &extra_roots);
     let toolchain = generate_toolchain();
-    files.push(("lakefile.lean".to_string(), lakefile));
-    files.push(("lean-toolchain".to_string(), toolchain));
 
-    ProjectOutput { files }
+    crate::codegen::multi_file::package_multi_file_output(
+        "lean",
+        "AverCommon",
+        common_content,
+        &project_name,
+        entry_content,
+        module_files,
+        vec![
+            ("lakefile.lean".to_string(), lakefile),
+            ("lean-toolchain".to_string(), toolchain),
+        ],
+    )
 }
 
 fn build_common_lean(union_body: &str) -> String {

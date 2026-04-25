@@ -124,7 +124,7 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
                 }
                 let bare_dafny = aver_name_to_dafny(bare);
                 if !ctx.modules.is_empty() {
-                    return format!("{}.{}", prefix, bare_dafny);
+                    return format!("{}.{}", super::dafny_module_name(prefix), bare_dafny);
                 }
                 return bare_dafny;
             }
