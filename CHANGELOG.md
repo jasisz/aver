@@ -4,16 +4,22 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## 0.12.0 "Atlas" (2026-04-25)
 
-> _Multi-module proofs split into per-module Lean namespaces and Dafny modules — each module its own file, shared `AverCommon` carrying only what's actually referenced._
+> _Multi-module proofs land properly: every module gets its own Lean namespace / Dafny module / Rust mod.rs, with a shared `AverCommon` carrying only what's actually referenced. Sweep across all 42 examples now passes both proof backends end to end._
 
 ### Added
 - **`Terminal.size` is now a classified Snapshot effect.** Oracle signature `() -> Terminal.Size`, same shape as `Args.get` / `Env.get`. Example: `examples/formal/terminal_size_snapshot.av`.
 - **Playground download menu:** the ⬇ button now expands into Aver source / WASM binary / Rust project / Lean 4 proof / Dafny proof. The current source is fed through the in-browser compiler and the chosen format ships as `.av` / `.wasm` / `.zip`.
-- **Unified multi-file emission across all three backends.** Lean / Dafny / Rust now share `codegen::multi_file::{ModuleTree, walk_module_tree, route_pure_components_per_scope, package_multi_file_output}`. Lean wraps each module in `namespace M ... end M`, Dafny in `module M { ... }`, Rust in cascading `mod.rs` — but the tree, the SCC routing per scope, and the file-packaging skeleton come from one place. Single-module sources go through the same path as multi-module ones (entry + `AverCommon`/`common.dfy` + extras for Lean/Dafny; the existing `Cargo.toml` + `src/aver_generated/...` tree for Rust) — no more split between single- and multi-file emitters. Fixes rogue-style collisions (`Map.getT` vs `Fov.getT`, `Combat.entityAtPos` vs `Pathfinding.entityAtPos`) and supports deep submodules (`Apps.Notepad.Store`, `Modules.Models.User`).
+- **Multi-module proof export.** Lean wraps each dependent module in `namespace M ... end M`, Dafny in `module Aver_M { ... }`, Rust in cascading `mod.rs` (unchanged for Rust — multi-file there was already there). Path-as-module convention: `Apps.Notepad.Store` lands at `Apps/Notepad/Store.{lean,dfy}`. Shared `AverCommon.lean` / `common.dfy` carries built-in records & helpers, conditional on the union of every body's actual usage. Single-module sources go through the same emitter — no more `if modules.is_empty()` split.
+- **Lean `AverFloat` namespace** — proper `Float → Int` conversions matching Aver runtime semantics (`f64::floor() as i64`): IEEE floor/ceil/round followed by saturating cast, NaN → 0, ±Inf → i64::MIN/MAX. 14 `native_decide` edge-case proofs (NaN, ±Inf, granice i64, half-away-from-zero rounding) re-run on every Lake build.
+- **`Float.sin / Float.cos / Float.atan2` in Lean & Dafny.** Lean uses native `Float.sin` etc.; Dafny declares them as opaque functions (math `real` type). Used by doom's raycaster.
+- **Bare `?` operator lowering in pure functions.** `cmd = parseCommand(line)?; <rest>` now lowers to `match parseCommand(line) { Result.Ok(cmd) -> <rest>; Result.Err(e) -> Result.Err(e) }` before reaching the proof emitter. Previously only `?!` (independent product) was desugared; bare `?` left a placeholder Dafny couldn't compile (mission_control).
 
 ### Changed
 - **Generated proof files shrank dramatically.** Lean and Dafny preludes are now conditional on actual usage (built-in records, namespace helper blocks, trust-assumption header). Calculator and pure-laws examples shrank ~85-90% in Lean and ~70-90% in Dafny; effectful examples 25-40%.
 - **Shared `codegen::builtin_records` and `codegen::builtin_helpers`.** Single source of truth for built-in record shapes (Header, HttpResponse, HttpRequest, Tcp.Connection, Terminal.Size) and prelude helper blocks; Lean, Dafny, and WASM all consume the same table.
+- **Per-scope SCC routing in `codegen::common`.** `route_pure_components_per_scope` runs SCC analysis on each emission scope (entry + each dependent module) independently — global SCC would conflate same-bare-name fns from different modules (rogue's `Map.getT` vs `Fov.getT`). Lean and Dafny share the helper.
+- **Dafny module names prefixed with `Aver_`.** Aver source legally declares `module Foo` and `record Foo` in different modules; Dafny resolves both in the same namespace, so collisions surface in `import opened` scope. `module Aver_Foo` ≠ `record Foo` keeps them distinct without forcing user-source rename.
+- **Dafny underscore-prefix identifiers** (Aver's idiomatic `_pmy` "intentionally unused") rewrite to `aver_pmy` since Dafny rejects identifiers starting with `_` (except the wildcard `_` itself, which we preserve).
 
 ## 0.11.0 "Oracle" (2026-04-24)
 
