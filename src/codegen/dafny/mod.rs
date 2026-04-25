@@ -300,7 +300,27 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
     for record in crate::codegen::builtin_records::needed_records(&body, false) {
         prelude_sections.push(crate::codegen::builtin_records::render_dafny(record));
     }
-    prelude_sections.push(DAFNY_PRELUDE_AFTER_RECORDS.to_string());
+    prelude_sections.push(DAFNY_PRELUDE_CORE_HELPERS.to_string());
+    // Built-in helpers — same shared decision module Lean uses, with
+    // Dafny-native fragment per key.
+    for helper in crate::codegen::builtin_helpers::needed_helpers(&body, false) {
+        match helper.key {
+            "BranchPath" => prelude_sections.push(DAFNY_HELPER_BRANCH_PATH.to_string()),
+            "AverList" => prelude_sections.push(DAFNY_HELPER_AVER_LIST.to_string()),
+            "StringHelpers" => prelude_sections.push(DAFNY_HELPER_STRING_HELPERS.to_string()),
+            "NumericParse" => prelude_sections.push(DAFNY_HELPER_NUMERIC_PARSE.to_string()),
+            "CharByte" => prelude_sections.push(DAFNY_HELPER_CHAR_BYTE.to_string()),
+            "AverMap" => prelude_sections.push(DAFNY_HELPER_AVER_MAP.to_string()),
+            // AverMeasure / ProofFuel — Lean-only termination machinery,
+            // Dafny uses native `decreases` clauses; nothing to emit here.
+            "AverMeasure" | "ProofFuel" => {}
+            other => panic!(
+                "Dafny backend has no implementation for builtin helper key '{}'. \
+                 Add a match arm in emit_project or remove the key from BUILTIN_HELPERS.",
+                other
+            ),
+        }
+    }
 
     let content = format!("{}\n{}", prelude_sections.join("\n"), body);
     let file_name = format!("{}.dfy", ctx.project_name);
@@ -325,20 +345,9 @@ datatype Option<T> = None | Some(value: T)
 datatype BranchPath = BranchPath(dewey: string)
 "#;
 
-const DAFNY_PRELUDE_AFTER_RECORDS: &str = r#"
-const BranchPath_Root: BranchPath := BranchPath("")
-
-function BranchPath_child(p: BranchPath, idx: int): BranchPath
-  requires idx >= 0
-{
-  if |p.dewey| == 0 then BranchPath(IntToString(idx))
-  else BranchPath(p.dewey + "." + IntToString(idx))
-}
-
-function BranchPath_parse(s: string): BranchPath {
-  BranchPath(s)
-}
-
+/// Always-included Result/Option destructuring + the universal
+/// `ToString<T>` opaque (small, ubiquitous, not worth gating).
+const DAFNY_PRELUDE_CORE_HELPERS: &str = r#"
 function ResultWithDefault<T, E>(r: Result<T, E>, d: T): T {
   match r
   case Ok(v) => v
@@ -357,6 +366,31 @@ function OptionToResult<T, E>(o: Option<T>, err: E): Result<T, E> {
   case None => Result.Err(err)
 }
 
+function ToString<T>(v: T): string
+"#;
+
+/// `BranchPath` constructors. Emitted only when the body uses Oracle
+/// lifting (any `BranchPath` reference); pure-math files don't need
+/// them. Note `BranchPath_child` calls `IntToString`, so when this
+/// helper is included the StringHelpers piece must come along too —
+/// that's enforced via `BUILTIN_HELPERS::depends_on` for `BranchPath`
+/// pulling in `NumericParse` (whose tokens cover `IntToString`).
+const DAFNY_HELPER_BRANCH_PATH: &str = r#"
+const BranchPath_Root: BranchPath := BranchPath("")
+
+function BranchPath_child(p: BranchPath, idx: int): BranchPath
+  requires idx >= 0
+{
+  if |p.dewey| == 0 then BranchPath(IntToString(idx))
+  else BranchPath(p.dewey + "." + IntToString(idx))
+}
+
+function BranchPath_parse(s: string): BranchPath {
+  BranchPath(s)
+}
+"#;
+
+const DAFNY_HELPER_AVER_LIST: &str = r#"
 function ListReverse<T>(xs: seq<T>): seq<T>
   decreases |xs|
 {
@@ -385,33 +419,14 @@ function ListDrop<T>(xs: seq<T>, n: int): seq<T> {
   else if n >= |xs| then []
   else xs[n..]
 }
+"#;
 
+const DAFNY_HELPER_AVER_MAP: &str = r#"
 function MapGet<K, V>(m: map<K, V>, k: K): Option<V> {
   if k in m then Some(m[k])
   else None
 }
 
-// --- String/Char helpers (opaque stubs for verification) ---
-
-function IntToString(n: int): string
-function IntFromString(s: string): Result<int, string>
-function FloatToString(r: real): string
-function FloatFromString(s: string): Result<real, string>
-function StringCharAt(s: string, i: int): Option<string> {
-  if 0 <= i < |s| then Option.Some([s[i]]) else Option.None
-}
-function StringChars(s: string): seq<string> {
-  seq(|s|, (i: int) requires 0 <= i < |s| => [s[i]])
-}
-function StringJoin(sep: string, parts: seq<string>): string
-  decreases |parts|
-{
-  if |parts| == 0 then ""
-  else if |parts| == 1 then parts[0]
-  else parts[0] + sep + StringJoin(sep, parts[1..])
-}
-function CharToCode(c: string): int
-function CharFromCode(n: int): Option<string>
 function MapEntries<K, V>(m: map<K, V>): seq<(K, V)>
 function MapFromList<K, V>(entries: seq<(K, V)>): map<K, V>
   decreases |entries|
@@ -419,9 +434,43 @@ function MapFromList<K, V>(entries: seq<(K, V)>): map<K, V>
   if |entries| == 0 then map[]
   else MapFromList(entries[..|entries|-1])[entries[|entries|-1].0 := entries[|entries|-1].1]
 }
+"#;
+
+/// `StringHelpers` covers the opaque/ish string utilities. Note Dafny
+/// has no AverDigits namespace; the numeric `IntToString`/`FromString`/
+/// `FloatToString`/`FromString` opaques live under the `NumericParse`
+/// helper key alongside Lean's parsing namespace, since the body-token
+/// detection is shared.
+const DAFNY_HELPER_STRING_HELPERS: &str = r#"
+function StringCharAt(s: string, i: int): Option<string> {
+  if 0 <= i < |s| then Option.Some([s[i]]) else Option.None
+}
+
+function StringChars(s: string): seq<string> {
+  seq(|s|, (i: int) requires 0 <= i < |s| => [s[i]])
+}
+
+function StringJoin(sep: string, parts: seq<string>): string
+  decreases |parts|
+{
+  if |parts| == 0 then ""
+  else if |parts| == 1 then parts[0]
+  else parts[0] + sep + StringJoin(sep, parts[1..])
+}
+"#;
+
+const DAFNY_HELPER_NUMERIC_PARSE: &str = r#"
+function IntToString(n: int): string
+function IntFromString(s: string): Result<int, string>
+function FloatToString(r: real): string
+function FloatFromString(s: string): Result<real, string>
+"#;
+
+const DAFNY_HELPER_CHAR_BYTE: &str = r#"
+function CharToCode(c: string): int
+function CharFromCode(n: int): Option<string>
 function ByteToHex(b: int): Result<string, string>
 function ByteFromHex(s: string): Result<int, string>
-function ToString<T>(v: T): string
 "#;
 
 #[cfg(test)]
@@ -453,15 +502,33 @@ mod tests {
     }
 
     #[test]
-    fn prelude_carries_branch_path_datatype_and_helpers() {
+    fn prelude_carries_branch_path_datatype_always_helpers_only_when_used() {
+        // Pure fn — body has no BranchPath, so the constructor helpers
+        // are omitted (the bare datatype declaration always ships from
+        // DAFNY_PRELUDE_HEAD).
         let src = "module M\n    intent = \"t\"\n\nfn pure(x: Int) -> Int\n    x\n";
         let ctx = ctx_from_source(src, "m");
         let out = transpile(&ctx);
         let dfy = dafny_output(&out);
         assert!(dfy.contains("datatype BranchPath"));
-        assert!(dfy.contains("const BranchPath_Root"));
-        assert!(dfy.contains("function BranchPath_child"));
-        assert!(dfy.contains("function BranchPath_parse"));
+        assert!(!dfy.contains("const BranchPath_Root"));
+        assert!(!dfy.contains("function BranchPath_child"));
+        assert!(!dfy.contains("function BranchPath_parse"));
+
+        // Effectful fn with a verify block — Oracle lifting reaches the
+        // proof body and introduces `BranchPath` references, pulling
+        // the constructor helpers in.
+        let src_eff = "module M\n    intent = \"t\"\n\n\
+                       fn rollMax(path: BranchPath, n: Int, lo: Int, hi: Int) -> Int\n    hi\n\n\
+                       fn roll() -> Int\n    ! [Random.int]\n    Random.int(1, 6)\n\n\
+                       verify roll law alwaysSix\n    given rnd: Random.int = [rollMax]\n    roll() => 6\n";
+        let ctx_eff = ctx_from_source(src_eff, "m");
+        let out_eff = transpile(&ctx_eff);
+        let dfy_eff = dafny_output(&out_eff);
+        assert!(dfy_eff.contains("datatype BranchPath"));
+        assert!(dfy_eff.contains("const BranchPath_Root"));
+        assert!(dfy_eff.contains("function BranchPath_child"));
+        assert!(dfy_eff.contains("function BranchPath_parse"));
     }
 
     #[test]

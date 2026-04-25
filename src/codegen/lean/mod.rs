@@ -1240,6 +1240,8 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
             "-- ",
         ));
     }
+    // Small always-on instances and namespace shims. Tiny enough that
+    // body-detection isn't worth it; collectively ~50 lines.
     parts.extend([
         LEAN_PRELUDE_FLOAT_COE.to_string(),
         LEAN_PRELUDE_FLOAT_DEC_EQ.to_string(),
@@ -1247,38 +1249,36 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
         LEAN_PRELUDE_EXCEPT_NS.to_string(),
         LEAN_PRELUDE_OPTION_TO_EXCEPT.to_string(),
         LEAN_PRELUDE_STRING_HADD.to_string(),
-        LEAN_PRELUDE_BRANCH_PATH.to_string(),
     ]);
 
-    // Built-in record types (Header, HttpResponse, HttpRequest,
-    // Tcp.Connection, Terminal.Size) are pulled from the shared
-    // `codegen::builtin_records` table. The same `needed_records`
-    // helper drives Lean, Dafny, and WASM emission, so adding a new
-    // built-in record only requires touching the table.
+    // Built-in record types — shared decision module decides which ones.
     for record in
         crate::codegen::builtin_records::needed_records(body, include_all_helpers)
     {
         parts.push(crate::codegen::builtin_records::render_lean(record));
     }
 
-    if include_all_helpers || body.contains("averStringPosFuel") {
-        parts.push(LEAN_PRELUDE_PROOF_FUEL.to_string());
+    // Built-in helpers — same shared decision pattern. Each key has a
+    // backend-native body resolved here (Lean preludes); other backends
+    // use the same shared decision against their own implementations.
+    for helper in crate::codegen::builtin_helpers::needed_helpers(body, include_all_helpers) {
+        match helper.key {
+            "BranchPath" => parts.push(LEAN_PRELUDE_BRANCH_PATH.to_string()),
+            "AverList" => parts.push(LEAN_PRELUDE_AVER_LIST.to_string()),
+            "StringHelpers" => parts.push(LEAN_PRELUDE_STRING_HELPERS.to_string()),
+            "NumericParse" => parts.push(LEAN_PRELUDE_NUMERIC_PARSE.to_string()),
+            "CharByte" => parts.push(LEAN_PRELUDE_CHAR_BYTE.to_string()),
+            "AverMeasure" => parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string()),
+            "AverMap" => parts.push(generate_map_prelude(body, include_all_helpers)),
+            "ProofFuel" => parts.push(LEAN_PRELUDE_PROOF_FUEL.to_string()),
+            other => panic!(
+                "Lean backend has no implementation for builtin helper key '{}'. \
+                 Add a match arm in generate_prelude_for_body or remove the key \
+                 from BUILTIN_HELPERS.",
+                other
+            ),
+        }
     }
-
-    if include_all_helpers || body.contains("AverMeasure.") {
-        parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string());
-    }
-
-    if include_all_helpers || body.contains("AverMap.") {
-        parts.push(generate_map_prelude(body, include_all_helpers));
-    }
-
-    parts.extend([
-        LEAN_PRELUDE_AVER_LIST.to_string(),
-        LEAN_PRELUDE_STRING_HELPERS.to_string(),
-        LEAN_PRELUDE_NUMERIC_PARSE.to_string(),
-        LEAN_PRELUDE_CHAR_BYTE.to_string(),
-    ]);
 
     parts.join("\n\n")
 }
