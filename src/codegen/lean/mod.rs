@@ -214,34 +214,12 @@ def sort [Ord α] (xs : List α) : List α :=
   xs.foldl (fun acc x => insertSorted x acc) []
 end AverList"#;
 
-const LEAN_PRELUDE_HEADER_TYPE: &str = r#"structure Header where
-  name : String
-  value : String
-  deriving Repr, BEq, Inhabited, DecidableEq"#;
-
-const LEAN_PRELUDE_HTTP_RESPONSE_TYPE: &str = r#"structure HttpResponse where
-  status : Int
-  body : String
-  headers : List Header
-  deriving Repr, BEq, Inhabited, DecidableEq"#;
-
-const LEAN_PRELUDE_HTTP_REQUEST_TYPE: &str = r#"structure HttpRequest where
-  method : String
-  path : String
-  body : String
-  headers : List Header
-  deriving Repr, BEq, Inhabited, DecidableEq"#;
-
-const LEAN_PRELUDE_TCP_CONNECTION_TYPE: &str = r#"structure Tcp_Connection where
-  id : String
-  host : String
-  port : Int
-  deriving Repr, BEq, Inhabited, DecidableEq"#;
-
-const LEAN_PRELUDE_TERMINAL_SIZE_TYPE: &str = r#"structure Terminal_Size where
-  width : Int
-  height : Int
-  deriving Repr, BEq, Inhabited, DecidableEq"#;
+// Built-in record types (Header, HttpResponse, HttpRequest,
+// Tcp.Connection, Terminal.Size) used to live as hard-coded literals
+// here. They now live in `crate::codegen::builtin_records` —
+// declarative descriptions consumed by Lean, Dafny, and WASM via
+// shared `needed_records()` and `render_lean()`. Drift between
+// backends is no longer possible.
 
 const LEAN_PRELUDE_STRING_HELPERS: &str = r#"def String.charAt (s : String) (i : Int) : Option String :=
   if i < 0 then none
@@ -1265,29 +1243,15 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
         LEAN_PRELUDE_BRANCH_PATH.to_string(),
     ];
 
-    // `HttpResponse` / `HttpRequest` have `headers : List Header`; if
-    // either is emitted, `Header` must come first so the derive chain
-    // for `DecidableEq / BEq / Repr` sees the instance for the nested
-    // list's element type. Without this guard the body can reference
-    // HttpResponse without directly naming Header, and Lean bails with
-    // a stuck `Repr (List ?m)` typeclass instance.
-    let needs_header = needs_builtin_named_type(body, "Header")
-        || needs_builtin_named_type(body, "HttpResponse")
-        || needs_builtin_named_type(body, "HttpRequest");
-    if include_all_helpers || needs_header {
-        parts.push(LEAN_PRELUDE_HEADER_TYPE.to_string());
-    }
-    if include_all_helpers || needs_builtin_named_type(body, "HttpResponse") {
-        parts.push(LEAN_PRELUDE_HTTP_RESPONSE_TYPE.to_string());
-    }
-    if include_all_helpers || needs_builtin_named_type(body, "HttpRequest") {
-        parts.push(LEAN_PRELUDE_HTTP_REQUEST_TYPE.to_string());
-    }
-    if include_all_helpers || needs_builtin_named_type(body, "Tcp_Connection") {
-        parts.push(LEAN_PRELUDE_TCP_CONNECTION_TYPE.to_string());
-    }
-    if include_all_helpers || needs_builtin_named_type(body, "Terminal_Size") {
-        parts.push(LEAN_PRELUDE_TERMINAL_SIZE_TYPE.to_string());
+    // Built-in record types (Header, HttpResponse, HttpRequest,
+    // Tcp.Connection, Terminal.Size) are pulled from the shared
+    // `codegen::builtin_records` table. The same `needed_records`
+    // helper drives Lean, Dafny, and WASM emission, so adding a new
+    // built-in record only requires touching the table.
+    for record in
+        crate::codegen::builtin_records::needed_records(body, include_all_helpers)
+    {
+        parts.push(crate::codegen::builtin_records::render_lean(record));
     }
 
     if include_all_helpers || body.contains("averStringPosFuel") {
