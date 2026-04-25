@@ -440,10 +440,10 @@ pub(super) fn format_context_md(
                 ctx.module_effects.join(", ")
             ));
         }
-        if let Some(main_effects) = &ctx.main_effects {
-            if !effects_equal(main_effects, &ctx.module_effects) {
-                out.push_str(&format!("main_effects: `[{}]`\n", main_effects.join(", ")));
-            }
+        if let Some(main_effects) = &ctx.main_effects
+            && !effects_equal(main_effects, &ctx.module_effects)
+        {
+            out.push_str(&format!("main_effects: `[{}]`\n", main_effects.join(", ")));
         }
         out.push('\n');
 
