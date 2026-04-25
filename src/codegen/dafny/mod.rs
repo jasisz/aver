@@ -314,6 +314,10 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
             // AverMeasure / ProofFuel — Lean-only termination machinery,
             // Dafny uses native `decreases` clauses; nothing to emit here.
             "AverMeasure" | "ProofFuel" => {}
+            // FloatInstances / ExceptInstances / StringHadd — Lean-only
+            // typeclass instance bundles. Dafny's type system doesn't
+            // need analogues; nothing to emit.
+            "FloatInstances" | "ExceptInstances" | "StringHadd" => {}
             other => panic!(
                 "Dafny backend has no implementation for builtin helper key '{}'. \
                  Add a match arm in emit_project or remove the key from BUILTIN_HELPERS.",

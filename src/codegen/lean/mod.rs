@@ -1240,17 +1240,6 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
             "-- ",
         ));
     }
-    // Small always-on instances and namespace shims. Tiny enough that
-    // body-detection isn't worth it; collectively ~50 lines.
-    parts.extend([
-        LEAN_PRELUDE_FLOAT_COE.to_string(),
-        LEAN_PRELUDE_FLOAT_DEC_EQ.to_string(),
-        LEAN_PRELUDE_EXCEPT_DEC_EQ.to_string(),
-        LEAN_PRELUDE_EXCEPT_NS.to_string(),
-        LEAN_PRELUDE_OPTION_TO_EXCEPT.to_string(),
-        LEAN_PRELUDE_STRING_HADD.to_string(),
-    ]);
-
     // Built-in record types — shared decision module decides which ones.
     for record in
         crate::codegen::builtin_records::needed_records(body, include_all_helpers)
@@ -1271,6 +1260,16 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
             "AverMeasure" => parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string()),
             "AverMap" => parts.push(generate_map_prelude(body, include_all_helpers)),
             "ProofFuel" => parts.push(LEAN_PRELUDE_PROOF_FUEL.to_string()),
+            "FloatInstances" => parts.extend([
+                LEAN_PRELUDE_FLOAT_COE.to_string(),
+                LEAN_PRELUDE_FLOAT_DEC_EQ.to_string(),
+            ]),
+            "ExceptInstances" => parts.extend([
+                LEAN_PRELUDE_EXCEPT_DEC_EQ.to_string(),
+                LEAN_PRELUDE_EXCEPT_NS.to_string(),
+                LEAN_PRELUDE_OPTION_TO_EXCEPT.to_string(),
+            ]),
+            "StringHadd" => parts.push(LEAN_PRELUDE_STRING_HADD.to_string()),
             other => panic!(
                 "Lean backend has no implementation for builtin helper key '{}'. \
                  Add a match arm in generate_prelude_for_body or remove the key \

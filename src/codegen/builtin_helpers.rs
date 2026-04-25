@@ -124,6 +124,32 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
         depends_on: &[],
         doc: "Proof-mode fuel measure for string-position recursion (Lean only).",
     },
+    // Small Lean instance bundles. These used to be unconditional (~32
+    // lines) but are unnecessary on pure-Int examples; they're cheap
+    // enough that detecting via substring is fine.
+    BuiltinHelper {
+        key: "FloatInstances",
+        body_tokens: &["Float"],
+        depends_on: &[],
+        doc: "`Coe Int Float`, `Float.fromInt`, `Float.unsafeDecEq` / `Float.compDecEq`, \
+              and the `DecidableEq Float` instance used by `=>`-equality on Float-returning \
+              functions in proof samples (Lean only).",
+    },
+    BuiltinHelper {
+        key: "ExceptInstances",
+        body_tokens: &["Except", ".ok", ".error"],
+        depends_on: &[],
+        doc: "`DecidableEq (Except ε α)`, the `Except` namespace's `withDefault`, and \
+              `Option.toExcept`. Needed whenever a function or law mentions a Lean `Except` \
+              (Aver `Result`) value (Lean only).",
+    },
+    BuiltinHelper {
+        key: "StringHadd",
+        body_tokens: &["String"],
+        depends_on: &[],
+        doc: "`HAdd String String String` instance for string-concat literals like `\"a\" ++ \"b\"`. \
+              Cheap to ship but unused on pure-Int examples (Lean only).",
+    },
 ];
 
 /// Look up a helper by key.
@@ -196,8 +222,10 @@ mod tests {
 
     #[test]
     fn body_with_string_char_at_pulls_string_helpers() {
+        // `String.charAt` contains the substring `String`, so the small
+        // `StringHadd` instance bundle gets pulled in alongside.
         let keys = needed_keys("...String.charAt s 0...", false);
-        assert_eq!(keys, vec!["StringHelpers"]);
+        assert_eq!(keys, vec!["StringHelpers", "StringHadd"]);
     }
 
     #[test]
@@ -209,6 +237,7 @@ mod tests {
 
     #[test]
     fn body_with_multiple_tokens_returns_all_in_emission_order() {
+        // `String.charAt` carries `String` → StringHadd also pulled.
         let body = "AverDigits. String.charAt Char.toCode AverList. averStringPosFuel BranchPath";
         let keys = needed_keys(body, false);
         // Emission order: declaration order in BUILTIN_HELPERS, with
@@ -223,6 +252,7 @@ mod tests {
                 "StringHelpers",
                 "CharByte",
                 "ProofFuel",
+                "StringHadd",
             ]
         );
     }
@@ -243,8 +273,28 @@ mod tests {
                 "AverMeasure",
                 "AverMap",
                 "ProofFuel",
+                "FloatInstances",
+                "ExceptInstances",
+                "StringHadd",
             ]
         );
+    }
+
+    #[test]
+    fn pure_int_body_skips_lean_instance_bundles() {
+        // No Float / Except / String tokens — the instance bundles
+        // shouldn't be requested.
+        let body = "def absVal (x : Int) : Int := if x < 0 then -x else x";
+        let keys = needed_keys(body, false);
+        assert!(!keys.contains(&"FloatInstances"));
+        assert!(!keys.contains(&"ExceptInstances"));
+        assert!(!keys.contains(&"StringHadd"));
+    }
+
+    #[test]
+    fn body_with_float_pulls_float_instances() {
+        let body = "def f (x : Float) : Float := x + 1.0";
+        assert!(needed_keys(body, false).contains(&"FloatInstances"));
     }
 
     #[test]
