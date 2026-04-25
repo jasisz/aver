@@ -1377,45 +1377,31 @@ fn transpile_multi_file_lean(
         LeanEmitMode::Standard => (HashMap::<String, RecursionPlan>::new(), Vec::new()),
     };
 
-    let fn_scope = crate::codegen::common::fn_owning_scope(ctx);
-
-    // Pure fn SCCs computed globally; for DAG inputs each component lives
-    // in a single scope, so we route it to that scope's section list.
-    let all_pure_fns: Vec<&FnDef> = ctx
-        .modules
-        .iter()
-        .flat_map(|m| m.fn_defs.iter())
-        .chain(ctx.fn_defs.iter())
-        .filter(|fd| toplevel::is_pure_fn(fd))
-        .collect();
-    let components = call_graph::ordered_fn_components(&all_pure_fns, &ctx.module_prefixes);
-
+    // Pure fns are SCC-routed per scope (per dependent module + entry)
+    // independently. A global SCC analysis would conflate same-bare-name
+    // fns from different modules (e.g. rogue's `Map.getT` and `Fov.getT`)
+    // and emit only one of them. Cross-module mutual recursion is detected
+    // separately (deferred fallback for 0.13).
     let mut pure_per_scope: HashMap<String, Vec<String>> = HashMap::new();
-    for fns in components {
+    let emit_component = |fns: &Vec<&FnDef>, bucket: &mut Vec<String>| {
         if fns.is_empty() {
-            continue;
+            return;
         }
-        let scope = fns
-            .first()
-            .and_then(|fd| fn_scope.get(&fd.name))
-            .cloned()
-            .unwrap_or_default();
-        let bucket = pure_per_scope.entry(scope).or_default();
         if fns.len() > 1 {
             let code = match emit_mode {
                 LeanEmitMode::Proof => {
                     let all_supported = fns.iter().all(|fd| plans.contains_key(&fd.name));
                     if all_supported {
-                        toplevel::emit_mutual_group_proof(&fns, ctx, &plans)
+                        toplevel::emit_mutual_group_proof(fns, ctx, &plans)
                     } else {
-                        toplevel::emit_mutual_group(&fns, ctx)
+                        toplevel::emit_mutual_group(fns, ctx)
                     }
                 }
-                LeanEmitMode::Standard => toplevel::emit_mutual_group(&fns, ctx),
+                LeanEmitMode::Standard => toplevel::emit_mutual_group(fns, ctx),
             };
             bucket.push(code);
             bucket.push(String::new());
-            continue;
+            return;
         }
         let fd = fns[0];
         let emitted = match emit_mode {
@@ -1433,6 +1419,28 @@ fn transpile_multi_file_lean(
             bucket.push(code);
             bucket.push(String::new());
         }
+    };
+    for module in &ctx.modules {
+        let module_pure: Vec<&FnDef> = module
+            .fn_defs
+            .iter()
+            .filter(|fd| toplevel::is_pure_fn(fd))
+            .collect();
+        let comps = call_graph::ordered_fn_components(&module_pure, &ctx.module_prefixes);
+        let bucket = pure_per_scope.entry(module.prefix.clone()).or_default();
+        for fns in comps {
+            emit_component(&fns, bucket);
+        }
+    }
+    let entry_pure: Vec<&FnDef> = ctx
+        .fn_defs
+        .iter()
+        .filter(|fd| toplevel::is_pure_fn(fd))
+        .collect();
+    let entry_comps = call_graph::ordered_fn_components(&entry_pure, &ctx.module_prefixes);
+    let entry_bucket = pure_per_scope.entry(String::new()).or_default();
+    for fns in entry_comps {
+        emit_component(&fns, entry_bucket);
     }
 
     // Lifted effectful fns + decisions + verifies remain entry-only.

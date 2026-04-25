@@ -35,6 +35,7 @@ pub enum BuiltinType {
 impl BuiltinType {
     /// Convert to the Aver type-system representation (used by the
     /// WASM and proof backends for type inference of field accesses).
+    #[allow(dead_code)] // consumed by `wasm` feature only
     pub fn as_aver_type(&self) -> crate::types::Type {
         use crate::types::Type;
         match self {
@@ -82,6 +83,7 @@ impl BuiltinRecord {
     }
 
     /// Field type lookup (returns the backend-neutral `BuiltinType`).
+    #[allow(dead_code)] // consumed by `wasm` feature only
     pub fn field_type(&self, name: &str) -> Option<&'static BuiltinType> {
         for f in self.fields {
             if f.name == name {

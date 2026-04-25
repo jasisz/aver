@@ -102,8 +102,8 @@ pub fn emit_builtin_call(
         ListHead => format!("{}.head?", p(&a[0])),
         ListTail => format!("{}.tail?", p(&a[0])),
         ListPrepend => format!("{} :: {}", a[0], p(&a[1])),
-        ListTake => format!("{}.take ({}.toNat)", p(&a[0]), p(&a[1])),
-        ListDrop => format!("{}.drop ({}.toNat)", p(&a[0]), p(&a[1])),
+        ListTake => format!("{}.take (Int.toNat {})", p(&a[0]), p(&a[1])),
+        ListDrop => format!("{}.drop (Int.toNat {})", p(&a[0]), p(&a[1])),
         ListConcat => format!("{} ++ {}", p(&a[0]), p(&a[1])),
         ListReverse => format!("{}.reverse", p(&a[0])),
         ListContains => format!("{}.contains {}", p(&a[0]), p(&a[1])),
@@ -113,9 +113,9 @@ pub fn emit_builtin_call(
 
         // ---- Vector (Lean Array) ----
         VectorNew => format!("Array.mkArray {} {}", p(&a[0]), p(&a[1])),
-        VectorGet => format!("{}.get? {}", p(&a[0]), p(&a[1])),
+        VectorGet => format!("{}.get? (Int.toNat {})", p(&a[0]), p(&a[1])),
         VectorSet => format!(
-            "if {} < {}.size then some ({}.set! {} {}) else none",
+            "if {} < {}.size then some ({}.set! (Int.toNat {}) {}) else none",
             p(&a[1]),
             p(&a[0]),
             p(&a[0]),
