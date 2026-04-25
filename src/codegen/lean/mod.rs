@@ -1229,11 +1229,18 @@ fn generate_prelude() -> String {
 
 fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
     // Oracle v1: trust-assumption header first so the emitted file opens with
-    // the explicit claim block before any prelude or definitions.
-    let trust_header = crate::types::checker::proof_trust_header::generate_commented("-- ");
-    let mut parts = vec![
-        LEAN_PRELUDE_HEADER.to_string(),
-        trust_header,
+    // the explicit claim block before any prelude or definitions. Skipped when
+    // the body has no Oracle lifting at all — pure-math files don't depend on
+    // any of the trust claims, so emitting the block would just add noise.
+    let mut parts = vec![LEAN_PRELUDE_HEADER.to_string()];
+    if include_all_helpers
+        || crate::codegen::builtin_records::needs_trust_header(body)
+    {
+        parts.push(crate::types::checker::proof_trust_header::generate_commented(
+            "-- ",
+        ));
+    }
+    parts.extend([
         LEAN_PRELUDE_FLOAT_COE.to_string(),
         LEAN_PRELUDE_FLOAT_DEC_EQ.to_string(),
         LEAN_PRELUDE_EXCEPT_DEC_EQ.to_string(),
@@ -1241,7 +1248,7 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
         LEAN_PRELUDE_OPTION_TO_EXCEPT.to_string(),
         LEAN_PRELUDE_STRING_HADD.to_string(),
         LEAN_PRELUDE_BRANCH_PATH.to_string(),
-    ];
+    ]);
 
     // Built-in record types (Header, HttpResponse, HttpRequest,
     // Tcp.Connection, Terminal.Size) are pulled from the shared

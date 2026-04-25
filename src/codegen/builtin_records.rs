@@ -180,6 +180,21 @@ pub fn needs_in_body(body: &str, backend_name: &str) -> bool {
     token == backend_name
 }
 
+/// Shared decision: does the generated body include any Oracle-lifted
+/// effectful function or verify-trace export, and therefore need the
+/// proof-trust-assumption header at the top of the file?
+///
+/// Heuristic: the trust header documents what we promise about
+/// classified effects, BranchPath addressing, schedule invariance,
+/// and so on. None of that is meaningful for pure-math files that
+/// never lift an effect. The presence of `BranchPath` in the body
+/// is the strongest signal — Oracle's lifting always introduces it
+/// as an explicit parameter on lifted functions and as a constant
+/// in their theorem statements.
+pub fn needs_trust_header(body: &str) -> bool {
+    needs_in_body(body, "BranchPath")
+}
+
 /// Single shared decision: which built-in records does this generated
 /// body need, in dependency-correct emission order?
 ///
