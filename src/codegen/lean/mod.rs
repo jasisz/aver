@@ -1211,8 +1211,8 @@ fn transpile_unified(
         }
     }
 
-    // ---- Per-module file bodies (collected into the shared module tree) ----
-    let mut tree = crate::codegen::multi_file::ModuleTree::default();
+    // ---- Per-module file bodies ----
+    let mut module_files: Vec<(String, String)> = Vec::new();
     let mut union_body = String::new();
 
     for module in &ctx.modules {
@@ -1264,8 +1264,8 @@ fn transpile_unified(
             body,
             module.prefix
         );
-        let segments: Vec<String> = module.prefix.split('.').map(String::from).collect();
-        tree.insert(&segments, content);
+        let path = module.prefix.replace('.', "/");
+        module_files.push((format!("{}.lean", path), content));
     }
 
     // ---- Entry sections ----
@@ -1326,39 +1326,12 @@ fn transpile_unified(
     let lakefile = generate_lakefile_with_roots(&project_name, &extra_roots);
     let toolchain = generate_toolchain();
 
-    tree.insert(&[], entry_content);
-
-    let renderer = LeanModuleRenderer {
-        project_name: &project_name,
-    };
-    let mut files = crate::codegen::multi_file::walk_module_tree(&tree, &renderer);
+    let mut files = module_files;
+    files.push((format!("{}.lean", project_name), entry_content));
     files.push(("AverCommon.lean".to_string(), common_content));
     files.push(("lakefile.lean".to_string(), lakefile));
     files.push(("lean-toolchain".to_string(), toolchain));
     ProjectOutput { files }
-}
-
-struct LeanModuleRenderer<'a> {
-    project_name: &'a str,
-}
-
-impl<'a> crate::codegen::multi_file::ModuleTreeRenderer for LeanModuleRenderer<'a> {
-    fn render_node(
-        &self,
-        path_segments: &[String],
-        content: Option<&str>,
-        _child_names: &[String],
-    ) -> Vec<(String, String)> {
-        let Some(body) = content else {
-            return Vec::new();
-        };
-        let basename = if path_segments.is_empty() {
-            self.project_name.to_string()
-        } else {
-            path_segments.join("/")
-        };
-        vec![(format!("{}.lean", basename), body.to_string())]
-    }
 }
 
 fn build_common_lean(union_body: &str) -> String {

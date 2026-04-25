@@ -14,45 +14,58 @@ mod syntax;
 mod toplevel;
 mod types;
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::ast::{FnDef, TopLevel, TypeDef};
 use crate::codegen::common::module_prefix_to_rust_segments;
-use crate::codegen::multi_file::{ModuleTree, ModuleTreeRenderer, walk_module_tree};
 use crate::codegen::{CodegenContext, ProjectOutput};
 use crate::types::Type;
 
-struct RustModuleRenderer<'a> {
-    rel_dir: &'a str,
-}
-
-impl<'a> ModuleTreeRenderer for RustModuleRenderer<'a> {
-    fn render_node(
-        &self,
-        path_segments: &[String],
-        content: Option<&str>,
-        child_names: &[String],
-    ) -> Vec<(String, String)> {
-        let dir = if path_segments.is_empty() {
-            self.rel_dir.to_string()
+/// Synthesize Rust's `mod.rs` cascade from a flat list of (segments, body)
+/// modules. Every parent directory along each module's path gets a
+/// `mod.rs` that declares `pub mod {child};` for each immediate child;
+/// the leaf node's `mod.rs` carries the body. Backend-local because the
+/// cascade is a Rust/Cargo-specific filesystem convention — Lean and
+/// Dafny just write the leaf path directly.
+fn synthesize_rust_module_cascade(
+    rel_dir: &str,
+    modules: &[(Vec<String>, String)],
+) -> Vec<(String, String)> {
+    let mut by_dir: BTreeMap<Vec<String>, (Option<String>, BTreeSet<String>)> = BTreeMap::new();
+    for (segments, content) in modules {
+        by_dir.entry(segments.clone()).or_default().0 = Some(content.clone());
+        for i in 0..segments.len() {
+            let parent: Vec<String> = segments[..i].to_vec();
+            by_dir
+                .entry(parent)
+                .or_default()
+                .1
+                .insert(segments[i].clone());
+        }
+    }
+    let mut files = Vec::new();
+    for (dir_segs, (content, children)) in by_dir {
+        let dir_path = if dir_segs.is_empty() {
+            rel_dir.to_string()
         } else {
-            format!("{}/{}", self.rel_dir, path_segments.join("/"))
+            format!("{}/{}", rel_dir, dir_segs.join("/"))
         };
-        let mut parts = Vec::new();
+        let mut parts: Vec<String> = Vec::new();
         if let Some(c) = content
             && !c.trim().is_empty()
         {
             parts.push(c.trim_end().to_string());
         }
-        for name in child_names {
-            parts.push(format!("pub mod {};", name));
+        for child in children {
+            parts.push(format!("pub mod {};", child));
         }
         let mut mod_rs = parts.join("\n\n");
         if !mod_rs.is_empty() {
             mod_rs.push('\n');
         }
-        vec![(format!("{}/mod.rs", dir), mod_rs)]
+        files.push((format!("{}/mod.rs", dir_path), mod_rs));
     }
+    files
 }
 
 /// Transpile an Aver program to a Rust project.
@@ -174,32 +187,32 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
         ));
     }
 
-    let mut module_tree = ModuleTree::default();
-    module_tree.insert(
-        &[String::from("entry")],
+    let mut rust_modules: Vec<(Vec<String>, String)> = Vec::new();
+    rust_modules.push((
+        vec!["entry".to_string()],
         render_generated_module(
             root_module_depends(&ctx.items),
             entry_module_sections(ctx, main_fn, &top_level_stmts),
         ),
-    );
+    ));
 
     for i in 0..ctx.modules.len() {
         // Set extra_fn_defs so find_fn_def_by_name resolves intra-module
         // bare-name calls (e.g. buildFibStats calling finalizeFibStats).
         ctx.extra_fn_defs = ctx.modules[i].fn_defs.clone();
         let module = &ctx.modules[i];
-        let path = module_prefix_to_rust_segments(&module.prefix);
-        module_tree.insert(
-            &path,
+        let segments = module_prefix_to_rust_segments(&module.prefix);
+        rust_modules.push((
+            segments,
             render_generated_module(module.depends.clone(), module_sections(module, ctx)),
-        );
+        ));
     }
     ctx.extra_fn_defs.clear();
 
-    let renderer = RustModuleRenderer {
-        rel_dir: "src/aver_generated",
-    };
-    files.extend(walk_module_tree(&module_tree, &renderer));
+    files.extend(synthesize_rust_module_cascade(
+        "src/aver_generated",
+        &rust_modules,
+    ));
     files.sort_by(|left, right| left.0.cmp(&right.0));
 
     ProjectOutput { files }
@@ -538,9 +551,8 @@ fn type_contains_named(ty: &Type, wanted: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{RustModuleRenderer, render_generated_module, transpile};
+    use super::{render_generated_module, synthesize_rust_module_cascade, transpile};
     use crate::codegen::build_context;
-    use crate::codegen::multi_file::{ModuleTree, walk_module_tree};
     use crate::source::parse_source;
     use crate::tco;
     use crate::types::checker::run_type_check_full;
@@ -606,16 +618,11 @@ fn main() -> Int
 
     #[test]
     fn module_tree_files_do_not_reexport_children() {
-        let mut tree = ModuleTree::default();
-        tree.insert(
-            &["app".to_string(), "cli".to_string()],
+        let modules = vec![(
+            vec!["app".to_string(), "cli".to_string()],
             "pub fn run() {}".to_string(),
-        );
-
-        let renderer = RustModuleRenderer {
-            rel_dir: "src/aver_generated",
-        };
-        let files = walk_module_tree(&tree, &renderer);
+        )];
+        let files = synthesize_rust_module_cascade("src/aver_generated", &modules);
 
         let root_mod = files
             .iter()
