@@ -88,9 +88,22 @@ const DAFNY_RESERVED: &[&str] = &[
     "yields",
 ];
 
-/// Convert an Aver identifier to a valid Dafny name.
+/// Convert an Aver identifier to a valid Dafny name. Aver allows
+/// underscore-prefixed names like `_pmy` (idiomatic "intentionally
+/// unused"); Dafny rejects identifiers that begin with `_` AND have
+/// further characters. Pure `_` (Dafny's wildcard) is fine. We rewrite
+/// `_pmy` → `aver_pmy` but leave bare `_` untouched.
 pub fn aver_name_to_dafny(name: &str) -> String {
-    crate::codegen::common::escape_reserved_word(name, DAFNY_RESERVED, "_")
+    let stripped = name.trim_start_matches('_');
+    let normalized = if stripped.is_empty() {
+        // Pure `_` (or `__`...): Dafny treats this as wildcard.
+        name.to_string()
+    } else if stripped.len() < name.len() {
+        format!("aver_{}", stripped)
+    } else {
+        name.to_string()
+    };
+    crate::codegen::common::escape_reserved_word(&normalized, DAFNY_RESERVED, "_")
 }
 
 /// Emit a Dafny expression from an Aver Spanned<Expr>.
@@ -375,6 +388,9 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
         FloatPi => "FloatPi()".to_string(),
         FloatMin => format!("(if {} <= {} then {} else {})", a[0], a[1], a[0], a[1]),
         FloatMax => format!("(if {} >= {} then {} else {})", a[0], a[1], a[0], a[1]),
+        FloatSin => format!("FloatSin({})", a[0]),
+        FloatCos => format!("FloatCos({})", a[0]),
+        FloatAtan2 => format!("FloatAtan2({}, {})", a[0], a[1]),
 
         // String
         StringLen => format!("|{}|", a[0]),

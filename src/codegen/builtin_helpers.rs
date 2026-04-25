@@ -120,6 +120,9 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
             "FloatSqrt(",
             "FloatPow(",
             "FloatToInt(",
+            "FloatSin(",
+            "FloatCos(",
+            "FloatAtan2(",
         ],
         // Dafny's `IntFromString` / `FloatFromString` declarations
         // return `Result<int, string>` / `Result<real, string>`, so

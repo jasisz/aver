@@ -40,6 +40,9 @@ pub(crate) enum Builtin {
     FloatPi,
     FloatMin,
     FloatMax,
+    FloatSin,
+    FloatCos,
+    FloatAtan2,
 
     // --- String ---
     StringLen,
@@ -152,6 +155,9 @@ pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
         "Float.pi" => Builtin::FloatPi,
         "Float.min" => Builtin::FloatMin,
         "Float.max" => Builtin::FloatMax,
+        "Float.sin" => Builtin::FloatSin,
+        "Float.cos" => Builtin::FloatCos,
+        "Float.atan2" => Builtin::FloatAtan2,
 
         // String
         "String.len" => Builtin::StringLen,

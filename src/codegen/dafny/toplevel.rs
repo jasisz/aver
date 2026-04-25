@@ -53,10 +53,20 @@ fn type_to_dafny(ty: &Type) -> String {
                 format!("({}) -> {}", parts.join(", "), ret_ty)
             }
         }
-        // Dafny doesn't accept dotted identifiers for datatypes/records
-        // (`Terminal.Size`, `Tcp.Connection`); the prelude defines them
-        // as `Terminal_Size` etc., so map names accordingly.
-        Type::Named(name) => name.replace('.', "_"),
+        // Built-in records with dotted names (`Terminal.Size`,
+        // `Tcp.Connection`) flatten to underscore form because the
+        // prelude declares them as `Terminal_Size` / `Tcp_Connection`.
+        // User-defined module-qualified types (`Level.Room`) keep the
+        // dotted form because in multi-file output they live in a
+        // `module Level { datatype Room ... }` and Dafny resolves
+        // `Level.Room` directly when `Level` is `import opened`.
+        Type::Named(name) => {
+            if crate::codegen::builtin_records::find(name).is_some() {
+                name.replace('.', "_")
+            } else {
+                name.to_string()
+            }
+        }
         Type::Unknown => "/* unknown type */".to_string(),
     }
 }

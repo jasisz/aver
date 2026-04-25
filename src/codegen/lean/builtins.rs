@@ -63,6 +63,9 @@ pub fn emit_builtin_call(
         FloatPi => "(3.141592653589793 : Float)".to_string(),
         FloatMin => format!("min {} {}", p(&a[0]), p(&a[1])),
         FloatMax => format!("max {} {}", p(&a[0]), p(&a[1])),
+        FloatSin => format!("Float.sin {}", p(&a[0])),
+        FloatCos => format!("Float.cos {}", p(&a[0])),
+        FloatAtan2 => format!("Float.atan2 {} {}", p(&a[0]), p(&a[1])),
 
         // ---- Bool ----
         BoolOr => format!("({} || {})", a[0], a[1]),

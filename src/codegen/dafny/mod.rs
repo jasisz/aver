@@ -560,6 +560,9 @@ function FloatPi(): real
 function FloatSqrt(r: real): real
 function FloatPow(base: real, exp: real): real
 function FloatToInt(r: real): int
+function FloatSin(r: real): real
+function FloatCos(r: real): real
+function FloatAtan2(y: real, x: real): real
 "#;
 
 const DAFNY_HELPER_CHAR_BYTE: &str = r#"
