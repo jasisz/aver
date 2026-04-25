@@ -52,29 +52,15 @@ struct JsonSelection<'a> {
 }
 
 #[derive(Serialize)]
-#[serde(untagged)]
-enum JsonVariant<'a> {
-    Nullary(&'a str),
-    WithFields { name: &'a str, fields: Vec<&'a str> },
-}
-
-#[derive(Serialize)]
 struct JsonType<'a> {
     name: &'a str,
-    variants: Vec<JsonVariant<'a>>,
-}
-
-#[derive(Serialize)]
-struct JsonRecordField<'a> {
-    name: &'a str,
-    #[serde(rename = "type")]
-    field_type: &'a str,
+    variants: Vec<String>,
 }
 
 #[derive(Serialize)]
 struct JsonRecord<'a> {
     name: &'a str,
-    fields: Vec<JsonRecordField<'a>>,
+    fields: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -169,6 +155,18 @@ fn fn_sig(fd: &FnDef) -> String {
     format!("{}({}) -> {}", fd.name, params.join(", "), fd.return_type)
 }
 
+/// Aver-source-style signature with the `! [effects]` suffix.
+/// Markdown context uses this to drop the redundant separate `effects:` line;
+/// JSON keeps the bare `sig` and an explicit `effects` array next to it.
+fn fn_sig_with_effects(fd: &FnDef) -> String {
+    if fd.effects.is_empty() {
+        fn_sig(fd)
+    } else {
+        let effs: Vec<&str> = fd.effects.iter().map(|e| e.node.as_str()).collect();
+        format!("{} ! [{}]", fn_sig(fd), effs.join(", "))
+    }
+}
+
 fn selection_to_json(selection: &ContextSelection) -> JsonSelection<'_> {
     JsonSelection {
         depth_mode: &selection.depth_mode,
@@ -217,12 +215,9 @@ fn module_to_json(ctx: &FileContext) -> JsonModule<'_> {
                         .iter()
                         .map(|variant| {
                             if variant.fields.is_empty() {
-                                JsonVariant::Nullary(&variant.name)
+                                variant.name.clone()
                             } else {
-                                JsonVariant::WithFields {
-                                    name: &variant.name,
-                                    fields: vec_refs(&variant.fields),
-                                }
+                                format!("{}({})", variant.name, variant.fields.join(", "))
                             }
                         })
                         .collect(),
@@ -242,10 +237,7 @@ fn module_to_json(ctx: &FileContext) -> JsonModule<'_> {
                     name,
                     fields: fields
                         .iter()
-                        .map(|(fname, ftype)| JsonRecordField {
-                            name: fname,
-                            field_type: ftype,
-                        })
+                        .map(|(fname, ftype)| format!("{}: {}", fname, ftype))
                         .collect(),
                 }),
                 TypeDef::Sum { .. } => None,
@@ -449,7 +441,9 @@ pub(super) fn format_context_md(
             ));
         }
         if let Some(main_effects) = &ctx.main_effects {
-            out.push_str(&format!("main_effects: `[{}]`\n", main_effects.join(", ")));
+            if !effects_equal(main_effects, &ctx.module_effects) {
+                out.push_str(&format!("main_effects: `[{}]`\n", main_effects.join(", ")));
+            }
         }
         out.push('\n');
 
@@ -487,18 +481,7 @@ pub(super) fn format_context_md(
                 continue;
             }
 
-            out.push_str(&format!("### `{}`\n", fn_sig(fd)));
-
-            if !fd.effects.is_empty() {
-                out.push_str(&format!(
-                    "effects: `[{}]`  \n",
-                    fd.effects
-                        .iter()
-                        .map(|e| e.node.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-            }
+            out.push_str(&format!("### `{}`\n", fn_sig_with_effects(fd)));
 
             // Only show analysis flags when non-default
             if ctx.fn_auto_memo.contains(&fd.name) {
@@ -576,8 +559,98 @@ pub(super) fn format_context_json(
     entry_file: &str,
     selection: Option<&ContextSelection>,
 ) -> String {
-    serde_json::to_string_pretty(&context_doc_to_json(contexts, entry_file, selection))
-        .expect("context JSON should always serialize")
+    serialize_dense(&context_doc_to_json(contexts, entry_file, selection))
+}
+
+/// Serialize JSON with objects on multiple lines but arrays inline.
+///
+/// Standard `to_string_pretty` puts every element of every array on its own
+/// indented line, which inflates `aver context --json` output by ~40% vs the
+/// pre-serde hand-written format. Effects/depends/verify lists are short
+/// strings — keeping them inline gives back the density without losing the
+/// human-readable object structure.
+fn serialize_dense<T: Serialize>(value: &T) -> String {
+    let mut buf = Vec::new();
+    let formatter = ObjectPrettyArrayCompactFormatter::default();
+    let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);
+    value
+        .serialize(&mut ser)
+        .expect("context JSON should always serialize");
+    String::from_utf8(buf).expect("serde_json output is utf-8")
+}
+
+#[derive(Default)]
+struct ObjectPrettyArrayCompactFormatter {
+    indent_level: usize,
+    object_has_value: Vec<bool>,
+}
+
+impl ObjectPrettyArrayCompactFormatter {
+    fn write_indent<W: ?Sized + std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        for _ in 0..self.indent_level {
+            writer.write_all(b"  ")?;
+        }
+        Ok(())
+    }
+}
+
+impl serde_json::ser::Formatter for ObjectPrettyArrayCompactFormatter {
+    fn begin_object<W: ?Sized + std::io::Write>(&mut self, writer: &mut W) -> std::io::Result<()> {
+        self.indent_level += 1;
+        self.object_has_value.push(false);
+        writer.write_all(b"{")
+    }
+
+    fn end_object<W: ?Sized + std::io::Write>(&mut self, writer: &mut W) -> std::io::Result<()> {
+        self.indent_level -= 1;
+        let had_value = self.object_has_value.pop().unwrap_or(false);
+        if had_value {
+            writer.write_all(b"\n")?;
+            self.write_indent(writer)?;
+        }
+        writer.write_all(b"}")
+    }
+
+    fn begin_object_key<W: ?Sized + std::io::Write>(
+        &mut self,
+        writer: &mut W,
+        first: bool,
+    ) -> std::io::Result<()> {
+        if !first {
+            writer.write_all(b",")?;
+        }
+        writer.write_all(b"\n")?;
+        self.write_indent(writer)
+    }
+
+    fn begin_object_value<W: ?Sized + std::io::Write>(
+        &mut self,
+        writer: &mut W,
+    ) -> std::io::Result<()> {
+        if let Some(last) = self.object_has_value.last_mut() {
+            *last = true;
+        }
+        writer.write_all(b": ")
+    }
+
+    fn begin_array<W: ?Sized + std::io::Write>(&mut self, writer: &mut W) -> std::io::Result<()> {
+        writer.write_all(b"[")
+    }
+
+    fn end_array<W: ?Sized + std::io::Write>(&mut self, writer: &mut W) -> std::io::Result<()> {
+        writer.write_all(b"]")
+    }
+
+    fn begin_array_value<W: ?Sized + std::io::Write>(
+        &mut self,
+        writer: &mut W,
+        first: bool,
+    ) -> std::io::Result<()> {
+        if !first {
+            writer.write_all(b", ")?;
+        }
+        Ok(())
+    }
 }
 
 pub(super) fn collect_all_decisions(contexts: &[FileContext]) -> Vec<&DecisionBlock> {
@@ -661,8 +734,7 @@ pub(super) fn format_decisions_json(
     entry_file: &str,
     selection: Option<&ContextSelection>,
 ) -> String {
-    serde_json::to_string_pretty(&decisions_doc_to_json(decisions, entry_file, selection))
-        .expect("decisions JSON should always serialize")
+    serialize_dense(&decisions_doc_to_json(decisions, entry_file, selection))
 }
 
 #[cfg(test)]
