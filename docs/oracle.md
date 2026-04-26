@@ -399,23 +399,21 @@ profile label. Trace form does not currently support `when` (that
 keyword lives on `law` form's value domain), so the repair speaks to
 the two real options today.
 
-> **Partial in 0.13: `when` over effect-given.** `verify <fn> trace law
-> <name>` already supports `when clock(root, 1) > clock(root, 0)` for
-> the declared case — guards are evaluated with the user's stub
-> installed and respected. **Hostile-profile cases under `--hostile`
-> currently ignore the guard**: substitution in the law expander
-> rewrites `clock` to the user's stub fn name (e.g. `realStub`) before
-> hostile expansion, so the guard fires `realStub(...)` instead of the
-> profile-installed effect stub for those cases. Profiles that should
-> have been filtered (`frozen` / `backward` for a monotonicity guard)
-> still run and report violations.
+> **`when` as oracle assumption (0.13).** `verify <fn> trace law <name>`
+> supports `when` predicates that reference the effect-given oracle —
+> `when clock(root, 1) > clock(root, 0)` for monotonicity, `when
+> read(root, 1, "f") == Result.Ok("hello")` for read-your-writes. Under
+> `--hostile`, profiles that violate the assumption are *skipped*; the
+> law is checked only under oracle behaviors that satisfy the declared
+> assumption. The guard observes the same oracle the case body sees:
+> for the declared case the user's stub fires, for each hostile-profile
+> case the corresponding profile fn fires. No state model, no session
+> types — just a predicate over oracle outputs at counter indices.
 >
-> Workaround for 0.13: write the law without `when` and accept that
-> hostile reports those profiles as fails (treat them as adversarial
-> worlds the impl actually has to handle), or run that block without
-> `--hostile`. Fix planned for 0.14: per-hostile-case rewrite of
-> user-stub references back to the effect method, so install-stub
-> overrides take effect in the guard.
+> **`when` itself must be pure.** Calls like `clock(root, 1)` inside a
+> guard are *queries on the oracle* installed for this case, not runtime
+> effect calls. Don't read this as Aver inspecting the wall clock — the
+> guard is asking the same fn that supplies values to the law body.
 
 ```
   origin: hostile effect profile: Time.unixMs/saturated

@@ -413,20 +413,23 @@ pub fn verify_mismatch_diagnostic(
     }
     let repair = if from_hostile {
         if hostile_profile.is_some() {
-            // Effect-side hostile only fires inside `verify <fn> trace`,
-            // and trace form does not support `when` — that keyword lives
-            // on `verify <fn> law <name>` blocks, where `given` is a value
-            // domain. Don't suggest it here. The honest options are:
-            // adjust the impl (the profile is a real production world the
-            // code should handle), or take the trace out of the hostile
-            // run if it's intentionally example-only.
+            // Effect-side hostile fires inside `verify <fn> law <name>`
+            // (with or without `trace`). Three honest options: adjust
+            // the impl (the profile models a real production world);
+            // declare the oracle assumption with `when` so hostile
+            // skips profiles that violate it (`when clock(root, 1) >
+            // clock(root, 0)` for monotonicity); or, if the law is
+            // intentionally example-only, run it without `--hostile`.
             Repair::primary(
-                "the trace passes for the world your `given` stub describes \
-                 but breaks under this adversarial profile. Either adjust \
-                 the impl to be robust against the profile (it models a \
-                 real production world — frozen clock, empty disk, network \
-                 down) or, if this trace is intentionally example-only, \
-                 run it without `--hostile`.",
+                "the law passes for the world your `given` stub describes \
+                 but breaks under this adversarial profile. Three options: \
+                 (a) adjust the impl to be robust against the profile (it \
+                 models a real production world — frozen clock, empty disk, \
+                 network down); (b) declare the oracle assumption with \
+                 `when` (e.g. `when clock(root, 1) > clock(root, 0)` for \
+                 monotonicity) so hostile skips profiles that violate it; \
+                 (c) if the law is intentionally example-only, run it \
+                 without `--hostile`.",
             )
         } else {
             // Value-side hostile: only fires on `verify <fn> law <name>`,
