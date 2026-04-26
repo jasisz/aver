@@ -115,6 +115,7 @@ pub fn from_type_error(te: &TypeError, source: &str, file: &str) -> Diagnostic {
         repair: repair_text.map(Repair::primary).unwrap_or_default(),
         regions,
         related: Vec::new(),
+        from_hostile: false,
     }
 }
 
@@ -142,6 +143,7 @@ pub fn unused_binding_diagnostic(
         repair: Repair::primary(format!("Remove the binding or prefix with _: _{}", binding)),
         regions: AnnotatedRegion::single(extract_source_lines(source, line, 0), None),
         related: Vec::new(),
+        from_hostile: false,
     }
 }
 
@@ -179,6 +181,7 @@ pub fn needs_format_diagnostic(
             repair: Repair::primary("Run `aver format` to apply the formatter"),
             regions: Vec::new(),
             related: Vec::new(),
+            from_hostile: false,
         };
     }
 
@@ -248,6 +251,7 @@ pub fn needs_format_diagnostic(
         repair: Repair::primary("Run `aver format` to apply the formatter"),
         regions,
         related: Vec::new(),
+        from_hostile: false,
     }
 }
 
@@ -362,6 +366,7 @@ pub fn from_check_finding(
         repair: repair_text.map(Repair::primary).unwrap_or_default(),
         regions,
         related: Vec::new(),
+        from_hostile: false,
     }
 }
 
@@ -439,6 +444,7 @@ pub fn verify_mismatch_diagnostic(
             }),
         ),
         related: Vec::new(),
+        from_hostile,
     }
 }
 
@@ -483,6 +489,7 @@ pub fn verify_runtime_error_diagnostic(
             }),
         ),
         related: Vec::new(),
+        from_hostile: false,
     }
 }
 
@@ -527,6 +534,7 @@ pub fn verify_unexpected_err_diagnostic(
             }),
         ),
         related: Vec::new(),
+        from_hostile: false,
     }
 }
 
@@ -581,6 +589,7 @@ pub fn replay_output_mismatch_diagnostic(
         repair: Repair::default(),
         regions: AnnotatedRegion::single(vec![], None),
         related: Vec::new(),
+        from_hostile: false,
     }
 }
 
@@ -614,5 +623,6 @@ pub fn replay_effect_error_diagnostic(
         repair: Repair::default(),
         regions: AnnotatedRegion::single(vec![], None),
         related: Vec::new(),
+        from_hostile: false,
     }
 }

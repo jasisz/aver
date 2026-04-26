@@ -417,6 +417,7 @@ fn parse_error_diagnostic(msg: &str, source: &str, file: &str) -> Diagnostic {
         repair: parse_error_repair(body),
         regions,
         related: Vec::new(),
+        from_hostile: false,
     }
 }
 

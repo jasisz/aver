@@ -287,6 +287,121 @@ This is not a bug — it's the design. `verify` answers "does this hold for the 
 
 When a `verify` passes but `aver proof` rejects, the law is **stub-specific** — true under the chosen stubs, not universal. Either rewrite the law so it doesn't depend on hidden stub structure (e.g. assert against `rnd(...)` directly instead of a constant), or keep it as a sample-only check and don't export. `verify <fn> trace` is the cases form when the goal is "given this concrete stub, here's what I expect"; it doesn't export and doesn't pretend to.
 
+## Hostile mode (`aver verify --hostile`)
+
+> _In laws, examples are not limits. Preconditions are._
+
+A `verify ... law` block is a universal claim: "this holds for every value
+of the given clauses' types". The user usually writes a small declared set
+(`given n: Int = [1, 5, 100]`) as the *exploration domain* — values they
+think will exercise the law — but the claim itself ranges over the whole
+type. `--hostile` checks that.
+
+**Hostile applies only to `verify <fn> law <name>` blocks.** Plain
+`verify <fn>` (cases form) is fixtures — explicit values the user wrote,
+not a domain — so boundary expansion has no semantic role; the flag is a
+no-op. `verify <fn> trace` has `given`, but those are oracle stubs (the
+world side), not value domains; hostile of stubs is a separate
+mechanism (effect-side hostile, deferred). Only `law` form has typed
+given clauses with a universal claim across the type, which is what
+`--hostile` augments.
+
+Under `aver verify --hostile`, every typed `given` clause in a `law`
+block is augmented with a per-type adversarial set:
+
+- `Int`   → `0`, `1`, `-1`, `i64::MIN`, `i64::MAX`
+- `Float` → `0.0`, `1.0`, `-1.0`, `MIN`, `MAX`, `+/-Inf`, `NaN`
+- `Bool`  → both
+- `Str`   → `""`, `"a"`, 1024×`x`, `"\0"` (NUL embedded), multi-byte UTF-8
+- `Unit`  → `Unit`
+
+These augment the declared list — duplicates are dropped, so a value the
+user already wrote is not re-run. Cartesian product across multiple givens
+multiplies the per-given lists directly; the per-type sets stay small (≤6
+for scalars) so the total case count grows linearly in practice.
+
+`when` clauses stay binding: a hostile case is dropped if the `when`
+guard returns `false`. That is the line `--hostile` honours — `given`
+ranges are exploration hints, `when` is the law boundary.
+
+### Output
+
+When a hostile-injected case fails, the diagnostic header changes:
+
+```
+fail[verify-mismatch]: law violated under --hostile expansion
+  at: prog.av:9:1
+  block: isPositive spec alwaysPositive
+  case: isPositive(0) == true
+  expected: true
+  actual: false
+  given: n = 0
+  law: isPositive(n) == true
+  origin: hostile boundary expansion
+  repair: this case isn't in the declared `given` — the claim isn't
+          universal. Either add `when <precondition>` to scope it, or
+          drop `law` form and use `verify <fn>` (cases form, example
+          semantics) with the values you actually meant.
+```
+
+The block summary line breaks the count down by origin:
+
+```
+✗ isPositive spec alwaysPositive      4/7 passed
+                                       (3 mismatch, 3/3 declared, 1/4 hostile)
+```
+
+— `3/3 declared` = all values the user wrote pass, `1/4 hostile` = boundary
+expansion found 3 fails. The classic "law is not universal" signal.
+
+JSON (`--json`) carries the same data structurally:
+
+- per-diagnostic `from_hostile: true` (top-level boolean) plus
+  `fields[origin] = "hostile boundary expansion"`
+- `verify_summary.blocks[].declared_passed / declared_failed /
+  hostile_passed / hostile_failed` — tooling can split "law regression"
+  (`declared_failed > 0`) from "hostile coverage gap" (`hostile_failed >
+  0 && declared_failed == 0`).
+
+### Two responses to a hostile failure
+
+1. **It IS a precondition you forgot.** Encode it: `when n > 0` makes the
+   law explicit about what `n` it applies to. The hostile case `n = 0`
+   gets filtered, the law passes again, and the precondition is now
+   visible to anyone reading the spec — and to proof export, which can
+   pick it up too.
+
+2. **The values you wrote were *examples*, not a universal claim.** Drop
+   the `law <name>` form and use plain `verify <fn>` (cases form):
+
+   ```aver
+   verify isPositive
+       isPositive(1) => true
+       isPositive(5) => true
+       isPositive(100) => true
+   ```
+
+   Same checks, but now the spec says "these specific cases", not
+   "for all `n`". `--hostile` does not augment `verify <fn>` cases — they
+   are intentionally narrow.
+
+The wrong response is to silently widen the declared list to suppress the
+hostile failure: that just covers up a real assumption with more
+examples. `when` makes the assumption explicit; `verify` cases-form makes
+the spec narrower. Pick one.
+
+### What `--hostile` does not do
+
+- It does not run effect-side adversarial responses (the worst-case
+  classified-effect oracles — `Time.now` cycling backward, `Disk.readText`
+  returning `Err`, etc.). That's a separate feature, follow-up release.
+- It does not invent values for user-defined types (`Type::Named`). If a
+  given is over `MyShape`, `--hostile` leaves the declared list alone —
+  there is no boundary set that respects user constructors.
+- It does not synthesise `List<T>` / `Option<T>` / `Result<T, E>` values
+  in 0.13. The boundary set for those is empty; declared values pass
+  through unchanged.
+
 ## Current limits
 
 Oracle does not try to model every side effect.

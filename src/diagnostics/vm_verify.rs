@@ -47,7 +47,22 @@ fn apply_hostile_expansion(block: &mut VerifyBlock) {
     let new_origins: Vec<bool> = expanded.iter().map(|c| c.from_hostile).collect();
     let new_givens: Vec<Vec<(String, Spanned<Expr>)>> =
         expanded.iter().map(|c| c.bindings.clone()).collect();
-    let new_spans: Vec<SourceSpan> = vec![SourceSpan::default(); expanded.len()];
+    // Hostile-injected cases inherit the law block's source line so
+    // diagnostics point to the `verify ... law` declaration instead of
+    // 0:0 — IDEs / playground / LSP can highlight the right span and the
+    // user understands which law the boundary value broke. Declared cases
+    // already had spans pointing at their own source positions, but the
+    // post-parse expansion replaces the whole list so we synthesise spans
+    // for every case here; the block-line fallback is conservative and
+    // good enough until per-case spans for declared values get re-mapped
+    // through the new pipeline (separate refactor).
+    let block_span = SourceSpan {
+        line: block.line,
+        col: 1,
+        end_line: block.line,
+        end_col: 1,
+    };
+    let new_spans: Vec<SourceSpan> = vec![block_span; expanded.len()];
     let new_guards: Vec<Spanned<Expr>> = if has_when {
         expanded.iter().filter_map(|c| c.guard.clone()).collect()
     } else {

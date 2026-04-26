@@ -2571,6 +2571,37 @@ fn run_verify_for_file(
     Ok(file_results)
 }
 
+/// Bucket case outcomes by `from_hostile` for the per-block summary
+/// (declared vs hostile pass/fail). Skipped cases are dropped — they
+/// already live in `result.skipped`.
+fn bucket_hostile(cases: &[aver::checker::VerifyCaseResult]) -> (usize, usize, usize, usize) {
+    use aver::checker::VerifyCaseOutcome;
+
+    let mut declared_passed = 0usize;
+    let mut declared_failed = 0usize;
+    let mut hostile_passed = 0usize;
+    let mut hostile_failed = 0usize;
+    for case in cases {
+        let passed = matches!(case.outcome, VerifyCaseOutcome::Pass);
+        let skipped = matches!(case.outcome, VerifyCaseOutcome::Skipped);
+        if skipped {
+            continue;
+        }
+        match (case.from_hostile, passed) {
+            (false, true) => declared_passed += 1,
+            (false, false) => declared_failed += 1,
+            (true, true) => hostile_passed += 1,
+            (true, false) => hostile_failed += 1,
+        }
+    }
+    (
+        declared_passed,
+        declared_failed,
+        hostile_passed,
+        hostile_failed,
+    )
+}
+
 fn render_verify_output(
     file_results: &[VerifyFileResult],
     module_root: &str,
@@ -2642,12 +2673,18 @@ fn render_verify_output(
                         diagnostics.push(d);
                     }
                 }
+                let (declared_passed, declared_failed, hostile_passed, hostile_failed) =
+                    bucket_hostile(&block.case_results);
                 block_results.push(aver::diagnostics::model::VerifyBlockResult {
                     name: block.block_label.clone(),
                     passed: block.passed,
                     failed: block.failed,
                     skipped: block.skipped,
                     total: block.passed + block.failed + block.skipped,
+                    declared_passed,
+                    declared_failed,
+                    hostile_passed,
+                    hostile_failed,
                 });
             }
             let mut report =
@@ -2686,6 +2723,9 @@ fn render_verify_output(
                             _ => {}
                         }
                     }
+                    let (declared_passed, declared_failed, hostile_passed, hostile_failed) =
+                        bucket_hostile(&block.case_results);
+                    let has_hostile = hostile_passed + hostile_failed > 0;
                     let mut parts = Vec::new();
                     if mismatch > 0 {
                         parts.push(format!("{} mismatch", mismatch));
@@ -2695,6 +2735,14 @@ fn render_verify_output(
                     }
                     if unexpected_err > 0 {
                         parts.push(format!("{} unexpected err", unexpected_err));
+                    }
+                    if has_hostile {
+                        let declared_total = declared_passed + declared_failed;
+                        let hostile_total = hostile_passed + hostile_failed;
+                        parts.push(format!(
+                            "{}/{} declared, {}/{} hostile",
+                            declared_passed, declared_total, hostile_passed, hostile_total
+                        ));
                     }
                     let breakdown = if parts.is_empty() {
                         String::new()

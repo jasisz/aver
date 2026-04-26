@@ -75,12 +75,18 @@ fn map_results_to_diagnostics(
 
     for result in results {
         let is_law = result.block_label.contains(" spec ");
+        let (declared_passed, declared_failed, hostile_passed, hostile_failed) =
+            split_hostile_counts(&result.case_results);
         blocks.push(VerifyBlockResult {
             name: result.fn_name.clone(),
             passed: result.passed,
             failed: result.failed,
             skipped: result.skipped,
             total: result.passed + result.failed + result.skipped,
+            declared_passed,
+            declared_failed,
+            hostile_passed,
+            hostile_failed,
         });
 
         for case in &result.case_results {
@@ -133,4 +139,38 @@ fn map_results_to_diagnostics(
     }
 
     (diagnostics, VerifySummary { blocks })
+}
+
+/// Bucket case outcomes by `from_hostile` so the per-block summary can
+/// report declared-vs-hostile pass/fail breakdown. Skipped cases (when
+/// guard returned false) are not counted in either bucket — they're in
+/// `result.skipped`.
+fn split_hostile_counts(
+    cases: &[crate::checker::VerifyCaseResult],
+) -> (usize, usize, usize, usize) {
+    use crate::checker::VerifyCaseOutcome;
+
+    let mut declared_passed = 0usize;
+    let mut declared_failed = 0usize;
+    let mut hostile_passed = 0usize;
+    let mut hostile_failed = 0usize;
+    for case in cases {
+        let passed = matches!(case.outcome, VerifyCaseOutcome::Pass);
+        let skipped = matches!(case.outcome, VerifyCaseOutcome::Skipped);
+        if skipped {
+            continue;
+        }
+        match (case.from_hostile, passed) {
+            (false, true) => declared_passed += 1,
+            (false, false) => declared_failed += 1,
+            (true, true) => hostile_passed += 1,
+            (true, false) => hostile_failed += 1,
+        }
+    }
+    (
+        declared_passed,
+        declared_failed,
+        hostile_passed,
+        hostile_failed,
+    )
 }
