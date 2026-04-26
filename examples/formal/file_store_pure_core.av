@@ -1,0 +1,37 @@
+module FileStorePureCore
+    intent =
+        "Functional-core / imperative-shell pattern for filesystem-like state."
+        "Read-after-write consistency is a property of the FileStore data model,"
+        "not of Disk effects. Disk.* stays at the boundary as stateless effects."
+        "This file: pure core only. Shell example in file_store_shell.av."
+    exposes [write, read]
+
+fn write(s: List<(String, String)>, path: String, body: String) -> List<(String, String)>
+    ? "Append a (path, body) entry. Most-recent-wins lookup is in `read`."
+    List.prepend((path, body), s)
+
+fn read(s: List<(String, String)>, path: String) -> Option<String>
+    ? "Most-recent-wins lookup over the FileStore."
+    match s
+        [] -> Option.None
+        [entry, ..rest] -> match entry
+            (p, body) -> match p == path
+                true -> Option.Some(body)
+                false -> read(rest, path)
+
+verify write
+    write([], "a.txt", "hi") => [("a.txt", "hi")]
+
+verify read
+    read([], "a.txt") => Option.None
+    read([("a.txt", "hi")], "a.txt") => Option.Some("hi")
+    read(write([], "a.txt", "hello"), "a.txt") => Option.Some("hello")
+    read(write(write([], "a.txt", "old"), "a.txt", "new"), "a.txt") => Option.Some("new")
+    read(write(write([], "a.txt", "x"), "b.txt", "y"), "a.txt") => Option.Some("x")
+
+fn main() -> Unit
+    ! [Console.print]
+    store = write(write([], "config.toml", "x = 1"), "log.txt", "ok")
+    Console.print(read(store, "config.toml"))
+    Console.print(read(store, "log.txt"))
+    Console.print(read(store, "missing"))

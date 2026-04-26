@@ -78,6 +78,7 @@ Oracle has a fixed built-in effect set:
 |---|---|---|
 | `Args` | `get` | snapshot |
 | `Env` | `get` | snapshot |
+| `Env` | `set` | output |
 | `Console` | `readLine` | generative |
 | `Random` | `int`, `float` | generative |
 | `Time` | `now`, `unixMs` | generative |
@@ -86,23 +87,48 @@ Oracle has a fixed built-in effect set:
 | `Disk` | `writeText`, `appendText`, `delete`, `deleteDir`, `makeDir` | generative + output |
 | `Http` | `get`, `head`, `delete`, `post`, `put`, `patch` | generative + output |
 | `Tcp` | `send`, `ping` | generative + output |
+| `Tcp` | `connect`, `readLine`, `writeLine`, `close` | generative + output |
 | `Console` | `print`, `error`, `warn` | output |
 | `Terminal` | `readKey` | generative |
+| `Terminal` | `size` | snapshot |
 | `Terminal` | `clear`, `moveTo`, `print`, `hideCursor`, `showCursor`, `flush` | output |
+| `Terminal` | `enableRawMode`, `disableRawMode`, `setColor`, `resetColor` | output |
 
 Anything outside this set is not modeled by Oracle.
 
-Important boundary details:
+## Effect stubs are stateless
+
+> Prove the model, not the world.
+
+Oracle stubs do not imply state. A `Disk.writeText("a.txt", "hi")` in the trace does **not** make a later `Disk.readText("a.txt")` return `"hi"`. An `Env.set("KEY", "v")` does **not** make a later `Env.get("KEY")` return `"v"`. A first `Time.now()` call does **not** constrain the value of a second one to be greater. A `Tcp.writeLine(c, "x")` does **not** affect what `Tcp.readLine(c)` returns next.
+
+This is by design. Wall clocks are not monotonic in the real world (NTP, leap seconds, suspend/resume, VM clock skew). Filesystems are not transactional. TCP connections drop, return partial reads, lie about delivery. **Aver does not pretend external services have nicer laws than the platform actually promises.** A Ledger-style "stateful capability model" would let you prove read-after-write consistency on `Disk.*` — and then your proof claims a guarantee the OS never gave.
+
+The cure is functional core / imperative shell:
+
+- **State you own** (a `FileStore`, a `PaymentLedger`, a `WorkflowState`) lives in pure user code as ordinary data. Read-after-write consistency is a property of that data model, proven by `verify` over the pure functions.
+- **The world you don't own** (`Disk.*`, `Time.*`, `Tcp.*`, `Http.*`) stays at the boundary. Oracle stubs return what the test says they return, independent of preceding effect calls.
+
+Two runnable examples ship the pattern:
+
+- `examples/formal/file_store_pure_core.av` + `examples/formal/file_store_shell.av` — `FileStore` pure data model with read-after-write laws proven over pure code; `Disk.writeText` only at the boundary as a stateless oracle.
+- `examples/formal/clock_as_data.av` — time-dependent logic with `nowMs` passed as a parameter; `Time.unixMs` only at the boundary.
+
+If a `verify` law assumes ordering, accumulation, or memory across effect calls, it does not belong in Oracle — it belongs in the pure core.
+
+Boundary notes:
 
 - `Console.readLine` and `Terminal.readKey` are modeled as generative input:
   the proof receives a deterministic oracle value for each call.
 - Mutating `Disk.*` calls are modeled as operation/result effects: the requested
   operation is emitted to the trace, and success/failure comes from the oracle.
   Oracle does not assert persistent filesystem state after the operation.
-- One-shot `Tcp.send` / `Tcp.ping` follow the same request/result shape. Stateful
-  TCP sessions are not in this model.
-- Terminal drawing calls are output trace events. Terminal mode and color state
-  are not modeled.
+- `Tcp.connect` / `readLine` / `writeLine` / `close` are session methods using an opaque
+  `Tcp.Connection` token. Stubs are stateless: a `writeLine` does not affect what a
+  later `readLine` returns. If the test wants request/response symmetry, encode it
+  explicitly in the stub.
+- Terminal drawing and modal calls are output trace events. Mode (raw / cooked) and
+  color state are not modeled — assert the sequence of trace events instead.
 
 ## Stub signatures
 
@@ -267,16 +293,11 @@ Oracle does not try to model every side effect.
 
 Not supported:
 
-- `Env.set`. Process environment is same-process mutable state, and Oracle v1
-  does not model the relation between a set and a later `Env.get`.
-- Persistent TCP sessions: `Tcp.connect`, `Tcp.writeLine`, `Tcp.readLine`, and
-  `Tcp.close`. The one-shot `Tcp.send` / `Tcp.ping` shape is classified.
 - `HttpServer.listen` / `listenWith`. Server lifecycle and callbacks are
   long-running protocols, not one call/result effects.
-- Terminal modal state: `Terminal.enableRawMode`, `disableRawMode`, `setColor`,
-  and `resetColor`. Drawing calls (`clear`, `moveTo`, `print`, `hideCursor`,
-  `showCursor`, `flush`), `readKey`, and `size` are classified — `size` as a
-  snapshot oracle `() -> Terminal.Size` (added 0.11.1).
+- Stateful capability models / hidden filesystem-or-clock state. Effect stubs are
+  stateless by design (see the section above) — if a property depends on memory
+  across effect calls, model the state in pure user code.
 - Proof export for `?!` cancel mode. Oracle proof export expects complete independence mode so every branch has a stable trace position.
 - Higher-order effectful callbacks. Oracle works best when the effect surface is visible in the verified function's signature.
 - Trace-aware laws on recursive effectful functions. Use `verify <fn> law ...` without `trace`, or move the effect-emitting step into a non-recursive function and verify that trace.
