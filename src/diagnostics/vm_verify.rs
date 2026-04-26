@@ -1378,9 +1378,17 @@ mod tests {
             cases_givens: vec![],
         };
         let combos = collect_effect_profile_combinations(&block, &items);
-        // Time.now: 2 profiles (frozen/epoch), Random.int: 2 profiles (min/max).
-        // Cartesian = 4 worlds.
-        assert_eq!(combos.len(), 4);
+        // Profile counts grow per effect; what matters here is shape:
+        // every combo references one Time.now profile + one Random.int
+        // profile, and the cartesian equals the product of the per-method
+        // profile counts.
+        let time_now_profiles =
+            crate::types::checker::hostile_effects::hostile_profiles_for("Time.now").len();
+        let random_int_profiles =
+            crate::types::checker::hostile_effects::hostile_profiles_for("Random.int").len();
+        assert!(time_now_profiles >= 2);
+        assert!(random_int_profiles >= 2);
+        assert_eq!(combos.len(), time_now_profiles * random_int_profiles);
         for combo in &combos {
             assert_eq!(combo.len(), 2);
         }
@@ -1421,9 +1429,13 @@ mod tests {
             cases_givens: vec![],
         };
         let combos = collect_effect_profile_combinations(&block, &items);
-        // Time.now: 2 profiles (frozen/epoch), Random.int: 2 (min/max).
-        // Cartesian = 4 worlds, regardless of user-given on Time.now.
-        assert_eq!(combos.len(), 4);
+        // Cartesian = (Time.now profiles) × (Random.int profiles),
+        // regardless of user-given on Time.now.
+        let time_now_profiles =
+            crate::types::checker::hostile_effects::hostile_profiles_for("Time.now").len();
+        let random_int_profiles =
+            crate::types::checker::hostile_effects::hostile_profiles_for("Random.int").len();
+        assert_eq!(combos.len(), time_now_profiles * random_int_profiles);
         let methods: std::collections::HashSet<&str> = combos
             .iter()
             .flat_map(|c| c.iter().map(|(m, _)| m.as_str()))
@@ -1472,8 +1484,9 @@ mod tests {
         let before = items.len();
         inject_hostile_effect_stubs_for_blocks(&mut items, &blocks);
         let after = items.len();
-        // Time.now ships 2 hostile profiles → 2 new FnDefs appended.
-        assert_eq!(after - before, 2);
+        let expected =
+            crate::types::checker::hostile_effects::hostile_profiles_for("Time.now").len();
+        assert_eq!(after - before, expected);
         let fn_names: Vec<String> = items
             .iter()
             .filter_map(|i| match i {
@@ -1514,23 +1527,25 @@ verify currentYear
 
         apply_hostile_expansion(block, &items);
 
-        // Time.now ships 2 profiles (frozen, epoch). Per declared case we
-        // produce 1 base case + 2 profile cases = 3 cases × 2 declared = 6.
-        assert_eq!(block.cases.len(), 6);
-        assert_eq!(block.case_hostile_profiles.len(), 6);
-        // 2 base cases (origin=false, profiles=[]); 4 profile cases.
+        // Per declared case: 1 base + N profile cases (one per Time.now
+        // profile), where N grows over time as we add adversarial worlds.
+        let time_now_profiles =
+            crate::types::checker::hostile_effects::hostile_profiles_for("Time.now").len();
+        let expected_total = declared_count * (1 + time_now_profiles);
+        assert_eq!(block.cases.len(), expected_total);
+        assert_eq!(block.case_hostile_profiles.len(), expected_total);
         let base_count = block
             .case_hostile_profiles
             .iter()
             .filter(|p| p.is_empty())
             .count();
-        assert_eq!(base_count, 2);
+        assert_eq!(base_count, declared_count);
         let profile_count = block
             .case_hostile_profiles
             .iter()
             .filter(|p| !p.is_empty())
             .count();
-        assert_eq!(profile_count, 4);
+        assert_eq!(profile_count, declared_count * time_now_profiles);
     }
 
     #[test]
