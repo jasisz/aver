@@ -544,6 +544,64 @@ enum VmVerifyEval {
     ErrProp(Value),
 }
 
+/// Per-case guard regeneration for hostile-profile cases.
+///
+/// Returns `Some(rewritten_guard)` when the case is in a `law` block,
+/// has a `when` clause, AND has at least one effect-given name that
+/// the per-case profile assignment overrides. Returns `None` otherwise
+/// (caller falls back to parser's pre-substituted `sample_guards`).
+///
+/// The rewrite swaps each effect-given binding's name (e.g. `clock`)
+/// from the user's stub fn name (`realStub` after the parser's
+/// substitution pass) to the synthetic hostile profile fn name
+/// (`__hostile_Time_unixMs_frozen_zero`). After the rewrite, the
+/// guard helper invokes the profile stub directly — install /
+/// uninstall machinery is bypassed for guard purposes, but the case
+/// body itself still sees the profile via the standard
+/// `install_oracle_stubs` path.
+fn guard_for_case(block: &VerifyBlock, case_idx: usize) -> Option<Spanned<Expr>> {
+    use crate::ast_rewrite::rewrite_idents_scoped;
+    use std::collections::HashMap;
+
+    let VerifyKind::Law(law) = &block.kind else {
+        return None;
+    };
+    let when = law.when.as_ref()?;
+    let combo = block.case_hostile_profiles.get(case_idx)?;
+    if combo.is_empty() {
+        return None;
+    }
+    let case_bindings = block.case_givens.get(case_idx)?;
+
+    let mut bindings: HashMap<String, Spanned<Expr>> = HashMap::new();
+    // Start from the case's actual given bindings — value-given names
+    // already resolve here, and effect-given names point at the user's
+    // stub fn name (via the parser's per-case substitution).
+    for (name, value) in case_bindings {
+        bindings.insert(name.clone(), value.clone());
+    }
+    // Override every effect-given that has a profile assigned for this
+    // case. The hostile profile fn (`__hostile_<method>_<profile>`) was
+    // injected as a TopLevel::FnDef in `inject_hostile_effect_stubs_for_blocks`,
+    // so by name it resolves to a real fn at VM compile time.
+    for given in &law.givens {
+        if let Some((_, profile)) = combo.iter().find(|(m, _)| m == &given.type_name) {
+            let stub_fn_name = format!(
+                "__hostile_{}_{}",
+                given.type_name.replace('.', "_"),
+                profile
+            );
+            bindings.insert(
+                given.name.clone(),
+                Spanned::bare(Expr::Ident(stub_fn_name)),
+            );
+        }
+    }
+    Some(rewrite_idents_scoped(when, |name| {
+        bindings.get(name).cloned()
+    }))
+}
+
 fn make_verify_vm_helper(
     name: String,
     line: usize,
@@ -606,19 +664,24 @@ fn build_verify_vm_plans(
                 true,
             ));
 
-            let guard_name = sample_guards
-                .and_then(|guards| guards.get(case_idx))
-                .cloned()
-                .map(|guard_expr| {
-                    let name = format!("{}_guard", prefix);
-                    items.push(make_verify_vm_helper(
-                        name.clone(),
-                        block.line,
-                        guard_expr,
-                        false,
-                    ));
-                    name
-                });
+            // Guard generation. For hostile-profile cases, regenerate
+            // the guard from `law.when` with effect-given names rebound
+            // to the synthetic `__hostile_<method>_<profile>` fn names
+            // so the predicate fires under the same world the case
+            // body sees. For declared / value-only-hostile cases, use
+            // the parser's pre-substituted `sample_guards` as before.
+            let guard_expr = guard_for_case(block, case_idx)
+                .or_else(|| sample_guards.and_then(|gs| gs.get(case_idx)).cloned());
+            let guard_name = guard_expr.map(|guard_expr| {
+                let name = format!("{}_guard", prefix);
+                items.push(make_verify_vm_helper(
+                    name.clone(),
+                    block.line,
+                    guard_expr,
+                    false,
+                ));
+                name
+            });
 
             case_plans.push(VmVerifyCaseFns {
                 left: left_name,
