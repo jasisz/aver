@@ -1446,6 +1446,54 @@ mod tests {
     }
 
     #[test]
+    fn apply_hostile_expansion_multiplies_cases_by_effect_cartesian() {
+        // A 2-case law on a fn that uses Time.now without a given.
+        // Hostile expansion produces: 2 declared cases ×
+        // (1 un-effected base + 2 Time.now profiles) = 6 cases.
+        // Then value-side hostile may add more boundary cases for any
+        // typed givens — but this fn has no `given`, so value side is
+        // a no-op. Net = 6.
+        let src = r#"module M
+    effects [Time.now]
+
+fn currentYear() -> String
+    ? "current year"
+    ! [Time.now]
+    Time.now()
+
+verify currentYear
+    currentYear() => "any"
+    currentYear() => "any"
+"#;
+        let items = parse_source(src);
+        let mut blocks = crate::checker::merge_verify_blocks(&items);
+        assert_eq!(blocks.len(), 1);
+        let block = &mut blocks[0];
+        let declared_count = block.cases.len();
+        assert_eq!(declared_count, 2);
+
+        apply_hostile_expansion(block, &items);
+
+        // Time.now ships 2 profiles (frozen, epoch). Per declared case we
+        // produce 1 base case + 2 profile cases = 3 cases × 2 declared = 6.
+        assert_eq!(block.cases.len(), 6);
+        assert_eq!(block.case_hostile_profiles.len(), 6);
+        // 2 base cases (origin=false, profiles=[]); 4 profile cases.
+        let base_count = block
+            .case_hostile_profiles
+            .iter()
+            .filter(|p| p.is_empty())
+            .count();
+        assert_eq!(base_count, 2);
+        let profile_count = block
+            .case_hostile_profiles
+            .iter()
+            .filter(|p| !p.is_empty())
+            .count();
+        assert_eq!(profile_count, 4);
+    }
+
+    #[test]
     fn render_hostile_profile_label_joins_pairs() {
         let combo = vec![
             ("Time.now".to_string(), "frozen".to_string()),
