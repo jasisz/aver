@@ -1392,6 +1392,7 @@ if (verifyBtn) {
 
             const verifyFailSlugs = new Set([
                 "verify-mismatch",
+                "verify-hostile-mismatch",
                 "verify-runtime-error",
                 "verify-unexpected-err",
             ]);
@@ -3061,7 +3062,8 @@ function parseAuditBundle(json) {
     const bundle = JSON.parse(json);
     const diagnostics = bundle.diagnostics || [];
     const verifyFailSlugs = new Set([
-        "verify-mismatch", "verify-runtime-error", "verify-unexpected-err",
+        "verify-mismatch", "verify-hostile-mismatch",
+        "verify-runtime-error", "verify-unexpected-err",
     ]);
     const formatSlugs = new Set(["needs-format"]);
     const verifyFailures = diagnostics.filter((d) => verifyFailSlugs.has(d.slug));

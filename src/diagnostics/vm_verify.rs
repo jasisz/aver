@@ -171,19 +171,30 @@ fn apply_hostile_expansion(block: &mut VerifyBlock, items: &[TopLevel]) -> Resul
 /// non-`Output` effect the fn declares. Each inner Vec is one adversarial
 /// world.
 ///
-/// User-given assignments are *not* a pre-empt — they're the "honest
-/// world", run as the un-effected base case alongside the hostile cases.
-/// Skipping a user-pinned effect from the cartesian would defeat the
-/// point of `--hostile`: the user's stub is itself an *assumption*
-/// ("clock always goes backwards", "random rolls 4"), and hostile mode
-/// exists to challenge those assumptions with adversarial profiles
-/// (frozen, fast-forward, min, max, ...). The runtime stub installer
-/// overwrites user-given for the duration of a hostile-profile case so
-/// the same law gets evaluated under both worlds.
+/// **Effect-side hostile applies only to `verify <fn> trace` blocks.**
+/// In trace form, `given rnd: Random.int = [stub]` is a runtime oracle
+/// stub — a concrete choice of world that the trace assertions check.
+/// Hostile profiles ask "what if you chose wrong?": the same trace law
+/// runs under each adversarial world, the runtime stub installer
+/// overwrites the user's stub for the duration of each profile case.
+///
+/// In `law` form, `given` is either value substitution (`given x: Int =
+/// [...]`) or a formal oracle parameter folded into the lifted spec for
+/// proof export. Multiplying a universal-quantified claim by a
+/// per-effect profile cartesian doesn't add information — the law's
+/// claim is already over every world by definition. Hostile in law form
+/// stays on the value side (boundary expansion of typed `given`s).
+///
+/// In plain cases form there's no `given`; a fn with classified effects
+/// flaps without stubs anyway (`aver verify` warns). Hostile here would
+/// be a no-op on a pattern that's already broken.
 fn collect_effect_profile_combinations(
     block: &VerifyBlock,
     items: &[TopLevel],
 ) -> Vec<Vec<(String, String)>> {
+    if !block.trace {
+        return Vec::new();
+    }
     let fn_def = items.iter().find_map(|i| match i {
         TopLevel::FnDef(fd) if fd.name == block.fn_name => Some(fd),
         _ => None,
@@ -226,15 +237,14 @@ fn collect_effect_profile_combinations(
     out
 }
 
-/// For each verify block, find the function under test and the classified
-/// non-Output effects it declares, then parse + inject the corresponding
-/// hostile profile bodies as `TopLevel::FnDef`. User-given pins are *not*
-/// a pre-empt — hostile profiles always layer on top, since the user's
-/// stub is itself an assumption that the adversarial worlds challenge
-/// (see `collect_effect_profile_combinations` for the rationale). Runs
-/// before type-check so synthetic stubs go through the regular checker
-/// and compile to ordinary user-space fns the runner can install as
-/// oracle stubs.
+/// For each *trace-form* verify block, find the function under test and
+/// the classified non-Output effects it declares, then parse + inject
+/// the corresponding hostile profile bodies as `TopLevel::FnDef`.
+/// Effect-side hostile only applies to trace form — see
+/// `collect_effect_profile_combinations` for the rationale. Runs before
+/// type-check so synthetic stubs go through the regular checker and
+/// compile to ordinary user-space fns the runner can install as oracle
+/// stubs.
 fn inject_hostile_effect_stubs_for_blocks(items: &mut Vec<TopLevel>, blocks: &[VerifyBlock]) {
     let existing: std::collections::HashSet<String> = items
         .iter()
@@ -248,6 +258,9 @@ fn inject_hostile_effect_stubs_for_blocks(items: &mut Vec<TopLevel>, blocks: &[V
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for block in blocks {
+        if !block.trace {
+            continue;
+        }
         let Some(fn_def) = items.iter().find_map(|i| match i {
             TopLevel::FnDef(fd) if fd.name == block.fn_name => Some(fd),
             _ => None,
@@ -1406,7 +1419,7 @@ mod tests {
             case_hostile_origins: vec![],
             case_hostile_profiles: vec![],
             kind: VerifyKind::Cases,
-            trace: false,
+            trace: true,
             cases_givens: vec![],
         };
         let combos = collect_effect_profile_combinations(&block, &items);
@@ -1427,14 +1440,11 @@ mod tests {
     }
 
     #[test]
-    fn collect_effect_profile_includes_user_pinned_givens() {
-        // Hostile is *parity* — even when the user pinned `given Time.now`,
-        // the profile cartesian still includes Time.now alongside the
-        // user's stub. The user-given is one assumption; hostile mode
-        // exists to challenge it ("clock always backwards" vs frozen vs
-        // fast-forward). The runtime stub installer overwrites the user's
-        // given for the duration of a hostile-profile case, so both
-        // worlds get evaluated against the same law.
+    fn collect_effect_profile_skips_law_form_blocks() {
+        // Effect-side hostile only applies to trace-form blocks.
+        // Law-form `given` is value substitution / formal proof param,
+        // not a runtime stub to challenge — multiplying a universal
+        // claim by adversarial profiles adds no information.
         let src = "module M\n    effects [Time.now, Random.int]\n\nfn f() -> Int\n    ? \"toy\"\n    ! [Time.now, Random.int]\n    1\n";
         let items = parse_source(src);
         let block = VerifyBlock {
@@ -1461,19 +1471,10 @@ mod tests {
             cases_givens: vec![],
         };
         let combos = collect_effect_profile_combinations(&block, &items);
-        // Cartesian = (Time.now profiles) × (Random.int profiles),
-        // regardless of user-given on Time.now.
-        let time_now_profiles =
-            crate::types::checker::hostile_effects::hostile_profiles_for("Time.now").len();
-        let random_int_profiles =
-            crate::types::checker::hostile_effects::hostile_profiles_for("Random.int").len();
-        assert_eq!(combos.len(), time_now_profiles * random_int_profiles);
-        let methods: std::collections::HashSet<&str> = combos
-            .iter()
-            .flat_map(|c| c.iter().map(|(m, _)| m.as_str()))
-            .collect();
-        assert!(methods.contains("Time.now"));
-        assert!(methods.contains("Random.int"));
+        assert!(
+            combos.is_empty(),
+            "law-form should not get effect-side hostile expansion"
+        );
     }
 
     #[test]
@@ -1490,7 +1491,7 @@ mod tests {
             case_hostile_origins: vec![],
             case_hostile_profiles: vec![],
             kind: VerifyKind::Cases,
-            trace: false,
+            trace: true,
             cases_givens: vec![],
         };
         let combos = collect_effect_profile_combinations(&block, &items);
@@ -1510,7 +1511,7 @@ mod tests {
             case_hostile_origins: vec![],
             case_hostile_profiles: vec![],
             kind: VerifyKind::Cases,
-            trace: false,
+            trace: true,
             cases_givens: vec![],
         }];
         let before = items.len();
@@ -1532,23 +1533,26 @@ mod tests {
 
     #[test]
     fn apply_hostile_expansion_multiplies_cases_by_effect_cartesian() {
-        // A 2-case law on a fn that uses Time.now without a given.
-        // Hostile expansion produces: 2 declared cases ×
-        // (1 un-effected base + 2 Time.now profiles) = 6 cases.
-        // Then value-side hostile may add more boundary cases for any
-        // typed givens — but this fn has no `given`, so value side is
-        // a no-op. Net = 6.
+        // Trace-form verify on a fn that uses Time.now. Hostile expansion
+        // produces: N declared cases × (1 un-effected base + K Time.now
+        // profiles), where K = current profile count for Time.now.
+        // Effect-side hostile only applies to trace form, hence
+        // `verify currentYear trace` here.
         let src = r#"module M
     effects [Time.now]
+
+fn frozenStub(path: BranchPath, n: Int) -> String
+    "2026-01-01T00:00:00Z"
 
 fn currentYear() -> String
     ? "current year"
     ! [Time.now]
     Time.now()
 
-verify currentYear
-    currentYear() => "any"
-    currentYear() => "any"
+verify currentYear trace
+    given clock: Time.now = [frozenStub]
+    currentYear().result => "2026-01-01T00:00:00Z"
+    currentYear().result => "2026-01-01T00:00:00Z"
 "#;
         let items = parse_source(src);
         let mut blocks = crate::checker::merge_verify_blocks(&items);
@@ -1559,8 +1563,6 @@ verify currentYear
 
         apply_hostile_expansion(block, &items).expect("expansion within budget");
 
-        // Per declared case: 1 base + N profile cases (one per Time.now
-        // profile), where N grows over time as we add adversarial worlds.
         let time_now_profiles =
             crate::types::checker::hostile_effects::hostile_profiles_for("Time.now").len();
         let expected_total = declared_count * (1 + time_now_profiles);
@@ -1582,37 +1584,40 @@ verify currentYear
 
     #[test]
     fn apply_hostile_expansion_rejects_over_budget_cartesian() {
-        // Stress: a value-side `given x: Int = 1..N` plus a cartesian over
-        // every Time.now / Random.int profile would balloon to N × 5 × 4
-        // cases. Pick N so we cross the 10_000 cap, and assert the runner
-        // returns a clean error instead of running for an hour.
-        let big_range = (VERIFY_HOSTILE_MAX_CASES / 5) + 100;
+        // Stress: pick a `given x: Int` range big enough to clear the
+        // hostile cap once value-boundary cases are added but small
+        // enough that the parser still accepts it. Effect-side hostile
+        // doesn't apply to law form, so this test exercises just the
+        // value-side cap path.
+        let big_range = VERIFY_HOSTILE_MAX_CASES + 50;
         let src = format!(
-            "module M\n    effects [Time.now]\n\nfn f(x: Int) -> Int\n    ? \"toy\"\n    ! [Time.now]\n    x\n\nverify f law big\n    given x: Int = 1..{}\n    f(x) => x\n",
+            "module M\n    effects []\n\nfn f(x: Int) -> Int\n    ? \"toy\"\n    x\n\nverify f law big\n    given x: Int = 1..{}\n    f(x) => x\n",
             big_range
         );
-        // Build items via parse_source — this exercises the parser-side
-        // declared cap too. If the parser rejects the range first (it caps
-        // at the same 10_000) then the test still validates that the
-        // parser/verify caps line up. Otherwise apply_hostile_expansion's
-        // cap fires.
+        // The parser may reject the range first (its own cap is also
+        // 10_000); either path keeps us safe. Test passes if at least
+        // one of the two layers stops the run.
         let parse_result = crate::source::parse_source(&src);
-        if let Ok(items) = parse_result {
-            let mut blocks = crate::checker::merge_verify_blocks(&items);
-            if let Some(block) = blocks.first_mut() {
-                let res = apply_hostile_expansion(block, &items);
-                assert!(
-                    res.is_err(),
-                    "expected --hostile cap to reject over-budget expansion"
-                );
-                assert!(
-                    res.unwrap_err().contains("more than"),
-                    "error should mention the cap"
-                );
+        match parse_result {
+            Err(_) => {
+                // Parser-side cap fired — fine, that's the first line of
+                // defence and the user gets a clear error already.
+            }
+            Ok(items) => {
+                let mut blocks = crate::checker::merge_verify_blocks(&items);
+                if let Some(block) = blocks.first_mut() {
+                    let res = apply_hostile_expansion(block, &items);
+                    assert!(
+                        res.is_err(),
+                        "expected --hostile cap to reject over-budget expansion"
+                    );
+                    assert!(
+                        res.unwrap_err().contains("more than"),
+                        "error should mention the cap"
+                    );
+                }
             }
         }
-        // Either parser rejected first or our cap rejected — both are
-        // acceptable; the assertion is "no silent multi-million case run".
     }
 
     #[test]

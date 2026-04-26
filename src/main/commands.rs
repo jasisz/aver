@@ -2705,43 +2705,51 @@ fn render_verify_output(
                         total
                     );
                 } else {
-                    // Count failure types
-                    let mut mismatch = 0usize;
-                    let mut runtime_err = 0usize;
-                    let mut unexpected_err = 0usize;
-                    for cr in &block.case_results {
-                        match &cr.outcome {
-                            VerifyCaseOutcome::Mismatch { .. } => mismatch += 1,
-                            VerifyCaseOutcome::RuntimeError { .. } => runtime_err += 1,
-                            VerifyCaseOutcome::UnexpectedErr { .. } => unexpected_err += 1,
-                            _ => {}
-                        }
-                    }
+                    // Bracket reports either declared/hostile pass-ratios
+                    // (when --hostile produced extra cases — the per-
+                    // bucket split already implies the failure count) or
+                    // a typed-failure breakdown (mismatch / runtime err /
+                    // unexpected err — declared-only runs need this since
+                    // the bucket split is just `1/1 ✗`). Mixing both is
+                    // redundant: 24 mismatch + 11/35 hostile says "24
+                    // failed" twice.
                     let (declared_passed, declared_failed, hostile_passed, hostile_failed) =
                         bucket_hostile(&block.case_results);
                     let has_hostile = hostile_passed + hostile_failed > 0;
-                    let mut parts = Vec::new();
-                    if mismatch > 0 {
-                        parts.push(format!("{} mismatch", mismatch));
-                    }
-                    if runtime_err > 0 {
-                        parts.push(format!("{} runtime error", runtime_err));
-                    }
-                    if unexpected_err > 0 {
-                        parts.push(format!("{} unexpected err", unexpected_err));
-                    }
-                    if has_hostile {
+                    let breakdown = if has_hostile {
                         let declared_total = declared_passed + declared_failed;
                         let hostile_total = hostile_passed + hostile_failed;
-                        parts.push(format!(
-                            "{}/{} declared, {}/{} hostile",
+                        format!(
+                            " ({}/{} declared, {}/{} hostile)",
                             declared_passed, declared_total, hostile_passed, hostile_total
-                        ));
-                    }
-                    let breakdown = if parts.is_empty() {
-                        String::new()
+                        )
                     } else {
-                        format!(" ({})", parts.join(", "))
+                        let mut mismatch = 0usize;
+                        let mut runtime_err = 0usize;
+                        let mut unexpected_err = 0usize;
+                        for cr in &block.case_results {
+                            match &cr.outcome {
+                                VerifyCaseOutcome::Mismatch { .. } => mismatch += 1,
+                                VerifyCaseOutcome::RuntimeError { .. } => runtime_err += 1,
+                                VerifyCaseOutcome::UnexpectedErr { .. } => unexpected_err += 1,
+                                _ => {}
+                            }
+                        }
+                        let mut parts = Vec::new();
+                        if mismatch > 0 {
+                            parts.push(format!("{} mismatch", mismatch));
+                        }
+                        if runtime_err > 0 {
+                            parts.push(format!("{} runtime error", runtime_err));
+                        }
+                        if unexpected_err > 0 {
+                            parts.push(format!("{} unexpected err", unexpected_err));
+                        }
+                        if parts.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" ({})", parts.join(", "))
+                        }
                     };
                     println!(
                         "  {} {}      {}/{} passed{}",

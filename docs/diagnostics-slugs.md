@@ -75,7 +75,8 @@ Source of truth: `src/diagnostics/classify.rs` (classifier) and `src/checker/*.r
 
 | Slug | Severity | Fires when | Repair |
 |---|---|---|---|
-| `verify-mismatch` | fail | Verify case ran but the observed result ≠ the expected one. | Inspect `fields.expected` / `fields.actual`; fix the function or the case. |
+| `verify-mismatch` | fail | Declared verify case ran but the observed result ≠ the expected one. | Inspect `fields.expected` / `fields.actual`; fix the function or the case. |
+| `verify-hostile-mismatch` | fail | Same as `verify-mismatch` but the case was injected by `aver verify --hostile` (boundary value or adversarial effect profile). `fields.origin` carries the profile label, `from_hostile` is `true`. | Pin the effect via `given <Effect>` if your law assumes a specific world, or weaken with `when <precondition>` to scope it. Distinct slug so CI gates can route declared vs adversarial failures separately. |
 | `verify-runtime-error` | fail | Verify case crashed during evaluation (div-by-zero, pattern fail, etc.). | Fix the crash; add a case for the boundary if intentional. |
 | `verify-unexpected-err` | fail | Case propagated a `Result.Err` via `?` the case didn't account for. | Either expect the `Err` in the case or handle it inside the function. |
 | `replay-output-mismatch` | fail | Replayed recording's output differs from the recorded run. | Inspect `fields.diff`; update the function or re-record. |

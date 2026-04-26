@@ -300,17 +300,25 @@ of the given clauses' types". The user usually writes a small declared set
 think will exercise the law — but the claim itself ranges over the whole
 type. `--hostile` checks that.
 
-**Hostile applies only to `verify <fn> law <name>` blocks.** Plain
-`verify <fn>` (cases form) is fixtures — explicit values the user wrote,
-not a domain — so boundary expansion has no semantic role; the flag is a
-no-op. `verify <fn> trace` has `given`, but those are oracle stubs (the
-world side), not value domains; hostile of stubs is a separate
-mechanism (effect-side hostile, deferred). Only `law` form has typed
-given clauses with a universal claim across the type, which is what
-`--hostile` augments.
+`--hostile` works on **two axes**, each tied to a different verify form:
 
-Under `aver verify --hostile`, every typed `given` clause in a `law`
-block is augmented with a per-type adversarial set:
+1. **Value-side** — only on `verify <fn> law <name>` blocks. Typed
+   `given` clauses get augmented with the per-type boundary set. Law
+   form is a universal claim; hostile checks the boundary the user did
+   not exercise.
+2. **Effect-side** — only on `verify <fn> trace` blocks. Classified
+   non-`Output` effects the fn declares get multiplied by an adversarial
+   profile cartesian. The user's `given <Effect>` stub is one chosen
+   world; hostile asks "what if you chose wrong?" by overriding the stub
+   with each profile in turn.
+
+Plain cases-form `verify <fn>` is fixtures (explicit examples) — neither
+axis applies. `law` form's `given` is value substitution / formal proof
+parameter (not a runtime stub to challenge), so effect-side has no
+semantic role there. `trace` form's `given` is a runtime oracle stub
+(the world side of one concrete sample), so value-side has no role.
+
+**Value-side boundary sets:**
 
 - `Int`   → `0`, `1`, `-1`, `i64::MIN`, `i64::MAX`
 - `Float` → `0.0`, `1.0`, `-1.0`, `MIN`, `MAX`, `+/-Inf`, `NaN`
@@ -319,9 +327,36 @@ block is augmented with a per-type adversarial set:
 - `Unit`  → `Unit`
 
 These augment the declared list — duplicates are dropped, so a value the
-user already wrote is not re-run. Cartesian product across multiple givens
-multiplies the per-given lists directly; the per-type sets stay small (≤6
-for scalars) so the total case count grows linearly in practice.
+user already wrote is not re-run.
+
+**Effect-side adversarial profiles** (per classified non-`Output` effect):
+
+| Effect | Profiles |
+|---|---|
+| `Time.now` / `Time.unixMs` | `normal` (advancing 1s/call), `frozen` / `frozen_zero`, `epoch` / `saturated`, `backward` (NTP correction), `fast_forward` (leap second / skew) |
+| `Random.int` | `midrange`, `always_min`, `always_max`, `alternating` (per-call min↔max) |
+| `Random.float` | `midrange` (0.5), `always_zero`, `always_one` |
+| `Args.get` | `normal`, `empty`, `many` (edge values like `\0`, `--flag`) |
+| `Env.get` | `normal`, `missing`, `empty` |
+| `Terminal.size` | `normal` (80×24), `minimal` (1×1) |
+| `Disk.readText` / `exists` / `listDir` | `normal` + `always_err` + format-specific (`empty_ok`, `never`, `always`) |
+| `Console.readLine` | `normal`, `eof`, `empty` |
+| `Terminal.readKey` | `normal`, `no_input` |
+| `Http.{get,head,delete,post,put,patch}` | `normal_ok`, `always_err` |
+| `Disk.{writeText,appendText,delete,deleteDir,makeDir}` | `normal_ok`, `always_err` |
+| `Tcp.{send,ping,readLine,writeLine,close}` | `normal_ok`, `always_err` |
+| `Tcp.connect` | `always_err` (lifecycle — connection either holds or doesn't) |
+
+User-given pins are **not** a pre-empt: hostile profiles always layer
+on top, since the user's stub is itself an assumption. The runtime stub
+installer overwrites user-given for the duration of a hostile-profile
+case so the same law gets evaluated under both worlds.
+
+The full cartesian (value-boundary cases × adversarial worlds) is
+capped at `10_000` cases per block — same cap as parser-side declared
+expansion. Over-budget blocks fail with a clear error pointing at the
+law and listing the projected size; tighten the `given` domain, add a
+`when` precondition, or run that block without `--hostile`.
 
 `when` clauses stay binding: a hostile case is dropped if the `when`
 guard returns `false`. That is the line `--hostile` honours — `given`
@@ -329,10 +364,15 @@ ranges are exploration hints, `when` is the law boundary.
 
 ### Output
 
-When a hostile-injected case fails, the diagnostic header changes:
+When a hostile-injected case fails, the diagnostic uses a distinct slug
+so CI gates can route declared vs adversarial failures separately:
+
+- `verify-mismatch` — declared world failure, real bug
+- `verify-hostile-mismatch` — adversarial world failure, missing
+  precondition or unpinned effect
 
 ```
-fail[verify-mismatch]: law violated under --hostile expansion
+fail[verify-hostile-mismatch]: law violated under --hostile expansion
   at: prog.av:9:1
   block: isPositive spec alwaysPositive
   case: isPositive(0) == true
@@ -347,11 +387,24 @@ fail[verify-mismatch]: law violated under --hostile expansion
           semantics) with the values you actually meant.
 ```
 
+For effect-side hostile (`verify <fn> trace` block, adversarial profile
+overriding the user's oracle stub for that case), `origin` carries the
+profile label and the repair hint speaks to the trace pattern:
+
+```
+  origin: hostile effect profile: Time.unixMs/saturated
+  repair: the trace passes for the world your `given` stub describes
+          but breaks under this adversarial profile. Either accept the
+          profile as a real concern (the world your code will see in
+          production) and adjust the impl, or scope the trace with
+          `when <precondition>` so it only covers the worlds you
+          actually meant.
+```
+
 The block summary line breaks the count down by origin:
 
 ```
-✗ isPositive spec alwaysPositive      4/7 passed
-                                       (3 mismatch, 3/3 declared, 1/4 hostile)
+✗ isPositive spec alwaysPositive      4/7 passed (3/3 declared, 1/4 hostile)
 ```
 
 — `3/3 declared` = all values the user wrote pass, `1/4 hostile` = boundary
@@ -359,12 +412,28 @@ expansion found 3 fails. The classic "law is not universal" signal.
 
 JSON (`--json`) carries the same data structurally:
 
-- per-diagnostic `from_hostile: true` (top-level boolean) plus
-  `fields[origin] = "hostile boundary expansion"`
+- per-diagnostic `slug` is `verify-hostile-mismatch` (or `verify-mismatch`
+  for declared failures), `from_hostile: true` flag, and
+  `fields[origin] = "hostile boundary expansion"` or
+  `"hostile effect profile: Time.unixMs/saturated"`
 - `verify_summary.blocks[].declared_passed / declared_failed /
   hostile_passed / hostile_failed` — tooling can split "law regression"
   (`declared_failed > 0`) from "hostile coverage gap" (`hostile_failed >
   0 && declared_failed == 0`).
+
+#### jq one-liners
+
+```sh
+# Adversarial-only failures
+aver audit --hostile --json prog.av | head -1 \
+  | jq '.diagnostics[] | select(.slug == "verify-hostile-mismatch")'
+
+# Group by adversarial profile
+aver audit --hostile --json prog.av | head -1 \
+  | jq '[.diagnostics[] | select(.slug == "verify-hostile-mismatch") |
+         .fields[] | select(.[0] == "origin") | .[1]]
+        | group_by(.) | map({profile: .[0], count: length})'
+```
 
 ### Two responses to a hostile failure
 

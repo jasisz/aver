@@ -414,10 +414,12 @@ pub fn verify_mismatch_diagnostic(
     let repair = if from_hostile {
         if hostile_profile.is_some() {
             Repair::primary(
-                "the law assumed an effect-world the user did not pin via \
-                 `given`. Either pick a `given <Effect>` stub that captures \
-                 the assumption you actually rely on, or weaken the law (`when \
-                 <precondition>`) so it covers only the worlds you meant.",
+                "the trace passes for the world your `given` stub describes \
+                 but breaks under this adversarial profile. Either accept \
+                 the profile as a real concern (the world your code will \
+                 see in production) and adjust the impl, or scope the trace \
+                 with `when <precondition>` so it only covers the worlds \
+                 you actually meant.",
             )
         } else {
             Repair::primary(
@@ -430,9 +432,21 @@ pub fn verify_mismatch_diagnostic(
     } else {
         Repair::default()
     };
+    // Distinct slug for hostile-only failures so consumers (jq, CI gates,
+    // playground filters) can split the dual-run into two channels:
+    //   `verify-mismatch`         — declared world failure, real bug
+    //   `verify-hostile-mismatch` — adversarial world failure, missing
+    //                                precondition or unpinned effect
+    // Both carry the same fields and `from_hostile` flag; the slug is
+    // for routing.
+    let slug = if from_hostile {
+        "verify-hostile-mismatch"
+    } else {
+        "verify-mismatch"
+    };
     Diagnostic {
         severity: Severity::Fail,
-        slug: "verify-mismatch",
+        slug,
         summary: summary.to_string(),
         span: Span {
             file: file.to_string(),
@@ -454,7 +468,7 @@ pub fn verify_mismatch_diagnostic(
                     .map(|l| l.trim().len())
                     .unwrap_or(1)
                     .max(1),
-                label: "verify-mismatch".to_string(),
+                label: slug.to_string(),
             }),
         ),
         related: Vec::new(),
