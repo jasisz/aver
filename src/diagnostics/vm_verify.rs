@@ -134,11 +134,20 @@ fn apply_hostile_expansion(block: &mut VerifyBlock, items: &[TopLevel]) {
     }
 }
 
-/// For a verify block, find the function under test, list its classified
-/// effects that aren't covered by user `given`, and return the cartesian
-/// product of (method, profile) pairs. Each inner Vec is one adversarial
-/// world. `Output`-dimension effects are excluded — they have no oracle
-/// response to vary.
+/// For a verify block, find the function under test and return the
+/// cartesian product of `(method, profile)` pairs across every classified
+/// non-`Output` effect the fn declares. Each inner Vec is one adversarial
+/// world.
+///
+/// User-given assignments are *not* a pre-empt — they're the "honest
+/// world", run as the un-effected base case alongside the hostile cases.
+/// Skipping a user-pinned effect from the cartesian would defeat the
+/// point of `--hostile`: the user's stub is itself an *assumption*
+/// ("clock always goes backwards", "random rolls 4"), and hostile mode
+/// exists to challenge those assumptions with adversarial profiles
+/// (frozen, fast-forward, min, max, ...). The runtime stub installer
+/// overwrites user-given for the duration of a hostile-profile case so
+/// the same law gets evaluated under both worlds.
 fn collect_effect_profile_combinations(
     block: &VerifyBlock,
     items: &[TopLevel],
@@ -151,23 +160,11 @@ fn collect_effect_profile_combinations(
         return Vec::new();
     };
 
-    let user_covered: std::collections::HashSet<String> = match &block.kind {
-        VerifyKind::Law(law) => law.givens.iter().map(|g| g.type_name.clone()).collect(),
-        VerifyKind::Cases => block
-            .cases_givens
-            .iter()
-            .map(|g| g.type_name.clone())
-            .collect(),
-    };
-
     let mut per_method: Vec<(String, Vec<HostileProfile>)> = Vec::new();
     for eff in &fn_def.effects {
         let method = eff.node.as_str();
         let Some(c) = classify(method) else { continue };
         if matches!(c.dimension, EffectDimension::Output) {
-            continue;
-        }
-        if user_covered.contains(method) {
             continue;
         }
         let profiles = hostile_profiles_for(method);
@@ -198,11 +195,14 @@ fn collect_effect_profile_combinations(
 }
 
 /// For each verify block, find the function under test and the classified
-/// non-Output effects it declares but the user has not pinned via `given`,
-/// then parse + inject the corresponding hostile profile bodies as
-/// `TopLevel::FnDef`. Runs before type-check so the synthetic stubs go
-/// through the regular checker and compile down to ordinary user-space
-/// fns the runner can install as oracle stubs.
+/// non-Output effects it declares, then parse + inject the corresponding
+/// hostile profile bodies as `TopLevel::FnDef`. User-given pins are *not*
+/// a pre-empt — hostile profiles always layer on top, since the user's
+/// stub is itself an assumption that the adversarial worlds challenge
+/// (see `collect_effect_profile_combinations` for the rationale). Runs
+/// before type-check so synthetic stubs go through the regular checker
+/// and compile to ordinary user-space fns the runner can install as
+/// oracle stubs.
 fn inject_hostile_effect_stubs_for_blocks(items: &mut Vec<TopLevel>, blocks: &[VerifyBlock]) {
     let existing: std::collections::HashSet<String> = items
         .iter()
@@ -216,14 +216,6 @@ fn inject_hostile_effect_stubs_for_blocks(items: &mut Vec<TopLevel>, blocks: &[V
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for block in blocks {
-        let user_covered: std::collections::HashSet<String> = match &block.kind {
-            VerifyKind::Law(law) => law.givens.iter().map(|g| g.type_name.clone()).collect(),
-            VerifyKind::Cases => block
-                .cases_givens
-                .iter()
-                .map(|g| g.type_name.clone())
-                .collect(),
-        };
         let Some(fn_def) = items.iter().find_map(|i| match i {
             TopLevel::FnDef(fd) if fd.name == block.fn_name => Some(fd),
             _ => None,
@@ -234,9 +226,6 @@ fn inject_hostile_effect_stubs_for_blocks(items: &mut Vec<TopLevel>, blocks: &[V
             let method = eff.node.as_str();
             let Some(c) = classify(method) else { continue };
             if matches!(c.dimension, EffectDimension::Output) {
-                continue;
-            }
-            if user_covered.contains(method) {
                 continue;
             }
             if !seen.insert(method.to_string()) {
@@ -1398,11 +1387,16 @@ mod tests {
     }
 
     #[test]
-    fn collect_effect_profile_skips_user_pinned_givens() {
+    fn collect_effect_profile_includes_user_pinned_givens() {
+        // Hostile is *parity* — even when the user pinned `given Time.now`,
+        // the profile cartesian still includes Time.now alongside the
+        // user's stub. The user-given is one assumption; hostile mode
+        // exists to challenge it ("clock always backwards" vs frozen vs
+        // fast-forward). The runtime stub installer overwrites the user's
+        // given for the duration of a hostile-profile case, so both
+        // worlds get evaluated against the same law.
         let src = "module M\n    effects [Time.now, Random.int]\n\nfn f() -> Int\n    ? \"toy\"\n    ! [Time.now, Random.int]\n    1\n";
         let items = parse_source(src);
-        // Pretend the user wrote `given Time.now myStub` — that effect
-        // shouldn't get hostile profiles.
         let block = VerifyBlock {
             fn_name: "f".to_string(),
             line: 1,
@@ -1427,12 +1421,15 @@ mod tests {
             cases_givens: vec![],
         };
         let combos = collect_effect_profile_combinations(&block, &items);
-        // Only Random.int should expand → 2 worlds (min, max), each with one entry.
-        assert_eq!(combos.len(), 2);
-        for combo in &combos {
-            assert_eq!(combo.len(), 1);
-            assert_eq!(combo[0].0, "Random.int");
-        }
+        // Time.now: 2 profiles (frozen/epoch), Random.int: 2 (min/max).
+        // Cartesian = 4 worlds, regardless of user-given on Time.now.
+        assert_eq!(combos.len(), 4);
+        let methods: std::collections::HashSet<&str> = combos
+            .iter()
+            .flat_map(|c| c.iter().map(|(m, _)| m.as_str()))
+            .collect();
+        assert!(methods.contains("Time.now"));
+        assert!(methods.contains("Random.int"));
     }
 
     #[test]
