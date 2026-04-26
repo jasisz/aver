@@ -399,15 +399,23 @@ profile label. Trace form does not currently support `when` (that
 keyword lives on `law` form's value domain), so the repair speaks to
 the two real options today.
 
-> **Future: `when` over effect-given.** Naturally one could let trace
-> form take a `when` predicate that references the effect stub
-> (`when clock(root, 1) > clock(root, 0)` for monotonicity), letting
-> users encode state-aware preconditions (e.g. "the clock advances")
-> that hostile honours by filtering out profiles which break the
-> invariant — `frozen` and `backward` would skip, `normal` /
-> `fast_forward` would run. Out of scope for 0.13 (needs profile-stub
-> installation before `when` evaluation, and the trace runner currently
-> evaluates guards stub-less). Tracked for a follow-up.
+> **Partial in 0.13: `when` over effect-given.** `verify <fn> trace law
+> <name>` already supports `when clock(root, 1) > clock(root, 0)` for
+> the declared case — guards are evaluated with the user's stub
+> installed and respected. **Hostile-profile cases under `--hostile`
+> currently ignore the guard**: substitution in the law expander
+> rewrites `clock` to the user's stub fn name (e.g. `realStub`) before
+> hostile expansion, so the guard fires `realStub(...)` instead of the
+> profile-installed effect stub for those cases. Profiles that should
+> have been filtered (`frozen` / `backward` for a monotonicity guard)
+> still run and report violations.
+>
+> Workaround for 0.13: write the law without `when` and accept that
+> hostile reports those profiles as fails (treat them as adversarial
+> worlds the impl actually has to handle), or run that block without
+> `--hostile`. Fix planned for 0.14: per-hostile-case rewrite of
+> user-stub references back to the effect method, so install-stub
+> overrides take effect in the guard.
 
 ```
   origin: hostile effect profile: Time.unixMs/saturated
