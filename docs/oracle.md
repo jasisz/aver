@@ -414,6 +414,15 @@ the two real options today.
 > guard are *queries on the oracle* installed for this case, not runtime
 > effect calls. Don't read this as Aver inspecting the wall clock — the
 > guard is asking the same fn that supplies values to the law body.
+>
+> **Two different concepts share the word "invariant" — keep them
+> apart.** A user-written `when` is an *oracle assumption* (per-law,
+> local, the user states it explicitly). The axiom block emitted into
+> Lean / Dafny by `aver proof` carries *runtime invariants* (global,
+> guaranteed by Aver: `Random.int` respects bounds, `Random.float ∈
+> [0,1]`, `Time.unixMs ≥ 0`). Both feed the proof side, but they sit
+> at different scopes — `when` scopes one law, axioms hold across the
+> whole project.
 
 ```
   origin: hostile effect profile: Time.unixMs/saturated

@@ -2567,6 +2567,28 @@ fn run_verify_for_file(
 /// Bucket case outcomes by `from_hostile` for the per-block summary
 /// (declared vs hostile pass/fail). Skipped cases are dropped — they
 /// already live in `result.skipped`.
+/// Detect "vacuous-under-hostile" blocks: at least one hostile-profile
+/// case was generated, and every single one ended in `Skipped` (its
+/// `when` predicate returned false). Means the user's `when` is so
+/// strict that no adversarial profile satisfies it — the law's hostile
+/// run reduces to nothing. The renderer flags this as a warning so the
+/// user doesn't read "0 hostile failures" as a clean bill.
+fn vacuous_under_hostile(cases: &[aver::checker::VerifyCaseResult]) -> bool {
+    use aver::checker::VerifyCaseOutcome;
+    let mut had_hostile = false;
+    let mut all_skipped = true;
+    for case in cases {
+        if !case.from_hostile || case.hostile_profile.is_none() {
+            continue;
+        }
+        had_hostile = true;
+        if !matches!(case.outcome, VerifyCaseOutcome::Skipped) {
+            all_skipped = false;
+        }
+    }
+    had_hostile && all_skipped
+}
+
 fn bucket_hostile(cases: &[aver::checker::VerifyCaseResult]) -> (usize, usize, usize, usize) {
     use aver::checker::VerifyCaseOutcome;
 
@@ -2719,9 +2741,18 @@ fn render_verify_output(
                     let breakdown = if has_hostile {
                         let declared_total = declared_passed + declared_failed;
                         let hostile_total = hostile_passed + hostile_failed;
+                        let skipped_tail = if block.skipped > 0 {
+                            format!(", {} skipped by `when`", block.skipped)
+                        } else {
+                            String::new()
+                        };
                         format!(
-                            " ({}/{} declared, {}/{} hostile)",
-                            declared_passed, declared_total, hostile_passed, hostile_total
+                            " ({}/{} declared, {}/{} hostile{})",
+                            declared_passed,
+                            declared_total,
+                            hostile_passed,
+                            hostile_total,
+                            skipped_tail
                         )
                     } else {
                         let mut mismatch = 0usize;
@@ -2758,6 +2789,21 @@ fn render_verify_output(
                         block.passed,
                         total,
                         breakdown
+                    );
+                }
+
+                // Vacuous-truth warning. If every hostile-profile case
+                // was skipped by `when`, the law was effectively NOT
+                // exercised under hostile mode — the user's assumption
+                // is so strict that no adversarial profile satisfies
+                // it. Without this hint, the user reads "passed under
+                // hostile" and gets a false sense of safety.
+                if vacuous_under_hostile(&block.case_results) {
+                    println!(
+                        "    {} every hostile profile was skipped by `when` — \
+                         this law was not exercised under --hostile. Consider \
+                         loosening the assumption.",
+                        "warning:".yellow()
                     );
                 }
 
@@ -2913,7 +2959,12 @@ pub(super) fn cmd_verify(
         .flat_map(|fr| &fr.blocks)
         .map(|b| b.failed)
         .sum();
-    let total_cases = total_passed + total_failed;
+    let total_skipped: usize = all_file_results
+        .iter()
+        .flat_map(|fr| &fr.blocks)
+        .map(|b| b.skipped)
+        .sum();
+    let total_cases = total_passed + total_failed + total_skipped;
     let total_files = all_file_results
         .iter()
         .filter(|fr| !fr.blocks.is_empty())
@@ -2942,8 +2993,13 @@ pub(super) fn cmd_verify(
         );
     } else {
         println!();
+        let skipped_part = if total_skipped > 0 {
+            format!(" | {} skipped by `when`", total_skipped)
+        } else {
+            String::new()
+        };
         let summary = format!(
-            "Summary: {} file{} | {} block{} | {}/{} cases passed | {} failed",
+            "Summary: {} file{} | {} block{} | {}/{} cases passed | {} failed{}",
             total_files,
             if total_files == 1 { "" } else { "s" },
             total_blocks,
@@ -2951,6 +3007,7 @@ pub(super) fn cmd_verify(
             total_passed,
             total_cases,
             total_failed,
+            skipped_part,
         );
         if total_failed == 0 {
             println!("{}", summary.green());
