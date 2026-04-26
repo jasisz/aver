@@ -4,6 +4,7 @@ module Lexer
         "Lexer for the mini Aver subset."
         "Tokenizes source string into a list of tokens."
     exposes [lex]
+    effects []
 
 fn tokenizeDigit(src: String, pos: Int) -> List<Token>
     ? "Tokenize starting from a digit character."

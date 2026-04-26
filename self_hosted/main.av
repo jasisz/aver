@@ -4,6 +4,7 @@ module SelfHosted
         "Mini Aver interpreter written in Aver."
         "Demonstrates self-hosting: Aver source parsed and evaluated by Aver running on its own VM."
         "Usage: aver run self_hosted/main.av --module-root self_hosted -- <file.av> <module-root> [guest args...]"
+    effects [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
 
 fn run(source: String) -> Result<Val, String>
     ? "Lex, parse, resolve, and evaluate an Aver source string (no module loading)."

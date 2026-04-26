@@ -5,6 +5,7 @@ module Events
         "in the domain again instead of reconstructing state from serialized event fields."
     exposes [eventName, recordedAt, latestEvent, eventsForTask, hasTaskEvents, findTask, replayTask, replayAll, replayAllStates]
     depends [Domain.Types, Domain.Validation]
+    effects []
 
 decision ReplayReturnsToDomain
     date = "2026-03-08"

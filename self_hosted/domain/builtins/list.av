@@ -2,6 +2,7 @@ module List
     depends [Domain.Value, Domain.Builtins.Helpers]
     intent = "List namespace builtins for the self-hosted evaluator."
     exposes [call]
+    effects []
 
 fn call(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch List.* builtins."

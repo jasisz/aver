@@ -5,6 +5,7 @@ module Commands
         "functions, then commits new facts and manual-review work explicitly."
     exposes [Command, CommandReport, execute]
     depends [App.Shared, Domain.Types, Domain.Normalize, Domain.Ledger, Domain.Cases, Domain.Reconcile, Infra.Store, Infra.Audit, Infra.Imports]
+    effects [Disk, Time]
 
 type Command
     IngestWebhooks(String, String)

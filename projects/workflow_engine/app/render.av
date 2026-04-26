@@ -5,6 +5,7 @@ module Render
         "app and domain layers, not in presentation glue."
     exposes [renderCommand, renderQuery]
     depends [App.Commands, App.Queries, Domain.Types, Domain.Events, Domain.Views]
+    effects []
 
 fn renderCommandReport(report: CommandReport) -> List<String>
     ? "Renders a command result as CLI lines."

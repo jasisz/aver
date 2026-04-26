@@ -4,6 +4,7 @@ module FileStoreShell
         "Pure data lives in FileStorePureCore; this is just the syscall."
         "Single-entry write; iteration belongs in the caller."
     exposes [persistEntry]
+    effects [Console, Disk]
 
 fn persistEntry(path: String, body: String) -> Result<Unit, String>
     ? "Boundary shell: a single Disk write. Effectless recursion belongs in pure code."

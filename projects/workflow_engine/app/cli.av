@@ -5,6 +5,7 @@ module Cli
         "core flow without treating the shell adapter as application logic."
     exposes [runCli]
     depends [App.Parse, App.Render, App.Commands, App.Queries, Infra.Store, Infra.Audit, Infra.Notify]
+    effects [Args, Console, Disk, Time]
 
 fn helpLines() -> List<String>
     ? "User-facing help for the argv CLI."

@@ -2,6 +2,7 @@ module Types
     intent =
         "Shared types for the roguelike: points, tiles, entities, items."
     depends []
+    effects []
 
 record Point
     x: Int

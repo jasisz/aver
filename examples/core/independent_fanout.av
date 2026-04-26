@@ -2,6 +2,7 @@ module IndependentFanout
     intent =
         "Tests independent products (?! and !) with pure recursive fan-out."
         "No external effects — exercises the independence machinery on pure computations."
+    effects [Console]
 
 fn slow(x: Int) -> Result<Int, String>
     ? "Simulates a computation that returns Ok."

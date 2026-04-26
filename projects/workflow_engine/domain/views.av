@@ -5,6 +5,7 @@ module Views
         "being hidden as imperative mutations."
     exposes [statusText, priorityText, deriveView, deriveSummary]
     depends [Domain.Types, Domain.Time]
+    effects []
 
 fn statusText(status: TaskStatus) -> String
     ? "Readable task status label."

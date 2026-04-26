@@ -4,6 +4,7 @@ module DiskDemo
         "exists, delete, deleteDir, listDir, makeDir."
         "Use granular sub-effects like ! [Disk.readText], ! [Disk.writeText], etc."
         "This keeps signatures minimal and explicit."
+    effects [Console, Disk]
 
 decision DiskAsCapability
     date = "2025-01-01"

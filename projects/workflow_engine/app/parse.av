@@ -5,6 +5,7 @@ module Parse
         "does not need to know any command semantics."
     exposes [Input, parseArgs]
     depends [App.Commands, App.Queries, Domain.Types]
+    effects []
 
 type Input
     ShowHelp

@@ -4,6 +4,7 @@ module Sexpr
         "Atoms are symbols or numbers; lists use parentheses; quote is prefix '."
         "No strings, no dots, no comments, no macros. Pure and deterministic."
     exposes [Sexpr, parse, toString, eval]
+    effects [Console]
 
 type Sexpr
     AtomSym(String)

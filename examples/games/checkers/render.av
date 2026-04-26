@@ -3,6 +3,7 @@ module Render
         "Checkers board rendering: 4-char wide cells, cursor brackets,"
         "piece colors, selection highlight, legal move indicators."
     depends [Board]
+    effects [Terminal]
 
 fn drawAt(x: Int, y: Int, ch: String) -> Unit
     ? "Print a 2-char wide cell at board coordinates"

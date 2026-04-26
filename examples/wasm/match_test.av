@@ -1,5 +1,6 @@
 module MatchTest
     intent = "Test match and Result constructors in WASM"
+    effects []
 
 fn safeDivide(a: Int, b: Int) -> Result<Int, String>
     ? "Safe integer division."

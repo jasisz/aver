@@ -2,6 +2,7 @@ module OracleIndependentProducts
     intent =
         "Demonstrates Oracle verification for independent products."
         "Covers bare ! branch traces and ?! Result unwrapping with leftmost-error priority."
+    effects [Disk, Random]
 
 fn counterStub(path: BranchPath, n: Int, min: Int, max: Int) -> Int
     ? "Return the per-branch oracle counter."

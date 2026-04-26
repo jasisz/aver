@@ -2,6 +2,7 @@ module LawAuto
     intent =
         "Demonstrates Lean proof export for pure Aver code."
         "Shows auto-proven universal laws, symmetric variants, and sampled-only fallback laws."
+    effects [Console]
 
 fn id(x: Int) -> Int
     ? "Identity helper used for reflexive law demo."

@@ -3,6 +3,7 @@ module PricingApp
     exposes [applyDiscount]
     intent =
         "Tests opaque type usage from outside the defining module."
+    effects [Console]
 
 fn applyDiscount(price: Float, rawDiscount: Float) -> Result<Float, String>
     ? "Constructs discount, applies it to price."

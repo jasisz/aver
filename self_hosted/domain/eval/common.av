@@ -4,6 +4,7 @@ module Common
         "Shared evaluator helpers that are independent from the main map/slot execution loops."
         "Includes function-reference fallback, ? propagation markers, and record field lookup."
     exposes [evalVarFallback, wrapPropagatedError, unwrapPropagatedError, normalizeFnReturn, lookupField]
+    effects []
 
 fn evalVarFallback(name: String, fns: FnStore) -> Result<Val, String>
     ? "If variable not in env, try as a named function reference before falling back to a nullary variant."

@@ -5,6 +5,7 @@ module Render
         "reconciliation, and explicit review cases rather than presentation logic."
     exposes [renderCommand, renderQuery]
     depends [App.Commands, App.Queries, Domain.Types, Domain.Ledger, Domain.Views, Domain.Cases]
+    effects []
 
 fn renderCommand(result: Result<CommandReport, String>) -> Result<List<String>, String>
     ? "Maps command execution into rendered output."

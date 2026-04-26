@@ -3,6 +3,7 @@ module Render
         "Braille-based raycasting renderer with wall textures, enemy sprites,"
         "distance shading, HUD, and minimap with direction indicator."
     depends [Math, Level, Types]
+    effects [Terminal]
 
 // ─── Screen constants ──────────────────────────────────────────────────────
 

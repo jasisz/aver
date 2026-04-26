@@ -5,6 +5,7 @@ module StatusBoard
         "Shows batch N on the left while batch N+1 is alive on the right."
         "Best viewed on the default bytecode VM or compiled Rust, where sibling branches overlap for real."
     exposes [main]
+    effects [Terminal, Time]
 
 decision PipelineStatusWall
     date = "2026-04-03"

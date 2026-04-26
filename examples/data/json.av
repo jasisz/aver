@@ -4,6 +4,7 @@ module Json
         "Supports: integers, floats, strings (with \\uXXXX), bools, null, arrays, objects."
         "Validates: trailing content, leading zeros, control chars, invalid escapes."
     exposes [Json, fromString, toString]
+    effects [Console]
 
 type Json
     JsonString(String)

@@ -3,6 +3,7 @@ module Calculator
         "Safe calculator demonstrating Result types, match expressions,"
         "and co-located verification. Errors are values, not exceptions."
     exposes [safeDivide, safeRoot]
+    effects [Console]
 
 decision NoExceptions
     date = "2024-01-15"

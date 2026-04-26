@@ -5,6 +5,7 @@ module FileStorePureCore
         "not of Disk effects. Disk.* stays at the boundary as stateless effects."
         "This file: pure core only. Shell example in file_store_shell.av."
     exposes [write, read]
+    effects [Console]
 
 fn write(s: List<(String, String)>, path: String, body: String) -> List<(String, String)>
     ? "Append a (path, body) entry. Most-recent-wins lookup is in `read`."

@@ -5,6 +5,7 @@ module ClockAsData
         "Wall clocks are NOT monotonic in the real world (NTP, leap, suspend, VM clock skew)."
         "Aver does not pretend otherwise: there is no Time.now state model."
     exposes [isExpired, secondsUntil, refreshIfStale]
+    effects [Console, Time]
 
 fn isExpired(nowMs: Int, deadlineMs: Int) -> Bool
     ? "Pure: a deadline is expired iff now is at or past it."

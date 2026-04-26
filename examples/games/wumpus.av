@@ -4,6 +4,7 @@ module Main
         "Demonstrates match-driven control flow, recursive game loop,"
         "pure logic separated from effectful I/O, and record-based state."
     depends []
+    effects [Console, Random]
 
 fn caveMap() -> List<List<Int>>
     ? "Adjacency list. Index i holds neighbors of room i+1."

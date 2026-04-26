@@ -3,6 +3,7 @@ module IndependentProducts
         "Demonstrates independent products (?! and !) for concurrent effects."
         "A tuple followed by ! is a product of independent computations."
         "A tuple followed by ?! adds Result unwrapping."
+    effects [Console, Disk, Http]
 
 decision IndependenceNotParallelism
     date = "2026-04-01"

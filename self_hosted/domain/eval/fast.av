@@ -4,6 +4,7 @@ module Fast
         "Direct slot-based fast paths for the self-hosted evaluator."
         "Executes tiny leaf wrappers and fixed-shape branches without descending the full AST."
     exposes [runFastLeafSlot, fastBoolSlotBranch, fastEqIntBranch, fastEqStringBranch, fastLtIntSlotsBranch, fastListSlotBranch]
+    effects []
 
 fn runFastLeafSlot(leaf: FastLeaf, calleeEnv: Vector<Val>) -> Result<Val, String>
     ? "Execute a leaf-like fast path directly from slots."

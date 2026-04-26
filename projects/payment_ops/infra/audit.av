@@ -5,6 +5,7 @@ module Audit
         "case openings, and manual resolutions."
     exposes [initAudit, loadEntries, forSubject, recordEntries]
     depends [Domain.Types, Infra.Codec, Infra.Store]
+    effects [Disk]
 
 fn auditPath() -> String
     ? "Path for the append-only audit log."

@@ -3,6 +3,7 @@ module RandomnessParadox
         "The same verify block reads two ways: aver verify passes, aver proof rejects."
         "Sample-based law evaluation with a deterministic stub vs universal theorem over every possible oracle."
         "Lean and Dafny independently reject the export — paradox is a fact about universal quantification, not a backend quirk."
+    effects [Console, Random]
 
 fn distinctStub(path: BranchPath, n: Int) -> Float
     ? "Stub returning n+1 as a Float — different value per call counter."

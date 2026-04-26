@@ -1,5 +1,6 @@
 module WasmArithmetic
     intent = "Minimal test for WASM compilation: pure arithmetic functions."
+    effects []
 
 fn add(a: Int, b: Int) -> Int
     ? "Add two integers."

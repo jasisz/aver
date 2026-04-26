@@ -3,6 +3,7 @@ module Logic
         "Tetris game logic: collision detection, piece movement,"
         "placement, line scoring, and spawn mechanics."
     depends [Board, Pieces]
+    effects []
 
 record GameState
     board: List<List<Option<PieceKind>>>

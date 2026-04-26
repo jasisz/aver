@@ -4,6 +4,7 @@ module Main
         "Grid uses (w+2)×(h+2) padding so neighbors need no bounds checks."
         "Editor mode: place cells with cursor before starting the simulation."
     depends []
+    effects [Console, Terminal, Time]
 
 record FpsState
     frames: Int

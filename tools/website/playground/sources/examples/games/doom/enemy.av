@@ -3,6 +3,7 @@ module Enemy
         "Enemy AI movement and combat for Braille Doom."
         "Imp chases, Demon guards, Ghost teleports."
     depends [Types, Rng, Level, Math]
+    effects []
 
 // ─── AI movement ───────────────────────────────────────────────────────────
 

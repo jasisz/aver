@@ -2,6 +2,7 @@ module Value
     intent =
         "Runtime values for the mini interpreter."
     exposes [Val, valRepr, mapKeyRepr]
+    effects []
 
 fn quoteString(s: String) -> String
     ? "Render a string key or nested string value with quotes."

@@ -5,6 +5,7 @@ module Rules
         "can see which business pressure caused each follow-up event or notification."
     exposes [runRules]
     depends [Domain.Types, Domain.Views]
+    effects []
 
 decision RulesStayAsFunctions
     date = "2026-03-08"

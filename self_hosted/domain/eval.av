@@ -4,6 +4,7 @@ module Eval
         "Facade module for the self-hosted evaluator."
         "Keeps public entry points stable while the implementation lives in smaller submodules under Domain.Eval."
     exposes [evalProgram, evalProgramWithFns, callResolved]
+    effects [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
 
 fn evalProgram(prog: Program) -> Result<Val, String>
     ? "Evaluate a complete program through the self-hosted evaluator."

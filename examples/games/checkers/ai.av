@@ -3,6 +3,7 @@ module Ai
         "Checkers AI: board evaluation with piece count, king bonus, and center"
         "control; alpha-beta pruning search; best move selection."
     depends [Board, Rules]
+    effects []
 
 decision EvaluationStrategy
     date = "2026-03-18"

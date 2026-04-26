@@ -4,6 +4,7 @@ module Date
         "Parses RFC3339-like timestamps into a Date record and provides"
         "formatting and comparison helpers. No external dependencies."
     exposes [Date, parse, format, isBefore]
+    effects [Console, Time]
 
 record Date
     year: Int

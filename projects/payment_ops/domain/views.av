@@ -5,6 +5,7 @@ module Views
         "instead of making the shell layer reinterpret the ledger."
     exposes [statusText, anomalySummary, providerSummary]
     depends [Domain.Types, Domain.Cases]
+    effects []
 
 fn statusText(state: PaymentState) -> String
     ? "User-facing payment status derived from totals and anomalies."

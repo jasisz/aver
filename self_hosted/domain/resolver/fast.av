@@ -4,6 +4,7 @@ module Fast
         "Function fast-path classification for the self-hosted resolver."
         "Tags tiny wrappers and small fixed-shape matches so eval can bypass the full stmt walker."
     exposes [annotateFastFns]
+    effects []
 
 fn annotateFastFns(fns: List<FnDef>, fnMap: Map<String, Int>, acc: List<FnDef>) -> List<FnDef>
     ? "Tag simple single-expression functions so eval can skip the stmt walker."

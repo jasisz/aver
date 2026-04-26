@@ -5,6 +5,7 @@ module Redis
         "commands on the same socket, close explicitly."
     exposes [connect, disconnect, ping, set, get, del]
     depends []
+    effects [Console, Tcp]
 
 decision RespOverTcp
     date = "2026-02-25"

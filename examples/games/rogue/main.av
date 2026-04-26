@@ -4,6 +4,7 @@ module Main
         "concepts that Aver deliberately rejects. Turn-based, procedurally"
         "generated, with FOV and AI. No if/else was harmed in the making."
     depends [Types, Map, Fov, Pathfinding, Combat, Render]
+    effects [Console, Random, Terminal, Time]
 
 decision TurnBasedImmutableState
     date = "2026-03-18"

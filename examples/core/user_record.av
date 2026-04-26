@@ -2,6 +2,7 @@ module UserRecord
     intent =
         "Record example with simple user operations."
     exposes [User, greet, is_adult]
+    effects [Console]
 
 record User
   name: String

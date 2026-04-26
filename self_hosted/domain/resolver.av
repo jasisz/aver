@@ -5,6 +5,7 @@ module Resolver
         "Assigns slot indices to params and local bindings inside each FnDef."
         "Globals and dotted names (builtins, constructors) are left as ExprVar."
     exposes [resolveProgram]
+    effects []
 
 fn resolveProgram(prog: Program) -> Program
     ? "Resolve all functions: slots, direct calls, then attach narrow fast-path tags."

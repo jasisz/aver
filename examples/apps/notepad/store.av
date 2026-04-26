@@ -5,6 +5,7 @@ module Store
         "A counter file tracks the next available ID."
     exposes [Note, initStore, loadAll, addNote, removeNote, findById]
     depends []
+    effects [Disk]
 
 decision FlatFileStorage
     date = "2026-03-01"

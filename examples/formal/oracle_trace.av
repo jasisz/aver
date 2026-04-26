@@ -2,6 +2,7 @@ module OracleTrace
     intent =
         "Demonstrates Oracle verification for classified effects."
         "Shows Oracle laws, explicit stubs, result projection, trace assertions, and multi-stub expansion."
+    effects [Console, Disk, Random, Tcp, Terminal, Time]
 
 fn lowDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int
     ? "Deterministic Random.int stub returning the lower bound."

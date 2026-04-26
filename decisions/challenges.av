@@ -2,6 +2,7 @@ module Challenges
     intent =
         "Challenge-driven design summary for Aver."
         "Each block captures one conclusion from the review discussion."
+    effects []
 
 decision DecisionVersioningUsesGitHistory
     date = "2026-02-25"

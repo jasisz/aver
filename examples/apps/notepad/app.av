@@ -5,6 +5,7 @@ module App
         "and HttpServer for the REST interface."
     exposes [main]
     depends [Apps.Notepad.Store, Apps.Notepad.Routes]
+    effects [Console, Disk, HttpServer]
 
 decision DiskAsDatabase
     date = "2026-03-01"

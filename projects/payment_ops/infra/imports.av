@@ -5,6 +5,7 @@ module Imports
         "dedupe, replay, and reconciliation rather than data wrangling ceremony."
     exposes [parseWebhookFile, parseSettlementFile]
     depends [Domain.Types, Infra.Codec]
+    effects []
 
 fn parseWebhookFile(content: String) -> Result<List<RawWebhook>, String>
     ? "Parses pipe-delimited webhook imports: sourceId|paymentId|kind|amount|currency|occurredAt."

@@ -1,5 +1,6 @@
 module DemoLints
     intent = "Showcase all checker lint warnings."
+    effects [Console]
 
 // B1: List.len == 0 → use pattern match instead
 fn isEmpty(xs: List<Int>) -> Bool

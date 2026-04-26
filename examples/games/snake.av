@@ -3,6 +3,7 @@ module Main
         "Snake game — demonstrates immutable state threading, TCO game loop,"
         "records, pure logic with verify blocks, and Terminal service."
     depends []
+    effects [Console, Random, Terminal, Time]
 
 decision ImmutableGameState
     date = "2026-03-17"

@@ -5,6 +5,7 @@ module Commands
         "derives follow-up rule effects as data, then commits and dispatches that plan."
     exposes [Command, CommandReport, execute]
     depends [Domain.Types, Domain.Projects, Domain.Tasks, Domain.Events, Domain.Rules, Domain.Validation, Infra.Store, Infra.Clock, Infra.Notify, Infra.Audit]
+    effects [Console, Disk, Time]
 
 decision OneRulePassPerCommand
     date = "2026-03-08"

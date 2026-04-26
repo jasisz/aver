@@ -3,6 +3,7 @@ module Board
         "Checkers board representation: 8x8 grid with cell content sum type."
         "Pure operations for reading, writing, moving, and promoting pieces."
     depends []
+    effects []
 
 record Point
     x: Int

@@ -5,6 +5,7 @@ module ParserMatch
         "No dependency on Domain.Parser — this is a leaf module."
     depends [Domain.Token, Domain.Ast]
     exposes [parsePattern, tokenAt, isToken, expect, skipNewlines, skipNewlinesAndDedents, skipTypeAnnotation, skipReturnType, skipDescAndEffects, skipBlock, parseModuleHeader, parseParamList, isBodyEndFlat, isArmStart]
+    effects []
 
 fn tokenAt(tokens: List<Token>, pos: Int) -> Token
     ? "Token at position, or TkEof if past end."

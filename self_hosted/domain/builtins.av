@@ -4,6 +4,7 @@ module Builtins
         "Builtin function implementations for the self-hosted evaluator."
         "Dispatches qualified names like List.len, String.charAt, Console.print to sub-modules."
     exposes [callBuiltin, callBuiltinByIdValues, splitDotted, tryVariantConstructor]
+    effects [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
 
 fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch qualified builtin calls to sub-module implementations."

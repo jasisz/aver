@@ -5,6 +5,7 @@ module Ledger
         "and every current state is rebuilt from those events in plain code."
     exposes [eventName, eventAt, hasSourceId, nextSeq, eventsForPayment, replayPayment, replayAll]
     depends [Domain.Types]
+    effects []
 
 decision ReplayEverythingFromCanonicalEvents
     date = "2026-03-12"

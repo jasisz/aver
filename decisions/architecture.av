@@ -3,6 +3,7 @@ module Architecture
         "Documents the architectural decisions of the Aver interpreter itself."
         "The language uses its own decision blocks to record why it was built the way it was."
         "This file is self-referential: Aver explains its own design in Aver."
+    effects [Console]
 
 decision HostLanguage
     date = "2024-01-10"

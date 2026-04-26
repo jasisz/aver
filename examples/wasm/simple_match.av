@@ -1,5 +1,6 @@
 module SimpleMatch
     intent = "Test safeDivide with Result + match"
+    effects []
 
 fn safeDivide(a: Int, b: Int) -> Result<Int, String>
     match b

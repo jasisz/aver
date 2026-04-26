@@ -3,6 +3,7 @@ module Map
         "Map module for roguelike: 50x30 tile grid."
         "Procedural room-based generation from a seed, pure and verify-able."
     depends [Types]
+    effects []
 
 record Room
     x: Int

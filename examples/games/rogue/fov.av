@@ -2,6 +2,7 @@ module Fov
     intent =
         "Field-of-view computation using recursive shadowcasting (8-octant)."
     depends [Types]
+    effects []
 
 record Visibility
     visible: List<Point>

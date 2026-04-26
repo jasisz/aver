@@ -5,6 +5,7 @@ module Queries
         "inside storage or rendering modules."
     exposes [Query, QueryOutput, run]
     depends [App.Shared, Domain.Types, Domain.Ledger, Domain.Reconcile, Domain.Cases, Domain.Views, Infra.Store, Infra.Audit]
+    effects [Disk]
 
 type Query
     ShowPayment(String)

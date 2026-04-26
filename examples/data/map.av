@@ -2,6 +2,7 @@ module MapExample
     intent =
         "Demonstrates typed Map usage in Aver."
         "Shows map literals, Map.get, Map.entries, recursive counting, and proof-oriented map laws."
+    effects [Console]
 
 fn emptyCounts() -> Map<String, Int>
     ? "Creates an empty word-count map."

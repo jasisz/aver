@@ -4,6 +4,7 @@ module Level
         "Map stored as List<String> where '#' is wall, '.' is floor."
         "Wall type map uses 'S'=Stone, 'B'=Brick, 'M'=Metal."
     depends [Rng, Types]
+    effects []
 
 record Room
     x: Int

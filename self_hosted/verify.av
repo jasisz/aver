@@ -1,6 +1,7 @@
 module Verify
     depends [Domain.Token, Domain.Lexer, Domain.Ast, Domain.Parser]
     intent = "Verify cases for pure parts of the self-hosted interpreter."
+    effects []
 
 fn parseProg(source: String) -> Result<Program, String>
     ? "Lex and parse a source string."

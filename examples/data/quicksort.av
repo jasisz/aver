@@ -3,6 +3,7 @@ module Quicksort
         "Quicksort in direct recursive style."
         "Partition around the pivot into smaller-or-equal and greater lists."
         "No loops, no mutation, just pattern matching and list recursion."
+    effects []
 
 fn sort(xs: List<Int>) -> List<Int>
     ? "Sorts integers with recursive quicksort."

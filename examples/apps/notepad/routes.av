@@ -4,6 +4,7 @@ module Routes
         "Maps endpoints to store operations and builds JSON responses."
     exposes [handleRequest]
     depends [Apps.Notepad.Store, Data.Json]
+    effects [Disk]
 
 decision JsonModuleSerialization
     date = "2026-03-01"
