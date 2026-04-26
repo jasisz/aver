@@ -744,6 +744,49 @@ fn apply_trace_projection(
                     };
                     Ok(VmVerifyEval::Value(Value::Bool(hit)))
                 }
+                "count" => {
+                    // 0.13 Limit nail #3: count laws. `.trace.count(M)` returns
+                    // the number of trace events whose method matches `M` (an
+                    // effect-method reference like `Time.now` or a call literal
+                    // `Console.print("hi")`). Lets users write quantitative
+                    // assertions — "this fn calls the API exactly once" —
+                    // instead of just "contains" / "length over the whole
+                    // trace". The hostile-effect profiles and trace count
+                    // laws compose: `count(Time.now) == n` checks how many
+                    // times the law's fn reaches for the clock under each
+                    // adversarial profile.
+                    if args.len() != 1 {
+                        return Err(format!(
+                            "Trace.count(x) expects 1 arg, got {}",
+                            args.len()
+                        ));
+                    }
+                    let arg = &args[0];
+                    let method_only_name = effect_method_ref_name(arg);
+                    let n = if let Some(method_name) = method_only_name {
+                        filtered
+                            .iter()
+                            .filter(|ev| effect_event_has_method(ev, &method_name))
+                            .count()
+                    } else {
+                        let expected = match expr_to_effect_event(arg) {
+                            Some(ev) => ev,
+                            None => {
+                                return Err(
+                                    "Trace.count(x): argument must be either an effect-method \
+                                     reference (e.g. `Console.print`) or an effect-method call \
+                                     (e.g. `Console.print(\"...\")`) that elaborates to an event literal"
+                                        .to_string(),
+                                );
+                            }
+                        };
+                        filtered
+                            .iter()
+                            .filter(|ev| effect_event_method_args_eq(ev, &expected))
+                            .count()
+                    };
+                    Ok(VmVerifyEval::Value(Value::Int(n as i64)))
+                }
                 _ => Ok(helper_result),
             }
         }
@@ -791,7 +834,7 @@ fn is_trace_projection_shape(expr: &Spanned<Expr>) -> bool {
             let Expr::Attr(inner_attr, method) = &callee.node else {
                 return false;
             };
-            if !matches!(method.as_str(), "length" | "event" | "contains") {
+            if !matches!(method.as_str(), "length" | "event" | "contains" | "count") {
                 return false;
             }
             let (scope, _, _) = peel_tree_nav_stages(inner_attr);

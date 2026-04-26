@@ -188,7 +188,10 @@ fn().trace                    -- Trace
 fn().trace.length()           -- Int
 fn().trace.event(k)           -- Option<EffectEvent>
 fn().trace.contains(eventLit) -- Bool
+fn().trace.count(method)      -- Int  -- 0.13 Limit
 ```
+
+`.trace.count(M)` returns the number of trace events whose method matches `M` (an effect-method reference like `Random.int` or a call literal like `Console.print("rolled")`). It complements `.contains` (boolean any-match) with a quantitative form so laws can pin "this fn calls the API exactly once" or "no extra Disk reads under hostile profiles".
 
 Tree navigation for `!` / `?!` groups:
 

@@ -543,6 +543,60 @@ fn aver_verify_trace_contains_and_event_and_length_projections() {
 }
 
 #[test]
+fn aver_verify_trace_count_projection_matches_event_method() {
+    // 0.13 Limit nail #3: `.trace.count(M)` returns the number of trace
+    // events with method `M`. Argument shape mirrors `.contains` —
+    // either an effect-method reference or a call literal. The fn here
+    // calls Random.int twice and Console.print once; the count law
+    // distinguishes the two methods.
+    let dir = temp_output_dir("aver-verify-trace-count");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn rollPair() -> Int\n\
+         \x20   ? \"two rolls + a print\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   a = Random.int(1, 6)\n\
+         \x20   b = Random.int(1, 6)\n\
+         \x20   Console.print(\"rolled\")\n\
+         \x20   a + b\n\
+         \n\
+         verify rollPair trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   rollPair().trace.count(Random.int) => 2\n\
+         \x20   rollPair().trace.count(Console.print) => 1\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+
+    assert!(
+        output.status.success(),
+        "aver verify failed on trace.count law; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn aver_verify_trace_local_bindings_substitute_into_cases() {
     // Oracle v1: local bindings (`name = expr`) in a verify-trace block
     // are syntactic aliases substituted into each case's LHS / RHS
