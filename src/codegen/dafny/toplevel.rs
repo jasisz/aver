@@ -7,6 +7,17 @@ use crate::types::Type;
 use super::expr::{aver_name_to_dafny, emit_expr};
 
 /// Emit a Dafny type from an Aver type annotation string.
+/// Ghost-predicate names emitted by `oracle_subtypes::dafny_subtype_predicates`
+/// for classified Generative-shape effects. Keep in sync with that module.
+fn bounded_oracle_predicate_for(method: &str) -> Option<&'static str> {
+    match method {
+        "Random.int" => Some("IsRandomIntInBounds"),
+        "Random.float" => Some("IsRandomFloatInUnit"),
+        "Time.unixMs" => Some("IsTimeUnixMsNonneg"),
+        _ => None,
+    }
+}
+
 pub fn emit_type(type_str: &str) -> String {
     type_to_dafny(&parse_type_annotation(type_str))
 }
@@ -761,6 +772,22 @@ pub fn emit_verify_law(
             law_name,
             params.join(", ")
         ));
+    }
+
+    // Subtype-equivalent for Dafny: ghost predicates from
+    // `oracle_subtypes::dafny_subtype_predicates` describe the
+    // runtime invariant for each classified Generative-shape effect
+    // (`IsRandomIntInBounds`, `IsRandomFloatInUnit`,
+    // `IsTimeUnixMsNonneg`). Bind each oracle-given to its predicate
+    // via `requires` so the lemma is exercised only against oracles
+    // that respect the bound — same enforcement as Lean's subtype
+    // carriers, just using Dafny's idiom (predicate + requires)
+    // instead of first-class subtype types over functions.
+    for given in &law.givens {
+        if let Some(pred) = bounded_oracle_predicate_for(&given.type_name) {
+            let oracle_name = aver_name_to_dafny(&given.name);
+            lines.push(format!("  requires {}({})", pred, oracle_name));
+        }
     }
 
     if let Some(when_expr) = &law.when {

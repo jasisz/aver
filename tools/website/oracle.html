@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <title>The randomness paradox — Aver Oracle</title>
-    <meta name="description" content="One verify block. Three tools. Three verdicts. How Aver Oracle traces the path from sample-based testing through adversarial profiles to universal proof — and what conventional Z3 verification can't reach.">
+    <meta name="description" content="One verify block. Four tools. Two verdicts. How Aver Oracle traces the path from sample-based testing through adversarial profiles to universal proof — and what conventional Z3 verification can't reach.">
     <link rel="stylesheet" href="style.css">
     <style>
         .oracle-page { max-width: 1100px; margin: 0 auto; padding: 0 1.5rem; }
@@ -63,12 +63,9 @@
 
         .panels {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(2, 1fr);
             gap: 1rem;
             margin: 1rem 0 1.4rem;
-        }
-        @media (max-width: 1100px) {
-            .panels { grid-template-columns: repeat(2, 1fr); }
         }
         .panel {
             background: var(--code-surface);
@@ -182,8 +179,8 @@
 
     <header class="oracle-hero">
         <div class="eyebrow">Oracle &middot; the randomness paradox</div>
-        <h1>One <code>verify</code> block. Three tools. <span class="accent">Three verdicts.</span></h1>
-        <p class="subhead">A 30-line example that passes <code>aver verify</code>, fails <code>aver verify --hostile</code>, and is rejected by <code>aver proof</code> on identical source &mdash; tracing the path from sampled effects through adversarial profiles to universal proof.</p>
+        <h1>One <code>verify</code> block. Four tools. <span class="accent">Two verdicts.</span></h1>
+        <p class="subhead">A 30-line example: <code>aver verify</code> passes, <code>aver verify --hostile</code> fails, and both proof backends reject it on identical source &mdash; tracing the path from sampled effects through adversarial profiles to universal proof.</p>
     </header>
 
     <section class="oracle-section">

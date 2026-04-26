@@ -477,31 +477,16 @@ pub(crate) fn rewrite_effectful_calls_in_law(
                     line: expr.line,
                 },
                 OracleInjectionMode::LemmaBindingProjected => {
-                    // For classified Generative-shaped effects the Lean
-                    // backend emits the oracle parameter as a subtype
-                    // (e.g. `RandomIntInBounds`); call sites need to
-                    // project through `.val` to get the underlying
-                    // function. Other effect kinds stay as plain idents.
-                    let subtype_carrier = matches!(
-                        crate::types::checker::effect_classification::classify(&g.type_name)
-                            .map(|c| c.dimension),
-                        Some(
-                            crate::types::checker::effect_classification::EffectDimension::Generative
-                        ) | Some(
-                            crate::types::checker::effect_classification::EffectDimension::GenerativeOutput
-                        )
-                    );
-                    let inner = Spanned {
+                    // Inject the bare oracle name; the post-rewrite pass
+                    // `project_oracle_direct_calls` walks the whole
+                    // expression once and lifts every reference to a
+                    // subtype-carried oracle (callee, arg, comparison
+                    // LHS, ...) through `.val`. Doing the projection
+                    // here as well would compound — `Attr(Attr(rng,
+                    // val), val)` for refs the injection wraps.
+                    Spanned {
                         node: Expr::Ident(g.name.clone()),
                         line: expr.line,
-                    };
-                    if subtype_carrier {
-                        Spanned {
-                            node: Expr::Attr(Box::new(inner), "val".to_string()),
-                            line: expr.line,
-                        }
-                    } else {
-                        inner
                     }
                 }
                 OracleInjectionMode::SampleValue => match &g.domain {
@@ -549,35 +534,55 @@ pub(crate) fn rewrite_effectful_calls_in_law(
     rewritten
 }
 
-/// Rewrite every `<oracle_name>(args...)` into
-/// `<oracle_name>.val(args...)` so the call type-checks against the
-/// subtype carrier the lemma quantifier introduces. Recursive over the
-/// whole expression — in nested expressions like `Result.Ok(rng(p, n,
-/// 1, 6))`, only the inner direct call gets projected.
+/// Rewrite every reference to a subtype-carried oracle so the surrounding
+/// expression type-checks against the carrier:
+///
+/// * Bare ident `rng` → `rng.val` (when `rng` is passed as an argument
+///   to a helper, or compared with `=` in a domain-premise / `when`
+///   clause).
+/// * Direct call `rng(args...)` → `rng.val(args...)` (the underlying
+///   function call site).
+///
+/// Recursive over the whole expression. In nested expressions like
+/// `Result.Ok(rng(p, n, 1, 6))` or `pairSpec(BranchPath.Root, rng)`,
+/// each oracle reference is projected exactly once.
 fn project_oracle_direct_calls(
     expr: &crate::ast::Spanned<Expr>,
     oracle_names: &std::collections::HashSet<String>,
 ) -> crate::ast::Spanned<Expr> {
     use crate::ast::Spanned;
     let line = expr.line;
+    let project_ident = |name: &str, line: usize| -> Spanned<Expr> {
+        Spanned {
+            node: Expr::Attr(
+                Box::new(Spanned {
+                    node: Expr::Ident(name.to_string()),
+                    line,
+                }),
+                "val".to_string(),
+            ),
+            line,
+        }
+    };
     let new_node = match &expr.node {
+        // Bare ident reference to a subtype-carried oracle — project.
+        // Catches helper-call args (`pairSpec(root, rng)`) and any
+        // other position where the oracle name appears as a value.
+        Expr::Ident(name) if oracle_names.contains(name) => {
+            return project_ident(name, line);
+        }
         Expr::FnCall(callee, args) => {
             let new_args: Vec<Spanned<Expr>> = args
                 .iter()
                 .map(|a| project_oracle_direct_calls(a, oracle_names))
                 .collect();
-            let new_callee = match &callee.node {
-                Expr::Ident(name) if oracle_names.contains(name) => Spanned {
-                    node: Expr::Attr(
-                        Box::new(Spanned {
-                            node: Expr::Ident(name.clone()),
-                            line: callee.line,
-                        }),
-                        "val".to_string(),
-                    ),
-                    line: callee.line,
-                },
-                _ => project_oracle_direct_calls(callee, oracle_names),
+            // `rng(...)` direct call — project the callee.
+            let new_callee = if let Expr::Ident(name) = &callee.node
+                && oracle_names.contains(name)
+            {
+                project_ident(name, callee.line)
+            } else {
+                project_oracle_direct_calls(callee, oracle_names)
             };
             Expr::FnCall(Box::new(new_callee), new_args)
         }
