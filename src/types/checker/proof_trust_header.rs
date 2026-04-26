@@ -138,8 +138,7 @@ pub(crate) fn generate_for_effects(
     out.push_str("  only the fixed built-in effect set listed above.\n");
     out.push('\n');
 
-    out.push_str("Built-in oracle invariants (runtime-guaranteed, available as\n");
-    out.push_str("trusted lemmas):\n");
+    out.push_str("Built-in oracle invariants (runtime-guaranteed, documented):\n");
     out.push_str("  - Random.int(path, n, min, max): if min ≤ max, the result\n");
     out.push_str("    is in the closed interval [min, max]. The Aver runtime and\n");
     out.push_str("    the user-supplied stubs both honour this.\n");
@@ -149,12 +148,15 @@ pub(crate) fn generate_for_effects(
     out.push_str("    the unix epoch onward in this proof subset.\n");
     out.push_str("  - Disk.exists(path, n, file): the result is a Bool — no\n");
     out.push_str("    third state. Trivially total.\n");
-    out.push_str("  These are emitted as axioms in the generated proof so a\n");
-    out.push_str("  user-side law about a fair-die roll does not have to manually\n");
-    out.push_str("  prove `1 ≤ Random.int(.., 1, 6) ≤ 6` — the runtime carries the\n");
-    out.push_str("  burden, the proof imports it as `oracle_*_in_bounds` /\n");
-    out.push_str("  `oracle_*_in_unit_interval` / `oracle_*_nonnegative` axioms.\n");
-    out.push_str("  See the axiom block right after this header in the entry file.\n");
+    out.push_str("  These hold for the runtime oracles that Aver threads into\n");
+    out.push_str("  lifted specs, and for any user-supplied `given <Effect>` stub\n");
+    out.push_str("  the type-checker accepts. Stating them as `axiom ∀ rng, ...`\n");
+    out.push_str("  in Lean / Dafny would be unsound (it would postulate the\n");
+    out.push_str("  bound for *every* function of the oracle's type, including\n");
+    out.push_str("  pathological ones), so 0.13 documents them here only —\n");
+    out.push_str("  user-side proofs carry the bound as a hypothesis. Subtype-\n");
+    out.push_str("  encoded oracle types (`{ x // bound }`) that surface the\n");
+    out.push_str("  invariant as a free side-condition land in 0.14.\n");
     out.push('\n');
 
     out.push_str("Backend independence:\n");

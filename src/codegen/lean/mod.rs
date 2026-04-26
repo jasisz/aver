@@ -1386,10 +1386,6 @@ fn transpile_unified(
             crate::types::checker::proof_trust_header::generate_commented("-- ", &declared, has_ip),
         );
     }
-    let axiom_block = crate::types::checker::oracle_axioms::lean_axioms(&declared);
-    if !axiom_block.is_empty() {
-        entry_parts.push(axiom_block);
-    }
     entry_parts.push(entry_body);
     let entry_content = entry_parts.join("\n\n");
 

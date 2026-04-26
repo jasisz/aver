@@ -107,7 +107,7 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 name: "normal",
                 stub_fn_name: stub_name("normal"),
                 stub_body: format!(
-                    "fn {}() -> Terminal.Size\n    ? \"honest: typical 80x24 terminal\"\n    Terminal.Size(rows = 24, cols = 80)\n",
+                    "fn {}() -> Terminal.Size\n    ? \"honest: typical 80x24 terminal\"\n    Terminal.Size(width = 80, height = 24)\n",
                     stub_name("normal")
                 ),
             },
@@ -115,7 +115,7 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 name: "minimal",
                 stub_fn_name: stub_name("minimal"),
                 stub_body: format!(
-                    "fn {}() -> Terminal.Size\n    ? \"hostile: tiny terminal, layout under pressure\"\n    Terminal.Size(rows = 1, cols = 1)\n",
+                    "fn {}() -> Terminal.Size\n    ? \"hostile: tiny terminal, layout under pressure\"\n    Terminal.Size(width = 1, height = 1)\n",
                     stub_name("minimal")
                 ),
             },
@@ -506,7 +506,7 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 ),
             },
         ],
-        "Tcp.writeLine" | "Tcp.close" => vec![
+        "Tcp.writeLine" => vec![
             HostileProfile {
                 name: "normal_ok",
                 stub_fn_name: stub_name("normal_ok"),
@@ -520,6 +520,24 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 stub_fn_name: stub_name("always_err"),
                 stub_body: format!(
                     "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection, line: String) -> Result<Unit, String>\n    ? \"hostile: connection write fails\"\n    Result.Err(\"hostile: dropped\")\n",
+                    stub_name("always_err")
+                ),
+            },
+        ],
+        "Tcp.close" => vec![
+            HostileProfile {
+                name: "normal_ok",
+                stub_fn_name: stub_name("normal_ok"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection) -> Result<Unit, String>\n    ? \"honest: close succeeds\"\n    Result.Ok(Unit)\n",
+                    stub_name("normal_ok")
+                ),
+            },
+            HostileProfile {
+                name: "always_err",
+                stub_fn_name: stub_name("always_err"),
+                stub_body: format!(
+                    "fn {}(path: BranchPath, n: Int, conn: Tcp.Connection) -> Result<Unit, String>\n    ? \"hostile: close on already-dropped connection\"\n    Result.Err(\"hostile: dropped\")\n",
                     stub_name("always_err")
                 ),
             },
@@ -625,6 +643,82 @@ mod tests {
                 parser
                     .parse()
                     .unwrap_or_else(|e| panic!("{}/{}: parse failed: {}", method, p.name, e));
+            }
+        }
+    }
+
+    /// Every stub body must (a) type-check cleanly as an Aver fn, and
+    /// (b) have a signature that matches what the runtime expects from
+    /// an oracle for that classified effect — same parameter list as
+    /// `effect_classification::oracle_signature`, same return type,
+    /// same record-field shapes (Terminal.Size: width/height, not
+    /// rows/cols). Without this test, the kind of regression second-AI
+    /// caught (Terminal.Size with wrong fields, Tcp.close inheriting
+    /// Tcp.writeLine's `line` param) sneaks through the parse-only
+    /// sanity check and only surfaces when a real user runs `aver
+    /// verify --hostile` against a fn that uses that effect.
+    #[test]
+    fn stub_bodies_typecheck_with_signature_matching_oracle_classification() {
+        use crate::source::parse_source;
+        use crate::types::checker::run_type_check_full;
+
+        // Every method that ships a stub. Add new ones here as
+        // `hostile_profiles_for` grows.
+        let methods = [
+            "Args.get",
+            "Env.get",
+            "Terminal.size",
+            "Random.int",
+            "Random.float",
+            "Time.now",
+            "Time.unixMs",
+            "Disk.readText",
+            "Disk.exists",
+            "Disk.listDir",
+            "Console.readLine",
+            "Http.get",
+            "Http.head",
+            "Http.delete",
+            "Http.post",
+            "Http.put",
+            "Http.patch",
+            "Disk.writeText",
+            "Disk.appendText",
+            "Disk.delete",
+            "Disk.deleteDir",
+            "Disk.makeDir",
+            "Tcp.send",
+            "Tcp.ping",
+            "Tcp.connect",
+            "Tcp.readLine",
+            "Tcp.writeLine",
+            "Tcp.close",
+            "Terminal.readKey",
+        ];
+        for method in methods {
+            for p in hostile_profiles_for(method) {
+                let src = format!(
+                    "module M\n    intent = \"t\"\n    effects []\n\n{}",
+                    p.stub_body
+                );
+                let items = parse_source(&src).unwrap_or_else(|e| {
+                    panic!("{}/{}: parse: {:?}", method, p.name, e)
+                });
+                let result = run_type_check_full(&items, None);
+                if !result.errors.is_empty() {
+                    panic!(
+                        "{}/{}: typecheck errors:\n{}\n\nbody:\n{}",
+                        method,
+                        p.name,
+                        result
+                            .errors
+                            .iter()
+                            .map(|e| format!("  {}: {}", e.line, e.message))
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                        p.stub_body
+                    );
+                }
             }
         }
     }

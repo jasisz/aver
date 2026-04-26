@@ -1269,7 +1269,12 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
         if let Some(guard_name) = &case_fns.guard {
             let guard_result = vm_call_guard_helper(machine, guard_name);
             // Drain any trace events emitted while the guard ran so
-            // they don't bleed into the case's trace assertions.
+            // they don't bleed into the case's trace assertions. The
+            // public wrapper also stops trace collection as a side
+            // effect, so we restart it on the happy path before the
+            // case body runs — otherwise the body would lose effect-
+            // gate suppression and `.trace.*` assertions would see
+            // an empty buffer.
             let _ = machine.take_trace_events_with_coords();
             let cleanup = |m: &mut vm::VM| {
                 if has_stubs {
@@ -1277,7 +1282,10 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                 }
             };
             match guard_result {
-                Ok(Value::Bool(true)) => {}
+                Ok(Value::Bool(true)) => {
+                    machine.start_trace_collection();
+                    machine.set_trace_root_fn_id(root_fn_id);
+                }
                 Ok(Value::Bool(false)) => {
                     cleanup(machine);
                     skipped += 1;
@@ -1475,7 +1483,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{Literal, Spanned, VerifyGiven, VerifyGivenDomain, VerifyLaw};
+    use crate::ast::{Literal, Spanned, VerifyLaw};
 
     fn parse_source(src: &str) -> Vec<TopLevel> {
         let mut lexer = crate::lexer::Lexer::new(src);

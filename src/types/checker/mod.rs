@@ -25,7 +25,6 @@ pub mod hostile_values;
 mod infer;
 mod memo;
 mod modules;
-pub mod oracle_axioms;
 pub mod proof_trust_header;
 
 #[cfg(test)]
