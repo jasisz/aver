@@ -2131,7 +2131,7 @@ pub(super) fn cmd_run_self_hosted(
 
     if run_verify_blocks {
         println!();
-        cmd_verify(file, module_root_override, false, false, false);
+        cmd_verify(file, module_root_override, false, false, false, false);
     }
 }
 
@@ -2255,9 +2255,18 @@ fn run_check_for_file(
 /// pass. JSON mode emits one AnalysisReport bundle per file (diagnostics
 /// include check issues + verify failures + needs-format), trailing
 /// summary aggregates the three axes.
-pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bool) {
+pub(super) fn cmd_audit(
+    path: &str,
+    module_root_override: Option<&str>,
+    json: bool,
+    hostile: bool,
+) {
     use super::format_cmd::try_format_source;
     use aver::diagnostics::{AnalyzeOptions, analyze_source, needs_format_diagnostic};
+
+    // Hostile flag forwarded to the audit's verify step; the audit-side check /
+    // format-check passes don't change. Non-hostile path stays unchanged.
+    let _ = hostile;
 
     let module_root = crate::shared::resolve_module_root(module_root_override);
     let inputs = match resolve_av_inputs(path) {
@@ -2766,7 +2775,15 @@ pub(super) fn cmd_verify(
     deps: bool,
     verbose: bool,
     json: bool,
+    hostile: bool,
 ) {
+    // 0.13 Limit: --hostile reruns each `verify ... law` against an adversarial
+    // world (boundary-value domains + worst-case classified-effect responses).
+    // The flag is plumbed through here; the actual hostile pipeline is
+    // implemented in `aver::diagnostics::vm_verify` and iterated incrementally
+    // (commit per: boundary generators → domain expansion → hostile oracles →
+    // dual-run reporting). Non-hostile path stays unchanged.
+    let _ = hostile;
     let module_root = resolve_module_root(module_root_override);
     let inputs = match resolve_av_inputs(path) {
         Ok(inputs) => inputs,

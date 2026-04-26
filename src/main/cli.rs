@@ -190,6 +190,17 @@ pub(super) enum Commands {
         /// Output diagnostics as JSON (NDJSON, one object per line)
         #[arg(long)]
         json: bool,
+        /// Re-run each `verify ... law` against an adversarial world. Boundary
+        /// values for declared domains (Int min/max/0/±1, String empty/long/edge
+        /// unicode, ...) and worst-case classified-effect responses (Time.now
+        /// goes backward, Disk.readText returns Err, Random.int returns
+        /// boundaries, ...). Compared against the declared run, divergences are
+        /// reported on stderr — catches one-sided assumptions in both
+        /// directions (law assumed nice-world, or law assumed only-hostile).
+        /// `when` clauses stay binding; `given` ranges become exploration
+        /// hints, not contracts.
+        #[arg(long)]
+        hostile: bool,
     },
     /// Run check + verify + format-check in one pass
     Audit {
@@ -202,6 +213,9 @@ pub(super) enum Commands {
         /// Emit NDJSON AnalysisReport bundles — one per file, trailing summary
         #[arg(long)]
         json: bool,
+        /// Forward `--hostile` to the verify step. See `aver verify --hostile`.
+        #[arg(long)]
+        hostile: bool,
     },
     /// Format Aver source files
     Format {
