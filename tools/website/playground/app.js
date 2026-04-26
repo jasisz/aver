@@ -3399,10 +3399,14 @@ if (auditBtn) {
         clearOutput();
         clearCompileMeta();
 
+        const hostileToggle = document.querySelector("[data-hostile-toggle]");
+        const hostile = !!(hostileToggle && hostileToggle.checked);
+        const auditKind = hostile ? "audit_hostile" : "audit";
+
         try {
             const comp = await loadCompiler();
-            setStatus("Auditing…", "info");
-            const json = runAnalysis(comp, "audit", source);
+            setStatus(hostile ? "Auditing (hostile)…" : "Auditing…", "info");
+            const json = runAnalysis(comp, auditKind, source);
             const data = parseAuditBundle(json);
 
             const panel = document.createElement("div");

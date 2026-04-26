@@ -190,6 +190,28 @@ body {
     background: rgba(74, 222, 128, 0.1) !important;
     border-color: var(--green) !important;
 }
+/* Hostile toggle — sits next to Audit and only matters for that
+   button. Subtle muted look until checked, then picks up the audit
+   green so the user sees that hostile-mode audit is what they'll get. */
+.audit-hostile-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0 0.5rem;
+    font-size: 0.85em;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+}
+.audit-hostile-toggle input[type="checkbox"] {
+    margin: 0;
+    accent-color: var(--green);
+    cursor: pointer;
+}
+.audit-hostile-toggle:has(input:checked) {
+    color: var(--green);
+    font-weight: 600;
+}
 .btn-why {
     color: #c084fc !important;
     border-color: rgba(192, 132, 252, 0.45) !important;
