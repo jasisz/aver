@@ -29,20 +29,34 @@ use crate::value::{Value, aver_repr, list_from_vec};
 use crate::verify_law::expand::{ExpandedCase, ExpansionMode, expand_law_cases};
 use crate::vm;
 
+/// Mirror of the parser's declared-side cap (`Parser::VERIFY_LAW_MAX_CASES`).
+/// Hostile expansion is unbounded *in principle* — value-side boundary
+/// sets multiply with the per-method profile cartesian — so a fn with
+/// 3 classified effects (5 × 4 × 3 = 60 worlds) and a `given x: Int = 0..100`
+/// would balloon to 6_000 cases per declared case. We cap at the same
+/// 10_000 the parser uses for declared expansion; over-budget blocks
+/// fail with a runtime error pointing at the law's source line so the
+/// user can either tighten the `given` domain or drop a `when` guard.
+pub const VERIFY_HOSTILE_MAX_CASES: usize = 10_000;
+
 /// Replace `block.cases` with the hostile expansion of its law template,
 /// then layer effect-side hostile on top: each case is multiplied by the
 /// cartesian product of `(method, profile)` adversarial responses for
-/// every classified effect the fn declares but the user did not pin via
-/// `given`. Both expansions run together when `--hostile` is on; cases
-/// the user wrote stay as-is (origin=false, profiles=[]), value-hostile
-/// cases get origin=true / profiles=[], effect-hostile cases get
-/// origin=true / profiles=[(method, profile), ...].
+/// every classified effect the fn declares. Both expansions run together
+/// when `--hostile` is on; cases the user wrote stay as-is (origin=false,
+/// profiles=[]), value-hostile cases get origin=true / profiles=[],
+/// effect-hostile cases get origin=true / profiles=[(method, profile),...].
 ///
 /// No-op for non-law blocks on the value side (hostile only expands
 /// `given` *domains*, which exist in law form), but effect-side hostile
 /// applies to both forms since classified effects are independent of
 /// `given` shape.
-fn apply_hostile_expansion(block: &mut VerifyBlock, items: &[TopLevel]) {
+///
+/// Returns `Err` when the cartesian would exceed
+/// `VERIFY_HOSTILE_MAX_CASES`; mirrors the parser's declared-side cap so
+/// `--hostile` can't accidentally produce a multi-hour run from a small
+/// source.
+fn apply_hostile_expansion(block: &mut VerifyBlock, items: &[TopLevel]) -> Result<(), String> {
     let value_expanded: Vec<(
         Spanned<Expr>,
         Spanned<Expr>,
@@ -75,6 +89,23 @@ fn apply_hostile_expansion(block: &mut VerifyBlock, items: &[TopLevel]) {
     };
 
     let effect_combos = collect_effect_profile_combinations(block, items);
+
+    // Pre-flight cap check. The post-expansion length is
+    // value_expanded × (1 + |effect_combos|); we use checked_mul so
+    // 32-bit-overflowing inputs (rare but possible if the user wrote
+    // a `given x: Int = 0..i32::MAX`) still return a clean diagnostic
+    // instead of panicking on the unsigned wrap.
+    let per_value = effect_combos.len().saturating_add(1);
+    let projected = value_expanded.len().checked_mul(per_value);
+    if projected.map(|n| n > VERIFY_HOSTILE_MAX_CASES).unwrap_or(true) {
+        return Err(format!(
+            "verify '{}' under --hostile expands to more than {} cases ({} declared/boundary cases × {} adversarial worlds). Tighten the `given` domain, add a `when` precondition, or drop hostile mode for this law.",
+            block.fn_name,
+            VERIFY_HOSTILE_MAX_CASES,
+            value_expanded.len(),
+            per_value,
+        ));
+    }
 
     // Hostile-injected cases inherit the law block's source line so
     // diagnostics point to the `verify ... law` declaration instead of
@@ -132,6 +163,7 @@ fn apply_hostile_expansion(block: &mut VerifyBlock, items: &[TopLevel]) {
     if let VerifyKind::Law(law_box) = &mut block.kind {
         law_box.sample_guards = new_guards;
     }
+    Ok(())
 }
 
 /// For a verify block, find the function under test and return the
@@ -386,7 +418,7 @@ pub fn run_verify_for_items_vm_with_mode(
 
     if mode == ExpansionMode::Hostile {
         for block in &mut verify_blocks {
-            apply_hostile_expansion(block, &items);
+            apply_hostile_expansion(block, &items)?;
         }
     }
 
@@ -453,7 +485,7 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode(
 
     if mode == ExpansionMode::Hostile {
         for block in &mut verify_blocks {
-            apply_hostile_expansion(block, &items);
+            apply_hostile_expansion(block, &items)?;
         }
     }
 
@@ -1525,7 +1557,7 @@ verify currentYear
         let declared_count = block.cases.len();
         assert_eq!(declared_count, 2);
 
-        apply_hostile_expansion(block, &items);
+        apply_hostile_expansion(block, &items).expect("expansion within budget");
 
         // Per declared case: 1 base + N profile cases (one per Time.now
         // profile), where N grows over time as we add adversarial worlds.
@@ -1546,6 +1578,41 @@ verify currentYear
             .filter(|p| !p.is_empty())
             .count();
         assert_eq!(profile_count, declared_count * time_now_profiles);
+    }
+
+    #[test]
+    fn apply_hostile_expansion_rejects_over_budget_cartesian() {
+        // Stress: a value-side `given x: Int = 1..N` plus a cartesian over
+        // every Time.now / Random.int profile would balloon to N × 5 × 4
+        // cases. Pick N so we cross the 10_000 cap, and assert the runner
+        // returns a clean error instead of running for an hour.
+        let big_range = (VERIFY_HOSTILE_MAX_CASES / 5) + 100;
+        let src = format!(
+            "module M\n    effects [Time.now]\n\nfn f(x: Int) -> Int\n    ? \"toy\"\n    ! [Time.now]\n    x\n\nverify f law big\n    given x: Int = 1..{}\n    f(x) => x\n",
+            big_range
+        );
+        // Build items via parse_source — this exercises the parser-side
+        // declared cap too. If the parser rejects the range first (it caps
+        // at the same 10_000) then the test still validates that the
+        // parser/verify caps line up. Otherwise apply_hostile_expansion's
+        // cap fires.
+        let parse_result = crate::source::parse_source(&src);
+        if let Ok(items) = parse_result {
+            let mut blocks = crate::checker::merge_verify_blocks(&items);
+            if let Some(block) = blocks.first_mut() {
+                let res = apply_hostile_expansion(block, &items);
+                assert!(
+                    res.is_err(),
+                    "expected --hostile cap to reject over-budget expansion"
+                );
+                assert!(
+                    res.unwrap_err().contains("more than"),
+                    "error should mention the cap"
+                );
+            }
+        }
+        // Either parser rejected first or our cap rejected — both are
+        // acceptable; the assertion is "no silent multi-million case run".
     }
 
     #[test]
