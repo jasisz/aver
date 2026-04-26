@@ -20,6 +20,7 @@ pub mod effect_classification;
 pub mod effect_lifting;
 mod exhaustiveness;
 mod flow;
+pub mod hostile_effects;
 pub mod hostile_values;
 mod infer;
 mod memo;
