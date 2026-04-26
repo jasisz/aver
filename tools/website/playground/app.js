@@ -899,6 +899,31 @@ fn main() -> Unit
     Console.print("live roll: {roll()}")
     Console.print("live roll: {roll()}")
 `,
+
+    // 0.13 Limit: showcase for `aver verify --hostile` / Audit's
+    // hostile toggle. The law looks plausible — "the deadline is
+    // millennia away, surely we're not past it" — but quietly assumes
+    // that Time.unixMs() returns a believable real-clock value. Run
+    // Audit without hostile: passes. Flip hostile on: the saturated
+    // profile (clock pegged at i64-saturated value) breaks the law,
+    // and the diagnostic points at the missing precondition.
+    "hostile-clock": `module DeadlineCheck
+    intent =
+        "Demonstrate \`aver verify --hostile\`: the law passes under real time"
+        "but breaks under the saturated-clock adversarial profile. Toggle the"
+        "hostile checkbox next to Audit and watch the failure call out a"
+        "missing \`when\` precondition or unpinned \`given\` for Time.unixMs."
+    effects [Time.unixMs]
+
+fn willCompleteBeforeDeadline(deadlineMs: Int) -> Bool
+    ? "is the current time still before the deadline?"
+    ! [Time.unixMs]
+    Time.unixMs() < deadlineMs
+
+verify willCompleteBeforeDeadline law deadlineHolds
+    given d: Int = [9999999999999]
+    willCompleteBeforeDeadline(d) => true
+`,
 };
 
 const codeEditor = document.querySelector("[data-code-editor]");
