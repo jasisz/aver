@@ -19,6 +19,7 @@ use super::factories::{
 };
 use super::model::{Diagnostic, VerifyBlockResult, VerifySummary};
 use super::vm_verify;
+use crate::verify_law::expand::ExpansionMode;
 
 /// Run every verify block found in `items` and return failing-case
 /// diagnostics plus a per-block scorecard.
@@ -31,8 +32,28 @@ pub fn run_verify_blocks(
     file_label: &str,
     source: &str,
 ) -> (Vec<Diagnostic>, VerifySummary) {
+    run_verify_blocks_with_mode(items, base_dir, file_label, source, ExpansionMode::Declared)
+}
+
+/// Like [`run_verify_blocks`] but lets the caller request hostile mode
+/// (`aver audit --hostile`, playground "Hostile" toggle). Hostile expands
+/// each `verify ... law` block's `given` domains with the per-type boundary
+/// set and multiplies cases by every applicable adversarial effect profile.
+pub fn run_verify_blocks_with_mode(
+    items: Vec<TopLevel>,
+    base_dir: Option<&str>,
+    file_label: &str,
+    source: &str,
+    mode: ExpansionMode,
+) -> (Vec<Diagnostic>, VerifySummary) {
     let config = base_dir.and_then(load_project_config);
-    let results = match vm_verify::run_verify_for_items_vm(items, config, base_dir, file_label) {
+    let results = match vm_verify::run_verify_for_items_vm_with_mode(
+        items,
+        config,
+        base_dir,
+        file_label,
+        mode,
+    ) {
         Ok(r) => r,
         Err(_) => {
             return (Vec::new(), VerifySummary { blocks: Vec::new() });
@@ -49,13 +70,34 @@ pub fn run_verify_blocks_with_loaded(
     file_label: &str,
     source: &str,
 ) -> (Vec<Diagnostic>, VerifySummary) {
-    let results =
-        match vm_verify::run_verify_for_items_vm_with_loaded(items, loaded, None, file_label) {
-            Ok(r) => r,
-            Err(_) => {
-                return (Vec::new(), VerifySummary { blocks: Vec::new() });
-            }
-        };
+    run_verify_blocks_with_loaded_and_mode(
+        items,
+        loaded,
+        file_label,
+        source,
+        ExpansionMode::Declared,
+    )
+}
+
+pub fn run_verify_blocks_with_loaded_and_mode(
+    items: Vec<TopLevel>,
+    loaded: Vec<crate::source::LoadedModule>,
+    file_label: &str,
+    source: &str,
+    mode: ExpansionMode,
+) -> (Vec<Diagnostic>, VerifySummary) {
+    let results = match vm_verify::run_verify_for_items_vm_with_loaded_and_mode(
+        items,
+        loaded,
+        None,
+        file_label,
+        mode,
+    ) {
+        Ok(r) => r,
+        Err(_) => {
+            return (Vec::new(), VerifySummary { blocks: Vec::new() });
+        }
+    };
     map_results_to_diagnostics(results, file_label, source)
 }
 

@@ -2259,14 +2259,6 @@ pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bo
     use super::format_cmd::try_format_source;
     use aver::diagnostics::{AnalyzeOptions, analyze_source, needs_format_diagnostic};
 
-    // 0.13 Limit: audit's verify step goes through `analyze_source` →
-    // `verify_run::run_verify_blocks`, not `cmd_verify`'s direct call into
-    // vm_verify. Threading hostile through that path adds an `ExpansionMode`
-    // option to `AnalyzeOptions`; deferred to a follow-up commit. The flag
-    // is accepted here for CLI symmetry so users don't get a "no such flag"
-    // surprise when running audit; treated as no-op until plumbed.
-    let _ = hostile;
-
     let module_root = crate::shared::resolve_module_root(module_root_override);
     let inputs = match resolve_av_inputs(path) {
         Ok(v) => v,
@@ -2308,6 +2300,7 @@ pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bo
         let mut opts = AnalyzeOptions::new(shown_path.clone());
         opts.module_base_dir = Some(module_root.clone());
         opts.include_verify_run = true;
+        opts.verify_run_hostile = hostile;
         let mut report = analyze_source(&source, &opts);
 
         // Format check: append needs-format diagnostic with structured

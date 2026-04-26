@@ -48,6 +48,13 @@ pub struct AnalyzeOptions {
     /// case. Off by default: analysis should stay pure static checks;
     /// callers opt in explicitly.
     pub include_verify_run: bool,
+    /// When `true` and `include_verify_run` is also `true`, run verify
+    /// blocks under `--hostile` mode: typed `given` domains are expanded
+    /// with the per-type boundary set and each case is multiplied by the
+    /// adversarial effect-profile cartesian. Failures that surface only
+    /// here are flagged with `from_hostile = true` so the renderer can
+    /// suggest weakening the law (`when`) or pinning the effect (`given`).
+    pub verify_run_hostile: bool,
     /// When `true`, populate `AnalysisReport::why_summary` with
     /// per-function justification data. Off by default.
     pub include_why_summary: bool,
@@ -73,6 +80,7 @@ impl Default for AnalyzeOptions {
             include_unused_bindings: true,
             include_verify_effectful_warnings: true,
             include_verify_run: false,
+            verify_run_hostile: false,
             include_why_summary: false,
             include_context_summary: false,
         }
@@ -257,19 +265,26 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
         // now works through the same VM path via loaded_modules →
         // compile_program_with_loaded_modules.
         let runnable_items = items.clone();
+        let mode = if options.verify_run_hostile {
+            crate::verify_law::expand::ExpansionMode::Hostile
+        } else {
+            crate::verify_law::expand::ExpansionMode::Declared
+        };
         let (verify_diags, verify_summary) = if let Some(loaded) = options.loaded_modules.clone() {
-            super::verify_run::run_verify_blocks_with_loaded(
+            super::verify_run::run_verify_blocks_with_loaded_and_mode(
                 runnable_items,
                 loaded,
                 &options.file_label,
                 source,
+                mode,
             )
         } else {
-            super::verify_run::run_verify_blocks(
+            super::verify_run::run_verify_blocks_with_mode(
                 runnable_items,
                 options.module_base_dir.as_deref(),
                 &options.file_label,
                 source,
+                mode,
             )
         };
         for diag in verify_diags {
