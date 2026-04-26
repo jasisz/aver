@@ -237,6 +237,13 @@ pub struct Module {
     pub exposes_opaque: Vec<String>,
     pub exposes_line: Option<usize>,
     pub intent: String,
+    /// Module-level effect surface declaration. `None` is legacy/mixed
+    /// (no enforcement, soft warning emitted by `aver check`); `Some([])`
+    /// is explicit pure; `Some([...])` is a declared boundary — every
+    /// function's `! [...]` must be a subset (namespace-level entry like
+    /// `Disk` admits any `Disk.*` method).
+    pub effects: Option<Vec<String>>,
+    pub effects_line: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
