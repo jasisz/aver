@@ -682,12 +682,14 @@ impl Parser {
         }
 
         debug_assert_eq!(cases.len(), case_spans.len());
+        let case_hostile_origins = vec![false; cases.len()];
         Ok(VerifyBlock {
             fn_name,
             line,
             cases,
             case_spans,
             case_givens,
+            case_hostile_origins,
             kind,
             trace: trace_mode,
             cases_givens: cases_givens_out,

@@ -2255,17 +2255,16 @@ fn run_check_for_file(
 /// pass. JSON mode emits one AnalysisReport bundle per file (diagnostics
 /// include check issues + verify failures + needs-format), trailing
 /// summary aggregates the three axes.
-pub(super) fn cmd_audit(
-    path: &str,
-    module_root_override: Option<&str>,
-    json: bool,
-    hostile: bool,
-) {
+pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bool, hostile: bool) {
     use super::format_cmd::try_format_source;
     use aver::diagnostics::{AnalyzeOptions, analyze_source, needs_format_diagnostic};
 
-    // Hostile flag forwarded to the audit's verify step; the audit-side check /
-    // format-check passes don't change. Non-hostile path stays unchanged.
+    // 0.13 Limit: audit's verify step goes through `analyze_source` →
+    // `verify_run::run_verify_blocks`, not `cmd_verify`'s direct call into
+    // vm_verify. Threading hostile through that path adds an `ExpansionMode`
+    // option to `AnalyzeOptions`; deferred to a follow-up commit. The flag
+    // is accepted here for CLI symmetry so users don't get a "no such flag"
+    // surprise when running audit; treated as no-op until plumbed.
     let _ = hostile;
 
     let module_root = crate::shared::resolve_module_root(module_root_override);
@@ -2541,17 +2540,26 @@ fn run_verify_for_file(
     file: &str,
     module_root: &str,
     deps: bool,
+    hostile: bool,
 ) -> Result<Vec<VerifyFileResult>, String> {
+    use aver::verify_law::expand::ExpansionMode;
+
     let units = collect_check_units(file, module_root, deps)?;
     let mut file_results = Vec::new();
 
     let config = load_runtime_policy(module_root)?;
+    let mode = if hostile {
+        ExpansionMode::Hostile
+    } else {
+        ExpansionMode::Declared
+    };
     for (path, source, items) in units {
-        let blocks = aver::diagnostics::vm_verify::run_verify_for_items_vm(
+        let blocks = aver::diagnostics::vm_verify::run_verify_for_items_vm_with_mode(
             items,
             config.clone(),
             Some(module_root),
             &path,
+            mode,
         )?;
         file_results.push(VerifyFileResult {
             path,
@@ -2778,12 +2786,9 @@ pub(super) fn cmd_verify(
     hostile: bool,
 ) {
     // 0.13 Limit: --hostile reruns each `verify ... law` against an adversarial
-    // world (boundary-value domains + worst-case classified-effect responses).
-    // The flag is plumbed through here; the actual hostile pipeline is
-    // implemented in `aver::diagnostics::vm_verify` and iterated incrementally
-    // (commit per: boundary generators → domain expansion → hostile oracles →
-    // dual-run reporting). Non-hostile path stays unchanged.
-    let _ = hostile;
+    // world. Domain side (this commit) injects boundary values per typed
+    // `given`; effect side (next commit) responds with worst-case classified-
+    // effect oracles; differential reporting is layered on top of both.
     let module_root = resolve_module_root(module_root_override);
     let inputs = match resolve_av_inputs(path) {
         Ok(inputs) => inputs,
@@ -2799,7 +2804,7 @@ pub(super) fn cmd_verify(
     let mut printed_any = false;
 
     for file in &inputs {
-        match run_verify_for_file(file, &module_root, deps) {
+        match run_verify_for_file(file, &module_root, deps, hostile) {
             Ok(file_results) => {
                 // Render immediately — streaming output
                 let has_blocks = file_results.iter().any(|fr| !fr.blocks.is_empty());

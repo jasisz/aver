@@ -102,7 +102,10 @@ mod tests {
         let bs = boundary_values(&Type::Str);
         assert!(bs.contains(&Literal::Str(String::new())));
         // NUL embedded
-        assert!(bs.iter().any(|l| matches!(l, Literal::Str(s) if s.contains('\0'))));
+        assert!(
+            bs.iter()
+                .any(|l| matches!(l, Literal::Str(s) if s.contains('\0')))
+        );
         // Multi-byte
         assert!(
             bs.iter()
@@ -113,9 +116,18 @@ mod tests {
     #[test]
     fn float_boundary_includes_nan_and_infinities() {
         let bs = boundary_values(&Type::Float);
-        assert!(bs.iter().any(|l| matches!(l, Literal::Float(f) if f.is_nan())));
-        assert!(bs.iter().any(|l| matches!(l, Literal::Float(f) if f.is_infinite() && *f > 0.0)));
-        assert!(bs.iter().any(|l| matches!(l, Literal::Float(f) if f.is_infinite() && *f < 0.0)));
+        assert!(
+            bs.iter()
+                .any(|l| matches!(l, Literal::Float(f) if f.is_nan()))
+        );
+        assert!(
+            bs.iter()
+                .any(|l| matches!(l, Literal::Float(f) if f.is_infinite() && *f > 0.0))
+        );
+        assert!(
+            bs.iter()
+                .any(|l| matches!(l, Literal::Float(f) if f.is_infinite() && *f < 0.0))
+        );
     }
 
     #[test]

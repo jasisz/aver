@@ -298,6 +298,13 @@ pub struct VerifyBlock {
     pub case_spans: Vec<SourceSpan>,
     /// Per-case given bindings for law verify (empty for Cases kind).
     pub case_givens: Vec<Vec<(String, Spanned<Expr>)>>,
+    /// Parallel to `cases`: `true` when the case was injected by
+    /// `aver verify --hostile` (boundary-value expansion of a law's
+    /// `given` clause), `false` for cases the user wrote directly.
+    /// Empty under non-hostile runs; the renderer uses this to label
+    /// failures as "outside declared given — encode as `when` if
+    /// precondition" when they only fail under the hostile expansion.
+    pub case_hostile_origins: Vec<bool>,
     pub kind: VerifyKind,
     /// Oracle v1: `trace` keyword enables trace-aware assertions
     /// (`.trace.*`, `.result`, event literals in `.contains` / match
@@ -323,12 +330,14 @@ impl VerifyBlock {
         kind: VerifyKind,
     ) -> Self {
         let case_spans = vec![SourceSpan::default(); cases.len()];
+        let case_hostile_origins = vec![false; cases.len()];
         Self {
             fn_name,
             line,
             cases,
             case_spans,
             case_givens: vec![],
+            case_hostile_origins,
             kind,
             trace: false,
             cases_givens: vec![],

@@ -11,7 +11,9 @@
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
-use crate::ast::{Expr, FnBody, FnDef, Spanned, TopLevel, VerifyBlock, VerifyGiven, VerifyKind};
+use crate::ast::{
+    Expr, FnBody, FnDef, SourceSpan, Spanned, TopLevel, VerifyBlock, VerifyGiven, VerifyKind,
+};
 use crate::checker::{
     VerifyCaseOutcome, VerifyCaseResult, VerifyLawContext, VerifyResult, expr_to_str,
     merge_verify_blocks,
@@ -23,7 +25,43 @@ use crate::tco;
 use crate::types::checker::effect_classification::{EffectDimension, classify, is_classified};
 use crate::types::checker::run_type_check_full;
 use crate::value::{Value, aver_repr, list_from_vec};
+use crate::verify_law::expand::{ExpandedCase, ExpansionMode, expand_law_cases};
 use crate::vm;
+
+/// Replace `block.cases` with the hostile expansion of its law template.
+/// No-op for non-law blocks (cases-form `verify`, trace-form, ...): hostile
+/// only expands `given` *domains*, and those exist in law form. Effect-
+/// side hostile (worst-case classified-effect responses) is layered on
+/// top of this in a separate step — both run together when `--hostile`
+/// is on.
+fn apply_hostile_expansion(block: &mut VerifyBlock) {
+    let VerifyKind::Law(law) = &block.kind else {
+        return;
+    };
+    let expanded = expand_law_cases(law, ExpansionMode::Hostile);
+    let has_when = law.when.is_some();
+    let new_cases: Vec<(Spanned<Expr>, Spanned<Expr>)> = expanded
+        .iter()
+        .map(|c: &ExpandedCase| (c.lhs.clone(), c.rhs.clone()))
+        .collect();
+    let new_origins: Vec<bool> = expanded.iter().map(|c| c.from_hostile).collect();
+    let new_givens: Vec<Vec<(String, Spanned<Expr>)>> =
+        expanded.iter().map(|c| c.bindings.clone()).collect();
+    let new_spans: Vec<SourceSpan> = vec![SourceSpan::default(); expanded.len()];
+    let new_guards: Vec<Spanned<Expr>> = if has_when {
+        expanded.iter().filter_map(|c| c.guard.clone()).collect()
+    } else {
+        Vec::new()
+    };
+
+    block.cases = new_cases;
+    block.case_spans = new_spans;
+    block.case_givens = new_givens;
+    block.case_hostile_origins = new_origins;
+    if let VerifyKind::Law(law_box) = &mut block.kind {
+        law_box.sample_guards = new_guards;
+    }
+}
 
 /// Run the complete verify pipeline for a set of items: typecheck,
 /// synthesize per-case helpers, compile + run in VM with Oracle stub
@@ -34,10 +72,34 @@ use crate::vm;
 /// root for cross-module resolution. `source_file` labels the VM's
 /// compilation unit for diagnostics.
 pub fn run_verify_for_items_vm(
+    items: Vec<TopLevel>,
+    config: Option<ProjectConfig>,
+    base_dir: Option<&str>,
+    source_file: &str,
+) -> Result<Vec<VerifyResult>, String> {
+    run_verify_for_items_vm_with_mode(
+        items,
+        config,
+        base_dir,
+        source_file,
+        ExpansionMode::Declared,
+    )
+}
+
+/// Same as [`run_verify_for_items_vm`] but lets the caller request hostile
+/// boundary-value expansion of `verify ... law` cases. Under
+/// `ExpansionMode::Hostile`, each typed `given` clause is augmented with
+/// the per-type boundary set (`Int` min/max/0/±1, `Str` empty/long/edge,
+/// ...) and the `when` precondition is preserved across the expansion.
+/// Cases injected by the hostile pass carry `from_hostile = true` in
+/// `VerifyBlock::case_hostile_origins` so the renderer can label them as
+/// "outside declared given" when they fail.
+pub fn run_verify_for_items_vm_with_mode(
     mut items: Vec<TopLevel>,
     config: Option<ProjectConfig>,
     base_dir: Option<&str>,
     source_file: &str,
+    mode: ExpansionMode,
 ) -> Result<Vec<VerifyResult>, String> {
     tco::transform_program(&mut items);
 
@@ -46,9 +108,15 @@ pub fn run_verify_for_items_vm(
         return Err(format_type_errors(&tc_result.errors));
     }
 
-    let verify_blocks = merge_verify_blocks(&items);
+    let mut verify_blocks = merge_verify_blocks(&items);
     if verify_blocks.is_empty() {
         return Ok(vec![]);
+    }
+
+    if mode == ExpansionMode::Hostile {
+        for block in &mut verify_blocks {
+            apply_hostile_expansion(block);
+        }
     }
 
     let plans = build_verify_vm_plans(&mut items, &verify_blocks);
@@ -74,10 +142,26 @@ pub fn run_verify_for_items_vm(
 /// Variant for audit / LSP: accept pre-loaded dependency modules
 /// (virtual filesystems) instead of resolving from disk.
 pub fn run_verify_for_items_vm_with_loaded(
+    items: Vec<TopLevel>,
+    loaded: Vec<crate::source::LoadedModule>,
+    config: Option<ProjectConfig>,
+    source_file: &str,
+) -> Result<Vec<VerifyResult>, String> {
+    run_verify_for_items_vm_with_loaded_and_mode(
+        items,
+        loaded,
+        config,
+        source_file,
+        ExpansionMode::Declared,
+    )
+}
+
+pub fn run_verify_for_items_vm_with_loaded_and_mode(
     mut items: Vec<TopLevel>,
     loaded: Vec<crate::source::LoadedModule>,
     config: Option<ProjectConfig>,
     source_file: &str,
+    mode: ExpansionMode,
 ) -> Result<Vec<VerifyResult>, String> {
     tco::transform_program(&mut items);
 
@@ -86,9 +170,15 @@ pub fn run_verify_for_items_vm_with_loaded(
         return Err(format_type_errors(&tc_result.errors));
     }
 
-    let verify_blocks = merge_verify_blocks(&items);
+    let mut verify_blocks = merge_verify_blocks(&items);
     if verify_blocks.is_empty() {
         return Ok(vec![]);
+    }
+
+    if mode == ExpansionMode::Hostile {
+        for block in &mut verify_blocks {
+            apply_hostile_expansion(block);
+        }
     }
 
     let plans = build_verify_vm_plans(&mut items, &verify_blocks);
