@@ -683,6 +683,7 @@ impl Parser {
 
         debug_assert_eq!(cases.len(), case_spans.len());
         let case_hostile_origins = vec![false; cases.len()];
+        let case_hostile_profiles = vec![Vec::new(); cases.len()];
         Ok(VerifyBlock {
             fn_name,
             line,
@@ -690,6 +691,7 @@ impl Parser {
             case_spans,
             case_givens,
             case_hostile_origins,
+            case_hostile_profiles,
             kind,
             trace: trace_mode,
             cases_givens: cases_givens_out,

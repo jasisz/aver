@@ -2643,6 +2643,7 @@ fn render_verify_output(
                                 cr.law_context.is_some(),
                                 cr.law_context.as_ref(),
                                 cr.from_hostile,
+                                cr.hostile_profile.as_deref(),
                             ))
                         }
                         VerifyCaseOutcome::RuntimeError { error } => {
@@ -2778,6 +2779,7 @@ fn render_verify_output(
                                 cr.law_context.is_some(),
                                 cr.law_context.as_ref(),
                                 cr.from_hostile,
+                                cr.hostile_profile.as_deref(),
                             ))
                         }
                         VerifyCaseOutcome::RuntimeError { error } => {

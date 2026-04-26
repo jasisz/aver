@@ -110,6 +110,7 @@ fn map_results_to_diagnostics(
                         is_law,
                         None,
                         case.from_hostile,
+                        case.hostile_profile.as_deref(),
                     ));
                 }
                 VerifyCaseOutcome::UnexpectedErr { err_repr } => {

@@ -23,30 +23,59 @@ use crate::nan_value::{Arena, NanValueConvert};
 use crate::resolver;
 use crate::tco;
 use crate::types::checker::effect_classification::{EffectDimension, classify, is_classified};
+use crate::types::checker::hostile_effects::{HostileProfile, hostile_profiles_for};
 use crate::types::checker::run_type_check_full;
 use crate::value::{Value, aver_repr, list_from_vec};
 use crate::verify_law::expand::{ExpandedCase, ExpansionMode, expand_law_cases};
 use crate::vm;
 
-/// Replace `block.cases` with the hostile expansion of its law template.
-/// No-op for non-law blocks (cases-form `verify`, trace-form, ...): hostile
-/// only expands `given` *domains*, and those exist in law form. Effect-
-/// side hostile (worst-case classified-effect responses) is layered on
-/// top of this in a separate step — both run together when `--hostile`
-/// is on.
-fn apply_hostile_expansion(block: &mut VerifyBlock) {
-    let VerifyKind::Law(law) = &block.kind else {
-        return;
+/// Replace `block.cases` with the hostile expansion of its law template,
+/// then layer effect-side hostile on top: each case is multiplied by the
+/// cartesian product of `(method, profile)` adversarial responses for
+/// every classified effect the fn declares but the user did not pin via
+/// `given`. Both expansions run together when `--hostile` is on; cases
+/// the user wrote stay as-is (origin=false, profiles=[]), value-hostile
+/// cases get origin=true / profiles=[], effect-hostile cases get
+/// origin=true / profiles=[(method, profile), ...].
+///
+/// No-op for non-law blocks on the value side (hostile only expands
+/// `given` *domains*, which exist in law form), but effect-side hostile
+/// applies to both forms since classified effects are independent of
+/// `given` shape.
+fn apply_hostile_expansion(block: &mut VerifyBlock, items: &[TopLevel]) {
+    let value_expanded: Vec<(
+        Spanned<Expr>,
+        Spanned<Expr>,
+        bool,
+        Vec<(String, Spanned<Expr>)>,
+        Option<Spanned<Expr>>,
+    )> = match &block.kind {
+        VerifyKind::Law(law) => expand_law_cases(law, ExpansionMode::Hostile)
+            .into_iter()
+            .map(|c: ExpandedCase| (c.lhs, c.rhs, c.from_hostile, c.bindings, c.guard))
+            .collect(),
+        VerifyKind::Cases => block
+            .cases
+            .iter()
+            .enumerate()
+            .map(|(idx, (lhs, rhs))| {
+                (
+                    lhs.clone(),
+                    rhs.clone(),
+                    block
+                        .case_hostile_origins
+                        .get(idx)
+                        .copied()
+                        .unwrap_or(false),
+                    block.case_givens.get(idx).cloned().unwrap_or_default(),
+                    None,
+                )
+            })
+            .collect(),
     };
-    let expanded = expand_law_cases(law, ExpansionMode::Hostile);
-    let has_when = law.when.is_some();
-    let new_cases: Vec<(Spanned<Expr>, Spanned<Expr>)> = expanded
-        .iter()
-        .map(|c: &ExpandedCase| (c.lhs.clone(), c.rhs.clone()))
-        .collect();
-    let new_origins: Vec<bool> = expanded.iter().map(|c| c.from_hostile).collect();
-    let new_givens: Vec<Vec<(String, Spanned<Expr>)>> =
-        expanded.iter().map(|c| c.bindings.clone()).collect();
+
+    let effect_combos = collect_effect_profile_combinations(block, items);
+
     // Hostile-injected cases inherit the law block's source line so
     // diagnostics point to the `verify ... law` declaration instead of
     // 0:0 — IDEs / playground / LSP can highlight the right span and the
@@ -62,20 +91,243 @@ fn apply_hostile_expansion(block: &mut VerifyBlock) {
         end_line: block.line,
         end_col: 1,
     };
-    let new_spans: Vec<SourceSpan> = vec![block_span; expanded.len()];
-    let new_guards: Vec<Spanned<Expr>> = if has_when {
-        expanded.iter().filter_map(|c| c.guard.clone()).collect()
-    } else {
-        Vec::new()
-    };
+
+    let mut new_cases: Vec<(Spanned<Expr>, Spanned<Expr>)> = Vec::new();
+    let mut new_origins: Vec<bool> = Vec::new();
+    let mut new_givens: Vec<Vec<(String, Spanned<Expr>)>> = Vec::new();
+    let mut new_spans: Vec<SourceSpan> = Vec::new();
+    let mut new_profiles: Vec<Vec<(String, String)>> = Vec::new();
+    let mut new_guards: Vec<Spanned<Expr>> = Vec::new();
+    let has_when = matches!(&block.kind, VerifyKind::Law(law) if law.when.is_some());
+
+    for (lhs, rhs, from_hostile, bindings, guard) in value_expanded {
+        // Always keep the un-effected case (declared or value-hostile).
+        new_cases.push((lhs.clone(), rhs.clone()));
+        new_origins.push(from_hostile);
+        new_givens.push(bindings.clone());
+        new_spans.push(block_span.clone());
+        new_profiles.push(Vec::new());
+        if has_when && let Some(g) = &guard {
+            new_guards.push(g.clone());
+        }
+
+        // Then add one case per effect-profile cartesian combination.
+        for combo in &effect_combos {
+            new_cases.push((lhs.clone(), rhs.clone()));
+            new_origins.push(true);
+            new_givens.push(bindings.clone());
+            new_spans.push(block_span.clone());
+            new_profiles.push(combo.clone());
+            if has_when && let Some(g) = &guard {
+                new_guards.push(g.clone());
+            }
+        }
+    }
 
     block.cases = new_cases;
     block.case_spans = new_spans;
     block.case_givens = new_givens;
     block.case_hostile_origins = new_origins;
+    block.case_hostile_profiles = new_profiles;
     if let VerifyKind::Law(law_box) = &mut block.kind {
         law_box.sample_guards = new_guards;
     }
+}
+
+/// For a verify block, find the function under test, list its classified
+/// effects that aren't covered by user `given`, and return the cartesian
+/// product of (method, profile) pairs. Each inner Vec is one adversarial
+/// world. `Output`-dimension effects are excluded — they have no oracle
+/// response to vary.
+fn collect_effect_profile_combinations(
+    block: &VerifyBlock,
+    items: &[TopLevel],
+) -> Vec<Vec<(String, String)>> {
+    let fn_def = items.iter().find_map(|i| match i {
+        TopLevel::FnDef(fd) if fd.name == block.fn_name => Some(fd),
+        _ => None,
+    });
+    let Some(fn_def) = fn_def else {
+        return Vec::new();
+    };
+
+    let user_covered: std::collections::HashSet<String> = match &block.kind {
+        VerifyKind::Law(law) => law.givens.iter().map(|g| g.type_name.clone()).collect(),
+        VerifyKind::Cases => block
+            .cases_givens
+            .iter()
+            .map(|g| g.type_name.clone())
+            .collect(),
+    };
+
+    let mut per_method: Vec<(String, Vec<HostileProfile>)> = Vec::new();
+    for eff in &fn_def.effects {
+        let method = eff.node.as_str();
+        let Some(c) = classify(method) else { continue };
+        if matches!(c.dimension, EffectDimension::Output) {
+            continue;
+        }
+        if user_covered.contains(method) {
+            continue;
+        }
+        let profiles = hostile_profiles_for(method);
+        if profiles.is_empty() {
+            continue;
+        }
+        per_method.push((method.to_string(), profiles));
+    }
+
+    if per_method.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out: Vec<Vec<(String, String)>> = vec![Vec::new()];
+    for (method, profiles) in &per_method {
+        let mut next: Vec<Vec<(String, String)>> =
+            Vec::with_capacity(out.len() * profiles.len().max(1));
+        for partial in &out {
+            for profile in profiles {
+                let mut extended = partial.clone();
+                extended.push((method.clone(), profile.name.to_string()));
+                next.push(extended);
+            }
+        }
+        out = next;
+    }
+    out
+}
+
+/// For each verify block, find the function under test and the classified
+/// non-Output effects it declares but the user has not pinned via `given`,
+/// then parse + inject the corresponding hostile profile bodies as
+/// `TopLevel::FnDef`. Runs before type-check so the synthetic stubs go
+/// through the regular checker and compile down to ordinary user-space
+/// fns the runner can install as oracle stubs.
+fn inject_hostile_effect_stubs_for_blocks(items: &mut Vec<TopLevel>, blocks: &[VerifyBlock]) {
+    let existing: std::collections::HashSet<String> = items
+        .iter()
+        .filter_map(|i| match i {
+            TopLevel::FnDef(fd) => Some(fd.name.clone()),
+            _ => None,
+        })
+        .collect();
+
+    let mut to_inject: Vec<&'static str> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for block in blocks {
+        let user_covered: std::collections::HashSet<String> = match &block.kind {
+            VerifyKind::Law(law) => law.givens.iter().map(|g| g.type_name.clone()).collect(),
+            VerifyKind::Cases => block
+                .cases_givens
+                .iter()
+                .map(|g| g.type_name.clone())
+                .collect(),
+        };
+        let Some(fn_def) = items.iter().find_map(|i| match i {
+            TopLevel::FnDef(fd) if fd.name == block.fn_name => Some(fd),
+            _ => None,
+        }) else {
+            continue;
+        };
+        for eff in &fn_def.effects {
+            let method = eff.node.as_str();
+            let Some(c) = classify(method) else { continue };
+            if matches!(c.dimension, EffectDimension::Output) {
+                continue;
+            }
+            if user_covered.contains(method) {
+                continue;
+            }
+            if !seen.insert(method.to_string()) {
+                continue;
+            }
+            to_inject.push(static_method_name(method));
+        }
+    }
+
+    let mut new_items: Vec<TopLevel> = Vec::new();
+    for method in to_inject {
+        for profile in hostile_profiles_for(method) {
+            if existing.contains(&profile.stub_fn_name) {
+                continue;
+            }
+            match parse_stub_body(&profile.stub_body) {
+                Ok(stub_items) => new_items.extend(stub_items),
+                Err(e) => {
+                    eprintln!(
+                        "warning: hostile profile {} failed to parse: {}",
+                        profile.stub_fn_name, e
+                    );
+                }
+            }
+        }
+    }
+    items.extend(new_items);
+}
+
+/// `hostile_profiles_for` takes a `&str` and the closed set of known
+/// method names is small. This indirection lets us push owned method
+/// strings through the loop without leaking the lifetime of the borrow
+/// from `fn_def.effects` across the mutable borrow of `items` we need
+/// for stub injection.
+fn static_method_name(method: &str) -> &'static str {
+    match method {
+        "Args.get" => "Args.get",
+        "Env.get" => "Env.get",
+        "Terminal.size" => "Terminal.size",
+        "Random.int" => "Random.int",
+        "Random.float" => "Random.float",
+        "Time.now" => "Time.now",
+        "Time.unixMs" => "Time.unixMs",
+        "Disk.readText" => "Disk.readText",
+        "Disk.exists" => "Disk.exists",
+        "Disk.listDir" => "Disk.listDir",
+        "Console.readLine" => "Console.readLine",
+        "Http.get" => "Http.get",
+        "Http.head" => "Http.head",
+        "Http.delete" => "Http.delete",
+        "Http.post" => "Http.post",
+        "Http.put" => "Http.put",
+        "Http.patch" => "Http.patch",
+        "Disk.writeText" => "Disk.writeText",
+        "Disk.appendText" => "Disk.appendText",
+        "Disk.delete" => "Disk.delete",
+        "Disk.deleteDir" => "Disk.deleteDir",
+        "Disk.makeDir" => "Disk.makeDir",
+        "Tcp.send" => "Tcp.send",
+        "Tcp.ping" => "Tcp.ping",
+        "Tcp.connect" => "Tcp.connect",
+        "Tcp.readLine" => "Tcp.readLine",
+        "Tcp.writeLine" => "Tcp.writeLine",
+        "Tcp.close" => "Tcp.close",
+        "Terminal.readKey" => "Terminal.readKey",
+        _ => "",
+    }
+}
+
+fn parse_stub_body(source: &str) -> Result<Vec<TopLevel>, String> {
+    let mut lexer = crate::lexer::Lexer::new(source);
+    let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
+    let mut parser = crate::parser::Parser::new(tokens);
+    parser.parse().map_err(|e| e.to_string())
+}
+
+/// Render a per-case hostile-effect-profile assignment into a short human
+/// label. `[("Time.now", "frozen"), ("Random.int", "min")]` →
+/// `Some("Time.now/frozen + Random.int/min")`. `None` for empty / missing.
+fn render_hostile_profile_label(combo: Option<&[(String, String)]>) -> Option<String> {
+    let combo = combo?;
+    if combo.is_empty() {
+        return None;
+    }
+    Some(
+        combo
+            .iter()
+            .map(|(method, profile)| format!("{}/{}", method, profile))
+            .collect::<Vec<_>>()
+            .join(" + "),
+    )
 }
 
 /// Run the complete verify pipeline for a set of items: typecheck,
@@ -118,6 +370,21 @@ pub fn run_verify_for_items_vm_with_mode(
 ) -> Result<Vec<VerifyResult>, String> {
     tco::transform_program(&mut items);
 
+    if mode == ExpansionMode::Hostile {
+        // Inject hostile effect-profile stubs as `TopLevel::FnDef` before
+        // type-check so they're visible to the verify pipeline as ordinary
+        // user-defined functions. We can't compute case-level
+        // `case_hostile_profiles` until after type-check (because the
+        // value-side hostile expansion must run on a checked AST), so we
+        // pre-scan: find every classified non-Output effect each verify
+        // block's fn declares but the user did not pin via `given`, and
+        // inject the corresponding hostile profile bodies. The cases are
+        // wired up to those stubs in `apply_hostile_expansion` after
+        // type-check.
+        let preview_blocks = merge_verify_blocks(&items);
+        inject_hostile_effect_stubs_for_blocks(&mut items, &preview_blocks);
+    }
+
     let tc_result = run_type_check_full(&items, base_dir);
     if !tc_result.errors.is_empty() {
         return Err(format_type_errors(&tc_result.errors));
@@ -130,7 +397,7 @@ pub fn run_verify_for_items_vm_with_mode(
 
     if mode == ExpansionMode::Hostile {
         for block in &mut verify_blocks {
-            apply_hostile_expansion(block);
+            apply_hostile_expansion(block, &items);
         }
     }
 
@@ -180,6 +447,11 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode(
 ) -> Result<Vec<VerifyResult>, String> {
     tco::transform_program(&mut items);
 
+    if mode == ExpansionMode::Hostile {
+        let preview_blocks = merge_verify_blocks(&items);
+        inject_hostile_effect_stubs_for_blocks(&mut items, &preview_blocks);
+    }
+
     let tc_result = crate::types::checker::run_type_check_with_loaded(&items, &loaded);
     if !tc_result.errors.is_empty() {
         return Err(format_type_errors(&tc_result.errors));
@@ -192,7 +464,7 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode(
 
     if mode == ExpansionMode::Hostile {
         for block in &mut verify_blocks {
-            apply_hostile_expansion(block);
+            apply_hostile_expansion(block, &items);
         }
     }
 
@@ -731,36 +1003,55 @@ fn build_case_oracle_stubs(
         VerifyKind::Law(law) => law.givens.as_slice(),
         VerifyKind::Cases => block.cases_givens.as_slice(),
     };
-    if givens_source.is_empty() {
-        return out;
-    }
-    let Some(case_bindings) = block.case_givens.get(case_idx) else {
-        return out;
-    };
-    for given in givens_source {
-        let Some(classification) = classify(&given.type_name) else {
-            continue;
-        };
-        if matches!(classification.dimension, EffectDimension::Output) {
-            continue;
-        }
-        let Some((_, value_expr)) = case_bindings.iter().find(|(n, _)| n == &given.name) else {
-            continue;
-        };
-        let stub_name = match &value_expr.node {
-            Expr::Ident(s) => s.clone(),
-            Expr::Resolved { name, .. } => name.clone(),
-            _ => {
-                let Some(dotted) = dotted_path_from_expr(&value_expr.node) else {
-                    continue;
-                };
-                dotted
+
+    if !givens_source.is_empty()
+        && let Some(case_bindings) = block.case_givens.get(case_idx)
+    {
+        for given in givens_source {
+            let Some(classification) = classify(&given.type_name) else {
+                continue;
+            };
+            if matches!(classification.dimension, EffectDimension::Output) {
+                continue;
             }
-        };
-        let Some(fn_id) = machine.find_fn_id(&stub_name) else {
-            continue;
-        };
-        out.insert(given.type_name.clone(), fn_id);
+            let Some((_, value_expr)) = case_bindings.iter().find(|(n, _)| n == &given.name) else {
+                continue;
+            };
+            let stub_name = match &value_expr.node {
+                Expr::Ident(s) => s.clone(),
+                Expr::Resolved { name, .. } => name.clone(),
+                _ => {
+                    let Some(dotted) = dotted_path_from_expr(&value_expr.node) else {
+                        continue;
+                    };
+                    dotted
+                }
+            };
+            let Some(fn_id) = machine.find_fn_id(&stub_name) else {
+                continue;
+            };
+            out.insert(given.type_name.clone(), fn_id);
+        }
+    }
+
+    // Layer hostile effect-profile stubs on top of (or instead of) the
+    // user's `given` stubs. Effect-profile assignments are computed by
+    // `apply_hostile_expansion` and only contain effects the user did
+    // not pin via `given`, so user-given always wins for the same method
+    // — a hostile-expanded case for an un-given effect installs the
+    // profile's synthetic stub fn. This keeps the runner agnostic to
+    // which kind of stub it is — the VM only cares about (method →
+    // fn_id), and `__hostile_<method>_<profile>` lives as an ordinary
+    // FnDef thanks to `inject_hostile_effect_stubs_for_blocks`.
+    if let Some(combo) = block.case_hostile_profiles.get(case_idx) {
+        for (method, profile) in combo {
+            let stub_fn_name =
+                format!("__hostile_{}_{}", method.replace('.', "_"), profile);
+            let Some(fn_id) = machine.find_fn_id(&stub_fn_name) else {
+                continue;
+            };
+            out.insert(method.clone(), fn_id);
+        }
     }
     out
 }
@@ -797,6 +1088,9 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
             .get(idx)
             .copied()
             .unwrap_or(false);
+        let hostile_profile = render_hostile_profile_label(
+            block.case_hostile_profiles.get(idx).map(Vec::as_slice),
+        );
         let failure_case = if is_law {
             format!("case {}/{} [{}]", idx + 1, case_total, case_str)
         } else {
@@ -834,6 +1128,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                         case_total,
                         law_context,
                         from_hostile,
+                        hostile_profile: hostile_profile.clone(),
                     });
                     continue;
                 }
@@ -849,6 +1144,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                         case_total,
                         law_context,
                         from_hostile,
+                        hostile_profile: hostile_profile.clone(),
                     });
                     continue;
                 }
@@ -864,6 +1160,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                         case_total,
                         law_context,
                         from_hostile,
+                        hostile_profile: hostile_profile.clone(),
                     });
                     continue;
                 }
@@ -879,6 +1176,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                         case_total,
                         law_context,
                         from_hostile,
+                        hostile_profile: hostile_profile.clone(),
                     });
                     continue;
                 }
@@ -949,6 +1247,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                         case_total,
                         law_context,
                         from_hostile,
+                        hostile_profile: hostile_profile.clone(),
                     });
                 } else {
                     failed += 1;
@@ -966,6 +1265,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                         case_total,
                         law_context,
                         from_hostile,
+                        hostile_profile: hostile_profile.clone(),
                     });
                 }
             }
@@ -981,6 +1281,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                     case_total,
                     law_context,
                     from_hostile,
+                    hostile_profile: hostile_profile.clone(),
                 });
             }
             (Err(e), _) | (_, Err(e)) => {
@@ -995,6 +1296,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                     case_total,
                     law_context,
                     from_hostile,
+                    hostile_profile: hostile_profile.clone(),
                 });
             }
         }
@@ -1012,5 +1314,148 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
         skipped,
         case_results,
         failures,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{Literal, Spanned, VerifyGiven, VerifyGivenDomain, VerifyLaw};
+
+    fn parse_source(src: &str) -> Vec<TopLevel> {
+        let mut lexer = crate::lexer::Lexer::new(src);
+        let tokens = lexer.tokenize().expect("lex");
+        let mut parser = crate::parser::Parser::new(tokens);
+        parser.parse().expect("parse")
+    }
+
+    #[test]
+    fn collect_effect_profile_returns_cartesian_for_unfixed_effects() {
+        let src = "module M\n    effects [Time.now, Random.int]\n\nfn f() -> Int\n    ? \"toy\"\n    ! [Time.now, Random.int]\n    1\n";
+        let items = parse_source(src);
+        let block = VerifyBlock {
+            fn_name: "f".to_string(),
+            line: 1,
+            cases: vec![],
+            case_spans: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            kind: VerifyKind::Cases,
+            trace: false,
+            cases_givens: vec![],
+        };
+        let combos = collect_effect_profile_combinations(&block, &items);
+        // Time.now: 2 profiles (frozen/epoch), Random.int: 2 profiles (min/max).
+        // Cartesian = 4 worlds.
+        assert_eq!(combos.len(), 4);
+        for combo in &combos {
+            assert_eq!(combo.len(), 2);
+        }
+    }
+
+    #[test]
+    fn collect_effect_profile_skips_user_pinned_givens() {
+        let src = "module M\n    effects [Time.now, Random.int]\n\nfn f() -> Int\n    ? \"toy\"\n    ! [Time.now, Random.int]\n    1\n";
+        let items = parse_source(src);
+        // Pretend the user wrote `given Time.now myStub` — that effect
+        // shouldn't get hostile profiles.
+        let block = VerifyBlock {
+            fn_name: "f".to_string(),
+            line: 1,
+            cases: vec![],
+            case_spans: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
+                name: "test".to_string(),
+                givens: vec![VerifyGiven {
+                    name: "clock".to_string(),
+                    type_name: "Time.now".to_string(),
+                    domain: VerifyGivenDomain::Explicit(vec![]),
+                }],
+                when: None,
+                lhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                rhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                sample_guards: vec![],
+            })),
+            trace: false,
+            cases_givens: vec![],
+        };
+        let combos = collect_effect_profile_combinations(&block, &items);
+        // Only Random.int should expand → 2 worlds (min, max), each with one entry.
+        assert_eq!(combos.len(), 2);
+        for combo in &combos {
+            assert_eq!(combo.len(), 1);
+            assert_eq!(combo[0].0, "Random.int");
+        }
+    }
+
+    #[test]
+    fn collect_effect_profile_excludes_output_effects() {
+        // Console.print is Output — no oracle response to vary, so no profiles.
+        let src = "module M\n    effects [Console.print]\n\nfn greet() -> Unit\n    ? \"toy\"\n    ! [Console.print]\n    Console.print(\"hi\")\n";
+        let items = parse_source(src);
+        let block = VerifyBlock {
+            fn_name: "greet".to_string(),
+            line: 1,
+            cases: vec![],
+            case_spans: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            kind: VerifyKind::Cases,
+            trace: false,
+            cases_givens: vec![],
+        };
+        let combos = collect_effect_profile_combinations(&block, &items);
+        assert!(combos.is_empty());
+    }
+
+    #[test]
+    fn inject_hostile_stubs_appends_fn_defs_for_unfixed_classified_effects() {
+        let src = "module M\n    effects [Time.now]\n\nfn f() -> String\n    ? \"toy\"\n    ! [Time.now]\n    Time.now()\n";
+        let mut items = parse_source(src);
+        let blocks = vec![VerifyBlock {
+            fn_name: "f".to_string(),
+            line: 1,
+            cases: vec![],
+            case_spans: vec![],
+            case_givens: vec![],
+            case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
+            kind: VerifyKind::Cases,
+            trace: false,
+            cases_givens: vec![],
+        }];
+        let before = items.len();
+        inject_hostile_effect_stubs_for_blocks(&mut items, &blocks);
+        let after = items.len();
+        // Time.now ships 2 hostile profiles → 2 new FnDefs appended.
+        assert_eq!(after - before, 2);
+        let fn_names: Vec<String> = items
+            .iter()
+            .filter_map(|i| match i {
+                TopLevel::FnDef(fd) => Some(fd.name.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(fn_names.contains(&"__hostile_Time_now_frozen".to_string()));
+        assert!(fn_names.contains(&"__hostile_Time_now_epoch".to_string()));
+    }
+
+    #[test]
+    fn render_hostile_profile_label_joins_pairs() {
+        let combo = vec![
+            ("Time.now".to_string(), "frozen".to_string()),
+            ("Random.int".to_string(), "min".to_string()),
+        ];
+        assert_eq!(
+            render_hostile_profile_label(Some(&combo)),
+            Some("Time.now/frozen + Random.int/min".to_string())
+        );
+        assert_eq!(render_hostile_profile_label(Some(&[])), None);
+        assert_eq!(render_hostile_profile_label(None), None);
     }
 }

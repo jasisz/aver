@@ -39,6 +39,13 @@ pub struct VerifyCaseResult {
     /// `when`, or downgrade from `law` form to `verify` (cases form,
     /// example/scenario semantics) with the values you actually meant.
     pub from_hostile: bool,
+    /// Display label for the effect-side hostile profile, e.g.
+    /// `"Time.now/frozen + Random.int/min"`. `None` when the case wasn't
+    /// effect-hostile-expanded (declared, value-hostile-only, or fns
+    /// without applicable classified effects). Reporting prepends this to
+    /// the diagnostic so the user sees which adversarial world broke the
+    /// law: "Time.now/frozen + Random.int/min: assumed deadline > now".
+    pub hostile_profile: Option<String>,
 }
 
 #[derive(Debug, Clone)]

@@ -305,6 +305,14 @@ pub struct VerifyBlock {
     /// failures as "outside declared given — encode as `when` if
     /// precondition" when they only fail under the hostile expansion.
     pub case_hostile_origins: Vec<bool>,
+    /// Parallel to `cases`: per-case hostile effect-profile assignment
+    /// for `--hostile` mode. Each inner Vec lists `(method, profile)`
+    /// pairs (e.g. `("Time.now", "frozen")`) that the runner installs
+    /// as oracle stubs before running the case, alongside any user-given
+    /// stubs. Empty inner Vec for cases that aren't effect-hostile-
+    /// expanded (declared, value-hostile-only, or fns without applicable
+    /// classified effects). All entries empty under non-hostile runs.
+    pub case_hostile_profiles: Vec<Vec<(String, String)>>,
     pub kind: VerifyKind,
     /// Oracle v1: `trace` keyword enables trace-aware assertions
     /// (`.trace.*`, `.result`, event literals in `.contains` / match
@@ -331,6 +339,7 @@ impl VerifyBlock {
     ) -> Self {
         let case_spans = vec![SourceSpan::default(); cases.len()];
         let case_hostile_origins = vec![false; cases.len()];
+        let case_hostile_profiles = vec![Vec::new(); cases.len()];
         Self {
             fn_name,
             line,
@@ -338,6 +347,7 @@ impl VerifyBlock {
             case_spans,
             case_givens: vec![],
             case_hostile_origins,
+            case_hostile_profiles,
             kind,
             trace: false,
             cases_givens: vec![],

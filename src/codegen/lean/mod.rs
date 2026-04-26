@@ -1533,6 +1533,7 @@ mod tests {
             case_spans: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
             kind: VerifyKind::Cases,
             trace: false,
             cases_givens: vec![],
@@ -1552,6 +1553,7 @@ mod tests {
             case_spans: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
             kind: VerifyKind::Cases,
             trace: false,
             cases_givens: vec![],
@@ -1566,6 +1568,7 @@ mod tests {
             case_spans: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
             kind: VerifyKind::Cases,
             trace: false,
             cases_givens: vec![],
@@ -1634,6 +1637,7 @@ mod tests {
             case_spans: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "commutative".to_string(),
                 givens: vec![
@@ -2056,6 +2060,7 @@ verify square law squareSpec
             case_spans: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "reflexive".to_string(),
                 givens: vec![VerifyGiven {
@@ -2101,6 +2106,7 @@ verify square law squareSpec
             case_spans: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "identityZero".to_string(),
                 givens: vec![VerifyGiven {
@@ -2173,6 +2179,7 @@ verify square law squareSpec
             case_spans: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "associative".to_string(),
                 givens: vec![
@@ -2282,6 +2289,7 @@ verify square law squareSpec
             case_spans: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "rightIdentity".to_string(),
                 givens: vec![VerifyGiven {
@@ -2329,6 +2337,7 @@ verify square law squareSpec
             case_spans: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "antiCommutative".to_string(),
                 givens: vec![
@@ -2443,6 +2452,7 @@ verify square law squareSpec
             case_spans: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "identityViaAdd".to_string(),
                 givens: vec![VerifyGiven {
@@ -2548,6 +2558,7 @@ verify square law squareSpec
             case_spans: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "setHasKey".to_string(),
                 givens: vec![
@@ -2604,6 +2615,7 @@ verify square law squareSpec
             case_spans: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "setGetKey".to_string(),
                 givens: vec![
@@ -2840,6 +2852,7 @@ verify mirror law involutive
             case_spans: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "keyPresent".to_string(),
                 givens: vec![
@@ -2902,6 +2915,7 @@ verify mirror law involutive
             case_spans: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "existingKeyIncrements".to_string(),
                 givens: vec![VerifyGiven {
@@ -2996,6 +3010,7 @@ verify mirror law involutive
             case_spans: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "commutative".to_string(),
                 givens: vec![
@@ -3071,6 +3086,7 @@ verify mirror law involutive
             case_spans: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
             kind: VerifyKind::Cases,
             trace: false,
             cases_givens: vec![],
@@ -3085,6 +3101,7 @@ verify mirror law involutive
             case_spans: vec![],
             case_givens: vec![],
             case_hostile_origins: vec![],
+            case_hostile_profiles: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "identity".to_string(),
                 givens: vec![VerifyGiven {
