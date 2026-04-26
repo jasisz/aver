@@ -19,7 +19,7 @@ use std::collections::HashMap;
 
 use crate::ast::{Expr, Literal, Spanned, VerifyGiven, VerifyGivenDomain, VerifyLaw};
 use crate::ast_rewrite::rewrite_idents_scoped;
-use crate::types::checker::hostile_values::boundary_values;
+use crate::types::checker::hostile_values::boundary_exprs;
 use crate::types::parse_type_str_strict;
 
 /// Which values the expansion should draw from for each `given` clause.
@@ -102,9 +102,13 @@ fn values_for_given(g: &VerifyGiven, mode: ExpansionMode) -> Vec<Spanned<Expr>> 
         // Only append boundary values that aren't already covered by
         // the declared set — keeps the cartesian product tight and
         // avoids re-running the same combination twice.
+        // `boundary_exprs` covers scalars *and* compound types (Option,
+        // Result, List, Tuple) through one recursive walk. Map/Vector
+        // and user-defined types return empty — hostile is a no-op for
+        // them. Dedup against declared set so a value the user already
+        // wrote is not re-run.
         let existing: std::collections::HashSet<String> = values.iter().map(render_expr).collect();
-        for lit in boundary_values(&ty) {
-            let candidate = Spanned::bare(Expr::Literal(lit));
+        for candidate in boundary_exprs(&ty) {
             if !existing.contains(&render_expr(&candidate)) {
                 values.push(candidate);
             }
