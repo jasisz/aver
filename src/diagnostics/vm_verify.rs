@@ -1188,10 +1188,35 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
             None
         };
 
+        // Install oracle stubs and start trace collection BEFORE the
+        // guard evaluates, so `when` predicates that reference effect
+        // stubs (e.g. `when clock(root, 1) > clock(root, 0)` for
+        // monotonicity) see the same stub world the case body will
+        // see. Without this, a guard like that would fire real-time
+        // and either flap or fail the effect gate.
+        let oracle_stubs = build_case_oracle_stubs(machine, block, idx);
+        let has_stubs = !oracle_stubs.is_empty();
+        if has_stubs {
+            machine.install_oracle_stubs(oracle_stubs);
+        }
+        machine.start_trace_collection();
+        let root_fn_id = machine.find_fn_id(&block.fn_name);
+        machine.set_trace_root_fn_id(root_fn_id);
+
         if let Some(guard_name) = &case_fns.guard {
-            match vm_call_guard_helper(machine, guard_name) {
+            let guard_result = vm_call_guard_helper(machine, guard_name);
+            // Drain any trace events emitted while the guard ran so
+            // they don't bleed into the case's trace assertions.
+            let _ = machine.take_trace_events_with_coords();
+            let cleanup = |m: &mut vm::VM| {
+                if has_stubs {
+                    m.clear_oracle_stubs();
+                }
+            };
+            match guard_result {
                 Ok(Value::Bool(true)) => {}
                 Ok(Value::Bool(false)) => {
+                    cleanup(machine);
                     skipped += 1;
                     case_results.push(VerifyCaseResult {
                         outcome: VerifyCaseOutcome::Skipped,
@@ -1206,6 +1231,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                     continue;
                 }
                 Ok(Value::Err(err_val)) => {
+                    cleanup(machine);
                     failed += 1;
                     let err_repr = format!("Result.Err({})", aver_repr(&err_val));
                     failures.push((failure_case, String::new(), err_repr.clone()));
@@ -1222,6 +1248,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                     continue;
                 }
                 Ok(other) => {
+                    cleanup(machine);
                     failed += 1;
                     let error = format!("when produced {}, expected Bool", aver_repr(&other));
                     failures.push((failure_case, "Bool".to_string(), error.clone()));
@@ -1238,6 +1265,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                     continue;
                 }
                 Err(e) => {
+                    cleanup(machine);
                     failed += 1;
                     let error = format!("guard error: {}", e);
                     failures.push((failure_case, String::new(), error.clone()));
@@ -1256,13 +1284,8 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
             }
         }
 
-        let oracle_stubs = build_case_oracle_stubs(machine, block, idx);
-        let has_stubs = !oracle_stubs.is_empty();
-        if has_stubs {
-            machine.install_oracle_stubs(oracle_stubs);
-        }
-
-        // Always start trace collection, not just for `block.trace`.
+        // Trace collection started above (before the guard). Continue
+        // through the case body.
         // The generated verify helper (`__verify_foo_left`) declares
         // no effects, so calling an effectful user fn from it would
         // trip the VM's effect gate for any classified effect that
@@ -1277,10 +1300,6 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
         // with typecheck + proof. We discard the buffered events for
         // non-trace blocks — they're only consumed by the trace
         // projection path below.
-        machine.start_trace_collection();
-        let root_fn_id = machine.find_fn_id(&block.fn_name);
-        machine.set_trace_root_fn_id(root_fn_id);
-
         let left_result = vm_call_verify_helper(machine, &case_fns.left);
         let (lhs_trace_events, lhs_trace_coords): (
             Vec<Value>,
