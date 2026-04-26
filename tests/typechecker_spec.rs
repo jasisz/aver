@@ -2204,10 +2204,13 @@ fn trace_law_on_recursive_pure_function_is_accepted() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn verify_law_on_ambient_env_set_is_rejected() {
-    // Env.set mutates ambient process state — outside Oracle v1's
-    // single-call/oracle model because read-after-write depends on the
-    // whole ambient map, not a per-call oracle response.
+fn verify_law_on_newly_classified_output_effects_is_accepted() {
+    // 0.13: Env.set and Terminal.setColor were classified as stateless
+    // Output. Effect stubs do not imply state — `Env.set` does NOT affect
+    // a later `Env.get`, `Terminal.setColor` does NOT model modal state
+    // across calls. The trace records the call; that's all. Laws over
+    // these now type-check; cross-call consistency, if needed, belongs
+    // in pure user data, not the effect oracle.
     let src = concat!(
         "fn configure(k: String, v: String) -> Unit\n",
         "    ! [Env.set]\n",
@@ -2217,15 +2220,15 @@ fn verify_law_on_ambient_env_set_is_rejected() {
         "    given v: String = [\"V\"]\n",
         "    configure(k, v) => configure(k, v)\n",
     );
-    assert_error_containing(src, "outside Oracle v1's proof subset");
-    assert_error_containing(src, "Env.set");
-}
+    let errs = errors(src);
+    assert!(
+        !errs
+            .iter()
+            .any(|e| e.contains("outside Oracle v1's proof subset")),
+        "Env.set should be classified, got: {:?}",
+        errs
+    );
 
-#[test]
-fn verify_law_on_modal_terminal_set_color_is_rejected() {
-    // Terminal.setColor flips modal TTY state that persists across
-    // calls and affects every subsequent Terminal.* render — not
-    // modellable as a single-shot oracle response.
     let src = concat!(
         "fn paint(c: String) -> Unit\n",
         "    ! [Terminal.setColor]\n",
@@ -2234,8 +2237,14 @@ fn verify_law_on_modal_terminal_set_color_is_rejected() {
         "    given c: String = [\"red\"]\n",
         "    paint(c) => paint(c)\n",
     );
-    assert_error_containing(src, "outside Oracle v1's proof subset");
-    assert_error_containing(src, "Terminal.setColor");
+    let errs = errors(src);
+    assert!(
+        !errs
+            .iter()
+            .any(|e| e.contains("outside Oracle v1's proof subset")),
+        "Terminal.setColor should be classified, got: {:?}",
+        errs
+    );
 }
 
 #[test]
