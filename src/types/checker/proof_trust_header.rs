@@ -138,6 +138,25 @@ pub(crate) fn generate_for_effects(
     out.push_str("  only the fixed built-in effect set listed above.\n");
     out.push('\n');
 
+    out.push_str("Built-in oracle invariants (runtime-guaranteed, available as\n");
+    out.push_str("trusted lemmas):\n");
+    out.push_str("  - Random.int(path, n, min, max): if min ≤ max, the result\n");
+    out.push_str("    is in the closed interval [min, max]. The Aver runtime and\n");
+    out.push_str("    the user-supplied stubs both honour this.\n");
+    out.push_str("  - Random.float(path, n): the result is in the closed unit\n");
+    out.push_str("    interval [0.0, 1.0].\n");
+    out.push_str("  - Time.unixMs(path, n): non-negative — clocks count from\n");
+    out.push_str("    the unix epoch onward in this proof subset.\n");
+    out.push_str("  - Disk.exists(path, n, file): the result is a Bool — no\n");
+    out.push_str("    third state. Trivially total.\n");
+    out.push_str("  These are emitted as axioms in the generated proof so a\n");
+    out.push_str("  user-side law about a fair-die roll does not have to manually\n");
+    out.push_str("  prove `1 ≤ Random.int(.., 1, 6) ≤ 6` — the runtime carries the\n");
+    out.push_str("  burden, the proof imports it as `oracle_*_in_bounds` /\n");
+    out.push_str("  `oracle_*_in_unit_interval` / `oracle_*_nonnegative` axioms.\n");
+    out.push_str("  See the axiom block right after this header in the entry file.\n");
+    out.push('\n');
+
     out.push_str("Backend independence:\n");
     out.push_str("  Exported proofs hold uniformly across Aver backends (VM, compiled\n");
     out.push_str("  Rust, WASM) under the schedule-invariance compiler invariant above.\n");
