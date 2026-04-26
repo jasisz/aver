@@ -103,6 +103,7 @@ fn map_results_to_diagnostics(
                         col,
                         is_law,
                         None,
+                        case.from_hostile,
                     ));
                 }
                 VerifyCaseOutcome::UnexpectedErr { err_repr } => {

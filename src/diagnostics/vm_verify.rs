@@ -777,6 +777,11 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
     {
         let case_str = format!("{} == {}", expr_to_str(left_expr), expr_to_str(right_expr));
         let span = block.case_spans.get(idx).cloned();
+        let from_hostile = block
+            .case_hostile_origins
+            .get(idx)
+            .copied()
+            .unwrap_or(false);
         let failure_case = if is_law {
             format!("case {}/{} [{}]", idx + 1, case_total, case_str)
         } else {
@@ -813,6 +818,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                         case_index: idx,
                         case_total,
                         law_context,
+                        from_hostile,
                     });
                     continue;
                 }
@@ -827,6 +833,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                         case_index: idx,
                         case_total,
                         law_context,
+                        from_hostile,
                     });
                     continue;
                 }
@@ -841,6 +848,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                         case_index: idx,
                         case_total,
                         law_context,
+                        from_hostile,
                     });
                     continue;
                 }
@@ -855,6 +863,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                         case_index: idx,
                         case_total,
                         law_context,
+                        from_hostile,
                     });
                     continue;
                 }
@@ -924,6 +933,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                         case_index: idx,
                         case_total,
                         law_context,
+                        from_hostile,
                     });
                 } else {
                     failed += 1;
@@ -940,6 +950,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                         case_index: idx,
                         case_total,
                         law_context,
+                        from_hostile,
                     });
                 }
             }
@@ -954,6 +965,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                     case_index: idx,
                     case_total,
                     law_context,
+                    from_hostile,
                 });
             }
             (Err(e), _) | (_, Err(e)) => {
@@ -967,6 +979,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                     case_index: idx,
                     case_total,
                     law_context,
+                    from_hostile,
                 });
             }
         }

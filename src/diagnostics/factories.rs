@@ -379,11 +379,12 @@ pub fn verify_mismatch_diagnostic(
     col: usize,
     is_law: bool,
     law_context: Option<&VerifyLawContext>,
+    from_hostile: bool,
 ) -> Diagnostic {
-    let summary = if is_law {
-        "law violated"
-    } else {
-        "assertion failed"
+    let summary = match (is_law, from_hostile) {
+        (true, true) => "law violated under --hostile expansion",
+        (true, false) => "law violated",
+        (false, _) => "assertion failed",
     };
     let mut fields: Vec<(&'static str, String)> = vec![
         ("block", block_name.to_string()),
@@ -397,6 +398,19 @@ pub fn verify_mismatch_diagnostic(
         }
         fields.push(("law", lctx.law_expr.clone()));
     }
+    if from_hostile {
+        fields.push(("origin", "hostile boundary expansion".to_string()));
+    }
+    let repair = if from_hostile {
+        Repair::primary(
+            "this case isn't in the declared `given` — the claim isn't \
+             universal. Either add `when <precondition>` to scope it, or \
+             drop `law` form and use `verify <fn>` (cases form, example \
+             semantics) with the values you actually meant.",
+        )
+    } else {
+        Repair::default()
+    };
     Diagnostic {
         severity: Severity::Fail,
         slug: "verify-mismatch",
@@ -410,7 +424,7 @@ pub fn verify_mismatch_diagnostic(
         intent: None,
         fields,
         conflict: None,
-        repair: Repair::default(),
+        repair,
         regions: AnnotatedRegion::single(
             extract_source_lines(source, line, 0),
             Some(Underline {

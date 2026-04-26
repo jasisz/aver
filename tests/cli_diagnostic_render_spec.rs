@@ -93,6 +93,7 @@ fn verify_mismatch_diagnostic_has_expected_fields() {
         5,
         false,
         None,
+        false,
     );
     insta::assert_snapshot!("verify_mismatch_tty", render_tty(&diag, false));
     insta::assert_snapshot!(

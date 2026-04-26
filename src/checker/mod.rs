@@ -32,6 +32,13 @@ pub struct VerifyCaseResult {
     pub case_index: usize,
     pub case_total: usize,
     pub law_context: Option<VerifyLawContext>,
+    /// `true` for cases injected by `aver verify --hostile` boundary
+    /// expansion (a binding the user did not declare). Drives differential
+    /// reporting: a hostile-only failure means the claim is not universal,
+    /// so it isn't a law — either encode the missing precondition with
+    /// `when`, or downgrade from `law` form to `verify` (cases form,
+    /// example/scenario semantics) with the values you actually meant.
+    pub from_hostile: bool,
 }
 
 #[derive(Debug, Clone)]
