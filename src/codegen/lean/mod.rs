@@ -1386,6 +1386,10 @@ fn transpile_unified(
             crate::types::checker::proof_trust_header::generate_commented("-- ", &declared, has_ip),
         );
     }
+    let subtype_block = crate::types::checker::oracle_subtypes::lean_subtypes(&declared);
+    if !subtype_block.is_empty() {
+        entry_parts.push(subtype_block);
+    }
     entry_parts.push(entry_body);
     let entry_content = entry_parts.join("\n\n");
 

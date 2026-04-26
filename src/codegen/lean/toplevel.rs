@@ -15,6 +15,19 @@ use crate::codegen::recursion::rewrite_recursive_calls_body;
 use crate::verify_law::canonical_spec_ref;
 
 /// Emit a Lean 4 type definition from an Aver TypeDef.
+/// Subtype helper-type names that the oracle_subtypes module emits at
+/// the top of every artifact. Returned name matches the
+/// `<...>InBounds` / `<...>InUnit` / `<...>Nonneg` declarations in
+/// `oracle_subtypes::lean_subtypes` — keep these in sync.
+fn bounded_oracle_subtype_for(method: &str) -> Option<&'static str> {
+    match method {
+        "Random.int" => Some("RandomIntInBounds"),
+        "Random.float" => Some("RandomFloatInUnit"),
+        "Time.unixMs" => Some("TimeUnixMsNonneg"),
+        _ => None,
+    }
+}
+
 pub fn emit_type_def(td: &TypeDef) -> String {
     match td {
         TypeDef::Sum { name, variants, .. } => emit_sum_type(name, variants),
@@ -1395,13 +1408,13 @@ fn emit_verify_law_block(
         &law.lhs,
         law,
         ctx,
-        crate::codegen::common::OracleInjectionMode::LemmaBinding,
+        crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
     );
     let law_rhs = crate::codegen::common::rewrite_effectful_calls_in_law(
         &law.rhs,
         law,
         ctx,
-        crate::codegen::common::OracleInjectionMode::LemmaBinding,
+        crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
     );
     let lhs_template = emit_expr(&law_lhs, ctx);
     let rhs_template = emit_expr(&law_rhs, ctx);
@@ -1410,15 +1423,26 @@ fn emit_verify_law_block(
         .givens
         .iter()
         .map(|given| {
-            // Oracle v1: classified-effect givens bind oracles — the
-            // quantifier must use the derived oracle signature type,
-            // not the effect-reference name (which Lean would see as
-            // an unresolved `Random_int : Sort _`).
-            let type_text = match crate::types::checker::effect_classification::oracle_signature(
-                &given.type_name,
-            ) {
-                Some(oracle_ty) => crate::codegen::lean::types::type_to_lean(&oracle_ty),
-                None => type_annotation_to_lean(&given.type_name),
+            // Oracle v1 + 0.13 subtype encoding: classified Generative-
+            // shaped effect-givens bind oracles through a subtype
+            // carrier (`RandomIntInBounds` etc.) that pairs the function
+            // with the bound proof. The quantifier uses the subtype, so
+            // the law's claim is universally quantified over only those
+            // oracles that respect the bound — strictly stronger than
+            // `∀ rng : BranchPath → Int → ... → Int`. Other effect
+            // kinds (Output, unclassified) keep the plain function
+            // signature.
+            let type_text = if let Some(subtype) =
+                bounded_oracle_subtype_for(&given.type_name)
+            {
+                subtype.to_string()
+            } else {
+                match crate::types::checker::effect_classification::oracle_signature(
+                    &given.type_name,
+                ) {
+                    Some(oracle_ty) => crate::codegen::lean::types::type_to_lean(&oracle_ty),
+                    None => type_annotation_to_lean(&given.type_name),
+                }
             };
             format!("({} : {})", aver_name_to_lean(&given.name), type_text)
         })

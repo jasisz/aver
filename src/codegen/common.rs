@@ -436,6 +436,16 @@ pub(crate) fn expr_to_dotted_name(expr: &Expr) -> Option<String> {
 #[derive(Debug, Clone)]
 pub(crate) enum OracleInjectionMode<'a> {
     LemmaBinding,
+    /// Like `LemmaBinding` but project through the subtype carrier
+    /// for classified `Generative` / `GenerativeOutput` effect-givens
+    /// — `g.name` becomes `g.name.val` in the rewritten expression.
+    /// Used by the Lean backend where lifted theorems quantify over
+    /// the constrained subtype (`RandomIntInBounds`) instead of the
+    /// plain function type, so call sites need to peel the carrier.
+    /// Dafny stays on `LemmaBinding` (no first-class subtype types
+    /// over functions); the bound is enforced via `requires` on the
+    /// emitted lemma instead.
+    LemmaBindingProjected,
     #[allow(dead_code)]
     SampleValue,
     SampleCaseBinding(&'a [(String, crate::ast::Spanned<Expr>)]),
@@ -466,6 +476,34 @@ pub(crate) fn rewrite_effectful_calls_in_law(
                     node: Expr::Ident(g.name.clone()),
                     line: expr.line,
                 },
+                OracleInjectionMode::LemmaBindingProjected => {
+                    // For classified Generative-shaped effects the Lean
+                    // backend emits the oracle parameter as a subtype
+                    // (e.g. `RandomIntInBounds`); call sites need to
+                    // project through `.val` to get the underlying
+                    // function. Other effect kinds stay as plain idents.
+                    let subtype_carrier = matches!(
+                        crate::types::checker::effect_classification::classify(&g.type_name)
+                            .map(|c| c.dimension),
+                        Some(
+                            crate::types::checker::effect_classification::EffectDimension::Generative
+                        ) | Some(
+                            crate::types::checker::effect_classification::EffectDimension::GenerativeOutput
+                        )
+                    );
+                    let inner = Spanned {
+                        node: Expr::Ident(g.name.clone()),
+                        line: expr.line,
+                    };
+                    if subtype_carrier {
+                        Spanned {
+                            node: Expr::Attr(Box::new(inner), "val".to_string()),
+                            line: expr.line,
+                        }
+                    } else {
+                        inner
+                    }
+                }
                 OracleInjectionMode::SampleValue => match &g.domain {
                     VerifyGivenDomain::Explicit(vals) => vals.first().cloned()?,
                     _ => return None,
@@ -478,7 +516,90 @@ pub(crate) fn rewrite_effectful_calls_in_law(
             Some((g.type_name.clone(), arg_expr))
         })
         .collect();
-    rewrite_effectful_call(expr, &injection_by_effect, ctx)
+    let rewritten = rewrite_effectful_call(expr, &injection_by_effect, ctx);
+
+    // For `LemmaBindingProjected`, oracle bindings live as subtypes
+    // (`RandomIntInBounds` etc.); direct calls `rng(path, n, min, max)`
+    // in the law body need to peel `.val` off the carrier. Walk the
+    // rewritten expression once more and rewrite direct
+    // `FnCall(Ident(<oracle_name>), args)` shapes into
+    // `FnCall(Attr(Ident(<oracle_name>), "val"), args)` for every
+    // classified Generative-shape given. Other modes leave the body
+    // alone.
+    if matches!(mode, OracleInjectionMode::LemmaBindingProjected) {
+        let oracle_names: std::collections::HashSet<String> = law
+            .givens
+            .iter()
+            .filter(|g| {
+                matches!(
+                    crate::types::checker::effect_classification::classify(&g.type_name)
+                        .map(|c| c.dimension),
+                    Some(crate::types::checker::effect_classification::EffectDimension::Generative)
+                        | Some(
+                            crate::types::checker::effect_classification::EffectDimension::GenerativeOutput
+                        )
+                )
+            })
+            .map(|g| g.name.clone())
+            .collect();
+        if !oracle_names.is_empty() {
+            return project_oracle_direct_calls(&rewritten, &oracle_names);
+        }
+    }
+    rewritten
+}
+
+/// Rewrite every `<oracle_name>(args...)` into
+/// `<oracle_name>.val(args...)` so the call type-checks against the
+/// subtype carrier the lemma quantifier introduces. Recursive over the
+/// whole expression — in nested expressions like `Result.Ok(rng(p, n,
+/// 1, 6))`, only the inner direct call gets projected.
+fn project_oracle_direct_calls(
+    expr: &crate::ast::Spanned<Expr>,
+    oracle_names: &std::collections::HashSet<String>,
+) -> crate::ast::Spanned<Expr> {
+    use crate::ast::Spanned;
+    let line = expr.line;
+    let new_node = match &expr.node {
+        Expr::FnCall(callee, args) => {
+            let new_args: Vec<Spanned<Expr>> = args
+                .iter()
+                .map(|a| project_oracle_direct_calls(a, oracle_names))
+                .collect();
+            let new_callee = match &callee.node {
+                Expr::Ident(name) if oracle_names.contains(name) => Spanned {
+                    node: Expr::Attr(
+                        Box::new(Spanned {
+                            node: Expr::Ident(name.clone()),
+                            line: callee.line,
+                        }),
+                        "val".to_string(),
+                    ),
+                    line: callee.line,
+                },
+                _ => project_oracle_direct_calls(callee, oracle_names),
+            };
+            Expr::FnCall(Box::new(new_callee), new_args)
+        }
+        Expr::Constructor(name, Some(arg)) => Expr::Constructor(
+            name.clone(),
+            Some(Box::new(project_oracle_direct_calls(arg, oracle_names))),
+        ),
+        Expr::Attr(obj, field) => Expr::Attr(
+            Box::new(project_oracle_direct_calls(obj, oracle_names)),
+            field.clone(),
+        ),
+        Expr::BinOp(op, l, r) => Expr::BinOp(
+            op.clone(),
+            Box::new(project_oracle_direct_calls(l, oracle_names)),
+            Box::new(project_oracle_direct_calls(r, oracle_names)),
+        ),
+        other => other.clone(),
+    };
+    Spanned {
+        node: new_node,
+        line,
+    }
 }
 
 fn rewrite_effectful_call(
