@@ -302,21 +302,28 @@ type. `--hostile` checks that.
 
 `--hostile` works on **two axes**, each tied to a different verify form:
 
-1. **Value-side** — only on `verify <fn> law <name>` blocks. Typed
-   `given` clauses get augmented with the per-type boundary set. Law
-   form is a universal claim; hostile checks the boundary the user did
-   not exercise.
-2. **Effect-side** — only on `verify <fn> trace` blocks. Classified
-   non-`Output` effects the fn declares get multiplied by an adversarial
-   profile cartesian. The user's `given <Effect>` stub is one chosen
-   world; hostile asks "what if you chose wrong?" by overriding the stub
-   with each profile in turn.
+1. **Value-side** — on `verify <fn> law <name>` blocks (with or without
+   `trace`). Typed `given` clauses get augmented with the per-type
+   boundary set. Law form is a universal claim; hostile checks the
+   boundary the user did not exercise.
+2. **Effect-side** — only on `verify <fn> trace law <name>` blocks
+   (trace + law together). Classified non-`Output` effects the fn
+   declares get multiplied by an adversarial profile cartesian. The
+   user's `given <Effect>` stub is one chosen world; hostile asks "what
+   if you chose wrong?" by overriding the stub with each profile in
+   turn.
 
-Plain cases-form `verify <fn>` is fixtures (explicit examples) — neither
-axis applies. `law` form's `given` is value substitution / formal proof
-parameter (not a runtime stub to challenge), so effect-side has no
-semantic role there. `trace` form's `given` is a runtime oracle stub
-(the world side of one concrete sample), so value-side has no role.
+Forms that opt out:
+
+- **Plain `verify <fn>`** — fixtures (explicit examples), neither axis
+  applies.
+- **`verify <fn> trace`** (cases-form trace, no `law`) — also fixtures;
+  the user wrote one specific scenario with one chosen stub, and
+  multiplying it by the profile cartesian would change "this scenario"
+  into "every scenario". Effect-side opts out.
+- **`verify <fn> law <name>`** without trace — gets value-side hostile.
+  Effect-side has no role: law-form `given` is value substitution /
+  formal proof parameter, not a runtime stub to challenge.
 
 **Value-side boundary sets:**
 
@@ -389,16 +396,28 @@ fail[verify-hostile-mismatch]: law violated under --hostile expansion
 
 For effect-side hostile (`verify <fn> trace` block, adversarial profile
 overriding the user's oracle stub for that case), `origin` carries the
-profile label and the repair hint speaks to the trace pattern:
+profile label. Trace form does not currently support `when` (that
+keyword lives on `law` form's value domain), so the repair speaks to
+the two real options today.
+
+> **Future: `when` over effect-given.** Naturally one could let trace
+> form take a `when` predicate that references the effect stub
+> (`when clock(root, 1) > clock(root, 0)` for monotonicity), letting
+> users encode state-aware preconditions (e.g. "the clock advances")
+> that hostile honours by filtering out profiles which break the
+> invariant — `frozen` and `backward` would skip, `normal` /
+> `fast_forward` would run. Out of scope for 0.13 (needs profile-stub
+> installation before `when` evaluation, and the trace runner currently
+> evaluates guards stub-less). Tracked for a follow-up.
 
 ```
   origin: hostile effect profile: Time.unixMs/saturated
   repair: the trace passes for the world your `given` stub describes
-          but breaks under this adversarial profile. Either accept the
-          profile as a real concern (the world your code will see in
-          production) and adjust the impl, or scope the trace with
-          `when <precondition>` so it only covers the worlds you
-          actually meant.
+          but breaks under this adversarial profile. Either adjust the
+          impl to be robust against the profile (it models a real
+          production world — frozen clock, empty disk, network down)
+          or, if this trace is intentionally example-only, run it
+          without `--hostile`.
 ```
 
 The block summary line breaks the count down by origin:

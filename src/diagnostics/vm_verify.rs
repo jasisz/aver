@@ -171,28 +171,27 @@ fn apply_hostile_expansion(block: &mut VerifyBlock, items: &[TopLevel]) -> Resul
 /// non-`Output` effect the fn declares. Each inner Vec is one adversarial
 /// world.
 ///
-/// **Effect-side hostile applies only to `verify <fn> trace` blocks.**
-/// In trace form, `given rnd: Random.int = [stub]` is a runtime oracle
-/// stub — a concrete choice of world that the trace assertions check.
-/// Hostile profiles ask "what if you chose wrong?": the same trace law
-/// runs under each adversarial world, the runtime stub installer
-/// overwrites the user's stub for the duration of each profile case.
+/// **Effect-side hostile applies only to `verify <fn> trace law <name>`
+/// blocks** — trace-aware universal claims. There the user wrote a law
+/// over `given` oracle stubs and trace assertions; hostile profiles ask
+/// "does this claim hold for every adversarial world, not just the one
+/// stub you picked?".
 ///
-/// In `law` form, `given` is either value substitution (`given x: Int =
-/// [...]`) or a formal oracle parameter folded into the lifted spec for
-/// proof export. Multiplying a universal-quantified claim by a
-/// per-effect profile cartesian doesn't add information — the law's
-/// claim is already over every world by definition. Hostile in law form
-/// stays on the value side (boundary expansion of typed `given`s).
+/// Cases-form trace (`verify <fn> trace`, no `law`) is a *fixture*: the
+/// user wrote a specific scenario with a specific stub. Multiplying it
+/// by the profile cartesian would change "this scenario" into "every
+/// scenario", which is not what the user wrote. Plain `verify <fn>`
+/// (cases-form) is a fixture too. Both opt out of effect-side hostile.
 ///
-/// In plain cases form there's no `given`; a fn with classified effects
-/// flaps without stubs anyway (`aver verify` warns). Hostile here would
-/// be a no-op on a pattern that's already broken.
+/// Plain `verify <fn> law <name>` (no trace) gets value-side hostile only
+/// — its `given` is value substitution / formal oracle parameter, not a
+/// runtime stub to challenge with profiles.
 fn collect_effect_profile_combinations(
     block: &VerifyBlock,
     items: &[TopLevel],
 ) -> Vec<Vec<(String, String)>> {
-    if !block.trace {
+    let is_trace_law = block.trace && matches!(block.kind, VerifyKind::Law(_));
+    if !is_trace_law {
         return Vec::new();
     }
     let fn_def = items.iter().find_map(|i| match i {
@@ -237,14 +236,14 @@ fn collect_effect_profile_combinations(
     out
 }
 
-/// For each *trace-form* verify block, find the function under test and
-/// the classified non-Output effects it declares, then parse + inject
-/// the corresponding hostile profile bodies as `TopLevel::FnDef`.
-/// Effect-side hostile only applies to trace form — see
-/// `collect_effect_profile_combinations` for the rationale. Runs before
-/// type-check so synthetic stubs go through the regular checker and
-/// compile to ordinary user-space fns the runner can install as oracle
-/// stubs.
+/// For each `verify <fn> trace law <name>` block, find the function
+/// under test and the classified non-Output effects it declares, then
+/// parse + inject the corresponding hostile profile bodies as
+/// `TopLevel::FnDef`. Effect-side hostile only applies to trace+law
+/// blocks — see `collect_effect_profile_combinations` for the rationale.
+/// Runs before type-check so synthetic stubs go through the regular
+/// checker and compile to ordinary user-space fns the runner can install
+/// as oracle stubs.
 fn inject_hostile_effect_stubs_for_blocks(items: &mut Vec<TopLevel>, blocks: &[VerifyBlock]) {
     let existing: std::collections::HashSet<String> = items
         .iter()
@@ -258,7 +257,8 @@ fn inject_hostile_effect_stubs_for_blocks(items: &mut Vec<TopLevel>, blocks: &[V
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for block in blocks {
-        if !block.trace {
+        let is_trace_law = block.trace && matches!(block.kind, VerifyKind::Law(_));
+        if !is_trace_law {
             continue;
         }
         let Some(fn_def) = items.iter().find_map(|i| match i {
@@ -1418,7 +1418,14 @@ mod tests {
             case_givens: vec![],
             case_hostile_origins: vec![],
             case_hostile_profiles: vec![],
-            kind: VerifyKind::Cases,
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
+                name: "test".to_string(),
+                givens: vec![],
+                when: None,
+                lhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                rhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                sample_guards: vec![],
+            })),
             trace: true,
             cases_givens: vec![],
         };
@@ -1479,7 +1486,9 @@ mod tests {
 
     #[test]
     fn collect_effect_profile_excludes_output_effects() {
-        // Console.print is Output — no oracle response to vary, so no profiles.
+        // Console.print is Output — no oracle response to vary, so no
+        // profiles. Use trace+law shape since that's the only form
+        // where effect-side hostile applies in the first place.
         let src = "module M\n    effects [Console.print]\n\nfn greet() -> Unit\n    ? \"toy\"\n    ! [Console.print]\n    Console.print(\"hi\")\n";
         let items = parse_source(src);
         let block = VerifyBlock {
@@ -1490,7 +1499,14 @@ mod tests {
             case_givens: vec![],
             case_hostile_origins: vec![],
             case_hostile_profiles: vec![],
-            kind: VerifyKind::Cases,
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
+                name: "test".to_string(),
+                givens: vec![],
+                when: None,
+                lhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                rhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                sample_guards: vec![],
+            })),
             trace: true,
             cases_givens: vec![],
         };
@@ -1510,7 +1526,14 @@ mod tests {
             case_givens: vec![],
             case_hostile_origins: vec![],
             case_hostile_profiles: vec![],
-            kind: VerifyKind::Cases,
+            kind: VerifyKind::Law(Box::new(VerifyLaw {
+                name: "test".to_string(),
+                givens: vec![],
+                when: None,
+                lhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                rhs: Spanned::bare(Expr::Literal(Literal::Unit)),
+                sample_guards: vec![],
+            })),
             trace: true,
             cases_givens: vec![],
         }];
@@ -1533,11 +1556,11 @@ mod tests {
 
     #[test]
     fn apply_hostile_expansion_multiplies_cases_by_effect_cartesian() {
-        // Trace-form verify on a fn that uses Time.now. Hostile expansion
-        // produces: N declared cases × (1 un-effected base + K Time.now
-        // profiles), where K = current profile count for Time.now.
-        // Effect-side hostile only applies to trace form, hence
-        // `verify currentYear trace` here.
+        // Trace+law form on a fn that uses Time.now. Effect-side hostile
+        // only applies to `verify <fn> trace law <name>` (a universal
+        // trace claim); cases-form trace is a fixture and opts out.
+        // Hostile expansion produces: 1 declared case × (1 un-effected
+        // base + K Time.now profiles).
         let src = r#"module M
     effects [Time.now]
 
@@ -1549,9 +1572,8 @@ fn currentYear() -> String
     ! [Time.now]
     Time.now()
 
-verify currentYear trace
+verify currentYear trace law alwaysReturns
     given clock: Time.now = [frozenStub]
-    currentYear().result => "2026-01-01T00:00:00Z"
     currentYear().result => "2026-01-01T00:00:00Z"
 "#;
         let items = parse_source(src);
@@ -1559,7 +1581,7 @@ verify currentYear trace
         assert_eq!(blocks.len(), 1);
         let block = &mut blocks[0];
         let declared_count = block.cases.len();
-        assert_eq!(declared_count, 2);
+        assert_eq!(declared_count, 1);
 
         apply_hostile_expansion(block, &items).expect("expansion within budget");
 
@@ -1580,6 +1602,39 @@ verify currentYear trace
             .filter(|p| !p.is_empty())
             .count();
         assert_eq!(profile_count, declared_count * time_now_profiles);
+    }
+
+    #[test]
+    fn cases_form_trace_opts_out_of_effect_side_hostile() {
+        // `verify <fn> trace` (no `law`) is a fixture — explicit scenario
+        // with one chosen stub. Effect-side hostile would change its
+        // semantics from "this scenario" to "every scenario", which the
+        // user did not write. The block stays untouched on the effect
+        // side; the cases-form `trace` semantics are preserved.
+        let src = r#"module M
+    effects [Time.now]
+
+fn frozenStub(path: BranchPath, n: Int) -> String
+    "2026-01-01T00:00:00Z"
+
+fn currentYear() -> String
+    ? "current year"
+    ! [Time.now]
+    Time.now()
+
+verify currentYear trace
+    given clock: Time.now = [frozenStub]
+    currentYear().result => "2026-01-01T00:00:00Z"
+"#;
+        let items = parse_source(src);
+        let combos = collect_effect_profile_combinations(
+            &crate::checker::merge_verify_blocks(&items)[0],
+            &items,
+        );
+        assert!(
+            combos.is_empty(),
+            "cases-form trace is a fixture; effect-side hostile must not multiply it"
+        );
     }
 
     #[test]

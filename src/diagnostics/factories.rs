@@ -413,20 +413,31 @@ pub fn verify_mismatch_diagnostic(
     }
     let repair = if from_hostile {
         if hostile_profile.is_some() {
+            // Effect-side hostile only fires inside `verify <fn> trace`,
+            // and trace form does not support `when` — that keyword lives
+            // on `verify <fn> law <name>` blocks, where `given` is a value
+            // domain. Don't suggest it here. The honest options are:
+            // adjust the impl (the profile is a real production world the
+            // code should handle), or take the trace out of the hostile
+            // run if it's intentionally example-only.
             Repair::primary(
                 "the trace passes for the world your `given` stub describes \
-                 but breaks under this adversarial profile. Either accept \
-                 the profile as a real concern (the world your code will \
-                 see in production) and adjust the impl, or scope the trace \
-                 with `when <precondition>` so it only covers the worlds \
-                 you actually meant.",
+                 but breaks under this adversarial profile. Either adjust \
+                 the impl to be robust against the profile (it models a \
+                 real production world — frozen clock, empty disk, network \
+                 down) or, if this trace is intentionally example-only, \
+                 run it without `--hostile`.",
             )
         } else {
+            // Value-side hostile: only fires on `verify <fn> law <name>`,
+            // which DOES support `when`. The `when` suggestion is honest
+            // here.
             Repair::primary(
                 "this case isn't in the declared `given` — the claim isn't \
-                 universal. Either add `when <precondition>` to scope it, or \
-                 drop `law` form and use `verify <fn>` (cases form, example \
-                 semantics) with the values you actually meant.",
+                 universal. Either add `when <precondition>` to scope the \
+                 law to the values it actually holds for, or drop `law` \
+                 form and use `verify <fn>` (cases form, example semantics) \
+                 with the values you actually meant.",
             )
         }
     } else {
