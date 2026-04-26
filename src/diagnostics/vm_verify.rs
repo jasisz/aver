@@ -171,27 +171,24 @@ fn apply_hostile_expansion(block: &mut VerifyBlock, items: &[TopLevel]) -> Resul
 /// non-`Output` effect the fn declares. Each inner Vec is one adversarial
 /// world.
 ///
-/// **Effect-side hostile applies only to `verify <fn> trace law <name>`
-/// blocks** — trace-aware universal claims. There the user wrote a law
-/// over `given` oracle stubs and trace assertions; hostile profiles ask
-/// "does this claim hold for every adversarial world, not just the one
+/// **Effect-side hostile applies to `verify <fn> law <name>` blocks**
+/// (with or without `trace`) — universal claims with runtime oracle
+/// stubs. The user's `given <Effect> = [stub]` pins one specific world
+/// inside what is otherwise a universal claim; hostile profiles ask
+/// "does this law hold under every adversarial world, not just the one
 /// stub you picked?".
 ///
-/// Cases-form trace (`verify <fn> trace`, no `law`) is a *fixture*: the
-/// user wrote a specific scenario with a specific stub. Multiplying it
-/// by the profile cartesian would change "this scenario" into "every
-/// scenario", which is not what the user wrote. Plain `verify <fn>`
-/// (cases-form) is a fixture too. Both opt out of effect-side hostile.
-///
-/// Plain `verify <fn> law <name>` (no trace) gets value-side hostile only
-/// — its `given` is value substitution / formal oracle parameter, not a
-/// runtime stub to challenge with profiles.
+/// Cases-form opts out — both plain `verify <fn>` and `verify <fn>
+/// trace` (no `law`) are *fixtures*: the user wrote one specific
+/// scenario with one chosen stub. Multiplying a fixture by the profile
+/// cartesian would change "this scenario" into "every scenario", which
+/// is not what the user wrote.
 fn collect_effect_profile_combinations(
     block: &VerifyBlock,
     items: &[TopLevel],
 ) -> Vec<Vec<(String, String)>> {
-    let is_trace_law = block.trace && matches!(block.kind, VerifyKind::Law(_));
-    if !is_trace_law {
+    let is_law = matches!(block.kind, VerifyKind::Law(_));
+    if !is_law {
         return Vec::new();
     }
     let fn_def = items.iter().find_map(|i| match i {
@@ -236,14 +233,14 @@ fn collect_effect_profile_combinations(
     out
 }
 
-/// For each `verify <fn> trace law <name>` block, find the function
-/// under test and the classified non-Output effects it declares, then
-/// parse + inject the corresponding hostile profile bodies as
-/// `TopLevel::FnDef`. Effect-side hostile only applies to trace+law
-/// blocks — see `collect_effect_profile_combinations` for the rationale.
-/// Runs before type-check so synthetic stubs go through the regular
-/// checker and compile to ordinary user-space fns the runner can install
-/// as oracle stubs.
+/// For each `verify <fn> law <name>` block (with or without `trace`),
+/// find the function under test and the classified non-Output effects
+/// it declares, then parse + inject the corresponding hostile profile
+/// bodies as `TopLevel::FnDef`. Effect-side hostile only applies to
+/// law form — see `collect_effect_profile_combinations` for the
+/// rationale. Runs before type-check so synthetic stubs go through the
+/// regular checker and compile to ordinary user-space fns the runner
+/// can install as oracle stubs.
 fn inject_hostile_effect_stubs_for_blocks(items: &mut Vec<TopLevel>, blocks: &[VerifyBlock]) {
     let existing: std::collections::HashSet<String> = items
         .iter()
@@ -257,8 +254,7 @@ fn inject_hostile_effect_stubs_for_blocks(items: &mut Vec<TopLevel>, blocks: &[V
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for block in blocks {
-        let is_trace_law = block.trace && matches!(block.kind, VerifyKind::Law(_));
-        if !is_trace_law {
+        if !matches!(block.kind, VerifyKind::Law(_)) {
             continue;
         }
         let Some(fn_def) = items.iter().find_map(|i| match i {
@@ -1447,12 +1443,12 @@ mod tests {
     }
 
     #[test]
-    fn collect_effect_profile_skips_law_form_blocks() {
-        // Effect-side hostile only applies to trace-form blocks.
-        // Law-form `given` is value substitution / formal proof param,
-        // not a runtime stub to challenge — multiplying a universal
-        // claim by adversarial profiles adds no information.
-        let src = "module M\n    effects [Time.now, Random.int]\n\nfn f() -> Int\n    ? \"toy\"\n    ! [Time.now, Random.int]\n    1\n";
+    fn collect_effect_profile_applies_to_law_form_with_or_without_trace() {
+        // Law form is a universal claim. Even without `trace`, the user's
+        // `given <Effect>` is a runtime stub (one chosen world); hostile
+        // profiles ask "does this law hold under every world?". So the
+        // cartesian fires.
+        let src = "module M\n    effects [Time.now]\n\nfn f() -> Int\n    ? \"toy\"\n    ! [Time.now]\n    1\n";
         let items = parse_source(src);
         let block = VerifyBlock {
             fn_name: "f".to_string(),
@@ -1464,24 +1460,18 @@ mod tests {
             case_hostile_profiles: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "test".to_string(),
-                givens: vec![VerifyGiven {
-                    name: "clock".to_string(),
-                    type_name: "Time.now".to_string(),
-                    domain: VerifyGivenDomain::Explicit(vec![]),
-                }],
+                givens: vec![],
                 when: None,
                 lhs: Spanned::bare(Expr::Literal(Literal::Unit)),
                 rhs: Spanned::bare(Expr::Literal(Literal::Unit)),
                 sample_guards: vec![],
             })),
-            trace: false,
+            trace: false, // no trace, still law → still gets effect-side
             cases_givens: vec![],
         };
         let combos = collect_effect_profile_combinations(&block, &items);
-        assert!(
-            combos.is_empty(),
-            "law-form should not get effect-side hostile expansion"
-        );
+        let time_now = crate::types::checker::hostile_effects::hostile_profiles_for("Time.now");
+        assert_eq!(combos.len(), time_now.len());
     }
 
     #[test]

@@ -300,30 +300,29 @@ of the given clauses' types". The user usually writes a small declared set
 think will exercise the law — but the claim itself ranges over the whole
 type. `--hostile` checks that.
 
-`--hostile` works on **two axes**, each tied to a different verify form:
+`--hostile` works on **two axes**, both tied to law form:
 
-1. **Value-side** — on `verify <fn> law <name>` blocks (with or without
+1. **Value-side** — on `verify <fn> law <name>` (with or without
    `trace`). Typed `given` clauses get augmented with the per-type
    boundary set. Law form is a universal claim; hostile checks the
    boundary the user did not exercise.
-2. **Effect-side** — only on `verify <fn> trace law <name>` blocks
-   (trace + law together). Classified non-`Output` effects the fn
-   declares get multiplied by an adversarial profile cartesian. The
-   user's `given <Effect>` stub is one chosen world; hostile asks "what
-   if you chose wrong?" by overriding the stub with each profile in
-   turn.
+2. **Effect-side** — also on `verify <fn> law <name>` (with or without
+   `trace`). Classified non-`Output` effects the fn declares get
+   multiplied by an adversarial profile cartesian. The user's `given
+   <Effect>` stub is one chosen world; hostile asks "what if you chose
+   wrong?" by overriding the stub with each profile in turn.
 
-Forms that opt out:
+| Form | Value-side | Effect-side |
+|---|---|---|
+| `verify <fn>` (plain) | — | — |
+| `verify <fn> trace` (cases-form trace) | — | — |
+| `verify <fn> law <name>` | ✓ | ✓ |
+| `verify <fn> trace law <name>` | ✓ | ✓ |
 
-- **Plain `verify <fn>`** — fixtures (explicit examples), neither axis
-  applies.
-- **`verify <fn> trace`** (cases-form trace, no `law`) — also fixtures;
-  the user wrote one specific scenario with one chosen stub, and
-  multiplying it by the profile cartesian would change "this scenario"
-  into "every scenario". Effect-side opts out.
-- **`verify <fn> law <name>`** without trace — gets value-side hostile.
-  Effect-side has no role: law-form `given` is value substitution /
-  formal proof parameter, not a runtime stub to challenge.
+Cases-form opts out — both plain `verify <fn>` and `verify <fn> trace`
+(no `law`) are fixtures: explicit scenarios with chosen stubs.
+Multiplying a fixture by the adversarial cartesian would turn "this
+scenario" into "every scenario", which is not what the user wrote.
 
 **Value-side boundary sets:**
 
