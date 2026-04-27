@@ -34,7 +34,6 @@ If you only remember one section, make it this one:
 module Hello
     intent = "Tiny intro module."
     exposes [greet, main]
-    effects [Console.print]
 
 fn greet(name: String) -> String
     ? "Builds a greeting."
@@ -54,7 +53,6 @@ This shows the core pattern:
 - a pure function
 - a `verify` block directly below it
 - an effectful `main`
-- a module-level `effects [...]` boundary that names every effect any function in the module uses (since 0.13)
 
 
 ## Core syntax
@@ -175,7 +173,6 @@ module Billing
         "Exports only the public entrypoints."
     exposes [charge, refund]
     depends [Core.Types, Infra.Store]
-    effects [Console.print, Disk]
 ```
 
 Rules:
@@ -183,7 +180,7 @@ Rules:
 - `intent` may be inline or multiline; formatter prefers multiline for multiline text
 - `depends [...]` and `exposes [...]` are explicit
 - opaque types: `exposes opaque [Discount]` — visible in signatures but cannot be constructed or destructured from outside
-- `effects [...]` declares the module's effect surface. Every function's `! [Effect]` must be covered: a method-level entry like `Disk.readText` admits only that method, a namespace entry like `Disk` admits any `Disk.*` method. Underdeclared = type error; overdeclared = warning. A module with functions but no `effects [...]` triggers a warning to add the boundary (use `effects []` for a pure module).
+- `effects [...]` is an optional boundary you can add to a module header to enforce which effects its functions may use: a method-level entry like `Disk.readText` admits only that method, a namespace entry like `Disk` admits any `Disk.*` method. Skip it unless you specifically want the boundary — every fn's `! [Effect]` must be covered or you get a type error.
 
 ### Verify blocks
 
