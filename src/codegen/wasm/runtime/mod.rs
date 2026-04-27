@@ -48,7 +48,8 @@ pub(crate) const IO_FLOAT_BUF: u32 = 48; // 48 bytes for float digits (48..95)
 /// Migrated so far: alloc, truncate, obj_kind/tag/meta, obj_field
 /// (i64/f64/i32), unwrap (i64/f64/i32), wrap (i64/f64/i32), str_eq,
 /// str_concat, list_cons (i64/f64), str_byte_len, str_find,
-/// str_starts_with, str_ends_with, str_contains.
+/// str_starts_with, str_ends_with, str_contains, list_take/drop/
+/// concat/reverse/contains/zip.
 #[allow(clippy::vec_init_then_push)]
 pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     let mut funcs = Vec::new();
@@ -62,12 +63,6 @@ pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     funcs.push(io::emit_fd_write_buf(rt)); // $fd_write_buf
     funcs.push(strings::emit_i64_to_str_obj(rt)); // $i64_to_str_obj
     funcs.push(strings::emit_f64_to_str_obj(rt)); // $f64_to_str_obj
-    funcs.push(lists::emit_list_take(rt)); // $list_take
-    funcs.push(lists::emit_list_drop()); // $list_drop
-    funcs.push(lists::emit_list_concat(rt)); // $list_concat
-    funcs.push(lists::emit_list_reverse(rt)); // $list_reverse
-    funcs.push(lists::emit_list_contains(rt)); // $list_contains
-    funcs.push(lists::emit_list_zip(rt)); // $list_zip
     funcs.push(maps::emit_map_get(rt)); // $map_get
     funcs.push(maps::emit_map_set(rt)); // $map_set
     funcs.push(maps::emit_map_has(rt)); // $map_has

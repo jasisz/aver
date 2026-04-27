@@ -36,6 +36,12 @@ pub struct AverRuntimeImports {
     pub rt_str_starts_with: u32,
     pub rt_str_ends_with: u32,
     pub rt_str_contains: u32,
+    pub rt_list_take: u32,
+    pub rt_list_drop: u32,
+    pub rt_list_concat: u32,
+    pub rt_list_reverse: u32,
+    pub rt_list_contains: u32,
+    pub rt_list_zip: u32,
 }
 
 /// Index assignments for runtime functions within the module.
@@ -159,12 +165,12 @@ impl RuntimeFuncIndices {
             str_concat: imports.rt_str_concat,
             i64_to_str_obj: next(),
             f64_to_str_obj: next(),
-            list_take: next(),
-            list_drop: next(),
-            list_concat: next(),
-            list_reverse: next(),
-            list_contains: next(),
-            list_zip: next(),
+            list_take: imports.rt_list_take,
+            list_drop: imports.rt_list_drop,
+            list_concat: imports.rt_list_concat,
+            list_reverse: imports.rt_list_reverse,
+            list_contains: imports.rt_list_contains,
+            list_zip: imports.rt_list_zip,
             map_get: next(),
             map_set: next(),
             map_has: next(),
@@ -675,24 +681,6 @@ pub fn rt_type_index(
     }
     if local_idx == rt.f64_to_str_obj - import_func_count {
         return rti.f64_to_i32;
-    }
-    if local_idx == rt.list_take - import_func_count {
-        return rti.i32_i32_to_i32;
-    }
-    if local_idx == rt.list_drop - import_func_count {
-        return rti.i32_i32_to_i32;
-    }
-    if local_idx == rt.list_concat - import_func_count {
-        return rti.i32_i32_to_i32;
-    }
-    if local_idx == rt.list_reverse - import_func_count {
-        return rti.unwrap_i32;
-    }
-    if local_idx == rt.list_contains - import_func_count {
-        return rti.i32_i64_to_i32;
-    }
-    if local_idx == rt.list_zip - import_func_count {
-        return rti.i32_i32_to_i32;
     }
     if local_idx == rt.map_get - import_func_count {
         return rti.i32_i32_to_i32;

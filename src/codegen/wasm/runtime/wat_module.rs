@@ -24,6 +24,7 @@ const STR_EQ_WAT: &str = include_str!("wat/str_eq.part.wat");
 const STR_CONCAT_WAT: &str = include_str!("wat/str_concat.part.wat");
 const LIST_CONS_WAT: &str = include_str!("wat/list_cons.part.wat");
 const STR_SEARCH_WAT: &str = include_str!("wat/str_search.part.wat");
+const LISTS_WAT: &str = include_str!("wat/lists.part.wat");
 
 /// Build the runtime module's WAT source by concatenating fragments
 /// inside a `(module ...)` wrapper. Order matters — prelude declares
@@ -50,6 +51,8 @@ fn runtime_wat_source() -> String {
     s.push_str(LIST_CONS_WAT);
     s.push('\n');
     s.push_str(STR_SEARCH_WAT);
+    s.push('\n');
+    s.push_str(LISTS_WAT);
     s.push('\n');
     s.push(')');
     s
@@ -110,6 +113,12 @@ mod tests {
             "rt_str_starts_with",
             "rt_str_ends_with",
             "rt_str_contains",
+            "rt_list_take",
+            "rt_list_drop",
+            "rt_list_concat",
+            "rt_list_reverse",
+            "rt_list_contains",
+            "rt_list_zip",
         ];
         let mut found: std::collections::HashSet<&str> =
             std::collections::HashSet::new();
