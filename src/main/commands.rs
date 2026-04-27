@@ -2581,6 +2581,16 @@ fn vacuous_under_hostile(cases: &[aver::checker::VerifyCaseResult]) -> bool {
         if !case.from_hostile || case.hostile_profile.is_none() {
             continue;
         }
+        // SkippedAfterBaseFail isn't a `when`-driven skip; it's a
+        // VM-level optimization (base case already failed, so we
+        // didn't bother running the profile permutation). Treat
+        // those cases as if they didn't exist — vacuous-under-hostile
+        // means "every adversarial profile rejected by `when`", not
+        // "every adversarial profile pre-empted because the base
+        // already broke".
+        if matches!(case.outcome, VerifyCaseOutcome::SkippedAfterBaseFail) {
+            continue;
+        }
         had_hostile = true;
         if !matches!(case.outcome, VerifyCaseOutcome::Skipped) {
             all_skipped = false;
@@ -2598,7 +2608,10 @@ fn bucket_hostile(cases: &[aver::checker::VerifyCaseResult]) -> (usize, usize, u
     let mut hostile_failed = 0usize;
     for case in cases {
         let passed = matches!(case.outcome, VerifyCaseOutcome::Pass);
-        let skipped = matches!(case.outcome, VerifyCaseOutcome::Skipped);
+        let skipped = matches!(
+            case.outcome,
+            VerifyCaseOutcome::Skipped | VerifyCaseOutcome::SkippedAfterBaseFail
+        );
         if skipped {
             continue;
         }
@@ -2741,18 +2754,35 @@ fn render_verify_output(
                     let breakdown = if has_hostile {
                         let declared_total = declared_passed + declared_failed;
                         let hostile_total = hostile_passed + hostile_failed;
-                        let skipped_tail = if block.skipped > 0 {
-                            format!(", {} skipped by `when`", block.skipped)
-                        } else {
-                            String::new()
-                        };
+                        let skipped_when = block
+                            .case_results
+                            .iter()
+                            .filter(|c| matches!(c.outcome, VerifyCaseOutcome::Skipped))
+                            .count();
+                        let skipped_base = block
+                            .case_results
+                            .iter()
+                            .filter(|c| {
+                                matches!(c.outcome, VerifyCaseOutcome::SkippedAfterBaseFail)
+                            })
+                            .count();
+                        let mut tail = String::new();
+                        if skipped_when > 0 {
+                            tail.push_str(&format!(", {} skipped by `when`", skipped_when));
+                        }
+                        if skipped_base > 0 {
+                            tail.push_str(&format!(
+                                ", {} skipped (base case already failed)",
+                                skipped_base
+                            ));
+                        }
                         format!(
                             " ({}/{} declared, {}/{} hostile{})",
                             declared_passed,
                             declared_total,
                             hostile_passed,
                             hostile_total,
-                            skipped_tail
+                            tail
                         )
                     } else {
                         let mut mismatch = 0usize;
@@ -2808,11 +2838,10 @@ fn render_verify_output(
                 }
 
                 // Group `Mismatch` outcomes by (case_expr, line).
-                // Under --hostile a single broken case typically
-                // breaks under multiple adversarial profiles; emit one
-                // grouped diagnostic per case with the full list of
-                // worlds it failed under, instead of a wall of near-
-                // identical entries with the same repair text.
+                // Profile-after-base-fail skipping happens at the VM
+                // layer (`SkippedAfterBaseFail` outcome), so by the
+                // time we get here every `Mismatch` is one we
+                // actually want to show.
                 use std::collections::HashMap;
                 let mut mismatch_groups: HashMap<(String, usize), Vec<usize>> = HashMap::new();
                 let mut mismatch_order: Vec<(String, usize)> = Vec::new();
@@ -3050,11 +3079,33 @@ pub(super) fn cmd_verify(
         );
     } else {
         println!();
-        let skipped_part = if total_skipped > 0 {
-            format!(" | {} skipped by `when`", total_skipped)
-        } else {
-            String::new()
-        };
+        // Split skipped into when-driven and base-failure-driven —
+        // they have different meanings (`when` filtered the case
+        // out vs Aver pre-empted a redundant profile permutation).
+        use aver::checker::VerifyCaseOutcome;
+        let mut skipped_when = 0usize;
+        let mut skipped_base = 0usize;
+        for fr in &all_file_results {
+            for b in &fr.blocks {
+                for cr in &b.case_results {
+                    match cr.outcome {
+                        VerifyCaseOutcome::Skipped => skipped_when += 1,
+                        VerifyCaseOutcome::SkippedAfterBaseFail => skipped_base += 1,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        let mut skipped_part = String::new();
+        if skipped_when > 0 {
+            skipped_part.push_str(&format!(" | {} skipped by `when`", skipped_when));
+        }
+        if skipped_base > 0 {
+            skipped_part.push_str(&format!(
+                " | {} skipped (base case already failed)",
+                skipped_base
+            ));
+        }
         let summary = format!(
             "Summary: {} file{} | {} block{} | {}/{} cases passed | {} failed{}",
             total_files,

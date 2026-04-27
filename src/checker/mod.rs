@@ -19,6 +19,13 @@ use crate::ast::{
 pub enum VerifyCaseOutcome {
     Pass,
     Skipped,
+    /// Hostile-profile case for a `case_expr` whose un-effected base
+    /// case already failed. Aver doesn't run the VM for these — the
+    /// counter-example is the base failure itself; the per-profile
+    /// follow-ups would only re-confirm the same case under harder
+    /// worlds. Distinct from `Skipped` (which is `when`-driven and
+    /// drives the vacuous-under-hostile warning).
+    SkippedAfterBaseFail,
     Mismatch { expected: String, actual: String },
     RuntimeError { error: String },
     UnexpectedErr { err_repr: String },

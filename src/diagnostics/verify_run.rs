@@ -138,6 +138,10 @@ fn map_results_to_diagnostics(
         // user in near-identical entries with the same repair text.
         // Other outcomes (RuntimeError / UnexpectedErr) stay
         // per-case; they're already rare.
+        //
+        // Profile-after-base-fail cases are already pre-filtered at
+        // runtime (`SkippedAfterBaseFail` outcome from
+        // `run_verify_vm`); they don't appear as `Mismatch` here.
         use std::collections::HashMap;
         let mut mismatch_groups: HashMap<(String, usize), Vec<usize>> = HashMap::new();
         let mut mismatch_order: Vec<(String, usize)> = Vec::new();
@@ -212,6 +216,7 @@ fn map_results_to_diagnostics(
             match &case.outcome {
                 VerifyCaseOutcome::Pass
                 | VerifyCaseOutcome::Skipped
+                | VerifyCaseOutcome::SkippedAfterBaseFail
                 | VerifyCaseOutcome::Mismatch { .. } => {}
                 VerifyCaseOutcome::UnexpectedErr { err_repr } => {
                     diagnostics.push(verify_unexpected_err_diagnostic(

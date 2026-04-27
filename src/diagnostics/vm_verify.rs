@@ -1214,6 +1214,15 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
         None
     };
 
+    // Track which case_exprs already failed in their un-effected base
+    // (declared) world. Once a base case fails, the per-profile
+    // follow-ups for the same `case_expr` would just re-confirm the
+    // same counter-example under harder worlds — Aver skips them
+    // instead of running the VM. Saves time on every law where a
+    // boundary value or declared value already breaks the claim.
+    use std::collections::HashSet;
+    let mut base_failed: HashSet<String> = HashSet::new();
+
     for (idx, ((left_expr, right_expr), case_fns)) in
         block.cases.iter().zip(&plan.cases).enumerate()
     {
@@ -1227,6 +1236,47 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
         let hostile_profile = render_hostile_profile_label(
             block.case_hostile_profiles.get(idx).map(Vec::as_slice),
         );
+
+        // Profile-multiplied case for a base that already failed?
+        // Skip the VM run; record an outcome variant the renderer
+        // suppresses by default but tools can detect via
+        // `SkippedAfterBaseFail` in JSON.
+        let is_profile_case = block
+            .case_hostile_profiles
+            .get(idx)
+            .map(|c| !c.is_empty())
+            .unwrap_or(false);
+        if is_profile_case && base_failed.contains(&case_str) {
+            skipped += 1;
+            let law_context = if let VerifyKind::Law(_) = &block.kind {
+                let givens: Vec<(String, String)> = block
+                    .case_givens
+                    .get(idx)
+                    .map(|gs| {
+                        gs.iter()
+                            .map(|(name, expr)| (name.clone(), expr_to_str(expr)))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Some(VerifyLawContext {
+                    givens,
+                    law_expr: law_context_template.clone().unwrap_or_default(),
+                })
+            } else {
+                None
+            };
+            case_results.push(VerifyCaseResult {
+                outcome: VerifyCaseOutcome::SkippedAfterBaseFail,
+                span,
+                case_expr: case_str,
+                case_index: idx,
+                case_total,
+                law_context,
+                from_hostile,
+                hostile_profile,
+            });
+            continue;
+        }
         let failure_case = if is_law {
             format!("case {}/{} [{}]", idx + 1, case_total, case_str)
         } else {
@@ -1462,6 +1512,17 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                     hostile_profile: hostile_profile.clone(),
                 });
             }
+        }
+
+        // After this case is fully resolved, if it was a base
+        // (un-effected) case and ended in `Mismatch`, mark its
+        // `case_expr` so subsequent profile-multiplied cases for the
+        // same case_expr skip the VM run entirely.
+        if !is_profile_case
+            && let Some(last) = case_results.last()
+            && matches!(last.outcome, VerifyCaseOutcome::Mismatch { .. })
+        {
+            base_failed.insert(last.case_expr.clone());
         }
     }
 
