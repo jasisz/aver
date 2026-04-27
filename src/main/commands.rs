@@ -2862,9 +2862,9 @@ fn render_verify_output(
                         let origin =
                             match (other.from_hostile, other.hostile_profile.as_deref()) {
                                 (true, Some(profile)) => {
-                                    format!("hostile effect profile: {}", profile)
+                                    format!("effect profile: {}", profile)
                                 }
-                                (true, None) => "hostile boundary expansion".to_string(),
+                                (true, None) => "value boundary substitution".to_string(),
                                 (false, _) => continue,
                             };
                         if !d

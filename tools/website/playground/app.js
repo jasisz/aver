@@ -3176,11 +3176,22 @@ function renderDiag(container, d) {
     // law) so the user sees what actually mismatched. Skip "origin"
     // because grouped diags surface it through `_origins` below.
     const fields = Array.isArray(d.fields) ? d.fields : [];
+    // Cases that came out of hostile expansion (value boundary OR
+    // effect profile) carry an `origin` field on the source diag.
+    // Tag the `case:` line so the user sees at a glance which ones
+    // are Aver-injected vs the values they actually wrote.
+    const isAverInjected = fields.some((f) => f[0] === "origin");
     for (const [key, val] of fields) {
         if (key === "origin") continue;
         const f = document.createElement("div");
         f.className = "diag-line diag-meta";
-        f.textContent = `${key}: ${val}`;
+        if (key === "case" && isAverInjected) {
+            f.innerHTML =
+                `${key}: ${escapeHtml(val)}` +
+                ` <span class="diag-injected-tag">← injected by Aver (--hostile)</span>`;
+        } else {
+            f.textContent = `${key}: ${val}`;
+        }
         container.appendChild(f);
     }
     // For grouped failures (one case broke under multiple hostile
@@ -3192,7 +3203,7 @@ function renderDiag(container, d) {
         label.textContent =
             d._origins.length === 1
                 ? `under: ${d._origins[0]}`
-                : `under ${d._origins.length} hostile worlds:`;
+                : `under ${d._origins.length} adversarial worlds:`;
         container.appendChild(label);
         if (d._origins.length > 1) {
             for (const o of d._origins) {

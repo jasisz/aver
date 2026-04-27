@@ -706,6 +706,20 @@ body {
     background: rgba(74, 222, 128, 0.04);
 }
 
+/* "← injected by Aver" tag next to the case: line on hostile-
+   expanded diagnostics. Muted accent so it reads as a meta
+   annotation, not a primary signal — the failure colour already
+   carries the alert. */
+.diag-injected-tag {
+    margin-left: 0.5rem;
+    padding: 0 0.4rem;
+    border: 1px dashed rgba(248, 113, 113, 0.45);
+    border-radius: 3px;
+    color: rgba(248, 113, 113, 0.85);
+    font-size: 0.8em;
+    font-style: italic;
+}
+
 /* "+ N more failures" button at the end of a capped issue list.
    Subtle muted look — it's an info / continuation cue, not a
    primary action. */

@@ -405,9 +405,19 @@ pub fn verify_mismatch_diagnostic(
         fields.push(("law", lctx.law_expr.clone()));
     }
     if from_hostile {
+        // Origin label distinguishes the two hostile axes:
+        //   "effect profile: <method>/<profile>" — the user's `given`
+        //   stub for that classified effect was overridden by an
+        //   adversarial profile (Time.unixMs/saturated, ...).
+        //   "value boundary substitution"        — the typed `given`
+        //   domain was extended with a per-type adversarial value
+        //   (Int 0/1/-1/MIN/MAX, Float NaN/±Inf, Str empty/NUL/long).
+        //   The substituted value already shows up in the `case`
+        //   field (e.g. `willCompleteBeforeDeadline(0)`), so this
+        //   label just names the axis.
         let origin_label = match hostile_profile {
-            Some(profile) => format!("hostile effect profile: {}", profile),
-            None => "hostile boundary expansion".to_string(),
+            Some(profile) => format!("effect profile: {}", profile),
+            None => "value boundary substitution".to_string(),
         };
         fields.push(("origin", origin_label));
     }
@@ -434,14 +444,35 @@ pub fn verify_mismatch_diagnostic(
         } else {
             // Value-side hostile: only fires on `verify <fn> law <name>`,
             // which DOES support `when`. The `when` suggestion is honest
-            // here.
-            Repair::primary(
-                "this case isn't in the declared `given` — the claim isn't \
-                 universal. Either add `when <precondition>` to scope the \
-                 law to the values it actually holds for, or drop `law` \
-                 form and use `verify <fn>` (cases form, example semantics) \
-                 with the values you actually meant.",
-            )
+            // here. If the law has typed `given` clauses, name them in
+            // the message so the user sees exactly which clause to
+            // narrow with `when` instead of staring at a generic
+            // suggestion.
+            let given_refs = law_context
+                .map(|lc| {
+                    lc.givens
+                        .iter()
+                        .map(|(name, _)| format!("`{}`", name))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let scoped = match given_refs.as_slice() {
+                [] => "add `when <precondition>` to scope the law".to_string(),
+                [one] => format!(
+                    "add `when {} <precondition>` (e.g. `when {} > 0`) to scope the law to the values {} actually holds for",
+                    one, one, one
+                ),
+                many => format!(
+                    "add `when` over {} to scope the law to the values they actually hold for",
+                    many.join(" / ")
+                ),
+            };
+            Repair::primary(format!(
+                "this case isn't in your declared `given` set — the claim isn't \
+                 universal. Either {}, or drop `law` form and use `verify <fn>` \
+                 (cases form, example semantics) with the values you actually meant.",
+                scoped
+            ))
         }
     } else {
         Repair::default()

@@ -177,7 +177,7 @@ fn map_results_to_diagnostics(
                 line,
                 col,
                 is_law,
-                None,
+                primary_case.law_context.as_ref(),
                 primary_case.from_hostile,
                 primary_case.hostile_profile.as_deref(),
             );
@@ -187,10 +187,8 @@ fn map_results_to_diagnostics(
             for &other_idx in &group[1..] {
                 let other = &result.case_results[other_idx];
                 let origin = match (other.from_hostile, other.hostile_profile.as_deref()) {
-                    (true, Some(profile)) => {
-                        format!("hostile effect profile: {}", profile)
-                    }
-                    (true, None) => "hostile boundary expansion".to_string(),
+                    (true, Some(profile)) => format!("effect profile: {}", profile),
+                    (true, None) => "value boundary substitution".to_string(),
                     (false, _) => continue,
                 };
                 if !diag
