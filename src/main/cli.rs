@@ -65,6 +65,28 @@ pub(super) enum CompileTarget {
     /// Generate a .wasm binary (requires --features wasm).
     #[value(name = "wasm")]
     Wasm,
+    /// Generate a .wat (WebAssembly text) file, disassembled from
+    /// pre-wasm-opt bytes so names and structure are preserved.
+    #[value(name = "wat")]
+    Wat,
+    /// Generate both .wasm (post-wasm-opt if requested) and .wat
+    /// (always pre-opt for readability) side by side.
+    #[value(name = "wasm+wat")]
+    WasmWat,
+}
+
+impl CompileTarget {
+    pub(super) fn emits_wasm_binary(self) -> bool {
+        matches!(self, CompileTarget::Wasm | CompileTarget::WasmWat)
+    }
+
+    pub(super) fn emits_wat(self) -> bool {
+        matches!(self, CompileTarget::Wat | CompileTarget::WasmWat)
+    }
+
+    pub(super) fn needs_wasm_pipeline(self) -> bool {
+        !matches!(self, CompileTarget::Rust)
+    }
 }
 
 /// Runtime policy handling for generated Rust projects.
