@@ -19,6 +19,7 @@ const ALLOC_WAT: &str = include_str!("wat/alloc.part.wat");
 const TRUNCATE_WAT: &str = include_str!("wat/truncate.part.wat");
 const OBJ_WAT: &str = include_str!("wat/obj.part.wat");
 const UNWRAP_WAT: &str = include_str!("wat/unwrap.part.wat");
+const WRAP_WAT: &str = include_str!("wat/wrap.part.wat");
 
 /// Build the runtime module's WAT source by concatenating fragments
 /// inside a `(module ...)` wrapper. Order matters — prelude declares
@@ -35,6 +36,8 @@ fn runtime_wat_source() -> String {
     s.push_str(OBJ_WAT);
     s.push('\n');
     s.push_str(UNWRAP_WAT);
+    s.push('\n');
+    s.push_str(WRAP_WAT);
     s.push('\n');
     s.push(')');
     s
@@ -83,6 +86,9 @@ mod tests {
             "rt_unwrap",
             "rt_unwrap_f64",
             "rt_unwrap_i32",
+            "rt_wrap",
+            "rt_wrap_f64",
+            "rt_wrap_i32",
         ];
         let mut found: std::collections::HashSet<&str> =
             std::collections::HashSet::new();

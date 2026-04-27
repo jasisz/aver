@@ -23,7 +23,6 @@ mod wat_module;
 
 use wasm_encoder::Function;
 
-use super::value::*;
 
 pub use indices::{
     AverRuntimeImports, RuntimeFuncIndices, emit_base_type_section, lookup_type_index,
@@ -47,7 +46,7 @@ pub(crate) const IO_FLOAT_BUF: u32 = 48; // 48 bytes for float digits (48..95)
 /// intentionally absent here — they live in `runtime/wat/*.part.wat`
 /// and are referenced through their import indices on `rt`.
 /// Migrated so far: alloc, truncate, obj_kind/tag/meta, obj_field
-/// (i64/f64/i32 variants), unwrap (i64/f64/i32 variants).
+/// (i64/f64/i32), unwrap (i64/f64/i32), wrap (i64/f64/i32).
 #[allow(clippy::vec_init_then_push)]
 pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     let mut funcs = Vec::new();
@@ -56,9 +55,6 @@ pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     funcs.push(alloc::emit_collect_end(rt)); // $collect_end
     funcs.push(alloc::emit_rebase_i32()); // $rebase_i32
     funcs.push(alloc::emit_retain_i32(rt)); // $retain_i32
-    funcs.push(alloc::emit_wrap(rt, OBJ_WRAPPER)); // $wrap (i64 inner)
-    funcs.push(alloc::emit_wrap_f64(rt)); // $wrap_f64
-    funcs.push(alloc::emit_wrap_i32(rt)); // $wrap_i32
     funcs.push(lists::emit_list_cons_i64(rt)); // $list_cons
     funcs.push(lists::emit_list_cons_f64(rt)); // $list_cons_f64
     funcs.push(io::emit_int_to_str()); // $int_to_str
