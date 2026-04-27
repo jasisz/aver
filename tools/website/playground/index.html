@@ -59,10 +59,11 @@
                 title="Halt the running program.">⏹ Stop</button>
             <button type="button" data-audit class="btn-audit"
                 title="Three axes: static checks + verify execution + format compliance. CI gate.">🔍 Audit</button>
-            <label class="audit-hostile-toggle"
-                title="Run Audit under --hostile: typed `given` domains expanded with the per-type boundary set, classified effects multiplied by adversarial profiles. Failures here mean a missing `when` precondition or unpinned effect.">
-                <input type="checkbox" data-hostile-toggle><span>+ hostile</span>
-            </label>
+            <!-- Hidden hostile state holder. The user-facing flow is:
+                 click Audit → results render → results include a
+                 "↻ Re-run with --hostile" CTA. Toggling this checkbox
+                 from JS controls which mode the next audit run uses. -->
+            <input type="checkbox" data-hostile-toggle hidden>
             <button type="button" data-trace class="btn-trace"
                 title="Open the Trace panel — record main()'s effect log, edit outcomes inline, replay against the current source. Import/export .replay.json.">📜 Trace</button>
             <button type="button" data-context class="btn-context"

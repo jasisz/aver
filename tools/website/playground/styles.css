@@ -190,48 +190,79 @@ body {
     background: rgba(74, 222, 128, 0.1) !important;
     border-color: var(--green) !important;
 }
-/* Hostile toggle — pill-style button-equivalent that sits flush
-   against Audit and reads as a flag, not a stray form element. The
-   raw <input type="checkbox"> is hidden; the surrounding label
-   doubles as the visible chip and flips its border / text colour
-   when checked, mirroring how `--hostile` flips Audit's behaviour. */
-.audit-hostile-toggle {
-    display: inline-flex;
-    align-items: center;
-    height: 100%;
-    padding: 0.25rem 0.55rem;
-    margin-left: -0.35rem;          /* hug the Audit button */
-    border: 1px dashed rgba(74, 222, 128, 0.35);
-    border-radius: 4px;
+/* Re-run CTA at the bottom of an Audit panel. Mirrors the audit
+   button's accent colour (green) until hostile mode is active, then
+   shifts to the hostile red palette so the user sees they're going
+   *into* the harder world. Stays full-width to be obvious. */
+.audit-rerun-hostile {
+    display: block;
+    width: 100%;
+    margin-top: 1rem;
+    padding: 0.55rem 0.75rem;
     background: transparent;
-    font-size: 0.78em;
-    line-height: 1;
+    border: 1px dashed rgba(74, 222, 128, 0.45);
+    border-radius: 4px;
+    color: var(--green);
+    font-family: inherit;
+    font-size: 0.85em;
     letter-spacing: 0.02em;
-    color: var(--muted);
     cursor: pointer;
-    user-select: none;
-    transition: color 80ms ease, border-color 80ms ease, background 80ms ease;
+    transition: background 80ms ease, border-color 80ms ease, color 80ms ease;
 }
-.audit-hostile-toggle:hover {
-    color: var(--green);
-    border-color: rgba(74, 222, 128, 0.7);
-}
-.audit-hostile-toggle input[type="checkbox"] {
-    /* Hide the native checkbox — the label IS the indicator. */
-    appearance: none;
-    -webkit-appearance: none;
-    width: 0;
-    height: 0;
-    opacity: 0;
-    position: absolute;
-    pointer-events: none;
-}
-.audit-hostile-toggle:has(input:checked) {
-    color: var(--green);
-    border-style: solid;
+.audit-rerun-hostile:hover {
+    background: rgba(74, 222, 128, 0.08);
     border-color: var(--green);
-    background: rgba(74, 222, 128, 0.1);
-    font-weight: 600;
+}
+.audit-panel.hostile-mode .audit-rerun-hostile {
+    border-color: rgba(248, 113, 113, 0.5);
+    color: #f87171;
+}
+.audit-panel.hostile-mode .audit-rerun-hostile:hover {
+    background: rgba(248, 113, 113, 0.08);
+    border-color: #f87171;
+}
+
+/* Hostile-mode panel cosmetics. Subtle red tint so the user sees
+   that the report on screen is the adversarial-world reading,
+   distinguishing it visually from a regular declared audit. */
+.audit-panel.hostile-mode {
+    border-left: 3px solid rgba(248, 113, 113, 0.5);
+    padding-left: 0.75rem;
+    background: linear-gradient(
+        to right,
+        rgba(248, 113, 113, 0.04),
+        transparent 30%
+    );
+}
+.audit-panel.hostile-mode .audit-header-row .title {
+    color: #f87171;
+}
+
+/* Easter egg — narrative one-liner that drops in when the hostile
+   audit lands. Reads like a stage direction: "world has been
+   substituted." Same red accent as the panel; dashed-bar prefix so
+   it stands apart from real diagnostics. */
+.hostile-easter-egg {
+    margin: 0.6rem 0 0.9rem;
+    padding: 0.5rem 0.75rem;
+    border-left: 2px dashed #f87171;
+    background: rgba(248, 113, 113, 0.06);
+    color: rgba(248, 113, 113, 0.85);
+    font-family: var(--font-mono, monospace);
+    font-size: 0.78em;
+    font-style: italic;
+    letter-spacing: 0.01em;
+    line-height: 1.5;
+    animation: hostile-flicker 2.4s ease-out;
+}
+@keyframes hostile-flicker {
+    0%   { opacity: 0; transform: translateX(-4px); }
+    8%   { opacity: 0.95; }
+    10%  { opacity: 0.4; }
+    14%  { opacity: 0.95; }
+    18%  { opacity: 0.5; }
+    22%  { opacity: 0.95; transform: translateX(0); }
+    100% { opacity: 1; }
 }
 .btn-why {
     color: #c084fc !important;

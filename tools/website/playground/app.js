@@ -3437,13 +3437,15 @@ if (auditBtn) {
             const data = parseAuditBundle(json);
 
             const panel = document.createElement("div");
-            panel.className = "audit-panel";
+            panel.className = hostile ? "audit-panel hostile-mode" : "audit-panel";
 
             const header = document.createElement("div");
             header.className = "audit-header-row";
             const title = document.createElement("span");
             title.className = "title";
-            title.textContent = "Audit — 3-axis health report";
+            title.textContent = hostile
+                ? "Audit — hostile world engaged"
+                : "Audit — 3-axis health report";
             header.appendChild(title);
             const bundle = JSON.parse(json);
             header.appendChild(makeDownloadButton(
@@ -3453,9 +3455,44 @@ if (auditBtn) {
             ));
             panel.appendChild(header);
 
+            // Easter egg — when hostile mode flips on, narrate it.
+            // One short line at the top of the report, dashed red bar
+            // and the same red tint as the hostile-mode panel border.
+            // "world has been substituted" reads like the file got
+            // its reality knocked sideways, which is exactly what
+            // happened to the oracle stubs.
+            if (hostile) {
+                const egg = document.createElement("div");
+                egg.className = "hostile-easter-egg";
+                egg.textContent =
+                    "// world has been substituted. clocks freeze. randoms collapse. " +
+                    "disks burn. networks drop. let's see what your law says now.";
+                panel.appendChild(egg);
+            }
+
             panel.appendChild(renderStaticSection(data, sectionActions("static")));
             panel.appendChild(renderVerifySection(data, sectionActions("verify")));
             panel.appendChild(renderFormatSection(data, sectionActions("format")));
+
+            // Re-run CTA: declared mode shows "↻ Re-run with --hostile",
+            // hostile mode shows "↻ Back to declared run". Click toggles
+            // the hidden state holder and re-clicks the Audit button.
+            const rerun = document.createElement("button");
+            rerun.type = "button";
+            rerun.className = "audit-rerun-hostile";
+            rerun.textContent = hostile
+                ? "↻ Re-run without --hostile"
+                : "↻ Re-run with --hostile";
+            rerun.title = hostile
+                ? "Drop hostile expansion and re-audit on declared values only."
+                : "Multiply every law through adversarial profiles. " +
+                  "Failures here mean a missing `when` precondition or unpinned effect.";
+            rerun.addEventListener("click", () => {
+                if (hostileToggle) hostileToggle.checked = !hostile;
+                auditBtn.click();
+            });
+            panel.appendChild(rerun);
+
             dom.console.appendChild(panel);
 
             updateAuditStatus(data);
