@@ -4,7 +4,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## 0.13.0 "Limit" (2026-04-26)
 
-> _Pure core. Explicit shell. Auditable boundary. Aver learns to say no — to hidden effects in pure code, to extra calls, to hostile worlds._
+> _Pure core. Explicit shell. Auditable boundary. Aver learns to say no — at the module's edge, to extra calls, to hostile worlds._
 
 ### Added
 - **`aver verify --hostile` / `aver audit --hostile`** — runs every `verify <fn> law <name>` block under an adversarial expansion of its `given` clauses. Typed value domains (`given x: Int = [3]`) get augmented with the per-type boundary set (`0`, `1`, `-1`, `i64::MIN`, `i64::MAX`; for `Float` add `±Inf` and `NaN`; for `Str` add empty / NUL-embedded / multi-byte / 1024-char). On top of that, classified effects with no user-pinned stub get multiplied by adversarial profiles (frozen / fast-forward / backward clocks, always-min / always-max / alternating random, network-down responses, empty / always-error filesystem, …). Failures that surface only here mean the law isn't universal — either pin a `given <Effect>` stub for the world you actually rely on, weaken the law with `when <precondition>`, or accept the profile as a real production world the impl should handle.
