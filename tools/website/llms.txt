@@ -290,8 +290,8 @@ verify add law commutative
 ```
 
 Law verify rules:
-- `given x: T = [...]` describes the world / domain to test — values or, for classified effects, stubs. The runtime check enumerates the cartesian product. `aver proof` exports the law as a **universal theorem over every possible value/stub**, not just the ones you listed — so don't expect `given` to pin the law to your stub.
-- `when <pred>` is an explicit precondition that scopes the law (a filter on the world). Cases violating `when` are skipped in runtime check, proof export, and `--hostile`.
+- `given x: T = [...]` — world/domain (values or, for effects, stubs). `aver proof` quantifies universally over every value/stub, so `given <Effect>` doesn't pin the law to your stub.
+- `when <pred>` — explicit precondition; cases violating it are skipped (runtime, proof, `--hostile`).
 - exactly one assertion line (`lhs => rhs`)
 - the assertion must be a single expression, not a boolean chain — if you need multiple conditions, extract a helper function
 
@@ -330,14 +330,7 @@ fn highDie(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int
 
 ### Hostile audit (0.13)
 
-`aver audit --hostile` / `aver verify --hostile` runs every `verify <fn> law` block under an adversarial expansion of its world:
-
-- Typed value `given`s get the boundary set added (`Int`: `0`, `1`, `-1`, `i64::MIN`, `i64::MAX`; `Float`: `±Inf`, `NaN`; `Str`: empty, NUL-embedded, multi-byte, 1024-char). Your declared values stay in the cartesian, hostile values are layered on top.
-- Classified effects get multiplied by hostile profiles (frozen / fast-forward / backward clock, always-min / always-max / alternating random, network-down, empty / always-error filesystem, …). Your `given <Effect> = [stub]` is *not* a pin against hostile — hostile profiles always layer on top, because `law` semantics already say "for every possible stub". Pinning to a single stub means it isn't a law.
-- `when <pred>` *is* honoured — cases where the predicate is false get skipped, not flagged. This is how you scope a law to "I assume monotonic clock" / "I assume read-after-write": `when clock(BranchPath.Root, 1) > clock(BranchPath.Root, 0)`.
-- Failures from hostile cases get the separate slug `verify-hostile-mismatch` (vs plain `verify-mismatch`) so CI gates can route declared-world regressions and adversarial-world surfacings to different channels.
-- When a hostile failure surfaces: weaken the law with `when` to scope it, downgrade from `law` to `verify <fn>` cases-form if the claim is genuinely stub-specific (no longer a universal claim), or accept the profile as a real production world the impl should handle.
-- Cartesian expansion is capped at 10,000 cases per block; over-budget blocks fail with an error pointing at the law and the projected size.
+`aver audit --hostile` adds adversarial worlds on top of every `verify <fn> law` block: typed `given`s get type-boundary values, classified effects get hostile profiles (frozen clocks, network-down, etc.). When a failure surfaces, fix it with `when <pred>` (scope the law), downgrade `law` → cases-form (if it's stub-specific), or fix the impl. Failures use slug `verify-hostile-mismatch` (split from `verify-mismatch`). See `docs/oracle.md` for the full profile/boundary table.
 
 ### Decisions
 
