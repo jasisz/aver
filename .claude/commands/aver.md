@@ -118,6 +118,7 @@ module Billing
         "Exports only the public entrypoints."
     exposes [charge, refund]
     depends [Core.Types, Infra.Store]
+    effects [Console.print, Disk]
 ```
 
 Rules:
@@ -125,7 +126,7 @@ Rules:
 - `intent` may be inline or multiline; formatter prefers multiline for multiline text
 - `depends [...]` and `exposes [...]` are explicit
 - opaque types: `exposes opaque [Discount]` — visible in signatures but cannot be constructed or destructured from outside
-- `effects [...]` is an optional boundary you can add to a module header to enforce which effects its functions may use: a method-level entry like `Disk.readText` admits only that method, a namespace entry like `Disk` admits any `Disk.*` method. Skip it unless you specifically want the boundary — every fn's `! [Effect]` must be covered or you get a type error.
+- `effects [...]` declares the module's effect surface. Every function's `! [Effect]` must be covered: a method-level entry like `Disk.readText` admits only that method, a namespace entry like `Disk` admits any `Disk.*` method. Underdeclared = type error; overdeclared = warning. A module with functions but no `effects [...]` triggers a warning to add the boundary (use `effects []` for a pure module).
 
 ### Verify blocks
 

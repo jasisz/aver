@@ -34,6 +34,7 @@ If you only remember one section, make it this one:
 module Hello
     intent = "Tiny intro module."
     exposes [greet, main]
+    effects [Console.print]
 
 fn greet(name: String) -> String
     ? "Builds a greeting."
@@ -53,4 +54,5 @@ This shows the core pattern:
 - a pure function
 - a `verify` block directly below it
 - an effectful `main`
+- a module-level `effects [...]` boundary that names every effect any function in the module uses (since 0.13)
 

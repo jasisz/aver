@@ -52,8 +52,7 @@ pub fn collect_module_effects_warnings_in(
             fn_name: None,
             message: format!(
                 "module '{}' does not declare an effect boundary — \
-                 add `effects [...]` after `intent` listing the effects \
-                 functions in this module use",
+                 add `effects [...]` after `intent` (use `effects []` if the module is pure)",
                 module_name
             ),
             extra_spans: vec![],
