@@ -2578,7 +2578,13 @@ fn vacuous_under_hostile(cases: &[aver::checker::VerifyCaseResult]) -> bool {
     let mut had_hostile = false;
     let mut all_skipped = true;
     for case in cases {
-        if !case.from_hostile || case.hostile_profile.is_none() {
+        // `from_hostile` covers both axes: value-side boundary
+        // expansion (typed `given` widened with i64::MIN/MAX,
+        // ±Inf/NaN, NUL-embedded strings, …) and effect-side
+        // adversarial profiles (frozen clock, always-min random,
+        // network-down, …). Either is enough to drive the
+        // vacuous warning when `when` rejects them all.
+        if !case.from_hostile {
             continue;
         }
         // SkippedAfterBaseFail isn't a `when`-driven skip; it's a
