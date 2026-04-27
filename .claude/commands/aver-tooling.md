@@ -80,6 +80,12 @@ it catches illegal `?!` usages, match-arm body-on-next-line parse errors,
 and effect-type mismatches that a naked `aver run` can miss when the VM
 short-circuits on the first failure.
 
+`--hostile` (0.13+) layers adversarial worlds on top of every
+`verify <fn> law` block — typed `given`s get type-boundary values,
+classified effects get hostile profiles. Failures use the separate
+slug `verify-hostile-mismatch` so CI can route declared-world vs
+adversarial-world regressions to different channels.
+
 ### Context
 
 ```bash

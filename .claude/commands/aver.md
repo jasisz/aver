@@ -138,9 +138,12 @@ verify add law commutative
 Rules:
 - `verify` checks executable examples only
 - law verify expands cartesian product of `given` domains (capped at 10,000 cases)
+- `given x: T = [...]` describes the world / domain to test (values, or stubs for classified effects). `aver proof` quantifies universally over every value/stub — `given <Effect>` does **not** pin the law to one stub
+- `when <pred>` is an explicit precondition on the law; cases where it's false are skipped (in runtime, proof, and `--hostile`). Use it to scope a law to assumed worlds (`when clock(BranchPath.Root, 1) > clock(BranchPath.Root, 0)`)
 - `aver check` expects pure, non-trivial, non-`main` functions to carry a `verify` block
 - plain `verify fn` on a fn with a generative effect (Random, Http, Time.now, etc.) warns — the case RHS is compared against a freshly-produced value and flaps. Use `verify fn law …` with `given` stubs or `verify fn trace` instead
 - unclassified ambient state, persistent protocols, terminal modes, and server callbacks should use record/replay
+- `aver audit --hostile` (or `aver verify --hostile`) layers adversarial worlds on top of every `verify <fn> law` block: typed `given`s get type-boundary values; classified effects get hostile profiles. Failures use slug `verify-hostile-mismatch`. Repair: `when <pred>` to scope the law, downgrade `law` → cases-form if it's stub-specific, or fix the impl. See `docs/oracle.md` for profile/boundary tables.
 
 #### Oracle verify-trace (effectful functions)
 
