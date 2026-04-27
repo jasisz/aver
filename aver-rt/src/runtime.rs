@@ -35,10 +35,22 @@ pub fn time_now() -> String {
 }
 
 pub fn time_unix_ms() -> i64 {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("Time.unixMs: system clock error");
-    i64::try_from(now.as_millis()).expect("Time.unixMs: value out of i64 range")
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    {
+        // `std::time::SystemTime::now()` panics on
+        // wasm32-unknown-unknown ("time not implemented on this
+        // platform"). Use `Date.now()` from JS — same epoch, same
+        // unit, well within i64. Symmetric with the time_sleep
+        // wasm32 no-op fallback added in 0.10.0.
+        return js_sys::Date::now() as i64;
+    }
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("Time.unixMs: system clock error");
+        i64::try_from(now.as_millis()).expect("Time.unixMs: value out of i64 range")
+    }
 }
 
 pub fn time_sleep(ms: i64) {
@@ -199,19 +211,31 @@ fn validate_env_key(key: &str) -> Result<(), String> {
 }
 
 fn unix_parts_now() -> (i64, u32) {
-    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-        Ok(d) => (
-            i64::try_from(d.as_secs()).expect("Time.now: seconds out of i64 range"),
-            d.subsec_nanos(),
-        ),
-        Err(e) => {
-            let d = e.duration();
-            let secs = i64::try_from(d.as_secs()).expect("Time.now: seconds out of i64 range");
-            let nanos = d.subsec_nanos();
-            if nanos == 0 {
-                (-secs, 0)
-            } else {
-                (-(secs + 1), 1_000_000_000 - nanos)
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    {
+        // `SystemTime::now()` panics on wasm32-unknown-unknown.
+        // Decompose the JS millisecond clock into (secs, nanos).
+        let ms = js_sys::Date::now();
+        let secs = (ms / 1000.0) as i64;
+        let nanos = ((ms.rem_euclid(1000.0)) * 1_000_000.0) as u32;
+        return (secs, nanos);
+    }
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    {
+        match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => (
+                i64::try_from(d.as_secs()).expect("Time.now: seconds out of i64 range"),
+                d.subsec_nanos(),
+            ),
+            Err(e) => {
+                let d = e.duration();
+                let secs = i64::try_from(d.as_secs()).expect("Time.now: seconds out of i64 range");
+                let nanos = d.subsec_nanos();
+                if nanos == 0 {
+                    (-secs, 0)
+                } else {
+                    (-(secs + 1), 1_000_000_000 - nanos)
+                }
             }
         }
     }

@@ -30,8 +30,14 @@ crossterm = { version = "0.28", optional = true }
 rand = { version = "0.9", optional = true }
 ureq = { version = "2", optional = true }
 
-# On wasm32-unknown-unknown, `rand` pulls in `getrandom`, which needs the
-# `js` feature to use the browser's crypto API. Configuring getrandom
-# here (not behind our own feature) keeps `random` usable on any target.
+# On wasm32-unknown-unknown:
+# - `rand` pulls in `getrandom`, which needs the `js` feature to use
+#   the browser's crypto API. Configuring getrandom here (not behind
+#   our own feature) keeps `random` usable on any target.
+# - `std::time::SystemTime::now()` panics ("time not implemented on
+#   this platform"). We route `time_now` / `time_unix_ms` through
+#   `js_sys::Date` so the playground returns real wall-clock values
+#   instead of "unreachable executed".
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
+js-sys = "0.3"
