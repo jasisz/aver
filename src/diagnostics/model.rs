@@ -183,6 +183,9 @@ pub struct VerifyBlockResult {
     pub name: String,
     pub passed: usize,
     pub failed: usize,
+    /// Combined skipped count (`when`-driven plus base-fail-driven).
+    /// Kept for back-compat with consumers that don't care about the
+    /// distinction; the split lives in the two fields below.
     pub skipped: usize,
     pub total: usize,
     /// Cases that originated from the user's declared `given` list (or
@@ -202,6 +205,17 @@ pub struct VerifyBlockResult {
     pub hostile_passed: usize,
     #[serde(skip_serializing_if = "is_zero", default)]
     pub hostile_failed: usize,
+    /// Cases skipped because the user's `when` predicate evaluated
+    /// to false. Subset of `skipped`. When this equals `skipped` and
+    /// no hostile profiles ran, the law is vacuously-under-hostile.
+    #[serde(skip_serializing_if = "is_zero", default)]
+    pub skipped_by_when: usize,
+    /// Cases skipped because the same `case_expr` already failed in
+    /// its un-effected base world. Aver doesn't run the VM for these
+    /// — they would only re-confirm the same counter-example under
+    /// harder worlds. Subset of `skipped`.
+    #[serde(skip_serializing_if = "is_zero", default)]
+    pub skipped_after_base_fail: usize,
 }
 
 fn is_zero(n: &usize) -> bool {

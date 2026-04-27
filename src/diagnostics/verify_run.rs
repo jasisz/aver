@@ -119,6 +119,16 @@ fn map_results_to_diagnostics(
         let is_law = result.block_label.contains(" spec ");
         let (declared_passed, declared_failed, hostile_passed, hostile_failed) =
             split_hostile_counts(&result.case_results);
+        let skipped_by_when = result
+            .case_results
+            .iter()
+            .filter(|c| matches!(c.outcome, VerifyCaseOutcome::Skipped))
+            .count();
+        let skipped_after_base_fail = result
+            .case_results
+            .iter()
+            .filter(|c| matches!(c.outcome, VerifyCaseOutcome::SkippedAfterBaseFail))
+            .count();
         blocks.push(VerifyBlockResult {
             name: result.fn_name.clone(),
             passed: result.passed,
@@ -129,6 +139,8 @@ fn map_results_to_diagnostics(
             declared_failed,
             hostile_passed,
             hostile_failed,
+            skipped_by_when,
+            skipped_after_base_fail,
         });
 
         // Group `Mismatch` outcomes that share the same (case_expr,

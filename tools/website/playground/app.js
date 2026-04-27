@@ -3414,12 +3414,25 @@ function renderVerifySection(data, actions) {
     // Group them so the user reads "this case failed under these N
     // profiles" instead of N separate entries with the same repair.
     const groupedFailures = groupVerifyFailures(verifyFailures);
+    // Effective denominator excludes Aver's base-fail-driven skips —
+    // those weren't run, so counting them as part of the "X out of Y
+    // passed" denominator reads worse than the actual coverage. `when`-
+    // skipped cases also don't run, but the user *wrote* the
+    // precondition that filtered them, so they're meaningful denominators.
+    const skippedByBase = (verifySummary?.blocks || [])
+        .reduce((acc, b) => acc + (b.skipped_after_base_fail || 0), 0);
+    const effectiveTotal = verifyTotal - skippedByBase;
+    const baseSkipTail = skippedByBase > 0
+        ? ` (+${skippedByBase} pre-empted; base case already failed)`
+        : "";
     return buildSection({
         key: "verify",
         label: "Verify — executed contract checks",
         status: verifyFailed > 0 ? "fail" : (verifyTotal > 0 ? "pass" : "warn"),
         statusText: verifyFailed > 0 ? "✗" : (verifyTotal > 0 ? "✓" : "—"),
-        countText: verifyTotal > 0 ? `${verifyPassed}/${verifyTotal} passed` : "no verify blocks",
+        countText: verifyTotal > 0
+            ? `${verifyPassed}/${effectiveTotal} passed${baseSkipTail}`
+            : "no verify blocks",
         teaching: "Each `verify` block's cases run in the VM. Pass rate tells you how well your function matches the spec you wrote alongside it. Verify is Aver's core contract.",
         issues: groupedFailures,
         actions: sectionActionsWithHostile,
@@ -3436,10 +3449,16 @@ function renderVerifySection(data, actions) {
                 const cls = b.failed > 0 ? "diag-err" : "diag-ok";
                 line.className = `diag-line ${cls}`;
                 const tag = b.failed > 0 ? "✗" : "✓";
-                const breakdown = b.skipped > 0
-                    ? `${b.passed}/${b.total} passed, ${b.skipped} skipped`
-                    : `${b.passed}/${b.total} passed`;
-                line.textContent = `${tag} ${b.name}  ${breakdown}`;
+                const baseSkipped = b.skipped_after_base_fail || 0;
+                const whenSkipped = b.skipped_by_when || 0;
+                const effective = b.total - baseSkipped;
+                const parts = [`${b.passed}/${effective} passed`];
+                if (b.failed > 0) parts.push(`${b.failed} failed`);
+                if (whenSkipped > 0) parts.push(`${whenSkipped} skipped by \`when\``);
+                if (baseSkipped > 0) {
+                    parts.push(`${baseSkipped} pre-empted (base case already failed)`);
+                }
+                line.textContent = `${tag} ${b.name}  ${parts.join(", ")}`;
                 body.appendChild(line);
             }
         },

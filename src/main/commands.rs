@@ -2704,6 +2704,16 @@ fn render_verify_output(
                 }
                 let (declared_passed, declared_failed, hostile_passed, hostile_failed) =
                     bucket_hostile(&block.case_results);
+                let skipped_by_when = block
+                    .case_results
+                    .iter()
+                    .filter(|c| matches!(c.outcome, VerifyCaseOutcome::Skipped))
+                    .count();
+                let skipped_after_base_fail = block
+                    .case_results
+                    .iter()
+                    .filter(|c| matches!(c.outcome, VerifyCaseOutcome::SkippedAfterBaseFail))
+                    .count();
                 block_results.push(aver::diagnostics::model::VerifyBlockResult {
                     name: block.block_label.clone(),
                     passed: block.passed,
@@ -2714,6 +2724,8 @@ fn render_verify_output(
                     declared_failed,
                     hostile_passed,
                     hostile_failed,
+                    skipped_by_when,
+                    skipped_after_base_fail,
                 });
             }
             let mut report =
