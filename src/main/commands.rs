@@ -3416,11 +3416,35 @@ fn cmd_compile_wasm(
                     .unwrap_or(wasm_bytes.len() as u64);
                 let mut compile_suffix = String::new();
 
-                // If program uses effects (Console.print etc.), merge with runtime
-                let needs_runtime =
+                // EdgeWasm intentionally skips wasm-merge: the user gets a thin
+                // program.wasm with `aver_rt.*` imports unresolved, to be linked
+                // at instantiate time (browser, edge runtime, wasmtime --preload).
+                let is_edge = matches!(target, super::cli::CompileTarget::EdgeWasm);
+                let uses_effects =
                     !wasm_bytes.is_empty() && wasm_bytes.windows(7).any(|w| w == b"aver_rt");
+                let needs_runtime = uses_effects && !is_edge;
 
-                if needs_runtime {
+                if is_edge {
+                    let file_display = file.cyan();
+                    let (sz, suffix) = finalize_wasm_artifact(&wasm_file, wasm_opt);
+                    final_size = sz;
+                    compile_suffix = suffix;
+                    let wasm_display = wasm_file.display().to_string().cyan();
+                    let imports_note = if uses_effects {
+                        ", imports aver_rt.* (effects)"
+                    } else {
+                        ""
+                    };
+                    println!(
+                        "{} {} → {} ({}{}{})",
+                        "Compiled".green().bold(),
+                        file_display,
+                        wasm_display,
+                        format_byte_size(final_size),
+                        compile_suffix,
+                        imports_note
+                    );
+                } else if needs_runtime {
                     // Try to find aver-wasm-rt.wasm
                     let rt_path = find_wasm_runtime();
                     if let Some(rt_path) = rt_path {
@@ -3444,10 +3468,10 @@ fn cmd_compile_wasm(
                                     std::fs::metadata(&wasm_file).map(|m| m.len()).unwrap_or(0);
                                 let file_display = file.cyan();
                                 let (sz, suffix) =
-                                    finalize_wasm_artifact(&wasm_file, target, wasm_opt);
+                                    finalize_wasm_artifact(&wasm_file, wasm_opt);
                                 final_size = sz;
                                 compile_suffix = suffix;
-                                let wasm_display = report_path(&wasm_file, target).cyan();
+                                let wasm_display = wasm_file.display().to_string().cyan();
                                 println!(
                                     "{} {} → {} ({}{}, with runtime)",
                                     "Compiled".green().bold(),
@@ -3471,10 +3495,10 @@ fn cmd_compile_wasm(
                                 // Keep unmerged file
                                 let file_display = file.cyan();
                                 let (sz, suffix) =
-                                    finalize_wasm_artifact(&wasm_file, target, wasm_opt);
+                                    finalize_wasm_artifact(&wasm_file, wasm_opt);
                                 final_size = sz;
                                 compile_suffix = suffix;
-                                let wasm_display = report_path(&wasm_file, target).cyan();
+                                let wasm_display = wasm_file.display().to_string().cyan();
                                 println!(
                                     "{} {} → {} ({}{}, unmerged)",
                                     "Compiled".green().bold(),
@@ -3492,10 +3516,10 @@ fn cmd_compile_wasm(
                                 );
                                 let file_display = file.cyan();
                                 let (sz, suffix) =
-                                    finalize_wasm_artifact(&wasm_file, target, wasm_opt);
+                                    finalize_wasm_artifact(&wasm_file, wasm_opt);
                                 final_size = sz;
                                 compile_suffix = suffix;
-                                let wasm_display = report_path(&wasm_file, target).cyan();
+                                let wasm_display = wasm_file.display().to_string().cyan();
                                 println!(
                                     "{} {} → {} ({}{}, unmerged)",
                                     "Compiled".green().bold(),
@@ -3514,10 +3538,10 @@ fn cmd_compile_wasm(
                         );
                         let file_display = file.cyan();
                         let (sz, suffix) =
-                            finalize_wasm_artifact(&wasm_file, target, wasm_opt);
+                            finalize_wasm_artifact(&wasm_file, wasm_opt);
                         final_size = sz;
                         compile_suffix = suffix;
-                        let wasm_display = report_path(&wasm_file, target).cyan();
+                        let wasm_display = wasm_file.display().to_string().cyan();
                         println!(
                             "{} {} → {} ({}{}, unmerged)",
                             "Compiled".green().bold(),
@@ -3529,10 +3553,10 @@ fn cmd_compile_wasm(
                     }
                 } else {
                     let file_display = file.cyan();
-                    let (sz, suffix) = finalize_wasm_artifact(&wasm_file, target, wasm_opt);
+                    let (sz, suffix) = finalize_wasm_artifact(&wasm_file, wasm_opt);
                     final_size = sz;
                     compile_suffix = suffix;
-                    let wasm_display = report_path(&wasm_file, target).cyan();
+                    let wasm_display = wasm_file.display().to_string().cyan();
                     println!(
                         "{} {} → {} ({}{})",
                         "Compiled".green().bold(),
@@ -3564,77 +3588,28 @@ fn validate_wasm_bytes(bytes: &[u8]) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// Path to display in the "Compiled X → Y" message — `.wat` when the
-/// target dropped the binary, `.wasm` otherwise.
-#[cfg(feature = "wasm")]
-fn report_path(wasm_file: &Path, target: super::cli::CompileTarget) -> String {
-    if target.emits_wasm_binary() {
-        wasm_file.display().to_string()
-    } else {
-        wasm_file.with_extension("wat").display().to_string()
-    }
-}
-
-/// Run the post-codegen WASM tail: optionally emit a `.wat` text file
-/// (always from the pre-wasm-opt bytes — readable, names preserved),
-/// optionally run wasm-opt, optionally clean up the `.wasm` file when
-/// the user asked for `.wat` only. Returns (final_size, suffix) for
-/// the existing `Compiled X → Y (size, suffix)` print line.
+/// Run the post-codegen WASM tail: optionally run wasm-opt. Returns
+/// (final_size, suffix) for the existing `Compiled X → Y (size, suffix)`
+/// print line.
+///
+/// WAT companion output is intentionally not provided — the name section
+/// emitted by codegen makes the binary readable through standard tooling
+/// (`wasm-tools print program.wasm`). For pre-opt builds, names survive;
+/// for post-opt, `wasm-opt -Oz` strips the section by design.
 #[cfg(feature = "wasm")]
 fn finalize_wasm_artifact(
     wasm_file: &Path,
-    target: super::cli::CompileTarget,
     wasm_opt: Option<super::cli::WasmOptMode>,
 ) -> (u64, String) {
-    // 1. WAT first, before any opt pass that would strip names/structure.
-    if target.emits_wat() {
-        let bytes = match std::fs::read(wasm_file) {
-            Ok(b) => b,
-            Err(e) => {
-                eprintln!(
-                    "{}",
-                    format!("Failed to read {} for WAT emit: {}", wasm_file.display(), e).red()
-                );
-                process::exit(1);
-            }
-        };
-        match wasmprinter::print_bytes(&bytes) {
-            Ok(wat) => {
-                let wat_file = wasm_file.with_extension("wat");
-                if let Err(e) = std::fs::write(&wat_file, wat) {
-                    eprintln!("{}", format!("Failed to write {}: {}", wat_file.display(), e).red());
-                    process::exit(1);
-                }
-            }
-            Err(e) => {
-                eprintln!("{}", format!("WAT disassembly failed: {}", e).red());
-                process::exit(1);
-            }
-        }
-    }
-
-    // 2. wasm-opt only when the user keeps the .wasm output. Running it
-    //    when we're about to delete the binary is wasted work.
     let mut final_size = std::fs::metadata(wasm_file).map(|m| m.len()).unwrap_or(0);
     let mut compile_suffix = String::new();
-    if target.emits_wasm_binary()
-        && let Some(mode) = wasm_opt
-    {
+    if let Some(mode) = wasm_opt {
         final_size = run_wasm_opt(wasm_file, mode).unwrap_or_else(|err| {
             eprintln!("{}", err.red());
             process::exit(1);
         });
         compile_suffix = format!(", wasm-opt {}", wasm_opt_label(mode));
     }
-
-    // 3. WAT-only target: drop the binary, report the .wat size instead.
-    if !target.emits_wasm_binary() {
-        let _ = std::fs::remove_file(wasm_file);
-        final_size = std::fs::metadata(wasm_file.with_extension("wat"))
-            .map(|m| m.len())
-            .unwrap_or(0);
-    }
-
     (final_size, compile_suffix)
 }
 

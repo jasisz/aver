@@ -62,26 +62,23 @@ pub(super) enum CompileTarget {
     #[default]
     #[value(name = "rust")]
     Rust,
-    /// Generate a .wasm binary (requires --features wasm).
+    /// Generate a single bundled .wasm binary (data-structure runtime
+    /// inlined, effects merged via wasm-merge). Requires --features wasm
+    /// and `wasm-merge` (binaryen) in PATH if the program uses effects.
     #[value(name = "wasm")]
     Wasm,
-    /// Generate a .wat (WebAssembly text) file, disassembled from
-    /// pre-wasm-opt bytes so names and structure are preserved.
-    #[value(name = "wat")]
-    Wat,
-    /// Generate both .wasm (post-wasm-opt if requested) and .wat
-    /// (always pre-opt for readability) side by side.
-    #[value(name = "wasm+wat")]
-    WasmWat,
+    /// Generate a thin .wasm that imports the data-structure runtime and
+    /// effect host as separate modules (zero external tooling required).
+    /// Designed for browser playgrounds, edge runtimes (Cloudflare Workers,
+    /// Fastly Compute@Edge), and dev workflows where the runtime is shared
+    /// between programs.
+    #[value(name = "edge-wasm")]
+    EdgeWasm,
 }
 
 impl CompileTarget {
     pub(super) fn emits_wasm_binary(self) -> bool {
-        matches!(self, CompileTarget::Wasm | CompileTarget::WasmWat)
-    }
-
-    pub(super) fn emits_wat(self) -> bool {
-        matches!(self, CompileTarget::Wat | CompileTarget::WasmWat)
+        matches!(self, CompileTarget::Wasm | CompileTarget::EdgeWasm)
     }
 
     pub(super) fn needs_wasm_pipeline(self) -> bool {
