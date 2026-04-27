@@ -894,7 +894,7 @@ fn effect_aliases_are_parse_errors() {
         "    ! [AppIO]\n",
         "    Console.print(\"hi\")\n"
     );
-    assert_parse_error_containing(src, "Effect aliases were removed");
+    assert_parse_error_containing(src, "module-level declaration");
 }
 
 #[test]
@@ -918,7 +918,7 @@ fn removed_effect_aliases_fail_before_typecheck() {
         "    ! [Silent]\n",
         "    Console.print(\"hi\")\n",
     );
-    assert_parse_error_containing(src, "Effect aliases were removed");
+    assert_parse_error_containing(src, "module-level declaration");
 }
 
 // ---------------------------------------------------------------------------
@@ -1821,7 +1821,7 @@ fn removed_effect_alias_parse_error() {
         "    Http.get(url)\n",
         "    Disk.readText(path)\n",
     );
-    assert_parse_error_containing(src, "Effect aliases were removed");
+    assert_parse_error_containing(src, "module-level declaration");
 }
 
 #[test]
@@ -1832,7 +1832,7 @@ fn removed_effect_alias_blocks_nothing_because_it_is_parse_error() {
         "    ! [ReadOnly]\n",
         "    Disk.writeText(path, \"data\")\n",
     );
-    assert_parse_error_containing(src, "Effect aliases were removed");
+    assert_parse_error_containing(src, "module-level declaration");
 }
 
 #[test]
@@ -1888,7 +1888,7 @@ fn error_effect_alias_syntax_is_removed_even_for_cycles() {
         "    ! [A]\n",
         "    Console.print(\"hi\")\n",
     );
-    assert_parse_error_containing(src, "Effect aliases were removed");
+    assert_parse_error_containing(src, "module-level declaration");
 }
 
 // ---------------------------------------------------------------------------
