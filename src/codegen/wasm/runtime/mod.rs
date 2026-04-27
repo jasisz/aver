@@ -46,7 +46,8 @@ pub(crate) const IO_FLOAT_BUF: u32 = 48; // 48 bytes for float digits (48..95)
 /// intentionally absent here — they live in `runtime/wat/*.part.wat`
 /// and are referenced through their import indices on `rt`.
 /// Migrated so far: alloc, truncate, obj_kind/tag/meta, obj_field
-/// (i64/f64/i32), unwrap (i64/f64/i32), wrap (i64/f64/i32), str_eq.
+/// (i64/f64/i32), unwrap (i64/f64/i32), wrap (i64/f64/i32), str_eq,
+/// str_concat, list_cons (i64/f64).
 #[allow(clippy::vec_init_then_push)]
 pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     let mut funcs = Vec::new();
@@ -55,12 +56,9 @@ pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     funcs.push(alloc::emit_collect_end(rt)); // $collect_end
     funcs.push(alloc::emit_rebase_i32()); // $rebase_i32
     funcs.push(alloc::emit_retain_i32(rt)); // $retain_i32
-    funcs.push(lists::emit_list_cons_i64(rt)); // $list_cons
-    funcs.push(lists::emit_list_cons_f64(rt)); // $list_cons_f64
     funcs.push(io::emit_int_to_str()); // $int_to_str
     funcs.push(io::emit_float_to_str()); // $float_to_str
     funcs.push(io::emit_fd_write_buf(rt)); // $fd_write_buf
-    funcs.push(strings::emit_str_concat(rt)); // $str_concat
     funcs.push(strings::emit_i64_to_str_obj(rt)); // $i64_to_str_obj
     funcs.push(strings::emit_f64_to_str_obj(rt)); // $f64_to_str_obj
     funcs.push(lists::emit_list_take(rt)); // $list_take

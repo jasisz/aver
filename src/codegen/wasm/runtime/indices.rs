@@ -28,6 +28,9 @@ pub struct AverRuntimeImports {
     pub rt_wrap_f64: u32,
     pub rt_wrap_i32: u32,
     pub rt_str_eq: u32,
+    pub rt_str_concat: u32,
+    pub rt_list_cons: u32,
+    pub rt_list_cons_f64: u32,
 }
 
 /// Index assignments for runtime functions within the module.
@@ -142,13 +145,13 @@ impl RuntimeFuncIndices {
             obj_field: imports.rt_obj_field,
             obj_field_f64: imports.rt_obj_field_f64,
             obj_field_i32: imports.rt_obj_field_i32,
-            list_cons: next(),
-            list_cons_f64: next(),
+            list_cons: imports.rt_list_cons,
+            list_cons_f64: imports.rt_list_cons_f64,
             int_to_str: next(),
             float_to_str: next(),
             fd_write_buf: next(),
             str_eq: imports.rt_str_eq,
-            str_concat: next(),
+            str_concat: imports.rt_str_concat,
             i64_to_str_obj: next(),
             f64_to_str_obj: next(),
             list_take: next(),
@@ -653,12 +656,6 @@ pub fn rt_type_index(
     if local_idx == rt.retain_i32 - import_func_count {
         return rti.unwrap_i32;
     }
-    if local_idx == rt.list_cons - import_func_count {
-        return rti.list_cons_i64;
-    }
-    if local_idx == rt.list_cons_f64 - import_func_count {
-        return rti.list_cons_f64;
-    }
     if local_idx == rt.int_to_str - import_func_count {
         return rti.int_to_str;
     }
@@ -667,9 +664,6 @@ pub fn rt_type_index(
     }
     if local_idx == rt.fd_write_buf - import_func_count {
         return rti.fd_write_buf;
-    }
-    if local_idx == rt.str_concat - import_func_count {
-        return rti.i32_i32_to_i32;
     }
     if local_idx == rt.i64_to_str_obj - import_func_count {
         return rti.i64_to_i32;
