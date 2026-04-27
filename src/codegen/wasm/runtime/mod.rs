@@ -46,7 +46,7 @@ pub(crate) const IO_FLOAT_BUF: u32 = 48; // 48 bytes for float digits (48..95)
 /// intentionally absent here — they live in `runtime/wat/*.part.wat`
 /// and are referenced through their import indices on `rt`.
 /// Migrated so far: alloc, truncate, obj_kind/tag/meta, obj_field
-/// (i64/f64/i32), unwrap (i64/f64/i32), wrap (i64/f64/i32).
+/// (i64/f64/i32), unwrap (i64/f64/i32), wrap (i64/f64/i32), str_eq.
 #[allow(clippy::vec_init_then_push)]
 pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     let mut funcs = Vec::new();
@@ -60,7 +60,6 @@ pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     funcs.push(io::emit_int_to_str()); // $int_to_str
     funcs.push(io::emit_float_to_str()); // $float_to_str
     funcs.push(io::emit_fd_write_buf(rt)); // $fd_write_buf
-    funcs.push(strings::emit_str_eq()); // $str_eq
     funcs.push(strings::emit_str_concat(rt)); // $str_concat
     funcs.push(strings::emit_i64_to_str_obj(rt)); // $i64_to_str_obj
     funcs.push(strings::emit_f64_to_str_obj(rt)); // $f64_to_str_obj
