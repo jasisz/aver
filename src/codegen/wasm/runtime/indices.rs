@@ -57,6 +57,7 @@ pub struct AverRuntimeImports {
     pub rt_float_to_str: u32,
     pub rt_i64_to_str_obj: u32,
     pub rt_f64_to_str_obj: u32,
+    pub rt_str_len: u32,
 }
 
 /// Index assignments for runtime functions within the module.
@@ -197,7 +198,7 @@ impl RuntimeFuncIndices {
             vec_set: imports.rt_vec_set,
             vec_new: imports.rt_vec_new,
             vec_to_list: imports.rt_vec_to_list,
-            str_len: next(),
+            str_len: imports.rt_str_len,
             str_byte_len: imports.rt_str_byte_len,
             str_find: imports.rt_str_find,
             str_starts_with: imports.rt_str_starts_with,
@@ -684,9 +685,6 @@ pub fn rt_type_index(
     }
     if local_idx == rt.fd_write_buf - import_func_count {
         return rti.fd_write_buf;
-    }
-    if local_idx == rt.str_len - import_func_count {
-        return rti.unwrap_i64;
     }
     if local_idx == rt.str_char_at - import_func_count {
         return rti.i32_i64_to_i32;

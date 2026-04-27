@@ -10,66 +10,6 @@ use super::{IO_FLOAT_BUF, IO_INT_BUF, RuntimeFuncIndices};
 
 // $str_eq lives in `runtime/wat/str_eq.part.wat`.
 
-/// $str_len(str: i32) -> i64
-/// Counts UTF-8 code points in a string object.
-pub(super) fn emit_str_len() -> Function {
-    // params: str=0. locals: byte_len=1, byte_pos=2, char_len=3, lead=4, width=5
-    let mut f = Function::new(vec![
-        (1, ValType::I32),
-        (1, ValType::I32),
-        (1, ValType::I32),
-        (1, ValType::I32),
-        (1, ValType::I32),
-    ]);
-
-    emit_load_string_byte_len(&mut f, 0, 1);
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalSet(2));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalSet(3));
-
-    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
-    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::I32GeU);
-    f.instruction(&Instruction::BrIf(1));
-
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::I32Load8U(wasm_encoder::MemArg {
-        offset: 8,
-        align: 0,
-        memory_index: 0,
-    }));
-    f.instruction(&Instruction::LocalSet(4));
-    emit_set_utf8_char_width(&mut f, 4, 5);
-
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::LocalGet(5));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalSet(2));
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalSet(3));
-    f.instruction(&Instruction::Br(0));
-    f.instruction(&Instruction::End);
-    f.instruction(&Instruction::End);
-
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::I64ExtendI32U);
-    f.instruction(&Instruction::End);
-    f
-}
-
-// $str_byte_len / $str_find / $str_starts_with / $str_ends_with /
-// $str_contains live in `runtime/wat/str_search.part.wat`.
-
-
-// $str_concat lives in `runtime/wat/str_concat.part.wat`.
-
 pub fn emit_str_char_at(rt: &RuntimeFuncIndices) -> Function {
     // params: str=0, idx=1(i64). locals: byte_len=2, target=3, byte_pos=4,
     //         char_pos=5, lead=6, width=7, ptr=8
