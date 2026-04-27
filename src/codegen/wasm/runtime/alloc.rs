@@ -1272,45 +1272,6 @@ pub(super) fn emit_wrap_i32(rt: &RuntimeFuncIndices) -> Function {
     f
 }
 
-/// $unwrap(ptr: i32) -> i64
-pub(super) fn emit_unwrap_i64() -> Function {
-    let mut f = Function::new(vec![]);
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 8,
-        align: 3,
-        memory_index: 0,
-    }));
-    f.instruction(&Instruction::End);
-    f
-}
-
-/// $unwrap_f64(ptr: i32) -> f64
-pub(super) fn emit_unwrap_f64() -> Function {
-    let mut f = Function::new(vec![]);
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::F64Load(wasm_encoder::MemArg {
-        offset: 8,
-        align: 3,
-        memory_index: 0,
-    }));
-    f.instruction(&Instruction::End);
-    f
-}
-
-/// $unwrap_i32(ptr: i32) -> i32
-pub(super) fn emit_unwrap_i32() -> Function {
-    let mut f = Function::new(vec![]);
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::I64Load(wasm_encoder::MemArg {
-        offset: 8,
-        align: 3,
-        memory_index: 0,
-    }));
-    f.instruction(&Instruction::I32WrapI64);
-    f.instruction(&Instruction::End);
-    f
-}
 
 // $obj_kind / $obj_tag / $obj_meta / $obj_field{,_f64,_i32} live in
 // `runtime/wat/obj.part.wat`; user.wasm imports them and reaches them

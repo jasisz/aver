@@ -21,6 +21,9 @@ pub struct AverRuntimeImports {
     pub rt_obj_field: u32,
     pub rt_obj_field_f64: u32,
     pub rt_obj_field_i32: u32,
+    pub rt_unwrap: u32,
+    pub rt_unwrap_f64: u32,
+    pub rt_unwrap_i32: u32,
 }
 
 /// Index assignments for runtime functions within the module.
@@ -126,9 +129,9 @@ impl RuntimeFuncIndices {
             wrap: next(),
             wrap_f64: next(),
             wrap_i32: next(),
-            unwrap: next(),
-            unwrap_f64: next(),
-            unwrap_i32: next(),
+            unwrap: imports.rt_unwrap,
+            unwrap_f64: imports.rt_unwrap_f64,
+            unwrap_i32: imports.rt_unwrap_i32,
             obj_kind: imports.rt_obj_kind,
             obj_tag: imports.rt_obj_tag,
             obj_meta: imports.rt_obj_meta,
@@ -654,15 +657,6 @@ pub fn rt_type_index(
     }
     if local_idx == rt.wrap_i32 - import_func_count {
         return rti.wrap_i32;
-    }
-    if local_idx == rt.unwrap - import_func_count {
-        return rti.unwrap_i64;
-    }
-    if local_idx == rt.unwrap_f64 - import_func_count {
-        return rti.unwrap_f64;
-    }
-    if local_idx == rt.unwrap_i32 - import_func_count {
-        return rti.unwrap_i32;
     }
     if local_idx == rt.list_cons - import_func_count {
         return rti.list_cons_i64;
