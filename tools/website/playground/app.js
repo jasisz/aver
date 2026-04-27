@@ -3126,17 +3126,83 @@ function parseAuditBundle(json) {
     };
 }
 
+/// Collapse verify failures that differ only by hostile profile.
+/// Each Diagnostic from the server may already carry multiple
+/// `("origin", ...)` field entries (server-side grouped one
+/// diagnostic per case) or just one (legacy path). This function
+/// covers both: collect every origin from each diag's fields,
+/// then re-group across diags by (slug, block, case, line) so
+/// the renderer always sees one entry per case with a single
+/// `_origins` list.
+function groupVerifyFailures(failures) {
+    const groups = new Map();
+    const order = [];
+    for (const d of failures) {
+        const fields = Array.isArray(d.fields) ? d.fields : [];
+        const get = (k) => fields.find((f) => f[0] === k)?.[1];
+        const block = get("block") || "";
+        const caseExpr = get("case") || "";
+        const allOrigins = fields.filter((f) => f[0] === "origin").map((f) => f[1]);
+        const key = `${d.slug}|${block}|${caseExpr}|${d.span?.line ?? ""}`;
+        if (!groups.has(key)) {
+            const cloned = { ...d, fields: fields.slice() };
+            cloned._origins = [];
+            cloned._count = 0;
+            groups.set(key, cloned);
+            order.push(key);
+        }
+        const g = groups.get(key);
+        g._count += 1;
+        for (const o of allOrigins) {
+            if (!g._origins.includes(o)) g._origins.push(o);
+        }
+    }
+    return order.map((k) => groups.get(k));
+}
+
 function renderDiag(container, d) {
     const isErr = d.severity === "error" || d.severity === "fail";
     const cls = isErr ? "diag-err" : "diag-warn";
     const head = document.createElement("div");
     head.className = `diag-line ${cls}`;
-    head.textContent = `${d.severity}[${d.slug}]: ${d.summary}`;
+    const groupSuffix = d._count > 1 ? `   (×${d._count})` : "";
+    head.textContent = `${d.severity}[${d.slug}]: ${d.summary}${groupSuffix}`;
     container.appendChild(head);
     const meta = document.createElement("div");
     meta.className = "diag-line diag-meta";
     meta.textContent = `at: ${d.span?.file || "playground"}:${d.span?.line || 0}:${d.span?.col || 0}`;
     container.appendChild(meta);
+    // Show non-origin fields (block / case / expected / actual / given /
+    // law) so the user sees what actually mismatched. Skip "origin"
+    // because grouped diags surface it through `_origins` below.
+    const fields = Array.isArray(d.fields) ? d.fields : [];
+    for (const [key, val] of fields) {
+        if (key === "origin") continue;
+        const f = document.createElement("div");
+        f.className = "diag-line diag-meta";
+        f.textContent = `${key}: ${val}`;
+        container.appendChild(f);
+    }
+    // For grouped failures (one case broke under multiple hostile
+    // profiles), list every world the case failed under. One line
+    // per profile so the user sees the spread without scrolling.
+    if (Array.isArray(d._origins) && d._origins.length > 0) {
+        const label = document.createElement("div");
+        label.className = "diag-line diag-meta";
+        label.textContent =
+            d._origins.length === 1
+                ? `under: ${d._origins[0]}`
+                : `under ${d._origins.length} hostile worlds:`;
+        container.appendChild(label);
+        if (d._origins.length > 1) {
+            for (const o of d._origins) {
+                const li = document.createElement("div");
+                li.className = "diag-line diag-meta diag-origin-item";
+                li.textContent = `  • ${o}`;
+                container.appendChild(li);
+            }
+        }
+    }
     if (d.repair?.primary) {
         const rep = document.createElement("div");
         rep.className = "diag-line diag-repair";
@@ -3341,6 +3407,13 @@ function renderVerifySection(data, actions) {
             extraClass: "audit-action-hostile",
         });
     }
+    // Group verify failures by (block, case, slug). Hostile mode
+    // produces one diagnostic per (case × profile) combination, but
+    // most of those are the same case breaking under a different
+    // adversarial world — repair text and snippet are identical.
+    // Group them so the user reads "this case failed under these N
+    // profiles" instead of N separate entries with the same repair.
+    const groupedFailures = groupVerifyFailures(verifyFailures);
     return buildSection({
         key: "verify",
         label: "Verify — executed contract checks",
@@ -3348,12 +3421,7 @@ function renderVerifySection(data, actions) {
         statusText: verifyFailed > 0 ? "✗" : (verifyTotal > 0 ? "✓" : "—"),
         countText: verifyTotal > 0 ? `${verifyPassed}/${verifyTotal} passed` : "no verify blocks",
         teaching: "Each `verify` block's cases run in the VM. Pass rate tells you how well your function matches the spec you wrote alongside it. Verify is Aver's core contract.",
-        issues: verifyFailures,
-        // Hostile mode produces one diagnostic per (case × profile)
-        // combination, which can be 20-30 near-identical entries on
-        // a single broken law. Cap the inline render at 3 — same
-        // ceiling the CLI uses — and expose the rest behind a click.
-        issuesCap: 3,
+        issues: groupedFailures,
         actions: sectionActionsWithHostile,
         extras: (body) => {
             if (!verifySummary?.blocks?.length) {

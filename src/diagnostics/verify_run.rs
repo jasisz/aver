@@ -131,6 +131,80 @@ fn map_results_to_diagnostics(
             hostile_failed,
         });
 
+        // Group `Mismatch` outcomes that share the same (case_expr,
+        // span line) — under `--hostile` a single broken case
+        // typically fails across multiple adversarial profiles, and
+        // emitting one diagnostic per (case × profile) drowns the
+        // user in near-identical entries with the same repair text.
+        // Other outcomes (RuntimeError / UnexpectedErr) stay
+        // per-case; they're already rare.
+        use std::collections::HashMap;
+        let mut mismatch_groups: HashMap<(String, usize), Vec<usize>> = HashMap::new();
+        let mut mismatch_order: Vec<(String, usize)> = Vec::new();
+        for (idx, case) in result.case_results.iter().enumerate() {
+            if matches!(case.outcome, VerifyCaseOutcome::Mismatch { .. }) {
+                let line = case.span.as_ref().map(|s| s.line).unwrap_or(1);
+                let key = (case.case_expr.clone(), line);
+                if !mismatch_groups.contains_key(&key) {
+                    mismatch_order.push(key.clone());
+                }
+                mismatch_groups.entry(key).or_default().push(idx);
+            }
+        }
+
+        // Emit one diagnostic per mismatch group.
+        for key in &mismatch_order {
+            let group = &mismatch_groups[key];
+            let primary_case = &result.case_results[group[0]];
+            let (line, col) = primary_case
+                .span
+                .as_ref()
+                .map(|s| (s.line, s.col))
+                .unwrap_or((1, 1));
+            let (expected, actual) = match &primary_case.outcome {
+                VerifyCaseOutcome::Mismatch { expected, actual } => {
+                    (expected.clone(), actual.clone())
+                }
+                _ => unreachable!("filtered above"),
+            };
+            let mut diag = verify_mismatch_diagnostic(
+                file_label,
+                source,
+                &result.fn_name,
+                &primary_case.case_expr,
+                &expected,
+                &actual,
+                line,
+                col,
+                is_law,
+                None,
+                primary_case.from_hostile,
+                primary_case.hostile_profile.as_deref(),
+            );
+            // Append every other origin in the group as an extra
+            // `("origin", ...)` field so the renderer can list each
+            // world the same case broke under. Skip duplicates.
+            for &other_idx in &group[1..] {
+                let other = &result.case_results[other_idx];
+                let origin = match (other.from_hostile, other.hostile_profile.as_deref()) {
+                    (true, Some(profile)) => {
+                        format!("hostile effect profile: {}", profile)
+                    }
+                    (true, None) => "hostile boundary expansion".to_string(),
+                    (false, _) => continue,
+                };
+                if !diag
+                    .fields
+                    .iter()
+                    .any(|(k, v)| *k == "origin" && v == &origin)
+                {
+                    diag.fields.push(("origin", origin));
+                }
+            }
+            diagnostics.push(diag);
+        }
+
+        // Non-mismatch outcomes — emit per case as before.
         for case in &result.case_results {
             let (line, col) = case
                 .span
@@ -138,23 +212,9 @@ fn map_results_to_diagnostics(
                 .map(|s| (s.line, s.col))
                 .unwrap_or((1, 1));
             match &case.outcome {
-                VerifyCaseOutcome::Pass | VerifyCaseOutcome::Skipped => {}
-                VerifyCaseOutcome::Mismatch { expected, actual } => {
-                    diagnostics.push(verify_mismatch_diagnostic(
-                        file_label,
-                        source,
-                        &result.fn_name,
-                        &case.case_expr,
-                        expected,
-                        actual,
-                        line,
-                        col,
-                        is_law,
-                        None,
-                        case.from_hostile,
-                        case.hostile_profile.as_deref(),
-                    ));
-                }
+                VerifyCaseOutcome::Pass
+                | VerifyCaseOutcome::Skipped
+                | VerifyCaseOutcome::Mismatch { .. } => {}
                 VerifyCaseOutcome::UnexpectedErr { err_repr } => {
                     diagnostics.push(verify_unexpected_err_diagnostic(
                         file_label,

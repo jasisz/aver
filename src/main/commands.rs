@@ -2807,28 +2807,85 @@ fn render_verify_output(
                     );
                 }
 
-                // Emit diagnostics for failures (capped in normal mode)
+                // Group `Mismatch` outcomes by (case_expr, line).
+                // Under --hostile a single broken case typically
+                // breaks under multiple adversarial profiles; emit one
+                // grouped diagnostic per case with the full list of
+                // worlds it failed under, instead of a wall of near-
+                // identical entries with the same repair text.
+                use std::collections::HashMap;
+                let mut mismatch_groups: HashMap<(String, usize), Vec<usize>> = HashMap::new();
+                let mut mismatch_order: Vec<(String, usize)> = Vec::new();
+                for (idx, cr) in block.case_results.iter().enumerate() {
+                    if matches!(cr.outcome, VerifyCaseOutcome::Mismatch { .. }) {
+                        let line = cr.span.as_ref().map(|s| s.line).unwrap_or(1);
+                        let key = (cr.case_expr.clone(), line);
+                        if !mismatch_groups.contains_key(&key) {
+                            mismatch_order.push(key.clone());
+                        }
+                        mismatch_groups.entry(key).or_default().push(idx);
+                    }
+                }
                 let max_diags = if verbose { usize::MAX } else { 3 };
                 let mut diag_count = 0usize;
+
+                for key in &mismatch_order {
+                    let group = &mismatch_groups[key];
+                    let primary = &block.case_results[group[0]];
+                    let (line, col) = primary
+                        .span
+                        .as_ref()
+                        .map(|s| (s.line, s.col))
+                        .unwrap_or((1, 1));
+                    let (expected, actual) = match &primary.outcome {
+                        VerifyCaseOutcome::Mismatch { expected, actual } => {
+                            (expected.clone(), actual.clone())
+                        }
+                        _ => unreachable!(),
+                    };
+                    let mut d = verify_mismatch_diagnostic(
+                        &display_path,
+                        &fr.source,
+                        &block.block_label,
+                        &primary.case_expr,
+                        &expected,
+                        &actual,
+                        line,
+                        col,
+                        primary.law_context.is_some(),
+                        primary.law_context.as_ref(),
+                        primary.from_hostile,
+                        primary.hostile_profile.as_deref(),
+                    );
+                    for &other_idx in &group[1..] {
+                        let other = &block.case_results[other_idx];
+                        let origin =
+                            match (other.from_hostile, other.hostile_profile.as_deref()) {
+                                (true, Some(profile)) => {
+                                    format!("hostile effect profile: {}", profile)
+                                }
+                                (true, None) => "hostile boundary expansion".to_string(),
+                                (false, _) => continue,
+                            };
+                        if !d
+                            .fields
+                            .iter()
+                            .any(|(k, v)| *k == "origin" && v == &origin)
+                        {
+                            d.fields.push(("origin", origin));
+                        }
+                    }
+                    if diag_count < max_diags {
+                        println!();
+                        print!("{}", render_tty(&d, verbose));
+                    }
+                    diag_count += 1;
+                }
+
+                // Other outcomes — per-case, not grouped (rare).
                 for cr in &block.case_results {
                     let (line, col) = cr.span.as_ref().map(|s| (s.line, s.col)).unwrap_or((1, 1));
                     let diag = match &cr.outcome {
-                        VerifyCaseOutcome::Mismatch { expected, actual } => {
-                            Some(verify_mismatch_diagnostic(
-                                &display_path,
-                                &fr.source,
-                                &block.block_label,
-                                &cr.case_expr,
-                                expected,
-                                actual,
-                                line,
-                                col,
-                                cr.law_context.is_some(),
-                                cr.law_context.as_ref(),
-                                cr.from_hostile,
-                                cr.hostile_profile.as_deref(),
-                            ))
-                        }
                         VerifyCaseOutcome::RuntimeError { error } => {
                             Some(verify_runtime_error_diagnostic(
                                 &display_path,
