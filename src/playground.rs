@@ -919,10 +919,7 @@ mod bindgen {
     }
 
     #[wasm_bindgen]
-    pub fn aver_verify_hostile_project(
-        files_json: &str,
-        entry: &str,
-    ) -> Result<String, JsError> {
+    pub fn aver_verify_hostile_project(files_json: &str, entry: &str) -> Result<String, JsError> {
         let files = parse_files(files_json)?;
         Ok(super::verify_project_hostile(&files, entry))
     }
@@ -957,10 +954,7 @@ mod bindgen {
     }
 
     #[wasm_bindgen]
-    pub fn aver_audit_hostile_project(
-        files_json: &str,
-        entry: &str,
-    ) -> Result<String, JsError> {
+    pub fn aver_audit_hostile_project(files_json: &str, entry: &str) -> Result<String, JsError> {
         let files = parse_files(files_json)?;
         Ok(super::audit_project_hostile(&files, entry))
     }

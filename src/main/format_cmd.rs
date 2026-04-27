@@ -618,7 +618,8 @@ fn is_oracle_stub_fn(fd: &aver::ast::FnDef) -> bool {
     let Some((_, first_ty)) = fd.params.first() else {
         return false;
     };
-    first_ty.trim() == "BranchPath" || first_ty.trim().starts_with("BranchPath ")
+    first_ty.trim() == "BranchPath"
+        || first_ty.trim().starts_with("BranchPath ")
         || first_ty.trim().starts_with("BranchPath\t")
 }
 
@@ -770,9 +771,7 @@ fn reorder_verify_blocks_tracked(
                 // follows. They're considered glue between the fn
                 // under test and its verify block, not standalone
                 // fn definitions.
-                while i < blocks_vec.len()
-                    && matches!(blocks_vec[i].kind, BlockKind::FnStub(_))
-                {
+                while i < blocks_vec.len() && matches!(blocks_vec[i].kind, BlockKind::FnStub(_)) {
                     out.push(blocks_vec[i].clone());
                     i += 1;
                 }
@@ -922,7 +921,8 @@ fn normalize_module_effects_blocks_tracked(
             i += 1;
             continue;
         }
-        if in_module_header && indent_len == 0 && !trimmed.is_empty() && !trimmed.starts_with("//") {
+        if in_module_header && indent_len == 0 && !trimmed.is_empty() && !trimmed.starts_with("//")
+        {
             in_module_header = false;
         }
 

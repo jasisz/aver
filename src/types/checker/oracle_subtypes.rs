@@ -166,7 +166,9 @@ mod tests {
         // would re-introduce the 0.13-pre soundness hole. Match a
         // line-start `axiom ` declaration, not the literal word in
         // commentary.
-        let any_axiom_decl = out.lines().any(|line| line.trim_start().starts_with("axiom "));
+        let any_axiom_decl = out
+            .lines()
+            .any(|line| line.trim_start().starts_with("axiom "));
         assert!(
             !any_axiom_decl,
             "subtype helpers must not emit `axiom` declarations; got:\n{}",

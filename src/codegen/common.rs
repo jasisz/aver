@@ -595,7 +595,7 @@ fn project_oracle_direct_calls(
             field.clone(),
         ),
         Expr::BinOp(op, l, r) => Expr::BinOp(
-            op.clone(),
+            *op,
             Box::new(project_oracle_direct_calls(l, oracle_names)),
             Box::new(project_oracle_direct_calls(r, oracle_names)),
         ),

@@ -27,12 +27,9 @@ pub fn collect_module_effects_warnings_in(
     // modules don't need a boundary.
     let Some((declared_opt, declared_line, module_name, module_line)) =
         items.iter().find_map(|i| match i {
-            TopLevel::Module(m) => Some((
-                m.effects.clone(),
-                m.effects_line,
-                m.name.clone(),
-                m.line,
-            )),
+            TopLevel::Module(m) => {
+                Some((m.effects.clone(), m.effects_line, m.name.clone(), m.line))
+            }
             _ => None,
         })
     else {
@@ -65,8 +62,7 @@ pub fn collect_module_effects_warnings_in(
     // method only if the module declared the namespace too — otherwise
     // they're ambiguous and we skip them in the "covered" set.
     let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut used_namespaces: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
+    let mut used_namespaces: std::collections::HashSet<String> = std::collections::HashSet::new();
     for item in items {
         let TopLevel::FnDef(fd) = item else { continue };
         for eff in &fd.effects {
@@ -167,7 +163,11 @@ mod tests {
                    \x20   Console.print(\"hi\")\n";
         let ws = warnings_for(src);
         assert_eq!(ws.len(), 1);
-        assert!(ws[0].message.contains("does not declare an effect boundary"));
+        assert!(
+            ws[0]
+                .message
+                .contains("does not declare an effect boundary")
+        );
     }
 
     #[test]

@@ -1087,7 +1087,6 @@ fn emit_fn_params(params: &[(String, String)]) -> String {
         .join(" ")
 }
 
-
 fn lower_pure_question_bang_for_emit(fd: &FnDef) -> Option<FnDef> {
     crate::types::checker::effect_lifting::lower_pure_question_bang_fn(fd)
         .ok()
@@ -1456,9 +1455,7 @@ fn emit_verify_law_block(
             // `∀ rng : BranchPath → Int → ... → Int`. Other effect
             // kinds (Output, unclassified) keep the plain function
             // signature.
-            let type_text = if let Some(subtype) =
-                bounded_oracle_subtype_for(&given.type_name)
-            {
+            let type_text = if let Some(subtype) = bounded_oracle_subtype_for(&given.type_name) {
                 subtype.to_string()
             } else {
                 match crate::types::checker::effect_classification::oracle_signature(

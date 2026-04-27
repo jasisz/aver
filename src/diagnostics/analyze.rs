@@ -9,9 +9,9 @@ use super::factories::{from_check_finding, from_type_error, unused_binding_diagn
 use super::model::{AnalysisReport, Diagnostic, Severity, Span};
 use crate::checker::{
     CheckFinding, check_module_intent_with_sigs_in, collect_cse_warnings_in,
-    collect_independence_warnings_in, collect_naming_warnings_in, collect_perf_warnings_in,
-    collect_module_effects_warnings_in, collect_plain_cases_effectful_warnings_in,
-    collect_verify_coverage_warnings_in,
+    collect_independence_warnings_in, collect_module_effects_warnings_in,
+    collect_naming_warnings_in, collect_perf_warnings_in,
+    collect_plain_cases_effectful_warnings_in, collect_verify_coverage_warnings_in,
 };
 #[cfg(feature = "runtime")]
 use crate::checker::{FindingSpan, collect_verify_law_dependency_warnings_in};

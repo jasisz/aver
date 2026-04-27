@@ -701,9 +701,8 @@ mod tests {
                     "module M\n    intent = \"t\"\n    effects []\n\n{}",
                     p.stub_body
                 );
-                let items = parse_source(&src).unwrap_or_else(|e| {
-                    panic!("{}/{}: parse: {:?}", method, p.name, e)
-                });
+                let items = parse_source(&src)
+                    .unwrap_or_else(|e| panic!("{}/{}: parse: {:?}", method, p.name, e));
                 let result = run_type_check_full(&items, None);
                 if !result.errors.is_empty() {
                     panic!(

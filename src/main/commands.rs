@@ -2796,11 +2796,7 @@ fn render_verify_output(
                         }
                         format!(
                             " ({}/{} declared, {}/{} hostile{})",
-                            declared_passed,
-                            declared_total,
-                            hostile_passed,
-                            hostile_total,
-                            tail
+                            declared_passed, declared_total, hostile_passed, hostile_total, tail
                         )
                     } else {
                         let mut mismatch = 0usize;
@@ -2906,19 +2902,14 @@ fn render_verify_output(
                     );
                     for &other_idx in &group[1..] {
                         let other = &block.case_results[other_idx];
-                        let origin =
-                            match (other.from_hostile, other.hostile_profile.as_deref()) {
-                                (true, Some(profile)) => {
-                                    format!("effect profile: {}", profile)
-                                }
-                                (true, None) => "value boundary substitution".to_string(),
-                                (false, _) => continue,
-                            };
-                        if !d
-                            .fields
-                            .iter()
-                            .any(|(k, v)| *k == "origin" && v == &origin)
-                        {
+                        let origin = match (other.from_hostile, other.hostile_profile.as_deref()) {
+                            (true, Some(profile)) => {
+                                format!("effect profile: {}", profile)
+                            }
+                            (true, None) => "value boundary substitution".to_string(),
+                            (false, _) => continue,
+                        };
+                        if !d.fields.iter().any(|(k, v)| *k == "origin" && v == &origin) {
                             d.fields.push(("origin", origin));
                         }
                     }

@@ -56,14 +56,16 @@ pub const VERIFY_HOSTILE_MAX_CASES: usize = 10_000;
 /// `VERIFY_HOSTILE_MAX_CASES`; mirrors the parser's declared-side cap so
 /// `--hostile` can't accidentally produce a multi-hour run from a small
 /// source.
+type HostileCaseTuple = (
+    Spanned<Expr>,
+    Spanned<Expr>,
+    bool,
+    Vec<(String, Spanned<Expr>)>,
+    Option<Spanned<Expr>>,
+);
+
 fn apply_hostile_expansion(block: &mut VerifyBlock, items: &[TopLevel]) -> Result<(), String> {
-    let value_expanded: Vec<(
-        Spanned<Expr>,
-        Spanned<Expr>,
-        bool,
-        Vec<(String, Spanned<Expr>)>,
-        Option<Spanned<Expr>>,
-    )> = match &block.kind {
+    let value_expanded: Vec<HostileCaseTuple> = match &block.kind {
         VerifyKind::Law(law) => expand_law_cases(law, ExpansionMode::Hostile)
             .into_iter()
             .map(|c: ExpandedCase| (c.lhs, c.rhs, c.from_hostile, c.bindings, c.guard))
@@ -97,7 +99,10 @@ fn apply_hostile_expansion(block: &mut VerifyBlock, items: &[TopLevel]) -> Resul
     // instead of panicking on the unsigned wrap.
     let per_value = effect_combos.len().saturating_add(1);
     let projected = value_expanded.len().checked_mul(per_value);
-    if projected.map(|n| n > VERIFY_HOSTILE_MAX_CASES).unwrap_or(true) {
+    if projected
+        .map(|n| n > VERIFY_HOSTILE_MAX_CASES)
+        .unwrap_or(true)
+    {
         return Err(format!(
             "verify '{}' under --hostile expands to more than {} cases ({} declared/boundary cases × {} adversarial worlds). Tighten the `given` domain, add a `when` precondition, or drop hostile mode for this law.",
             block.fn_name,
@@ -591,10 +596,7 @@ fn guard_for_case(block: &VerifyBlock, case_idx: usize) -> Option<Spanned<Expr>>
                 given.type_name.replace('.', "_"),
                 profile
             );
-            bindings.insert(
-                given.name.clone(),
-                Spanned::bare(Expr::Ident(stub_fn_name)),
-            );
+            bindings.insert(given.name.clone(), Spanned::bare(Expr::Ident(stub_fn_name)));
         }
     }
     Some(rewrite_idents_scoped(when, |name| {
@@ -849,10 +851,7 @@ fn apply_trace_projection(
                     // times the law's fn reaches for the clock under each
                     // adversarial profile.
                     if args.len() != 1 {
-                        return Err(format!(
-                            "Trace.count(x) expects 1 arg, got {}",
-                            args.len()
-                        ));
+                        return Err(format!("Trace.count(x) expects 1 arg, got {}", args.len()));
                     }
                     let arg = &args[0];
                     let method_only_name = effect_method_ref_name(arg);
@@ -1181,8 +1180,7 @@ fn build_case_oracle_stubs(
     // FnDef thanks to `inject_hostile_effect_stubs_for_blocks`.
     if let Some(combo) = block.case_hostile_profiles.get(case_idx) {
         for (method, profile) in combo {
-            let stub_fn_name =
-                format!("__hostile_{}_{}", method.replace('.', "_"), profile);
+            let stub_fn_name = format!("__hostile_{}_{}", method.replace('.', "_"), profile);
             let Some(fn_id) = machine.find_fn_id(&stub_fn_name) else {
                 continue;
             };
@@ -1233,9 +1231,8 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
             .get(idx)
             .copied()
             .unwrap_or(false);
-        let hostile_profile = render_hostile_profile_label(
-            block.case_hostile_profiles.get(idx).map(Vec::as_slice),
-        );
+        let hostile_profile =
+            render_hostile_profile_label(block.case_hostile_profiles.get(idx).map(Vec::as_slice));
 
         // Profile-multiplied case for a base that already failed?
         // Skip the VM run; record an outcome variant the renderer

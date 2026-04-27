@@ -48,11 +48,7 @@ pub fn run_verify_blocks_with_mode(
 ) -> (Vec<Diagnostic>, VerifySummary) {
     let config = base_dir.and_then(load_project_config);
     let results = match vm_verify::run_verify_for_items_vm_with_mode(
-        items,
-        config,
-        base_dir,
-        file_label,
-        mode,
+        items, config, base_dir, file_label, mode,
     ) {
         Ok(r) => r,
         Err(_) => {
@@ -87,11 +83,7 @@ pub fn run_verify_blocks_with_loaded_and_mode(
     mode: ExpansionMode,
 ) -> (Vec<Diagnostic>, VerifySummary) {
     let results = match vm_verify::run_verify_for_items_vm_with_loaded_and_mode(
-        items,
-        loaded,
-        None,
-        file_label,
-        mode,
+        items, loaded, None, file_label, mode,
     ) {
         Ok(r) => r,
         Err(_) => {

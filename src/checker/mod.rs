@@ -2,9 +2,9 @@ mod coverage;
 mod cse;
 mod independence;
 mod intent;
-mod module_effects;
 #[cfg(feature = "runtime")]
 mod law;
+mod module_effects;
 mod naming;
 mod perf;
 mod verify;
@@ -27,9 +27,16 @@ pub enum VerifyCaseOutcome {
     /// worlds. Distinct from `Skipped` (which is `when`-driven and
     /// drives the vacuous-under-hostile warning).
     SkippedAfterBaseFail,
-    Mismatch { expected: String, actual: String },
-    RuntimeError { error: String },
-    UnexpectedErr { err_repr: String },
+    Mismatch {
+        expected: String,
+        actual: String,
+    },
+    RuntimeError {
+        error: String,
+    },
+    UnexpectedErr {
+        err_repr: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -247,9 +254,6 @@ use verify::verify_case_calls_target;
 
 // Public re-exports so external callers don't break
 pub use coverage::{collect_verify_coverage_warnings, collect_verify_coverage_warnings_in};
-pub use module_effects::{
-    collect_module_effects_warnings, collect_module_effects_warnings_in,
-};
 pub use cse::{collect_cse_warnings, collect_cse_warnings_in};
 pub use independence::{collect_independence_warnings, collect_independence_warnings_in};
 pub use intent::{
@@ -258,6 +262,7 @@ pub use intent::{
 };
 #[cfg(feature = "runtime")]
 pub use law::{collect_verify_law_dependency_warnings, collect_verify_law_dependency_warnings_in};
+pub use module_effects::{collect_module_effects_warnings, collect_module_effects_warnings_in};
 pub use naming::{collect_naming_warnings, collect_naming_warnings_in};
 pub use perf::{collect_perf_warnings, collect_perf_warnings_in};
 pub use verify::{expr_to_str, merge_verify_blocks};
