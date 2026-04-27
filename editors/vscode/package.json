@@ -2,7 +2,7 @@
   "name": "aver-lang",
   "displayName": "Aver Language",
   "description": "Syntax highlighting and LSP support for the Aver programming language",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "publisher": "Aver",
   "license": "MIT",
   "repository": {
