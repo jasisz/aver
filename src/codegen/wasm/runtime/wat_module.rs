@@ -26,6 +26,7 @@ const LIST_CONS_WAT: &str = include_str!("wat/list_cons.part.wat");
 const STR_SEARCH_WAT: &str = include_str!("wat/str_search.part.wat");
 const LISTS_WAT: &str = include_str!("wat/lists.part.wat");
 const MAPS_WAT: &str = include_str!("wat/maps.part.wat");
+const VECTORS_WAT: &str = include_str!("wat/vectors.part.wat");
 
 /// Build the runtime module's WAT source by concatenating fragments
 /// inside a `(module ...)` wrapper. Order matters — prelude declares
@@ -56,6 +57,8 @@ fn runtime_wat_source() -> String {
     s.push_str(LISTS_WAT);
     s.push('\n');
     s.push_str(MAPS_WAT);
+    s.push('\n');
+    s.push_str(VECTORS_WAT);
     s.push('\n');
     s.push(')');
     s
@@ -127,6 +130,12 @@ mod tests {
             "rt_map_has",
             "rt_map_keys",
             "rt_map_entries",
+            "rt_vec_from_list",
+            "rt_vec_get",
+            "rt_vec_len",
+            "rt_vec_set",
+            "rt_vec_new",
+            "rt_vec_to_list",
         ];
         let mut found: std::collections::HashSet<&str> =
             std::collections::HashSet::new();

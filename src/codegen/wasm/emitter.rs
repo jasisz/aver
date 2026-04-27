@@ -243,6 +243,12 @@ pub fn build_wasm_module(
         rt_map_has: 31,
         rt_map_keys: 32,
         rt_map_entries: 33,
+        rt_vec_from_list: 34,
+        rt_vec_get: 35,
+        rt_vec_len: 36,
+        rt_vec_set: 37,
+        rt_vec_new: 38,
+        rt_vec_to_list: 39,
     };
     import_section.import(
         "aver_runtime",
@@ -416,6 +422,36 @@ pub fn build_wasm_module(
     );
     import_section.import(
         "aver_runtime",
+        "rt_vec_from_list",
+        EntityType::Function(rti.i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_vec_get",
+        EntityType::Function(rti.i32_i64_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_vec_len",
+        EntityType::Function(rti.unwrap_i64),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_vec_set",
+        EntityType::Function(rti.i32_i64_i64_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_vec_new",
+        EntityType::Function(rti.i64_i64_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_vec_to_list",
+        EntityType::Function(rti.unwrap_i32),
+    );
+    import_section.import(
+        "aver_runtime",
         "memory",
         EntityType::Memory(MemoryType {
             minimum: 1,
@@ -434,7 +470,7 @@ pub fn build_wasm_module(
             shared: false,
         }),
     );
-    let mut import_func_count = 34u32; // prev 29 + 5 map_*
+    let mut import_func_count = 40u32; // prev 34 + 6 vec_*
     // Index of the write-to-stdout import (used by runtime's write_stdout helper)
     let mut write_stdout_import: Option<u32> = None;
 

@@ -47,6 +47,12 @@ pub struct AverRuntimeImports {
     pub rt_map_has: u32,
     pub rt_map_keys: u32,
     pub rt_map_entries: u32,
+    pub rt_vec_from_list: u32,
+    pub rt_vec_get: u32,
+    pub rt_vec_len: u32,
+    pub rt_vec_set: u32,
+    pub rt_vec_new: u32,
+    pub rt_vec_to_list: u32,
 }
 
 /// Index assignments for runtime functions within the module.
@@ -181,12 +187,12 @@ impl RuntimeFuncIndices {
             map_has: imports.rt_map_has,
             map_keys: imports.rt_map_keys,
             map_entries: imports.rt_map_entries,
-            vec_from_list: next(),
-            vec_get: next(),
-            vec_len: next(),
-            vec_set: next(),
-            vec_new: next(),
-            vec_to_list: next(),
+            vec_from_list: imports.rt_vec_from_list,
+            vec_get: imports.rt_vec_get,
+            vec_len: imports.rt_vec_len,
+            vec_set: imports.rt_vec_set,
+            vec_new: imports.rt_vec_new,
+            vec_to_list: imports.rt_vec_to_list,
             str_len: next(),
             str_byte_len: imports.rt_str_byte_len,
             str_find: imports.rt_str_find,
@@ -686,24 +692,6 @@ pub fn rt_type_index(
     }
     if local_idx == rt.f64_to_str_obj - import_func_count {
         return rti.f64_to_i32;
-    }
-    if local_idx == rt.vec_from_list - import_func_count {
-        return rti.i32_i32_to_i32;
-    }
-    if local_idx == rt.vec_get - import_func_count {
-        return rti.i32_i64_to_i32;
-    }
-    if local_idx == rt.vec_len - import_func_count {
-        return rti.unwrap_i64;
-    }
-    if local_idx == rt.vec_set - import_func_count {
-        return rti.i32_i64_i64_to_i32;
-    }
-    if local_idx == rt.vec_new - import_func_count {
-        return rti.i64_i64_i32_to_i32;
-    }
-    if local_idx == rt.vec_to_list - import_func_count {
-        return rti.unwrap_i32;
     }
     if local_idx == rt.str_len - import_func_count {
         return rti.unwrap_i64;
