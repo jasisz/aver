@@ -942,7 +942,17 @@ pub fn emit_fn_def(
     let is_recursive = recursive_fns.contains(&fd.name);
     let fn_name = aver_name_to_lean(&fd.name);
 
-    // Parameters
+    // Parameters — lifted fn keeps the plain function type for oracle
+    // bindings; the subtype constraint is enforced at the lemma level
+    // (`∀ rng : RandomIntInBounds, ...`) where it bites the universal
+    // claim. Threading the subtype through the operational signature
+    // would force every sample binding (`theorem ..._sample_1`) to
+    // wrap concrete stubs in `⟨stub, by sorry⟩`, since most user
+    // stubs (e.g. `counterStub : fn p n min max := n + min`) only
+    // satisfy the bound at specific `(min, max)` pairs and `decide`
+    // can't discharge the `∀ min max` quantifier. Sound for the
+    // universal lemma, executable for the concrete sample — that's
+    // the trade.
     let params = emit_fn_params(&fd.params);
 
     // Return type
@@ -1076,6 +1086,7 @@ fn emit_fn_params(params: &[(String, String)]) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
+
 
 fn lower_pure_question_bang_for_emit(fd: &FnDef) -> Option<FnDef> {
     crate::types::checker::effect_lifting::lower_pure_question_bang_fn(fd)
