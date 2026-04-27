@@ -656,6 +656,26 @@ dom.fileInput.addEventListener("change", async (event) => {
     await onFileChange(event.target.files);
 });
 
+// Folder upload — webkitdirectory input lets the browser open its
+// native folder picker. Same handler as files; onFileChange already
+// honours `webkitRelativePath` to mirror the folder layout in the
+// virtual fs.
+const folderInput = document.querySelector("[data-folder-input]");
+if (folderInput) {
+    folderInput.addEventListener("change", async (event) => {
+        await onFileChange(event.target.files);
+    });
+}
+
+const uploadFilesBtn = document.querySelector("[data-upload-files]");
+if (uploadFilesBtn) {
+    uploadFilesBtn.addEventListener("click", () => dom.fileInput.click());
+}
+const uploadFolderBtn = document.querySelector("[data-upload-folder]");
+if (uploadFolderBtn && folderInput) {
+    uploadFolderBtn.addEventListener("click", () => folderInput.click());
+}
+
 dom.dropzone.addEventListener("dragover", (event) => {
     event.preventDefault();
     dom.dropzone.dataset.drag = "true";

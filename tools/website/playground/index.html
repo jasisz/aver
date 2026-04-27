@@ -115,10 +115,26 @@
                 </ul>
             </div>
             <div class="dropzone-inline" data-dropzone data-drag="false">
-                <!-- accepts .wasm (run it), .av (single tab), folder (many tabs).
-                     webkitdirectory is toggled from JS when the user drags. -->
-                <input type="file" accept=".wasm,application/wasm,.av,text/plain,.json,application/json" multiple data-file-input>
-                <span data-file-meta>drop .wasm · .av · folder · .replay.json</span>
+                <!-- Two explicit upload entry points — files and folders.
+                     Single-file drop still works (the whole div listens
+                     for dragover/drop), but the primary affordance is
+                     "click to upload" so the buttons appear in any
+                     browser without surprising the user. webkitdirectory
+                     on the second input asks the browser for a folder
+                     picker; that's how Aver multi-file projects load. -->
+                <input type="file"
+                    accept=".wasm,application/wasm,.av,text/plain,.json,application/json"
+                    multiple hidden data-file-input>
+                <input type="file" webkitdirectory directory hidden data-folder-input>
+                <button type="button" class="upload-btn" data-upload-files
+                    title="Choose .av · .wasm · .replay.json files. Multi-select to load several at once.">
+                    📁 Upload files
+                </button>
+                <button type="button" class="upload-btn" data-upload-folder
+                    title="Choose a folder — every .av inside lands as its own tab in the editor.">
+                    📂 Upload folder
+                </button>
+                <span data-file-meta class="dropzone-hint">or drop here</span>
             </div>
         </div>
         <div class="editor-tabs" data-editor-tabs></div>
