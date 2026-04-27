@@ -31,6 +31,7 @@ const INT_TO_STR_WAT: &str = include_str!("wat/int_to_str.part.wat");
 const TO_STR_OBJ_WAT: &str = include_str!("wat/to_str_obj.part.wat");
 const STR_LEN_WAT: &str = include_str!("wat/str_len.part.wat");
 const CHAR_TO_CODE_WAT: &str = include_str!("wat/char_to_code.part.wat");
+const BYTE_HEX_WAT: &str = include_str!("wat/byte_hex.part.wat");
 
 /// Build the runtime module's WAT source by concatenating fragments
 /// inside a `(module ...)` wrapper. Order matters — prelude declares
@@ -71,6 +72,8 @@ fn runtime_wat_source() -> String {
     s.push_str(STR_LEN_WAT);
     s.push('\n');
     s.push_str(CHAR_TO_CODE_WAT);
+    s.push('\n');
+    s.push_str(BYTE_HEX_WAT);
     s.push('\n');
     s.push(')');
     s
@@ -154,6 +157,8 @@ mod tests {
             "rt_f64_to_str_obj",
             "rt_str_len",
             "rt_char_to_code",
+            "rt_byte_to_hex",
+            "rt_byte_from_hex",
         ];
         let mut found: std::collections::HashSet<&str> =
             std::collections::HashSet::new();
