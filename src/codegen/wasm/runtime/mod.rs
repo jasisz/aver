@@ -19,6 +19,7 @@ mod lists;
 mod maps;
 mod strings;
 mod vectors;
+mod wat_module;
 
 use wasm_encoder::Function;
 
