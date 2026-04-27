@@ -36,6 +36,7 @@ const CHAR_FROM_CODE_WAT: &str = include_str!("wat/char_from_code.part.wat");
 const STR_CHAR_AT_WAT: &str = include_str!("wat/str_char_at.part.wat");
 const STR_CASE_WAT: &str = include_str!("wat/str_case.part.wat");
 const STR_TRIM_WAT: &str = include_str!("wat/str_trim.part.wat");
+const STR_OPS_WAT: &str = include_str!("wat/str_ops.part.wat");
 
 /// Build the runtime module's WAT source by concatenating fragments
 /// inside a `(module ...)` wrapper. Order matters — prelude declares
@@ -86,6 +87,8 @@ fn runtime_wat_source() -> String {
     s.push_str(STR_CASE_WAT);
     s.push('\n');
     s.push_str(STR_TRIM_WAT);
+    s.push('\n');
+    s.push_str(STR_OPS_WAT);
     s.push('\n');
     s.push(')');
     s
@@ -176,6 +179,11 @@ mod tests {
             "rt_str_to_lower",
             "rt_str_to_upper",
             "rt_str_trim",
+            "rt_str_slice",
+            "rt_str_chars",
+            "rt_str_split",
+            "rt_str_join",
+            "rt_str_replace",
         ];
         let mut found: std::collections::HashSet<&str> =
             std::collections::HashSet::new();

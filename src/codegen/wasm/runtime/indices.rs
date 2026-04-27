@@ -66,6 +66,11 @@ pub struct AverRuntimeImports {
     pub rt_str_to_lower: u32,
     pub rt_str_to_upper: u32,
     pub rt_str_trim: u32,
+    pub rt_str_slice: u32,
+    pub rt_str_chars: u32,
+    pub rt_str_split: u32,
+    pub rt_str_join: u32,
+    pub rt_str_replace: u32,
 }
 
 /// Index assignments for runtime functions within the module.
@@ -218,11 +223,11 @@ impl RuntimeFuncIndices {
             byte_to_hex: imports.rt_byte_to_hex,
             byte_from_hex: imports.rt_byte_from_hex,
             str_trim: imports.rt_str_trim,
-            str_slice: next(),
-            str_chars: next(),
-            str_split: next(),
-            str_join: next(),
-            str_replace: next(),
+            str_slice: imports.rt_str_slice,
+            str_chars: imports.rt_str_chars,
+            str_split: imports.rt_str_split,
+            str_join: imports.rt_str_join,
+            str_replace: imports.rt_str_replace,
             str_to_lower: imports.rt_str_to_lower,
             str_to_upper: imports.rt_str_to_upper,
             int_from_str: next(),
@@ -693,21 +698,6 @@ pub fn rt_type_index(
     }
     if local_idx == rt.fd_write_buf - import_func_count {
         return rti.fd_write_buf;
-    }
-    if local_idx == rt.str_slice - import_func_count {
-        return rti.i32_i32_i32_to_i32;
-    }
-    if local_idx == rt.str_chars - import_func_count {
-        return rti.unwrap_i32;
-    }
-    if local_idx == rt.str_split - import_func_count {
-        return rti.i32_i32_to_i32;
-    }
-    if local_idx == rt.str_join - import_func_count {
-        return rti.i32_i32_to_i32;
-    }
-    if local_idx == rt.str_replace - import_func_count {
-        return rti.i32_i32_i32_to_i32;
     }
     if local_idx == rt.int_from_str - import_func_count {
         return rti.unwrap_i32;
