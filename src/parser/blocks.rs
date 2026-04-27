@@ -340,14 +340,36 @@ impl Parser {
                     ));
                 }
 
-                let when = if self.current_ident_is("when") {
+                // Multiple `when` predicates compose with `Bool.and` — each
+                // line tightens the world. We fold them left-to-right so
+                // the runtime / proof / hostile pipelines see one
+                // composite predicate they can drop cases against.
+                let mut when: Option<Spanned<Expr>> = None;
+                while self.current_ident_is("when") {
                     self.advance(); // when
-                    let when_expr = self.parse_expr()?;
+                    let next = self.parse_expr()?;
                     self.skip_newlines();
-                    Some(when_expr)
-                } else {
-                    None
-                };
+                    when = Some(match when.take() {
+                        None => next,
+                        Some(prev) => {
+                            let line = prev.line;
+                            let bool_and = Spanned {
+                                node: Expr::Attr(
+                                    Box::new(Spanned {
+                                        node: Expr::Ident("Bool".to_string()),
+                                        line,
+                                    }),
+                                    "and".to_string(),
+                                ),
+                                line,
+                            };
+                            Spanned {
+                                node: Expr::FnCall(Box::new(bool_and), vec![prev, next]),
+                                line,
+                            }
+                        }
+                    });
+                }
 
                 // Oracle v1: local bindings in law form — symmetric
                 // with trace-form. `expected = rnd(root(), 0, 1, 6) + ...`
