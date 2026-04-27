@@ -1410,7 +1410,7 @@ fn parse_singleton_variant_with_parens_is_parse_error() {
 fn effect_set_single_is_parse_error() {
     let msg = parse_error("effects AppIO = [Console.print]");
     assert!(
-        msg.contains("Effect aliases were removed"),
+        msg.contains("module-level declaration"),
         "unexpected parse error: {}",
         msg
     );
@@ -1420,7 +1420,7 @@ fn effect_set_single_is_parse_error() {
 fn effect_set_multiple_is_parse_error() {
     let msg = parse_error("effects AppIO = [Console.print, Disk.readText, Http.get]");
     assert!(
-        msg.contains("Effect aliases were removed"),
+        msg.contains("module-level declaration"),
         "unexpected parse error: {}",
         msg
     );
