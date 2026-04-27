@@ -31,6 +31,11 @@ pub struct AverRuntimeImports {
     pub rt_str_concat: u32,
     pub rt_list_cons: u32,
     pub rt_list_cons_f64: u32,
+    pub rt_str_byte_len: u32,
+    pub rt_str_find: u32,
+    pub rt_str_starts_with: u32,
+    pub rt_str_ends_with: u32,
+    pub rt_str_contains: u32,
 }
 
 /// Index assignments for runtime functions within the module.
@@ -172,11 +177,11 @@ impl RuntimeFuncIndices {
             vec_new: next(),
             vec_to_list: next(),
             str_len: next(),
-            str_byte_len: next(),
-            str_find: next(),
-            str_starts_with: next(),
-            str_ends_with: next(),
-            str_contains: next(),
+            str_byte_len: imports.rt_str_byte_len,
+            str_find: imports.rt_str_find,
+            str_starts_with: imports.rt_str_starts_with,
+            str_ends_with: imports.rt_str_ends_with,
+            str_contains: imports.rt_str_contains,
             str_char_at: next(),
             char_from_code: next(),
             char_to_code: next(),
@@ -724,21 +729,6 @@ pub fn rt_type_index(
     }
     if local_idx == rt.str_len - import_func_count {
         return rti.unwrap_i64;
-    }
-    if local_idx == rt.str_byte_len - import_func_count {
-        return rti.unwrap_i64;
-    }
-    if local_idx == rt.str_find - import_func_count {
-        return rti.i32_i32_i32_to_i32;
-    }
-    if local_idx == rt.str_starts_with - import_func_count {
-        return rti.i32_i32_to_i32;
-    }
-    if local_idx == rt.str_ends_with - import_func_count {
-        return rti.i32_i32_to_i32;
-    }
-    if local_idx == rt.str_contains - import_func_count {
-        return rti.i32_i32_to_i32;
     }
     if local_idx == rt.str_char_at - import_func_count {
         return rti.i32_i64_to_i32;

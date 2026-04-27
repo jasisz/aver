@@ -227,6 +227,11 @@ pub fn build_wasm_module(
         rt_str_concat: 15,
         rt_list_cons: 16,
         rt_list_cons_f64: 17,
+        rt_str_byte_len: 18,
+        rt_str_find: 19,
+        rt_str_starts_with: 20,
+        rt_str_ends_with: 21,
+        rt_str_contains: 22,
     };
     import_section.import(
         "aver_runtime",
@@ -320,6 +325,31 @@ pub fn build_wasm_module(
     );
     import_section.import(
         "aver_runtime",
+        "rt_str_byte_len",
+        EntityType::Function(rti.unwrap_i64),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_find",
+        EntityType::Function(rti.i32_i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_starts_with",
+        EntityType::Function(rti.i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_ends_with",
+        EntityType::Function(rti.i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_contains",
+        EntityType::Function(rti.i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
         "memory",
         EntityType::Memory(MemoryType {
             minimum: 1,
@@ -338,7 +368,7 @@ pub fn build_wasm_module(
             shared: false,
         }),
     );
-    let mut import_func_count = 18u32; // alloc/truncate/6 obj_*/3 unwrap_*/3 wrap_*/str_eq/str_concat/list_cons{,_f64}
+    let mut import_func_count = 23u32; // ...prev 18... + str_byte_len + str_find + str_{starts,ends}_with + str_contains
     // Index of the write-to-stdout import (used by runtime's write_stdout helper)
     let mut write_stdout_import: Option<u32> = None;
 

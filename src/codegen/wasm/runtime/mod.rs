@@ -47,7 +47,8 @@ pub(crate) const IO_FLOAT_BUF: u32 = 48; // 48 bytes for float digits (48..95)
 /// and are referenced through their import indices on `rt`.
 /// Migrated so far: alloc, truncate, obj_kind/tag/meta, obj_field
 /// (i64/f64/i32), unwrap (i64/f64/i32), wrap (i64/f64/i32), str_eq,
-/// str_concat, list_cons (i64/f64).
+/// str_concat, list_cons (i64/f64), str_byte_len, str_find,
+/// str_starts_with, str_ends_with, str_contains.
 #[allow(clippy::vec_init_then_push)]
 pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     let mut funcs = Vec::new();
@@ -79,11 +80,6 @@ pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     funcs.push(vectors::emit_vec_new(rt)); // $vec_new
     funcs.push(vectors::emit_vec_to_list(rt)); // $vec_to_list
     funcs.push(strings::emit_str_len()); // $str_len
-    funcs.push(strings::emit_str_byte_len()); // $str_byte_len
-    funcs.push(strings::emit_str_find(rt)); // $str_find
-    funcs.push(strings::emit_str_starts_with(rt)); // $str_starts_with
-    funcs.push(strings::emit_str_ends_with(rt)); // $str_ends_with
-    funcs.push(strings::emit_str_contains(rt)); // $str_contains
     funcs.push(strings::emit_str_char_at(rt)); // $str_char_at
     funcs.push(strings::emit_char_from_code(rt)); // $char_from_code
     funcs.push(strings::emit_char_to_code()); // $char_to_code
