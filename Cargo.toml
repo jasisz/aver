@@ -44,7 +44,7 @@ runtime-net = ["runtime", "aver-rt/http"]
 terminal = ["aver-rt/terminal"]
 tty-render = ["dep:colored"]
 wasm = ["wasm-compile", "dep:wasmtime"]
-wasm-compile = ["dep:wasm-encoder", "dep:wasmprinter"]
+wasm-compile = ["dep:wasm-encoder", "dep:wasmprinter", "dep:wasmparser"]
 playground = ["wasm-compile", "dep:wasm-bindgen", "runtime", "tty-render"]
 
 [dependencies]
@@ -59,6 +59,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 wasm-bindgen = { version = "0.2", optional = true }
 wasm-encoder = { version = "0.225", optional = true }
+wasmparser = { version = "0.225", optional = true }
 wasmprinter = { version = "0.225", optional = true }
 wasmtime = { version = "29", optional = true, default-features = false, features = ["cranelift", "runtime"] }
 

@@ -3381,6 +3381,13 @@ fn cmd_compile_wasm(
         };
         match codegen::wasm::emit_wasm_with_adapter(&ctx, wasm_adapter) {
             Ok(wasm_bytes) => {
+                if let Err(err) = validate_wasm_bytes(&wasm_bytes) {
+                    eprintln!(
+                        "{}",
+                        format!("WASM emit produced invalid bytecode: {}", err).red()
+                    );
+                    process::exit(1);
+                }
                 let out_path = Path::new(output_dir);
                 if let Err(e) = std::fs::create_dir_all(out_path) {
                     eprintln!(
@@ -3542,6 +3549,19 @@ fn cmd_compile_wasm(
             }
         }
     }
+}
+
+/// Validate WASM bytes structurally before they reach disk or wasmtime.
+/// Catches emit-time bugs like Map<Int,V>'s `expected i32, found i64`
+/// where the type checker accepted the program but codegen produced
+/// invalid bytecode.
+#[cfg(feature = "wasm")]
+fn validate_wasm_bytes(bytes: &[u8]) -> Result<(), String> {
+    let mut validator = wasmparser::Validator::new();
+    validator
+        .validate_all(bytes)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Path to display in the "Compiled X → Y" message — `.wat` when the

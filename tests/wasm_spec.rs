@@ -224,3 +224,134 @@ fn main()
 
     let _ = fs::remove_dir_all(module_path.parent().expect("temp module dir"));
 }
+
+#[test]
+fn wasm_compile_rejects_int_map_keys_with_validation_error() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let module_path = write_temp_module(
+        "aver-wasm-validate-int-map",
+        r#"module Tmp
+
+fn main()
+    ! [Console.print]
+    m = Map.set(Map.empty(), 1, "one")
+    Console.print("{Map.len(m)}")
+"#,
+    );
+    let output_dir = temp_output_dir("aver-wasm-validate-int-map-out");
+
+    let output = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg(&module_path)
+        .arg("--target")
+        .arg("wasm")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("expected `aver compile --target wasm` to run");
+
+    assert!(
+        !output.status.success(),
+        "expected Map<Int, V> WASM compile to fail validation, but it succeeded:\n{}",
+        format_output(&output)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("WASM emit produced invalid bytecode"),
+        "expected emit-time validation error, got stderr:\n{}",
+        stderr
+    );
+    assert!(
+        !output_dir.join("main.wasm").exists(),
+        "expected no .wasm artifact when validation fails"
+    );
+
+    let _ = fs::remove_dir_all(module_path.parent().expect("temp module dir"));
+    let _ = fs::remove_dir_all(&output_dir);
+}
+
+#[test]
+fn wasm_compile_rejects_float_map_keys_with_validation_error() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let module_path = write_temp_module(
+        "aver-wasm-validate-float-map",
+        r#"module Tmp
+
+fn main()
+    ! [Console.print]
+    m = Map.set(Map.empty(), 1.5, "one-and-a-half")
+    Console.print("{Map.len(m)}")
+"#,
+    );
+    let output_dir = temp_output_dir("aver-wasm-validate-float-map-out");
+
+    let output = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg(&module_path)
+        .arg("--target")
+        .arg("wasm")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("expected `aver compile --target wasm` to run");
+
+    assert!(
+        !output.status.success(),
+        "expected Map<Float, V> WASM compile to fail validation, but it succeeded:\n{}",
+        format_output(&output)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("WASM emit produced invalid bytecode"),
+        "expected emit-time validation error, got stderr:\n{}",
+        stderr
+    );
+
+    let _ = fs::remove_dir_all(module_path.parent().expect("temp module dir"));
+    let _ = fs::remove_dir_all(&output_dir);
+}
+
+#[test]
+fn wasm_compile_validates_string_map_keys_successfully() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let module_path = write_temp_module(
+        "aver-wasm-validate-string-map",
+        r#"module Tmp
+
+fn main()
+    ! [Console.print]
+    m = Map.set(Map.empty(), "k", 1)
+    Console.print("{Map.len(m)}")
+"#,
+    );
+    let output_dir = temp_output_dir("aver-wasm-validate-string-map-out");
+
+    let output = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg(&module_path)
+        .arg("--target")
+        .arg("wasm")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("expected `aver compile --target wasm` to run");
+
+    assert!(
+        output.status.success(),
+        "expected Map<String, Int> WASM compile to pass validation:\n{}",
+        format_output(&output)
+    );
+    assert!(
+        output_dir.join("main.wasm").exists(),
+        "expected main.wasm to exist when validation passes"
+    );
+
+    let _ = fs::remove_dir_all(module_path.parent().expect("temp module dir"));
+    let _ = fs::remove_dir_all(&output_dir);
+}
