@@ -176,6 +176,7 @@ module Billing
         "Exports only the public entrypoints."
     exposes [charge, refund]
     depends [Core.Types, Infra.Store]
+    effects [Console.print, Disk]
 ```
 
 Rules:
@@ -183,6 +184,7 @@ Rules:
 - `intent` may be inline or multiline; formatter prefers multiline for multiline text
 - `depends [...]` and `exposes [...]` are explicit
 - opaque types: `exposes opaque [Discount]` — visible in signatures but cannot be constructed or destructured from outside
+- `effects [...]` declares the module's effect surface (since 0.13). Every function's `! [Effect]` must be covered: a method-level entry like `Disk.readText` admits only that method, a namespace entry like `Disk` admits any `Disk.*` method. Underdeclared = hard type error; overdeclared = soft warning. Modules without `effects [...]` stay in legacy mode for the 0.13 → 0.14 migration window and trigger a soft warning suggesting `effects []` for a pure module.
 
 ### Verify blocks
 
