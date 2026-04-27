@@ -190,35 +190,17 @@ body {
     background: rgba(74, 222, 128, 0.1) !important;
     border-color: var(--green) !important;
 }
-/* Re-run CTA at the bottom of an Audit panel. Mirrors the audit
-   button's accent colour (green) until hostile mode is active, then
-   shifts to the hostile red palette so the user sees they're going
-   *into* the harder world. Stays full-width to be obvious. */
-.audit-rerun-hostile {
-    display: block;
-    width: 100%;
-    margin-top: 1rem;
-    padding: 0.55rem 0.75rem;
-    background: transparent;
-    border: 1px dashed rgba(74, 222, 128, 0.45);
-    border-radius: 4px;
-    color: var(--green);
-    font-family: inherit;
-    font-size: 0.85em;
-    letter-spacing: 0.02em;
-    cursor: pointer;
-    transition: background 80ms ease, border-color 80ms ease, color 80ms ease;
-}
-.audit-rerun-hostile:hover {
-    background: rgba(74, 222, 128, 0.08);
-    border-color: var(--green);
-}
-.audit-panel.hostile-mode .audit-rerun-hostile {
-    border-color: rgba(248, 113, 113, 0.5);
+/* Hostile re-run as a verify-section header action — sits beside
+   the regular ↻ re-run, distinct red accent so the user sees this
+   is the harder/adversarial path. Hidden when the section has no
+   verify blocks. */
+.rerun-btn.audit-action-hostile {
     color: #f87171;
+    border-color: rgba(248, 113, 113, 0.45);
+    border-style: dashed;
 }
-.audit-panel.hostile-mode .audit-rerun-hostile:hover {
-    background: rgba(248, 113, 113, 0.08);
+.rerun-btn.audit-action-hostile:hover {
+    background: rgba(248, 113, 113, 0.1);
     border-color: #f87171;
 }
 

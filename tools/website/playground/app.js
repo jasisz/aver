@@ -3209,8 +3209,9 @@ function buildSection({ key, label, status, statusText, countText, teaching, iss
     `;
     for (const a of actions || []) {
         const btn = document.createElement("button");
-        btn.className = "rerun-btn";
+        btn.className = "rerun-btn" + (a.extraClass ? ` ${a.extraClass}` : "");
         btn.textContent = a.label;
+        if (a.title) btn.title = a.title;
         btn.addEventListener("click", (e) => {
             e.stopPropagation();
             e.preventDefault();
@@ -3268,6 +3269,30 @@ function renderVerifySection(data, actions) {
         .reduce((acc, b) => acc + b.passed, 0);
     const verifyTotal = (verifySummary?.blocks || [])
         .reduce((acc, b) => acc + b.total, 0);
+    // Hostile re-run lives on the verify section header alongside
+    // ↻ re-run — it's the verify-specific axis, no reason to attach
+    // it to the whole audit panel. Hidden when there are no verify
+    // blocks; flips its label/colour based on current mode.
+    const sectionActionsWithHostile = [...actions];
+    if (verifyTotal > 0) {
+        const hostileToggle = document.querySelector("[data-hostile-toggle]");
+        const hostileOn = !!(hostileToggle && hostileToggle.checked);
+        sectionActionsWithHostile.push({
+            label: hostileOn ? "↻ drop --hostile" : "↻ re-run with --hostile",
+            title: hostileOn
+                ? "Re-run verify on declared values only — drops the adversarial expansion."
+                : "Extend your declared cases with adversarial worlds. Every typed `given` " +
+                  "(even Int) gets the per-type boundary set on top of your values; every " +
+                  "classified effect (Time, Random, Disk, Http, Tcp, …) gets its profile " +
+                  "cartesian on top of your stub. Reveals laws that hold under what you " +
+                  "wrote but not under the worlds your code will actually meet.",
+            fn: () => {
+                if (hostileToggle) hostileToggle.checked = !hostileOn;
+                document.querySelector("[data-audit]")?.click();
+            },
+            extraClass: "audit-action-hostile",
+        });
+    }
     return buildSection({
         key: "verify",
         label: "Verify — executed contract checks",
@@ -3276,7 +3301,7 @@ function renderVerifySection(data, actions) {
         countText: verifyTotal > 0 ? `${verifyPassed}/${verifyTotal} passed` : "no verify blocks",
         teaching: "Each `verify` block's cases run in the VM. Pass rate tells you how well your function matches the spec you wrote alongside it. Verify is Aver's core contract.",
         issues: verifyFailures,
-        actions,
+        actions: sectionActionsWithHostile,
         extras: (body) => {
             if (!verifySummary?.blocks?.length) {
                 const none = document.createElement("div");
@@ -3433,7 +3458,7 @@ function updateAuditStatus(data) {
 }
 
 if (auditBtn) {
-    auditBtn.addEventListener("click", async () => {
+    auditBtn.addEventListener("click", async (event) => {
         if (state.wasmOnly) {
             setStatus("No source — drop .av or folder first.", "error");
             return;
@@ -3447,6 +3472,16 @@ if (auditBtn) {
         clearCompileMeta();
 
         const hostileToggle = document.querySelector("[data-hostile-toggle]");
+        // Plain Audit click resets to declared mode. The hostile mode
+        // is only entered via the in-panel "↻ Re-run with --hostile"
+        // CTA, which programmatically flips the checkbox before
+        // re-firing this handler. Detect that synthetic click via
+        // event.detail (== 0 for programmatic click() calls; native
+        // user clicks have detail >= 1).
+        const isProgrammaticRerun = event && event.detail === 0;
+        if (!isProgrammaticRerun && hostileToggle) {
+            hostileToggle.checked = false;
+        }
         const hostile = !!(hostileToggle && hostileToggle.checked);
         const auditKind = hostile ? "audit_hostile" : "audit";
 
@@ -3480,38 +3515,21 @@ if (auditBtn) {
             // and the same red tint as the hostile-mode panel border.
             // "world has been substituted" reads like the file got
             // its reality knocked sideways, which is exactly what
-            // happened to the oracle stubs.
+            // happened to the oracle stubs and the typed `given`
+            // domains.
             if (hostile) {
                 const egg = document.createElement("div");
                 egg.className = "hostile-easter-egg";
                 egg.textContent =
-                    "// world has been substituted. clocks freeze. randoms collapse. " +
-                    "disks burn. networks drop. let's see what your law says now.";
+                    "// extending your cases with the worst worlds we can think of. " +
+                    "Int boundary substituted. clocks frozen. randoms collapsed. " +
+                    "disks burning. let's see what your law says now.";
                 panel.appendChild(egg);
             }
 
             panel.appendChild(renderStaticSection(data, sectionActions("static")));
             panel.appendChild(renderVerifySection(data, sectionActions("verify")));
             panel.appendChild(renderFormatSection(data, sectionActions("format")));
-
-            // Re-run CTA: declared mode shows "↻ Re-run with --hostile",
-            // hostile mode shows "↻ Back to declared run". Click toggles
-            // the hidden state holder and re-clicks the Audit button.
-            const rerun = document.createElement("button");
-            rerun.type = "button";
-            rerun.className = "audit-rerun-hostile";
-            rerun.textContent = hostile
-                ? "↻ Re-run without --hostile"
-                : "↻ Re-run with --hostile";
-            rerun.title = hostile
-                ? "Drop hostile expansion and re-audit on declared values only."
-                : "Multiply every law through adversarial profiles. " +
-                  "Failures here mean a missing `when` precondition or unpinned effect.";
-            rerun.addEventListener("click", () => {
-                if (hostileToggle) hostileToggle.checked = !hostile;
-                auditBtn.click();
-            });
-            panel.appendChild(rerun);
 
             dom.console.appendChild(panel);
 
