@@ -190,26 +190,47 @@ body {
     background: rgba(74, 222, 128, 0.1) !important;
     border-color: var(--green) !important;
 }
-/* Hostile toggle — sits next to Audit and only matters for that
-   button. Subtle muted look until checked, then picks up the audit
-   green so the user sees that hostile-mode audit is what they'll get. */
+/* Hostile toggle — pill-style button-equivalent that sits flush
+   against Audit and reads as a flag, not a stray form element. The
+   raw <input type="checkbox"> is hidden; the surrounding label
+   doubles as the visible chip and flips its border / text colour
+   when checked, mirroring how `--hostile` flips Audit's behaviour. */
 .audit-hostile-toggle {
     display: inline-flex;
     align-items: center;
-    gap: 0.35rem;
-    padding: 0 0.5rem;
-    font-size: 0.85em;
+    height: 100%;
+    padding: 0.25rem 0.55rem;
+    margin-left: -0.35rem;          /* hug the Audit button */
+    border: 1px dashed rgba(74, 222, 128, 0.35);
+    border-radius: 4px;
+    background: transparent;
+    font-size: 0.78em;
+    line-height: 1;
+    letter-spacing: 0.02em;
     color: var(--muted);
     cursor: pointer;
     user-select: none;
+    transition: color 80ms ease, border-color 80ms ease, background 80ms ease;
+}
+.audit-hostile-toggle:hover {
+    color: var(--green);
+    border-color: rgba(74, 222, 128, 0.7);
 }
 .audit-hostile-toggle input[type="checkbox"] {
-    margin: 0;
-    accent-color: var(--green);
-    cursor: pointer;
+    /* Hide the native checkbox — the label IS the indicator. */
+    appearance: none;
+    -webkit-appearance: none;
+    width: 0;
+    height: 0;
+    opacity: 0;
+    position: absolute;
+    pointer-events: none;
 }
 .audit-hostile-toggle:has(input:checked) {
     color: var(--green);
+    border-style: solid;
+    border-color: var(--green);
+    background: rgba(74, 222, 128, 0.1);
     font-weight: 600;
 }
 .btn-why {
