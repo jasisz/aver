@@ -1,0 +1,32 @@
+module FileStoreShell
+    intent =
+        "Shell side of the FileStore pattern: a thin Disk boundary."
+        "Pure data lives in FileStorePureCore; this is just the syscall."
+        "Single-entry write; iteration belongs in the caller."
+    exposes [persistEntry]
+    effects [Console, Disk]
+
+fn persistEntry(path: String, body: String) -> Result<Unit, String>
+    ? "Boundary shell: a single Disk write. Effectless recursion belongs in pure code."
+    ! [Disk.writeText]
+    Disk.writeText(path, body)
+
+fn fakeWriteOk(path: BranchPath, n: Int, file: String, content: String) -> Result<Unit, String>
+    ? "Stub: every write succeeds. Stateless: does not depend on previous calls."
+    Result.Ok(Unit)
+
+fn fakeWriteErr(path: BranchPath, n: Int, file: String, content: String) -> Result<Unit, String>
+    ? "Stub: every write fails."
+    Result.Err("disk full")
+
+verify persistEntry law happyPath
+    given write: Disk.writeText = [fakeWriteOk]
+    persistEntry("a.txt", "hi") => Result.Ok(Unit)
+
+verify persistEntry law unhappyPath
+    given write: Disk.writeText = [fakeWriteErr]
+    persistEntry("a.txt", "hi") => Result.Err("disk full")
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("shell demo — see verify blocks")

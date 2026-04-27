@@ -3,6 +3,7 @@ module Main
         "Tetris — demonstrates immutable 2D grid state, piece rotation,"
         "collision detection, line clearing, and TCO game loop."
     depends [Board, Pieces, Logic]
+    effects [Console, Random, Terminal, Time]
 
 decision ImmutableBoardRepresentation
     date = "2026-03-17"

@@ -2,6 +2,7 @@ module SpecLaws
     intent =
         "Demonstrates implementation-vs-spec laws in Aver."
         "Shows `verify foo law fooSpec` as a direct path from executable samples to Lean proof artifacts."
+    effects [Console]
 
 fn absVal(x: Int) -> Int
     ? "Returns the absolute value of x."

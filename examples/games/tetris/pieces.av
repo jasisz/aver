@@ -3,6 +3,7 @@ module Pieces
         "Tetris piece definitions: offsets, rotations, colors."
         "Seven standard tetrominoes using PieceKind from Board."
     depends [Board]
+    effects []
 
 record Piece
     kind: PieceKind

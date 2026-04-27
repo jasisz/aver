@@ -3,6 +3,7 @@ module Discount
     exposes opaque [Discount]
     intent =
         "Opaque discount type. Construction only through mkDiscount."
+    effects []
 
 record Discount
     percent: Float

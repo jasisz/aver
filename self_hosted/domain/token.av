@@ -3,6 +3,7 @@ module Token
         "Token types for the mini Aver lexer."
         "Covers a subset: Int, Bool, identifiers, operators, parens, keywords."
     exposes [Token, tokenRepr]
+    effects []
 
 type Token
     TkInt(Int)

@@ -3,6 +3,7 @@ module Rules
         "Checkers game rules: legal move generation, forced captures,"
         "multi-jump chains, turn application, and promotion."
     depends [Board]
+    effects []
 
 decision ForcedCaptureRule
     date = "2026-03-18"

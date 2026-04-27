@@ -5,6 +5,7 @@ module Match
         "Matches runtime Val values against Pattern AST nodes and produces bindings."
         "Supports integer tag-based dispatch for fast constructor matching."
     exposes [matchPattern, zipBindings]
+    effects []
 
 fn matchPattern(pat: Pattern, v: Val) -> Result<List<(String, Val)>, String>
     ? "Try to match a value against a pattern. Returns bindings on success."

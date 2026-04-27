@@ -5,6 +5,7 @@ module Reconcile
         "functions instead of hiding them behind batch jobs and SQL views."
     exposes [settlementsForProvider, settlementsForPayment, reconcileProvider]
     depends [Domain.Types, Domain.Cases]
+    effects []
 
 decision SettlementIsEvidenceNotTruth
     date = "2026-03-12"

@@ -4,6 +4,7 @@ module Codec
         "The project uses explicit text files on purpose, so escaping and line handling"
         "stay visible in code instead of disappearing into a serializer."
     exposes [escapeField, fieldAt, optionalFieldAt, encodeOption, decodeOption, splitNonEmptyLines, renderLines]
+    effects []
 
 fn escapeField(text: String) -> String
     ? "Escapes percent, pipe, and newline for one file field."

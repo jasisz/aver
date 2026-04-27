@@ -2,6 +2,7 @@ module Lists
     intent =
         "Demonstrates the core List API without callbacks."
         "Aver prefers recursion, pattern matching, and first-order helpers."
+    effects [Console]
 
 fn main() -> Unit
     ! [Console.print]

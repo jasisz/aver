@@ -167,10 +167,28 @@ Aver is intentionally opinionated. These omissions are part of the design, not m
 - no `null` — absence is `Option`
 - no closures — functions are top-level and explicit
 - no async/await, streams, or channels — `(a, b)?!` declares independent computations; the runtime handles the rest. See [docs/independence.md](docs/independence.md)
+- no hidden state behind effects — `Disk.write` does not affect a later `Disk.read`; if state matters, it lives in pure user data (see below)
 
 The point is to remove classes of implicit behavior that are easy for AI to generate and annoying for humans to audit.
 
 For the fuller language rationale, see [docs/language.md](docs/language.md).
+
+---
+
+## Pure core, effect shell
+
+> Prove the model, not the world.
+
+Aver splits programs into two layers:
+
+- **Pure core** — explicit data, explicit state transitions, laws. Read-after-write consistency, ordering, accumulation — all of that is a property of *your* data structures (a `FileStore`, a `PaymentLedger`, a `WorkflowState`), proven by `verify` over pure functions.
+- **Effect shell** — `Disk.*`, `Time.*`, `Tcp.*`, `Http.*`, `Env.*`. One-shot calls to the world. Oracle stubs are **stateless**: an `Env.set` does not change a later `Env.get`, a first `Time.now` does not constrain the next, a `Disk.write` does not seed a later `Disk.read`.
+
+This is by design. Wall clocks are not monotonic in the real world (NTP, leap, suspend, VM clock skew). Filesystems are not transactional. Aver does not pretend external services have nicer laws than the platform actually promises — that would prove guarantees the OS never gave.
+
+If a property depends on memory across effect calls, model the state in pure user code. The shell stays thin.
+
+Runnable patterns: [`examples/formal/file_store_pure_core.av`](examples/formal/file_store_pure_core.av) + [`examples/formal/file_store_shell.av`](examples/formal/file_store_shell.av), [`examples/formal/clock_as_data.av`](examples/formal/clock_as_data.av). Background: [docs/oracle.md](docs/oracle.md#effect-stubs-are-stateless).
 
 ---
 

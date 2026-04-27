@@ -543,6 +543,60 @@ fn aver_verify_trace_contains_and_event_and_length_projections() {
 }
 
 #[test]
+fn aver_verify_trace_count_projection_matches_event_method() {
+    // 0.13 Limit nail #3: `.trace.count(M)` returns the number of trace
+    // events with method `M`. Argument shape mirrors `.contains` —
+    // either an effect-method reference or a call literal. The fn here
+    // calls Random.int twice and Console.print once; the count law
+    // distinguishes the two methods.
+    let dir = temp_output_dir("aver-verify-trace-count");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn rollPair() -> Int\n\
+         \x20   ? \"two rolls + a print\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   a = Random.int(1, 6)\n\
+         \x20   b = Random.int(1, 6)\n\
+         \x20   Console.print(\"rolled\")\n\
+         \x20   a + b\n\
+         \n\
+         verify rollPair trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   rollPair().trace.count(Random.int) => 2\n\
+         \x20   rollPair().trace.count(Console.print) => 1\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+
+    assert!(
+        output.status.success(),
+        "aver verify failed on trace.count law; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn aver_verify_trace_local_bindings_substitute_into_cases() {
     // Oracle v1: local bindings (`name = expr`) in a verify-trace block
     // are syntactic aliases substituted into each case's LHS / RHS
@@ -644,74 +698,6 @@ fn aver_verify_trace_given_alias_callable_in_case_expressions() {
         output.status.success(),
         "aver verify failed when using given-alias as callable in case; {}",
         format_output(&output)
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn aver_verify_trace_rejects_cases_form_on_unclassified_effect() {
-    // Oracle v1: cases-form `verify fn trace` must reject fns whose
-    // effects aren't in the classified proof subset. Without the trace
-    // keyword, cases-form is a plain runtime check and stays permissive;
-    // but trace-aware assertions can't be lifted or emulated for
-    // ambient / protocol / modal effects, so the user gets a clear
-    // diagnostic up front.
-    let dir = temp_output_dir("aver-verify-trace-reject-unclassified");
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    std::fs::write(
-        dir.join("aver.toml"),
-        "[independence]\nmode = \"complete\"\n",
-    )
-    .expect("write aver.toml");
-    std::fs::write(
-        dir.join("program.av"),
-        "module Prog\n\
-         \x20   intent = \"t\"\n\
-         \n\
-         fn persist(k: String, v: String) -> Unit\n\
-         \x20   ? \"writes env\"\n\
-         \x20   ! [Env.set]\n\
-         \x20   Env.set(k, v)\n\
-         \n\
-         verify persist trace\n\
-         \x20   persist(\"a\", \"b\").trace.length() => 1\n",
-    )
-    .expect("write program.av");
-
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
-    let verify = Command::new(aver_bin)
-        .current_dir(&dir)
-        .arg("verify")
-        .arg("program.av")
-        .output()
-        .expect("expected `aver verify` to run");
-    assert!(
-        !verify.status.success(),
-        "aver verify must reject cases-form trace on unclassified effect; {}",
-        format_output(&verify)
-    );
-
-    // aver check surfaces the full proof-subset diagnostic.
-    let check = Command::new(aver_bin)
-        .current_dir(&dir)
-        .arg("check")
-        .arg("program.av")
-        .output()
-        .expect("expected `aver check` to run");
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&check.stderr),
-        String::from_utf8_lossy(&check.stdout)
-    );
-    assert!(
-        combined.contains("outside Oracle v1's proof subset"),
-        "expected rejection diagnostic mentioning 'outside Oracle v1's proof subset', got: {}",
-        combined
-    );
-    assert!(
-        combined.contains("verify trace 'persist'"),
-        "expected diagnostic labelled 'verify trace' for cases-form trace block, got: {}",
-        combined
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

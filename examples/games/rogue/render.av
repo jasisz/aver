@@ -2,6 +2,7 @@ module Render
     intent =
         "Terminal rendering for the roguelike: map with FOV, entities, items, player, HUD, messages."
     depends [Types, Map, Fov]
+    effects [Terminal]
 
 fn tileColor(tile: Tile) -> String
     ? "Foreground color for a visible tile"

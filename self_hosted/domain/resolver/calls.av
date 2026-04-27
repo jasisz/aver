@@ -4,6 +4,7 @@ module Calls
         "Direct-call linking for the self-hosted resolver."
         "Turns known user calls into ExprCallDirect and routes builtin namespaces to ExprCallBuiltin."
     exposes [buildFnMap, resolveCallsInFns]
+    effects []
 
 fn buildFnMap(fns: List<FnDef>, acc: Map<String, Int>, idx: Int) -> Map<String, Int>
     ? "Build name→fnId map from resolved function list."

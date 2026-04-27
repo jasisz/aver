@@ -2,6 +2,7 @@ module Architecture
     intent =
         "Architectural decisions for the Aver language, expressed in Aver itself."
         "Run 'aver context decisions/decisions.av --decisions-only' to query this file."
+    effects [Console]
 
 decision UseResultOverExceptions
     date = "2024-01-15"

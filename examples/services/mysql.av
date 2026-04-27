@@ -4,6 +4,7 @@ module MySql
         "All operations return Result: transport and SQL failures are values, never exceptions."
         "Pure Aver surface: no native driver, no binary protocol, no hidden connection state."
     exposes [query, execute, ping]
+    effects [Console, Http]
 
 record Header
     name: String

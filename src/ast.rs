@@ -237,6 +237,13 @@ pub struct Module {
     pub exposes_opaque: Vec<String>,
     pub exposes_line: Option<usize>,
     pub intent: String,
+    /// Module-level effect surface declaration. `None` is legacy/mixed
+    /// (no enforcement, soft warning emitted by `aver check`); `Some([])`
+    /// is explicit pure; `Some([...])` is a declared boundary — every
+    /// function's `! [...]` must be a subset (namespace-level entry like
+    /// `Disk` admits any `Disk.*` method).
+    pub effects: Option<Vec<String>>,
+    pub effects_line: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -291,6 +298,21 @@ pub struct VerifyBlock {
     pub case_spans: Vec<SourceSpan>,
     /// Per-case given bindings for law verify (empty for Cases kind).
     pub case_givens: Vec<Vec<(String, Spanned<Expr>)>>,
+    /// Parallel to `cases`: `true` when the case was injected by
+    /// `aver verify --hostile` (boundary-value expansion of a law's
+    /// `given` clause), `false` for cases the user wrote directly.
+    /// Empty under non-hostile runs; the renderer uses this to label
+    /// failures as "outside declared given — encode as `when` if
+    /// precondition" when they only fail under the hostile expansion.
+    pub case_hostile_origins: Vec<bool>,
+    /// Parallel to `cases`: per-case hostile effect-profile assignment
+    /// for `--hostile` mode. Each inner Vec lists `(method, profile)`
+    /// pairs (e.g. `("Time.now", "frozen")`) that the runner installs
+    /// as oracle stubs before running the case, alongside any user-given
+    /// stubs. Empty inner Vec for cases that aren't effect-hostile-
+    /// expanded (declared, value-hostile-only, or fns without applicable
+    /// classified effects). All entries empty under non-hostile runs.
+    pub case_hostile_profiles: Vec<Vec<(String, String)>>,
     pub kind: VerifyKind,
     /// Oracle v1: `trace` keyword enables trace-aware assertions
     /// (`.trace.*`, `.result`, event literals in `.contains` / match
@@ -316,12 +338,16 @@ impl VerifyBlock {
         kind: VerifyKind,
     ) -> Self {
         let case_spans = vec![SourceSpan::default(); cases.len()];
+        let case_hostile_origins = vec![false; cases.len()];
+        let case_hostile_profiles = vec![Vec::new(); cases.len()];
         Self {
             fn_name,
             line,
             cases,
             case_spans,
             case_givens: vec![],
+            case_hostile_origins,
+            case_hostile_profiles,
             kind,
             trace: false,
             cases_givens: vec![],

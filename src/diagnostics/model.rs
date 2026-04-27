@@ -103,6 +103,19 @@ pub struct Diagnostic {
     pub regions: Vec<AnnotatedRegion>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub related: Vec<RelatedSpan>,
+    /// `true` when this diagnostic was raised by a case `aver verify
+    /// --hostile` injected through boundary-value expansion (a binding
+    /// the user did not write in the law's `given` clause). Lets tooling
+    /// (CI dashboards, IDE filters, LSP code actions) cleanly separate
+    /// "the law I already had stopped passing" from "hostile expansion
+    /// found a boundary value that breaks it". Default `false`; only
+    /// the hostile-aware verify pipeline sets it.
+    #[serde(skip_serializing_if = "is_false", default)]
+    pub from_hostile: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 impl Diagnostic {
@@ -170,8 +183,43 @@ pub struct VerifyBlockResult {
     pub name: String,
     pub passed: usize,
     pub failed: usize,
+    /// Combined skipped count (`when`-driven plus base-fail-driven).
+    /// Kept for back-compat with consumers that don't care about the
+    /// distinction; the split lives in the two fields below.
     pub skipped: usize,
     pub total: usize,
+    /// Cases that originated from the user's declared `given` list (or
+    /// the `verify` cases-form values they wrote literally). Always
+    /// populated under `--hostile`; under a non-hostile run, equal to
+    /// `passed/failed` and `hostile_*` are zero.
+    #[serde(skip_serializing_if = "is_zero", default)]
+    pub declared_passed: usize,
+    #[serde(skip_serializing_if = "is_zero", default)]
+    pub declared_failed: usize,
+    /// Cases injected by `aver verify --hostile` boundary expansion.
+    /// `hostile_failed > 0 && declared_failed == 0` is the canonical
+    /// "your law passed on the values you wrote but breaks on the
+    /// boundary" signal — encode the missing precondition as `when`,
+    /// or drop the `law` form to a `verify` cases-form example.
+    #[serde(skip_serializing_if = "is_zero", default)]
+    pub hostile_passed: usize,
+    #[serde(skip_serializing_if = "is_zero", default)]
+    pub hostile_failed: usize,
+    /// Cases skipped because the user's `when` predicate evaluated
+    /// to false. Subset of `skipped`. When this equals `skipped` and
+    /// no hostile profiles ran, the law is vacuously-under-hostile.
+    #[serde(skip_serializing_if = "is_zero", default)]
+    pub skipped_by_when: usize,
+    /// Cases skipped because the same `case_expr` already failed in
+    /// its un-effected base world. Aver doesn't run the VM for these
+    /// — they would only re-confirm the same counter-example under
+    /// harder worlds. Subset of `skipped`.
+    #[serde(skip_serializing_if = "is_zero", default)]
+    pub skipped_after_base_fail: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 impl AnalysisReport {

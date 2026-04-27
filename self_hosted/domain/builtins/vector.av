@@ -2,6 +2,7 @@ module Vector
     depends [Domain.Value, Domain.Builtins.Helpers]
     intent = "Vector namespace builtins for the self-hosted evaluator."
     exposes [call]
+    effects []
 
 fn call(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch Vector.* builtins."

@@ -4,6 +4,7 @@ mod independence;
 mod intent;
 #[cfg(feature = "runtime")]
 mod law;
+mod module_effects;
 mod naming;
 mod perf;
 mod verify;
@@ -19,9 +20,23 @@ use crate::ast::{
 pub enum VerifyCaseOutcome {
     Pass,
     Skipped,
-    Mismatch { expected: String, actual: String },
-    RuntimeError { error: String },
-    UnexpectedErr { err_repr: String },
+    /// Hostile-profile case for a `case_expr` whose un-effected base
+    /// case already failed. Aver doesn't run the VM for these — the
+    /// counter-example is the base failure itself; the per-profile
+    /// follow-ups would only re-confirm the same case under harder
+    /// worlds. Distinct from `Skipped` (which is `when`-driven and
+    /// drives the vacuous-under-hostile warning).
+    SkippedAfterBaseFail,
+    Mismatch {
+        expected: String,
+        actual: String,
+    },
+    RuntimeError {
+        error: String,
+    },
+    UnexpectedErr {
+        err_repr: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -32,6 +47,20 @@ pub struct VerifyCaseResult {
     pub case_index: usize,
     pub case_total: usize,
     pub law_context: Option<VerifyLawContext>,
+    /// `true` for cases injected by `aver verify --hostile` boundary
+    /// expansion (a binding the user did not declare). Drives differential
+    /// reporting: a hostile-only failure means the claim is not universal,
+    /// so it isn't a law — either encode the missing precondition with
+    /// `when`, or downgrade from `law` form to `verify` (cases form,
+    /// example/scenario semantics) with the values you actually meant.
+    pub from_hostile: bool,
+    /// Display label for the effect-side hostile profile, e.g.
+    /// `"Time.now/frozen + Random.int/min"`. `None` when the case wasn't
+    /// effect-hostile-expanded (declared, value-hostile-only, or fns
+    /// without applicable classified effects). Reporting prepends this to
+    /// the diagnostic so the user sees which adversarial world broke the
+    /// law: "Time.now/frozen + Random.int/min: assumed deadline > now".
+    pub hostile_profile: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -233,6 +262,7 @@ pub use intent::{
 };
 #[cfg(feature = "runtime")]
 pub use law::{collect_verify_law_dependency_warnings, collect_verify_law_dependency_warnings_in};
+pub use module_effects::{collect_module_effects_warnings, collect_module_effects_warnings_in};
 pub use naming::{collect_naming_warnings, collect_naming_warnings_in};
 pub use perf::{collect_perf_warnings, collect_perf_warnings_in};
 pub use verify::{expr_to_str, merge_verify_blocks};

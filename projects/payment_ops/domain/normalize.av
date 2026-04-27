@@ -5,6 +5,7 @@ module Normalize
         "so replay and reconciliation stay provider-agnostic."
     exposes [normalizeWebhook, normalizeSettlement]
     depends [Domain.Types]
+    effects []
 
 decision CanonicalLedgerOverProviderStatuses
     date = "2026-03-12"

@@ -3,6 +3,7 @@ module Pathfinding
         "BFS-based pathfinding for enemy AI."
         "Returns the next step toward a target, limited to 15 depth."
     depends [Types, Map]
+    effects []
 
 record BfsNode
     pos: Point

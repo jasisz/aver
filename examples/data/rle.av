@@ -3,6 +3,7 @@ module Rle
         "Run-length encoding: the simplest lossless compression algorithm."
         "Consecutive identical elements become (element, count) pairs."
         "Demonstrates fold with record accumulator and law roundtrip."
+    effects [Console]
 
 record Run
     char: String

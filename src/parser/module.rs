@@ -17,6 +17,8 @@ impl Parser {
         let mut exposes_opaque = Vec::new();
         let mut exposes_line = None;
         let mut intent = String::new();
+        let mut effects = None;
+        let mut effects_line = None;
 
         if self.is_indent() {
             self.advance(); // consume INDENT
@@ -40,6 +42,16 @@ impl Parser {
                     TokenKind::Depends => {
                         depends = self.parse_depends()?;
                     }
+                    TokenKind::Effects => {
+                        effects_line = Some(self.current().line);
+                        self.advance(); // consume 'effects'
+                        let list = self
+                            .parse_effect_ident_list()?
+                            .into_iter()
+                            .map(|s| s.node)
+                            .collect();
+                        effects = Some(list);
+                    }
                     _ => break,
                 }
                 self.skip_newlines();
@@ -58,6 +70,8 @@ impl Parser {
             exposes_opaque,
             exposes_line,
             intent,
+            effects,
+            effects_line,
         })
     }
 

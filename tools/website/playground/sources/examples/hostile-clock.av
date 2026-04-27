@@ -1,0 +1,16 @@
+module DeadlineCheck
+    intent =
+        "Demonstrate `aver verify --hostile`: the law passes under real time"
+        "but breaks under the saturated-clock adversarial profile. Toggle the"
+        "hostile checkbox next to Audit and watch the failure call out a"
+        "missing `when` precondition or unpinned `given` for Time.unixMs."
+    effects [Time.unixMs]
+
+fn willCompleteBeforeDeadline(deadlineMs: Int) -> Bool
+    ? "is the current time still before the deadline?"
+    ! [Time.unixMs]
+    Time.unixMs() < deadlineMs
+
+verify willCompleteBeforeDeadline law deadlineHolds
+    given d: Int = [9999999999999]
+    willCompleteBeforeDeadline(d) => true

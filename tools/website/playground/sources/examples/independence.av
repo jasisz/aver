@@ -1,0 +1,24 @@
+module Independence
+    intent =
+        "Two effectful branches run under `?!` — Aver may reorder them at runtime."
+        "Hit ⏺ Record: the Trace panel groups both under one independent product,"
+        "so replay matches either order. Shuffle the cards inside the group and try Replay."
+    effects [Console.print]
+
+fn announceA() -> Result<Int, String>
+    ? "first independent branch — prints and returns 10"
+    ! [Console.print]
+    Console.print("branch A")
+    Result.Ok(10)
+
+fn announceB() -> Result<Int, String>
+    ? "second independent branch — prints and returns 20"
+    ! [Console.print]
+    Console.print("branch B")
+    Result.Ok(20)
+
+fn main() -> Result<Unit, String>
+    ! [Console.print]
+    _pair = (announceA(), announceB())?!
+    Console.print("done — both branches ran")
+    Result.Ok(Unit)

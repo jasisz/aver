@@ -294,6 +294,27 @@ pub fn verify_project(files: &HashMap<String, String>, entry: &str) -> String {
     })
 }
 
+/// Run verify under `--hostile` mode: typed `given` domains are expanded
+/// with the per-type boundary set and each case is multiplied by the
+/// adversarial effect-profile cartesian. Diagnostics flagged
+/// `from_hostile = true` indicate failures the law would not catch under
+/// declared values alone — a missing `when` precondition or an unpinned
+/// effect.
+pub fn verify_source_hostile(source: &str) -> String {
+    let mut opts = AnalyzeOptions::new("playground");
+    opts.include_verify_run = true;
+    opts.verify_run_hostile = true;
+    analyze_source(source, &opts).to_json()
+}
+
+pub fn verify_project_hostile(files: &HashMap<String, String>, entry: &str) -> String {
+    analyze_project(files, entry, |mut o| {
+        o.include_verify_run = true;
+        o.verify_run_hostile = true;
+        o
+    })
+}
+
 /// Run analysis plus the file-local "why" summary (per-function
 /// justification signals) and return the canonical report as JSON.
 pub fn why_source(source: &str) -> String {
@@ -372,7 +393,15 @@ pub fn context_md_project(files: &HashMap<String, String>, entry: &str) -> Strin
 /// diagnostics + verify_summary.
 #[cfg(feature = "runtime")]
 pub fn audit_source(source: &str) -> String {
-    audit_build_report(source, None, None, None).to_json()
+    audit_build_report(source, None, None, None, false).to_json()
+}
+
+/// Audit under `--hostile` mode — see `verify_source_hostile` for
+/// what the hostile expansion adds. The audit panel surfaces the same
+/// dual-run pass/fail breakdown as `aver audit --hostile` from the CLI.
+#[cfg(feature = "runtime")]
+pub fn audit_source_hostile(source: &str) -> String {
+    audit_build_report(source, None, None, None, true).to_json()
 }
 
 #[cfg(feature = "runtime")]
@@ -384,7 +413,19 @@ pub fn audit_project(files: &HashMap<String, String>, entry: &str) -> String {
         .ok()
         .map(|items| module_depends(&items))
         .and_then(|deps| crate::source::load_module_tree_from_map(&deps, files).ok());
-    audit_build_report(entry_source, loaded, Some(files), Some(entry)).to_json()
+    audit_build_report(entry_source, loaded, Some(files), Some(entry), false).to_json()
+}
+
+#[cfg(feature = "runtime")]
+pub fn audit_project_hostile(files: &HashMap<String, String>, entry: &str) -> String {
+    let Some(entry_source) = files.get(entry) else {
+        return crate::diagnostics::AnalysisReport::new("playground").to_json();
+    };
+    let loaded = parse_source(entry_source)
+        .ok()
+        .map(|items| module_depends(&items))
+        .and_then(|deps| crate::source::load_module_tree_from_map(&deps, files).ok());
+    audit_build_report(entry_source, loaded, Some(files), Some(entry), true).to_json()
 }
 
 #[cfg(feature = "runtime")]
@@ -393,11 +434,13 @@ fn audit_build_report(
     loaded: Option<Vec<LoadedModule>>,
     all_files: Option<&HashMap<String, String>>,
     entry: Option<&str>,
+    hostile: bool,
 ) -> crate::diagnostics::AnalysisReport {
     use crate::diagnostics::needs_format_diagnostic;
 
     let mut opts = AnalyzeOptions::new("playground");
     opts.include_verify_run = true;
+    opts.verify_run_hostile = hostile;
     if let Some(loaded) = loaded {
         opts = opts.with_loaded_modules(loaded);
     }
@@ -767,6 +810,15 @@ mod bindgen {
         super::verify_source(source)
     }
 
+    /// Verify under `--hostile` mode: per-type boundary set substituted
+    /// into typed `given` clauses, plus per-classified-effect adversarial
+    /// profile cartesian. The returned report carries `from_hostile = true`
+    /// on cases that would not surface under `aver_verify`.
+    #[wasm_bindgen]
+    pub fn aver_verify_hostile(source: &str) -> String {
+        super::verify_source_hostile(source)
+    }
+
     #[wasm_bindgen]
     pub fn aver_why(source: &str) -> String {
         super::why_source(source)
@@ -780,6 +832,11 @@ mod bindgen {
     #[wasm_bindgen]
     pub fn aver_audit(source: &str) -> String {
         super::audit_source(source)
+    }
+
+    #[wasm_bindgen]
+    pub fn aver_audit_hostile(source: &str) -> String {
+        super::audit_source_hostile(source)
     }
 
     #[wasm_bindgen]
@@ -862,6 +919,12 @@ mod bindgen {
     }
 
     #[wasm_bindgen]
+    pub fn aver_verify_hostile_project(files_json: &str, entry: &str) -> Result<String, JsError> {
+        let files = parse_files(files_json)?;
+        Ok(super::verify_project_hostile(&files, entry))
+    }
+
+    #[wasm_bindgen]
     pub fn aver_why_project(files_json: &str, entry: &str) -> Result<String, JsError> {
         let files = parse_files(files_json)?;
         Ok(super::why_project(&files, entry))
@@ -888,6 +951,12 @@ mod bindgen {
     pub fn aver_audit_project(files_json: &str, entry: &str) -> Result<String, JsError> {
         let files = parse_files(files_json)?;
         Ok(super::audit_project(&files, entry))
+    }
+
+    #[wasm_bindgen]
+    pub fn aver_audit_hostile_project(files_json: &str, entry: &str) -> Result<String, JsError> {
+        let files = parse_files(files_json)?;
+        Ok(super::audit_project_hostile(&files, entry))
     }
 
     // ── Record / replay bindings ───────────────────────────────────
@@ -1178,6 +1247,43 @@ mod tests {
             err.contains("Missing") || err.contains("not found"),
             "expected missing-module error, got: {}",
             err
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "runtime")]
+    fn audit_source_hostile_does_not_panic_on_showcase() {
+        // Repro for the playground "unreachable executed" panic the
+        // user hit when picking the Hostile-clock example and clicking
+        // Audit. CLI works; WASM crashed. Run the same source through
+        // the same pipeline the playground does so any panic surfaces
+        // as a Rust test failure instead of a browser error message.
+        let src = r#"module DeadlineCheck
+    intent =
+        "Demonstrate `aver verify --hostile`: the law passes under real time"
+        "but breaks under the saturated-clock adversarial profile. Toggle the"
+        "hostile checkbox next to Audit and watch the failure call out a"
+        "missing `when` precondition or unpinned `given` for Time.unixMs."
+    effects [Time.unixMs]
+
+fn willCompleteBeforeDeadline(deadlineMs: Int) -> Bool
+    ? "is the current time still before the deadline?"
+    ! [Time.unixMs]
+    Time.unixMs() < deadlineMs
+
+verify willCompleteBeforeDeadline law deadlineHolds
+    given d: Int = [9999999999999]
+    willCompleteBeforeDeadline(d) => true
+"#;
+        let report = audit_source_hostile(src);
+        assert!(
+            !report.is_empty(),
+            "audit_source_hostile returned empty payload"
+        );
+        assert!(
+            report.contains("verify-hostile-mismatch"),
+            "expected the hostile failures in the report; got: {}",
+            &report[..report.len().min(400)]
         );
     }
 }

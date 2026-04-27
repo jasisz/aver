@@ -5,6 +5,7 @@ module Cases
         "does not keep opening the same human task forever."
     exposes [makeCaseDraft, draftsFromStates, statusText, parseStatus, materializeNewCases, resolveCase, filterByStatusLabel, openCasesForPayment, findCaseById, auditForOpenedCase, auditForResolvedCase]
     depends [Domain.Types]
+    effects []
 
 decision ManualReviewInsteadOfSilentFixup
     date = "2026-03-12"

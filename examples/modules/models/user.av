@@ -2,6 +2,7 @@ module User
     exposes [nameById]
     intent =
         "User lookup module for dot-path import demo."
+    effects []
 
 fn nameById(id: Int) -> String
     ? "Lookup demo user name by id."

@@ -4,6 +4,7 @@ module Clock
         "Keeping Time.now behind one module makes orchestration explicit about where"
         "time enters the system without contaminating pure domain logic."
     exposes [now]
+    effects [Time]
 
 decision TimeEntersThroughClockModule
     date = "2026-03-08"

@@ -3,6 +3,7 @@ module HttpDemo
         "Demonstrates the built-in Http service: GET, POST, and response handling."
         "Use granular sub-effects like ! [Http.get] and ! [Http.post]."
         "This keeps signatures minimal and explicit."
+    effects [Console, Http]
 
 record Header
     name: String

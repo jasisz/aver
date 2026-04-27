@@ -3,6 +3,7 @@ module Ast
         "AST node types for the mini Aver interpreter."
         "Covers: literals, binops, comparisons, variables, bindings, function defs/calls, match."
     exposes [Expr, MatchArm, Pattern, Stmt, FnDef, Program, BinOp, CmpOp, FnFastPath, FastLeaf, tagResultOk, tagResultErr, tagOptionSome, tagOptionNone, tagUserBase, ctorNameToTag, builtinNameToId]
+    effects []
 
 type Expr
     ExprInt(Int)

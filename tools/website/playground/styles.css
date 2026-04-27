@@ -190,6 +190,62 @@ body {
     background: rgba(74, 222, 128, 0.1) !important;
     border-color: var(--green) !important;
 }
+/* Hostile re-run as a verify-section header action — sits beside
+   the regular ↻ re-run, distinct red accent so the user sees this
+   is the harder/adversarial path. Hidden when the section has no
+   verify blocks. */
+.rerun-btn.audit-action-hostile {
+    color: #f87171;
+    border-color: rgba(248, 113, 113, 0.45);
+    border-style: dashed;
+}
+.rerun-btn.audit-action-hostile:hover {
+    background: rgba(248, 113, 113, 0.1);
+    border-color: #f87171;
+}
+
+/* Hostile-mode panel cosmetics. Subtle red tint so the user sees
+   that the report on screen is the adversarial-world reading,
+   distinguishing it visually from a regular declared audit. */
+.audit-panel.hostile-mode {
+    border-left: 3px solid rgba(248, 113, 113, 0.5);
+    padding-left: 0.75rem;
+    background: linear-gradient(
+        to right,
+        rgba(248, 113, 113, 0.04),
+        transparent 30%
+    );
+}
+.audit-panel.hostile-mode .audit-header-row .title {
+    color: #f87171;
+}
+
+/* Easter egg — narrative one-liner that drops in when the hostile
+   audit lands. Reads like a stage direction: "world has been
+   substituted." Same red accent as the panel; dashed-bar prefix so
+   it stands apart from real diagnostics. */
+.hostile-easter-egg {
+    margin: 0.6rem 0 0.9rem;
+    padding: 0.5rem 0.75rem;
+    border-left: 2px dashed #f87171;
+    background: rgba(248, 113, 113, 0.06);
+    color: rgba(248, 113, 113, 0.85);
+    font-family: var(--font-mono, monospace);
+    font-size: 0.78em;
+    font-style: italic;
+    letter-spacing: 0.01em;
+    line-height: 1.5;
+    animation: hostile-flicker 2.4s ease-out;
+}
+@keyframes hostile-flicker {
+    0%   { opacity: 0; transform: translateX(-4px); }
+    8%   { opacity: 0.95; }
+    10%  { opacity: 0.4; }
+    14%  { opacity: 0.95; }
+    18%  { opacity: 0.5; }
+    22%  { opacity: 0.95; transform: translateX(0); }
+    100% { opacity: 1; }
+}
 .btn-why {
     color: #c084fc !important;
     border-color: rgba(192, 132, 252, 0.45) !important;
@@ -640,18 +696,36 @@ body {
     margin-left: -0.15rem;
 }
 
-.dropzone-inline {
-    position: relative;
-    font-size: 0.7rem;
-    color: var(--muted);
-    cursor: pointer;
+/* Drop target moved to the editor area itself. When something is
+   being dragged over the wrap, dim-tint and outline so the user
+   knows the drop will land. JS toggles `data-drag="true"` on the
+   wrap node. */
+.editor-wrap[data-drag="true"] {
+    outline: 2px dashed var(--accent);
+    outline-offset: -2px;
+    background: rgba(74, 222, 128, 0.04);
 }
 
-.dropzone-inline input {
-    position: absolute;
-    inset: 0;
-    opacity: 0;
+/* "+ N more failures" button at the end of a capped issue list.
+   Subtle muted look — it's an info / continuation cue, not a
+   primary action. */
+.diag-expand-more {
+    display: block;
+    margin: 0.6rem 0 0.3rem;
+    padding: 0.35rem 0.6rem;
+    background: transparent;
+    border: 1px dashed var(--border);
+    border-radius: 3px;
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 0.8em;
+    letter-spacing: 0.02em;
     cursor: pointer;
+    transition: color 80ms ease, border-color 80ms ease;
+}
+.diag-expand-more:hover {
+    color: var(--text);
+    border-color: var(--accent);
 }
 
 .editor-tabs {

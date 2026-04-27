@@ -1,0 +1,8 @@
+module Hello
+    intent = "minimal effect demo — print a greeting to console"
+    effects [Console.print]
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("Hello, World!")
+    Console.print("Hello from the Aver Playground!")

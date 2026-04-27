@@ -4,6 +4,7 @@ module Parser
         "Statement, function definition, and program parsing for the Aver parser."
         "Expression parsing delegated to Domain.Parser.Expr."
     exposes [parse]
+    effects []
 
 fn parseStmt(tokens: List<Token>, pos: Int) -> Result<(Stmt, Int), String>
     ? "Parse a statement: binding (name = expr) or expression."

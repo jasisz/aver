@@ -1,5 +1,6 @@
 module MatchTest
     intent = "Test match and Result constructors in WASM"
+    effects []
 
 fn safeDivide(a: Int, b: Int) -> Result<Int, String>
     ? "Safe integer division."
@@ -7,11 +8,19 @@ fn safeDivide(a: Int, b: Int) -> Result<Int, String>
         0 -> Result.Err("Division by zero")
         _ -> Result.Ok(a / b)
 
+verify safeDivide
+    safeDivide(10, 2) => Result.Ok(5)
+    safeDivide(10, 0) => Result.Err("Division by zero")
+
 fn unwrapOrDefault(r: Result<Int, String>, default: Int) -> Int
     ? "Unwrap Result or return default."
     match r
         Result.Ok(v) -> v
         Result.Err(_) -> default
+
+verify unwrapOrDefault
+    unwrapOrDefault(Result.Ok(7), 0) => 7
+    unwrapOrDefault(Result.Err("nope"), 99) => 99
 
 fn main() -> Int
     r = safeDivide(10, 2)

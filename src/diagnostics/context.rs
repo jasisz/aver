@@ -100,6 +100,7 @@ pub fn build_context_for_items(
 ) -> FileContext {
     let mut ctx = FileContext::empty(file_label);
 
+    let mut declared_module_effects: Option<Vec<String>> = None;
     for item in items {
         match item {
             TopLevel::Module(m) => {
@@ -112,6 +113,7 @@ pub fn build_context_for_items(
                 ctx.depends = m.depends.clone();
                 ctx.exposes = m.exposes.clone();
                 ctx.exposes_opaque = m.exposes_opaque.clone();
+                declared_module_effects = m.effects.clone();
             }
             TopLevel::FnDef(fd) => {
                 ctx.fn_defs.push(fd.clone());
@@ -161,11 +163,21 @@ pub fn build_context_for_items(
     ctx.verify_counts = verify_counts;
     ctx.verify_samples = verify_samples;
 
-    ctx.module_effects = unique_sorted_effects(
-        ctx.fn_defs
-            .iter()
-            .flat_map(|fd| fd.effects.iter().map(|e| &e.node)),
-    );
+    // Prefer the module-level `effects [...]` declaration when the
+    // user spelled it out — it's the source-of-truth boundary, and
+    // may use namespace shorthand (`Disk` covers `Disk.*`) that the
+    // per-fn aggregation can't recover. Fall back to walking every
+    // fn's `! [...]` only for legacy (0.12-style) modules that omit
+    // the boundary.
+    ctx.module_effects = if let Some(declared) = declared_module_effects {
+        unique_sorted_effects(declared.iter())
+    } else {
+        unique_sorted_effects(
+            ctx.fn_defs
+                .iter()
+                .flat_map(|fd| fd.effects.iter().map(|e| &e.node)),
+        )
+    };
     ctx.api_effects = unique_sorted_effects(
         ctx.fn_defs
             .iter()

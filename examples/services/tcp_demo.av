@@ -3,6 +3,7 @@ module TcpDemo
         "Demonstrates the built-in Tcp service: raw TCP send and port ping."
         "Tcp is a platform capability — declare granular sub-effects (! [Tcp.send], ! [Tcp.ping])."
         "Use Http for HTTP/HTTPS. Use Tcp when you need a raw byte stream protocol."
+    effects [Console, Tcp]
 
 decision TcpVsHttp
     date = "2025-01-01"

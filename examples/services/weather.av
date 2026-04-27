@@ -6,6 +6,7 @@ module Weather
         "Demonstrates HttpServer, Http, Tcp, and Console working together."
     exposes [main]
     depends [Services.Redis]
+    effects [Console, Http, HttpServer, Tcp]
 
 decision CacheFirstArchitecture
     date = "2026-02-26"

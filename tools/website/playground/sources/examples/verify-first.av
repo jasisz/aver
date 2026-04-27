@@ -1,0 +1,16 @@
+module Starter
+    intent = "pure arithmetic, locked by verify"
+    effects [Console.print]
+
+fn add(a: Int, b: Int) -> Int
+    ? "sum of two ints"
+    a + b
+
+verify add
+    add(1, 2) => 3
+    add(2, 3) => 5
+    add(0, 0) => 0
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(add(2, 3))

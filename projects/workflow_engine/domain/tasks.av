@@ -5,6 +5,7 @@ module Tasks
         "into domain events without touching persistence or notifications."
     exposes [nextSeq, createTask, renameTask, startTask, blockTask, completeTask, reopenTask, changePriority, addTag, removeTag, addComment, setDeadline, clearDeadline, archiveTask]
     depends [Domain.Types, Domain.Validation]
+    effects []
 
 decision CommandsProduceEventsNotMutatedTasks
     date = "2026-03-08"

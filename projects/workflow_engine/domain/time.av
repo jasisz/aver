@@ -4,6 +4,7 @@ module Time
         "Uses explicit ISO parsing instead of assuming Time.now() strings can only be"
         "compared lexicographically when duration math is needed."
     exposes [parseIso, withinNextHours, olderThanDays, isPast]
+    effects []
 
 record Timestamp
     year: Int

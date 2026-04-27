@@ -20,9 +20,12 @@ pub mod effect_classification;
 pub mod effect_lifting;
 mod exhaustiveness;
 mod flow;
+pub mod hostile_effects;
+pub mod hostile_values;
 mod infer;
 mod memo;
 mod modules;
+pub mod oracle_subtypes;
 pub mod proof_trust_header;
 
 #[cfg(test)]
@@ -88,7 +91,7 @@ pub fn run_type_check_with_loaded(
     finalize_check_result(checker, items)
 }
 
-fn finalize_check_result(checker: TypeChecker, items: &[TopLevel]) -> TypeCheckResult {
+fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCheckResult {
     let fn_sigs: HashMap<String, (Vec<Type>, Type, Vec<String>)> = checker
         .fn_sigs
         .iter()
@@ -102,11 +105,70 @@ fn finalize_check_result(checker: TypeChecker, items: &[TopLevel]) -> TypeCheckR
 
     let memo_safe_types = checker.compute_memo_safe_types(items);
 
+    check_module_effect_boundary(items, &mut checker.errors);
+
     TypeCheckResult {
         errors: checker.errors,
         fn_sigs,
         memo_safe_types,
         unused_bindings: checker.unused_warnings,
+    }
+}
+
+/// Enforce module-level `effects [...]` declaration against per-fn effect
+/// usage. The rule:
+///
+/// - Module without `effects [...]` → legacy/mixed, no enforcement (0.13
+///   migration shim; 0.14+ may upgrade to soft warning).
+/// - Module with `effects [...]` (including `effects []` for explicit pure)
+///   → every function's `! [...]` must be covered by the module's declared
+///   surface. A namespace-level entry like `Disk` admits any `Disk.*`
+///   method; a method-level entry like `Time.now` admits only that one.
+fn check_module_effect_boundary(items: &[TopLevel], errors: &mut Vec<TypeError>) {
+    let Some(allowed) = items.iter().find_map(|i| match i {
+        TopLevel::Module(m) => m.effects.as_ref().map(|e| (e, m)),
+        _ => None,
+    }) else {
+        return;
+    };
+    let (allowed_list, module) = allowed;
+
+    let allowed_namespaces: HashSet<&str> = allowed_list
+        .iter()
+        .filter(|e| !e.contains('.'))
+        .map(|e| e.as_str())
+        .collect();
+    let allowed_methods: HashSet<&str> = allowed_list.iter().map(|e| e.as_str()).collect();
+
+    for item in items {
+        let TopLevel::FnDef(fd) = item else { continue };
+        for eff in &fd.effects {
+            let method = eff.node.as_str();
+            if allowed_methods.contains(method) {
+                continue;
+            }
+            if let Some((ns, _)) = method.split_once('.')
+                && allowed_namespaces.contains(ns)
+            {
+                continue;
+            }
+            errors.push(TypeError {
+                message: format!(
+                    "module '{}' declared `effects [{}]` but '{}' uses '{}' which is not in the declared boundary",
+                    module.name,
+                    allowed_list.join(", "),
+                    fd.name,
+                    method
+                ),
+                line: eff.line,
+                col: 1,
+                secondary: module.effects_line.map(|l| TypeErrorSpan {
+                    line: l,
+                    col: 1,
+                    label: "module effects declared here".to_string(),
+                }),
+            });
+        }
     }
 }
 

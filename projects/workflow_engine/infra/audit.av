@@ -5,6 +5,7 @@ module Audit
         "why a decision happened rather than representing state reconstruction inputs."
     exposes [initAudit, loadEntries, recordEntries, forSubject]
     depends [Domain.Types, Infra.Codec, Infra.Store]
+    effects [Disk]
 
 decision AuditsStayAdjacentToEventsNotInsideThem
     date = "2026-03-08"

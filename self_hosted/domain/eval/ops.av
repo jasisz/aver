@@ -4,6 +4,7 @@ module Ops
         "Pure value-level operations used by the self-hosted evaluator."
         "Keeps arithmetic, comparison, and Vector.get/set default helpers outside the main eval loop."
     exposes [evalBinopVals, evalCmpVals, evalVectorGetOrIntVals, evalIntModOrIntVals, evalVectorSetMaybeDefault, evalVectorGetMaybeDefault]
+    effects []
 
 fn applyBinop(x: Int, y: Int, op: BinOp) -> Result<Val, String>
     ? "Apply a binary operation to two integers."

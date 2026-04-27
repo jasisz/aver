@@ -112,15 +112,24 @@ fn main() {
             deps,
             verbose,
             json,
+            hostile,
         } => {
-            commands::cmd_verify(file, module_root.as_deref(), *deps, *verbose, *json);
+            commands::cmd_verify(
+                file,
+                module_root.as_deref(),
+                *deps,
+                *verbose,
+                *json,
+                *hostile,
+            );
         }
         Commands::Audit {
             path,
             module_root,
             json,
+            hostile,
         } => {
-            commands::cmd_audit(path, module_root.as_deref(), *json);
+            commands::cmd_audit(path, module_root.as_deref(), *json, *hostile);
         }
         Commands::Format { path, check, json } => {
             format_cmd::cmd_format(path, *check, *json);

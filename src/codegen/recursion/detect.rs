@@ -34,6 +34,21 @@ pub(crate) fn expr_to_dotted_name(expr: &Spanned<Expr>) -> Option<String> {
     }
 }
 
+/// Local-variable name regardless of whether the expression has been
+/// resolved. Resolver rewrites `Expr::Ident(name)` for locals into
+/// `Expr::Resolved { name, .. }` (slot-numbered for the VM); pre-resolution
+/// passes still see `Expr::Ident`. Recursion-shape detectors run AFTER
+/// resolution at codegen time, so they must accept both forms — otherwise
+/// every list/string-recursive function silently falls outside the proof
+/// subset.
+pub(crate) fn local_name_of(expr: &Spanned<Expr>) -> Option<&str> {
+    match &expr.node {
+        Expr::Ident(name) => Some(name.as_str()),
+        Expr::Resolved { name, .. } => Some(name.as_str()),
+        _ => None,
+    }
+}
+
 pub(crate) fn call_matches(name: &str, target: &str) -> bool {
     name == target || name.rsplit('.').next() == Some(target)
 }
@@ -65,7 +80,7 @@ pub(crate) fn call_matches_any(name: &str, targets: &HashSet<String>) -> bool {
 pub(crate) fn is_int_minus_positive(expr: &Spanned<Expr>, param_name: &str) -> bool {
     match &expr.node {
         Expr::BinOp(BinOp::Sub, left, right) => {
-            matches!(&left.node, Expr::Ident(id) if id == param_name)
+            local_name_of(left).is_some_and(|id| id == param_name)
                 && matches!(&right.node, Expr::Literal(crate::ast::Literal::Int(n)) if *n >= 1)
         }
         Expr::FnCall(callee, args) => {
@@ -74,7 +89,7 @@ pub(crate) fn is_int_minus_positive(expr: &Spanned<Expr>, param_name: &str) -> b
             };
             (name == "Int.sub" || name == "int.sub")
                 && args.len() == 2
-                && matches!(&args[0].node, Expr::Ident(id) if id == param_name)
+                && local_name_of(&args[0]).is_some_and(|id| id == param_name)
                 && matches!(&args[1].node, Expr::Literal(crate::ast::Literal::Int(n)) if *n >= 1)
         }
         _ => false,
@@ -171,7 +186,7 @@ pub(crate) fn collect_list_tail_binders_from_expr(
 ) {
     match &expr.node {
         Expr::Match { subject, arms, .. } => {
-            if matches!(&subject.node, Expr::Ident(id) if id == list_param_name) {
+            if local_name_of(subject).is_some_and(|id| id == list_param_name) {
                 for MatchArm { pattern, .. } in arms {
                     if let Pattern::Cons(_, tail) = pattern {
                         tails.insert(tail.clone());
@@ -584,7 +599,7 @@ pub(crate) fn supports_single_sizeof_structural(fd: &FnDef, ctx: &CodegenContext
             let Some(binders) = binder_sets.get(idx) else {
                 return false;
             };
-            if matches!(&arg.node, Expr::Ident(id) if binders.contains(id)) {
+            if local_name_of(arg).is_some_and(|id| binders.contains(id)) {
                 strictly_smaller = true;
                 continue;
             }
@@ -621,20 +636,21 @@ pub(crate) fn single_list_structural_param_index(fd: &FnDef) -> Option<usize> {
             recursive_calls
                 .into_iter()
                 .all(|arg| {
-                    arg.is_some_and(|a| matches!(&a.node, Expr::Ident(id) if tails.contains(id)))
+                    arg.and_then(local_name_of)
+                        .is_some_and(|id| tails.contains(id))
                 })
                 .then_some(param_index)
         })
 }
 
 pub(crate) fn is_ident(expr: &Spanned<Expr>, name: &str) -> bool {
-    matches!(&expr.node, Expr::Ident(id) if id == name)
+    local_name_of(expr).is_some_and(|id| id == name)
 }
 
 pub(crate) fn is_int_plus_positive(expr: &Spanned<Expr>, param_name: &str) -> bool {
     match &expr.node {
         Expr::BinOp(BinOp::Add, left, right) => {
-            matches!(&left.node, Expr::Ident(id) if id == param_name)
+            local_name_of(left).is_some_and(|id| id == param_name)
                 && matches!(&right.node, Expr::Literal(crate::ast::Literal::Int(n)) if *n >= 1)
         }
         Expr::FnCall(callee, args) => {
@@ -643,7 +659,7 @@ pub(crate) fn is_int_plus_positive(expr: &Spanned<Expr>, param_name: &str) -> bo
             };
             (name == "Int.add" || name == "int.add")
                 && args.len() == 2
-                && matches!(&args[0].node, Expr::Ident(id) if id == param_name)
+                && local_name_of(&args[0]).is_some_and(|id| id == param_name)
                 && matches!(&args[1].node, Expr::Literal(crate::ast::Literal::Int(n)) if *n >= 1)
         }
         _ => false,
@@ -710,12 +726,12 @@ pub(crate) fn classify_string_pos_edge(
         if call_matches(&name, "skipWs")
             && args.len() == 2
             && is_ident(&args[0], string_param)
-            && matches!(&args[1].node, Expr::Ident(id) if id != pos_param)
+            && local_name_of(&args[1]).is_some_and(|id| id != pos_param)
         {
             return Some(StringPosEdge::Advance);
         }
     }
-    if matches!(&expr.node, Expr::Ident(id) if id != pos_param) {
+    if local_name_of(expr).is_some_and(|id| id != pos_param) {
         return Some(StringPosEdge::Advance);
     }
     None

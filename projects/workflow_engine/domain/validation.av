@@ -4,6 +4,7 @@ module Validation
         "Keeps task and project invariants inspectable without touching the store or clock."
     exposes [validTag, validateProjectCreate, validateTaskCreate, validateTaskRename, validateComment, validateReason, validateDeadline, ensureProjectActive, ensureTransition]
     depends [Domain.Types, Domain.Time]
+    effects []
 
 decision ArchivedProjectsRejectTaskChanges
     date = "2026-03-08"

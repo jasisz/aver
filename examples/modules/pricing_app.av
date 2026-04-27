@@ -1,14 +1,15 @@
 module PricingApp
-    depends [Pricing.Discount]
+    depends [Modules.Pricing.Discount]
     exposes [applyDiscount]
     intent =
         "Tests opaque type usage from outside the defining module."
+    effects [Console]
 
 fn applyDiscount(price: Float, rawDiscount: Float) -> Result<Float, String>
     ? "Constructs discount, applies it to price."
-    match Pricing.Discount.mkDiscount(rawDiscount)
+    match Modules.Pricing.Discount.mkDiscount(rawDiscount)
         Result.Err(e) -> Result.Err(e)
-        Result.Ok(d) -> Result.Ok(price - price * (Pricing.Discount.percent(d) / 100.0))
+        Result.Ok(d) -> Result.Ok(price - price * (Modules.Pricing.Discount.percent(d) / 100.0))
 
 verify applyDiscount
     applyDiscount(100.0, 50.0)  => Result.Ok(50.0)

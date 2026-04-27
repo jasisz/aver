@@ -2131,7 +2131,7 @@ pub(super) fn cmd_run_self_hosted(
 
     if run_verify_blocks {
         println!();
-        cmd_verify(file, module_root_override, false, false, false);
+        cmd_verify(file, module_root_override, false, false, false, false);
     }
 }
 
@@ -2255,7 +2255,7 @@ fn run_check_for_file(
 /// pass. JSON mode emits one AnalysisReport bundle per file (diagnostics
 /// include check issues + verify failures + needs-format), trailing
 /// summary aggregates the three axes.
-pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bool) {
+pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bool, hostile: bool) {
     use super::format_cmd::try_format_source;
     use aver::diagnostics::{AnalyzeOptions, analyze_source, needs_format_diagnostic};
 
@@ -2300,6 +2300,7 @@ pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bo
         let mut opts = AnalyzeOptions::new(shown_path.clone());
         opts.module_base_dir = Some(module_root.clone());
         opts.include_verify_run = true;
+        opts.verify_run_hostile = hostile;
         let mut report = analyze_source(&source, &opts);
 
         // Format check: append needs-format diagnostic with structured
@@ -2532,17 +2533,26 @@ fn run_verify_for_file(
     file: &str,
     module_root: &str,
     deps: bool,
+    hostile: bool,
 ) -> Result<Vec<VerifyFileResult>, String> {
+    use aver::verify_law::expand::ExpansionMode;
+
     let units = collect_check_units(file, module_root, deps)?;
     let mut file_results = Vec::new();
 
     let config = load_runtime_policy(module_root)?;
+    let mode = if hostile {
+        ExpansionMode::Hostile
+    } else {
+        ExpansionMode::Declared
+    };
     for (path, source, items) in units {
-        let blocks = aver::diagnostics::vm_verify::run_verify_for_items_vm(
+        let blocks = aver::diagnostics::vm_verify::run_verify_for_items_vm_with_mode(
             items,
             config.clone(),
             Some(module_root),
             &path,
+            mode,
         )?;
         file_results.push(VerifyFileResult {
             path,
@@ -2552,6 +2562,78 @@ fn run_verify_for_file(
     }
 
     Ok(file_results)
+}
+
+/// Bucket case outcomes by `from_hostile` for the per-block summary
+/// (declared vs hostile pass/fail). Skipped cases are dropped — they
+/// already live in `result.skipped`.
+/// Detect "vacuous-under-hostile" blocks: at least one hostile-profile
+/// case was generated, and every single one ended in `Skipped` (its
+/// `when` predicate returned false). Means the user's `when` is so
+/// strict that no adversarial profile satisfies it — the law's hostile
+/// run reduces to nothing. The renderer flags this as a warning so the
+/// user doesn't read "0 hostile failures" as a clean bill.
+fn vacuous_under_hostile(cases: &[aver::checker::VerifyCaseResult]) -> bool {
+    use aver::checker::VerifyCaseOutcome;
+    let mut had_hostile = false;
+    let mut all_skipped = true;
+    for case in cases {
+        // `from_hostile` covers both axes: value-side boundary
+        // expansion (typed `given` widened with i64::MIN/MAX,
+        // ±Inf/NaN, NUL-embedded strings, …) and effect-side
+        // adversarial profiles (frozen clock, always-min random,
+        // network-down, …). Either is enough to drive the
+        // vacuous warning when `when` rejects them all.
+        if !case.from_hostile {
+            continue;
+        }
+        // SkippedAfterBaseFail isn't a `when`-driven skip; it's a
+        // VM-level optimization (base case already failed, so we
+        // didn't bother running the profile permutation). Treat
+        // those cases as if they didn't exist — vacuous-under-hostile
+        // means "every adversarial profile rejected by `when`", not
+        // "every adversarial profile pre-empted because the base
+        // already broke".
+        if matches!(case.outcome, VerifyCaseOutcome::SkippedAfterBaseFail) {
+            continue;
+        }
+        had_hostile = true;
+        if !matches!(case.outcome, VerifyCaseOutcome::Skipped) {
+            all_skipped = false;
+        }
+    }
+    had_hostile && all_skipped
+}
+
+fn bucket_hostile(cases: &[aver::checker::VerifyCaseResult]) -> (usize, usize, usize, usize) {
+    use aver::checker::VerifyCaseOutcome;
+
+    let mut declared_passed = 0usize;
+    let mut declared_failed = 0usize;
+    let mut hostile_passed = 0usize;
+    let mut hostile_failed = 0usize;
+    for case in cases {
+        let passed = matches!(case.outcome, VerifyCaseOutcome::Pass);
+        let skipped = matches!(
+            case.outcome,
+            VerifyCaseOutcome::Skipped | VerifyCaseOutcome::SkippedAfterBaseFail
+        );
+        if skipped {
+            continue;
+        }
+        match (case.from_hostile, passed) {
+            (false, true) => declared_passed += 1,
+            (false, false) => declared_failed += 1,
+            (true, true) => hostile_passed += 1,
+            (true, false) => hostile_failed += 1,
+        }
+    }
+    (
+        declared_passed,
+        declared_failed,
+        hostile_passed,
+        hostile_failed,
+    )
 }
 
 fn render_verify_output(
@@ -2594,6 +2676,8 @@ fn render_verify_output(
                                 col,
                                 cr.law_context.is_some(),
                                 cr.law_context.as_ref(),
+                                cr.from_hostile,
+                                cr.hostile_profile.as_deref(),
                             ))
                         }
                         VerifyCaseOutcome::RuntimeError { error } => {
@@ -2624,12 +2708,30 @@ fn render_verify_output(
                         diagnostics.push(d);
                     }
                 }
+                let (declared_passed, declared_failed, hostile_passed, hostile_failed) =
+                    bucket_hostile(&block.case_results);
+                let skipped_by_when = block
+                    .case_results
+                    .iter()
+                    .filter(|c| matches!(c.outcome, VerifyCaseOutcome::Skipped))
+                    .count();
+                let skipped_after_base_fail = block
+                    .case_results
+                    .iter()
+                    .filter(|c| matches!(c.outcome, VerifyCaseOutcome::SkippedAfterBaseFail))
+                    .count();
                 block_results.push(aver::diagnostics::model::VerifyBlockResult {
                     name: block.block_label.clone(),
                     passed: block.passed,
                     failed: block.failed,
                     skipped: block.skipped,
                     total: block.passed + block.failed + block.skipped,
+                    declared_passed,
+                    declared_failed,
+                    hostile_passed,
+                    hostile_failed,
+                    skipped_by_when,
+                    skipped_after_base_fail,
                 });
             }
             let mut report =
@@ -2656,32 +2758,73 @@ fn render_verify_output(
                         total
                     );
                 } else {
-                    // Count failure types
-                    let mut mismatch = 0usize;
-                    let mut runtime_err = 0usize;
-                    let mut unexpected_err = 0usize;
-                    for cr in &block.case_results {
-                        match &cr.outcome {
-                            VerifyCaseOutcome::Mismatch { .. } => mismatch += 1,
-                            VerifyCaseOutcome::RuntimeError { .. } => runtime_err += 1,
-                            VerifyCaseOutcome::UnexpectedErr { .. } => unexpected_err += 1,
-                            _ => {}
+                    // Bracket reports either declared/hostile pass-ratios
+                    // (when --hostile produced extra cases — the per-
+                    // bucket split already implies the failure count) or
+                    // a typed-failure breakdown (mismatch / runtime err /
+                    // unexpected err — declared-only runs need this since
+                    // the bucket split is just `1/1 ✗`). Mixing both is
+                    // redundant: 24 mismatch + 11/35 hostile says "24
+                    // failed" twice.
+                    let (declared_passed, declared_failed, hostile_passed, hostile_failed) =
+                        bucket_hostile(&block.case_results);
+                    let has_hostile = hostile_passed + hostile_failed > 0;
+                    let breakdown = if has_hostile {
+                        let declared_total = declared_passed + declared_failed;
+                        let hostile_total = hostile_passed + hostile_failed;
+                        let skipped_when = block
+                            .case_results
+                            .iter()
+                            .filter(|c| matches!(c.outcome, VerifyCaseOutcome::Skipped))
+                            .count();
+                        let skipped_base = block
+                            .case_results
+                            .iter()
+                            .filter(|c| {
+                                matches!(c.outcome, VerifyCaseOutcome::SkippedAfterBaseFail)
+                            })
+                            .count();
+                        let mut tail = String::new();
+                        if skipped_when > 0 {
+                            tail.push_str(&format!(", {} skipped by `when`", skipped_when));
                         }
-                    }
-                    let mut parts = Vec::new();
-                    if mismatch > 0 {
-                        parts.push(format!("{} mismatch", mismatch));
-                    }
-                    if runtime_err > 0 {
-                        parts.push(format!("{} runtime error", runtime_err));
-                    }
-                    if unexpected_err > 0 {
-                        parts.push(format!("{} unexpected err", unexpected_err));
-                    }
-                    let breakdown = if parts.is_empty() {
-                        String::new()
+                        if skipped_base > 0 {
+                            tail.push_str(&format!(
+                                ", {} skipped (base case already failed)",
+                                skipped_base
+                            ));
+                        }
+                        format!(
+                            " ({}/{} declared, {}/{} hostile{})",
+                            declared_passed, declared_total, hostile_passed, hostile_total, tail
+                        )
                     } else {
-                        format!(" ({})", parts.join(", "))
+                        let mut mismatch = 0usize;
+                        let mut runtime_err = 0usize;
+                        let mut unexpected_err = 0usize;
+                        for cr in &block.case_results {
+                            match &cr.outcome {
+                                VerifyCaseOutcome::Mismatch { .. } => mismatch += 1,
+                                VerifyCaseOutcome::RuntimeError { .. } => runtime_err += 1,
+                                VerifyCaseOutcome::UnexpectedErr { .. } => unexpected_err += 1,
+                                _ => {}
+                            }
+                        }
+                        let mut parts = Vec::new();
+                        if mismatch > 0 {
+                            parts.push(format!("{} mismatch", mismatch));
+                        }
+                        if runtime_err > 0 {
+                            parts.push(format!("{} runtime error", runtime_err));
+                        }
+                        if unexpected_err > 0 {
+                            parts.push(format!("{} unexpected err", unexpected_err));
+                        }
+                        if parts.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" ({})", parts.join(", "))
+                        }
                     };
                     println!(
                         "  {} {}      {}/{} passed{}",
@@ -2693,26 +2836,94 @@ fn render_verify_output(
                     );
                 }
 
-                // Emit diagnostics for failures (capped in normal mode)
+                // Vacuous-truth warning. If every hostile-profile case
+                // was skipped by `when`, the law was effectively NOT
+                // exercised under hostile mode — the user's assumption
+                // is so strict that no adversarial profile satisfies
+                // it. Without this hint, the user reads "passed under
+                // hostile" and gets a false sense of safety.
+                if vacuous_under_hostile(&block.case_results) {
+                    println!(
+                        "    {} every hostile profile was skipped by `when` — \
+                         this law was not exercised under --hostile. Consider \
+                         loosening the assumption.",
+                        "warning:".yellow()
+                    );
+                }
+
+                // Group `Mismatch` outcomes by (case_expr, line).
+                // Profile-after-base-fail skipping happens at the VM
+                // layer (`SkippedAfterBaseFail` outcome), so by the
+                // time we get here every `Mismatch` is one we
+                // actually want to show.
+                use std::collections::HashMap;
+                let mut mismatch_groups: HashMap<(String, usize), Vec<usize>> = HashMap::new();
+                let mut mismatch_order: Vec<(String, usize)> = Vec::new();
+                for (idx, cr) in block.case_results.iter().enumerate() {
+                    if matches!(cr.outcome, VerifyCaseOutcome::Mismatch { .. }) {
+                        let line = cr.span.as_ref().map(|s| s.line).unwrap_or(1);
+                        let key = (cr.case_expr.clone(), line);
+                        if !mismatch_groups.contains_key(&key) {
+                            mismatch_order.push(key.clone());
+                        }
+                        mismatch_groups.entry(key).or_default().push(idx);
+                    }
+                }
                 let max_diags = if verbose { usize::MAX } else { 3 };
                 let mut diag_count = 0usize;
+
+                for key in &mismatch_order {
+                    let group = &mismatch_groups[key];
+                    let primary = &block.case_results[group[0]];
+                    let (line, col) = primary
+                        .span
+                        .as_ref()
+                        .map(|s| (s.line, s.col))
+                        .unwrap_or((1, 1));
+                    let (expected, actual) = match &primary.outcome {
+                        VerifyCaseOutcome::Mismatch { expected, actual } => {
+                            (expected.clone(), actual.clone())
+                        }
+                        _ => unreachable!(),
+                    };
+                    let mut d = verify_mismatch_diagnostic(
+                        &display_path,
+                        &fr.source,
+                        &block.block_label,
+                        &primary.case_expr,
+                        &expected,
+                        &actual,
+                        line,
+                        col,
+                        primary.law_context.is_some(),
+                        primary.law_context.as_ref(),
+                        primary.from_hostile,
+                        primary.hostile_profile.as_deref(),
+                    );
+                    for &other_idx in &group[1..] {
+                        let other = &block.case_results[other_idx];
+                        let origin = match (other.from_hostile, other.hostile_profile.as_deref()) {
+                            (true, Some(profile)) => {
+                                format!("effect profile: {}", profile)
+                            }
+                            (true, None) => "value boundary substitution".to_string(),
+                            (false, _) => continue,
+                        };
+                        if !d.fields.iter().any(|(k, v)| *k == "origin" && v == &origin) {
+                            d.fields.push(("origin", origin));
+                        }
+                    }
+                    if diag_count < max_diags {
+                        println!();
+                        print!("{}", render_tty(&d, verbose));
+                    }
+                    diag_count += 1;
+                }
+
+                // Other outcomes — per-case, not grouped (rare).
                 for cr in &block.case_results {
                     let (line, col) = cr.span.as_ref().map(|s| (s.line, s.col)).unwrap_or((1, 1));
                     let diag = match &cr.outcome {
-                        VerifyCaseOutcome::Mismatch { expected, actual } => {
-                            Some(verify_mismatch_diagnostic(
-                                &display_path,
-                                &fr.source,
-                                &block.block_label,
-                                &cr.case_expr,
-                                expected,
-                                actual,
-                                line,
-                                col,
-                                cr.law_context.is_some(),
-                                cr.law_context.as_ref(),
-                            ))
-                        }
                         VerifyCaseOutcome::RuntimeError { error } => {
                             Some(verify_runtime_error_diagnostic(
                                 &display_path,
@@ -2766,7 +2977,12 @@ pub(super) fn cmd_verify(
     deps: bool,
     verbose: bool,
     json: bool,
+    hostile: bool,
 ) {
+    // 0.13 Limit: --hostile reruns each `verify ... law` against an adversarial
+    // world. Domain side (this commit) injects boundary values per typed
+    // `given`; effect side (next commit) responds with worst-case classified-
+    // effect oracles; differential reporting is layered on top of both.
     let module_root = resolve_module_root(module_root_override);
     let inputs = match resolve_av_inputs(path) {
         Ok(inputs) => inputs,
@@ -2782,7 +2998,7 @@ pub(super) fn cmd_verify(
     let mut printed_any = false;
 
     for file in &inputs {
-        match run_verify_for_file(file, &module_root, deps) {
+        match run_verify_for_file(file, &module_root, deps, hostile) {
             Ok(file_results) => {
                 // Render immediately — streaming output
                 let has_blocks = file_results.iter().any(|fr| !fr.blocks.is_empty());
@@ -2838,7 +3054,12 @@ pub(super) fn cmd_verify(
         .flat_map(|fr| &fr.blocks)
         .map(|b| b.failed)
         .sum();
-    let total_cases = total_passed + total_failed;
+    let total_skipped: usize = all_file_results
+        .iter()
+        .flat_map(|fr| &fr.blocks)
+        .map(|b| b.skipped)
+        .sum();
+    let total_cases = total_passed + total_failed + total_skipped;
     let total_files = all_file_results
         .iter()
         .filter(|fr| !fr.blocks.is_empty())
@@ -2867,8 +3088,35 @@ pub(super) fn cmd_verify(
         );
     } else {
         println!();
+        // Split skipped into when-driven and base-failure-driven —
+        // they have different meanings (`when` filtered the case
+        // out vs Aver pre-empted a redundant profile permutation).
+        use aver::checker::VerifyCaseOutcome;
+        let mut skipped_when = 0usize;
+        let mut skipped_base = 0usize;
+        for fr in &all_file_results {
+            for b in &fr.blocks {
+                for cr in &b.case_results {
+                    match cr.outcome {
+                        VerifyCaseOutcome::Skipped => skipped_when += 1,
+                        VerifyCaseOutcome::SkippedAfterBaseFail => skipped_base += 1,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        let mut skipped_part = String::new();
+        if skipped_when > 0 {
+            skipped_part.push_str(&format!(" | {} skipped by `when`", skipped_when));
+        }
+        if skipped_base > 0 {
+            skipped_part.push_str(&format!(
+                " | {} skipped (base case already failed)",
+                skipped_base
+            ));
+        }
         let summary = format!(
-            "Summary: {} file{} | {} block{} | {}/{} cases passed | {} failed",
+            "Summary: {} file{} | {} block{} | {}/{} cases passed | {} failed{}",
             total_files,
             if total_files == 1 { "" } else { "s" },
             total_blocks,
@@ -2876,6 +3124,7 @@ pub(super) fn cmd_verify(
             total_passed,
             total_cases,
             total_failed,
+            skipped_part,
         );
         if total_failed == 0 {
             println!("{}", summary.green());

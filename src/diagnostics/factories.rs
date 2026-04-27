@@ -115,6 +115,7 @@ pub fn from_type_error(te: &TypeError, source: &str, file: &str) -> Diagnostic {
         repair: repair_text.map(Repair::primary).unwrap_or_default(),
         regions,
         related: Vec::new(),
+        from_hostile: false,
     }
 }
 
@@ -142,6 +143,7 @@ pub fn unused_binding_diagnostic(
         repair: Repair::primary(format!("Remove the binding or prefix with _: _{}", binding)),
         regions: AnnotatedRegion::single(extract_source_lines(source, line, 0), None),
         related: Vec::new(),
+        from_hostile: false,
     }
 }
 
@@ -179,6 +181,7 @@ pub fn needs_format_diagnostic(
             repair: Repair::primary("Run `aver format` to apply the formatter"),
             regions: Vec::new(),
             related: Vec::new(),
+            from_hostile: false,
         };
     }
 
@@ -248,6 +251,7 @@ pub fn needs_format_diagnostic(
         repair: Repair::primary("Run `aver format` to apply the formatter"),
         regions,
         related: Vec::new(),
+        from_hostile: false,
     }
 }
 
@@ -362,6 +366,7 @@ pub fn from_check_finding(
         repair: repair_text.map(Repair::primary).unwrap_or_default(),
         regions,
         related: Vec::new(),
+        from_hostile: false,
     }
 }
 
@@ -379,11 +384,13 @@ pub fn verify_mismatch_diagnostic(
     col: usize,
     is_law: bool,
     law_context: Option<&VerifyLawContext>,
+    from_hostile: bool,
+    hostile_profile: Option<&str>,
 ) -> Diagnostic {
-    let summary = if is_law {
-        "law violated"
-    } else {
-        "assertion failed"
+    let summary = match (is_law, from_hostile) {
+        (true, true) => "law violated under --hostile expansion",
+        (true, false) => "law violated",
+        (false, _) => "assertion failed",
     };
     let mut fields: Vec<(&'static str, String)> = vec![
         ("block", block_name.to_string()),
@@ -397,9 +404,97 @@ pub fn verify_mismatch_diagnostic(
         }
         fields.push(("law", lctx.law_expr.clone()));
     }
+    if from_hostile {
+        // Origin label distinguishes the two hostile axes:
+        //   "effect profile: <method>/<profile>" — the user's `given`
+        //   stub for that classified effect was overridden by an
+        //   adversarial profile (Time.unixMs/saturated, ...).
+        //   "value boundary substitution"        — the typed `given`
+        //   domain was extended with a per-type adversarial value
+        //   (Int 0/1/-1/MIN/MAX, Float NaN/±Inf, Str empty/NUL/long).
+        //   The substituted value already shows up in the `case`
+        //   field (e.g. `willCompleteBeforeDeadline(0)`), so this
+        //   label just names the axis.
+        let origin_label = match hostile_profile {
+            Some(profile) => format!("effect profile: {}", profile),
+            None => "value boundary substitution".to_string(),
+        };
+        fields.push(("origin", origin_label));
+    }
+    let repair = if from_hostile {
+        if hostile_profile.is_some() {
+            // Effect-side hostile fires inside `verify <fn> law <name>`
+            // (with or without `trace`). Three honest options: adjust
+            // the impl (the profile models a real production world);
+            // declare the oracle assumption with `when` so hostile
+            // skips profiles that violate it (`when clock(root, 1) >
+            // clock(root, 0)` for monotonicity); or — if the claim
+            // really only holds for the one stub you wrote — drop
+            // `law` form and use `verify <fn>` cases-form (example
+            // semantics).
+            Repair::primary(
+                "the law passes for the world your `given` stub describes \
+                 but breaks under this adversarial profile. Three options: \
+                 (a) adjust the impl to be robust against the profile (it \
+                 models a real production world — frozen clock, empty disk, \
+                 network down); (b) declare the oracle assumption with \
+                 `when` (e.g. `when clock(root, 1) > clock(root, 0)` for \
+                 monotonicity) so hostile skips profiles that violate it; \
+                 (c) if the claim really only holds for the one stub you \
+                 wrote, drop `law` form and use `verify <fn>` cases-form \
+                 (example semantics) with that stub.",
+            )
+        } else {
+            // Value-side hostile: only fires on `verify <fn> law <name>`,
+            // which DOES support `when`. The `when` suggestion is honest
+            // here. If the law has typed `given` clauses, name them in
+            // the message so the user sees exactly which clause to
+            // narrow with `when` instead of staring at a generic
+            // suggestion.
+            let given_refs = law_context
+                .map(|lc| {
+                    lc.givens
+                        .iter()
+                        .map(|(name, _)| format!("`{}`", name))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let scoped = match given_refs.as_slice() {
+                [] => "add `when <precondition>` to scope the law".to_string(),
+                [one] => format!(
+                    "add `when {} <precondition>` (e.g. `when {} > 0`) to scope the law to the values {} actually holds for",
+                    one, one, one
+                ),
+                many => format!(
+                    "add `when` over {} to scope the law to the values they actually hold for",
+                    many.join(" / ")
+                ),
+            };
+            Repair::primary(format!(
+                "this case isn't in your declared `given` set — the claim isn't \
+                 universal. Either {}, or drop `law` form and use `verify <fn>` \
+                 (cases form, example semantics) with the values you actually meant.",
+                scoped
+            ))
+        }
+    } else {
+        Repair::default()
+    };
+    // Distinct slug for hostile-only failures so consumers (jq, CI gates,
+    // playground filters) can split the dual-run into two channels:
+    //   `verify-mismatch`         — declared world failure, real bug
+    //   `verify-hostile-mismatch` — adversarial world failure, missing
+    //                                precondition or unpinned effect
+    // Both carry the same fields and `from_hostile` flag; the slug is
+    // for routing.
+    let slug = if from_hostile {
+        "verify-hostile-mismatch"
+    } else {
+        "verify-mismatch"
+    };
     Diagnostic {
         severity: Severity::Fail,
-        slug: "verify-mismatch",
+        slug,
         summary: summary.to_string(),
         span: Span {
             file: file.to_string(),
@@ -410,7 +505,7 @@ pub fn verify_mismatch_diagnostic(
         intent: None,
         fields,
         conflict: None,
-        repair: Repair::default(),
+        repair,
         regions: AnnotatedRegion::single(
             extract_source_lines(source, line, 0),
             Some(Underline {
@@ -421,10 +516,11 @@ pub fn verify_mismatch_diagnostic(
                     .map(|l| l.trim().len())
                     .unwrap_or(1)
                     .max(1),
-                label: "verify-mismatch".to_string(),
+                label: slug.to_string(),
             }),
         ),
         related: Vec::new(),
+        from_hostile,
     }
 }
 
@@ -469,6 +565,7 @@ pub fn verify_runtime_error_diagnostic(
             }),
         ),
         related: Vec::new(),
+        from_hostile: false,
     }
 }
 
@@ -513,6 +610,7 @@ pub fn verify_unexpected_err_diagnostic(
             }),
         ),
         related: Vec::new(),
+        from_hostile: false,
     }
 }
 
@@ -567,6 +665,7 @@ pub fn replay_output_mismatch_diagnostic(
         repair: Repair::default(),
         regions: AnnotatedRegion::single(vec![], None),
         related: Vec::new(),
+        from_hostile: false,
     }
 }
 
@@ -600,5 +699,6 @@ pub fn replay_effect_error_diagnostic(
         repair: Repair::default(),
         regions: AnnotatedRegion::single(vec![], None),
         related: Vec::new(),
+        from_hostile: false,
     }
 }

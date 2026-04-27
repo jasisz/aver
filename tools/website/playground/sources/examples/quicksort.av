@@ -1,0 +1,46 @@
+module Quicksort
+    intent = "classic quicksort with verified partition helpers"
+    effects [Console.print]
+
+fn filterLess(xs: List<Int>, pivot: Int) -> List<Int>
+    ? "keep elements strictly less than pivot"
+    match xs
+        [] -> []
+        [h, ..t] -> match h < pivot
+            true -> List.prepend(h, filterLess(t, pivot))
+            false -> filterLess(t, pivot)
+
+verify filterLess
+    filterLess([], 3) => []
+    filterLess([1, 5, 2, 8], 3) => [1, 2]
+    filterLess([5, 5, 5], 5) => []
+
+fn filterGte(xs: List<Int>, pivot: Int) -> List<Int>
+    ? "keep elements greater than or equal to pivot"
+    match xs
+        [] -> []
+        [h, ..t] -> match h >= pivot
+            true -> List.prepend(h, filterGte(t, pivot))
+            false -> filterGte(t, pivot)
+
+verify filterGte
+    filterGte([], 3) => []
+    filterGte([1, 5, 2, 8], 3) => [5, 8]
+    filterGte([5, 5, 5], 5) => [5, 5, 5]
+
+fn quicksort(xs: List<Int>) -> List<Int>
+    ? "classic quicksort: pivot + recurse on less/gte partitions"
+    match xs
+        [] -> []
+        [pivot, ..rest] -> List.concat(List.concat(quicksort(filterLess(rest, pivot)), [pivot]), quicksort(filterGte(rest, pivot)))
+
+verify quicksort
+    quicksort([]) => []
+    quicksort([3, 1, 2]) => [1, 2, 3]
+    quicksort([5, 5, 5]) => [5, 5, 5]
+
+fn main() -> Unit
+    ! [Console.print]
+    input = [38, 27, 43, 3, 9, 82, 10]
+    Console.print("input:  {input}")
+    Console.print("sorted: {quicksort(input)}")

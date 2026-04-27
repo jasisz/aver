@@ -5,6 +5,7 @@ module Store
         "in the domain so the application flow remains inspectable."
     exposes [dataDir, initStore, loadEvents, appendEvents, loadSettlements, appendSettlements, loadCases, saveCases]
     depends [Domain.Types, Domain.Cases, Infra.Codec]
+    effects [Disk]
 
 decision AppendOnlyEventsAndSettlements
     date = "2026-03-12"

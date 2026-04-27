@@ -4,6 +4,7 @@ module Types
         "Keeps records and enums in one place so command, rule, and store modules"
         "can speak about the same application core without repeating shapes."
     exposes [TaskStatus, Priority, Project, Comment, TaskEvent, TaskEventRecord, Task, TaskReplayState, TaskView, TaskSummary, Notification, AuditEntry, RuleResult]
+    effects []
 
 type TaskStatus
     Todo

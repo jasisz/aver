@@ -59,6 +59,11 @@
                 title="Halt the running program.">⏹ Stop</button>
             <button type="button" data-audit class="btn-audit"
                 title="Three axes: static checks + verify execution + format compliance. CI gate.">🔍 Audit</button>
+            <!-- Hidden hostile state holder. The user-facing flow is:
+                 click Audit → results render → results include a
+                 "↻ Re-run with --hostile" CTA. Toggling this checkbox
+                 from JS controls which mode the next audit run uses. -->
+            <input type="checkbox" data-hostile-toggle hidden>
             <button type="button" data-trace class="btn-trace"
                 title="Open the Trace panel — record main()'s effect log, edit outcomes inline, replay against the current source. Import/export .replay.json.">📜 Trace</button>
             <button type="button" data-context class="btn-context"
@@ -92,6 +97,7 @@
                 </optgroup>
                 <optgroup label="Oracle">
                     <option value="oracle">Oracle law + trace</option>
+                    <option value="hostile-clock">Hostile clock (--hostile)</option>
                 </optgroup>
             </select>
             <span class="toolbar-spacer"></span>
@@ -108,12 +114,13 @@
                     <li><button type="button" data-download-format="dafny">Dafny proof <span class="dl-ext">.zip</span></button></li>
                 </ul>
             </div>
-            <div class="dropzone-inline" data-dropzone data-drag="false">
-                <!-- accepts .wasm (run it), .av (single tab), folder (many tabs).
-                     webkitdirectory is toggled from JS when the user drags. -->
-                <input type="file" accept=".wasm,application/wasm,.av,text/plain,.json,application/json" multiple data-file-input>
-                <span data-file-meta>drop .wasm · .av · folder · .replay.json</span>
-            </div>
+            <!-- Upload inputs — hidden, fired by the buttons living
+                 down on the tab bar so the toolbar header stays uncluttered. -->
+            <input type="file"
+                accept=".wasm,application/wasm,.av,text/plain,.json,application/json"
+                multiple hidden data-file-input>
+            <input type="file" webkitdirectory directory hidden data-folder-input>
+            <span data-file-meta hidden>upload via tab bar</span>
         </div>
         <div class="editor-tabs" data-editor-tabs></div>
         <div class="editor-wrap">

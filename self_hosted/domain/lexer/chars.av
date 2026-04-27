@@ -2,6 +2,7 @@ module Chars
     depends [Domain.Token]
     intent = "Character classification and identifier reading for the lexer."
     exposes [isDigit, isLower, isUpper, isLetterOrUnderscore, isAlpha, isAlphaNum, digitVal, readNumber, isIdentCharDotted, isIdentCharPlain, readIdentLoopDotted, readIdentLoopPlain, readIdent, keywordOrIdent]
+    effects []
 
 fn isDigit(c: String) -> Bool
     ? "Check if a single character is a digit."

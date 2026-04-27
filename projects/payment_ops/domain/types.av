@@ -4,6 +4,7 @@ module Types
         "This project models dirty payment ingestion, settlement import, reconciliation,"
         "and manual-review cases without hiding the state machine in infrastructure."
     exposes [RawWebhook, RawSettlement, PaymentEvent, PaymentEventRecord, SettlementKind, SettlementRow, PaymentState, CaseStatus, CaseDraft, ReviewCase, AuditEntry, PaymentDetail, ProviderSummary]
+    effects []
 
 record RawWebhook
     sourceId: String

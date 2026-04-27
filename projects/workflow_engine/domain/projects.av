@@ -5,6 +5,7 @@ module Projects
         "lifecycle is simple enough to keep as direct state."
     exposes [findProject, putProject, createProject, archiveProject]
     depends [Domain.Types, Domain.Validation]
+    effects []
 
 decision ProjectsStayStateBased
     date = "2026-03-08"

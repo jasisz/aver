@@ -2,13 +2,11 @@ module OracleIndependentProducts
     intent =
         "Demonstrates Oracle verification for independent products."
         "Covers bare ! branch traces and ?! Result unwrapping with leftmost-error priority."
+    effects [Disk, Random]
 
 fn counterStub(path: BranchPath, n: Int, min: Int, max: Int) -> Int
     ? "Return the per-branch oracle counter."
     n
-
-verify counterStub
-    counterStub(BranchPath.Root, 0, 1, 6) => 0
 
 fn pairSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Int) -> (Int, Int)
     ? "Expected pair for a two-branch independent product."
@@ -39,10 +37,6 @@ fn fakeReadByFile(path: BranchPath, n: Int, file: String) -> Result<String, Stri
         "fail-right.txt" -> Result.Err("right failed")
         _ -> Result.Err("unknown file")
 
-verify fakeReadByFile
-    fakeReadByFile(BranchPath.Root, 0, "left.txt") => Result.Ok("left")
-    fakeReadByFile(BranchPath.Root, 0, "fail-left.txt") => Result.Err("left failed")
-
 fn readPair(leftFile: String, rightFile: String) -> Result<(String, String), String>
     ? "Read two files with ?!, unwrapping both Ok values or propagating the leftmost Err."
     ! [Disk.readText]
@@ -60,3 +54,10 @@ verify readPair trace
     ok.trace.group(0).branch(1).event(0) => Option.Some(EffectEvent(method = "Disk.readText", args = ["right.txt"], path = "1"))
     fails.result => Result.Err("left failed")
     fails.trace.group(0).length() => 2
+
+verify counterStub
+    counterStub(BranchPath.Root, 0, 1, 6) => 0
+
+verify fakeReadByFile
+    fakeReadByFile(BranchPath.Root, 0, "left.txt") => Result.Ok("left")
+    fakeReadByFile(BranchPath.Root, 0, "fail-left.txt") => Result.Err("left failed")

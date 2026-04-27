@@ -1,7 +1,11 @@
 import { TERMINAL_COLOR_NAMES, TERMINAL_SPACE_CODE } from "./browser_terminal.js";
 
 const dom = {
-    dropzone: document.querySelector("[data-dropzone]"),
+    // Drop target moved from a toolbar pill to the editor wrap so
+    // dragging onto the code area "just works" without aiming for a
+    // small button. The selector here points to the wider container;
+    // listeners attach in the same way the old dropzone did below.
+    dropzone: document.querySelector(".editor-wrap") || document.body,
     fileInput: document.querySelector("[data-file-input]"),
     fileMeta: document.querySelector("[data-file-meta]"),
     compileMeta: document.querySelector("[data-compile-meta]"),
@@ -656,6 +660,26 @@ dom.fileInput.addEventListener("change", async (event) => {
     await onFileChange(event.target.files);
 });
 
+// Folder upload — webkitdirectory input lets the browser open its
+// native folder picker. Same handler as files; onFileChange already
+// honours `webkitRelativePath` to mirror the folder layout in the
+// virtual fs.
+const folderInput = document.querySelector("[data-folder-input]");
+if (folderInput) {
+    folderInput.addEventListener("change", async (event) => {
+        await onFileChange(event.target.files);
+    });
+}
+
+const uploadFilesBtn = document.querySelector("[data-upload-files]");
+if (uploadFilesBtn) {
+    uploadFilesBtn.addEventListener("click", () => dom.fileInput.click());
+}
+const uploadFolderBtn = document.querySelector("[data-upload-folder]");
+if (uploadFolderBtn && folderInput) {
+    uploadFolderBtn.addEventListener("click", () => folderInput.click());
+}
+
 dom.dropzone.addEventListener("dragover", (event) => {
     event.preventDefault();
     dom.dropzone.dataset.drag = "true";
@@ -839,67 +863,37 @@ document.querySelectorAll("[data-game]").forEach(btn => {
 // Code editor + in-browser compile
 // ---------------------------------------------------------------------------
 
-const EXAMPLES = {
-    hello: `module Hello\n    intent = "minimal effect demo — print a greeting to console"\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print("Hello, World!")\n    Console.print("Hello from the Aver Playground!")\n`,
-    calculator: `module Calculator\n    intent = "tiny arithmetic API with verified contracts"\n\nfn add(a: Int, b: Int) -> Int\n    ? "integer sum"\n    a + b\n\nverify add\n    add(1, 2) => 3\n    add(0, 0) => 0\n    add(0 - 1, 1) => 0\n\nfn divide(a: Int, b: Int) -> Result<Int, String>\n    ? "integer division; returns Err on divide-by-zero"\n    match b\n        0 -> Result.Err("Division by zero")\n        _ -> Result.Ok(a / b)\n\nverify divide\n    divide(10, 2) => Result.Ok(5)\n    divide(10, 0) => Result.Err("Division by zero")\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(add(2, 3))\n    Console.print(divide(10, 2))\n    Console.print(divide(10, 0))\n`,
-    fibonacci: `module Fibonacci\n    intent = "naive Fibonacci — showcases verify on a recursive function"\n\nfn fib(n: Int) -> Int\n    ? "naive Fibonacci — O(2^n), good for demonstrating verify, not for production"\n    match n\n        0 -> 0\n        1 -> 1\n        _ -> fib(n - 1) + fib(n - 2)\n\nverify fib\n    fib(0) => 0\n    fib(1) => 1\n    fib(2) => 1\n    fib(10) => 55\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print("fib(10) = {fib(10)}")\n    Console.print("fib(20) = {fib(20)}")\n`,
-    shapes: `module Shapes\n    intent = "sum-type driven area calculation"\n\ntype Shape\n    Circle(Float)\n    Rectangle(Float, Float)\n\nfn area(shape: Shape) -> Float\n    ? "area for a Shape variant"\n    match shape\n        Shape.Circle(r) -> 3.14159 * r * r\n        Shape.Rectangle(w, h) -> w * h\n\nverify area\n    area(Shape.Circle(1.0)) => 3.14159\n    area(Shape.Rectangle(3.0, 4.0)) => 12.0\n    area(Shape.Rectangle(0.0, 5.0)) => 0.0\n\nfn main() -> Unit\n    ! [Console.print]\n    c = Shape.Circle(5.0)\n    r = Shape.Rectangle(3.0, 4.0)\n    Console.print("circle area = {Float.toString(area(c))}")\n    Console.print("rect area = {Float.toString(area(r))}")\n`,
-    quicksort: `module Quicksort\n    intent = "classic quicksort with verified partition helpers"\n\nfn filterLess(xs: List<Int>, pivot: Int) -> List<Int>\n    ? "keep elements strictly less than pivot"\n    match xs\n        [] -> []\n        [h, ..t] -> match h < pivot\n            true -> List.prepend(h, filterLess(t, pivot))\n            false -> filterLess(t, pivot)\n\nverify filterLess\n    filterLess([], 3) => []\n    filterLess([1, 5, 2, 8], 3) => [1, 2]\n    filterLess([5, 5, 5], 5) => []\n\nfn filterGte(xs: List<Int>, pivot: Int) -> List<Int>\n    ? "keep elements greater than or equal to pivot"\n    match xs\n        [] -> []\n        [h, ..t] -> match h >= pivot\n            true -> List.prepend(h, filterGte(t, pivot))\n            false -> filterGte(t, pivot)\n\nverify filterGte\n    filterGte([], 3) => []\n    filterGte([1, 5, 2, 8], 3) => [5, 8]\n    filterGte([5, 5, 5], 5) => [5, 5, 5]\n\nfn quicksort(xs: List<Int>) -> List<Int>\n    ? "classic quicksort: pivot + recurse on less/gte partitions"\n    match xs\n        [] -> []\n        [pivot, ..rest] -> List.concat(List.concat(quicksort(filterLess(rest, pivot)), [pivot]), quicksort(filterGte(rest, pivot)))\n\nverify quicksort\n    quicksort([]) => []\n    quicksort([3, 1, 2]) => [1, 2, 3]\n    quicksort([5, 5, 5]) => [5, 5, 5]\n\nfn main() -> Unit\n    ! [Console.print]\n    input = [38, 27, 43, 3, 9, 82, 10]\n    Console.print("input:  {input}")\n    Console.print("sorted: {quicksort(input)}")\n`,
-    rle: `module Rle\n    intent = "run-length encoding: compress consecutive repeats"\n\ntype RlePair\n    Pair(String, Int)\n\nfn encode(chars: List<String>, current: String, count: Int, acc: List<RlePair>) -> List<RlePair>\n    ? "run-length encoding accumulator loop"\n    match chars\n        [] -> List.reverse(List.prepend(RlePair.Pair(current, count), acc))\n        [h, ..t] -> match h == current\n            true -> encode(t, current, count + 1, acc)\n            false -> encode(t, h, 1, List.prepend(RlePair.Pair(current, count), acc))\n\nverify encode\n    encode([], "a", 3, []) => [RlePair.Pair("a", 3)]\n    encode(["a"], "a", 1, []) => [RlePair.Pair("a", 2)]\n\nfn rleEncode(input: String) -> List<RlePair>\n    ? "run-length encode a string: 'aaab' -> [(a,3),(b,1)]"\n    chars = String.chars(input)\n    match chars\n        [] -> []\n        [first, ..rest] -> encode(rest, first, 1, [])\n\nverify rleEncode\n    rleEncode("") => []\n    rleEncode("aaa") => [RlePair.Pair("a", 3)]\n    rleEncode("aab") => [RlePair.Pair("a", 2), RlePair.Pair("b", 1)]\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(rleEncode("aaabbbccddddee"))\n`,
+// Examples live as `.av` files under `sources/examples/`; the option
+// list in index.html is the canonical slug catalogue. We fetch lazily
+// on first activation and cache by slug so repeated tab loads are
+// free. Keeping examples on disk means they parse with Aver tooling
+// (fmt, check) and survive without JSON-escaping pain.
+const EXAMPLE_CACHE = new Map();
+const EXAMPLE_SLUGS = new Set();
+function refreshExampleSlugs() {
+    EXAMPLE_SLUGS.clear();
+    document
+        .querySelectorAll("[data-examples] option[value]")
+        .forEach((opt) => {
+            const v = opt.getAttribute("value");
+            if (v) EXAMPLE_SLUGS.add(v);
+        });
+}
+refreshExampleSlugs();
 
-    // ─── Trust-loop starters ──────────────────────────────────────────
-    // Each demonstrates one leg of Aver's thesis: effects → verify →
-    // decisions → errors-that-teach. Deep-linkable via ?example=<slug>.
-
-    "effect-violation": `module Starter\n    intent = "greet the user — but forgets to declare the effect"\n\nfn greet() -> Unit\n    Console.print("hello, world")\n\nfn main() -> Unit\n    ! [Console.print]\n    greet()\n`,
-
-    "verify-first": `module Starter\n    intent = "pure arithmetic, locked by verify"\n\nfn add(a: Int, b: Int) -> Int\n    ? "sum of two ints"\n    a + b\n\nverify add\n    add(1, 2) => 3\n    add(2, 3) => 5\n    add(0, 0) => 0\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(add(2, 3))\n`,
-
-    "decision-block": `module Payments\n    intent = "transactions as append-only log"\n\ndecision ImmutableTransactions\n    date = "2026-04-20"\n    reason =\n        "Audit trail requires transactions be append-only and non-modifiable."\n        "Mutable ledger would break compliance with SOX."\n    chosen = "ImmutableWithVersioning"\n    rejected = ["MutableLedger"]\n    impacts = [createTransaction]\n\nfn createTransaction(amount: Int) -> Int\n    ? "build an immutable transaction record"\n    amount\n\nverify createTransaction\n    createTransaction(100) => 100\n    createTransaction(0) => 0\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(createTransaction(100))\n`,
-
-    "result-monadic": `module Starter\n    intent = "idiomatic Result with ? short-circuit"\n\nfn parseNumber(s: String) -> Result<Int, String>\n    ? "parse a string into an int, with a friendly error"\n    match Int.fromString(s)\n        Result.Ok(n) -> Result.Ok(n)\n        Result.Err(_) -> Result.Err("not a number: {s}")\n\nverify parseNumber\n    parseNumber("42") => Result.Ok(42)\n    parseNumber("") => Result.Err("not a number: ")\n    parseNumber("abc") => Result.Err("not a number: abc")\n\nfn doubleParsed(s: String) -> Result<Int, String>\n    ? "parse then double; propagates parse errors via ?"\n    n = parseNumber(s)?\n    Result.Ok(n + n)\n\nverify doubleParsed\n    doubleParsed("21") => Result.Ok(42)\n    doubleParsed("oops") => Result.Err("not a number: oops")\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(doubleParsed("21"))\n    Console.print(doubleParsed("oops"))\n`,
-
-    "independence": `module Independence\n    intent =\n        "Two effectful branches run under \`?!\` — Aver may reorder them at runtime."\n        "Hit ⏺ Record: the Trace panel groups both under one independent product,"\n        "so replay matches either order. Shuffle the cards inside the group and try Replay."\n\nfn announceA() -> Result<Int, String>\n    ? "first independent branch — prints and returns 10"\n    ! [Console.print]\n    Console.print("branch A")\n    Result.Ok(10)\n\nfn announceB() -> Result<Int, String>\n    ? "second independent branch — prints and returns 20"\n    ! [Console.print]\n    Console.print("branch B")\n    Result.Ok(20)\n\nfn main() -> Result<Unit, String>\n    ! [Console.print]\n    _pair = (announceA(), announceB())?!\n    Console.print("done — both branches ran")\n    Result.Ok(Unit)\n`,
-
-    "fanout": `module Fanout\n    intent =\n        "Three parallel fetches — and the third is itself a nested \`?!\`."\n        "Trace panel shows nested independence: outer branches 0/1/2, and"\n        "branch 2 contains its own independent product inside (2.0 / 2.1)."\n        "Record, then try reordering within an inner branch vs moving the whole inner group."\n\nfn fetchOne(tag: String) -> Result<Int, String>\n    ? "one independent remote call"\n    ! [Console.print]\n    Console.print("fetch {tag}")\n    Result.Ok(String.len(tag))\n\nfn fetchPair() -> Result<(Int, Int), String>\n    ? "inner pair — independent fetch of two"\n    ! [Console.print]\n    xy = (fetchOne("inner-A"), fetchOne("inner-B"))?!\n    Result.Ok(xy)\n\nfn main() -> Result<Unit, String>\n    ! [Console.print]\n    _all = (fetchOne("outer-1"), fetchOne("outer-2"), fetchPair())?!\n    Console.print("all fan-outs completed")\n    Result.Ok(Unit)\n`,
-
-    "rec-fanout": `module RecFanout\n    intent =\n        "Recursive fan-out: a list of N items becomes N concurrent leaves"\n        "via \`?!\` pairing head against the recursion on the tail. Ten items"\n        "expand into a cascade of nested \`?!\` — every leaf is independent."\n        "Record to see the cascade; Replay works up to depth 2 today."\n\nfn fetch(tag: String) -> Result<Int, String>\n    ? "one independent leaf call"\n    ! [Console.print]\n    Console.print("fetch {tag}")\n    Result.Ok(String.len(tag))\n\nfn fanoutStep(x: String, rest: List<String>) -> Result<Int, String>\n    ? "pair head with recursive tail under ?!"\n    ! [Console.print]\n    pair = (fetch(x), fanout(rest))?!\n    match pair\n        (h, t) -> Result.Ok(h + t)\n\nfn fanout(items: List<String>) -> Result<Int, String>\n    ? "recursive fan-out over a list"\n    ! [Console.print]\n    match items\n        [] -> Result.Ok(0)\n        [x, ..rest] -> fanoutStep(x, rest)\n\nfn main() -> Unit\n    ! [Console.print]\n    result = fanout(["01", "02", "03", "04", "05", "06", "07", "08", "09", "10"])\n    match result\n        Result.Ok(n) -> Console.print("total = {n}")\n        Result.Err(e) -> Console.print("error: {e}")\n`,
-
-    // Oracle v1: effectful fns become first-class in aver proof.
-    // `verify … law` quantifies over the oracle; `verify … trace`
-    // stays for concrete .result / .trace.* runtime checks.
-    oracle: `module OracleDemo
-    intent =
-        "Showcase Aver Oracle v1: effectful fns become first-class in proof."
-        "The law exports as a theorem over every Random.int oracle."
-        "The trace block checks one concrete runtime trace."
-
-fn roll() -> Int
-    ? "Roll a six-sided die."
-    ! [Random.int]
-    Random.int(1, 6)
-
-fn highDie(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int
-    ? "Stub oracle: always max of the range."
-    hi
-
-verify roll law usesOracle
-    given rnd: Random.int = [highDie]
-    roll() => rnd(BranchPath.Root, 0, 1, 6)
-
-verify roll trace
-    given rnd: Random.int = [highDie]
-    rolled = roll()
-    rolled.result => rnd(BranchPath.Root, 0, 1, 6)
-    rolled.trace.length() => 1
-    rolled.trace.contains(Random.int(1, 6)) => true
-
-fn main() -> Unit
-    ! [Console.print, Random.int]
-    Console.print("live roll: {roll()}")
-    Console.print("live roll: {roll()}")
-`,
-};
+async function getExample(slug) {
+    if (!EXAMPLE_SLUGS.has(slug)) return null;
+    if (EXAMPLE_CACHE.has(slug)) return EXAMPLE_CACHE.get(slug);
+    try {
+        const res = await fetch(`./sources/examples/${slug}.av`, { cache: "no-cache" });
+        if (!res.ok) return null;
+        const text = await res.text();
+        EXAMPLE_CACHE.set(slug, text);
+        return text;
+    } catch {
+        return null;
+    }
+}
 
 const codeEditor = document.querySelector("[data-code-editor]");
 
@@ -959,6 +953,29 @@ function renderTabs() {
         addBtn.title = "Create a new .av tab in the editor";
         addBtn.addEventListener("click", newFilePrompt);
         dom.editorTabs.appendChild(addBtn);
+
+        // Upload entry points moved off the toolbar header into the
+        // tab bar — keeps the top row uncluttered and groups all
+        // "tab origin" actions together (new blank, files from disk,
+        // whole folder).
+        const filesBtn = document.createElement("button");
+        filesBtn.type = "button";
+        filesBtn.className = "tab-new";
+        filesBtn.textContent = "↑ files";
+        filesBtn.title = "Upload .av · .wasm · .replay.json file(s) from disk";
+        filesBtn.addEventListener("click", () => dom.fileInput.click());
+        dom.editorTabs.appendChild(filesBtn);
+
+        const folderBtn = document.createElement("button");
+        folderBtn.type = "button";
+        folderBtn.className = "tab-new";
+        folderBtn.textContent = "↑ folder";
+        folderBtn.title = "Upload an entire folder — every .av inside lands as its own tab";
+        folderBtn.addEventListener("click", () => {
+            const folderInput = document.querySelector("[data-folder-input]");
+            if (folderInput) folderInput.click();
+        });
+        dom.editorTabs.appendChild(folderBtn);
     }
 }
 
@@ -1187,8 +1204,8 @@ function exampleTabName(key) {
     return `${pascal || "Playground"}.av`;
 }
 
-function loadExampleAsTab(key, options = {}) {
-    const source = EXAMPLES[key];
+async function loadExampleAsTab(key, options = {}) {
+    const source = await getExample(key);
     if (!source) return;
     const writeUrl = options.writeUrl !== false;
     leaveWasmOnlyMode();
@@ -1262,7 +1279,7 @@ if (codeEditor) {
 if (examplesSelect) {
     examplesSelect.addEventListener("change", () => {
         const name = examplesSelect.value;
-        if (EXAMPLES[name]) loadExampleAsTab(name);
+        if (EXAMPLE_SLUGS.has(name)) loadExampleAsTab(name);
     });
 }
 
@@ -1367,6 +1384,7 @@ if (verifyBtn) {
 
             const verifyFailSlugs = new Set([
                 "verify-mismatch",
+                "verify-hostile-mismatch",
                 "verify-runtime-error",
                 "verify-unexpected-err",
             ]);
@@ -3036,7 +3054,8 @@ function parseAuditBundle(json) {
     const bundle = JSON.parse(json);
     const diagnostics = bundle.diagnostics || [];
     const verifyFailSlugs = new Set([
-        "verify-mismatch", "verify-runtime-error", "verify-unexpected-err",
+        "verify-mismatch", "verify-hostile-mismatch",
+        "verify-runtime-error", "verify-unexpected-err",
     ]);
     const formatSlugs = new Set(["needs-format"]);
     const verifyFailures = diagnostics.filter((d) => verifyFailSlugs.has(d.slug));
@@ -3052,17 +3071,83 @@ function parseAuditBundle(json) {
     };
 }
 
+/// Collapse verify failures that differ only by hostile profile.
+/// Each Diagnostic from the server may already carry multiple
+/// `("origin", ...)` field entries (server-side grouped one
+/// diagnostic per case) or just one (legacy path). This function
+/// covers both: collect every origin from each diag's fields,
+/// then re-group across diags by (slug, block, case, line) so
+/// the renderer always sees one entry per case with a single
+/// `_origins` list.
+function groupVerifyFailures(failures) {
+    const groups = new Map();
+    const order = [];
+    for (const d of failures) {
+        const fields = Array.isArray(d.fields) ? d.fields : [];
+        const get = (k) => fields.find((f) => f[0] === k)?.[1];
+        const block = get("block") || "";
+        const caseExpr = get("case") || "";
+        const allOrigins = fields.filter((f) => f[0] === "origin").map((f) => f[1]);
+        const key = `${d.slug}|${block}|${caseExpr}|${d.span?.line ?? ""}`;
+        if (!groups.has(key)) {
+            const cloned = { ...d, fields: fields.slice() };
+            cloned._origins = [];
+            cloned._count = 0;
+            groups.set(key, cloned);
+            order.push(key);
+        }
+        const g = groups.get(key);
+        g._count += 1;
+        for (const o of allOrigins) {
+            if (!g._origins.includes(o)) g._origins.push(o);
+        }
+    }
+    return order.map((k) => groups.get(k));
+}
+
 function renderDiag(container, d) {
     const isErr = d.severity === "error" || d.severity === "fail";
     const cls = isErr ? "diag-err" : "diag-warn";
     const head = document.createElement("div");
     head.className = `diag-line ${cls}`;
-    head.textContent = `${d.severity}[${d.slug}]: ${d.summary}`;
+    const groupSuffix = d._count > 1 ? `   (×${d._count})` : "";
+    head.textContent = `${d.severity}[${d.slug}]: ${d.summary}${groupSuffix}`;
     container.appendChild(head);
     const meta = document.createElement("div");
     meta.className = "diag-line diag-meta";
     meta.textContent = `at: ${d.span?.file || "playground"}:${d.span?.line || 0}:${d.span?.col || 0}`;
     container.appendChild(meta);
+    // Show non-origin fields (block / case / expected / actual / given /
+    // law) so the user sees what actually mismatched. Skip "origin"
+    // because grouped diags surface it through `_origins` below.
+    const fields = Array.isArray(d.fields) ? d.fields : [];
+    for (const [key, val] of fields) {
+        if (key === "origin") continue;
+        const f = document.createElement("div");
+        f.className = "diag-line diag-meta";
+        f.textContent = `${key}: ${val}`;
+        container.appendChild(f);
+    }
+    // For grouped failures (one case broke under multiple hostile
+    // profiles), list every world the case failed under. One line
+    // per profile so the user sees the spread without scrolling.
+    if (Array.isArray(d._origins) && d._origins.length > 0) {
+        const label = document.createElement("div");
+        label.className = "diag-line diag-meta";
+        label.textContent =
+            d._origins.length === 1
+                ? `under: ${d._origins[0]}`
+                : `under ${d._origins.length} adversarial worlds:`;
+        container.appendChild(label);
+        if (d._origins.length > 1) {
+            for (const o of d._origins) {
+                const li = document.createElement("div");
+                li.className = "diag-line diag-meta diag-origin-item";
+                li.textContent = `  • ${o}`;
+                container.appendChild(li);
+            }
+        }
+    }
     if (d.repair?.primary) {
         const rep = document.createElement("div");
         rep.className = "diag-line diag-repair";
@@ -3148,7 +3233,7 @@ function renderDiagRegions(container, d) {
     }
 }
 
-function buildSection({ key, label, status, statusText, countText, teaching, issues, actions, extras }) {
+function buildSection({ key, label, status, statusText, countText, teaching, issues, actions, extras, issuesCap }) {
     const section = document.createElement("details");
     section.className = "audit-section";
     section.dataset.section = key;
@@ -3162,8 +3247,9 @@ function buildSection({ key, label, status, statusText, countText, teaching, iss
     `;
     for (const a of actions || []) {
         const btn = document.createElement("button");
-        btn.className = "rerun-btn";
+        btn.className = "rerun-btn" + (a.extraClass ? ` ${a.extraClass}` : "");
         btn.textContent = a.label;
+        if (a.title) btn.title = a.title;
         btn.addEventListener("click", (e) => {
             e.stopPropagation();
             e.preventDefault();
@@ -3183,7 +3269,28 @@ function buildSection({ key, label, status, statusText, countText, teaching, iss
     }
     if (extras) extras(body);
     if (issues && issues.length > 0) {
-        for (const d of issues) renderDiag(body, d);
+        // Cap noisy sections (typically Verify under --hostile, where
+        // a single law breaks across N adversarial profiles and each
+        // case re-prints the same repair text + snippet). Show the
+        // first `issuesCap` diags inline; collapse the rest behind a
+        // "+N more — click to expand" button that swaps in the full
+        // list when clicked.
+        const cap = issuesCap ?? Infinity;
+        const visible = issues.slice(0, cap);
+        const hidden = issues.slice(cap);
+        for (const d of visible) renderDiag(body, d);
+        if (hidden.length > 0) {
+            const more = document.createElement("button");
+            more.type = "button";
+            more.className = "diag-expand-more";
+            more.textContent = `+ ${hidden.length} more failure${hidden.length === 1 ? "" : "s"} — click to expand`;
+            more.title = "Hostile expansion produces one diagnostic per (case × profile) combination. The first few cover the shape; click to see every individual failure.";
+            more.addEventListener("click", () => {
+                more.remove();
+                for (const d of hidden) renderDiag(body, d);
+            });
+            body.appendChild(more);
+        }
     } else if (!extras) {
         const ok = document.createElement("div");
         ok.className = "diag-line diag-ok";
@@ -3221,15 +3328,59 @@ function renderVerifySection(data, actions) {
         .reduce((acc, b) => acc + b.passed, 0);
     const verifyTotal = (verifySummary?.blocks || [])
         .reduce((acc, b) => acc + b.total, 0);
+    // Hostile re-run lives on the verify section header alongside
+    // ↻ re-run — it's the verify-specific axis, no reason to attach
+    // it to the whole audit panel. Hidden when there are no verify
+    // blocks; flips its label/colour based on current mode.
+    const sectionActionsWithHostile = [...actions];
+    if (verifyTotal > 0) {
+        const hostileToggle = document.querySelector("[data-hostile-toggle]");
+        const hostileOn = !!(hostileToggle && hostileToggle.checked);
+        sectionActionsWithHostile.push({
+            label: hostileOn ? "↻ drop --hostile" : "↻ re-run with --hostile",
+            title: hostileOn
+                ? "Re-run verify on declared values only — drops the adversarial expansion."
+                : "Extend your declared cases with adversarial worlds. Every typed `given` " +
+                  "(even Int) gets the per-type boundary set on top of your values; every " +
+                  "classified effect (Time, Random, Disk, Http, Tcp, …) gets its profile " +
+                  "cartesian on top of your stub. Reveals laws that hold under what you " +
+                  "wrote but not under the worlds your code will actually meet.",
+            fn: () => {
+                if (hostileToggle) hostileToggle.checked = !hostileOn;
+                document.querySelector("[data-audit]")?.click();
+            },
+            extraClass: "audit-action-hostile",
+        });
+    }
+    // Group verify failures by (block, case, slug). Hostile mode
+    // produces one diagnostic per (case × profile) combination, but
+    // most of those are the same case breaking under a different
+    // adversarial world — repair text and snippet are identical.
+    // Group them so the user reads "this case failed under these N
+    // profiles" instead of N separate entries with the same repair.
+    const groupedFailures = groupVerifyFailures(verifyFailures);
+    // Effective denominator excludes Aver's base-fail-driven skips —
+    // those weren't run, so counting them as part of the "X out of Y
+    // passed" denominator reads worse than the actual coverage. `when`-
+    // skipped cases also don't run, but the user *wrote* the
+    // precondition that filtered them, so they're meaningful denominators.
+    const skippedByBase = (verifySummary?.blocks || [])
+        .reduce((acc, b) => acc + (b.skipped_after_base_fail || 0), 0);
+    const effectiveTotal = verifyTotal - skippedByBase;
+    const baseSkipTail = skippedByBase > 0
+        ? ` (+${skippedByBase} pre-empted; base case already failed)`
+        : "";
     return buildSection({
         key: "verify",
         label: "Verify — executed contract checks",
         status: verifyFailed > 0 ? "fail" : (verifyTotal > 0 ? "pass" : "warn"),
         statusText: verifyFailed > 0 ? "✗" : (verifyTotal > 0 ? "✓" : "—"),
-        countText: verifyTotal > 0 ? `${verifyPassed}/${verifyTotal} passed` : "no verify blocks",
+        countText: verifyTotal > 0
+            ? `${verifyPassed}/${effectiveTotal} passed${baseSkipTail}`
+            : "no verify blocks",
         teaching: "Each `verify` block's cases run in the VM. Pass rate tells you how well your function matches the spec you wrote alongside it. Verify is Aver's core contract.",
-        issues: verifyFailures,
-        actions,
+        issues: groupedFailures,
+        actions: sectionActionsWithHostile,
         extras: (body) => {
             if (!verifySummary?.blocks?.length) {
                 const none = document.createElement("div");
@@ -3243,10 +3394,16 @@ function renderVerifySection(data, actions) {
                 const cls = b.failed > 0 ? "diag-err" : "diag-ok";
                 line.className = `diag-line ${cls}`;
                 const tag = b.failed > 0 ? "✗" : "✓";
-                const breakdown = b.skipped > 0
-                    ? `${b.passed}/${b.total} passed, ${b.skipped} skipped`
-                    : `${b.passed}/${b.total} passed`;
-                line.textContent = `${tag} ${b.name}  ${breakdown}`;
+                const baseSkipped = b.skipped_after_base_fail || 0;
+                const whenSkipped = b.skipped_by_when || 0;
+                const effective = b.total - baseSkipped;
+                const parts = [`${b.passed}/${effective} passed`];
+                if (b.failed > 0) parts.push(`${b.failed} failed`);
+                if (whenSkipped > 0) parts.push(`${whenSkipped} skipped by \`when\``);
+                if (baseSkipped > 0) {
+                    parts.push(`${baseSkipped} pre-empted (base case already failed)`);
+                }
+                line.textContent = `${tag} ${b.name}  ${parts.join(", ")}`;
                 body.appendChild(line);
             }
         },
@@ -3386,7 +3543,7 @@ function updateAuditStatus(data) {
 }
 
 if (auditBtn) {
-    auditBtn.addEventListener("click", async () => {
+    auditBtn.addEventListener("click", async (event) => {
         if (state.wasmOnly) {
             setStatus("No source — drop .av or folder first.", "error");
             return;
@@ -3399,20 +3556,36 @@ if (auditBtn) {
         clearOutput();
         clearCompileMeta();
 
+        const hostileToggle = document.querySelector("[data-hostile-toggle]");
+        // Plain Audit click resets to declared mode. The hostile mode
+        // is only entered via the in-panel "↻ Re-run with --hostile"
+        // CTA, which programmatically flips the checkbox before
+        // re-firing this handler. Detect that synthetic click via
+        // event.detail (== 0 for programmatic click() calls; native
+        // user clicks have detail >= 1).
+        const isProgrammaticRerun = event && event.detail === 0;
+        if (!isProgrammaticRerun && hostileToggle) {
+            hostileToggle.checked = false;
+        }
+        const hostile = !!(hostileToggle && hostileToggle.checked);
+        const auditKind = hostile ? "audit_hostile" : "audit";
+
         try {
             const comp = await loadCompiler();
-            setStatus("Auditing…", "info");
-            const json = runAnalysis(comp, "audit", source);
+            setStatus(hostile ? "Auditing (hostile)…" : "Auditing…", "info");
+            const json = runAnalysis(comp, auditKind, source);
             const data = parseAuditBundle(json);
 
             const panel = document.createElement("div");
-            panel.className = "audit-panel";
+            panel.className = hostile ? "audit-panel hostile-mode" : "audit-panel";
 
             const header = document.createElement("div");
             header.className = "audit-header-row";
             const title = document.createElement("span");
             title.className = "title";
-            title.textContent = "Audit — 3-axis health report";
+            title.textContent = hostile
+                ? "Audit — hostile world engaged"
+                : "Audit — 3-axis health report";
             header.appendChild(title);
             const bundle = JSON.parse(json);
             header.appendChild(makeDownloadButton(
@@ -3422,9 +3595,27 @@ if (auditBtn) {
             ));
             panel.appendChild(header);
 
+            // Easter egg — when hostile mode flips on, narrate it.
+            // One short line at the top of the report, dashed red bar
+            // and the same red tint as the hostile-mode panel border.
+            // "world has been substituted" reads like the file got
+            // its reality knocked sideways, which is exactly what
+            // happened to the oracle stubs and the typed `given`
+            // domains.
+            if (hostile) {
+                const egg = document.createElement("div");
+                egg.className = "hostile-easter-egg";
+                egg.textContent =
+                    "// extending your cases with all the nasty corner cases — " +
+                    "even an `Int` is not safe. clocks frozen. randoms collapsed. " +
+                    "disks burning. let's see what your law says now.";
+                panel.appendChild(egg);
+            }
+
             panel.appendChild(renderStaticSection(data, sectionActions("static")));
             panel.appendChild(renderVerifySection(data, sectionActions("verify")));
             panel.appendChild(renderFormatSection(data, sectionActions("format")));
+
             dom.console.appendChild(panel);
 
             updateAuditStatus(data);
@@ -3699,7 +3890,7 @@ if (urlGame) {
 // Auto-load starter from ?example= URL parameter. Shareable link that
 // drops the user straight into a trust-loop demo.
 const urlExample = new URLSearchParams(window.location.search).get("example");
-if (urlExample && EXAMPLES[urlExample] && codeEditor) {
+if (urlExample && EXAMPLE_SLUGS.has(urlExample) && codeEditor) {
     loadExampleAsTab(urlExample);
     if (examplesSelect) examplesSelect.value = urlExample;
 }

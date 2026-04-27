@@ -2,6 +2,7 @@ module Combat
     intent =
         "Combat and entity management: damage, death, AI movement, spawning."
     depends [Types]
+    effects []
 
 fn applyDamageToEntity(entity: Entity, damage: Int) -> Entity
     ? "Reduce entity HP by damage amount"

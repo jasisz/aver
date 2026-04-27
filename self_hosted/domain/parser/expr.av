@@ -5,6 +5,7 @@ module Expr
         "Handles precedence climbing: comparison > additive > multiplicative > atom."
         "Also handles string interpolation, list/tuple/record literals, field access, function calls, and match expressions."
     exposes [parseExpr, parsePostfixQuestion, parseCmpExprTail, parseAddExprTail, parseMulExprTail, parseIdentOrCall]
+    effects []
 
 fn parseExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
     ? "Parse an expression: comparison level, then optional ? postfix."

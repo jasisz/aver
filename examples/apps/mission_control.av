@@ -5,6 +5,7 @@ module MissionControl
         "Effectful shell: print final telemetry and history (great with --record/replay)."
         "Built in this session by Codex."
     exposes [Cmd, ShipState, parseCommand, runPlan, main]
+    effects [Console]
 
 decision FuelSafetyInvariant
     date = "2026-03-02"

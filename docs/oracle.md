@@ -78,6 +78,7 @@ Oracle has a fixed built-in effect set:
 |---|---|---|
 | `Args` | `get` | snapshot |
 | `Env` | `get` | snapshot |
+| `Env` | `set` | output |
 | `Console` | `readLine` | generative |
 | `Random` | `int`, `float` | generative |
 | `Time` | `now`, `unixMs` | generative |
@@ -86,23 +87,48 @@ Oracle has a fixed built-in effect set:
 | `Disk` | `writeText`, `appendText`, `delete`, `deleteDir`, `makeDir` | generative + output |
 | `Http` | `get`, `head`, `delete`, `post`, `put`, `patch` | generative + output |
 | `Tcp` | `send`, `ping` | generative + output |
+| `Tcp` | `connect`, `readLine`, `writeLine`, `close` | generative + output |
 | `Console` | `print`, `error`, `warn` | output |
 | `Terminal` | `readKey` | generative |
+| `Terminal` | `size` | snapshot |
 | `Terminal` | `clear`, `moveTo`, `print`, `hideCursor`, `showCursor`, `flush` | output |
+| `Terminal` | `enableRawMode`, `disableRawMode`, `setColor`, `resetColor` | output |
 
 Anything outside this set is not modeled by Oracle.
 
-Important boundary details:
+## Effect stubs are stateless
+
+> Prove the model, not the world.
+
+Oracle stubs do not imply state. A `Disk.writeText("a.txt", "hi")` in the trace does **not** make a later `Disk.readText("a.txt")` return `"hi"`. An `Env.set("KEY", "v")` does **not** make a later `Env.get("KEY")` return `"v"`. A first `Time.now()` call does **not** constrain the value of a second one to be greater. A `Tcp.writeLine(c, "x")` does **not** affect what `Tcp.readLine(c)` returns next.
+
+This is by design. Wall clocks are not monotonic in the real world (NTP, leap seconds, suspend/resume, VM clock skew). Filesystems are not transactional. TCP connections drop, return partial reads, lie about delivery. **Aver does not pretend external services have nicer laws than the platform actually promises.** A Ledger-style "stateful capability model" would let you prove read-after-write consistency on `Disk.*` — and then your proof claims a guarantee the OS never gave.
+
+The cure is functional core / imperative shell:
+
+- **State you own** (a `FileStore`, a `PaymentLedger`, a `WorkflowState`) lives in pure user code as ordinary data. Read-after-write consistency is a property of that data model, proven by `verify` over the pure functions.
+- **The world you don't own** (`Disk.*`, `Time.*`, `Tcp.*`, `Http.*`) stays at the boundary. Oracle stubs return what the test says they return, independent of preceding effect calls.
+
+Two runnable examples ship the pattern:
+
+- `examples/formal/file_store_pure_core.av` + `examples/formal/file_store_shell.av` — `FileStore` pure data model with read-after-write laws proven over pure code; `Disk.writeText` only at the boundary as a stateless oracle.
+- `examples/formal/clock_as_data.av` — time-dependent logic with `nowMs` passed as a parameter; `Time.unixMs` only at the boundary.
+
+If a `verify` law assumes ordering, accumulation, or memory across effect calls, it does not belong in Oracle — it belongs in the pure core.
+
+Boundary notes:
 
 - `Console.readLine` and `Terminal.readKey` are modeled as generative input:
   the proof receives a deterministic oracle value for each call.
 - Mutating `Disk.*` calls are modeled as operation/result effects: the requested
   operation is emitted to the trace, and success/failure comes from the oracle.
   Oracle does not assert persistent filesystem state after the operation.
-- One-shot `Tcp.send` / `Tcp.ping` follow the same request/result shape. Stateful
-  TCP sessions are not in this model.
-- Terminal drawing calls are output trace events. Terminal mode and color state
-  are not modeled.
+- `Tcp.connect` / `readLine` / `writeLine` / `close` are session methods using an opaque
+  `Tcp.Connection` token. Stubs are stateless: a `writeLine` does not affect what a
+  later `readLine` returns. If the test wants request/response symmetry, encode it
+  explicitly in the stub.
+- Terminal drawing and modal calls are output trace events. Mode (raw / cooked) and
+  color state are not modeled — assert the sequence of trace events instead.
 
 ## Stub signatures
 
@@ -162,7 +188,10 @@ fn().trace                    -- Trace
 fn().trace.length()           -- Int
 fn().trace.event(k)           -- Option<EffectEvent>
 fn().trace.contains(eventLit) -- Bool
+fn().trace.count(method)      -- Int  -- 0.13 Limit
 ```
+
+`.trace.count(M)` returns the number of trace events whose method matches `M` (an effect-method reference like `Random.int` or a call literal like `Console.print("rolled")`). It complements `.contains` (boolean any-match) with a quantitative form so laws can pin "this fn calls the API exactly once" or "no extra Disk reads under hostile profiles".
 
 Tree navigation for `!` / `?!` groups:
 
@@ -261,22 +290,255 @@ This is not a bug — it's the design. `verify` answers "does this hold for the 
 
 When a `verify` passes but `aver proof` rejects, the law is **stub-specific** — true under the chosen stubs, not universal. Either rewrite the law so it doesn't depend on hidden stub structure (e.g. assert against `rnd(...)` directly instead of a constant), or keep it as a sample-only check and don't export. `verify <fn> trace` is the cases form when the goal is "given this concrete stub, here's what I expect"; it doesn't export and doesn't pretend to.
 
+## Hostile mode (`aver verify --hostile`)
+
+> _In laws, examples are not limits. Preconditions are._
+
+### Three roles, one frame
+
+Read these together — every other detail in this section follows from them:
+
+- **`given` is your chosen world.** The stub or value list you wrote is
+  the world the law was demonstrated in. `aver verify` runs the law
+  there.
+- **Hostile is "what if your world was wrong?"** Under `--hostile`,
+  Aver substitutes adversarial profiles in for your `given` — frozen
+  clocks, empty disks, network down, rolls stuck at the bound — and
+  asks the same law to hold there too.
+- **`when` is the filter that says which worlds this law assumes.**
+  `when clock(root, 1) > clock(root, 0)` declares "this law assumes a
+  monotonic clock". Hostile profiles that violate the assumption are
+  skipped; the law is exercised only against worlds it actually
+  promised to hold for.
+
+A `verify ... law` block is a universal claim: "this holds for every
+value of the `given` clauses' types". The declared set
+(`given n: Int = [1, 5, 100]`) is the *exploration domain* — values you
+think will exercise the law — but the claim itself ranges over the
+whole type. `--hostile` checks that.
+
+`--hostile` works on **two axes**, both tied to law form:
+
+1. **Value-side** — on `verify <fn> law <name>` (with or without
+   `trace`). Typed `given` clauses get augmented with the per-type
+   boundary set. Law form is a universal claim; hostile checks the
+   boundary the user did not exercise.
+2. **Effect-side** — also on `verify <fn> law <name>` (with or without
+   `trace`). Classified non-`Output` effects the fn declares get
+   multiplied by an adversarial profile cartesian. The user's `given
+   <Effect>` stub is one chosen world; hostile asks "what if you chose
+   wrong?" by overriding the stub with each profile in turn.
+
+| Form | Value-side | Effect-side |
+|---|---|---|
+| `verify <fn>` (plain) | — | — |
+| `verify <fn> trace` (cases-form trace) | — | — |
+| `verify <fn> law <name>` | ✓ | ✓ |
+| `verify <fn> trace law <name>` | ✓ | ✓ |
+
+Cases-form opts out — both plain `verify <fn>` and `verify <fn> trace`
+(no `law`) are fixtures: explicit scenarios with chosen stubs.
+Multiplying a fixture by the adversarial cartesian would turn "this
+scenario" into "every scenario", which is not what the user wrote.
+
+**Value-side boundary sets:**
+
+- `Int`   → `0`, `1`, `-1`, `i64::MIN`, `i64::MAX`
+- `Float` → `0.0`, `1.0`, `-1.0`, `MIN`, `MAX`, `+/-Inf`, `NaN`
+- `Bool`  → both
+- `Str`   → `""`, `"a"`, 1024×`x`, `"\0"` (NUL embedded), multi-byte UTF-8
+- `Unit`  → `Unit`
+
+These augment the declared list — duplicates are dropped, so a value the
+user already wrote is not re-run.
+
+**Effect-side adversarial profiles** (per classified non-`Output` effect):
+
+| Effect | Profiles |
+|---|---|
+| `Time.now` / `Time.unixMs` | `normal` (advancing 1s/call), `frozen` / `frozen_zero`, `epoch` / `saturated`, `backward` (NTP correction), `fast_forward` (leap second / skew) |
+| `Random.int` | `midrange`, `always_min`, `always_max`, `alternating` (per-call min↔max) |
+| `Random.float` | `midrange` (0.5), `always_zero`, `always_one` |
+| `Args.get` | `normal`, `empty`, `many` (edge values like `\0`, `--flag`) |
+| `Env.get` | `normal`, `missing`, `empty` |
+| `Terminal.size` | `normal` (80×24), `minimal` (1×1) |
+| `Disk.readText` / `exists` / `listDir` | `normal` + `always_err` + format-specific (`empty_ok`, `never`, `always`) |
+| `Console.readLine` | `normal`, `eof`, `empty` |
+| `Terminal.readKey` | `normal`, `no_input` |
+| `Http.{get,head,delete,post,put,patch}` | `normal_ok`, `always_err` |
+| `Disk.{writeText,appendText,delete,deleteDir,makeDir}` | `normal_ok`, `always_err` |
+| `Tcp.{send,ping,readLine,writeLine,close}` | `normal_ok`, `always_err` |
+| `Tcp.connect` | `always_err` (lifecycle — connection either holds or doesn't) |
+
+User-given pins are **not** a pre-empt: hostile profiles always layer
+on top, since the user's stub is itself an assumption. The runtime stub
+installer overwrites user-given for the duration of a hostile-profile
+case so the same law gets evaluated under both worlds.
+
+The full cartesian (value-boundary cases × adversarial worlds) is
+capped at `10_000` cases per block — same cap as parser-side declared
+expansion. Over-budget blocks fail with a clear error pointing at the
+law and listing the projected size; tighten the `given` domain, add a
+`when` precondition, or run that block without `--hostile`.
+
+`when` clauses stay binding: a hostile case is dropped if the `when`
+guard returns `false`. That is the line `--hostile` honours — `given`
+ranges are exploration hints, `when` is the law boundary.
+
+### Output
+
+When a hostile-injected case fails, the diagnostic uses a distinct slug
+so CI gates can route declared vs adversarial failures separately:
+
+- `verify-mismatch` — declared world failure, real bug
+- `verify-hostile-mismatch` — adversarial world failure, missing
+  precondition or unpinned effect
+
+```
+fail[verify-hostile-mismatch]: law violated under --hostile expansion
+  at: prog.av:9:1
+  block: isPositive spec alwaysPositive
+  case: isPositive(0) == true
+  expected: true
+  actual: false
+  given: n = 0
+  law: isPositive(n) == true
+  origin: hostile boundary expansion
+  repair: this case isn't in the declared `given` — the claim isn't
+          universal. Either add `when <precondition>` to scope it, or
+          drop `law` form and use `verify <fn>` (cases form, example
+          semantics) with the values you actually meant.
+```
+
+For effect-side hostile (`verify <fn> trace` block, adversarial profile
+overriding the user's oracle stub for that case), `origin` carries the
+profile label. Trace form does not currently support `when` (that
+keyword lives on `law` form's value domain), so the repair speaks to
+the two real options today.
+
+> **`when` as oracle assumption (0.13).** `verify <fn> trace law <name>`
+> supports `when` predicates that reference the effect-given oracle —
+> `when clock(root, 1) > clock(root, 0)` for monotonicity, `when
+> read(root, 1, "f") == Result.Ok("hello")` for read-your-writes. Under
+> `--hostile`, profiles that violate the assumption are *skipped*; the
+> law is checked only under oracle behaviors that satisfy the declared
+> assumption. The guard observes the same oracle the case body sees:
+> for the declared case the user's stub fires, for each hostile-profile
+> case the corresponding profile fn fires. No state model, no session
+> types — just a predicate over oracle outputs at counter indices.
+>
+> **`when` itself must be pure.** Calls like `clock(root, 1)` inside a
+> guard are *queries on the oracle* installed for this case, not runtime
+> effect calls. Don't read this as Aver inspecting the wall clock — the
+> guard is asking the same fn that supplies values to the law body.
+>
+> **Two different concepts share the word "invariant" — keep them
+> apart.** A user-written `when` is an *oracle assumption* (per-law,
+> local, the user states it explicitly). The axiom block emitted into
+> Lean / Dafny by `aver proof` carries *runtime invariants* (global,
+> guaranteed by Aver: `Random.int` respects bounds, `Random.float ∈
+> [0,1]`, `Time.unixMs ≥ 0`). Both feed the proof side, but they sit
+> at different scopes — `when` scopes one law, axioms hold across the
+> whole project.
+
+```
+  origin: effect profile: Time.unixMs/saturated
+  repair: the law passes for the world your `given` stub describes
+          but breaks under this adversarial profile. Three options:
+          (a) adjust the impl to be robust against the profile (it
+          models a real production world — frozen clock, empty disk,
+          network down); (b) declare the oracle assumption with
+          `when` (e.g. `when clock(root, 1) > clock(root, 0)` for
+          monotonicity) so hostile skips profiles that violate it;
+          (c) if the claim really only holds for the one stub you
+          wrote, drop `law` form and use `verify <fn>` cases-form
+          (example semantics) with that stub.
+```
+
+The block summary line breaks the count down by origin:
+
+```
+✗ isPositive spec alwaysPositive      4/7 passed (3/3 declared, 1/4 hostile)
+```
+
+— `3/3 declared` = all values the user wrote pass, `1/4 hostile` = boundary
+expansion found 3 fails. The classic "law is not universal" signal.
+
+JSON (`--json`) carries the same data structurally:
+
+- per-diagnostic `slug` is `verify-hostile-mismatch` (or `verify-mismatch`
+  for declared failures), `from_hostile: true` flag, and
+  `fields[origin] = "hostile boundary expansion"` or
+  `"hostile effect profile: Time.unixMs/saturated"`
+- `verify_summary.blocks[].declared_passed / declared_failed /
+  hostile_passed / hostile_failed` — tooling can split "law regression"
+  (`declared_failed > 0`) from "hostile coverage gap" (`hostile_failed >
+  0 && declared_failed == 0`).
+
+#### jq one-liners
+
+```sh
+# Adversarial-only failures
+aver audit --hostile --json prog.av | head -1 \
+  | jq '.diagnostics[] | select(.slug == "verify-hostile-mismatch")'
+
+# Group by adversarial profile
+aver audit --hostile --json prog.av | head -1 \
+  | jq '[.diagnostics[] | select(.slug == "verify-hostile-mismatch") |
+         .fields[] | select(.[0] == "origin") | .[1]]
+        | group_by(.) | map({profile: .[0], count: length})'
+```
+
+### Two responses to a hostile failure
+
+1. **It IS a precondition you forgot.** Encode it: `when n > 0` makes the
+   law explicit about what `n` it applies to. The hostile case `n = 0`
+   gets filtered, the law passes again, and the precondition is now
+   visible to anyone reading the spec — and to proof export, which can
+   pick it up too.
+
+2. **The values you wrote were *examples*, not a universal claim.** Drop
+   the `law <name>` form and use plain `verify <fn>` (cases form):
+
+   ```aver
+   verify isPositive
+       isPositive(1) => true
+       isPositive(5) => true
+       isPositive(100) => true
+   ```
+
+   Same checks, but now the spec says "these specific cases", not
+   "for all `n`". `--hostile` does not augment `verify <fn>` cases — they
+   are intentionally narrow.
+
+The wrong response is to silently widen the declared list to suppress the
+hostile failure: that just covers up a real assumption with more
+examples. `when` makes the assumption explicit; `verify` cases-form makes
+the spec narrower. Pick one.
+
+### What `--hostile` does not do
+
+- It does not run effect-side adversarial responses (the worst-case
+  classified-effect oracles — `Time.now` cycling backward, `Disk.readText`
+  returning `Err`, etc.). That's a separate feature, follow-up release.
+- It does not invent values for user-defined types (`Type::Named`). If a
+  given is over `MyShape`, `--hostile` leaves the declared list alone —
+  there is no boundary set that respects user constructors.
+- It does not synthesise `List<T>` / `Option<T>` / `Result<T, E>` values
+  in 0.13. The boundary set for those is empty; declared values pass
+  through unchanged.
+
 ## Current limits
 
 Oracle does not try to model every side effect.
 
 Not supported:
 
-- `Env.set`. Process environment is same-process mutable state, and Oracle v1
-  does not model the relation between a set and a later `Env.get`.
-- Persistent TCP sessions: `Tcp.connect`, `Tcp.writeLine`, `Tcp.readLine`, and
-  `Tcp.close`. The one-shot `Tcp.send` / `Tcp.ping` shape is classified.
 - `HttpServer.listen` / `listenWith`. Server lifecycle and callbacks are
   long-running protocols, not one call/result effects.
-- Terminal modal state: `Terminal.enableRawMode`, `disableRawMode`, `setColor`,
-  and `resetColor`. Drawing calls (`clear`, `moveTo`, `print`, `hideCursor`,
-  `showCursor`, `flush`), `readKey`, and `size` are classified — `size` as a
-  snapshot oracle `() -> Terminal.Size` (added 0.11.1).
+- Stateful capability models / hidden filesystem-or-clock state. Effect stubs are
+  stateless by design (see the section above) — if a property depends on memory
+  across effect calls, model the state in pure user code.
 - Proof export for `?!` cancel mode. Oracle proof export expects complete independence mode so every branch has a stable trace position.
 - Higher-order effectful callbacks. Oracle works best when the effect surface is visible in the verified function's signature.
 - Trace-aware laws on recursive effectful functions. Use `verify <fn> law ...` without `trace`, or move the effect-emitting step into a non-recursive function and verify that trace.

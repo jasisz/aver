@@ -5,6 +5,7 @@ module OrderTotal
         "Item is intentionally unconstrained: negative prices model refunds,"
         "zero quantity models removed line items."
     exposes [calculateTotal, Item, mkDiscount, mkTaxRate]
+    effects [Console]
 
 decision BoundaryValidation
     date = "2026-03-17"

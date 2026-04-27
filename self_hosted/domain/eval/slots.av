@@ -4,6 +4,7 @@ module Slots
         "Slot-environment primitives for the self-hosted evaluator."
         "Handles Vector-backed local variable storage for resolved functions."
     exposes [buildSlotEnv, lookupSlot, setSlot]
+    effects []
 
 fn buildSlotEnv(args: List<Val>, slotCount: Int) -> Vector<Val>
     ? "Create slot env: Vector<Val> of slotCount, args at 0..n-1."

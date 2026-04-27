@@ -5,6 +5,7 @@ module Queries
         "those concerns into the parser or the pure domain modules."
     exposes [Query, QueryOutput, TaskDetails, run]
     depends [Domain.Types, Domain.Projects, Domain.Views, Domain.Events, Infra.Store, Infra.Audit, Infra.Notify, Infra.Clock]
+    effects [Disk, Time]
 
 decision QueriesReplayInsteadOfReadingMutableTaskTables
     date = "2026-03-08"

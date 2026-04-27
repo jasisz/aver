@@ -1,0 +1,31 @@
+module OracleDemo
+    intent =
+        "Showcase Aver Oracle v1: effectful fns become first-class in proof."
+        "The law exports as a theorem over every Random.int oracle."
+        "The trace block checks one concrete runtime trace."
+    effects [Console.print, Random.int]
+
+fn roll() -> Int
+    ? "Roll a six-sided die."
+    ! [Random.int]
+    Random.int(1, 6)
+
+fn highDie(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int
+    ? "Stub oracle: always max of the range."
+    hi
+
+verify roll law usesOracle
+    given rnd: Random.int = [highDie]
+    roll() => rnd(BranchPath.Root, 0, 1, 6)
+
+verify roll trace
+    given rnd: Random.int = [highDie]
+    rolled = roll()
+    rolled.result => rnd(BranchPath.Root, 0, 1, 6)
+    rolled.trace.length() => 1
+    rolled.trace.contains(Random.int(1, 6)) => true
+
+fn main() -> Unit
+    ! [Console.print, Random.int]
+    Console.print("live roll: {roll()}")
+    Console.print("live roll: {roll()}")

@@ -3,6 +3,7 @@ module Types
         "Shared data types for Braille Doom: player, enemies, game state,"
         "wall types, and helper functions."
     depends []
+    effects []
 
 type WallType
     Stone

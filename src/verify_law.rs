@@ -6,6 +6,8 @@ use crate::ast::{
 };
 use crate::types::Type;
 
+pub mod expand;
+
 pub type FnSigMap = HashMap<String, (Vec<Type>, Type, Vec<String>)>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

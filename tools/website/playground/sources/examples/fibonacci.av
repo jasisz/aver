@@ -1,0 +1,21 @@
+module Fibonacci
+    intent = "naive Fibonacci — showcases verify on a recursive function"
+    effects [Console.print]
+
+fn fib(n: Int) -> Int
+    ? "naive Fibonacci — O(2^n), good for demonstrating verify, not for production"
+    match n
+        0 -> 0
+        1 -> 1
+        _ -> fib(n - 1) + fib(n - 2)
+
+verify fib
+    fib(0) => 0
+    fib(1) => 1
+    fib(2) => 1
+    fib(10) => 55
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("fib(10) = {fib(10)}")
+    Console.print("fib(20) = {fib(20)}")

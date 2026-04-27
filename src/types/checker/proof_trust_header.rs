@@ -46,6 +46,19 @@ pub(crate) fn generate_for_effects(
     out.push_str("Trusted model assumptions for this Aver proof export:\n");
     out.push('\n');
 
+    out.push_str("Numeric model:\n");
+    out.push_str("  Aver `Int` is exported as the proof backend's unbounded\n");
+    out.push_str("  mathematical integer (Lean `Int`, Dafny `int`). Runtime\n");
+    out.push_str("  backends (VM, compiled Rust, WASM) represent `Int` as 64-bit\n");
+    out.push_str("  with wrapping arithmetic — `i64::MAX + 1` returns `i64::MIN`,\n");
+    out.push_str("  not unbounded. Theorems exported here are universal over the\n");
+    out.push_str("  mathematical integers; `aver verify --hostile` is what catches\n");
+    out.push_str("  cases where the runtime's bounded representation breaks a\n");
+    out.push_str("  claim that holds in the proof model.\n");
+    out.push_str("  `Float` is IEEE 754 binary64 across all backends, with the\n");
+    out.push_str("  usual NaN-not-equal-to-itself semantics.\n");
+    out.push('\n');
+
     if !used.is_empty() {
         out.push_str("Effects and dimensions:\n");
         for c in &used {
@@ -136,6 +149,27 @@ pub(crate) fn generate_for_effects(
     out.push_str("  (Terminal.enableRawMode / .disableRawMode / .setColor /\n");
     out.push_str("  .resetColor / .size). These remain replay-only. Oracle covers\n");
     out.push_str("  only the fixed built-in effect set listed above.\n");
+    out.push('\n');
+
+    out.push_str("Built-in oracle invariants (runtime-guaranteed):\n");
+    out.push_str("  - Random.int(path, n, min, max): if min ≤ max, the result\n");
+    out.push_str("    is in the closed interval [min, max].\n");
+    out.push_str("  - Random.float(path, n): in the closed unit interval [0.0, 1.0].\n");
+    out.push_str("  - Time.unixMs(path, n): non-negative — clocks count from\n");
+    out.push_str("    the unix epoch onward in this proof subset.\n");
+    out.push_str("  - Disk.exists(path, n, file): the result is a Bool — no\n");
+    out.push_str("    third state. Trivially total.\n");
+    out.push_str("  Surfaced as subtype helper types in the section below\n");
+    out.push_str("  (`RandomIntInBounds`, `RandomFloatInUnit`, `TimeUnixMsNonneg`\n");
+    out.push_str("  in Lean; `IsRandomIntInBounds` etc. as ghost predicates in\n");
+    out.push_str("  Dafny). These are *types* / *predicates*, not axioms — a\n");
+    out.push_str("  value of `RandomIntInBounds` is a function plus a proof of\n");
+    out.push_str("  the bound, which user-side theorems can construct from\n");
+    out.push_str("  concrete stubs (via `decide`) or the runtime trust\n");
+    out.push_str("  assumption above. Sound: defining them adds no logical\n");
+    out.push_str("  claim. Lifted fn signatures stay plain function types in\n");
+    out.push_str("  0.13; auto-threading the subtypes through every spec\n");
+    out.push_str("  lands in 0.14.\n");
     out.push('\n');
 
     out.push_str("Backend independence:\n");

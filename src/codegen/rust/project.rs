@@ -92,6 +92,18 @@ pub fn generate_cargo_toml(
     lines.push("lto = true".to_string());
     lines.push("codegen-units = 1".to_string());
 
+    // Aver `Int` is i64 with wrapping arithmetic — that is the
+    // semantics the VM, WASM (i32/i64 wrap by spec), and verify
+    // hostile-boundary expansion all share. Disable overflow-checks
+    // in dev/test so debug builds match release: a hostile case like
+    // `i64::MAX * 2` returns the wrapped value instead of panicking.
+    lines.push(String::new());
+    lines.push("[profile.dev]".to_string());
+    lines.push("overflow-checks = false".to_string());
+    lines.push(String::new());
+    lines.push("[profile.test]".to_string());
+    lines.push("overflow-checks = false".to_string());
+
     lines.join("\n")
 }
 

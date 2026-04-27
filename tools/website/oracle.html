@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <title>The randomness paradox — Aver Oracle</title>
-    <meta name="description" content="One verify block. Three tools. Two answers. How Aver Oracle exposes the gap between sample-based testing and universal proof — and what conventional Z3 verification can't reach.">
+    <meta name="description" content="One verify block. Four tools. Two verdicts. How Aver Oracle traces the path from sample-based testing through adversarial profiles to universal proof — and what conventional Z3 verification can't reach.">
     <link rel="stylesheet" href="style.css">
     <style>
         .oracle-page { max-width: 1100px; margin: 0 auto; padding: 0 1.5rem; }
@@ -63,7 +63,7 @@
 
         .panels {
             display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
+            grid-template-columns: repeat(2, 1fr);
             gap: 1rem;
             margin: 1rem 0 1.4rem;
         }
@@ -179,12 +179,13 @@
 
     <header class="oracle-hero">
         <div class="eyebrow">Oracle &middot; the randomness paradox</div>
-        <h1>One <code>verify</code> block. Three tools. <span class="accent">Two verdicts.</span></h1>
-        <p class="subhead">A 30-line example that passes <code>aver verify</code> and fails <code>aver proof</code> on identical source &mdash; exposing the gap between sampled effects and universal proof.</p>
+        <h1>One <code>verify</code> block. Four tools. <span class="accent">Two verdicts.</span></h1>
+        <p class="subhead">A 30-line example: <code>aver verify</code> passes, <code>aver verify --hostile</code> fails, and both proof backends reject it on identical source &mdash; tracing the path from sampled effects through adversarial profiles to universal proof.</p>
     </header>
 
     <section class="oracle-section">
-        <p>The block doesn't change between runs. Only the question being asked changes: <em>"does this hold for the stub I wrote?"</em> versus <em>"does this hold for every implementation of this signature?"</em>. The first is sample testing. The second is universal proof. Aver lets you ask both with one source &mdash; and tells you when they disagree.</p>
+        <p>The block doesn't change between runs. Only the question being asked changes: <em>"does this hold for the stub I wrote?"</em> versus <em>"does this hold under adversarial profiles of the effects involved?"</em> versus <em>"does this hold for every implementation of this signature?"</em>. The first is sample testing. The second is hostile-mode boundary checking. The third is universal proof. Aver lets you ask all three from one source &mdash; and tells you exactly which one disagrees.</p>
+        <p><strong>Three roles, one frame:</strong> <code>given</code> is the world you chose &mdash; the stub or value list the law was demonstrated in. Hostile substitutes <em>other</em> worlds &mdash; frozen clocks, empty disks, rolls stuck at the bound &mdash; and asks "what if your world was wrong?". <code>when</code> is the filter that declares which worlds this law assumes (<code>when clock(root, 1) &gt; clock(root, 0)</code> = "monotonic clocks only"); hostile honours it and skips profiles that violate the assumption.</p>
     </section>
 
     <section class="oracle-section">
@@ -208,8 +209,8 @@
     </section>
 
     <section class="oracle-section">
-        <h2>Run it three ways</h2>
-        <p>Same file. Three commands. The first runs the verify block as a sample under the stub; the other two export the same block as a universal theorem and ask a real proof backend to discharge it.</p>
+        <h2>Run it four ways</h2>
+        <p>Same file. Four commands. The first runs the verify block as a sample under the stub. The second multiplies it through adversarial profiles of <code>Random.float</code> &mdash; <code>midrange</code> (always 0.5), <code>always_zero</code>, <code>always_one</code> &mdash; and asks "does the law still hold?". The other two export the same block as a universal theorem and ask a real proof backend to discharge it.</p>
         <div class="panels">
 
             <div class="panel">
@@ -223,14 +224,29 @@
             </div>
 
             <div class="panel">
+                <div class="panel-cmd"><span class="prompt">$</span> aver verify <span class="flag">--hostile</span> randomness_paradox.av</div>
+                <div class="verdict fail">FAILS</div>
+<pre class="panel-out"><span class="muted">Verify:</span> randomness_paradox.av
+  <span class="green">✓</span> verify distinctStub        2/2
+  <span class="red">✗</span> verify twoFloatsDistinct
+       1/4 (1/1 declared, 0/3 hostile)
+
+<span class="red">fail[verify-hostile-mismatch]:</span>
+  origin: hostile effect profile:
+    Random.float/midrange
+  expected: true   actual: false
+
+<span class="red">Summary:</span> 3/6 passed | 3 failed</pre>
+            </div>
+
+            <div class="panel">
                 <div class="panel-cmd"><span class="prompt">$</span> aver proof <span class="flag">--backend lean</span> &amp;&amp; lake build</div>
                 <div class="verdict fail">REJECTS</div>
 <pre class="panel-out"><span class="muted">✖ Building RandomnessParadox</span>
 <span class="red">error: unsolved goals</span>
-<span class="muted">  rnd : BranchPath
-        → Int → Float</span>
-<span class="yellow">  ⊢ (rnd BranchPath.Root 0
-     != rnd BranchPath.Root 1)
+<span class="muted">  rnd : RandomFloatInUnit</span>
+<span class="yellow">  ⊢ (rnd.val BranchPath.Root 0
+     != rnd.val BranchPath.Root 1)
      = true</span>
 
 <span class="red">error: build failed</span></pre>
@@ -255,9 +271,10 @@
     </section>
 
     <section class="oracle-section">
-        <h2>How the two readings work</h2>
+        <h2>How the three readings work</h2>
         <p><strong><code>aver verify</code></strong> evaluates the law as a finite sample. The cartesian product of <code>given</code> domains is enumerated and run against the law's RHS. With <code>distinctStub</code> returning <code>n + 1</code>, the two calls produce <code>1.0</code> and <code>2.0</code>; <code>1.0 != 2.0</code> holds; the sample case passes. This is the &mdash; familiar &mdash; testing path: assert against a chosen implementation, run, verify equality.</p>
-        <p><strong><code>aver proof</code></strong> takes the same block and lifts it. Every classified effect call (here <code>Random.float</code>) becomes an explicit function parameter. The exported theorem says the law's RHS holds <em>for every possible such function</em> &mdash; not just the stub you supplied. That's a strictly stronger claim. There exist oracles (e.g. one that always returns <code>0.5</code>) for which the two calls return the same value and the law fails. Lean and Dafny independently reject the export for this reason.</p>
+        <p><strong><code>aver verify --hostile</code></strong> keeps the same machinery but multiplies the law through every adversarial profile Aver ships for the classified effects involved. <code>Random.float</code> gets <code>midrange</code> (always 0.5), <code>always_zero</code>, <code>always_one</code>. Each profile breaks the &mdash; implicit &mdash; assumption that the two calls return distinct values: with <code>midrange</code>, both calls return <code>0.5</code>; <code>0.5 != 0.5</code> is false; the law fails. Hostile mode catches the bug your stub hid before you ever reach formal proof. Add a <code>when</code> clause to declare the assumption explicitly (<code>when rnd(root, 0) != rnd(root, 1)</code>) and hostile skips the profiles that violate it &mdash; the law is exercised only where its assumption holds.</p>
+        <p><strong><code>aver proof</code></strong> takes the same block and lifts it. Every classified effect call (here <code>Random.float</code>) becomes an explicit function parameter, typed as the bounded subtype <code>RandomFloatInUnit</code> &mdash; the runtime invariant <code>0.0 ≤ x ≤ 1.0</code> is structurally encoded, no <code>axiom</code> required. The exported theorem says the law's RHS holds <em>for every possible such function in the unit interval</em> &mdash; not just the stub you supplied, not just the adversarial profiles, but every function. That's a strictly stronger claim. Lean and Dafny independently reject the export for this reason.</p>
     </section>
 
     <section class="oracle-section">
@@ -276,12 +293,16 @@ cd aver
 aver verify examples/formal/randomness_paradox.av
 <span class="hl-green">  ✓ 3/3 cases passed</span>
 
-<span class="hl-comment"># 2. Lean rejects</span>
+<span class="hl-comment"># 2. Hostile fails — adversarial profiles break the implicit assumption</span>
+aver verify --hostile examples/formal/randomness_paradox.av
+<span class="hl-red">  ✖ 3/6 passed | 3 failed (Random.float midrange / always_zero / always_one)</span>
+
+<span class="hl-comment"># 3. Lean rejects</span>
 aver proof examples/formal/randomness_paradox.av --backend lean --output out
 <span class="hl-muted">cd out && lake build</span>
 <span class="hl-red">  ✖ unsolved goals</span>
 
-<span class="hl-comment"># 3. Dafny rejects</span>
+<span class="hl-comment"># 4. Dafny rejects</span>
 aver proof examples/formal/randomness_paradox.av --backend dafny --output out
 <span class="hl-muted">dafny verify out/*.dfy</span>
 <span class="hl-red">  ✖ postcondition could not be proved</span></pre>

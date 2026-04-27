@@ -5,6 +5,7 @@ module Parse
         "does not need to understand payment semantics."
     exposes [Input, parseArgs]
     depends [App.Commands, App.Queries]
+    effects []
 
 type Input
     ShowHelp

@@ -3,6 +3,7 @@ module Math
         "Trigonometry, vector helpers, and numeric utilities"
         "for the raycaster engine."
     depends []
+    effects []
 
 fn pi() -> Float
     ? "The constant pi"

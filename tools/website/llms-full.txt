@@ -1,41 +1,227 @@
 # Aver — Deep Documentation Index
 
-> Start with `llms.txt`. This file is not a second compact guide; it is a routing index for deeper docs, examples, and implementation context.
+> Start with [`llms.txt`](https://averlang.dev/llms.txt). This file is the deeper companion: the toolchain in full plus a routing index for language docs, examples, and implementation context.
 
 ## Recommended read order
 
-1. `llms.txt` for syntax guardrails and the minimal working shape of an Aver file
-2. `docs/language.md` for the full surface-language contract
-3. `docs/services.md` for stdlib and effect namespaces
+1. [`llms.txt`](https://averlang.dev/llms.txt) for syntax guardrails and the minimal working shape of an Aver file
+2. [Language Guide](https://github.com/jasisz/aver/blob/main/docs/language.md) for the full surface-language contract
+3. [Services (stdlib)](https://github.com/jasisz/aver/blob/main/docs/services.md) for stdlib and effect namespaces
 4. one or two raw `.av` examples close to your task
-5. `AGENTS.md` only if you need repository internals or implementation details
+5. [`AGENTS.md`](https://github.com/jasisz/aver/blob/main/AGENTS.md) only if you need repository internals or implementation details
 
-## Primary docs (read these first)
-- [llms.txt](https://averlang.dev/llms.txt) — compact language overview with examples
-- [Language Guide](https://raw.githubusercontent.com/jasisz/aver/main/docs/language.md) — complete surface language reference
-- [Services (stdlib)](https://raw.githubusercontent.com/jasisz/aver/main/docs/services.md) — all namespaces and their APIs
-- [Common Pushback](https://raw.githubusercontent.com/jasisz/aver/main/docs/pushback.md) — questions, objections, honest answers
+## Primary docs
+
+- [Language Guide](https://github.com/jasisz/aver/blob/main/docs/language.md) — complete surface-language reference
+- [Services (stdlib)](https://github.com/jasisz/aver/blob/main/docs/services.md) — every namespace and its API
+- [Common Pushback](https://github.com/jasisz/aver/blob/main/docs/pushback.md) — questions, objections, honest answers
 
 ## Advanced topics
-- [Independence (?!)](https://raw.githubusercontent.com/jasisz/aver/main/docs/independence.md) — parallel products
-- [Constructors](https://raw.githubusercontent.com/jasisz/aver/main/docs/constructors.md) — constructor routing rules
-- [Oracle](https://raw.githubusercontent.com/jasisz/aver/main/docs/oracle.md) — proof export for classified effectful functions via `verify fn trace` + `given` stubs
-- [Lean proof export](https://raw.githubusercontent.com/jasisz/aver/main/docs/lean.md) — verify blocks to Lean 4
-- [Dafny verification](https://raw.githubusercontent.com/jasisz/aver/main/docs/dafny.md) — verify laws to Dafny/Z3
-- [WASM backend](https://raw.githubusercontent.com/jasisz/aver/main/docs/wasm.md) — browser compilation
 
-## Examples (raw .av files)
-- [Calculator](https://raw.githubusercontent.com/jasisz/aver/main/examples/core/calculator.av) — Result types, verify blocks, decisions
-- [Temperature](https://raw.githubusercontent.com/jasisz/aver/main/examples/core/temperature.av) — pure functions, recursion, classification
-- [Order Total](https://raw.githubusercontent.com/jasisz/aver/main/examples/core/order_total.av) — records, verify laws, domain modeling
-- [Console Demo](https://raw.githubusercontent.com/jasisz/aver/main/examples/services/console_demo.av) — effectful code, Console namespace
-- [Oracle Trace](https://raw.githubusercontent.com/jasisz/aver/main/examples/formal/oracle_trace.av) — `verify fn trace` with `given` stubs for classified effects (Random, Disk, Console.readLine, Tcp, Time.sleep, Terminal.*)
-- [Oracle Independent Products](https://raw.githubusercontent.com/jasisz/aver/main/examples/formal/oracle_independent_products.av) — per-branch trace assertions for `!`/`?!` products
-- [Randomness Paradox](https://raw.githubusercontent.com/jasisz/aver/main/examples/formal/randomness_paradox.av) — `verify` passes, `aver proof` rejects: sample-vs-universal divergence on the same law over `Random.float`
-- [Terminal Size Snapshot](https://raw.githubusercontent.com/jasisz/aver/main/examples/formal/terminal_size_snapshot.av) — proof over `Terminal.size` as a snapshot oracle `() -> Terminal.Size` (newly classified in 0.11.1)
-- [Snake](https://raw.githubusercontent.com/jasisz/aver/main/examples/games/snake.av) — single-file game with Terminal effects
-- [Game of Life](https://raw.githubusercontent.com/jasisz/aver/main/examples/games/life.av) — cellular automata, FPS counter
+- [Independence (`?!`)](https://github.com/jasisz/aver/blob/main/docs/independence.md) — parallel products
+- [Constructors](https://github.com/jasisz/aver/blob/main/docs/constructors.md) — constructor routing rules
+- [Oracle](https://github.com/jasisz/aver/blob/main/docs/oracle.md) — proof export for classified effectful functions via `verify fn trace` + `given` stubs, plus `--hostile`
+- [Lean proof export](https://github.com/jasisz/aver/blob/main/docs/lean.md) — verify blocks to Lean 4
+- [Dafny verification](https://github.com/jasisz/aver/blob/main/docs/dafny.md) — verify laws to Dafny / Z3
+- [WASM backend](https://github.com/jasisz/aver/blob/main/docs/wasm.md) — browser compilation
 
-## Project
-- [README](https://raw.githubusercontent.com/jasisz/aver/main/README.md) — project overview and quickstart
-- [AGENTS.md](https://raw.githubusercontent.com/jasisz/aver/main/AGENTS.md) — AI context file with architecture and implementation notes
+## Canonical examples
+
+- [Hello](https://github.com/jasisz/aver/blob/main/examples/core/hello.av) — minimal pure file
+- [Calculator](https://github.com/jasisz/aver/blob/main/examples/core/calculator.av) — verify on basic arithmetic
+- [Independent Fan-out](https://github.com/jasisz/aver/blob/main/examples/core/independent_fanout.av) — `!` / `?!` independent products
+- [Quicksort](https://github.com/jasisz/aver/blob/main/examples/data/quicksort.av) — recursion + verify on a recursive algorithm
+- [Oracle Trace](https://github.com/jasisz/aver/blob/main/examples/formal/oracle_trace.av) — `verify fn trace` with `given` stubs for classified effects
+
+
+## Toolchain
+
+## Main commands
+
+### Run
+
+```bash
+aver run file.av
+aver run file.av --module-root .
+aver run file.av -- arg1 arg2 arg3
+```
+
+- Aver program args are available through `Args.get()`
+- `--record <dir>` records effect traces for replay
+
+### Check
+
+```bash
+aver check file-or-dir --module-root . --deps
+```
+
+`check` handles static contract diagnostics:
+- missing `intent =`
+- missing `?` descriptions on relevant functions
+- missing `verify` on pure, non-trivial, non-`main` functions
+- coverage-style warnings for thin `verify` examples
+- file size warnings
+
+Warnings do not make `check` fail.
+
+### Verify
+
+```bash
+aver verify file-or-dir --module-root . --deps
+```
+
+`verify` runs only declared `left => right` examples.
+It fails on:
+- mismatched examples
+- parse/type errors
+- execution errors
+
+It is not a coverage tool.
+
+### Format
+
+```bash
+aver format .
+aver format examples
+aver format examples --check
+```
+
+`format` accepts files or directories and walks `.av` files recursively.
+
+### Audit
+
+```bash
+aver audit file-or-dir --module-root . --deps
+```
+
+`audit` is the single-shot CI gate that runs all three axes at once:
+
+1. static checks (same diagnostics as `check`)
+2. `verify` execution (same as `verify`)
+3. `format --check` (structural compliance)
+
+Output is a flat list of `error[slug]:` / `warning[slug]:` lines plus a
+summary footer: `N files | X check errors | Y verify failures | Z format`.
+Any non-zero count fails the command.
+
+- warnings (e.g. `independence-hazard`, `non-tail-recursion`) do not fail
+  the audit — they are advisory
+- errors come from the same machinery as `check` / `verify` / `format`, so
+  slugs are stable and match `docs/diagnostics-slugs.md`
+- prefer `aver audit` over chaining `check && verify && format --check` —
+  it runs the pipeline once and reports everything in one place
+
+Use it before showing a snippet to the user or committing docs examples;
+it catches illegal `?!` usages, match-arm body-on-next-line parse errors,
+and effect-type mismatches that a naked `aver run` can miss when the VM
+short-circuits on the first failure.
+
+`--hostile` (0.13+) layers adversarial worlds on top of every
+`verify <fn> law` block — typed `given`s get type-boundary values,
+classified effects get hostile profiles. Failures use the separate
+slug `verify-hostile-mismatch` so CI can route declared-world vs
+adversarial-world regressions to different channels.
+
+### Context
+
+```bash
+aver context file.av --module-root .
+```
+
+Default:
+- `--depth auto`
+- `--budget 10kb`
+
+This is the preferred AI discovery workflow:
+
+1. start with a small budget
+2. inspect the architecture map
+3. look at selection metadata
+4. zoom in only where needed
+
+Examples:
+
+```bash
+aver context examples/modules/app.av --budget 10kb
+aver context projects/workflow_engine/main.av --module-root projects/workflow_engine --budget 24kb
+aver context projects/workflow_engine/main.av --module-root projects/workflow_engine --json --budget 24kb --output projects/workflow_engine/CONTEXT.json
+```
+
+Notes:
+- `--depth N` and `--depth unlimited` bypass the auto-budget behavior
+- `--decisions-only` exports only `decision` blocks
+- selection metadata is printed to stdout and embedded in JSON output
+
+### Compile
+
+```bash
+aver compile file.av -o /tmp/out --module-root .
+aver compile file.av --target wasm -o /tmp/out
+aver compile file.av --target wasm --wasm-opt oz -o /tmp/out
+```
+
+- Default: Rust codegen, emits a modular Cargo project
+- `--target wasm`: standalone WASM module with aver/* imports
+- `--wasm-opt oz`: post-process with binaryen for ~50% size reduction
+
+### Proof
+
+```bash
+aver proof file.av -o /tmp/proof --module-root . --verify-mode auto
+```
+
+Lean export modes:
+- `auto`
+- `sorry`
+- `theorem-skeleton`
+
+### Replay
+
+```bash
+aver replay recordings/ --test --diff
+```
+
+Use replay for effectful debugging and regression capture.
+
+## Recommended workflows
+
+### Logic bug
+
+1. add or tighten a `verify`
+2. run `aver verify ...`
+3. fix code
+4. keep the example
+
+### Effect bug
+
+1. run with `--record`
+2. inspect replay artifact
+3. run `aver replay ... --test --diff`
+
+### Project discovery
+
+1. `aver context <entry> --budget 10kb`
+2. if needed, raise budget or target a specific module
+3. only then open raw source files
+
+## aver.toml
+
+Project-level config (deployment guardrails + check tweaks):
+
+```toml
+[effects.Http]
+hosts = ["api.example.com", "*.internal.corp"]
+
+[effects.Disk]
+paths = ["./data/**"]
+
+[effects.Env]
+keys = ["APP_*", "TOKEN"]
+
+[[check.suppress]]
+slug = "non-tail-recursion"
+files = ["**/eval/**"]
+reason = "Tree-walking interpreter — CPS would destroy correspondence."
+```
+
+Effect-host / path / key allowlists narrow which hosts, files, and env keys the runtime will admit. `[[check.suppress]]` lets a project waive specific lint slugs in specific paths with a reason.

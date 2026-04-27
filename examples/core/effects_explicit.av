@@ -2,6 +2,7 @@ module EffectsExplicit
     intent =
         "Demonstrates explicit method-level effects."
         "Each function declares exactly the service method it calls."
+    effects [Console]
 
 fn greet(name: String) -> Unit
     ? "Prints a greeting."

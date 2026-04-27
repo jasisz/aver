@@ -4,6 +4,7 @@ module Main
         "Keeps the top-level module thin so the CLI and application core stay in their own"
         "modules and `aver context` has a stable root to resume from."
     depends [App.Cli]
+    effects [Args, Console, Disk, Time]
 
 fn main() -> Unit
     ? "Starts the payment_ops CLI."

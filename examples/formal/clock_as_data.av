@@ -1,0 +1,59 @@
+module ClockAsData
+    intent =
+        "Time-dependent logic with the clock passed as data."
+        "`Time.now` only at the boundary — the pure core takes a moment as a parameter."
+        "Wall clocks are NOT monotonic in the real world (NTP, leap, suspend, VM clock skew)."
+        "Aver does not pretend otherwise: there is no Time.now state model."
+    exposes [isExpired, secondsUntil, refreshIfStale]
+    effects [Console, Time]
+
+fn isExpired(nowMs: Int, deadlineMs: Int) -> Bool
+    ? "Pure: a deadline is expired iff now is at or past it."
+    nowMs >= deadlineMs
+
+verify isExpired
+    isExpired(0, 1000) => false
+    isExpired(500, 1000) => false
+    isExpired(1000, 1000) => true
+    isExpired(2000, 1000) => true
+
+fn secondsUntil(nowMs: Int, deadlineMs: Int) -> Int
+    ? "Pure: seconds remaining (negative if past)."
+    (deadlineMs - nowMs) / 1000
+
+verify secondsUntil
+    secondsUntil(0, 5000) => 5
+    secondsUntil(5000, 5000) => 0
+    secondsUntil(10000, 5000) => -5
+
+fn refreshIfStale(deadlineMs: Int) -> Result<Int, String>
+    ? "Boundary shell: read Time.unixMs, decide via the pure rule."
+    ! [Time.unixMs]
+    nowMs = Time.unixMs()
+    match isExpired(nowMs, deadlineMs)
+        true -> Result.Ok(nowMs + 60000)
+        false -> Result.Err("not stale yet")
+
+fn fixedNow(path: BranchPath, n: Int) -> Int
+    ? "Stub returning a fixed clock reading. Stateless: every call returns the same."
+    1500
+
+fn beforeDeadlineNow(path: BranchPath, n: Int) -> Int
+    ? "Stub returning a clock reading before the deadline."
+    500
+
+verify refreshIfStale trace
+    given clock: Time.unixMs = [fixedNow]
+    report = refreshIfStale(1000)
+    report.result => Result.Ok(61500)
+
+verify refreshIfStale trace
+    given clock: Time.unixMs = [beforeDeadlineNow]
+    report = refreshIfStale(1000)
+    report.result => Result.Err("not stale yet")
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(isExpired(0, 1000))
+    Console.print(isExpired(2000, 1000))
+    Console.print(secondsUntil(0, 5000))

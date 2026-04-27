@@ -5,6 +5,7 @@ module Core
         "Contains the actual map-based and slot-based execution logic used by the Eval facade."
         "Delegates builtins to Domain.Builtins and pattern matching to Domain.Match."
     exposes [evalProgram, evalProgramWithFns, callResolved]
+    effects [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
 
 type SlotTailStep
     SlotTailDone(Val)

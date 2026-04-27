@@ -5,6 +5,7 @@ module Store
         "A counter file tracks the next available ID."
     exposes [Note, initStore, loadAll, addNote, removeNote, findById]
     depends []
+    effects [Disk]
 
 decision FlatFileStorage
     date = "2026-03-01"
@@ -55,8 +56,8 @@ fn initFileIfMissing(path: String, content: String) -> Result<Unit, String>
 fn initStore() -> Result<Unit, String>
     ? "Ensures the data directory and storage files exist."
     ! [Disk.appendText, Disk.exists, Disk.makeDir, Disk.writeText]
-    d = Disk.makeDir(dataDir())?
-    n = initFileIfMissing(notesPath(), "")?
+    Disk.makeDir(dataDir())?
+    initFileIfMissing(notesPath(), "")?
     initFileIfMissing(counterPath(), "1")
 
 // --- id counter ---

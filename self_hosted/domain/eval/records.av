@@ -4,6 +4,7 @@ module Records
         "Record-update helpers for the self-hosted evaluator."
         "Keeps update-specific list munging out of the main call dispatch."
     exposes [isRecordUpdate, doRecordUpdate]
+    effects []
 
 fn isRecordUpdate(name: String, args: List<Val>) -> Bool
     ? "Check if this is a Type.update(record, _named(...)) call."

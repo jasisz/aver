@@ -80,6 +80,12 @@ it catches illegal `?!` usages, match-arm body-on-next-line parse errors,
 and effect-type mismatches that a naked `aver run` can miss when the VM
 short-circuits on the first failure.
 
+`--hostile` (0.13+) layers adversarial worlds on top of every
+`verify <fn> law` block — typed `given`s get type-boundary values,
+classified effects get hostile profiles. Failures use the separate
+slug `verify-hostile-mismatch` so CI can route declared-world vs
+adversarial-world regressions to different channels.
+
 ### Context
 
 ```bash
@@ -162,10 +168,24 @@ Use replay for effectful debugging and regression capture.
 2. if needed, raise budget or target a specific module
 3. only then open raw source files
 
-## Important current semantics
+## aver.toml
 
-- no `aver decisions`; use `aver context --decisions-only`
-- `check` and `verify` accept directories
-- exact method-level effects only
-- no effect aliases
-- broad namespace effects do not satisfy child effects
+Project-level config (deployment guardrails + check tweaks):
+
+```toml
+[effects.Http]
+hosts = ["api.example.com", "*.internal.corp"]
+
+[effects.Disk]
+paths = ["./data/**"]
+
+[effects.Env]
+keys = ["APP_*", "TOKEN"]
+
+[[check.suppress]]
+slug = "non-tail-recursion"
+files = ["**/eval/**"]
+reason = "Tree-walking interpreter — CPS would destroy correspondence."
+```
+
+Effect-host / path / key allowlists narrow which hosts, files, and env keys the runtime will admit. `[[check.suppress]]` lets a project waive specific lint slugs in specific paths with a reason.

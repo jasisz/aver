@@ -4,6 +4,7 @@ module Core
         "Core variable and pattern-slot resolution for the self-hosted resolver."
         "Turns ExprVar into ExprSlot and StmtBind into StmtBindSlot."
     exposes [resolveFns]
+    effects []
 
 fn resolveFns(fns: List<FnDef>, acc: List<FnDef>) -> List<FnDef>
     ? "Resolve each function definition."

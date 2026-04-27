@@ -2,10 +2,10 @@
 
 > Aver is a statically typed language optimized for a world where code is cheap to generate and expensive to trust. The optimization target is the reviewer, not the generator.
 
-- Website: https://averlang.dev
-- Playground: https://averlang.dev/playground/
-- GitHub: https://github.com/jasisz/aver
-- crates.io: https://crates.io/crates/aver-lang
+- Website: [averlang.dev](https://averlang.dev)
+- Playground: [averlang.dev/playground](https://averlang.dev/playground/)
+- GitHub: [jasisz/aver](https://github.com/jasisz/aver)
+- crates.io: [aver-lang](https://crates.io/crates/aver-lang)
 - License: MIT
 - Written in: Rust
 - Backends: bytecode VM, Rust codegen, WASM, Lean 4 proof export, Dafny verification
@@ -34,6 +34,7 @@ If you only remember one section, make it this one:
 module Hello
     intent = "Tiny intro module."
     exposes [greet, main]
+    effects [Console.print]
 
 fn greet(name: String) -> String
     ? "Builds a greeting."
@@ -53,34 +54,37 @@ This shows the core pattern:
 - a pure function
 - a `verify` block directly below it
 - an effectful `main`
+- a module-level `effects [...]` boundary that names every effect any function in the module uses (since 0.13)
+
 
 ## Core syntax
 
-### Types
+### Functions
 
-Primitives:
+```aver
+fn name(param: Type) -> ReturnType
+    ? "What this function does."
+      "Optional continuation line."
+    ! [Console.print, Disk.readText]
+    x = expr
+    expr
+```
 
-- `Int`
-- `Float`
-- `String`
-- `Bool`
-- `Unit`
+Rules:
+- indentation-only function bodies — no braces, no `end`
+- last expression is the return value, no `return` keyword
+- all functions are top-level; no closures, lambdas, or anonymous fns
+- top-level fns of the right shape can be passed where `Fn(...)` is expected
+- `main` returns `Unit` or `Result<Unit, String>`
 
-Common compound types:
-
-- `Result<T, E>`
-- `Option<T>`
-- `List<T>`
-- `Vector<T>`
-- `Map<K, V>`
-- tuples: `(A, B, ...)`
-- function types: `Fn(A) -> B`, `Fn(A) -> B ! [Effect]`
-
-`Unit` means "no meaningful value" and renders as `()` in diagnostics.
+`?` descriptions:
+- start with `? "..."` on the line after signature
+- continuation lines are more string literals at deeper indent
+- `aver check` warns when non-`main` functions omit the description
 
 ### Bindings
 
-All bindings are immutable.
+All bindings are immutable. No `let`, `val`, or `var`.
 
 ```aver
 name = "Alice"
@@ -88,121 +92,30 @@ age: Int = 30
 xs: List<Int> = []
 ```
 
-### Functions
+### Types
 
-```aver
-fn add(a: Int, b: Int) -> Int
-    a + b
+Primitives: `Int`, `Float`, `String`, `Bool`, `Unit`
 
-fn fetchUser(id: String) -> Result<String, String>
-    ? "Fetches a user record from the API."
-    ! [Http.get]
-    Http.get("https://api.example.com/users/{id}")
-```
+Compound:
+- `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>`
+- tuples: `(A, B, ...)`
+- function types: `Fn(A) -> B`, `Fn(A) -> B ! [Console.print]`
 
-Rules:
+Notes:
+- top-level named functions can be passed where `Fn(...)` is expected
+- there are no lambdas and no closures
+- no implicit type promotion; use `Int.toFloat` / `Float.fromInt`
 
-- `? "..."` is the prose description — must be indented on the line directly after the function signature, no blank line between
-- `! [...]` declares effects — also indented, directly after `?` (or after signature if no `?`)
-- indentation defines the body — the first expression must follow immediately, no blank lines after signature/`?`/`!`
-- the last expression is the return value
-- there is no `return` keyword
-- `main` returns `Unit` or `Result<Unit, String>`
+### User-defined types
 
-### Match
-
-There is no `if` / `else`. All branching is `match`.
-
-```aver
-match value
-    42 -> "exact"
-    _ -> "anything"
-    [] -> "empty list"
-    [h, ..t] -> "head {h}"
-    Result.Ok(v) -> "ok: {v}"
-    Result.Err(e) -> "err: {e}"
-    Shape.Circle(r) -> "circle"
-```
-
-Boolean branching:
-
-```aver
-match x > 0
-    true -> "positive"
-    false -> "non-positive"
-```
-
-**Critical rule:** the expression for an arm must begin on the same line as `->`. Multi-line match arms are a parse error. Extract a helper function instead.
-
-Wrong — parse error:
-
-```aver
-match xs
-    [] -> 0
-    [h, ..t] ->
-        result = h + sum(t)
-        result
-```
-
-Right — extract a helper:
-
-```aver
-fn addHead(h: Int, t: List<Int>) -> Int
-    h + sum(t)
-
-fn sum(xs: List<Int>) -> Int
-    match xs
-        [] -> 0
-        [h, ..t] -> addHead(h, t)
-```
-
-Right — simple expressions are fine inline:
-
-```aver
-match x > 0
-    true -> "positive"
-    false -> helper(x)
-```
-
-### Constructors and user-defined types
-
-UpperCamel callees are constructors. They are **always qualified** — both built-in and user-defined:
-
-```aver
-Result.Ok(42)
-Result.Err("bad")
-Option.Some("hello")
-Option.None
-```
-
-Sum types (no type parameters — use concrete types):
+Sum types:
 
 ```aver
 type Shape
     Circle(Float)
     Rect(Float, Float)
     Point
-
-type MyList
-    Nil
-    Cons(Int, MyList)
 ```
-
-**Note:** user-defined types do not support generics. Write `type MyList` with `Cons(Int, MyList)`, not `type MyList<T>` with `Cons(T, MyList<T>)`.
-
-Constructing and matching user-defined types — always use `TypeName.Variant`:
-
-```aver
-Shape.Circle(5.0)
-Shape.Point
-
-match s
-    Shape.Circle(r) -> r * r
-    Shape.Rect(w, h) -> w * h
-    Shape.Point -> 0.0
-```
-
-**Never** write bare `Circle(r)` or `Cons(h, t)` — always qualify: `Shape.Circle(r)`, `MyList.Cons(h, t)`.
 
 Records:
 
@@ -212,75 +125,76 @@ record User
     age: Int
 ```
 
-Record construction uses named fields:
+Rules:
+- constructors are qualified: `Shape.Circle(5.0)`, `Result.Ok(1)`, `Option.None`
+- records use named fields: `User(name = "A", age = 1)`
+- field access: `u.name`, `u.age`
+- record update: `User.update(u, age = 31)`
+- record positional pattern destructuring is not supported
+
+### Match
 
 ```aver
-User(name = "A", age = 1)
+match value
+    Result.Ok(v) -> Int.toString(v)
+    Result.Err(e) -> e
 ```
+
+Rules:
+- `match` is the only branching construct (no `if` / `else`)
+- **arm bodies must start on the same line as `->`** — multi-line bodies are a parse error; extract a helper function instead
+- no colon after the subject
+- no guards
+- list patterns: `[]` and `[head, ..tail]` (the `..` rest must be named)
+- tuple patterns: `(a, b)`
+- constructor patterns always qualified: `Result.Ok`, `Option.None`, `Shape.Circle`
+- boolean branching: `match x > 0` with `true ->` / `false ->`
+- nested match in match arms is supported
+
+### Effects
+
+Effects are exact method-level names:
+
+```aver
+! [Http.get, Disk.readText, Console.print]
+```
+
+Rules:
+- namespace shorthand `! [Disk]` covers all `Disk.*` effects
+- `aver check` suggests narrowing when shorthand could be more specific
+- effects propagate: callers must declare all effects of their callees
+- no `effects X = [...]` aliases
+- pure code stays pure; orchestration declares only the concrete effects it uses
 
 ### Modules
 
 ```aver
 module Billing
-    intent = "Billing application core."
+    intent =
+        "Billing application core."
+        "Exports only the public entrypoints."
     exposes [charge, refund]
     depends [Core.Types, Infra.Store]
+    effects [Console.print, Disk]
 ```
 
 Rules:
+- `module` must be the first top-level item in file-based programs
+- `intent` may be inline or multiline; formatter prefers multiline for multiline text
+- `depends [...]` and `exposes [...]` are explicit
+- opaque types: `exposes opaque [Discount]` — visible in signatures but cannot be constructed or destructured from outside
+- `effects [...]` declares the module's effect surface. Every function's `! [Effect]` must be covered: a method-level entry like `Disk.readText` admits only that method, a namespace entry like `Disk` admits any `Disk.*` method. Underdeclared = type error; overdeclared = warning. A module with functions but no `effects [...]` triggers a warning to add the boundary (use `effects []` for a pure module).
 
-- `module` must be the first top-level item
-- `intent` describes the module's purpose
-- `exposes` lists public functions and types
-- `depends` resolves from `--module-root`
-- opaque exports use `exposes opaque [TypeName]`
+### Verify blocks
 
-### Effects
-
-Effects can be granular or namespace-wide.
-
-```aver
-fn save(data: String) -> Unit
-    ? "Writes data to disk."
-    ! [Disk.writeText]
-    Disk.writeText("out.txt", data)
-```
-
-If a function calls `Console.print`, `Http.get`, or another effectful capability without declaring it, the compiler errors. Effects also propagate through calls, so callers must declare the effects required by their callees.
-
-- `! [Http.get]` allows only `Http.get`
-- `! [Http]` covers all `Http.*` effects
-
-Example with input parsing:
+Regular verify:
 
 ```aver
-fn askName() -> String
-    ? "Reads a name or falls back to stranger."
-    ! [Console.readLine]
-    input = Console.readLine()
-    match input
-        Result.Ok(line) -> line
-        Result.Err(_) -> "stranger"
-```
-
-### Verify and replay
-
-Regular verify — each line is `expression => expected_value` (note: `=>`, not `=`):
-
-```aver
-fn add(a: Int, b: Int) -> Int
-    a + b
-
 verify add
     add(1, 2) => 3
-    add(0, 0) => 0
 ```
 
-**Important:**
-- The separator is `=>` (fat arrow), never `=`. Writing `=` is a parse error.
-- Every pure function must have a `verify` block. `aver check` will warn if a pure function is missing one. If you write helper functions, add a verify block for each.
-
-Law verify (generative testing over value ranges):
+Law verify (finite universal checks):
 
 ```aver
 verify add law commutative
@@ -289,19 +203,19 @@ verify add law commutative
     add(a, b) => add(b, a)
 ```
 
-Law verify rules:
-- `given` lines define value ranges
-- exactly one assertion line (`lhs => rhs`)
-- the assertion must be a single expression, not a boolean chain — if you need multiple conditions, extract a helper function
+Rules:
+- `verify` checks executable examples only
+- law verify expands cartesian product of `given` domains (capped at 10,000 cases)
+- `given x: T = [...]` describes the world / domain to test (values, or stubs for classified effects). `aver proof` quantifies universally over every value/stub — `given <Effect>` does **not** pin the law to one stub
+- `when <pred>` is an explicit precondition on the law; cases where it's false are skipped (in runtime, proof, and `--hostile`). Use it to scope a law to assumed worlds (`when clock(BranchPath.Root, 1) > clock(BranchPath.Root, 0)`)
+- `aver check` expects pure, non-trivial, non-`main` functions to carry a `verify` block
+- plain `verify fn` on a fn with a generative effect (Random, Http, Time.now, etc.) warns — the case RHS is compared against a freshly-produced value and flaps. Use `verify fn law …` with `given` stubs or `verify fn trace` instead
+- unclassified ambient state, persistent protocols, terminal modes, and server callbacks should use record/replay
+- `aver audit --hostile` (or `aver verify --hostile`) layers adversarial worlds on top of every `verify <fn> law` block: typed `given`s get type-boundary values; classified effects get hostile profiles. Failures use slug `verify-hostile-mismatch`. Repair: `when <pred>` to scope the law, downgrade `law` → cases-form if it's stub-specific, or fix the impl. See `docs/oracle.md` for profile/boundary tables.
 
-Use `verify` for pure logic, `verify … trace` for classified effectful fns, `aver record` / `aver replay` for unclassified (ambient / session / modal) flows.
+#### Oracle verify-trace (effectful functions)
 
-```text
-aver run app.av --record recordings/
-aver replay recordings/ --test --diff
-```
-
-Oracle verify-trace (effectful fns — `Random.*`, `Disk.*`, `Http.*`, `Tcp.send/.ping`, `Time.*`, `Console.readLine`, `Terminal.readKey`, and the output-only trace effects):
+Classified effectful fns get formal proof export via `verify <fn> trace`. Stubs bind oracles at verify time so the fn produces deterministic values and the trace can be asserted about.
 
 ```aver
 fn roll() -> Int
@@ -321,15 +235,25 @@ fn highDie(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int
     hi
 ```
 
-- `given name: Effect.method = [stubFn, ...]` binds a stub for a classified effect; stub signature for generative effects is `(path: BranchPath, k: Int, args...) -> T`, snapshot effects skip the path/k prefix
-- `BranchPath.Root` is a nullary value constructor (no parens); nested paths via `BranchPath.child(parent, idx)`
-- Projections on case LHS: `.result`, `.trace`, `.trace.length()`, `.trace.event(k)`, `.trace.contains(Effect.method)` (method-only) or `.trace.contains(Effect.method("arg"))` (event literal), `.trace.group(N).branch(idx).*` for `!` / `?!` products
-- `aver proof <file>.av --backend lean|dafny` exports the verify blocks as Lean 4 `theorem` / Dafny `lemma` with a shared trust header
-- Unclassified effects (`Env.set`, `Tcp.connect`/`writeLine`/`readLine`/`close`, `HttpServer.listen`, modal terminal state) are rejected by `verify trace` — stay on record/replay for those
+Rules:
+- `given name: Effect.method = [stubFn, ...]` binds a stub for the classified effect. Multi-value list expands cartesian with cases; one `given` per effect — duplicates are rejected
+- Stub signature for generative effects (`Random.*`, `Http.*`, `Disk.*`, `Tcp.send/.ping`, `Console.readLine`, `Terminal.readKey`, `Time.now/.unixMs`): `(path: BranchPath, k: Int, args...) -> ReturnType`
+- Stub signature for snapshot effects (`Args.get`, `Env.get`): `(args...) -> ReturnType` — no path/counter prefix
+- Output-only effects (`Console.print/.error/.warn`, `Time.sleep`, `Terminal.clear/.moveTo/.print/.hideCursor/.showCursor/.flush`) don't need stubs; they append to the trace directly
+- `BranchPath.Root` is a nullary value constructor — no parens, PascalCase. `BranchPath.child(parent, idx)` and `BranchPath.parse(str)` are the constructors for nested paths
+- Case LHS projections:
+  - `fn(args).result` — return value
+  - `fn(args).trace` — full trace as a `Trace` record
+  - `fn(args).trace.length()` — Int, event count
+  - `fn(args).trace.event(k)` — `Option<EffectEvent>` at 0-based index
+  - `fn(args).trace.contains(Effect.method)` — Bool, method-only predicate (ignores args)
+  - `fn(args).trace.contains(Effect.method("arg"))` — Bool, exact event-literal match
+  - `fn(args).trace.group(N).branch(idx).*` — tree-nav into `!`/`?!` independent products (0-based N, idx)
+- Local bindings with `name = expr` go between `given` clauses and case assertions; they're substituted into every case (so each case still runs its own fresh `fn()` invocation)
+- Every generative/gen+output effect the fn uses must have a `given` stub under `trace`; missing stubs are rejected with a pointer at the fix
+- Unclassified effects (`Env.set`, `Tcp.connect/writeLine/readLine/close`, `Terminal.enableRawMode/setColor/resetColor/size`, `HttpServer.listen`) are rejected by `verify trace` — use record/replay for those
 
-### Decisions
-
-Architectural rationale is first-class syntax:
+### Decision blocks
 
 ```aver
 decision UseResultNotExceptions
@@ -340,14 +264,21 @@ decision UseResultNotExceptions
     chosen = "Result"
     rejected = ["Exceptions", "Nullable"]
     impacts = [safeDivide, safeRoot]
+    author = "team"
 ```
+
+Rules:
+- first-class syntax, not comments or markdown
+- `chosen`, `rejected`, `impacts` may reference symbols or quoted labels
+- exported through `aver context --decisions-only`
 
 ### Operators
 
-- arithmetic: `+`, `-`, `*`, `/` (integer division truncates)
-- comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
-- error propagation: `expr?`
-- independence: `(a, b)!`, `(a, b)?!`
+- Arithmetic: `+`, `-`, `*`, `/` (operands must match types)
+- Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
+- Error propagation: `expr?` (unwraps Result.Ok, propagates Err)
+- Independence: `(a, b)!` (parallel), `(a, b)?!` (parallel + Result unwrap)
+- String interpolation: `"Hello, {name}!"`
 
 **These operators do NOT exist** — do not use them:
 
@@ -359,7 +290,7 @@ decision UseResultNotExceptions
 
 ### Recursion
 
-There are no loops. Use recursion and pattern matching.
+There are no loops. Use recursion and pattern matching. Tail-call optimization is automatic.
 
 ```aver
 fn sum(xs: List<Int>) -> Int
@@ -368,107 +299,114 @@ fn sum(xs: List<Int>) -> Int
         [h, ..t] -> h + sum(t)
 ```
 
-Tail-call optimization is automatic.
+### Builtins and namespaces
 
-## Common namespaces
+Use namespaced builtins only.
 
-Useful pure functions:
+Common pure namespaces:
+- `Int`, `Float`, `String`, `List`, `Vector`, `Map`, `Bool`, `Char`, `Byte`, `Result`, `Option`
 
-- `Int.fromString : String -> Result<Int, String>`
-- `Int.toString : Int -> String`
-- `Int.abs : Int -> Int`
-- `Int.mod : (Int, Int) -> Result<Int, String>` (use instead of `%`)
-- `Float.fromString : String -> Result<Float, String>`
-- `String.len : String -> Int`
-- `String.contains : (String, String) -> Bool`
-- `String.toUpper : String -> String`
-- `String.toLower : String -> String`
-- `String.trim : String -> String`
-- `String.join : (List<String>, String) -> String`
-- `String.concat : (String, String) -> String`
-- `List.len : List<T> -> Int`
-- `List.prepend : (T, List<T>) -> List<T>`
-- `List.concat : (List<T>, List<T>) -> List<T>`
-- `List.reverse : List<T> -> List<T>`
-- `List.contains : (List<T>, T) -> Bool`
-- `Map.get : (Map<K, V>, K) -> Option<V>`
-- `Vector.get : (Vector<T>, Int) -> Option<T>`
-- `Result.withDefault : (Result<T, E>, T) -> T`
-- `Option.withDefault : (Option<T>, T) -> T`
-- `Bool.and : (Bool, Bool) -> Bool`
-- `Bool.or : (Bool, Bool) -> Bool`
-- `Bool.not : Bool -> Bool`
+Key `String` API:
+- `String.len`, `String.contains`, `String.startsWith`, `String.endsWith`
+- `String.toUpper`, `String.toLower`, `String.trim`
+- `String.concat`, `String.join`, `String.split`, `String.chars`
+- `Int.fromString : String -> Result<Int, String>`, `Int.toString : Int -> String`
+- string interpolation: `"Hello, {name}!"` is the idiomatic concat
 
-Useful effectful namespaces:
+Key `List` API (small, recursion-first):
+- `List.len`, `List.prepend`, `List.concat`, `List.reverse`, `List.contains`, `List.zip`, `List.take`, `List.drop`
+- No `List.map`, `List.filter`, `List.fold` — write with recursion
 
-- `Console.print`
-- `Console.error`
-- `Console.warn`
-- `Console.readLine`
-- `Http.get`
-- `Disk.readText`
-- `Disk.writeText`
-- `Tcp.connect`
-- `Terminal.readKey`
+Key `Vector` API (O(1) indexed access):
+- `Vector.new(n, default)`, `Vector.get(v, i) -> Option<T>`, `Vector.set(v, i, val) -> Option<Vector<T>>`
 
-Notably absent:
+Key `Map` API:
+- `Map.empty()`, `Map.fromList(pairs)`, `Map.get(m, k) -> Option<V>`, `Map.set(m, k, v)`, `Map.has(m, k)`, `Map.remove(m, k)`, `Map.keys(m)`, `Map.len(m)`
 
-- no built-in `List.map`
-- no built-in `List.filter`
-- no built-in `List.fold`
+Effectful namespaces:
+- `Console`: print, error, warn, readLine
+- `Http`: get, post, put, patch, delete, head
+- `Disk`: readText, writeText, appendText, exists, delete, deleteDir, listDir, makeDir
+- `Tcp`: connect, writeLine, readLine, close, send, ping
+- `Terminal`: enableRawMode, readKey, setCursor, print, clear, size
+- `Time`: now, unixMs, sleep
+- `Env`: get, set
+- `Args`: get
+- `HttpServer`: listen, listenWith
 
-Write these with recursion.
+### Common patterns
 
-## Toolchain
-
-```text
-aver run file.av
-aver run file.av --self-host
-aver verify file.av
-aver check file.av
-aver why file.av
-aver format file.av
-aver context file.av --budget 10kb
-aver compile file.av -o out/
-aver compile file.av --target wasm
-aver compile file.av --target wasm --wasm-opt oz
-aver proof file.av -o proof/
-aver proof file.av --backend dafny
-aver replay recordings/ --test --diff
+Recursive list processing (filter):
+```aver
+fn collectPositive(xs: List<Int>) -> List<Int>
+    match xs
+        [] -> []
+        [h, ..t] -> match h > 0
+            true  -> List.prepend(h, collectPositive(t))
+            false -> collectPositive(t)
 ```
 
-For AI navigation, start with:
-
-```text
-aver context file.av --budget 10kb
+Error propagation chain:
+```aver
+fn parseAndDivide(a: String, b: String) -> Result<Int, String>
+    x = Int.fromString(a)?
+    y = Int.fromString(b)?
+    safeDivide(x, y)?
 ```
 
-Then zoom in with `--focus <symbol>` or a larger budget.
+Map lookup:
+```aver
+match Map.get(ages, "alice")
+    Option.Some(age) -> "Alice is {age}"
+    Option.None -> "Unknown"
+```
 
-## Common mistakes
+### Common mistakes to avoid
 
 1. Writing `.aver` files instead of `.av`
-2. Using `let`, `val`, or `var` instead of `name = expr`
-3. Using bare constructors like `Ok(x)` instead of `Result.Ok(x)`
-4. Using `String.toInt` instead of `Int.fromString`
-5. Assuming `Console.readLine()` returns `String` instead of `Result<String, String>`
-6. Using `if` / `else` instead of `match`
-7. Writing multi-line match arms instead of extracting a helper
-8. Putting plain `verify` on a fn with generative effects — the RHS compares against a fresh value and flaps. Use `verify fn trace` with `given` stubs (classified effects) or record/replay (unclassified)
-9. Expecting closures or lambdas — not supported
-10. Expecting mutable variables — not supported
-11. Expecting `List.map`, `List.filter`, or `List.fold` to exist
-12. Using `%` for modulo — see Operators section
-13. Using `&&`, `||` for boolean logic — use `Bool.and`, `Bool.or`, or nested `match`
-14. Writing `=` instead of `=>` in verify blocks — the separator is always `=>`
-15. Using `..` without a name in list patterns — write `[h, ..t]`, not `[h, ..]`
+2. `if`/`else` — use `match`
+3. `val`/`var`/`let` — just `name = expr`
+4. Bare `Ok(x)` — must be `Result.Ok(x)`
+5. `String.toInt(s)` — not a thing; use `Int.fromString(s)` which returns `Result<Int, String>`
+6. Assuming `Console.readLine()` returns `String` — it returns `Result<String, String>`
+7. Writing `=` instead of `=>` in verify cases — separator is always `=>`
+8. Using `..` without a name in list patterns — write `[h, ..t]`, not `[h, ..]`
+9. Missing `!` effect declaration — compiler errors
+10. Closures/lambdas — not supported; use named top-level functions
+11. Mutable variables — not supported, all bindings are immutable
+12. `List.map`/`List.filter`/`List.fold` — not built-in; write with recursion
+13. Pipe `|>` — not supported
+14. Positional record destructuring in match — bind record, use field access
+15. Multi-line match arms — body must follow `->` on the same line; extract complex logic into a named function
+16. `BranchPath.Root()` / `BranchPath.root()` — it's a nullary value constructor, no parens: just `BranchPath.Root`
+17. Two `given` for the same effect — rejected. Use a multi-value domain `given rnd: Random.int = [stubA, stubB]` for varied samples
+18. Plain `verify fn` on a fn with generative effects — you get a lint warning, use `verify fn law …` with `given` stubs or `verify fn trace` instead
+
+### Style
+
+Prefer:
+- explicit domain types (records, sum types)
+- short, concrete `? "..."` descriptions
+- exact method effects
+- qualified constructors everywhere
+- straightforward orchestration over clever higher-order helpers
+- `verify` blocks on all pure non-trivial functions
+- `decision` blocks for non-obvious architectural choices
+
+Avoid:
+- broad effect declarations when specific ones suffice
+- hiding domain flow behind unnecessary abstraction
+- functions longer than ~30 lines; split into named helpers
 
 ## Further reading
 
-- Language Guide: https://github.com/jasisz/aver/blob/main/docs/language.md
-- Services (stdlib): https://github.com/jasisz/aver/blob/main/docs/services.md
-- Constructors: https://github.com/jasisz/aver/blob/main/docs/constructors.md
-- Common Pushback: https://github.com/jasisz/aver/blob/main/docs/pushback.md
-- Independence (?!): https://github.com/jasisz/aver/blob/main/docs/independence.md
-- Lean proofs: https://github.com/jasisz/aver/blob/main/docs/lean.md
-- Dafny verification: https://github.com/jasisz/aver/blob/main/docs/dafny.md
+- [Language Guide](https://github.com/jasisz/aver/blob/main/docs/language.md) — full surface-language reference
+- [Services (stdlib)](https://github.com/jasisz/aver/blob/main/docs/services.md) — every namespace and its API
+- [Constructors](https://github.com/jasisz/aver/blob/main/docs/constructors.md) — constructor routing rules
+- [Common Pushback](https://github.com/jasisz/aver/blob/main/docs/pushback.md) — questions, objections, honest answers
+- [Independence (`?!`)](https://github.com/jasisz/aver/blob/main/docs/independence.md) — parallel products
+- [Oracle](https://github.com/jasisz/aver/blob/main/docs/oracle.md) — `verify <fn> trace`, `given` stubs, `--hostile`
+- [Lean proofs](https://github.com/jasisz/aver/blob/main/docs/lean.md) — verify blocks to Lean 4
+- [Dafny verification](https://github.com/jasisz/aver/blob/main/docs/dafny.md) — verify laws to Dafny / Z3
+- [WASM backend](https://github.com/jasisz/aver/blob/main/docs/wasm.md) — browser compilation
+- [Toolchain reference (`llms-full.txt`)](https://averlang.dev/llms-full.txt) — `aver run`, `verify`, `audit`, `format`, `context`, `compile`, `proof`, `replay`

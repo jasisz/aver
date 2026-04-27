@@ -3,14 +3,20 @@ use alloc::string::ToString;
 
 impl NanValue {
     pub fn eq_in<T: ArenaTypes>(self, other: Self, arena: &Arena<T>) -> bool {
+        // Float comparison goes first and never short-circuits on
+        // bit-pattern equality. IEEE 754 says `NaN == NaN` is false
+        // and `+0.0 == -0.0` is true; both rules disagree with raw
+        // bit comparison, so we always defer to `f64::PartialEq` for
+        // floats. This keeps the VM's `==` aligned with what Rust
+        // codegen and WASM emit (both use IEEE 754 directly).
+        if self.is_float() || other.is_float() {
+            if !(self.is_float() && other.is_float()) {
+                return false;
+            }
+            return self.as_float() == other.as_float();
+        }
         if self.0 == other.0 {
             return true;
-        }
-        if self.is_float() != other.is_float() {
-            return false;
-        }
-        if self.is_float() {
-            return self.as_float() == other.as_float();
         }
         match (self.wrapper_parts(arena), other.wrapper_parts(arena)) {
             (Some((self_kind, self_inner)), Some((other_kind, other_inner))) => {

@@ -4,6 +4,7 @@ module Rewrite
         "Internal AST rewrites for the self-hosted resolver."
         "Compresses common resolved shapes into lighter internal expression nodes."
     exposes [rewriteInternalFns, rewriteInternalStmts]
+    effects []
 
 fn rewriteInternalFns(fns: List<FnDef>, acc: List<FnDef>) -> List<FnDef>
     ? "Rewrite resolved AST into lighter internal expression shapes without changing semantics."

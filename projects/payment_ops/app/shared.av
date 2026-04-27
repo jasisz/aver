@@ -4,6 +4,7 @@ module Shared
         "This module keeps boundary normalization logic in one place so CLI paths do not"
         "quietly drift apart over time."
     exposes [normalizeProviderInput]
+    effects []
 
 fn normalizeProviderInput(provider: String) -> Result<String, String>
     ? "Normalizes provider labels at the app boundary."

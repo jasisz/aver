@@ -4,6 +4,7 @@ module Codec
         "The storage format is intentionally plain text, so escaping, optional fields,"
         "and line splitting stay explicit instead of being hidden in a serializer."
     exposes [escapeField, serializeBool, parseBool, fieldAt, optionalFieldAt, encodeOption, decodeOption, splitNonEmptyLines]
+    effects []
 
 fn escapeField(text: String) -> String
     ? "Escapes percent, pipe, and newline for one flat-file field."

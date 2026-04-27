@@ -2,6 +2,7 @@ module Shapes
     intent =
         "Sum type example with geometric shapes."
     exposes [Shape, area, describe]
+    effects [Console]
 
 type Shape
   Circle(Float)

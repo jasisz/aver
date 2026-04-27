@@ -2,6 +2,7 @@ module Hello
     intent =
         "Demonstrates basic Aver syntax: functions, string interpolation,"
         "local bindings, and verify blocks."
+    effects [Console]
 
 fn greet(name: String) -> String
     ? "Returns a personalised greeting."

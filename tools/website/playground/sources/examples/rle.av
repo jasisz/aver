@@ -1,0 +1,34 @@
+module Rle
+    intent = "run-length encoding: compress consecutive repeats"
+    effects [Console.print]
+
+type RlePair
+    Pair(String, Int)
+
+fn encode(chars: List<String>, current: String, count: Int, acc: List<RlePair>) -> List<RlePair>
+    ? "run-length encoding accumulator loop"
+    match chars
+        [] -> List.reverse(List.prepend(RlePair.Pair(current, count), acc))
+        [h, ..t] -> match h == current
+            true -> encode(t, current, count + 1, acc)
+            false -> encode(t, h, 1, List.prepend(RlePair.Pair(current, count), acc))
+
+verify encode
+    encode([], "a", 3, []) => [RlePair.Pair("a", 3)]
+    encode(["a"], "a", 1, []) => [RlePair.Pair("a", 2)]
+
+fn rleEncode(input: String) -> List<RlePair>
+    ? "run-length encode a string: 'aaab' -> [(a,3),(b,1)]"
+    chars = String.chars(input)
+    match chars
+        [] -> []
+        [first, ..rest] -> encode(rest, first, 1, [])
+
+verify rleEncode
+    rleEncode("") => []
+    rleEncode("aaa") => [RlePair.Pair("a", 3)]
+    rleEncode("aab") => [RlePair.Pair("a", 2), RlePair.Pair("b", 1)]
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(rleEncode("aaabbbccddddee"))

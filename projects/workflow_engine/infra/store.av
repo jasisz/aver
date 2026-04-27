@@ -5,6 +5,7 @@ module Store
         "domain so the app core reads like event sourcing instead of storage magic."
     exposes [dataDir, initStore, loadProjects, saveProjects, loadTaskEvents, appendTaskEvents]
     depends [Domain.Types, Infra.Codec]
+    effects [Disk]
 
 decision AppendOnlyTaskEventsWithFlatProjectState
     date = "2026-03-08"

@@ -14,18 +14,26 @@ fn name(param: Type) -> ReturnType
 ```
 
 Rules:
-- indentation-only function bodies
+- indentation-only function bodies — no braces, no `end`
 - last expression is the return value, no `return` keyword
-- no `if` / `else`; use `match`
-- no `val` / `var`; bindings are `name = expr`, always immutable
-- no pipe operator `|>`
-- no closures or lambdas; all functions are top-level
+- all functions are top-level; no closures, lambdas, or anonymous fns
+- top-level fns of the right shape can be passed where `Fn(...)` is expected
 - `main` returns `Unit` or `Result<Unit, String>`
 
 `?` descriptions:
 - start with `? "..."` on the line after signature
 - continuation lines are more string literals at deeper indent
 - `aver check` warns when non-`main` functions omit the description
+
+### Bindings
+
+All bindings are immutable. No `let`, `val`, or `var`.
+
+```aver
+name = "Alice"
+age: Int = 30
+xs: List<Int> = []
+```
 
 ### Types
 
@@ -76,10 +84,11 @@ match value
 ```
 
 Rules:
-- `match` is the only branching construct
+- `match` is the only branching construct (no `if` / `else`)
+- **arm bodies must start on the same line as `->`** — multi-line bodies are a parse error; extract a helper function instead
 - no colon after the subject
 - no guards
-- list patterns: `[]` and `[head, ..tail]`
+- list patterns: `[]` and `[head, ..tail]` (the `..` rest must be named)
 - tuple patterns: `(a, b)`
 - constructor patterns always qualified: `Result.Ok`, `Option.None`, `Shape.Circle`
 - boolean branching: `match x > 0` with `true ->` / `false ->`
@@ -109,6 +118,7 @@ module Billing
         "Exports only the public entrypoints."
     exposes [charge, refund]
     depends [Core.Types, Infra.Store]
+    effects [Console.print, Disk]
 ```
 
 Rules:
@@ -116,6 +126,7 @@ Rules:
 - `intent` may be inline or multiline; formatter prefers multiline for multiline text
 - `depends [...]` and `exposes [...]` are explicit
 - opaque types: `exposes opaque [Discount]` — visible in signatures but cannot be constructed or destructured from outside
+- `effects [...]` declares the module's effect surface. Every function's `! [Effect]` must be covered: a method-level entry like `Disk.readText` admits only that method, a namespace entry like `Disk` admits any `Disk.*` method. Underdeclared = type error; overdeclared = warning. A module with functions but no `effects [...]` triggers a warning to add the boundary (use `effects []` for a pure module).
 
 ### Verify blocks
 
@@ -138,9 +149,12 @@ verify add law commutative
 Rules:
 - `verify` checks executable examples only
 - law verify expands cartesian product of `given` domains (capped at 10,000 cases)
+- `given x: T = [...]` describes the world / domain to test (values, or stubs for classified effects). `aver proof` quantifies universally over every value/stub — `given <Effect>` does **not** pin the law to one stub
+- `when <pred>` is an explicit precondition on the law; cases where it's false are skipped (in runtime, proof, and `--hostile`). Use it to scope a law to assumed worlds (`when clock(BranchPath.Root, 1) > clock(BranchPath.Root, 0)`)
 - `aver check` expects pure, non-trivial, non-`main` functions to carry a `verify` block
 - plain `verify fn` on a fn with a generative effect (Random, Http, Time.now, etc.) warns — the case RHS is compared against a freshly-produced value and flaps. Use `verify fn law …` with `given` stubs or `verify fn trace` instead
 - unclassified ambient state, persistent protocols, terminal modes, and server callbacks should use record/replay
+- `aver audit --hostile` (or `aver verify --hostile`) layers adversarial worlds on top of every `verify <fn> law` block: typed `given`s get type-boundary values; classified effects get hostile profiles. Failures use slug `verify-hostile-mismatch`. Repair: `when <pred>` to scope the law, downgrade `law` → cases-form if it's stub-specific, or fix the impl. See `docs/oracle.md` for profile/boundary tables.
 
 #### Oracle verify-trace (effectful functions)
 
@@ -209,12 +223,38 @@ Rules:
 - Independence: `(a, b)!` (parallel), `(a, b)?!` (parallel + Result unwrap)
 - String interpolation: `"Hello, {name}!"`
 
+**These operators do NOT exist** — do not use them:
+
+- no `%` (modulo) — use `Int.mod(a, b)` which returns `Result<Int, String>`
+- no `&&`, `||` (boolean and/or) — use `Bool.and(a, b)`, `Bool.or(a, b)`, or nested `match`
+- no `!` (boolean not) as prefix — use `Bool.not(x)`
+- no `+=`, `-=`, `++`, `--` (mutation operators)
+- no bitwise operators
+
+### Recursion
+
+There are no loops. Use recursion and pattern matching. Tail-call optimization is automatic.
+
+```aver
+fn sum(xs: List<Int>) -> Int
+    match xs
+        [] -> 0
+        [h, ..t] -> h + sum(t)
+```
+
 ### Builtins and namespaces
 
 Use namespaced builtins only.
 
 Common pure namespaces:
 - `Int`, `Float`, `String`, `List`, `Vector`, `Map`, `Bool`, `Char`, `Byte`, `Result`, `Option`
+
+Key `String` API:
+- `String.len`, `String.contains`, `String.startsWith`, `String.endsWith`
+- `String.toUpper`, `String.toLower`, `String.trim`
+- `String.concat`, `String.join`, `String.split`, `String.chars`
+- `Int.fromString : String -> Result<Int, String>`, `Int.toString : Int -> String`
+- string interpolation: `"Hello, {name}!"` is the idiomatic concat
 
 Key `List` API (small, recursion-first):
 - `List.len`, `List.prepend`, `List.concat`, `List.reverse`, `List.contains`, `List.zip`, `List.take`, `List.drop`
@@ -236,30 +276,6 @@ Effectful namespaces:
 - `Env`: get, set
 - `Args`: get
 - `HttpServer`: listen, listenWith
-
-### aver.toml
-
-Runtime effect policies (deployment guardrails):
-
-```toml
-[effects.Http]
-hosts = ["api.example.com", "*.internal.corp"]
-
-[effects.Disk]
-paths = ["./data/**"]
-
-[effects.Env]
-keys = ["APP_*", "TOKEN"]
-```
-
-Check-time suppressions:
-
-```toml
-[[check.suppress]]
-slug = "non-tail-recursion"
-files = ["**/eval/**"]
-reason = "Tree-walking interpreter — CPS would destroy correspondence."
-```
 
 ### Common patterns
 
@@ -290,18 +306,24 @@ match Map.get(ages, "alice")
 
 ### Common mistakes to avoid
 
-1. `if`/`else` — use `match`
-2. `val`/`var` — just `name = expr`
-3. Bare `Ok(x)` — must be `Result.Ok(x)`
-4. Missing `!` effect declaration — compiler errors
-5. Closures/lambdas — not supported; use named top-level functions
-6. `List.map`/`List.filter` — not built-in; write with recursion
-7. Pipe `|>` — not supported
-8. Positional record destructuring in match — bind record, use field access
-9. Multi-line match arms — body must follow `->` on the same line; extract complex logic into a named function
-10. `BranchPath.Root()` / `BranchPath.root()` — it's a nullary value constructor, no parens: just `BranchPath.Root`
-11. Two `given` for the same effect — rejected. Use a multi-value domain `given rnd: Random.int = [stubA, stubB]` for varied samples
-12. Plain `verify fn` on a fn with generative effects — you get a lint warning, use `verify fn law …` with `given` stubs or `verify fn trace` instead
+1. Writing `.aver` files instead of `.av`
+2. `if`/`else` — use `match`
+3. `val`/`var`/`let` — just `name = expr`
+4. Bare `Ok(x)` — must be `Result.Ok(x)`
+5. `String.toInt(s)` — not a thing; use `Int.fromString(s)` which returns `Result<Int, String>`
+6. Assuming `Console.readLine()` returns `String` — it returns `Result<String, String>`
+7. Writing `=` instead of `=>` in verify cases — separator is always `=>`
+8. Using `..` without a name in list patterns — write `[h, ..t]`, not `[h, ..]`
+9. Missing `!` effect declaration — compiler errors
+10. Closures/lambdas — not supported; use named top-level functions
+11. Mutable variables — not supported, all bindings are immutable
+12. `List.map`/`List.filter`/`List.fold` — not built-in; write with recursion
+13. Pipe `|>` — not supported
+14. Positional record destructuring in match — bind record, use field access
+15. Multi-line match arms — body must follow `->` on the same line; extract complex logic into a named function
+16. `BranchPath.Root()` / `BranchPath.root()` — it's a nullary value constructor, no parens: just `BranchPath.Root`
+17. Two `given` for the same effect — rejected. Use a multi-value domain `given rnd: Random.int = [stubA, stubB]` for varied samples
+18. Plain `verify fn` on a fn with generative effects — you get a lint warning, use `verify fn law …` with `given` stubs or `verify fn trace` instead
 
 ### Style
 
@@ -315,7 +337,6 @@ Prefer:
 - `decision` blocks for non-obvious architectural choices
 
 Avoid:
-- pseudo-imperative syntax from older Aver versions
 - broad effect declarations when specific ones suffice
 - hiding domain flow behind unnecessary abstraction
 - functions longer than ~30 lines; split into named helpers

@@ -3,6 +3,7 @@ module Rng
         "Deterministic LCG pseudo-random number generator."
         "Pure functions, no effects, fully verify-able."
     depends []
+    effects []
 
 fn nextSeed(s: Int) -> Int
     ? "Linear congruential generator step"

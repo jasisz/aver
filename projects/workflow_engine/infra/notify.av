@@ -5,6 +5,7 @@ module Notify
         "emitted immediately to the console to make the CLI feel alive."
     exposes [initNotify, loadNotifications, emitNotifications, forTask]
     depends [Domain.Types, Infra.Codec, Infra.Store]
+    effects [Console, Disk]
 
 decision NotificationsDeduplicateByKey
     date = "2026-03-08"

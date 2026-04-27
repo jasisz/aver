@@ -74,6 +74,10 @@ pub enum RuntimeType {
     ListHeader,
     /// `Terminal.Size` record — the return of `Terminal.size`.
     TerminalSize,
+    /// `Tcp.Connection` opaque token — argument/return of `Tcp.*` session methods.
+    TcpConnection,
+    /// `Result<Tcp.Connection, Str>` — return of `Tcp.connect`.
+    ResultTcpConnectionStr,
 }
 
 impl RuntimeType {
@@ -99,6 +103,11 @@ impl RuntimeType {
             ),
             RuntimeType::ListHeader => Type::List(Box::new(Type::Named("Header".to_string()))),
             RuntimeType::TerminalSize => Type::Named("Terminal.Size".to_string()),
+            RuntimeType::TcpConnection => Type::Named("Tcp.Connection".to_string()),
+            RuntimeType::ResultTcpConnectionStr => Type::Result(
+                Box::new(Type::Named("Tcp.Connection".to_string())),
+                Box::new(Type::Str),
+            ),
         }
     }
 }
@@ -278,7 +287,44 @@ const CLASSIFICATIONS: &[EffectClassification] = &[
         runtime_params: &[RuntimeType::Str, RuntimeType::Int],
         runtime_return: RuntimeType::ResultUnitStr,
     },
+    // Session TCP — connection is an opaque token. Stubs are stateless: a
+    // `writeLine` does not affect a later `readLine`. If a test wants
+    // request/response symmetry, it must encode that explicitly in the stub.
+    EffectClassification {
+        method: "Tcp.connect",
+        dimension: EffectDimension::GenerativeOutput,
+        runtime_params: &[RuntimeType::Str, RuntimeType::Int],
+        runtime_return: RuntimeType::ResultTcpConnectionStr,
+    },
+    EffectClassification {
+        method: "Tcp.readLine",
+        dimension: EffectDimension::GenerativeOutput,
+        runtime_params: &[RuntimeType::TcpConnection],
+        runtime_return: RuntimeType::ResultStrStr,
+    },
+    EffectClassification {
+        method: "Tcp.writeLine",
+        dimension: EffectDimension::GenerativeOutput,
+        runtime_params: &[RuntimeType::TcpConnection, RuntimeType::Str],
+        runtime_return: RuntimeType::ResultUnitStr,
+    },
+    EffectClassification {
+        method: "Tcp.close",
+        dimension: EffectDimension::GenerativeOutput,
+        runtime_params: &[RuntimeType::TcpConnection],
+        runtime_return: RuntimeType::ResultUnitStr,
+    },
     // Output-only — no oracle signature, but classified for completeness.
+    // Env.set is stateless under Oracle: emitted to trace, but does NOT
+    // make a later `Env.get` return the written value. If the program
+    // depends on read-after-write consistency, the model belongs in pure
+    // user code, not in the effect oracle.
+    EffectClassification {
+        method: "Env.set",
+        dimension: EffectDimension::Output,
+        runtime_params: &[RuntimeType::Str, RuntimeType::Str],
+        runtime_return: RuntimeType::Unit,
+    },
     EffectClassification {
         method: "Console.print",
         dimension: EffectDimension::Output,
@@ -341,6 +387,34 @@ const CLASSIFICATIONS: &[EffectClassification] = &[
     },
     EffectClassification {
         method: "Terminal.flush",
+        dimension: EffectDimension::Output,
+        runtime_params: &[],
+        runtime_return: RuntimeType::Unit,
+    },
+    // Terminal modal/visual — output only. Mode and color changes are
+    // observable via trace; the oracle does NOT model that a later `print`
+    // is "now in raw mode" or "now in red". If a test cares, it asserts the
+    // sequence of trace events.
+    EffectClassification {
+        method: "Terminal.enableRawMode",
+        dimension: EffectDimension::Output,
+        runtime_params: &[],
+        runtime_return: RuntimeType::Unit,
+    },
+    EffectClassification {
+        method: "Terminal.disableRawMode",
+        dimension: EffectDimension::Output,
+        runtime_params: &[],
+        runtime_return: RuntimeType::Unit,
+    },
+    EffectClassification {
+        method: "Terminal.setColor",
+        dimension: EffectDimension::Output,
+        runtime_params: &[RuntimeType::Str],
+        runtime_return: RuntimeType::Unit,
+    },
+    EffectClassification {
+        method: "Terminal.resetColor",
         dimension: EffectDimension::Output,
         runtime_params: &[],
         runtime_return: RuntimeType::Unit,
@@ -692,21 +766,34 @@ mod tests {
     }
 
     #[test]
-    fn ambient_protocol_and_modal_effects_not_classified() {
-        // These remain replay-only in v1.
+    fn server_lifecycle_remains_unclassified() {
+        // HttpServer.listen is a long-running protocol with callbacks — its
+        // handler is the unit of proof, not the lifecycle call itself. Stays
+        // outside Oracle by design.
+        for name in &["HttpServer.listen", "HttpServer.listenWith"] {
+            assert!(!is_classified(name), "{} should NOT be classified", name);
+        }
+    }
+
+    #[test]
+    fn extended_oracle_v1_methods_classified() {
+        // Output: env writes and terminal modal/visual changes — emitted to
+        // trace, no oracle signature.
         for name in &[
             "Env.set",
-            "Tcp.connect",
-            "Tcp.writeLine",
-            "Tcp.readLine",
-            "Tcp.close",
-            "HttpServer.listen",
             "Terminal.enableRawMode",
             "Terminal.disableRawMode",
             "Terminal.setColor",
             "Terminal.resetColor",
         ] {
-            assert!(!is_classified(name), "{} should NOT be classified", name);
+            let c = classify(name).unwrap_or_else(|| panic!("{} should be classified", name));
+            assert_eq!(c.dimension, EffectDimension::Output);
+        }
+        // GenerativeOutput: session TCP — request emitted, response from oracle.
+        // Stateless: writeLine does not affect a later readLine.
+        for name in &["Tcp.connect", "Tcp.readLine", "Tcp.writeLine", "Tcp.close"] {
+            let c = classify(name).unwrap_or_else(|| panic!("{} should be classified", name));
+            assert_eq!(c.dimension, EffectDimension::GenerativeOutput);
         }
     }
 

@@ -2,16 +2,25 @@ module IndependentFanout
     intent =
         "Tests independent products (?! and !) with pure recursive fan-out."
         "No external effects — exercises the independence machinery on pure computations."
+    effects [Console]
 
 fn slow(x: Int) -> Result<Int, String>
     ? "Simulates a computation that returns Ok."
     Result.Ok(x * 10)
+
+verify slow
+    slow(1) => Result.Ok(10)
+    slow(0) => Result.Ok(0)
 
 fn failing(x: Int) -> Result<Int, String>
     ? "Simulates a computation that fails for negative input."
     match x < 0
         true -> Result.Err("negative: {x}")
         false -> Result.Ok(x * 100)
+
+verify failing
+    failing(2) => Result.Ok(200)
+    failing(0 - 1) => Result.Err("negative: -1")
 
 // ── Flat ?! — all succeed ──────────────────────────────────────────────────
 
@@ -20,11 +29,17 @@ fn flatOk() -> Result<(Int, Int, Int), String>
     data = (slow(1), slow(2), slow(3))?!
     Result.Ok(data)
 
+verify flatOk
+    flatOk() => Result.Ok((10, 20, 30))
+
 // ── Flat ?! — one fails ────────────────────────────────────────────────────
 
 fn flatFail() -> (Result<Int, String>, Result<Int, String>, Result<Int, String>)
     ? "Three independent computations as bare product — middle one fails."
     (slow(1), failing(0 - 5), slow(3))!
+
+verify flatFail
+    flatFail() => (Result.Ok(10), Result.Err("negative: -5"), Result.Ok(30))
 
 // ── Bare ! — partial success ───────────────────────────────────────────────
 
@@ -32,11 +47,18 @@ fn bareProduct() -> (Result<Int, String>, Result<Int, String>)
     ? "Two independent computations, bare product preserves both Results."
     (slow(7), failing(0 - 1))!
 
+verify bareProduct
+    bareProduct() => (Result.Ok(70), Result.Err("negative: -1"))
+
 // ── Recursive fan-out with ?! ──────────────────────────────────────────────
 
 fn processOne(x: Int) -> Result<Int, String>
     ? "Process a single element."
     Result.Ok(x * x)
+
+verify processOne
+    processOne(0) => Result.Ok(0)
+    processOne(5) => Result.Ok(25)
 
 fn processStep(x: Int, rest: List<Int>) -> Result<List<Int>, String>
     ? "Process one element and the rest independently."
@@ -44,11 +66,19 @@ fn processStep(x: Int, rest: List<Int>) -> Result<List<Int>, String>
     match data
         (val, others) -> Result.Ok(List.prepend(val, others))
 
+verify processStep
+    processStep(2, []) => Result.Ok([4])
+    processStep(2, [3]) => Result.Ok([4, 9])
+
 fn processAll(items: List<Int>) -> Result<List<Int>, String>
     ? "Recursive fan-out over a list using ?!."
     match items
         [] -> Result.Ok([])
         [x, ..rest] -> processStep(x, rest)
+
+verify processAll
+    processAll([]) => Result.Ok([])
+    processAll([1, 2, 3]) => Result.Ok([1, 4, 9])
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 

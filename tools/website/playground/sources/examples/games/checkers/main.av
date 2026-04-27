@@ -3,6 +3,7 @@ module Main
         "Checkers game: human vs AI with terminal UI and decision trace."
         "Arrow keys to move cursor, Enter to select/move."
     depends [Board, Rules, Ai, Render]
+    effects [Args, Console, Terminal, Time]
 
 decision ImmutableStateThreading
     date = "2026-03-18"

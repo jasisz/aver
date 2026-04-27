@@ -4,6 +4,7 @@ module Fibonacci
         "Single-pass stats builder computes fibs, sum, max, and evens in one traversal."
         "Stats returned as a FibStats record; accumulator state as a FibAcc record."
         "Verify blocks serve as executable examples and AI anchors."
+    effects [Console]
 
 record FibStats
   fibs: List<Int>

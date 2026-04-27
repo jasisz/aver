@@ -611,6 +611,15 @@ impl TypeChecker {
                         "contains" => {
                             return Type::Fn(vec![Type::Unknown], Box::new(Type::Bool), vec![]);
                         }
+                        // 0.13 Limit nail #3: `.count(M)` returns the number
+                        // of events whose method matches `M`. Same argument
+                        // shape as `.contains` (effect-method reference or
+                        // call literal); difference is `Bool` vs `Int`. Lets
+                        // users write quantitative trace laws like
+                        // `result.trace.count(Http.get) == 1`.
+                        "count" => {
+                            return Type::Fn(vec![Type::Unknown], Box::new(Type::Int), vec![]);
+                        }
                         "event" => {
                             return Type::Fn(
                                 vec![Type::Int],

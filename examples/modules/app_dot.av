@@ -2,6 +2,7 @@ module App
     depends [Modules.Models.User]
     intent =
         "Demonstrates dot-path module imports."
+    effects [Console.print]
 
 fn main() -> Unit
     ! [Console.print]

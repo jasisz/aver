@@ -4,6 +4,7 @@ module Board
         "Immutable 2D grid as List<List<Option<PieceKind>>>, with cell access,"
         "line clearing, and row counting."
     depends []
+    effects []
 
 type PieceKind
     I
