@@ -120,7 +120,7 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "aver-lang"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aver-memory",
  "aver-rt",
@@ -151,14 +151,14 @@ dependencies = [
 
 [[package]]
 name = "aver-memory"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "aver-rt",
 ]
 
 [[package]]
 name = "aver-rt"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "crossterm",
  "getrandom 0.3.4",
