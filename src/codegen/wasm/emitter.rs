@@ -211,6 +211,12 @@ pub fn build_wasm_module(
     let aver_rt_imports = AverRuntimeImports {
         rt_alloc: 0,
         rt_truncate: 1,
+        rt_obj_kind: 2,
+        rt_obj_tag: 3,
+        rt_obj_meta: 4,
+        rt_obj_field: 5,
+        rt_obj_field_f64: 6,
+        rt_obj_field_i32: 7,
     };
     import_section.import(
         "aver_runtime",
@@ -221,6 +227,36 @@ pub fn build_wasm_module(
         "aver_runtime",
         "rt_truncate",
         EntityType::Function(rti.i32_to_empty),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_obj_kind",
+        EntityType::Function(rti.obj_kind),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_obj_tag",
+        EntityType::Function(rti.obj_tag),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_obj_meta",
+        EntityType::Function(rti.obj_meta),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_obj_field",
+        EntityType::Function(rti.obj_field_i64),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_obj_field_f64",
+        EntityType::Function(rti.obj_field_f64),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_obj_field_i32",
+        EntityType::Function(rti.obj_field_i32),
     );
     import_section.import(
         "aver_runtime",
@@ -242,7 +278,7 @@ pub fn build_wasm_module(
             shared: false,
         }),
     );
-    let mut import_func_count = 2u32; // rt_alloc, rt_truncate
+    let mut import_func_count = 8u32; // rt_alloc + rt_truncate + 6 obj_*
     // Index of the write-to-stdout import (used by runtime's write_stdout helper)
     let mut write_stdout_import: Option<u32> = None;
 

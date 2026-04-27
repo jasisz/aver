@@ -17,6 +17,7 @@
 const PRELUDE_WAT: &str = include_str!("wat/prelude.part.wat");
 const ALLOC_WAT: &str = include_str!("wat/alloc.part.wat");
 const TRUNCATE_WAT: &str = include_str!("wat/truncate.part.wat");
+const OBJ_WAT: &str = include_str!("wat/obj.part.wat");
 
 /// Build the runtime module's WAT source by concatenating fragments
 /// inside a `(module ...)` wrapper. Order matters — prelude declares
@@ -29,6 +30,8 @@ fn runtime_wat_source() -> String {
     s.push_str(ALLOC_WAT);
     s.push('\n');
     s.push_str(TRUNCATE_WAT);
+    s.push('\n');
+    s.push_str(OBJ_WAT);
     s.push('\n');
     s.push(')');
     s
@@ -63,7 +66,18 @@ mod tests {
     #[test]
     fn runtime_exports_expected_symbols() {
         let bytes = build_runtime_wasm().expect("runtime WAT must parse");
-        let expected = ["memory", "heap_ptr", "rt_alloc", "rt_truncate"];
+        let expected = [
+            "memory",
+            "heap_ptr",
+            "rt_alloc",
+            "rt_truncate",
+            "rt_obj_kind",
+            "rt_obj_tag",
+            "rt_obj_meta",
+            "rt_obj_field",
+            "rt_obj_field_f64",
+            "rt_obj_field_i32",
+        ];
         let mut found: std::collections::HashSet<&str> =
             std::collections::HashSet::new();
         for payload in wasmparser::Parser::new(0).parse_all(&bytes) {

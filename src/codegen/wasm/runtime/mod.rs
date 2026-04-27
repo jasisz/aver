@@ -46,7 +46,8 @@ pub(crate) const IO_FLOAT_BUF: u32 = 48; // 48 bytes for float digits (48..95)
 /// Functions migrated to the `aver_runtime` imported WAT module are
 /// intentionally absent here — they live in `runtime/wat/*.part.wat`
 /// and are referenced through their import indices on `rt`.
-/// Migrated so far: alloc, truncate.
+/// Migrated so far: alloc, truncate, obj_kind/tag/meta, obj_field
+/// (i64/f64/i32 variants).
 #[allow(clippy::vec_init_then_push)]
 pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     let mut funcs = Vec::new();
@@ -61,12 +62,6 @@ pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     funcs.push(alloc::emit_unwrap_i64()); // $unwrap
     funcs.push(alloc::emit_unwrap_f64()); // $unwrap_f64
     funcs.push(alloc::emit_unwrap_i32()); // $unwrap_i32
-    funcs.push(alloc::emit_obj_kind()); // $obj_kind
-    funcs.push(alloc::emit_obj_tag()); // $obj_tag
-    funcs.push(alloc::emit_obj_meta()); // $obj_meta
-    funcs.push(alloc::emit_obj_field_i64()); // $obj_field
-    funcs.push(alloc::emit_obj_field_f64()); // $obj_field_f64
-    funcs.push(alloc::emit_obj_field_i32()); // $obj_field_i32
     funcs.push(lists::emit_list_cons_i64(rt)); // $list_cons
     funcs.push(lists::emit_list_cons_f64(rt)); // $list_cons_f64
     funcs.push(io::emit_int_to_str()); // $int_to_str

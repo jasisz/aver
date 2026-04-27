@@ -15,6 +15,12 @@ use wasm_encoder::{TypeSection, ValType};
 pub struct AverRuntimeImports {
     pub rt_alloc: u32,
     pub rt_truncate: u32,
+    pub rt_obj_kind: u32,
+    pub rt_obj_tag: u32,
+    pub rt_obj_meta: u32,
+    pub rt_obj_field: u32,
+    pub rt_obj_field_f64: u32,
+    pub rt_obj_field_i32: u32,
 }
 
 /// Index assignments for runtime functions within the module.
@@ -123,12 +129,12 @@ impl RuntimeFuncIndices {
             unwrap: next(),
             unwrap_f64: next(),
             unwrap_i32: next(),
-            obj_kind: next(),
-            obj_tag: next(),
-            obj_meta: next(),
-            obj_field: next(),
-            obj_field_f64: next(),
-            obj_field_i32: next(),
+            obj_kind: imports.rt_obj_kind,
+            obj_tag: imports.rt_obj_tag,
+            obj_meta: imports.rt_obj_meta,
+            obj_field: imports.rt_obj_field,
+            obj_field_f64: imports.rt_obj_field_f64,
+            obj_field_i32: imports.rt_obj_field_i32,
             list_cons: next(),
             list_cons_f64: next(),
             int_to_str: next(),
@@ -657,24 +663,6 @@ pub fn rt_type_index(
     }
     if local_idx == rt.unwrap_i32 - import_func_count {
         return rti.unwrap_i32;
-    }
-    if local_idx == rt.obj_kind - import_func_count {
-        return rti.obj_kind;
-    }
-    if local_idx == rt.obj_tag - import_func_count {
-        return rti.obj_tag;
-    }
-    if local_idx == rt.obj_meta - import_func_count {
-        return rti.obj_meta;
-    }
-    if local_idx == rt.obj_field - import_func_count {
-        return rti.obj_field_i64;
-    }
-    if local_idx == rt.obj_field_f64 - import_func_count {
-        return rti.obj_field_f64;
-    }
-    if local_idx == rt.obj_field_i32 - import_func_count {
-        return rti.obj_field_i32;
     }
     if local_idx == rt.list_cons - import_func_count {
         return rti.list_cons_i64;
