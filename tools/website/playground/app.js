@@ -3521,8 +3521,8 @@ if (auditBtn) {
                 const egg = document.createElement("div");
                 egg.className = "hostile-easter-egg";
                 egg.textContent =
-                    "// extending your cases with the worst worlds we can think of. " +
-                    "Int boundary substituted. clocks frozen. randoms collapsed. " +
+                    "// extending your cases with all the nasty corner cases — " +
+                    "even an `Int` is not safe. clocks frozen. randoms collapsed. " +
                     "disks burning. let's see what your law says now.";
                 panel.appendChild(egg);
             }
