@@ -294,11 +294,28 @@ When a `verify` passes but `aver proof` rejects, the law is **stub-specific** �
 
 > _In laws, examples are not limits. Preconditions are._
 
-A `verify ... law` block is a universal claim: "this holds for every value
-of the given clauses' types". The user usually writes a small declared set
-(`given n: Int = [1, 5, 100]`) as the *exploration domain* — values they
-think will exercise the law — but the claim itself ranges over the whole
-type. `--hostile` checks that.
+### Three roles, one frame
+
+Read these together — every other detail in this section follows from them:
+
+- **`given` is your chosen world.** The stub or value list you wrote is
+  the world the law was demonstrated in. `aver verify` runs the law
+  there.
+- **Hostile is "what if your world was wrong?"** Under `--hostile`,
+  Aver substitutes adversarial profiles in for your `given` — frozen
+  clocks, empty disks, network down, rolls stuck at the bound — and
+  asks the same law to hold there too.
+- **`when` is the filter that says which worlds this law assumes.**
+  `when clock(root, 1) > clock(root, 0)` declares "this law assumes a
+  monotonic clock". Hostile profiles that violate the assumption are
+  skipped; the law is exercised only against worlds it actually
+  promised to hold for.
+
+A `verify ... law` block is a universal claim: "this holds for every
+value of the `given` clauses' types". The declared set
+(`given n: Int = [1, 5, 100]`) is the *exploration domain* — values you
+think will exercise the law — but the claim itself ranges over the
+whole type. `--hostile` checks that.
 
 `--hostile` works on **two axes**, both tied to law form:
 

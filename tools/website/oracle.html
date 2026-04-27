@@ -185,6 +185,7 @@
 
     <section class="oracle-section">
         <p>The block doesn't change between runs. Only the question being asked changes: <em>"does this hold for the stub I wrote?"</em> versus <em>"does this hold under adversarial profiles of the effects involved?"</em> versus <em>"does this hold for every implementation of this signature?"</em>. The first is sample testing. The second is hostile-mode boundary checking. The third is universal proof. Aver lets you ask all three from one source &mdash; and tells you exactly which one disagrees.</p>
+        <p><strong>Three roles, one frame:</strong> <code>given</code> is the world you chose &mdash; the stub or value list the law was demonstrated in. Hostile substitutes <em>other</em> worlds &mdash; frozen clocks, empty disks, rolls stuck at the bound &mdash; and asks "what if your world was wrong?". <code>when</code> is the filter that declares which worlds this law assumes (<code>when clock(root, 1) &gt; clock(root, 0)</code> = "monotonic clocks only"); hostile honours it and skips profiles that violate the assumption.</p>
     </section>
 
     <section class="oracle-section">
