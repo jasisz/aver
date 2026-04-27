@@ -1,11 +1,6 @@
 use super::*;
 
 impl Parser {
-    pub(super) fn parse_effect_set(&mut self) -> Result<TopLevel, ParseError> {
-        Err(self
-            .error("Effect aliases were removed. Declare concrete effects directly in ! [...]."))
-    }
-
     pub(super) fn parse_sum_type_def(&mut self) -> Result<TypeDef, ParseError> {
         let line = self.current().line;
         self.expect_exact(&TokenKind::Type)?;

@@ -145,7 +145,12 @@ impl Parser {
             TokenKind::Decision => Ok(Some(TopLevel::Decision(self.parse_decision()?))),
             TokenKind::Type => Ok(Some(TopLevel::TypeDef(self.parse_sum_type_def()?))),
             TokenKind::Record => Ok(Some(TopLevel::TypeDef(self.parse_record_def()?))),
-            TokenKind::Effects => Ok(Some(self.parse_effect_set()?)),
+            TokenKind::Effects => Err(self.error(
+                "`effects [...]` is a module-level declaration — it must be \
+                 indented inside a `module` block. For files without a module \
+                 header, the per-fn `! [...]` annotations already cover the \
+                 effect surface; drop the top-level `effects` line.",
+            )),
             TokenKind::Ident(s) if s == "val" || s == "var" => {
                 let kw = s.clone();
                 Err(self.error(format!(
