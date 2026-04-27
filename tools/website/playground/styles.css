@@ -696,39 +696,14 @@ body {
     margin-left: -0.15rem;
 }
 
-.dropzone-inline {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    font-size: 0.7rem;
-    color: var(--muted);
-}
-.dropzone-inline[data-drag="true"] {
+/* Drop target moved to the editor area itself. When something is
+   being dragged over the wrap, dim-tint and outline so the user
+   knows the drop will land. JS toggles `data-drag="true"` on the
+   wrap node. */
+.editor-wrap[data-drag="true"] {
     outline: 2px dashed var(--accent);
-    outline-offset: 3px;
-    border-radius: 4px;
-}
-.dropzone-inline .upload-btn {
-    padding: 0.3rem 0.55rem;
-    background: rgba(15, 23, 42, 0.6);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text);
-    font-family: inherit;
-    font-size: 0.78rem;
-    cursor: pointer;
-    transition: border-color 80ms ease, background 80ms ease;
-}
-.dropzone-inline .upload-btn:hover {
-    border-color: var(--accent);
-    background: rgba(15, 23, 42, 0.85);
-}
-.dropzone-inline .dropzone-hint {
-    color: var(--muted);
-    font-size: 0.7rem;
-    opacity: 0.7;
-    padding-left: 0.2rem;
+    outline-offset: -2px;
+    background: rgba(74, 222, 128, 0.04);
 }
 
 .editor-tabs {

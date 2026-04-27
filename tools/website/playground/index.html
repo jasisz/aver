@@ -114,28 +114,13 @@
                     <li><button type="button" data-download-format="dafny">Dafny proof <span class="dl-ext">.zip</span></button></li>
                 </ul>
             </div>
-            <div class="dropzone-inline" data-dropzone data-drag="false">
-                <!-- Two explicit upload entry points — files and folders.
-                     Single-file drop still works (the whole div listens
-                     for dragover/drop), but the primary affordance is
-                     "click to upload" so the buttons appear in any
-                     browser without surprising the user. webkitdirectory
-                     on the second input asks the browser for a folder
-                     picker; that's how Aver multi-file projects load. -->
-                <input type="file"
-                    accept=".wasm,application/wasm,.av,text/plain,.json,application/json"
-                    multiple hidden data-file-input>
-                <input type="file" webkitdirectory directory hidden data-folder-input>
-                <button type="button" class="upload-btn" data-upload-files
-                    title="Choose .av · .wasm · .replay.json files. Multi-select to load several at once.">
-                    📁 Upload files
-                </button>
-                <button type="button" class="upload-btn" data-upload-folder
-                    title="Choose a folder — every .av inside lands as its own tab in the editor.">
-                    📂 Upload folder
-                </button>
-                <span data-file-meta class="dropzone-hint">or drop here</span>
-            </div>
+            <!-- Upload inputs — hidden, fired by the buttons living
+                 down on the tab bar so the toolbar header stays uncluttered. -->
+            <input type="file"
+                accept=".wasm,application/wasm,.av,text/plain,.json,application/json"
+                multiple hidden data-file-input>
+            <input type="file" webkitdirectory directory hidden data-folder-input>
+            <span data-file-meta hidden>upload via tab bar</span>
         </div>
         <div class="editor-tabs" data-editor-tabs></div>
         <div class="editor-wrap">

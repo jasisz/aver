@@ -1,7 +1,11 @@
 import { TERMINAL_COLOR_NAMES, TERMINAL_SPACE_CODE } from "./browser_terminal.js";
 
 const dom = {
-    dropzone: document.querySelector("[data-dropzone]"),
+    // Drop target moved from a toolbar pill to the editor wrap so
+    // dragging onto the code area "just works" without aiming for a
+    // small button. The selector here points to the wider container;
+    // listeners attach in the same way the old dropzone did below.
+    dropzone: document.querySelector(".editor-wrap") || document.body,
     fileInput: document.querySelector("[data-file-input]"),
     fileMeta: document.querySelector("[data-file-meta]"),
     compileMeta: document.querySelector("[data-compile-meta]"),
@@ -1004,6 +1008,29 @@ function renderTabs() {
         addBtn.title = "Create a new .av tab in the editor";
         addBtn.addEventListener("click", newFilePrompt);
         dom.editorTabs.appendChild(addBtn);
+
+        // Upload entry points moved off the toolbar header into the
+        // tab bar — keeps the top row uncluttered and groups all
+        // "tab origin" actions together (new blank, files from disk,
+        // whole folder).
+        const filesBtn = document.createElement("button");
+        filesBtn.type = "button";
+        filesBtn.className = "tab-new";
+        filesBtn.textContent = "↑ files";
+        filesBtn.title = "Upload .av · .wasm · .replay.json file(s) from disk";
+        filesBtn.addEventListener("click", () => dom.fileInput.click());
+        dom.editorTabs.appendChild(filesBtn);
+
+        const folderBtn = document.createElement("button");
+        folderBtn.type = "button";
+        folderBtn.className = "tab-new";
+        folderBtn.textContent = "↑ folder";
+        folderBtn.title = "Upload an entire folder — every .av inside lands as its own tab";
+        folderBtn.addEventListener("click", () => {
+            const folderInput = document.querySelector("[data-folder-input]");
+            if (folderInput) folderInput.click();
+        });
+        dom.editorTabs.appendChild(folderBtn);
     }
 }
 

@@ -1255,4 +1255,41 @@ mod tests {
             err
         );
     }
+
+    #[test]
+    #[cfg(feature = "runtime")]
+    fn audit_source_hostile_does_not_panic_on_showcase() {
+        // Repro for the playground "unreachable executed" panic the
+        // user hit when picking the Hostile-clock example and clicking
+        // Audit. CLI works; WASM crashed. Run the same source through
+        // the same pipeline the playground does so any panic surfaces
+        // as a Rust test failure instead of a browser error message.
+        let src = r#"module DeadlineCheck
+    intent =
+        "Demonstrate `aver verify --hostile`: the law passes under real time"
+        "but breaks under the saturated-clock adversarial profile. Toggle the"
+        "hostile checkbox next to Audit and watch the failure call out a"
+        "missing `when` precondition or unpinned `given` for Time.unixMs."
+    effects [Time.unixMs]
+
+fn willCompleteBeforeDeadline(deadlineMs: Int) -> Bool
+    ? "is the current time still before the deadline?"
+    ! [Time.unixMs]
+    Time.unixMs() < deadlineMs
+
+verify willCompleteBeforeDeadline law deadlineHolds
+    given d: Int = [9999999999999]
+    willCompleteBeforeDeadline(d) => true
+"#;
+        let report = audit_source_hostile(src);
+        assert!(
+            !report.is_empty(),
+            "audit_source_hostile returned empty payload"
+        );
+        assert!(
+            report.contains("verify-hostile-mismatch"),
+            "expected the hostile failures in the report; got: {}",
+            &report[..report.len().min(400)]
+        );
+    }
 }
