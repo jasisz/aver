@@ -3427,28 +3427,28 @@ fn cmd_compile_wasm(
                     process::exit(1);
                 }
 
-                // Two paths today:
+                // Two targets:
                 //   - EdgeWasm: thin user.wasm with aver_runtime.* (and any
-                //     aver/* effect) imports unresolved; consumer instantiates
-                //     against host/CDN-provided runtimes.
-                //   - Wasm: blocked. Step 1 of the WAT runtime migration moved
-                //     the bump allocator + memory into a separately-imported
-                //     aver_runtime module. The aver-wasm-rt effects module
-                //     still defines its own memory and would conflict; the
-                //     three-way merge (runtime + effects-host + user) needs
-                //     aver-wasm-rt rebuilt to import aver_runtime.memory.
-                //     Tracked under (8f) of the 0.14 Edge plan.
+                //     aver/* effect / wasi fd_write) imports unresolved;
+                //     consumer instantiates against host/CDN-provided
+                //     runtimes.
+                //   - Wasm: 2-way wasm-merge of aver_runtime + user. Effect
+                //     imports (aver/* under Aver adapter, wasi fd_write
+                //     under Wasi adapter) intentionally remain unresolved —
+                //     the consumer host provides them at instantiate time.
                 let is_edge = matches!(target, super::cli::CompileTarget::EdgeWasm);
-                let uses_effects = wasm_imports_module(&wasm_bytes, "aver")
-                    || wasm_imports_module(&wasm_bytes, "wasi_snapshot_preview1");
+                let uses_aver_effects = wasm_imports_module(&wasm_bytes, "aver");
+                let uses_wasi = wasm_imports_module(&wasm_bytes, "wasi_snapshot_preview1");
 
                 if is_edge {
                     let file_display = file.cyan();
                     let (final_size, compile_suffix) =
                         finalize_wasm_artifact(&wasm_file, wasm_opt);
                     let wasm_display = wasm_file.display().to_string().cyan();
-                    let imports_note = if uses_effects {
+                    let imports_note = if uses_aver_effects {
                         ", imports aver_runtime.* + aver/* (effects)"
+                    } else if uses_wasi {
+                        ", imports aver_runtime.* + wasi_snapshot_preview1.*"
                     } else {
                         ", imports aver_runtime.*"
                     };
@@ -3462,18 +3462,85 @@ fn cmd_compile_wasm(
                         imports_note
                     );
                 } else {
-                    eprintln!(
-                        "{}",
-                        "compile --target wasm (single bundled artifact) is temporarily \
-                         disabled while aver-wasm-rt is rebuilt to import \
-                         aver_runtime.memory. Use --target edge-wasm to emit the \
-                         thin user.wasm and instantiate against the runtime + \
-                         effects host, or `aver run --wasm` for end-to-end \
-                         execution."
-                            .red()
-                    );
-                    let _ = std::fs::remove_file(&wasm_file);
-                    process::exit(1);
+                    // Bundle aver_runtime + user into one artifact via
+                    // wasm-merge. Effect imports stay unresolved (host
+                    // wires them up at instantiate).
+                    let runtime_bytes = match aver::codegen::wasm::build_runtime_wasm() {
+                        Ok(b) => b,
+                        Err(e) => {
+                            eprintln!("{}", format!("Runtime build error: {}", e).red());
+                            process::exit(1);
+                        }
+                    };
+                    let runtime_file = out_path.join(format!("{}_runtime.wasm", wasm_name));
+                    if let Err(e) = std::fs::write(&runtime_file, &runtime_bytes) {
+                        eprintln!(
+                            "{}",
+                            format!("Failed to write runtime WASM file: {}", e).red()
+                        );
+                        process::exit(1);
+                    }
+
+                    let merged_file = out_path.join(format!("{}_merged.wasm", wasm_name));
+                    let merge_result = std::process::Command::new("wasm-merge")
+                        .arg(&runtime_file)
+                        .arg("aver_runtime")
+                        .arg(&wasm_file)
+                        .arg("program")
+                        .arg("--rename-export-conflicts")
+                        .arg("--enable-bulk-memory")
+                        // Host imports like format_value return (i32, i32);
+                        // emitter uses tail calls in TCO trampolines.
+                        .arg("--enable-multivalue")
+                        .arg("--enable-tail-call")
+                        .arg("-o")
+                        .arg(&merged_file)
+                        .output();
+
+                    let _ = std::fs::remove_file(&runtime_file);
+
+                    match merge_result {
+                        Ok(out) if out.status.success() => {
+                            let _ = std::fs::rename(&merged_file, &wasm_file);
+                            let file_display = file.cyan();
+                            let (final_size, compile_suffix) =
+                                finalize_wasm_artifact(&wasm_file, wasm_opt);
+                            let wasm_display = wasm_file.display().to_string().cyan();
+                            let imports_note = if uses_aver_effects {
+                                ", with runtime, imports aver/* (effects)"
+                            } else if uses_wasi {
+                                ", with runtime, imports wasi_snapshot_preview1.*"
+                            } else {
+                                ", with runtime"
+                            };
+                            println!(
+                                "{} {} → {} ({}{}{})",
+                                "Compiled".green().bold(),
+                                file_display,
+                                wasm_display,
+                                format_byte_size(final_size),
+                                compile_suffix,
+                                imports_note
+                            );
+                        }
+                        Ok(out) => {
+                            let stderr = String::from_utf8_lossy(&out.stderr);
+                            eprintln!(
+                                "{}",
+                                format!("wasm-merge failed: {}", stderr.trim()).red()
+                            );
+                            let _ = std::fs::remove_file(&merged_file);
+                            process::exit(1);
+                        }
+                        Err(_) => {
+                            eprintln!(
+                                "{}",
+                                "wasm-merge not found. Install binaryen (`brew install binaryen`) or use --target edge-wasm."
+                                    .red()
+                            );
+                            process::exit(1);
+                        }
+                    }
                 }
             }
             Err(e) => {
@@ -3613,47 +3680,6 @@ fn run_wasm_opt(wasm_file: &Path, mode: super::cli::WasmOptMode) -> Result<u64, 
     );
 
     Ok(output_size)
-}
-
-/// Find the pre-built aver-wasm-rt.wasm runtime.
-/// Searches: next to aver binary, in aver-wasm-rt/target, AVER_WASM_RT env var.
-///
-/// Currently dormant — `--target wasm` with effects is gated off until
-/// aver-wasm-rt is rebuilt to import `aver_runtime.memory`. Kept so the
-/// helper is available when that ticket lands.
-#[cfg(feature = "wasm")]
-#[allow(dead_code)]
-fn find_wasm_runtime() -> Option<std::path::PathBuf> {
-    // 1. AVER_WASM_RT environment variable
-    if let Ok(path) = std::env::var("AVER_WASM_RT") {
-        let p = std::path::PathBuf::from(path);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-
-    // 2. Next to the aver binary
-    if let Ok(exe) = std::env::current_exe() {
-        let dir = exe.parent().unwrap_or(Path::new("."));
-        let candidate = dir.join("aver_wasm_rt.wasm");
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-
-    // 3. In the aver-wasm-rt build directory (development)
-    let candidates = [
-        "aver-wasm-rt/target/wasm32-wasip1/release/aver_wasm_rt.wasm",
-        "aver-wasm-rt/target/wasm32-wasip1/debug/aver_wasm_rt.wasm",
-    ];
-    for c in &candidates {
-        let p = std::path::PathBuf::from(c);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-
-    None
 }
 
 pub(super) struct CompileOptions<'a> {

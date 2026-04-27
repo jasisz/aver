@@ -49,7 +49,7 @@ fn wasm_compile_supports_multimodule_game_examples() {
         .arg("compile")
         .arg("examples/games/doom/main.av")
         .arg("--target")
-        .arg("edge-wasm")
+        .arg("wasm")
         .arg("--module-root")
         .arg("examples/games/doom")
         .arg("--name")
@@ -57,7 +57,7 @@ fn wasm_compile_supports_multimodule_game_examples() {
         .arg("-o")
         .arg(&output_dir)
         .output()
-        .expect("expected `aver compile --target edge-wasm` to run");
+        .expect("expected `aver compile --target wasm` to run");
 
     assert!(
         compile.status.success(),
@@ -89,7 +89,7 @@ fn wasm_opt_oz_does_not_increase_size_for_snake() {
         .arg("compile")
         .arg("examples/games/snake.av")
         .arg("--target")
-        .arg("edge-wasm")
+        .arg("wasm")
         .arg("--name")
         .arg("snake_raw")
         .arg("-o")
@@ -107,7 +107,7 @@ fn wasm_opt_oz_does_not_increase_size_for_snake() {
         .arg("compile")
         .arg("examples/games/snake.av")
         .arg("--target")
-        .arg("edge-wasm")
+        .arg("wasm")
         .arg("--wasm-opt")
         .arg("oz")
         .arg("--name")
@@ -336,11 +336,11 @@ fn main()
         .arg("compile")
         .arg(&module_path)
         .arg("--target")
-        .arg("edge-wasm")
+        .arg("wasm")
         .arg("-o")
         .arg(&output_dir)
         .output()
-        .expect("expected `aver compile --target edge-wasm` to run");
+        .expect("expected `aver compile --target wasm` to run");
 
     assert!(
         output.status.success(),
