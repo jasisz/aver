@@ -293,6 +293,16 @@ def main() -> int:
     else:
         print(f"=== Releasing {new_version} ===\n")
 
+    # 0. Editor grammars must match editors/keywords.json (sublime + vscode +
+    #    playground highlight.js). Drift here means a new keyword shipped to
+    #    one place and not the others — block the release.
+    print("Checking editor grammar sync...")
+    if dry_run:
+        print("  [dry-run] would run: python3 editors/sync.py --check")
+    else:
+        run([sys.executable, "editors/sync.py", "--check"])
+    print()
+
     # 1. Read current versions
     old_versions = {crate: read_crate_version(crate) for crate in CRATE_ORDER}
     print("Current versions:")

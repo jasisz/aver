@@ -70,7 +70,7 @@
       }
     },
     "keywords": {
-      "match": "\\b(fn|match|module|depends|exposes|opaque|intent|effects|trace|verify|decision|type|record|law|given|when|date|author|chosen|rejected|impacts|reason)\\b",
+      "match": "\\b(decision|rejected|depends|effects|exposes|impacts|author|chosen|intent|module|opaque|reason|record|verify|given|match|trace|date|type|when|law|fn)\\b",
       "name": "keyword.other.aver"
     },
     "effect-annotation": {
@@ -133,7 +133,7 @@
       "name": "support.function.constructor.aver"
     },
     "namespace-access": {
-      "match": "\\b(Int|Float|String|Bool|List|Vector|Map|Char|Byte|Result|Option|Args|Console|Http|HttpServer|Disk|Tcp|Time|Env|Random|Terminal)\\.([a-zA-Z_][a-zA-Z0-9_]*)",
+      "match": "\\b(HttpServer|Terminal|Console|Option|Random|Result|String|Vector|Float|Args|Bool|Byte|Char|Disk|Http|List|Time|Env|Int|Map|Tcp)\\.([a-zA-Z_][a-zA-Z0-9_]*)",
       "captures": {
         "1": { "name": "support.class.namespace.aver" },
         "2": { "name": "support.function.member.aver" }
@@ -172,7 +172,7 @@
       ]
     },
     "type-names": {
-      "match": "\\b(Int|Float|String|Bool|Unit|List|Vector|Result|Option|Map|Fn)\\b",
+      "match": "\\b(HttpResponse|HttpRequest|Header|Option|Result|String|Vector|Float|Bool|List|Unit|Int|Map|Fn)\\b",
       "name": "support.type.aver"
     },
     "identifier": {

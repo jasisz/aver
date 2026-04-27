@@ -89,9 +89,9 @@ contexts:
         2: entity.name.function.aver
 
   keywords:
-    - match: '\b(type|record|module|depends|exposes|opaque)\b'
+    - match: '\b(depends|exposes|module|opaque|record|type)\b'
       scope: keyword.declaration.aver
-    - match: '\b(fn|match|verify|decision|law|given|when|effects|trace)\b'
+    - match: '\b(decision|effects|verify|given|match|trace|when|law|fn)\b'
       scope: keyword.control.aver
     - match: '^(\s*)(intent|reason|date|chosen|rejected|impacts|author|needs)(:)'
       captures:
@@ -100,7 +100,7 @@ contexts:
 
   namespaces:
     # Namespace.method calls: Console.print, String.len, Char.toCode, etc.
-    - match: '\b(Console|Http|HttpServer|Disk|Tcp|Int|Float|String|Bool|List|Vector|Map|Char|Byte|Result|Option|Args|Time|Env|Random|Terminal)(\.)'
+    - match: '\b(HttpServer|Terminal|Console|Option|Random|Result|String|Vector|Float|Args|Bool|Byte|Char|Disk|Http|List|Time|Env|Int|Map|Tcp)(\.)'
       captures:
         1: support.class.namespace.aver
         2: punctuation.accessor.aver

@@ -6,18 +6,18 @@ function esc(s) {
 }
 
 const KEYWORDS = new Set([
-    "fn", "match", "module", "depends", "exposes", "opaque", "intent",
-    "effects", "trace",
-    "verify", "decision", "type", "record", "law", "given", "when",
-    "date", "author", "chosen", "rejected", "impacts", "reason",
+    "type", "record", "module", "depends", "exposes", "opaque", "fn",
+    "match", "verify", "decision", "law", "given", "when", "effects",
+    "trace", "intent", "reason", "date", "chosen", "rejected", "impacts",
+    "author",
 ]);
 
 const CONSTANTS = new Set(["true", "false", "Unit"]);
 
 const BUILTINS = new Set([
-    "Int", "Float", "String", "Bool", "List", "Map", "Vector",
-    "Result", "Option", "Console", "Http", "Disk", "Tcp", "Time",
-    "Random", "Env", "Args", "Terminal", "HttpServer", "Char", "Byte",
+    "Console", "Http", "HttpServer", "Disk", "Tcp", "Int", "Float",
+    "String", "Bool", "List", "Vector", "Map", "Char", "Byte",
+    "Result", "Option", "Args", "Time", "Env", "Random", "Terminal",
 ]);
 
 // Token types
