@@ -14,12 +14,10 @@ fn name(param: Type) -> ReturnType
 ```
 
 Rules:
-- indentation-only function bodies
+- indentation-only function bodies — no braces, no `end`
 - last expression is the return value, no `return` keyword
-- no `if` / `else`; use `match`
-- no `val` / `var`; bindings are `name = expr`, always immutable
-- no pipe operator `|>`
-- no closures or lambdas; all functions are top-level
+- all functions are top-level; no closures, lambdas, or anonymous fns
+- top-level fns of the right shape can be passed where `Fn(...)` is expected
 - `main` returns `Unit` or `Result<Unit, String>`
 
 `?` descriptions:
@@ -86,10 +84,11 @@ match value
 ```
 
 Rules:
-- `match` is the only branching construct
+- `match` is the only branching construct (no `if` / `else`)
+- **arm bodies must start on the same line as `->`** — multi-line bodies are a parse error; extract a helper function instead
 - no colon after the subject
 - no guards
-- list patterns: `[]` and `[head, ..tail]`
+- list patterns: `[]` and `[head, ..tail]` (the `..` rest must be named)
 - tuple patterns: `(a, b)`
 - constructor patterns always qualified: `Result.Ok`, `Option.None`, `Shape.Circle`
 - boolean branching: `match x > 0` with `true ->` / `false ->`
@@ -127,7 +126,7 @@ Rules:
 - `intent` may be inline or multiline; formatter prefers multiline for multiline text
 - `depends [...]` and `exposes [...]` are explicit
 - opaque types: `exposes opaque [Discount]` — visible in signatures but cannot be constructed or destructured from outside
-- `effects [...]` declares the module's effect surface (since 0.13). Every function's `! [Effect]` must be covered: a method-level entry like `Disk.readText` admits only that method, a namespace entry like `Disk` admits any `Disk.*` method. Underdeclared = hard type error; overdeclared = soft warning. Modules without `effects [...]` stay in legacy mode for the 0.13 → 0.14 migration window and trigger a soft warning suggesting `effects []` for a pure module.
+- `effects [...]` declares the module's effect surface. Every function's `! [Effect]` must be covered: a method-level entry like `Disk.readText` admits only that method, a namespace entry like `Disk` admits any `Disk.*` method. Underdeclared = type error; overdeclared = warning. A module with functions but no `effects [...]` triggers a warning to add the boundary (use `effects []` for a pure module).
 
 ### Verify blocks
 
@@ -250,6 +249,13 @@ Use namespaced builtins only.
 Common pure namespaces:
 - `Int`, `Float`, `String`, `List`, `Vector`, `Map`, `Bool`, `Char`, `Byte`, `Result`, `Option`
 
+Key `String` API:
+- `String.len`, `String.contains`, `String.startsWith`, `String.endsWith`
+- `String.toUpper`, `String.toLower`, `String.trim`
+- `String.concat`, `String.join`, `String.split`, `String.chars`
+- `Int.fromString : String -> Result<Int, String>`, `Int.toString : Int -> String`
+- string interpolation: `"Hello, {name}!"` is the idiomatic concat
+
 Key `List` API (small, recursion-first):
 - `List.len`, `List.prepend`, `List.concat`, `List.reverse`, `List.contains`, `List.zip`, `List.take`, `List.drop`
 - No `List.map`, `List.filter`, `List.fold` — write with recursion
@@ -270,30 +276,6 @@ Effectful namespaces:
 - `Env`: get, set
 - `Args`: get
 - `HttpServer`: listen, listenWith
-
-### aver.toml
-
-Runtime effect policies (deployment guardrails):
-
-```toml
-[effects.Http]
-hosts = ["api.example.com", "*.internal.corp"]
-
-[effects.Disk]
-paths = ["./data/**"]
-
-[effects.Env]
-keys = ["APP_*", "TOKEN"]
-```
-
-Check-time suppressions:
-
-```toml
-[[check.suppress]]
-slug = "non-tail-recursion"
-files = ["**/eval/**"]
-reason = "Tree-walking interpreter — CPS would destroy correspondence."
-```
 
 ### Common patterns
 

@@ -203,3 +203,25 @@ Use replay for effectful debugging and regression capture.
 1. `aver context <entry> --budget 10kb`
 2. if needed, raise budget or target a specific module
 3. only then open raw source files
+
+## aver.toml
+
+Project-level config (deployment guardrails + check tweaks):
+
+```toml
+[effects.Http]
+hosts = ["api.example.com", "*.internal.corp"]
+
+[effects.Disk]
+paths = ["./data/**"]
+
+[effects.Env]
+keys = ["APP_*", "TOKEN"]
+
+[[check.suppress]]
+slug = "non-tail-recursion"
+files = ["**/eval/**"]
+reason = "Tree-walking interpreter — CPS would destroy correspondence."
+```
+
+Effect-host / path / key allowlists narrow which hosts, files, and env keys the runtime will admit. `[[check.suppress]]` lets a project waive specific lint slugs in specific paths with a reason.
