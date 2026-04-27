@@ -11,8 +11,8 @@ use std::collections::{HashMap, HashSet};
 
 use wasm_encoder::{
     CodeSection, ConstExpr, DataSection, ExportKind, ExportSection, FunctionSection, GlobalSection,
-    GlobalType, ImportSection, Instruction, MemorySection, MemoryType, Module, NameMap,
-    NameSection, TypeSection, ValType,
+    GlobalType, ImportSection, IndirectNameMap, Instruction, MemorySection, MemoryType, Module,
+    NameMap, NameSection, TypeSection, ValType,
 };
 
 use crate::ast::{Expr, FnBody, FnDef, Literal, Pattern, Stmt, StrPart, TopLevel};
@@ -456,6 +456,11 @@ pub fn build_wasm_module(
     // -----------------------------------------------------------------------
     let mut code_section = CodeSection::new();
 
+    // Per-function local names collected during emission, keyed by absolute
+    // function index (post imports + runtime + tco trampolines). Fed into
+    // the wasm name section so disassembly shows aver source identifiers.
+    let mut user_fn_local_names: Vec<(u32, Vec<(String, u32)>)> = Vec::new();
+
     // Runtime function bodies
     let rt_funcs = runtime::emit_runtime_functions(&rt);
     for func in &rt_funcs {
@@ -506,7 +511,7 @@ pub fn build_wasm_module(
             continue;
         }
 
-        let func = emit_plain_user_function(
+        let (func, locals) = emit_plain_user_function(
             entry,
             &fn_indices,
             &rt,
@@ -518,6 +523,9 @@ pub fn build_wasm_module(
             tco_fns.contains(&entry.canonical_name),
         )?;
         code_section.function(&func);
+        if let Some(&fn_idx) = fn_indices.get(&entry.canonical_name) {
+            user_fn_local_names.push((fn_idx, locals));
+        }
     }
 
     module.section(&code_section);
@@ -561,6 +569,25 @@ pub fn build_wasm_module(
     }
     let mut name_section = NameSection::new();
     name_section.functions(&func_names);
+
+    // Per-function local names: aver-source identifiers (params + lets)
+    // surface as `local.set $tuple_ptr` instead of `local.set 4` after
+    // disassembly. Runtime function locals stay numbered for now —
+    // each runtime/*.rs `Function::new(...)` would need a parallel
+    // labelled-locals construction; tracked as a follow-up.
+    user_fn_local_names.sort_by_key(|(idx, _)| *idx);
+    let mut local_names = IndirectNameMap::new();
+    for (fn_idx, locals) in &user_fn_local_names {
+        let mut sorted = locals.clone();
+        sorted.sort_by_key(|(_, idx)| *idx);
+        sorted.dedup_by_key(|(_, idx)| *idx);
+        let mut map = NameMap::new();
+        for (name, idx) in &sorted {
+            map.append(*idx, name);
+        }
+        local_names.append(*fn_idx, &map);
+    }
+    name_section.locals(&local_names);
     module.section(&name_section);
 
     Ok(module.finish())
@@ -632,7 +659,7 @@ fn emit_plain_user_function(
     variant_registry: &HashMap<(String, String), super::expr::VariantInfo>,
     host_imports: &HashMap<String, u32>,
     needs_tco: bool,
-) -> Result<wasm_encoder::Function, String> {
+) -> Result<(wasm_encoder::Function, Vec<(String, u32)>), String> {
     let mut emitter = ExprEmitter::new(
         fn_indices,
         rt,
@@ -727,7 +754,9 @@ fn emit_plain_user_function(
         func.instruction(instr);
     }
     func.instruction(&Instruction::End);
-    Ok(func)
+    let local_names: Vec<(String, u32)> =
+        emitter.locals.into_iter().map(|(n, idx)| (n, idx)).collect();
+    Ok((func, local_names))
 }
 
 fn build_mutual_tco_groups(
