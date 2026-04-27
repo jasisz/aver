@@ -11,8 +11,8 @@ use std::collections::{HashMap, HashSet};
 
 use wasm_encoder::{
     CodeSection, ConstExpr, DataSection, ExportKind, ExportSection, FunctionSection, GlobalSection,
-    GlobalType, ImportSection, Instruction, MemorySection, MemoryType, Module, TypeSection,
-    ValType,
+    GlobalType, ImportSection, Instruction, MemorySection, MemoryType, Module, NameMap,
+    NameSection, TypeSection, ValType,
 };
 
 use crate::ast::{Expr, FnBody, FnDef, Literal, Pattern, Stmt, StrPart, TopLevel};
@@ -534,6 +534,34 @@ pub fn build_wasm_module(
         );
         module.section(&data_section);
     }
+
+    // -----------------------------------------------------------------------
+    // Name section: maps every function index back to a stable identifier so
+    // `wasm-tools print` (and `aver compile --target wat`) read like source
+    // instead of `call 18`. Stripped automatically by `wasm-opt -Oz` for
+    // production builds, kept for dev/debug/audit pipelines.
+    // -----------------------------------------------------------------------
+    let mut func_names = NameMap::new();
+    let mut named: Vec<(u32, String)> = Vec::new();
+    for (name, idx) in &host_imports {
+        if *idx > 0 || !needed_host_imports.is_empty() {
+            named.push((*idx, format!("host_{}", name.replace('/', "_"))));
+        }
+    }
+    for (idx, name) in rt.name_pairs() {
+        named.push((idx, format!("rt_{}", name)));
+    }
+    for (name, idx) in &fn_indices {
+        named.push((*idx, name.clone()));
+    }
+    named.sort_by_key(|(idx, _)| *idx);
+    named.dedup_by_key(|(idx, _)| *idx);
+    for (idx, name) in &named {
+        func_names.append(*idx, name);
+    }
+    let mut name_section = NameSection::new();
+    name_section.functions(&func_names);
+    module.section(&name_section);
 
     Ok(module.finish())
 }
