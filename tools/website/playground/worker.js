@@ -2,10 +2,38 @@ import { AverBrowserHost } from "./wasm_host.js";
 
 const host = new AverBrowserHost((message, transfer) => self.postMessage(message, transfer ?? []));
 
-async function runModule(wasmBytes) {
+// aver_runtime owns memory + the bump allocator (see 0.14 Edge Step 1).
+// Cache the instance: it's stateless across runs from the user's POV
+// (start fn re-bumps heap_ptr per user instantiation), so one runtime
+// instance can be re-used for every user.wasm we run in this worker.
+let runtimeInstance = null;
+let runtimeBytesCache = null;
+
+async function ensureRuntime(runtimeBytes) {
+    if (runtimeBytes && runtimeBytes !== runtimeBytesCache) {
+        runtimeBytesCache = runtimeBytes;
+        runtimeInstance = null;
+    }
+    if (runtimeInstance) return runtimeInstance;
+    if (!runtimeBytesCache) {
+        throw new Error(
+            "aver_runtime bytes missing — main thread must send them before the first run."
+        );
+    }
+    const { instance } = await WebAssembly.instantiate(runtimeBytesCache, {});
+    runtimeInstance = instance;
+    return instance;
+}
+
+async function runModule(wasmBytes, runtimeBytes) {
     try {
         host.post({ type: "status", level: "info", text: "Instantiating module…" });
-        const { instance } = await WebAssembly.instantiate(wasmBytes, host.createImports());
+
+        const runtime = await ensureRuntime(runtimeBytes);
+        const userImports = host.createImports();
+        userImports.aver_runtime = runtime.exports;
+
+        const { instance } = await WebAssembly.instantiate(wasmBytes, userImports);
         host.setInstance(instance);
         host.postTerminalSnapshot();
         host.post({ type: "status", level: "success", text: "Running…" });
@@ -40,9 +68,17 @@ self.onmessage = (event) => {
         return;
     }
 
+    if (type === "runtime-bytes") {
+        // Cache the aver_runtime wasm so subsequent runs don't re-fetch
+        // it. Sent once by the main thread after compiler init.
+        runtimeBytesCache = event.data.runtimeBytes;
+        runtimeInstance = null;
+        return;
+    }
+
     if (type === "run") {
         host.setProgramArgs(event.data.programArgs ?? []);
-        runModule(event.data.wasmBytes);
+        runModule(event.data.wasmBytes, event.data.runtimeBytes);
         return;
     }
 

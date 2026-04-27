@@ -12,6 +12,13 @@ use crate::types::checker::{run_type_check_full, run_type_check_with_loaded};
 #[cfg(feature = "runtime")]
 use crate::{nan_value::Arena, vm};
 
+/// Build the standalone aver_runtime wasm module bytes. Browser-side
+/// hosts instantiate this once, then point every user.wasm's
+/// `aver_runtime` import to its exports.
+pub fn build_aver_runtime_wasm() -> Result<Vec<u8>, String> {
+    codegen::wasm::build_runtime_wasm()
+}
+
 /// Compile Aver source text to WASM bytes.
 pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
     let mut items = parse_source(source)?;
@@ -788,6 +795,14 @@ mod bindgen {
     #[wasm_bindgen]
     pub fn aver_compile(source: &str) -> Result<Vec<u8>, JsError> {
         super::compile_to_wasm(source).map_err(|e| JsError::new(&e))
+    }
+
+    /// Bytes of the standalone aver_runtime wasm module. Worker-side
+    /// instantiates this once and feeds its exports as the
+    /// `aver_runtime` import of every compiled user.wasm.
+    #[wasm_bindgen]
+    pub fn aver_runtime_wasm() -> Result<Vec<u8>, JsError> {
+        super::build_aver_runtime_wasm().map_err(|e| JsError::new(&e))
     }
 
     /// Compile a multi-file project. `files_json` is a JSON object

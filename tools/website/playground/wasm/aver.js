@@ -557,6 +557,22 @@ export function aver_run_record_entry(files_json, entry, entry_expr) {
 }
 
 /**
+ * Bytes of the standalone aver_runtime wasm module. Worker-side
+ * instantiates this once and feeds its exports as the
+ * `aver_runtime` import of every compiled user.wasm.
+ * @returns {Uint8Array}
+ */
+export function aver_runtime_wasm() {
+    const ret = wasm.aver_runtime_wasm();
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
+}
+
+/**
  * @param {string} source
  * @returns {string}
  */
@@ -715,7 +731,7 @@ function __wbg_get_imports() {
         __wbg___wbindgen_throw_6ddd609b62940d55: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
-        __wbg_error_a3a40ae297028926: function(arg0, arg1) {
+        __wbg_error_46c6b5e45167d207: function(arg0, arg1) {
             console.error(getStringFromWasm0(arg0, arg1));
         },
         __wbg_getRandomValues_3f44b700395062e5: function() { return handleError(function (arg0, arg1) {

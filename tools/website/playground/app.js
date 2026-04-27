@@ -42,6 +42,9 @@ const KEY_CODE_CHAR_BASE = 1024;
 const state = {
     wasmBytes: null,
     wasmName: null,
+    // Cached aver_runtime.wasm bytes (Step 1 of 0.14 Edge); populated
+    // after loadCompiler so workers can instantiate it once and reuse.
+    runtimeBytes: null,
     worker: null,
     queuedLines: [],
     rawMode: false,
@@ -192,6 +195,11 @@ function spawnWorker(fixedSize) {
         keyBuffer: state.sharedKeyView ? state.sharedKeyView.buffer : null,
         lineBuffer: state.sharedLineBuffer,
     });
+
+    if (state.runtimeBytes) {
+        const buf = state.runtimeBytes.slice(0);
+        worker.postMessage({ type: "runtime-bytes", runtimeBytes: buf }, [buf]);
+    }
 
     autoSizeTerminalSurface();
     const { cols, rows } = fixedSize || terminalMetrics();
@@ -348,6 +356,17 @@ async function runSelectedModule(fixedSize) {
     if (!state.wasmBytes) {
         setStatus("Load a `.wasm` file first.", "error");
         return;
+    }
+
+    // Drag-and-drop pre-built path doesn't go through compile, so the
+    // aver_runtime cache may still be empty. Pull it from the compiler
+    // module so the worker has something to instantiate.
+    if (!state.runtimeBytes) {
+        try {
+            await loadCompiler();
+        } catch (_) {
+            /* loadCompiler surfaces its own status */
+        }
     }
 
     clearOutput();
@@ -1087,6 +1106,18 @@ async function loadCompiler() {
     const mod = await import("./wasm/aver.js");
     await mod.default("./wasm/aver_bg.wasm");
     compiler = mod;
+    // Step 1 of the 0.14 Edge runtime split: user.wasm imports memory,
+    // heap_ptr, and rt_alloc from a separate `aver_runtime` module.
+    // Pull its bytes once and hand them to the worker; the worker
+    // caches the instance so subsequent runs reuse it.
+    if (typeof compiler.aver_runtime_wasm === "function") {
+        const rtBytes = compiler.aver_runtime_wasm();
+        state.runtimeBytes = rtBytes.buffer;
+        if (state.worker) {
+            const buf = state.runtimeBytes.slice(0);
+            state.worker.postMessage({ type: "runtime-bytes", runtimeBytes: buf }, [buf]);
+        }
+    }
     return compiler;
 }
 
