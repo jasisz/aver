@@ -46,6 +46,19 @@ pub(crate) fn generate_for_effects(
     out.push_str("Trusted model assumptions for this Aver proof export:\n");
     out.push('\n');
 
+    out.push_str("Numeric model:\n");
+    out.push_str("  Aver `Int` is exported as the proof backend's unbounded\n");
+    out.push_str("  mathematical integer (Lean `Int`, Dafny `int`). Runtime\n");
+    out.push_str("  backends (VM, compiled Rust, WASM) represent `Int` as 64-bit\n");
+    out.push_str("  with wrapping arithmetic — `i64::MAX + 1` returns `i64::MIN`,\n");
+    out.push_str("  not unbounded. Theorems exported here are universal over the\n");
+    out.push_str("  mathematical integers; `aver verify --hostile` is what catches\n");
+    out.push_str("  cases where the runtime's bounded representation breaks a\n");
+    out.push_str("  claim that holds in the proof model.\n");
+    out.push_str("  `Float` is IEEE 754 binary64 across all backends, with the\n");
+    out.push_str("  usual NaN-not-equal-to-itself semantics.\n");
+    out.push('\n');
+
     if !used.is_empty() {
         out.push_str("Effects and dimensions:\n");
         for c in &used {

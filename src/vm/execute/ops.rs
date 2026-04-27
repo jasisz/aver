@@ -120,8 +120,11 @@ impl VM {
 
     pub(super) fn arith_add(&mut self, a: NanValue, b: NanValue) -> Result<NanValue, VmError> {
         if a.is_int() && b.is_int() {
+            // Wrapping rather than panicking on overflow — debug/release
+            // parity, and avoids crashing the VM under boundary inputs
+            // like `i64::MAX + 1` (e.g. `--hostile` expansion).
             Ok(NanValue::new_int(
-                a.as_int(&self.arena) + b.as_int(&self.arena),
+                a.as_int(&self.arena).wrapping_add(b.as_int(&self.arena)),
                 &mut self.arena,
             ))
         } else if a.is_float() && b.is_float() {
@@ -153,7 +156,7 @@ impl VM {
     pub(super) fn arith_sub(&mut self, a: NanValue, b: NanValue) -> Result<NanValue, VmError> {
         if a.is_int() && b.is_int() {
             Ok(NanValue::new_int(
-                a.as_int(&self.arena) - b.as_int(&self.arena),
+                a.as_int(&self.arena).wrapping_sub(b.as_int(&self.arena)),
                 &mut self.arena,
             ))
         } else if a.is_float() && b.is_float() {
@@ -178,7 +181,7 @@ impl VM {
     pub(super) fn arith_mul(&mut self, a: NanValue, b: NanValue) -> Result<NanValue, VmError> {
         if a.is_int() && b.is_int() {
             Ok(NanValue::new_int(
-                a.as_int(&self.arena) * b.as_int(&self.arena),
+                a.as_int(&self.arena).wrapping_mul(b.as_int(&self.arena)),
                 &mut self.arena,
             ))
         } else if a.is_float() && b.is_float() {
@@ -206,8 +209,10 @@ impl VM {
             if bv == 0 {
                 return Err(VmError::runtime("division by zero"));
             }
+            // `i64::MIN / -1` overflows; wrap to MIN to avoid the panic
+            // that hostile boundary expansion would otherwise hit.
             Ok(NanValue::new_int(
-                a.as_int(&self.arena) / bv,
+                a.as_int(&self.arena).wrapping_div(bv),
                 &mut self.arena,
             ))
         } else if a.is_float() && b.is_float() {
