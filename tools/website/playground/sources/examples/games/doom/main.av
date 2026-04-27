@@ -55,6 +55,9 @@ fn spawnEnemies(rooms: List<Level.Room>, seed: Int, i: Int, acc: List<Enemy>) ->
     ? "Spawn one enemy per room, skipping room 0 (player start)"
     spawnEnemiesVec(Vector.fromList(rooms), seed, i, acc)
 
+verify spawnEnemies
+    spawnEnemies([], 42, 0, []) => []
+
 fn spawnEnemiesVec(rooms: Vector<Level.Room>, seed: Int, i: Int, acc: List<Enemy>) -> List<Enemy>
     ? "Spawn one enemy per room using indexed room vector access"
     match i == Vector.len(rooms)
@@ -63,12 +66,12 @@ fn spawnEnemiesVec(rooms: Vector<Level.Room>, seed: Int, i: Int, acc: List<Enemy
             Option.Some(room) -> spawnSkipFirstVec(rooms, seed, i, acc, room)
             Option.None -> acc
 
-verify spawnEnemies
-    spawnEnemies([], 42, 0, []) => []
-
 fn spawnSkipFirst(rooms: List<Level.Room>, seed: Int, i: Int, acc: List<Enemy>, room: Level.Room) -> List<Enemy>
     ? "Skip first room, spawn in rest"
     spawnSkipFirstVec(Vector.fromList(rooms), seed, i, acc, room)
+
+verify spawnSkipFirst
+    spawnSkipFirst([Level.Room(x = 1, y = 1, w = 2, h = 2)], 42, 0, [], Level.Room(x = 1, y = 1, w = 2, h = 2)) => []
 
 fn spawnSkipFirstVec(rooms: Vector<Level.Room>, seed: Int, i: Int, acc: List<Enemy>, room: Level.Room) -> List<Enemy>
     ? "Skip first room while reusing shared room vector"
@@ -76,9 +79,6 @@ fn spawnSkipFirstVec(rooms: Vector<Level.Room>, seed: Int, i: Int, acc: List<Ene
     match i == 0
         true -> spawnEnemiesVec(rooms, Rng.nextSeed(seed), next, acc)
         false -> spawnEnemiesVec(rooms, Rng.nextSeed(seed), next, List.concat(acc, [spawnInRoom(room, seed)]))
-
-verify spawnSkipFirst
-    spawnSkipFirst([Level.Room(x = 1, y = 1, w = 2, h = 2)], 42, 0, [], Level.Room(x = 1, y = 1, w = 2, h = 2)) => []
 
 fn initGame(seed: Int) -> GameState
     ? "Create initial game state from seed"

@@ -11,15 +11,15 @@ fn isExpired(nowMs: Int, deadlineMs: Int) -> Bool
     ? "Pure: a deadline is expired iff now is at or past it."
     nowMs >= deadlineMs
 
-fn secondsUntil(nowMs: Int, deadlineMs: Int) -> Int
-    ? "Pure: seconds remaining (negative if past)."
-    (deadlineMs - nowMs) / 1000
-
 verify isExpired
     isExpired(0, 1000) => false
     isExpired(500, 1000) => false
     isExpired(1000, 1000) => true
     isExpired(2000, 1000) => true
+
+fn secondsUntil(nowMs: Int, deadlineMs: Int) -> Int
+    ? "Pure: seconds remaining (negative if past)."
+    (deadlineMs - nowMs) / 1000
 
 verify secondsUntil
     secondsUntil(0, 5000) => 5

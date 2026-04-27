@@ -105,6 +105,11 @@ fn updateEnemies(enemies: List<Enemy>, px: Float, py: Float, levelMap: List<Stri
     ? "Update all enemies one tick"
     updateEnemiesVec(Vector.fromList(enemies), px, py, levelMap, seed, turn, i, acc)
 
+verify updateEnemies
+    updateEnemies([], 1.0, 1.0, Level.buildMap(4, "....", []), 42, 0, 0, []) => []
+
+// ─── Combat ────────────────────────────────────────────────────────────────
+
 fn updateEnemiesVec(enemies: Vector<Enemy>, px: Float, py: Float, levelMap: List<String>, seed: Int, turn: Int, i: Int, acc: List<Enemy>) -> List<Enemy>
     ? "Update all enemies one tick using indexed vector access"
     match i == Vector.len(enemies)
@@ -112,11 +117,6 @@ fn updateEnemiesVec(enemies: Vector<Enemy>, px: Float, py: Float, levelMap: List
         false -> match Vector.get(enemies, i)
             Option.Some(e) -> updateEnemiesVec(enemies, px, py, levelMap, Rng.nextSeed(seed), turn, i + 1, List.concat(acc, [stepEnemy(e, px, py, levelMap, seed, turn)]))
             Option.None -> acc
-
-verify updateEnemies
-    updateEnemies([], 1.0, 1.0, Level.buildMap(4, "....", []), 42, 0, 0, []) => []
-
-// ─── Combat ────────────────────────────────────────────────────────────────
 
 fn enemyTouchingPlayer(enemy: Enemy, px: Float, py: Float) -> Bool
     ? "Is the enemy close enough to hurt the player"
@@ -142,6 +142,9 @@ fn applyEnemyDamage(enemies: List<Enemy>, player: Player, i: Int) -> Player
     ? "Apply damage from all touching enemies to player"
     applyEnemyDamageVec(Vector.fromList(enemies), player, i)
 
+verify applyEnemyDamage
+    applyEnemyDamage([], Types.mkPlayer(1.0, 1.0), 0).hp => 20
+
 fn applyEnemyDamageVec(enemies: Vector<Enemy>, player: Player, i: Int) -> Player
     ? "Apply damage from all touching enemies using indexed vector access"
     match i == Vector.len(enemies)
@@ -150,12 +153,14 @@ fn applyEnemyDamageVec(enemies: Vector<Enemy>, player: Player, i: Int) -> Player
             Option.Some(e) -> applyDamageOneVec(enemies, player, i, e)
             Option.None -> player
 
-verify applyEnemyDamage
-    applyEnemyDamage([], Types.mkPlayer(1.0, 1.0), 0).hp => 20
-
 fn applyDamageOne(enemies: List<Enemy>, player: Player, i: Int, e: Enemy) -> Player
     ? "Apply damage from one enemy if touching"
     applyDamageOneVec(Vector.fromList(enemies), player, i, e)
+
+verify applyDamageOne
+    applyDamageOne([], Types.mkPlayer(1.0, 1.0), 0, Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)).hp => 19
+
+// ─── Shooting ──────────────────────────────────────────────────────────────
 
 fn applyDamageOneVec(enemies: Vector<Enemy>, player: Player, i: Int, e: Enemy) -> Player
     ? "Apply damage from one enemy if touching using shared enemy vector"
@@ -163,11 +168,6 @@ fn applyDamageOneVec(enemies: Vector<Enemy>, player: Player, i: Int, e: Enemy) -
     match enemyTouchingPlayer(e, player.x, player.y)
         true -> applyEnemyDamageVec(enemies, Player.update(player, hp = player.hp - enemyDamage(e.kind)), next)
         false -> applyEnemyDamageVec(enemies, player, next)
-
-verify applyDamageOne
-    applyDamageOne([], Types.mkPlayer(1.0, 1.0), 0, Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)).hp => 19
-
-// ─── Shooting ──────────────────────────────────────────────────────────────
 
 fn shootRay(enemies: List<Enemy>, px: Float, py: Float, angle: Float, levelMap: List<String>) -> (List<Enemy>, String)
     ? "Cast a ray from player, hit first enemy in path. Returns updated enemies and message."
@@ -213,6 +213,10 @@ fn findEnemyAt(enemies: List<Enemy>, cx: Float, cy: Float, i: Int) -> Option<Int
     ? "Find enemy near position, return index"
     findEnemyAtVec(Vector.fromList(enemies), cx, cy, i)
 
+verify findEnemyAt
+    findEnemyAt([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 1.0, 1.0, 0) => Option.Some(0)
+    findEnemyAt([], 1.0, 1.0, 0) => Option.None
+
 fn findEnemyAtVec(enemies: Vector<Enemy>, cx: Float, cy: Float, i: Int) -> Option<Int>
     ? "Find enemy near position using indexed vector access"
     match i == Vector.len(enemies)
@@ -223,13 +227,12 @@ fn findEnemyAtVec(enemies: Vector<Enemy>, cx: Float, cy: Float, i: Int) -> Optio
                 false -> findEnemyAtVec(enemies, cx, cy, i + 1)
             Option.None -> Option.None
 
-verify findEnemyAt
-    findEnemyAt([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 1.0, 1.0, 0) => Option.Some(0)
-    findEnemyAt([], 1.0, 1.0, 0) => Option.None
-
 fn applyShot(enemies: List<Enemy>, idx: Int) -> (List<Enemy>, String)
     ? "Apply 5 damage to enemy at index, remove if dead"
     applyShotVec(Vector.fromList(enemies), idx)
+
+verify applyShot
+    applyShot([], 0) => ([], "Shot missed!")
 
 fn applyShotVec(enemies: Vector<Enemy>, idx: Int) -> (List<Enemy>, String)
     ? "Apply 5 damage to enemy at index using indexed vector access"
@@ -237,12 +240,12 @@ fn applyShotVec(enemies: Vector<Enemy>, idx: Int) -> (List<Enemy>, String)
         Option.Some(e) -> applyDamageToEnemyVec(enemies, idx, e)
         Option.None -> (Vector.toList(enemies), "Shot missed!")
 
-verify applyShot
-    applyShot([], 0) => ([], "Shot missed!")
-
 fn applyDamageToEnemy(enemies: List<Enemy>, idx: Int, e: Enemy) -> (List<Enemy>, String)
     ? "Reduce enemy HP, remove if dead"
     applyDamageToEnemyVec(Vector.fromList(enemies), idx, e)
+
+verify applyDamageToEnemy
+    applyDamageToEnemy([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 0, Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)) => ([], "Killed !!")
 
 fn applyDamageToEnemyVec(enemies: Vector<Enemy>, idx: Int, e: Enemy) -> (List<Enemy>, String)
     ? "Reduce enemy HP, remove if dead using shared enemy vector"
@@ -251,12 +254,12 @@ fn applyDamageToEnemyVec(enemies: Vector<Enemy>, idx: Int, e: Enemy) -> (List<En
         true -> (removeEnemyVec(enemies, idx, 0, []), "Killed {Types.enemyGlyph(e.kind)}!")
         false -> (replaceEnemyVec(enemies, idx, Enemy.update(e, hp = newHp), 0, []), "Hit {Types.enemyGlyph(e.kind)}! ({Int.toString(newHp)} HP)")
 
-verify applyDamageToEnemy
-    applyDamageToEnemy([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 0, Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)) => ([], "Killed !!")
-
 fn removeEnemy(enemies: List<Enemy>, idx: Int, i: Int, acc: List<Enemy>) -> List<Enemy>
     ? "Remove enemy at index from list"
     removeEnemyVec(Vector.fromList(enemies), idx, i, acc)
+
+verify removeEnemy
+    List.len(removeEnemy([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8)], 0, 0, [])) => 1
 
 fn removeEnemyVec(enemies: Vector<Enemy>, idx: Int, i: Int, acc: List<Enemy>) -> List<Enemy>
     ? "Remove enemy at index using indexed vector access"
@@ -266,12 +269,12 @@ fn removeEnemyVec(enemies: Vector<Enemy>, idx: Int, i: Int, acc: List<Enemy>) ->
             Option.Some(e) -> removeEnemyStepVec(enemies, idx, i, acc, e)
             Option.None -> acc
 
-verify removeEnemy
-    List.len(removeEnemy([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8)], 0, 0, [])) => 1
-
 fn removeEnemyStep(enemies: List<Enemy>, idx: Int, i: Int, acc: List<Enemy>, e: Enemy) -> List<Enemy>
     ? "Skip or keep enemy at index"
     removeEnemyStepVec(Vector.fromList(enemies), idx, i, acc, e)
+
+verify removeEnemyStep
+    List.len(removeEnemyStep([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 0, 0, [], Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3))) => 0
 
 fn removeEnemyStepVec(enemies: Vector<Enemy>, idx: Int, i: Int, acc: List<Enemy>, e: Enemy) -> List<Enemy>
     ? "Skip or keep enemy at index using shared enemy vector"
@@ -280,12 +283,15 @@ fn removeEnemyStepVec(enemies: Vector<Enemy>, idx: Int, i: Int, acc: List<Enemy>
         true -> removeEnemyVec(enemies, idx, next, acc)
         false -> removeEnemyVec(enemies, idx, next, List.concat(acc, [e]))
 
-verify removeEnemyStep
-    List.len(removeEnemyStep([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 0, 0, [], Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3))) => 0
-
 fn replaceEnemy(enemies: List<Enemy>, idx: Int, newE: Enemy, i: Int, acc: List<Enemy>) -> List<Enemy>
     ? "Replace enemy at index in list"
     replaceEnemyVec(Vector.fromList(enemies), idx, newE, i, acc)
+
+verify replaceEnemy
+    match Vector.get(Vector.fromList(replaceEnemy([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 0, Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8), 0, [])), 0)
+        Option.Some(e) -> e.kind
+        Option.None -> EnemyKind.Imp
+    => EnemyKind.Demon
 
 fn replaceEnemyVec(enemies: Vector<Enemy>, idx: Int, newE: Enemy, i: Int, acc: List<Enemy>) -> List<Enemy>
     ? "Replace enemy at index using indexed vector access"
@@ -295,15 +301,15 @@ fn replaceEnemyVec(enemies: Vector<Enemy>, idx: Int, newE: Enemy, i: Int, acc: L
             Option.Some(e) -> replaceEnemyStepVec(enemies, idx, newE, i, acc, e)
             Option.None -> acc
 
-verify replaceEnemy
-    match Vector.get(Vector.fromList(replaceEnemy([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 0, Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8), 0, [])), 0)
-        Option.Some(e) -> e.kind
-        Option.None -> EnemyKind.Imp
-    => EnemyKind.Demon
-
 fn replaceEnemyStep(enemies: List<Enemy>, idx: Int, newE: Enemy, i: Int, acc: List<Enemy>, e: Enemy) -> List<Enemy>
     ? "Replace or keep enemy at index"
     replaceEnemyStepVec(Vector.fromList(enemies), idx, newE, i, acc, e)
+
+verify replaceEnemyStep
+    match Vector.get(Vector.fromList(replaceEnemyStep([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 0, Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8), 0, [], Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3))), 0)
+        Option.Some(e) -> e.kind
+        Option.None -> EnemyKind.Imp
+    => EnemyKind.Demon
 
 fn replaceEnemyStepVec(enemies: Vector<Enemy>, idx: Int, newE: Enemy, i: Int, acc: List<Enemy>, e: Enemy) -> List<Enemy>
     ? "Replace or keep enemy at index using shared enemy vector"
@@ -311,9 +317,3 @@ fn replaceEnemyStepVec(enemies: Vector<Enemy>, idx: Int, newE: Enemy, i: Int, ac
     match i == idx
         true -> replaceEnemyVec(enemies, idx, newE, next, List.concat(acc, [newE]))
         false -> replaceEnemyVec(enemies, idx, newE, next, List.concat(acc, [e]))
-
-verify replaceEnemyStep
-    match Vector.get(Vector.fromList(replaceEnemyStep([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 0, Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8), 0, [], Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3))), 0)
-        Option.Some(e) -> e.kind
-        Option.None -> EnemyKind.Imp
-    => EnemyKind.Demon

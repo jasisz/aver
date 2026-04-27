@@ -241,7 +241,10 @@ fn drawFooter() -> Unit
 
 fn renderFrame(ready: List<Snapshot>, pending: List<Service>, batchIndex: Int, startMs: Int, frame: Int, hasNext: Bool) -> Unit
     ? "Renders one full dashboard frame."
-    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.unixMs]
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+        Time.unixMs,
+    ]
     nowMs = Time.unixMs()
     visible = minInt(List.len(ready), frame / 2 + 1)
     Terminal.clear()
@@ -253,7 +256,10 @@ fn renderFrame(ready: List<Snapshot>, pending: List<Service>, batchIndex: Int, s
 
 fn renderWarmFrame(firstBatch: List<Service>, startMs: Int, frame: Int) -> Unit
     ? "Renders the initial loading state before the first batch is ready."
-    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.unixMs]
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+        Time.unixMs,
+    ]
     nowMs = Time.unixMs()
     Terminal.clear()
     drawText(0, 0, "cyan", "===================== STATUS WALL =====================")
@@ -272,52 +278,76 @@ fn renderWarmFrame(firstBatch: List<Service>, startMs: Int, frame: Int) -> Unit
 
 fn animateProbeLoop(ready: List<Snapshot>, pending: List<Service>, batchIndex: Int, startMs: Int, frame: Int, remainingFrames: Int) -> Result<Unit, String>
     ? "Animates the dashboard while the sibling probe branch is in flight."
-    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
     match remainingFrames == 0
         true -> Result.Ok(Unit)
         false -> animateProbeStep(ready, pending, batchIndex, startMs, frame, remainingFrames)
 
 fn animateProbeStep(ready: List<Snapshot>, pending: List<Service>, batchIndex: Int, startMs: Int, frame: Int, remainingFrames: Int) -> Result<Unit, String>
     ? "Draws one animated frame and schedules the next one."
-    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
     _ = renderFrame(ready, pending, batchIndex, startMs, frame, true)
     Time.sleep(120)
     animateProbeLoop(ready, pending, batchIndex, startMs, frame + 1, remainingFrames - 1)
 
 fn animateProbe(ready: List<Snapshot>, pending: List<Service>, batchIndex: Int, startMs: Int) -> Result<Unit, String>
     ? "Shows one ready batch while the next batch is being probed."
-    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
     animateProbeLoop(ready, pending, batchIndex, startMs, 0, probeFrames(pending))
 
 fn warmFirstBatchLoop(firstBatch: List<Service>, startMs: Int, frame: Int, remainingFrames: Int) -> Result<Unit, String>
     ? "Animates the startup state until the first batch is ready."
-    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
     match remainingFrames == 0
         true -> Result.Ok(Unit)
         false -> warmFirstBatchStep(firstBatch, startMs, frame, remainingFrames)
 
 fn warmFirstBatchStep(firstBatch: List<Service>, startMs: Int, frame: Int, remainingFrames: Int) -> Result<Unit, String>
     ? "Draws one startup frame and schedules the next one."
-    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
     _ = renderWarmFrame(firstBatch, startMs, frame)
     Time.sleep(120)
     warmFirstBatchLoop(firstBatch, startMs, frame + 1, remainingFrames - 1)
 
 fn warmFirstBatch(firstBatch: List<Service>, startMs: Int) -> Result<Unit, String>
     ? "Animates the initial warm-up before any ready batch exists."
-    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
     warmFirstBatchLoop(firstBatch, startMs, 0, probeFrames(firstBatch))
 
 fn renderFinalScreen(ready: List<Snapshot>, batchIndex: Int, startMs: Int) -> Result<Unit, String>
     ? "Renders the last batch and leaves it on screen briefly."
-    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
     _ = renderFrame(ready, [], batchIndex, startMs, 0, false)
     Time.sleep(1200)
     Result.Ok(Unit)
 
 fn streamBoardStep(remaining: List<Service>, windowSize: Int, ready: List<Snapshot>, batchIndex: Int, startMs: Int) -> Result<Unit, String>
     ? "Fetches the next batch while the current one is rendered live."
-    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
     nextBatch = List.take(remaining, windowSize)
     rest = List.drop(remaining, windowSize)
     data = (animateProbe(ready, nextBatch, batchIndex, startMs), probeAll(nextBatch))?!
@@ -326,14 +356,20 @@ fn streamBoardStep(remaining: List<Service>, windowSize: Int, ready: List<Snapsh
 
 fn streamBoard(remaining: List<Service>, windowSize: Int, ready: List<Snapshot>, batchIndex: Int, startMs: Int) -> Result<Unit, String>
     ? "Renders one ready batch while the next batch is fetched."
-    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
     match remaining
         [] -> renderFinalScreen(ready, batchIndex, startMs)
         _ -> streamBoardStep(remaining, windowSize, ready, batchIndex, startMs)
 
 fn runBoardStep(services: List<Service>, windowSize: Int, startMs: Int) -> Result<Unit, String>
     ? "Warms the first batch, then starts the pipeline."
-    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
     firstBatch = List.take(services, windowSize)
     remaining = List.drop(services, windowSize)
     data = (warmFirstBatch(firstBatch, startMs), probeAll(firstBatch))?!
@@ -342,21 +378,30 @@ fn runBoardStep(services: List<Service>, windowSize: Int, startMs: Int) -> Resul
 
 fn runBoard(services: List<Service>, windowSize: Int, startMs: Int) -> Result<Unit, String>
     ? "Runs the visual bounded-concurrency demo."
-    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
     match windowSize > 0
         false -> Result.Err("Window size must be positive")
         true -> runBoardValidated(services, windowSize, startMs)
 
 fn runBoardValidated(services: List<Service>, windowSize: Int, startMs: Int) -> Result<Unit, String>
     ? "Handles empty versus non-empty service lists after validation."
-    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
     match services
         [] -> Result.Ok(Unit)
         _ -> runBoardStep(services, windowSize, startMs)
 
 fn main() -> Result<Unit, String>
     ? "Runs the visual status wall demo."
-    ! [Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor, Time.sleep, Time.unixMs]
+    ! [
+        Terminal.clear, Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor,
+        Time.sleep, Time.unixMs,
+    ]
     startMs = Time.unixMs()
     _ = runBoard(demoServices(), 2, startMs)?
     Terminal.moveTo(0, 22)

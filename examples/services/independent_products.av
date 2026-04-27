@@ -14,7 +14,6 @@ decision IndependenceNotParallelism
     chosen = "Independent products via ?! and !"
     rejected = ["async/await", "par keyword", "streams", "channels"]
     impacts = [loadDashboard, fetchAll, fetchStep, fetchAllWindowed, fetchAllWindowedAcc, loadWithFallback]
-
 // ── Flat: multiple independent effects ──────────────────────────────────────
 
 record Dashboard
@@ -34,7 +33,7 @@ fn loadSettings(userId: String) -> Result<String, String>
 
 fn loadDashboard(userId: String) -> Result<Dashboard, String>
     ? "Loads profile and settings independently."
-    ! [Http.get, Disk.readText]
+    ! [Disk.readText, Http.get]
     data = (fetchProfile(userId), loadSettings(userId))?!
     match data
         (profile, settings) -> Result.Ok(Dashboard(profile = profile, settings = settings))
@@ -85,7 +84,7 @@ fn fetchAllWindowed(urls: List<String>, windowSize: Int) -> Result<List<String>,
 
 fn loadWithFallback(userId: String) -> String
     ? "Loads profile and settings, handles partial failures."
-    ! [Http.get, Disk.readText]
+    ! [Disk.readText, Http.get]
     results = (fetchProfile(userId), loadSettings(userId))!
     match results
         (Result.Ok(profile), Result.Ok(settings)) -> "both: {profile}"
@@ -96,7 +95,7 @@ fn loadWithFallback(userId: String) -> String
 // ── Entry point ─────────────────────────────────────────────────────────────
 
 fn main() -> Unit
-    ! [Console.print, Console.error, Http.get, Disk.readText]
+    ! [Console.error, Console.print, Disk.readText, Http.get]
     Console.print("=== Independent Products Demo ===")
 
     // Flat ?!

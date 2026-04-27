@@ -123,10 +123,7 @@ fn del(conn: Tcp.Connection, key: String) -> Result<String, String>
 
 fn run() -> Result<Unit, String>
     ? "Full Redis demo: connect, PING, SET, GET, DEL, disconnect."
-    ! [
-        Console.print,
-        Tcp.close, Tcp.connect, Tcp.readLine, Tcp.writeLine,
-    ]
+    ! [Console.print, Tcp.close, Tcp.connect, Tcp.readLine, Tcp.writeLine]
     cfg  = RedisConfig(host = "127.0.0.1", port = 6379)
     conn = connect(cfg)?
 
@@ -147,10 +144,7 @@ fn run() -> Result<Unit, String>
     closed
 
 fn main() -> Unit
-    ! [
-        Console.print,
-        Tcp.close, Tcp.connect, Tcp.readLine, Tcp.writeLine,
-    ]
+    ! [Console.print, Tcp.close, Tcp.connect, Tcp.readLine, Tcp.writeLine]
     match run()
         Result.Ok(_)  -> Console.print("done.")
         Result.Err(e) -> Console.print("error: {e}")

@@ -384,6 +384,11 @@ fn isEnemyVisible(screenCol: Int, eDist: Float, zbuf: List<RayHit>) -> Bool
     ? "Check if enemy column is on screen and in front of walls"
     isEnemyVisibleVec(screenCol, eDist, Vector.fromList(zbuf))
 
+verify isEnemyVisible
+    isEnemyVisible(0, 1.0, [RayHit(dist = 10.0, side = 0, wallType = WallType.Stone)]) => true
+    isEnemyVisible(0 - 1, 1.0, [RayHit(dist = 10.0, side = 0, wallType = WallType.Stone)]) => false
+    isEnemyVisible(0, 0.1, [RayHit(dist = 10.0, side = 0, wallType = WallType.Stone)]) => false
+
 fn isEnemyVisibleVec(screenCol: Int, eDist: Float, zbuf: Vector<RayHit>) -> Bool
     ? "Check if enemy column is on screen and in front of walls using z-buffer vector"
     match screenCol < 0
@@ -395,11 +400,6 @@ fn isEnemyVisibleVec(screenCol: Int, eDist: Float, zbuf: Vector<RayHit>) -> Bool
                 false -> match Vector.get(zbuf, screenCol)
                     Option.Some(hit) -> eDist < hit.dist
                     Option.None -> false
-
-verify isEnemyVisible
-    isEnemyVisible(0, 1.0, [RayHit(dist = 10.0, side = 0, wallType = WallType.Stone)]) => true
-    isEnemyVisible(0 - 1, 1.0, [RayHit(dist = 10.0, side = 0, wallType = WallType.Stone)]) => false
-    isEnemyVisible(0, 0.1, [RayHit(dist = 10.0, side = 0, wallType = WallType.Stone)]) => false
 
 fn drawEnemyChar(e: Enemy, screenCol: Int, eDist: Float, enemies: Vector<Enemy>, zbuf: Vector<RayHit>, px: Float, py: Float, pAngle: Float, i: Int) -> Unit
     ? "Draw enemy using solid Unicode block characters"
@@ -677,6 +677,10 @@ fn enemyAt(enemies: List<Enemy>, mx: Int, my: Int, i: Int) -> Bool
     ? "Check if any enemy is at map tile (mx, my)"
     enemyAtVec(Vector.fromList(enemies), mx, my, i)
 
+verify enemyAt
+    enemyAt([], 5, 5, 0) => false
+    enemyAt([Types.mkEnemy(5.0, 5.0, EnemyKind.Imp, 3)], 5, 5, 0) => true
+
 fn enemyAtVec(enemies: Vector<Enemy>, mx: Int, my: Int, i: Int) -> Bool
     ? "Check if any enemy is at map tile (mx, my) using enemy vector"
     match i == Vector.len(enemies)
@@ -686,7 +690,3 @@ fn enemyAtVec(enemies: Vector<Enemy>, mx: Int, my: Int, i: Int) -> Bool
                 true -> true
                 false -> enemyAtVec(enemies, mx, my, i + 1)
             Option.None -> false
-
-verify enemyAt
-    enemyAt([], 5, 5, 0) => false
-    enemyAt([Types.mkEnemy(5.0, 5.0, EnemyKind.Imp, 3)], 5, 5, 0) => true

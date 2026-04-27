@@ -3,6 +3,7 @@ module DemoLints
     effects [Console]
 
 // B1: List.len == 0 → use pattern match instead
+
 fn isEmpty(xs: List<Int>) -> Bool
     ? "Check if list is empty."
     match List.len(xs) == 0
@@ -14,6 +15,7 @@ verify isEmpty
     isEmpty([1]) => false
 
 // B2: String concat in TailCall → use List + String.join
+
 fn repeat(s: String, n: Int, acc: String) -> String
     ? "Repeat string n times."
     match n
@@ -25,6 +27,7 @@ verify repeat
     repeat("ha", 2, "") => "haha"
 
 // B3: Nested match on x == literal → use match x directly
+
 fn classify(x: Int) -> String
     ? "Classify number."
     match x == 1
@@ -39,6 +42,7 @@ verify classify
     classify(3) => "other"
 
 // B4: Loop-invariant expression recomputed in recursion
+
 fn sumScaled(xs: List<Int>, factor: Int, acc: Int) -> Int
     ? "Sum list elements scaled by factor * 100."
     scale = factor * 100
@@ -51,6 +55,7 @@ verify sumScaled
     sumScaled([1, 2], 1, 0) => 300
 
 // CSE: repeated arithmetic in match subject vs arm body
+
 fn mandelbrot(zr: Float, zi: Float, cr: Float, ci: Float, n: Int) -> Int
     ? "Mandelbrot iteration step."
     match zr * zr + zi * zi > 4.0
@@ -61,6 +66,7 @@ verify mandelbrot
     mandelbrot(0.0, 0.0, 2.0, 2.0, 0) => 0
 
 // CSE: repeated pure function call
+
 fn processItems(xs: List<Int>) -> Int
     ? "Double the length."
     total = List.len(xs) + List.len(xs)

@@ -9,10 +9,6 @@ fn distinctStub(path: BranchPath, n: Int) -> Float
     ? "Stub returning n+1 as a Float — different value per call counter."
     Float.fromInt(n) + 1.0
 
-verify distinctStub
-    distinctStub(BranchPath.Root, 0) => 1.0
-    distinctStub(BranchPath.Root, 1) => 2.0
-
 fn twoFloatsDistinct() -> Bool
     ? "Sample two random floats; return whether they were different."
     ! [Random.float]
@@ -29,3 +25,7 @@ fn main() -> Unit
     Console.print("aver verify:                passes (sample under distinctStub: 1.0 != 2.0)")
     Console.print("aver proof --backend lean:  exports forall-quantified theorem; lake build rejects")
     Console.print("aver proof --backend dafny: exports the same lemma; dafny verify rejects")
+
+verify distinctStub
+    distinctStub(BranchPath.Root, 0) => 1.0
+    distinctStub(BranchPath.Root, 1) => 2.0

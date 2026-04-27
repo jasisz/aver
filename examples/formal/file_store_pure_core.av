@@ -11,6 +11,9 @@ fn write(s: List<(String, String)>, path: String, body: String) -> List<(String,
     ? "Append a (path, body) entry. Most-recent-wins lookup is in `read`."
     List.prepend((path, body), s)
 
+verify write
+    write([], "a.txt", "hi") => [("a.txt", "hi")]
+
 fn read(s: List<(String, String)>, path: String) -> Option<String>
     ? "Most-recent-wins lookup over the FileStore."
     match s
@@ -19,9 +22,6 @@ fn read(s: List<(String, String)>, path: String) -> Option<String>
             (p, body) -> match p == path
                 true -> Option.Some(body)
                 false -> read(rest, path)
-
-verify write
-    write([], "a.txt", "hi") => [("a.txt", "hi")]
 
 verify read
     read([], "a.txt") => Option.None
