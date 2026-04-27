@@ -66,6 +66,9 @@ fn spawnEnemiesVec(rooms: Vector<Level.Room>, seed: Int, i: Int, acc: List<Enemy
             Option.Some(room) -> spawnSkipFirstVec(rooms, seed, i, acc, room)
             Option.None -> acc
 
+verify spawnEnemiesVec
+    spawnEnemiesVec(Vector.fromList([]), 42, 0, []) => []
+
 fn spawnSkipFirst(rooms: List<Level.Room>, seed: Int, i: Int, acc: List<Enemy>, room: Level.Room) -> List<Enemy>
     ? "Skip first room, spawn in rest"
     spawnSkipFirstVec(Vector.fromList(rooms), seed, i, acc, room)
@@ -79,6 +82,9 @@ fn spawnSkipFirstVec(rooms: Vector<Level.Room>, seed: Int, i: Int, acc: List<Ene
     match i == 0
         true -> spawnEnemiesVec(rooms, Rng.nextSeed(seed), next, acc)
         false -> spawnEnemiesVec(rooms, Rng.nextSeed(seed), next, List.concat(acc, [spawnInRoom(room, seed)]))
+
+verify spawnSkipFirstVec
+    spawnSkipFirstVec(Vector.fromList([Level.Room(x = 1, y = 1, w = 2, h = 2)]), 42, 0, [], Level.Room(x = 1, y = 1, w = 2, h = 2)) => []
 
 fn initGame(seed: Int) -> GameState
     ? "Create initial game state from seed"

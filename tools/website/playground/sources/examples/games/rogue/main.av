@@ -44,6 +44,9 @@ fn buildVisGridVec(visible: Vector<Point>, grid: List<List<Bool>>, i: Int) -> Li
             Option.Some(p) -> buildVisGridVec(visible, setRemCell(grid, p.x, p.y), i + 1)
             Option.None -> grid
 
+verify buildVisGridVec
+    List.len(buildVisGridVec(Vector.fromList([Types.pt(1, 1)]), emptyRemembered(0), 0)) => 30
+
 fn emptyRemembered(y: Int) -> List<List<Bool>>
     ? "Build 30 rows of 50 false values"
     emptyRememberedAcc(y, [])
@@ -93,6 +96,9 @@ fn markRememberedVec(rem: List<List<Bool>>, visible: Vector<Point>, i: Int) -> L
         false -> match Vector.get(visible, i)
             Option.Some(p) -> markRememberedVec(setRemCell(rem, p.x, p.y), visible, i + 1)
             Option.None -> rem
+
+verify markRememberedVec
+    List.len(markRememberedVec(emptyRemembered(0), Vector.fromList([]), 0)) => 30
 
 fn setRemCell(rem: List<List<Bool>>, x: Int, y: Int) -> List<List<Bool>>
     ? "Set one remembered cell to true"
@@ -187,6 +193,9 @@ fn spawnEntitiesAccVec(seed: Int, rooms: Vector<Room>, i: Int, floor: Int, acc: 
         true -> acc
         false -> spawnEntitiesStepVec(seed, rooms, i, floor, acc)
 
+verify spawnEntitiesAccVec
+    List.len(spawnEntitiesAccVec(42, Vector.fromList([]), 0, 1, [])) => 0
+
 fn spawnEntitiesStep(seed: Int, rooms: List<Room>, i: Int, floor: Int, acc: List<Entity>) -> List<Entity>
     ? "Process one room in spawnEntities"
     spawnEntitiesStepVec(seed, Vector.fromList(rooms), i, floor, acc)
@@ -202,6 +211,9 @@ fn spawnEntitiesStepVec(seed: Int, rooms: Vector<Room>, i: Int, floor: Int, acc:
         false -> match Vector.get(rooms, i)
             Option.Some(room) -> spawnEntitiesAccVec(Map.nextSeed(seed), rooms, nextI, floor, List.prepend(spawnOneEntity(seed, room, i, floor), acc))
             Option.None -> spawnEntitiesAccVec(seed, rooms, nextI, floor, acc)
+
+verify spawnEntitiesStepVec
+    List.len(spawnEntitiesStepVec(42, Vector.fromList([Room(x = 5, y = 5, w = 6, h = 4)]), 0, 1, [])) => 0
 
 fn spawnOneEntity(seed: Int, room: Room, idx: Int, floor: Int) -> Entity
     ? "Spawn entity scaled by floor — deeper = stronger"
@@ -250,6 +262,9 @@ fn spawnItemsAccVec(seed: Int, rooms: Vector<Room>, i: Int, acc: List<Item>) -> 
             Option.Some(room) -> spawnItemInRoomVec(seed, rooms, room, i, acc)
             Option.None -> spawnItemsAccVec(seed, rooms, i + 1, acc)
 
+verify spawnItemsAccVec
+    List.len(spawnItemsAccVec(42, Vector.fromList([]), 0, [])) => 0
+
 fn spawnItemInRoom(seed: Int, rooms: List<Room>, room: Room, i: Int, acc: List<Item>) -> List<Item>
     ? "Maybe spawn an item in this room"
     spawnItemInRoomVec(seed, Vector.fromList(rooms), room, i, acc)
@@ -266,6 +281,9 @@ fn spawnItemInRoomVec(seed: Int, rooms: Vector<Room>, room: Room, i: Int, acc: L
     match Result.withDefault(Int.mod(i, 2), 0) == 0
         true -> spawnItemsAccVec(Map.nextSeed(seed), rooms, nextI, List.prepend(makeItemByKind(cx, cy, kind), acc))
         false -> spawnItemsAccVec(seed, rooms, nextI, acc)
+
+verify spawnItemInRoomVec
+    List.len(spawnItemInRoomVec(42, Vector.fromList([Room(x = 5, y = 5, w = 6, h = 4)]), Room(x = 5, y = 5, w = 6, h = 4), 0, [])) => 1
 
 fn makeItemByKind(x: Int, y: Int, kind: Int) -> Item
     ? "Create item by kind index"

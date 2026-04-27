@@ -2,11 +2,11 @@ module App
     depends [Data.Fibonacci]
     intent =
         "Demonstrates module imports via depends."
-    effects [Console]
+    effects [Console.print]
 
 fn main() -> Unit
     ! [Console.print]
     result = Data.Fibonacci.buildFibStats(10)
     match result
         Result.Ok(stats) -> Console.print(stats.sum)
-        Result.Err(msg)  -> Console.print(msg)
+        Result.Err(msg) -> Console.print(msg)

@@ -401,6 +401,11 @@ fn isEnemyVisibleVec(screenCol: Int, eDist: Float, zbuf: Vector<RayHit>) -> Bool
                     Option.Some(hit) -> eDist < hit.dist
                     Option.None -> false
 
+verify isEnemyVisibleVec
+    isEnemyVisibleVec(0, 1.0, Vector.fromList([RayHit(dist = 10.0, side = 0, wallType = WallType.Stone)])) => true
+    isEnemyVisibleVec(0 - 1, 1.0, Vector.fromList([RayHit(dist = 10.0, side = 0, wallType = WallType.Stone)])) => false
+    isEnemyVisibleVec(0, 0.1, Vector.fromList([RayHit(dist = 10.0, side = 0, wallType = WallType.Stone)])) => false
+
 fn drawEnemyChar(e: Enemy, screenCol: Int, eDist: Float, enemies: Vector<Enemy>, zbuf: Vector<RayHit>, px: Float, py: Float, pAngle: Float, i: Int) -> Unit
     ? "Draw enemy using solid Unicode block characters"
     ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
@@ -690,3 +695,7 @@ fn enemyAtVec(enemies: Vector<Enemy>, mx: Int, my: Int, i: Int) -> Bool
                 true -> true
                 false -> enemyAtVec(enemies, mx, my, i + 1)
             Option.None -> false
+
+verify enemyAtVec
+    enemyAtVec(Vector.fromList([]), 5, 5, 0) => false
+    enemyAtVec(Vector.fromList([Types.mkEnemy(5.0, 5.0, EnemyKind.Imp, 3)]), 5, 5, 0) => true

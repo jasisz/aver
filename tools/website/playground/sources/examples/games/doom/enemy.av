@@ -118,6 +118,9 @@ fn updateEnemiesVec(enemies: Vector<Enemy>, px: Float, py: Float, levelMap: List
             Option.Some(e) -> updateEnemiesVec(enemies, px, py, levelMap, Rng.nextSeed(seed), turn, i + 1, List.concat(acc, [stepEnemy(e, px, py, levelMap, seed, turn)]))
             Option.None -> acc
 
+verify updateEnemiesVec
+    updateEnemiesVec(Vector.fromList([]), 1.0, 1.0, Level.buildMap(4, "....", []), 42, 0, 0, []) => []
+
 fn enemyTouchingPlayer(enemy: Enemy, px: Float, py: Float) -> Bool
     ? "Is the enemy close enough to hurt the player"
     Math.dist(enemy.x, enemy.y, px, py) < 0.5
@@ -153,6 +156,9 @@ fn applyEnemyDamageVec(enemies: Vector<Enemy>, player: Player, i: Int) -> Player
             Option.Some(e) -> applyDamageOneVec(enemies, player, i, e)
             Option.None -> player
 
+verify applyEnemyDamageVec
+    applyEnemyDamageVec(Vector.fromList([]), Types.mkPlayer(1.0, 1.0), 0).hp => 20
+
 fn applyDamageOne(enemies: List<Enemy>, player: Player, i: Int, e: Enemy) -> Player
     ? "Apply damage from one enemy if touching"
     applyDamageOneVec(Vector.fromList(enemies), player, i, e)
@@ -168,6 +174,9 @@ fn applyDamageOneVec(enemies: Vector<Enemy>, player: Player, i: Int, e: Enemy) -
     match enemyTouchingPlayer(e, player.x, player.y)
         true -> applyEnemyDamageVec(enemies, Player.update(player, hp = player.hp - enemyDamage(e.kind)), next)
         false -> applyEnemyDamageVec(enemies, player, next)
+
+verify applyDamageOneVec
+    applyDamageOneVec(Vector.fromList([]), Types.mkPlayer(1.0, 1.0), 0, Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)).hp => 19
 
 fn shootRay(enemies: List<Enemy>, px: Float, py: Float, angle: Float, levelMap: List<String>) -> (List<Enemy>, String)
     ? "Cast a ray from player, hit first enemy in path. Returns updated enemies and message."
@@ -227,6 +236,10 @@ fn findEnemyAtVec(enemies: Vector<Enemy>, cx: Float, cy: Float, i: Int) -> Optio
                 false -> findEnemyAtVec(enemies, cx, cy, i + 1)
             Option.None -> Option.None
 
+verify findEnemyAtVec
+    findEnemyAtVec(Vector.fromList([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)]), 1.0, 1.0, 0) => Option.Some(0)
+    findEnemyAtVec(Vector.fromList([]), 1.0, 1.0, 0) => Option.None
+
 fn applyShot(enemies: List<Enemy>, idx: Int) -> (List<Enemy>, String)
     ? "Apply 5 damage to enemy at index, remove if dead"
     applyShotVec(Vector.fromList(enemies), idx)
@@ -239,6 +252,9 @@ fn applyShotVec(enemies: Vector<Enemy>, idx: Int) -> (List<Enemy>, String)
     match Vector.get(enemies, idx)
         Option.Some(e) -> applyDamageToEnemyVec(enemies, idx, e)
         Option.None -> (Vector.toList(enemies), "Shot missed!")
+
+verify applyShotVec
+    applyShotVec(Vector.fromList([]), 0) => ([], "Shot missed!")
 
 fn applyDamageToEnemy(enemies: List<Enemy>, idx: Int, e: Enemy) -> (List<Enemy>, String)
     ? "Reduce enemy HP, remove if dead"
@@ -253,6 +269,9 @@ fn applyDamageToEnemyVec(enemies: Vector<Enemy>, idx: Int, e: Enemy) -> (List<En
     match newHp < 1
         true -> (removeEnemyVec(enemies, idx, 0, []), "Killed {Types.enemyGlyph(e.kind)}!")
         false -> (replaceEnemyVec(enemies, idx, Enemy.update(e, hp = newHp), 0, []), "Hit {Types.enemyGlyph(e.kind)}! ({Int.toString(newHp)} HP)")
+
+verify applyDamageToEnemyVec
+    applyDamageToEnemyVec(Vector.fromList([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)]), 0, Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)) => ([], "Killed !!")
 
 fn removeEnemy(enemies: List<Enemy>, idx: Int, i: Int, acc: List<Enemy>) -> List<Enemy>
     ? "Remove enemy at index from list"
@@ -269,6 +288,9 @@ fn removeEnemyVec(enemies: Vector<Enemy>, idx: Int, i: Int, acc: List<Enemy>) ->
             Option.Some(e) -> removeEnemyStepVec(enemies, idx, i, acc, e)
             Option.None -> acc
 
+verify removeEnemyVec
+    List.len(removeEnemyVec(Vector.fromList([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3), Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8)]), 0, 0, [])) => 1
+
 fn removeEnemyStep(enemies: List<Enemy>, idx: Int, i: Int, acc: List<Enemy>, e: Enemy) -> List<Enemy>
     ? "Skip or keep enemy at index"
     removeEnemyStepVec(Vector.fromList(enemies), idx, i, acc, e)
@@ -282,6 +304,9 @@ fn removeEnemyStepVec(enemies: Vector<Enemy>, idx: Int, i: Int, acc: List<Enemy>
     match i == idx
         true -> removeEnemyVec(enemies, idx, next, acc)
         false -> removeEnemyVec(enemies, idx, next, List.concat(acc, [e]))
+
+verify removeEnemyStepVec
+    List.len(removeEnemyStepVec(Vector.fromList([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)]), 0, 0, [], Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3))) => 0
 
 fn replaceEnemy(enemies: List<Enemy>, idx: Int, newE: Enemy, i: Int, acc: List<Enemy>) -> List<Enemy>
     ? "Replace enemy at index in list"
@@ -301,6 +326,12 @@ fn replaceEnemyVec(enemies: Vector<Enemy>, idx: Int, newE: Enemy, i: Int, acc: L
             Option.Some(e) -> replaceEnemyStepVec(enemies, idx, newE, i, acc, e)
             Option.None -> acc
 
+verify replaceEnemyVec
+    match Vector.get(Vector.fromList(replaceEnemyVec(Vector.fromList([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)]), 0, Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8), 0, [])), 0)
+        Option.Some(e) -> e.kind
+        Option.None -> EnemyKind.Imp
+    => EnemyKind.Demon
+
 fn replaceEnemyStep(enemies: List<Enemy>, idx: Int, newE: Enemy, i: Int, acc: List<Enemy>, e: Enemy) -> List<Enemy>
     ? "Replace or keep enemy at index"
     replaceEnemyStepVec(Vector.fromList(enemies), idx, newE, i, acc, e)
@@ -317,3 +348,9 @@ fn replaceEnemyStepVec(enemies: Vector<Enemy>, idx: Int, newE: Enemy, i: Int, ac
     match i == idx
         true -> replaceEnemyVec(enemies, idx, newE, next, List.concat(acc, [newE]))
         false -> replaceEnemyVec(enemies, idx, newE, next, List.concat(acc, [e]))
+
+verify replaceEnemyStepVec
+    match Vector.get(Vector.fromList(replaceEnemyStepVec(Vector.fromList([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)]), 0, Types.mkEnemy(2.0, 2.0, EnemyKind.Demon, 8), 0, [], Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3))), 0)
+        Option.Some(e) -> e.kind
+        Option.None -> EnemyKind.Imp
+    => EnemyKind.Demon

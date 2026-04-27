@@ -6,9 +6,19 @@ fn add(a: Int, b: Int) -> Int
     ? "Add two integers."
     a + b
 
+verify add
+    add(2, 3) => 5
+    add(0, 0) => 0
+    add(0 - 1, 1) => 0
+
 fn double(x: Int) -> Int
     ? "Double a number."
     x * 2
+
+verify double
+    double(0) => 0
+    double(3) => 6
+    double(0 - 4) => 0 - 8
 
 fn main() -> Int
     x = add(2, 3)
