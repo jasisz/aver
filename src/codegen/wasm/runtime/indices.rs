@@ -71,6 +71,8 @@ pub struct AverRuntimeImports {
     pub rt_str_split: u32,
     pub rt_str_join: u32,
     pub rt_str_replace: u32,
+    pub rt_int_from_str: u32,
+    pub rt_float_from_str: u32,
 }
 
 /// Index assignments for runtime functions within the module.
@@ -230,8 +232,8 @@ impl RuntimeFuncIndices {
             str_replace: imports.rt_str_replace,
             str_to_lower: imports.rt_str_to_lower,
             str_to_upper: imports.rt_str_to_upper,
-            int_from_str: next(),
-            float_from_str: next(),
+            int_from_str: imports.rt_int_from_str,
+            float_from_str: imports.rt_float_from_str,
             // count = number of LOCAL runtime functions only (alloc is imported).
             count: i - base,
             fd_write_import: 0,
@@ -698,12 +700,6 @@ pub fn rt_type_index(
     }
     if local_idx == rt.fd_write_buf - import_func_count {
         return rti.fd_write_buf;
-    }
-    if local_idx == rt.int_from_str - import_func_count {
-        return rti.unwrap_i32;
-    }
-    if local_idx == rt.float_from_str - import_func_count {
-        return rti.unwrap_i32;
     }
 
     panic!(

@@ -267,6 +267,8 @@ pub fn build_wasm_module(
         rt_str_split: 55,
         rt_str_join: 56,
         rt_str_replace: 57,
+        rt_int_from_str: 58,
+        rt_float_from_str: 59,
     };
     import_section.import(
         "aver_runtime",
@@ -560,6 +562,16 @@ pub fn build_wasm_module(
     );
     import_section.import(
         "aver_runtime",
+        "rt_int_from_str",
+        EntityType::Function(rti.unwrap_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_float_from_str",
+        EntityType::Function(rti.unwrap_i32),
+    );
+    import_section.import(
+        "aver_runtime",
         "memory",
         EntityType::Memory(MemoryType {
             minimum: 1,
@@ -578,7 +590,7 @@ pub fn build_wasm_module(
             shared: false,
         }),
     );
-    let mut import_func_count = 58u32; // prev 53 + 5 str_ops (slice/chars/split/join/replace)
+    let mut import_func_count = 60u32; // prev 58 + int_from_str + float_from_str
     // Index of the write-to-stdout import (used by runtime's write_stdout helper)
     let mut write_stdout_import: Option<u32> = None;
 
