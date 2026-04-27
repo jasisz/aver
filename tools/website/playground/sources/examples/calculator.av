@@ -1,0 +1,28 @@
+module Calculator
+    intent = "tiny arithmetic API with verified contracts"
+    effects [Console.print]
+
+fn add(a: Int, b: Int) -> Int
+    ? "integer sum"
+    a + b
+
+verify add
+    add(1, 2) => 3
+    add(0, 0) => 0
+    add(0 - 1, 1) => 0
+
+fn divide(a: Int, b: Int) -> Result<Int, String>
+    ? "integer division; returns Err on divide-by-zero"
+    match b
+        0 -> Result.Err("Division by zero")
+        _ -> Result.Ok(a / b)
+
+verify divide
+    divide(10, 2) => Result.Ok(5)
+    divide(10, 0) => Result.Err("Division by zero")
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(add(2, 3))
+    Console.print(divide(10, 2))
+    Console.print(divide(10, 0))

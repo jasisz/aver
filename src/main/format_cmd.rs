@@ -251,13 +251,21 @@ fn sorted_effects(effects: &[String]) -> Vec<String> {
 }
 
 fn format_block_effect_declaration(indent: &str, effects: &[String]) -> Vec<String> {
+    format_bracketed_effect_list(indent, "! ", effects)
+}
+
+fn format_module_effects_declaration(indent: &str, effects: &[String]) -> Vec<String> {
+    format_bracketed_effect_list(indent, "effects ", effects)
+}
+
+fn format_bracketed_effect_list(indent: &str, lead: &str, effects: &[String]) -> Vec<String> {
     let effects = sorted_effects(effects);
-    let inline = format!("{}! [{}]", indent, effects.join(", "));
+    let inline = format!("{}{}[{}]", indent, lead, effects.join(", "));
     if inline.len() <= 100 {
         return vec![inline];
     }
 
-    let mut out = vec![format!("{}! [", indent)];
+    let mut out = vec![format!("{}{}[", indent, lead)];
     let mut start = 0usize;
     while start < effects.len() {
         let namespace = effect_namespace(&effects[start]);
@@ -573,6 +581,13 @@ fn normalize_effect_declaration_blocks_tracked(
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum BlockKind {
     Fn(String),
+    /// Oracle stub fn — first param is `path: BranchPath`, no
+    /// declared effects. These typically sit between a verified fn
+    /// and its `verify ... law` block (the law's `given` clause
+    /// names them); the format reorderer treats them as glue inside
+    /// a fn-and-its-verifies group, not standalone fn definitions
+    /// that would push the verify block out of place.
+    FnStub(String),
     Verify(String),
     Other,
 }
@@ -587,6 +602,24 @@ struct TopBlock {
 #[derive(Default)]
 struct FormatAstInfo {
     kind_by_line: HashMap<usize, BlockKind>,
+}
+
+/// Heuristic: is this fn an oracle stub? Stubs start with
+/// `(path: BranchPath, n: Int, ...)` and declare no effects of
+/// their own — they exist so a `verify ... law` block can name
+/// them in a `given` clause. Tagging them lets the format
+/// reorderer keep them in place between the fn under test and its
+/// verify block instead of demanding the verify follow the fn
+/// directly.
+fn is_oracle_stub_fn(fd: &aver::ast::FnDef) -> bool {
+    if !fd.effects.is_empty() {
+        return false;
+    }
+    let Some((_, first_ty)) = fd.params.first() else {
+        return false;
+    };
+    first_ty.trim() == "BranchPath" || first_ty.trim().starts_with("BranchPath ")
+        || first_ty.trim().starts_with("BranchPath\t")
 }
 
 fn classify_block(header_line: &str) -> BlockKind {
@@ -720,13 +753,29 @@ fn reorder_verify_blocks_tracked(
     }
 
     let mut used = vec![false; verify_blocks.len()];
-    let mut out = Vec::new();
+    let mut out: Vec<TopBlock> = Vec::new();
 
-    for block in blocks {
+    let blocks_vec: Vec<TopBlock> = blocks;
+    let mut i = 0;
+    while i < blocks_vec.len() {
+        let block = &blocks_vec[i];
         match block.kind.clone() {
-            BlockKind::Verify(_) => {}
+            BlockKind::Verify(_) => {
+                i += 1;
+            }
             BlockKind::Fn(name) => {
-                out.push(block);
+                out.push(block.clone());
+                i += 1;
+                // Greedy: pull every FnStub block that immediately
+                // follows. They're considered glue between the fn
+                // under test and its verify block, not standalone
+                // fn definitions.
+                while i < blocks_vec.len()
+                    && matches!(blocks_vec[i].kind, BlockKind::FnStub(_))
+                {
+                    out.push(blocks_vec[i].clone());
+                    i += 1;
+                }
                 if let Some(indices) = by_fn.remove(&name) {
                     for idx in indices {
                         used[idx] = true;
@@ -734,7 +783,16 @@ fn reorder_verify_blocks_tracked(
                     }
                 }
             }
-            BlockKind::Other => out.push(block),
+            BlockKind::FnStub(_) => {
+                // Stub not preceded by a verified fn (rare — usually
+                // a top-level helper). Push as-is; treat like Other.
+                out.push(block.clone());
+                i += 1;
+            }
+            BlockKind::Other => {
+                out.push(block.clone());
+                i += 1;
+            }
         }
     }
 
@@ -781,8 +839,12 @@ fn parse_ast_info_checked(source: &str) -> Result<FormatAstInfo, String> {
     for item in items {
         match item {
             TopLevel::FnDef(fd) => {
-                info.kind_by_line
-                    .insert(fd.line, BlockKind::Fn(fd.name.clone()));
+                let kind = if is_oracle_stub_fn(&fd) {
+                    BlockKind::FnStub(fd.name.clone())
+                } else {
+                    BlockKind::Fn(fd.name.clone())
+                };
+                info.kind_by_line.insert(fd.line, kind);
             }
             TopLevel::Verify(vb) => {
                 info.kind_by_line
@@ -836,7 +898,135 @@ fn normalize_source_lines_tracked(
     let lines = normalize_effect_declaration_blocks_tracked(lines, violations, Some(&line_offset));
     let lines = normalize_function_header_effects_tracked(lines, violations, Some(&line_offset));
     let lines = normalize_module_intent_blocks_tracked(lines, violations, Some(&line_offset));
+    let lines = normalize_module_effects_blocks_tracked(lines, violations, Some(&line_offset));
     normalize_inline_decision_fields_tracked(lines, violations, Some(&line_offset))
+}
+
+fn normalize_module_effects_blocks_tracked(
+    lines: Vec<String>,
+    violations: &mut Vec<aver::diagnostics::model::FormatViolation>,
+    line_offset: Option<&[usize]>,
+) -> Vec<String> {
+    let mut out = Vec::with_capacity(lines.len());
+    let mut in_module_header = false;
+    let mut i = 0usize;
+
+    while i < lines.len() {
+        let line = &lines[i];
+        let trimmed = line.trim();
+        let indent_len = line.chars().take_while(|c| *c == ' ').count();
+
+        if indent_len == 0 && trimmed.starts_with("module ") {
+            in_module_header = true;
+            out.push(line.clone());
+            i += 1;
+            continue;
+        }
+        if in_module_header && indent_len == 0 && !trimmed.is_empty() && !trimmed.starts_with("//") {
+            in_module_header = false;
+        }
+
+        if !(in_module_header && indent_len > 0 && trimmed.starts_with("effects ")) {
+            out.push(line.clone());
+            i += 1;
+            continue;
+        }
+
+        // Found a module-level `effects [...]`. Span may be inline or
+        // multi-line; collect until the matching `]`.
+        let indent = " ".repeat(indent_len);
+        let head = trimmed.trim_start_matches("effects").trim_start();
+        if !head.starts_with('[') {
+            out.push(line.clone());
+            i += 1;
+            continue;
+        }
+
+        let mut inner = String::new();
+        let mut consumed = 1usize;
+        let mut found_close = false;
+        let first_open = &head[1..];
+
+        // Single-line case: `effects [a, b, c]`.
+        if let Some(before_close) = first_open.strip_suffix(']') {
+            inner.push_str(before_close.trim());
+            found_close = true;
+        } else {
+            // Multi-line: scan subsequent lines until the closing `]`.
+            inner.push_str(first_open.trim());
+            while i + consumed < lines.len() {
+                let next = &lines[i + consumed];
+                let next_trimmed = next.trim();
+                if let Some(before_close) = next_trimmed.strip_suffix(']') {
+                    if !inner.is_empty() && !before_close.trim().is_empty() {
+                        inner.push(' ');
+                    }
+                    inner.push_str(before_close.trim());
+                    consumed += 1;
+                    found_close = true;
+                    break;
+                }
+                if !inner.is_empty() && !next_trimmed.is_empty() {
+                    inner.push(' ');
+                }
+                inner.push_str(next_trimmed);
+                consumed += 1;
+            }
+        }
+
+        if !found_close {
+            out.push(line.clone());
+            i += 1;
+            continue;
+        }
+
+        let effects: Vec<String> = if inner.trim().is_empty() {
+            vec![]
+        } else {
+            inner
+                .split(',')
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+                .map(ToString::to_string)
+                .collect()
+        };
+
+        let original_block: Vec<String> = lines[i..i + consumed].to_vec();
+        let rewritten_block = format_module_effects_declaration(&indent, &effects);
+        if original_block != rewritten_block {
+            let source_line = line_offset
+                .and_then(|off| off.get(i))
+                .copied()
+                .unwrap_or(i + 1);
+            let rule = {
+                let mut sorted = effects.clone();
+                sorted.sort();
+                if effects != sorted {
+                    "module-effects-unsorted"
+                } else {
+                    "module-effects-reshape"
+                }
+            };
+            let message = match rule {
+                "module-effects-unsorted" => {
+                    "module effect list out of order; formatter sorts alphabetically".to_string()
+                }
+                _ => "module effect declaration reshaped to canonical form".to_string(),
+            };
+            violations.push(aver::diagnostics::model::FormatViolation {
+                line: source_line,
+                col: 1,
+                rule,
+                message,
+                before: Some(original_block.join(" | ")),
+                after: Some(rewritten_block.join(" | ")),
+            });
+        }
+        out.extend(rewritten_block);
+        i += consumed;
+    }
+
+    out
 }
 
 fn normalize_module_intent_blocks_tracked(
@@ -1428,6 +1618,43 @@ decision D
             r#"fn apply(handler: Fn(Int) -> Int ! [Args.get, Console.print, Console.warn, Disk.readText, Time.now], value: Int) -> Int
     handler(value)
 "#
+        );
+    }
+
+    #[test]
+    fn sorts_module_effects_inline() {
+        let src = "module M\n    intent = \"t\"\n    effects [Time.now, Console.print]\n";
+        let got = format_source(src);
+        assert_eq!(
+            got,
+            "module M\n    intent = \"t\"\n    effects [Console.print, Time.now]\n"
+        );
+    }
+
+    #[test]
+    fn keeps_short_module_effects_inline() {
+        let src = "module M\n    intent = \"t\"\n    effects [Console.print]\n";
+        let got = format_source(src);
+        assert_eq!(got, src);
+    }
+
+    #[test]
+    fn expands_long_module_effects_to_multiline() {
+        let src = "module M\n    intent = \"t\"\n    effects [Time.now, Args.get, Console.warn, Console.print, Disk.readText, Disk.writeText, Random.int, Random.float]\n";
+        let got = format_source(src);
+        assert_eq!(
+            got,
+            "module M\n    intent = \"t\"\n    effects [\n        Args.get,\n        Console.print, Console.warn,\n        Disk.readText, Disk.writeText,\n        Random.float, Random.int,\n        Time.now,\n    ]\n"
+        );
+    }
+
+    #[test]
+    fn collapses_short_multiline_module_effects_back_to_inline() {
+        let src = "module M\n    intent = \"t\"\n    effects [\n        Console.print,\n        Time.now,\n    ]\n";
+        let got = format_source(src);
+        assert_eq!(
+            got,
+            "module M\n    intent = \"t\"\n    effects [Console.print, Time.now]\n"
         );
     }
 }

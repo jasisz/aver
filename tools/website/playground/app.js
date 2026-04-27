@@ -863,92 +863,37 @@ document.querySelectorAll("[data-game]").forEach(btn => {
 // Code editor + in-browser compile
 // ---------------------------------------------------------------------------
 
-const EXAMPLES = {
-    hello: `module Hello\n    intent = "minimal effect demo — print a greeting to console"\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print("Hello, World!")\n    Console.print("Hello from the Aver Playground!")\n`,
-    calculator: `module Calculator\n    intent = "tiny arithmetic API with verified contracts"\n\nfn add(a: Int, b: Int) -> Int\n    ? "integer sum"\n    a + b\n\nverify add\n    add(1, 2) => 3\n    add(0, 0) => 0\n    add(0 - 1, 1) => 0\n\nfn divide(a: Int, b: Int) -> Result<Int, String>\n    ? "integer division; returns Err on divide-by-zero"\n    match b\n        0 -> Result.Err("Division by zero")\n        _ -> Result.Ok(a / b)\n\nverify divide\n    divide(10, 2) => Result.Ok(5)\n    divide(10, 0) => Result.Err("Division by zero")\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(add(2, 3))\n    Console.print(divide(10, 2))\n    Console.print(divide(10, 0))\n`,
-    fibonacci: `module Fibonacci\n    intent = "naive Fibonacci — showcases verify on a recursive function"\n\nfn fib(n: Int) -> Int\n    ? "naive Fibonacci — O(2^n), good for demonstrating verify, not for production"\n    match n\n        0 -> 0\n        1 -> 1\n        _ -> fib(n - 1) + fib(n - 2)\n\nverify fib\n    fib(0) => 0\n    fib(1) => 1\n    fib(2) => 1\n    fib(10) => 55\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print("fib(10) = {fib(10)}")\n    Console.print("fib(20) = {fib(20)}")\n`,
-    shapes: `module Shapes\n    intent = "sum-type driven area calculation"\n\ntype Shape\n    Circle(Float)\n    Rectangle(Float, Float)\n\nfn area(shape: Shape) -> Float\n    ? "area for a Shape variant"\n    match shape\n        Shape.Circle(r) -> 3.14159 * r * r\n        Shape.Rectangle(w, h) -> w * h\n\nverify area\n    area(Shape.Circle(1.0)) => 3.14159\n    area(Shape.Rectangle(3.0, 4.0)) => 12.0\n    area(Shape.Rectangle(0.0, 5.0)) => 0.0\n\nfn main() -> Unit\n    ! [Console.print]\n    c = Shape.Circle(5.0)\n    r = Shape.Rectangle(3.0, 4.0)\n    Console.print("circle area = {Float.toString(area(c))}")\n    Console.print("rect area = {Float.toString(area(r))}")\n`,
-    quicksort: `module Quicksort\n    intent = "classic quicksort with verified partition helpers"\n\nfn filterLess(xs: List<Int>, pivot: Int) -> List<Int>\n    ? "keep elements strictly less than pivot"\n    match xs\n        [] -> []\n        [h, ..t] -> match h < pivot\n            true -> List.prepend(h, filterLess(t, pivot))\n            false -> filterLess(t, pivot)\n\nverify filterLess\n    filterLess([], 3) => []\n    filterLess([1, 5, 2, 8], 3) => [1, 2]\n    filterLess([5, 5, 5], 5) => []\n\nfn filterGte(xs: List<Int>, pivot: Int) -> List<Int>\n    ? "keep elements greater than or equal to pivot"\n    match xs\n        [] -> []\n        [h, ..t] -> match h >= pivot\n            true -> List.prepend(h, filterGte(t, pivot))\n            false -> filterGte(t, pivot)\n\nverify filterGte\n    filterGte([], 3) => []\n    filterGte([1, 5, 2, 8], 3) => [5, 8]\n    filterGte([5, 5, 5], 5) => [5, 5, 5]\n\nfn quicksort(xs: List<Int>) -> List<Int>\n    ? "classic quicksort: pivot + recurse on less/gte partitions"\n    match xs\n        [] -> []\n        [pivot, ..rest] -> List.concat(List.concat(quicksort(filterLess(rest, pivot)), [pivot]), quicksort(filterGte(rest, pivot)))\n\nverify quicksort\n    quicksort([]) => []\n    quicksort([3, 1, 2]) => [1, 2, 3]\n    quicksort([5, 5, 5]) => [5, 5, 5]\n\nfn main() -> Unit\n    ! [Console.print]\n    input = [38, 27, 43, 3, 9, 82, 10]\n    Console.print("input:  {input}")\n    Console.print("sorted: {quicksort(input)}")\n`,
-    rle: `module Rle\n    intent = "run-length encoding: compress consecutive repeats"\n\ntype RlePair\n    Pair(String, Int)\n\nfn encode(chars: List<String>, current: String, count: Int, acc: List<RlePair>) -> List<RlePair>\n    ? "run-length encoding accumulator loop"\n    match chars\n        [] -> List.reverse(List.prepend(RlePair.Pair(current, count), acc))\n        [h, ..t] -> match h == current\n            true -> encode(t, current, count + 1, acc)\n            false -> encode(t, h, 1, List.prepend(RlePair.Pair(current, count), acc))\n\nverify encode\n    encode([], "a", 3, []) => [RlePair.Pair("a", 3)]\n    encode(["a"], "a", 1, []) => [RlePair.Pair("a", 2)]\n\nfn rleEncode(input: String) -> List<RlePair>\n    ? "run-length encode a string: 'aaab' -> [(a,3),(b,1)]"\n    chars = String.chars(input)\n    match chars\n        [] -> []\n        [first, ..rest] -> encode(rest, first, 1, [])\n\nverify rleEncode\n    rleEncode("") => []\n    rleEncode("aaa") => [RlePair.Pair("a", 3)]\n    rleEncode("aab") => [RlePair.Pair("a", 2), RlePair.Pair("b", 1)]\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(rleEncode("aaabbbccddddee"))\n`,
+// Examples live as `.av` files under `sources/examples/`; the option
+// list in index.html is the canonical slug catalogue. We fetch lazily
+// on first activation and cache by slug so repeated tab loads are
+// free. Keeping examples on disk means they parse with Aver tooling
+// (fmt, check) and survive without JSON-escaping pain.
+const EXAMPLE_CACHE = new Map();
+const EXAMPLE_SLUGS = new Set();
+function refreshExampleSlugs() {
+    EXAMPLE_SLUGS.clear();
+    document
+        .querySelectorAll("[data-examples] option[value]")
+        .forEach((opt) => {
+            const v = opt.getAttribute("value");
+            if (v) EXAMPLE_SLUGS.add(v);
+        });
+}
+refreshExampleSlugs();
 
-    // ─── Trust-loop starters ──────────────────────────────────────────
-    // Each demonstrates one leg of Aver's thesis: effects → verify →
-    // decisions → errors-that-teach. Deep-linkable via ?example=<slug>.
-
-    "effect-violation": `module Starter\n    intent = "greet the user — but forgets to declare the effect"\n\nfn greet() -> Unit\n    Console.print("hello, world")\n\nfn main() -> Unit\n    ! [Console.print]\n    greet()\n`,
-
-    "verify-first": `module Starter\n    intent = "pure arithmetic, locked by verify"\n\nfn add(a: Int, b: Int) -> Int\n    ? "sum of two ints"\n    a + b\n\nverify add\n    add(1, 2) => 3\n    add(2, 3) => 5\n    add(0, 0) => 0\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(add(2, 3))\n`,
-
-    "decision-block": `module Payments\n    intent = "transactions as append-only log"\n\ndecision ImmutableTransactions\n    date = "2026-04-20"\n    reason =\n        "Audit trail requires transactions be append-only and non-modifiable."\n        "Mutable ledger would break compliance with SOX."\n    chosen = "ImmutableWithVersioning"\n    rejected = ["MutableLedger"]\n    impacts = [createTransaction]\n\nfn createTransaction(amount: Int) -> Int\n    ? "build an immutable transaction record"\n    amount\n\nverify createTransaction\n    createTransaction(100) => 100\n    createTransaction(0) => 0\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(createTransaction(100))\n`,
-
-    "result-monadic": `module Starter\n    intent = "idiomatic Result with ? short-circuit"\n\nfn parseNumber(s: String) -> Result<Int, String>\n    ? "parse a string into an int, with a friendly error"\n    match Int.fromString(s)\n        Result.Ok(n) -> Result.Ok(n)\n        Result.Err(_) -> Result.Err("not a number: {s}")\n\nverify parseNumber\n    parseNumber("42") => Result.Ok(42)\n    parseNumber("") => Result.Err("not a number: ")\n    parseNumber("abc") => Result.Err("not a number: abc")\n\nfn doubleParsed(s: String) -> Result<Int, String>\n    ? "parse then double; propagates parse errors via ?"\n    n = parseNumber(s)?\n    Result.Ok(n + n)\n\nverify doubleParsed\n    doubleParsed("21") => Result.Ok(42)\n    doubleParsed("oops") => Result.Err("not a number: oops")\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(doubleParsed("21"))\n    Console.print(doubleParsed("oops"))\n`,
-
-    "independence": `module Independence\n    intent =\n        "Two effectful branches run under \`?!\` — Aver may reorder them at runtime."\n        "Hit ⏺ Record: the Trace panel groups both under one independent product,"\n        "so replay matches either order. Shuffle the cards inside the group and try Replay."\n\nfn announceA() -> Result<Int, String>\n    ? "first independent branch — prints and returns 10"\n    ! [Console.print]\n    Console.print("branch A")\n    Result.Ok(10)\n\nfn announceB() -> Result<Int, String>\n    ? "second independent branch — prints and returns 20"\n    ! [Console.print]\n    Console.print("branch B")\n    Result.Ok(20)\n\nfn main() -> Result<Unit, String>\n    ! [Console.print]\n    _pair = (announceA(), announceB())?!\n    Console.print("done — both branches ran")\n    Result.Ok(Unit)\n`,
-
-    "fanout": `module Fanout\n    intent =\n        "Three parallel fetches — and the third is itself a nested \`?!\`."\n        "Trace panel shows nested independence: outer branches 0/1/2, and"\n        "branch 2 contains its own independent product inside (2.0 / 2.1)."\n        "Record, then try reordering within an inner branch vs moving the whole inner group."\n\nfn fetchOne(tag: String) -> Result<Int, String>\n    ? "one independent remote call"\n    ! [Console.print]\n    Console.print("fetch {tag}")\n    Result.Ok(String.len(tag))\n\nfn fetchPair() -> Result<(Int, Int), String>\n    ? "inner pair — independent fetch of two"\n    ! [Console.print]\n    xy = (fetchOne("inner-A"), fetchOne("inner-B"))?!\n    Result.Ok(xy)\n\nfn main() -> Result<Unit, String>\n    ! [Console.print]\n    _all = (fetchOne("outer-1"), fetchOne("outer-2"), fetchPair())?!\n    Console.print("all fan-outs completed")\n    Result.Ok(Unit)\n`,
-
-    "rec-fanout": `module RecFanout\n    intent =\n        "Recursive fan-out: a list of N items becomes N concurrent leaves"\n        "via \`?!\` pairing head against the recursion on the tail. Ten items"\n        "expand into a cascade of nested \`?!\` — every leaf is independent."\n        "Record to see the cascade; Replay works up to depth 2 today."\n\nfn fetch(tag: String) -> Result<Int, String>\n    ? "one independent leaf call"\n    ! [Console.print]\n    Console.print("fetch {tag}")\n    Result.Ok(String.len(tag))\n\nfn fanoutStep(x: String, rest: List<String>) -> Result<Int, String>\n    ? "pair head with recursive tail under ?!"\n    ! [Console.print]\n    pair = (fetch(x), fanout(rest))?!\n    match pair\n        (h, t) -> Result.Ok(h + t)\n\nfn fanout(items: List<String>) -> Result<Int, String>\n    ? "recursive fan-out over a list"\n    ! [Console.print]\n    match items\n        [] -> Result.Ok(0)\n        [x, ..rest] -> fanoutStep(x, rest)\n\nfn main() -> Unit\n    ! [Console.print]\n    result = fanout(["01", "02", "03", "04", "05", "06", "07", "08", "09", "10"])\n    match result\n        Result.Ok(n) -> Console.print("total = {n}")\n        Result.Err(e) -> Console.print("error: {e}")\n`,
-
-    // Oracle v1: effectful fns become first-class in aver proof.
-    // `verify … law` quantifies over the oracle; `verify … trace`
-    // stays for concrete .result / .trace.* runtime checks.
-    oracle: `module OracleDemo
-    intent =
-        "Showcase Aver Oracle v1: effectful fns become first-class in proof."
-        "The law exports as a theorem over every Random.int oracle."
-        "The trace block checks one concrete runtime trace."
-
-fn roll() -> Int
-    ? "Roll a six-sided die."
-    ! [Random.int]
-    Random.int(1, 6)
-
-fn highDie(path: BranchPath, k: Int, lo: Int, hi: Int) -> Int
-    ? "Stub oracle: always max of the range."
-    hi
-
-verify roll law usesOracle
-    given rnd: Random.int = [highDie]
-    roll() => rnd(BranchPath.Root, 0, 1, 6)
-
-verify roll trace
-    given rnd: Random.int = [highDie]
-    rolled = roll()
-    rolled.result => rnd(BranchPath.Root, 0, 1, 6)
-    rolled.trace.length() => 1
-    rolled.trace.contains(Random.int(1, 6)) => true
-
-fn main() -> Unit
-    ! [Console.print, Random.int]
-    Console.print("live roll: {roll()}")
-    Console.print("live roll: {roll()}")
-`,
-
-    // 0.13 Limit: showcase for `aver verify --hostile` / Audit's
-    // hostile toggle. The law looks plausible — "the deadline is
-    // millennia away, surely we're not past it" — but quietly assumes
-    // that Time.unixMs() returns a believable real-clock value. Run
-    // Audit without hostile: passes. Flip hostile on: the saturated
-    // profile (clock pegged at i64-saturated value) breaks the law,
-    // and the diagnostic points at the missing precondition.
-    "hostile-clock": `module DeadlineCheck
-    intent =
-        "Demonstrate \`aver verify --hostile\`: the law passes under real time"
-        "but breaks under the saturated-clock adversarial profile. Toggle the"
-        "hostile checkbox next to Audit and watch the failure call out a"
-        "missing \`when\` precondition or unpinned \`given\` for Time.unixMs."
-    effects [Time.unixMs]
-
-fn willCompleteBeforeDeadline(deadlineMs: Int) -> Bool
-    ? "is the current time still before the deadline?"
-    ! [Time.unixMs]
-    Time.unixMs() < deadlineMs
-
-verify willCompleteBeforeDeadline law deadlineHolds
-    given d: Int = [9999999999999]
-    willCompleteBeforeDeadline(d) => true
-`,
-};
+async function getExample(slug) {
+    if (!EXAMPLE_SLUGS.has(slug)) return null;
+    if (EXAMPLE_CACHE.has(slug)) return EXAMPLE_CACHE.get(slug);
+    try {
+        const res = await fetch(`./sources/examples/${slug}.av`, { cache: "no-cache" });
+        if (!res.ok) return null;
+        const text = await res.text();
+        EXAMPLE_CACHE.set(slug, text);
+        return text;
+    } catch {
+        return null;
+    }
+}
 
 const codeEditor = document.querySelector("[data-code-editor]");
 
@@ -1259,8 +1204,8 @@ function exampleTabName(key) {
     return `${pascal || "Playground"}.av`;
 }
 
-function loadExampleAsTab(key, options = {}) {
-    const source = EXAMPLES[key];
+async function loadExampleAsTab(key, options = {}) {
+    const source = await getExample(key);
     if (!source) return;
     const writeUrl = options.writeUrl !== false;
     leaveWasmOnlyMode();
@@ -1334,7 +1279,7 @@ if (codeEditor) {
 if (examplesSelect) {
     examplesSelect.addEventListener("change", () => {
         const name = examplesSelect.value;
-        if (EXAMPLES[name]) loadExampleAsTab(name);
+        if (EXAMPLE_SLUGS.has(name)) loadExampleAsTab(name);
     });
 }
 
@@ -3945,7 +3890,7 @@ if (urlGame) {
 // Auto-load starter from ?example= URL parameter. Shareable link that
 // drops the user straight into a trust-loop demo.
 const urlExample = new URLSearchParams(window.location.search).get("example");
-if (urlExample && EXAMPLES[urlExample] && codeEditor) {
+if (urlExample && EXAMPLE_SLUGS.has(urlExample) && codeEditor) {
     loadExampleAsTab(urlExample);
     if (examplesSelect) examplesSelect.value = urlExample;
 }

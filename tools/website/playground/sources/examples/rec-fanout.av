@@ -1,0 +1,34 @@
+module RecFanout
+    intent =
+        "Recursive fan-out: a list of N items becomes N concurrent leaves"
+        "via `?!` pairing head against the recursion on the tail. Ten items"
+        "expand into a cascade of nested `?!` — every leaf is independent."
+        "Record to see the cascade; Replay works up to depth 2 today."
+    effects [Console.print]
+
+fn fetch(tag: String) -> Result<Int, String>
+    ? "one independent leaf call"
+    ! [Console.print]
+    Console.print("fetch {tag}")
+    Result.Ok(String.len(tag))
+
+fn fanoutStep(x: String, rest: List<String>) -> Result<Int, String>
+    ? "pair head with recursive tail under ?!"
+    ! [Console.print]
+    pair = (fetch(x), fanout(rest))?!
+    match pair
+        (h, t) -> Result.Ok(h + t)
+
+fn fanout(items: List<String>) -> Result<Int, String>
+    ? "recursive fan-out over a list"
+    ! [Console.print]
+    match items
+        [] -> Result.Ok(0)
+        [x, ..rest] -> fanoutStep(x, rest)
+
+fn main() -> Unit
+    ! [Console.print]
+    result = fanout(["01", "02", "03", "04", "05", "06", "07", "08", "09", "10"])
+    match result
+        Result.Ok(n) -> Console.print("total = {n}")
+        Result.Err(e) -> Console.print("error: {e}")

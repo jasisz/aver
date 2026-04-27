@@ -442,13 +442,17 @@ the two real options today.
 > whole project.
 
 ```
-  origin: hostile effect profile: Time.unixMs/saturated
-  repair: the trace passes for the world your `given` stub describes
-          but breaks under this adversarial profile. Either adjust the
-          impl to be robust against the profile (it models a real
-          production world — frozen clock, empty disk, network down)
-          or, if this trace is intentionally example-only, run it
-          without `--hostile`.
+  origin: effect profile: Time.unixMs/saturated
+  repair: the law passes for the world your `given` stub describes
+          but breaks under this adversarial profile. Three options:
+          (a) adjust the impl to be robust against the profile (it
+          models a real production world — frozen clock, empty disk,
+          network down); (b) declare the oracle assumption with
+          `when` (e.g. `when clock(root, 1) > clock(root, 0)` for
+          monotonicity) so hostile skips profiles that violate it;
+          (c) if the claim really only holds for the one stub you
+          wrote, drop `law` form and use `verify <fn>` cases-form
+          (example semantics) with that stub.
 ```
 
 The block summary line breaks the count down by origin:

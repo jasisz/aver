@@ -10,7 +10,8 @@ use super::model::{AnalysisReport, Diagnostic, Severity, Span};
 use crate::checker::{
     CheckFinding, check_module_intent_with_sigs_in, collect_cse_warnings_in,
     collect_independence_warnings_in, collect_naming_warnings_in, collect_perf_warnings_in,
-    collect_plain_cases_effectful_warnings_in, collect_verify_coverage_warnings_in,
+    collect_module_effects_warnings_in, collect_plain_cases_effectful_warnings_in,
+    collect_verify_coverage_warnings_in,
 };
 #[cfg(feature = "runtime")]
 use crate::checker::{FindingSpan, collect_verify_law_dependency_warnings_in};
@@ -189,6 +190,20 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
                 &options.file_label,
             ));
         }
+    }
+
+    // Module-level `effects [...]` boundary diagnostics. Underdeclared
+    // (a fn uses an effect outside the boundary) is a hard type error,
+    // surfaced via `tc_result.errors`. Overdeclared (boundary lists
+    // effects no fn uses) is a softer hint — still worth surfacing so
+    // the module header documents what the code actually does.
+    for w in collect_module_effects_warnings_in(&items, None) {
+        diagnostics.push(from_check_finding(
+            Severity::Warning,
+            &w,
+            source,
+            &options.file_label,
+        ));
     }
 
     #[cfg(feature = "runtime")]

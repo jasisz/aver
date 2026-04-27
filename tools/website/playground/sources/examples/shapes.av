@@ -1,0 +1,25 @@
+module Shapes
+    intent = "sum-type driven area calculation"
+    effects [Console.print]
+
+type Shape
+    Circle(Float)
+    Rectangle(Float, Float)
+
+fn area(shape: Shape) -> Float
+    ? "area for a Shape variant"
+    match shape
+        Shape.Circle(r) -> 3.14159 * r * r
+        Shape.Rectangle(w, h) -> w * h
+
+verify area
+    area(Shape.Circle(1.0)) => 3.14159
+    area(Shape.Rectangle(3.0, 4.0)) => 12.0
+    area(Shape.Rectangle(0.0, 5.0)) => 0.0
+
+fn main() -> Unit
+    ! [Console.print]
+    c = Shape.Circle(5.0)
+    r = Shape.Rectangle(3.0, 4.0)
+    Console.print("circle area = {Float.toString(area(c))}")
+    Console.print("rect area = {Float.toString(area(r))}")

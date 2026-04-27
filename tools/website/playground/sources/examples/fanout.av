@@ -1,0 +1,25 @@
+module Fanout
+    intent =
+        "Three parallel fetches — and the third is itself a nested `?!`."
+        "Trace panel shows nested independence: outer branches 0/1/2, and"
+        "branch 2 contains its own independent product inside (2.0 / 2.1)."
+        "Record, then try reordering within an inner branch vs moving the whole inner group."
+    effects [Console.print]
+
+fn fetchOne(tag: String) -> Result<Int, String>
+    ? "one independent remote call"
+    ! [Console.print]
+    Console.print("fetch {tag}")
+    Result.Ok(String.len(tag))
+
+fn fetchPair() -> Result<(Int, Int), String>
+    ? "inner pair — independent fetch of two"
+    ! [Console.print]
+    xy = (fetchOne("inner-A"), fetchOne("inner-B"))?!
+    Result.Ok(xy)
+
+fn main() -> Result<Unit, String>
+    ! [Console.print]
+    _all = (fetchOne("outer-1"), fetchOne("outer-2"), fetchPair())?!
+    Console.print("all fan-outs completed")
+    Result.Ok(Unit)

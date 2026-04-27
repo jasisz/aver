@@ -1,0 +1,9 @@
+module Starter
+    intent = "greet the user — but forgets to declare the effect"
+
+fn greet() -> Unit
+    Console.print("hello, world")
+
+fn main() -> Unit
+    ! [Console.print]
+    greet()

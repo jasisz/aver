@@ -1,0 +1,24 @@
+module Payments
+    intent = "transactions as append-only log"
+    effects [Console.print]
+
+decision ImmutableTransactions
+    date = "2026-04-20"
+    reason =
+        "Audit trail requires transactions be append-only and non-modifiable."
+        "Mutable ledger would break compliance with SOX."
+    chosen = "ImmutableWithVersioning"
+    rejected = ["MutableLedger"]
+    impacts = [createTransaction]
+
+fn createTransaction(amount: Int) -> Int
+    ? "build an immutable transaction record"
+    amount
+
+verify createTransaction
+    createTransaction(100) => 100
+    createTransaction(0) => 0
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(createTransaction(100))

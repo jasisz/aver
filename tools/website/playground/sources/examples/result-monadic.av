@@ -1,0 +1,28 @@
+module Starter
+    intent = "idiomatic Result with ? short-circuit"
+    effects [Console.print]
+
+fn parseNumber(s: String) -> Result<Int, String>
+    ? "parse a string into an int, with a friendly error"
+    match Int.fromString(s)
+        Result.Ok(n) -> Result.Ok(n)
+        Result.Err(_) -> Result.Err("not a number: {s}")
+
+verify parseNumber
+    parseNumber("42") => Result.Ok(42)
+    parseNumber("") => Result.Err("not a number: ")
+    parseNumber("abc") => Result.Err("not a number: abc")
+
+fn doubleParsed(s: String) -> Result<Int, String>
+    ? "parse then double; propagates parse errors via ?"
+    n = parseNumber(s)?
+    Result.Ok(n + n)
+
+verify doubleParsed
+    doubleParsed("21") => Result.Ok(42)
+    doubleParsed("oops") => Result.Err("not a number: oops")
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(doubleParsed("21"))
+    Console.print(doubleParsed("oops"))

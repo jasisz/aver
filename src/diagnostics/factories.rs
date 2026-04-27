@@ -428,8 +428,10 @@ pub fn verify_mismatch_diagnostic(
             // the impl (the profile models a real production world);
             // declare the oracle assumption with `when` so hostile
             // skips profiles that violate it (`when clock(root, 1) >
-            // clock(root, 0)` for monotonicity); or, if the law is
-            // intentionally example-only, run it without `--hostile`.
+            // clock(root, 0)` for monotonicity); or — if the claim
+            // really only holds for the one stub you wrote — drop
+            // `law` form and use `verify <fn>` cases-form (example
+            // semantics).
             Repair::primary(
                 "the law passes for the world your `given` stub describes \
                  but breaks under this adversarial profile. Three options: \
@@ -438,8 +440,9 @@ pub fn verify_mismatch_diagnostic(
                  network down); (b) declare the oracle assumption with \
                  `when` (e.g. `when clock(root, 1) > clock(root, 0)` for \
                  monotonicity) so hostile skips profiles that violate it; \
-                 (c) if the law is intentionally example-only, run it \
-                 without `--hostile`.",
+                 (c) if the claim really only holds for the one stub you \
+                 wrote, drop `law` form and use `verify <fn>` cases-form \
+                 (example semantics) with that stub.",
             )
         } else {
             // Value-side hostile: only fires on `verify <fn> law <name>`,
