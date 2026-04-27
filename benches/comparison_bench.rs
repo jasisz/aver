@@ -200,6 +200,58 @@ fn main() -> Int
     sumVector(v, 5000, 0, 0)
 "#;
 
+// Newtype overhead: same compute three ways. The three programs do
+// the exact same wrap/unwrap-and-sum loop; the only difference is
+// the layer between the i64 and the function. Comparing the three
+// numbers per backend tells us how much current Aver lowering pays
+// for nominal newtype safety on each backend (and how much a
+// transparent-newtype lowering in 0.14 could save).
+const NEWTYPE_BARE_SRC: &str = r#"module Bench
+
+fn sumLoop(n: Int, acc: Int) -> Int
+    match n
+        0 -> acc
+        _ -> sumLoop(n - 1, acc + n)
+
+fn main() -> Int
+    sumLoop(20000, 0)
+"#;
+
+const NEWTYPE_RECORD_SRC: &str = r#"module Bench
+
+record UserId
+    raw: Int
+
+fn unwrap(id: UserId) -> Int
+    id.raw
+
+fn sumLoop(n: Int, acc: Int) -> Int
+    match n
+        0 -> acc
+        _ -> sumLoop(n - 1, acc + unwrap(UserId(raw = n)))
+
+fn main() -> Int
+    sumLoop(20000, 0)
+"#;
+
+const NEWTYPE_VARIANT_SRC: &str = r#"module Bench
+
+type UserId
+    UserId(Int)
+
+fn unwrap(id: UserId) -> Int
+    match id
+        UserId.UserId(n) -> n
+
+fn sumLoop(n: Int, acc: Int) -> Int
+    match n
+        0 -> acc
+        _ -> sumLoop(n - 1, acc + unwrap(UserId.UserId(n)))
+
+fn main() -> Int
+    sumLoop(20000, 0)
+"#;
+
 // ── Benchmark groups ─────────────────────────────────────────────────────────
 
 struct BenchArtifacts<'a> {
@@ -260,6 +312,9 @@ fn comparison_benches(c: &mut Criterion) {
         ("pattern match 30k", "bench_match", MATCH_SRC),
         ("string interp 5k", "bench_string", STRING_SRC),
         ("vector get/set 5k", "bench_vector", VECTOR_SRC),
+        ("newtype baseline 20k", "bench_newtype_bare", NEWTYPE_BARE_SRC),
+        ("newtype record 20k", "bench_newtype_record", NEWTYPE_RECORD_SRC),
+        ("newtype variant 20k", "bench_newtype_variant", NEWTYPE_VARIANT_SRC),
     ];
 
     // Pre-compile all native binaries
