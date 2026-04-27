@@ -27,6 +27,16 @@ Rules:
 - continuation lines are more string literals at deeper indent
 - `aver check` warns when non-`main` functions omit the description
 
+### Bindings
+
+All bindings are immutable. No `let`, `val`, or `var`.
+
+```aver
+name = "Alice"
+age: Int = 30
+xs: List<Int> = []
+```
+
 ### Types
 
 Primitives: `Int`, `Float`, `String`, `Bool`, `Unit`
@@ -212,6 +222,25 @@ Rules:
 - Independence: `(a, b)!` (parallel), `(a, b)?!` (parallel + Result unwrap)
 - String interpolation: `"Hello, {name}!"`
 
+**These operators do NOT exist** — do not use them:
+
+- no `%` (modulo) — use `Int.mod(a, b)` which returns `Result<Int, String>`
+- no `&&`, `||` (boolean and/or) — use `Bool.and(a, b)`, `Bool.or(a, b)`, or nested `match`
+- no `!` (boolean not) as prefix — use `Bool.not(x)`
+- no `+=`, `-=`, `++`, `--` (mutation operators)
+- no bitwise operators
+
+### Recursion
+
+There are no loops. Use recursion and pattern matching. Tail-call optimization is automatic.
+
+```aver
+fn sum(xs: List<Int>) -> Int
+    match xs
+        [] -> 0
+        [h, ..t] -> h + sum(t)
+```
+
 ### Builtins and namespaces
 
 Use namespaced builtins only.
@@ -293,18 +322,24 @@ match Map.get(ages, "alice")
 
 ### Common mistakes to avoid
 
-1. `if`/`else` — use `match`
-2. `val`/`var` — just `name = expr`
-3. Bare `Ok(x)` — must be `Result.Ok(x)`
-4. Missing `!` effect declaration — compiler errors
-5. Closures/lambdas — not supported; use named top-level functions
-6. `List.map`/`List.filter` — not built-in; write with recursion
-7. Pipe `|>` — not supported
-8. Positional record destructuring in match — bind record, use field access
-9. Multi-line match arms — body must follow `->` on the same line; extract complex logic into a named function
-10. `BranchPath.Root()` / `BranchPath.root()` — it's a nullary value constructor, no parens: just `BranchPath.Root`
-11. Two `given` for the same effect — rejected. Use a multi-value domain `given rnd: Random.int = [stubA, stubB]` for varied samples
-12. Plain `verify fn` on a fn with generative effects — you get a lint warning, use `verify fn law …` with `given` stubs or `verify fn trace` instead
+1. Writing `.aver` files instead of `.av`
+2. `if`/`else` — use `match`
+3. `val`/`var`/`let` — just `name = expr`
+4. Bare `Ok(x)` — must be `Result.Ok(x)`
+5. `String.toInt(s)` — not a thing; use `Int.fromString(s)` which returns `Result<Int, String>`
+6. Assuming `Console.readLine()` returns `String` — it returns `Result<String, String>`
+7. Writing `=` instead of `=>` in verify cases — separator is always `=>`
+8. Using `..` without a name in list patterns — write `[h, ..t]`, not `[h, ..]`
+9. Missing `!` effect declaration — compiler errors
+10. Closures/lambdas — not supported; use named top-level functions
+11. Mutable variables — not supported, all bindings are immutable
+12. `List.map`/`List.filter`/`List.fold` — not built-in; write with recursion
+13. Pipe `|>` — not supported
+14. Positional record destructuring in match — bind record, use field access
+15. Multi-line match arms — body must follow `->` on the same line; extract complex logic into a named function
+16. `BranchPath.Root()` / `BranchPath.root()` — it's a nullary value constructor, no parens: just `BranchPath.Root`
+17. Two `given` for the same effect — rejected. Use a multi-value domain `given rnd: Random.int = [stubA, stubB]` for varied samples
+18. Plain `verify fn` on a fn with generative effects — you get a lint warning, use `verify fn law …` with `given` stubs or `verify fn trace` instead
 
 ### Style
 
@@ -318,7 +353,6 @@ Prefer:
 - `decision` blocks for non-obvious architectural choices
 
 Avoid:
-- pseudo-imperative syntax from older Aver versions
 - broad effect declarations when specific ones suffice
 - hiding domain flow behind unnecessary abstraction
 - functions longer than ~30 lines; split into named helpers

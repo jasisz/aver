@@ -167,11 +167,3 @@ Use replay for effectful debugging and regression capture.
 1. `aver context <entry> --budget 10kb`
 2. if needed, raise budget or target a specific module
 3. only then open raw source files
-
-## Important current semantics
-
-- no `aver decisions`; use `aver context --decisions-only`
-- `check` and `verify` accept directories
-- exact method-level effects only
-- no effect aliases
-- broad namespace effects do not satisfy child effects
