@@ -386,6 +386,18 @@ pub fn build_wasm_module(
     let start_fn_idx = user_fn_base + user_fns.len() as u32;
     function_section.function(rti.empty_to_empty);
 
+    // Under the WASI adapter `_start` must be `() -> ()` so wasmtime can
+    // dispatch it as a command. main carries an i32/i64/f64 return; emit
+    // a void wrapper that calls main and drops its result.
+    let wasi_start_wrapper_idx: Option<u32> = if matches!(adapter, super::WasmAdapter::Wasi)
+        && fn_indices.contains_key("main")
+    {
+        function_section.function(rti.empty_to_empty);
+        Some(start_fn_idx + 1)
+    } else {
+        None
+    };
+
     module.section(&function_section);
 
     // Memory and the heap_ptr global are imported from aver_runtime; no
@@ -458,7 +470,11 @@ pub fn build_wasm_module(
 
     if let Some(&main_idx) = fn_indices.get("main") {
         export_section.export("main", ExportKind::Func, main_idx);
-        export_section.export("_start", ExportKind::Func, main_idx);
+        // Under WASI adapter point `_start` at the void wrapper so the
+        // module is a valid wasi command (else wasmtime falls back to
+        // experimental `--invoke` and prints the i32 return).
+        let start_idx = wasi_start_wrapper_idx.unwrap_or(main_idx);
+        export_section.export("_start", ExportKind::Func, start_idx);
     }
 
     // Re-export the imported memory, heap_ptr global, and rt_alloc so
@@ -568,6 +584,25 @@ pub fn build_wasm_module(
         start_fn.instruction(&Instruction::GlobalSet(0));
         start_fn.instruction(&Instruction::End);
         code_section.function(&start_fn);
+    }
+
+    // WASI _start wrapper body: call main, drop its result.
+    if wasi_start_wrapper_idx.is_some()
+        && let Some(&main_idx) = fn_indices.get("main")
+    {
+        let main_ret_type = ctx
+            .fn_sigs
+            .get("main")
+            .map(|(_, ret_type, _)| aver_type_to_wasm(ret_type))
+            .unwrap_or(WasmType::I32);
+        let mut wrapper = wasm_encoder::Function::new(Vec::new());
+        wrapper.instruction(&Instruction::Call(main_idx));
+        // main always returns one value (Aver functions return exactly
+        // one wasm value via the typed ABI). Drop it.
+        let _ = main_ret_type;
+        wrapper.instruction(&Instruction::Drop);
+        wrapper.instruction(&Instruction::End);
+        code_section.function(&wrapper);
     }
 
     module.section(&code_section);

@@ -677,6 +677,19 @@ impl<'a> ExprEmitter<'a> {
     }
 
     pub(super) fn emit_console_print(&mut self, args: &[Spanned<Expr>]) {
+        // Under the WASI adapter there's no aver/print_value host; the
+        // runtime owns the formatting and writes bytes through fd_write.
+        // For String args we resolve to (ptr+8, len_from_header) and call
+        // fd_write_buf directly. Numeric/Bool/heap args fall through to
+        // the runtime helpers that already produce OBJ_STRING (i64/f64
+        // _to_str_obj). Unit drops.
+        let is_wasi = matches!(self.rt.adapter, super::super::WasmAdapter::Wasi);
+
+        if is_wasi {
+            self.emit_console_print_wasi(args);
+            return;
+        }
+
         // All printing delegated to host via print_value(tag, val)
         // tag: 0=Int, 1=Float, 2=Bool, 3=String, 4=Heap, 5=Unit
         if let Some(&print_idx) = self.host_import_indices.get("print_value") {
@@ -738,6 +751,99 @@ impl<'a> ExprEmitter<'a> {
         self.instructions
             .push(Instruction::Call(self.rt.fd_write_buf));
         self.instructions.push(Instruction::I32Const(0)); // Unit
+    }
+
+    /// WASI-mode Console.print: write directly through fd_write_buf, no
+    /// host. String → (ptr+8, len_from_header). Int/Float → runtime
+    /// _to_str_obj then fd_write_buf. Bool → "true"/"false" literals.
+    /// Unit → drop. Other heap types fall back to header-len bytes.
+    fn emit_console_print_wasi(&mut self, args: &[Spanned<Expr>]) {
+        let arg_aver_type = self.infer_aver_type(&args[0].node);
+        let wt = self.infer_expr_type(&args[0].node);
+
+        match (&arg_aver_type, wt) {
+            (Some(Type::Unit), _) => {
+                self.instructions.push(Instruction::Drop);
+            }
+            (Some(Type::Int), _) | (_, WasmType::I64) => {
+                // i64_to_str_obj(value) → ptr; then bytes(ptr+8, len@ptr)
+                self.instructions
+                    .push(Instruction::Call(self.rt.i64_to_str_obj));
+                self.emit_str_obj_to_fd_write_buf();
+            }
+            (Some(Type::Float), _) | (_, WasmType::F64) => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.f64_to_str_obj));
+                self.emit_str_obj_to_fd_write_buf();
+            }
+            (Some(Type::Bool), _) => {
+                // Pick the "true" / "false" literal pointer based on the
+                // i32 on the stack. Both literals are always emitted (see
+                // emitter.rs string collection).
+                let true_ptr = self
+                    .string_literals
+                    .get("true")
+                    .map(|(p, _)| *p as i32)
+                    .unwrap_or(0);
+                let false_ptr = self
+                    .string_literals
+                    .get("false")
+                    .map(|(p, _)| *p as i32)
+                    .unwrap_or(0);
+                let cond = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalSet(cond));
+                self.instructions.push(Instruction::I32Const(true_ptr));
+                self.instructions.push(Instruction::I32Const(false_ptr));
+                self.instructions.push(Instruction::LocalGet(cond));
+                self.instructions.push(Instruction::Select);
+                self.emit_str_obj_to_fd_write_buf();
+            }
+            _ => {
+                // Heap type — assume OBJ_STRING (interpolated strings,
+                // String namespace results, etc.). Other heap shapes are
+                // a TODO; under WASI without a formatting host they'd
+                // need runtime serializers we don't have today.
+                self.emit_str_obj_to_fd_write_buf();
+            }
+        }
+
+        // Newline.
+        self.instructions.push(Instruction::I32Const(
+            super::super::runtime::NEWLINE_ADDR as i32,
+        ));
+        self.instructions.push(Instruction::I32Const(b'\n' as i32));
+        self.instructions
+            .push(Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }));
+        self.instructions.push(Instruction::I32Const(
+            super::super::runtime::NEWLINE_ADDR as i32,
+        ));
+        self.instructions.push(Instruction::I32Const(1));
+        self.instructions
+            .push(Instruction::Call(self.rt.fd_write_buf));
+        self.instructions.push(Instruction::I32Const(0)); // Unit
+    }
+
+    /// Stack: [ptr_to_obj_string]. Emit fd_write_buf(ptr+8, len@ptr).
+    /// OBJ_STRING header layout: low 32 bits = byte length.
+    fn emit_str_obj_to_fd_write_buf(&mut self) {
+        let s_ptr = self.alloc_local(WasmType::I32);
+        self.instructions.push(Instruction::LocalTee(s_ptr));
+        // ptr+8
+        self.instructions.push(Instruction::I32Const(8));
+        self.instructions.push(Instruction::I32Add);
+        // len from header (low 32 bits at ptr+0)
+        self.instructions.push(Instruction::LocalGet(s_ptr));
+        self.instructions.push(Instruction::I32Load(wasm_encoder::MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }));
+        self.instructions
+            .push(Instruction::Call(self.rt.fd_write_buf));
     }
 
     pub(super) fn emit_list_prepend(&mut self, args: &[Spanned<Expr>]) {
