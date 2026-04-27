@@ -3222,7 +3222,7 @@ function renderDiagRegions(container, d) {
     }
 }
 
-function buildSection({ key, label, status, statusText, countText, teaching, issues, actions, extras }) {
+function buildSection({ key, label, status, statusText, countText, teaching, issues, actions, extras, issuesCap }) {
     const section = document.createElement("details");
     section.className = "audit-section";
     section.dataset.section = key;
@@ -3258,7 +3258,28 @@ function buildSection({ key, label, status, statusText, countText, teaching, iss
     }
     if (extras) extras(body);
     if (issues && issues.length > 0) {
-        for (const d of issues) renderDiag(body, d);
+        // Cap noisy sections (typically Verify under --hostile, where
+        // a single law breaks across N adversarial profiles and each
+        // case re-prints the same repair text + snippet). Show the
+        // first `issuesCap` diags inline; collapse the rest behind a
+        // "+N more — click to expand" button that swaps in the full
+        // list when clicked.
+        const cap = issuesCap ?? Infinity;
+        const visible = issues.slice(0, cap);
+        const hidden = issues.slice(cap);
+        for (const d of visible) renderDiag(body, d);
+        if (hidden.length > 0) {
+            const more = document.createElement("button");
+            more.type = "button";
+            more.className = "diag-expand-more";
+            more.textContent = `+ ${hidden.length} more failure${hidden.length === 1 ? "" : "s"} — click to expand`;
+            more.title = "Hostile expansion produces one diagnostic per (case × profile) combination. The first few cover the shape; click to see every individual failure.";
+            more.addEventListener("click", () => {
+                more.remove();
+                for (const d of hidden) renderDiag(body, d);
+            });
+            body.appendChild(more);
+        }
     } else if (!extras) {
         const ok = document.createElement("div");
         ok.className = "diag-line diag-ok";
@@ -3328,6 +3349,11 @@ function renderVerifySection(data, actions) {
         countText: verifyTotal > 0 ? `${verifyPassed}/${verifyTotal} passed` : "no verify blocks",
         teaching: "Each `verify` block's cases run in the VM. Pass rate tells you how well your function matches the spec you wrote alongside it. Verify is Aver's core contract.",
         issues: verifyFailures,
+        // Hostile mode produces one diagnostic per (case × profile)
+        // combination, which can be 20-30 near-identical entries on
+        // a single broken law. Cap the inline render at 3 — same
+        // ceiling the CLI uses — and expose the rest behind a click.
+        issuesCap: 3,
         actions: sectionActionsWithHostile,
         extras: (body) => {
             if (!verifySummary?.blocks?.length) {

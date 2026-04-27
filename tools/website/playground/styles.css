@@ -706,6 +706,28 @@ body {
     background: rgba(74, 222, 128, 0.04);
 }
 
+/* "+ N more failures" button at the end of a capped issue list.
+   Subtle muted look — it's an info / continuation cue, not a
+   primary action. */
+.diag-expand-more {
+    display: block;
+    margin: 0.6rem 0 0.3rem;
+    padding: 0.35rem 0.6rem;
+    background: transparent;
+    border: 1px dashed var(--border);
+    border-radius: 3px;
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 0.8em;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    transition: color 80ms ease, border-color 80ms ease;
+}
+.diag-expand-more:hover {
+    color: var(--text);
+    border-color: var(--accent);
+}
+
 .editor-tabs {
     display: flex;
     align-items: center;
