@@ -10,9 +10,9 @@
 use std::collections::{HashMap, HashSet};
 
 use wasm_encoder::{
-    CodeSection, ConstExpr, DataSection, ExportKind, ExportSection, FunctionSection, GlobalSection,
-    GlobalType, ImportSection, IndirectNameMap, Instruction, MemorySection, MemoryType, Module,
-    NameMap, NameSection, TypeSection, ValType,
+    CodeSection, ConstExpr, DataSection, EntityType, ExportKind, ExportSection, FunctionSection,
+    GlobalSection, GlobalType, ImportSection, IndirectNameMap, Instruction, MemoryType, Module,
+    NameMap, NameSection, StartSection, TypeSection, ValType,
 };
 
 use crate::ast::{Expr, FnBody, FnDef, Literal, Pattern, Stmt, StrPart, TopLevel};
@@ -194,12 +194,45 @@ pub fn build_wasm_module(
 
     // -----------------------------------------------------------------------
     // Import section — driven by ABI table or WASI adapter
+    //
+    // Layout (Step 1 of the WAT runtime migration):
+    //   0..3        aver_runtime.{rt_alloc, memory, heap_ptr}
+    //   3..3+N      aver/* effect host imports (Aver adapter) or WASI imports
     // -----------------------------------------------------------------------
     let has_effects = !needed_host_imports.is_empty();
     let mut host_imports: HashMap<String, u32> = HashMap::new();
 
     let mut import_section = ImportSection::new();
-    let mut import_func_count = 0u32;
+
+    // aver_runtime imports come first — runtime owns memory and the bump
+    // allocator, user module reaches them via these import slots.
+    let alloc_import_idx: u32 = 0;
+    import_section.import(
+        "aver_runtime",
+        "rt_alloc",
+        EntityType::Function(rti.alloc),
+    );
+    import_section.import(
+        "aver_runtime",
+        "memory",
+        EntityType::Memory(MemoryType {
+            minimum: 1,
+            maximum: None,
+            memory64: false,
+            shared: false,
+            page_size_log2: None,
+        }),
+    );
+    import_section.import(
+        "aver_runtime",
+        "heap_ptr",
+        EntityType::Global(GlobalType {
+            val_type: ValType::I32,
+            mutable: true,
+            shared: false,
+        }),
+    );
+    let mut import_func_count = 1u32; // rt_alloc occupies func slot 0
     // Index of the write-to-stdout import (used by runtime's write_stdout helper)
     let mut write_stdout_import: Option<u32> = None;
 
@@ -299,16 +332,14 @@ pub fn build_wasm_module(
                 "fd_write",
                 wasm_encoder::EntityType::Function(rti.wasi_fd_write),
             );
-            write_stdout_import = Some(0);
-            import_func_count = 1;
+            write_stdout_import = Some(import_func_count);
+            import_func_count += 1;
         }
     }
 
-    if import_func_count > 0 {
-        module.section(&import_section);
-    }
+    module.section(&import_section);
 
-    let mut rt = RuntimeFuncIndices::new(import_func_count);
+    let mut rt = RuntimeFuncIndices::new(import_func_count, alloc_import_idx);
     rt.fd_write_import = write_stdout_import.unwrap_or(0);
     rt.adapter = adapter;
     let trampoline_fn_base = import_func_count + rt.count;
@@ -349,36 +380,26 @@ pub fn build_wasm_module(
         }
     }
 
+    // The start function bumps the imported heap_ptr past the user's
+    // static data on instantiate. Without this the runtime's allocator
+    // (initialized to 128) would scribble over the data section.
+    let start_fn_idx = user_fn_base + user_fns.len() as u32;
+    function_section.function(rti.empty_to_empty);
+
     module.section(&function_section);
 
-    // -----------------------------------------------------------------------
-    // Memory section
-    // -----------------------------------------------------------------------
-    let mut memory_section = MemorySection::new();
-    memory_section.memory(MemoryType {
-        minimum: 1,
-        maximum: None,
-        memory64: false,
-        shared: false,
-        page_size_log2: None,
-    });
-    module.section(&memory_section);
+    // Memory and the heap_ptr global are imported from aver_runtime; no
+    // local memory section is emitted.
 
     // Build variant registry early — needed for global section (name table)
     let variant_registry = build_variant_registry(ctx);
 
     // -----------------------------------------------------------------------
-    // Global section
+    // Global section — local globals start at index 1 (heap_ptr is the
+    // imported global at index 0, kept first to preserve every existing
+    // GlobalGet/Set(0) reference in runtime + user code).
     // -----------------------------------------------------------------------
     let mut global_section = GlobalSection::new();
-    global_section.global(
-        GlobalType {
-            val_type: ValType::I32,
-            mutable: true,
-            shared: false,
-        },
-        &ConstExpr::i32_const(heap_base),
-    );
     for _ in 0..3 {
         global_section.global(
             GlobalType {
@@ -440,16 +461,25 @@ pub fn build_wasm_module(
         export_section.export("_start", ExportKind::Func, main_idx);
     }
 
+    // Re-export the imported memory, heap_ptr global, and rt_alloc so
+    // hosts that look them up on the user instance (variant-name table
+    // reader, host-side guest-string writer) keep working without
+    // needing a handle to the runtime instance.
     export_section.export("memory", ExportKind::Memory, 0);
-
-    // Export $alloc so hosts can allocate guest memory for strings
-    // returned by host imports (readLine, readKey, format_value, etc.)
     export_section.export("alloc", ExportKind::Func, rt.alloc);
     export_section.export("$heap_ptr", ExportKind::Global, 0);
     export_section.export("$variant_names_ptr", ExportKind::Global, 4);
     export_section.export("$variant_names_len", ExportKind::Global, 5);
 
     module.section(&export_section);
+
+    // -----------------------------------------------------------------------
+    // Start section — runs the heap_ptr init before _start so the
+    // imported allocator skips the user's static data.
+    // -----------------------------------------------------------------------
+    module.section(&StartSection {
+        function_index: start_fn_idx,
+    });
 
     // -----------------------------------------------------------------------
     // Code section
@@ -528,6 +558,18 @@ pub fn build_wasm_module(
         }
     }
 
+    // Start function: bump heap_ptr to heap_base on instantiate. The
+    // runtime ships with heap_ptr = 128 (top of IO scratch); the user's
+    // static data lives at 128..heap_base, so without this the first
+    // alloc would scribble over its own string table.
+    {
+        let mut start_fn = wasm_encoder::Function::new(Vec::new());
+        start_fn.instruction(&Instruction::I32Const(heap_base));
+        start_fn.instruction(&Instruction::GlobalSet(0));
+        start_fn.instruction(&Instruction::End);
+        code_section.function(&start_fn);
+    }
+
     module.section(&code_section);
 
     // -----------------------------------------------------------------------
@@ -552,6 +594,11 @@ pub fn build_wasm_module(
     let mut func_names = NameMap::new();
     let mut named: Vec<(u32, String)> = Vec::new();
     for (name, idx) in &host_imports {
+        // Skip marker entries (Aver-qualified names like "Console.print"
+        // are existence flags, their idx 0 collides with rt_alloc).
+        if name.contains('.') {
+            continue;
+        }
         if *idx > 0 || !needed_host_imports.is_empty() {
             named.push((*idx, format!("host_{}", name.replace('/', "_"))));
         }
@@ -562,6 +609,7 @@ pub fn build_wasm_module(
     for (name, idx) in &fn_indices {
         named.push((*idx, name.clone()));
     }
+    named.push((start_fn_idx, "__aver_init_heap".to_string()));
     named.sort_by_key(|(idx, _)| *idx);
     named.dedup_by_key(|(idx, _)| *idx);
     for (idx, name) in &named {

@@ -12,6 +12,8 @@ mod runtime;
 mod types;
 pub(crate) mod value;
 
+pub use runtime::build_runtime_wasm;
+
 use crate::codegen::CodegenContext;
 
 /// Which import ABI to emit in the WASM module.

@@ -8,9 +8,14 @@
 use wasm_encoder::{TypeSection, ValType};
 
 /// Index assignments for runtime functions within the module.
+///
+/// `alloc` is special: it's an imported function from the `aver_runtime`
+/// module (Step 1 of the WAT runtime migration). All other entries are
+/// local function indices into the user module, starting at `base`
+/// (which itself starts after all imports).
 #[derive(Debug, Clone, Copy)]
 pub struct RuntimeFuncIndices {
-    pub alloc: u32,
+    pub alloc: u32,           // import index (aver_runtime.rt_alloc)
     pub truncate: u32,        // (i32) -> ()
     pub collect_begin: u32,   // (i32) -> ()
     pub collect_end: u32,     // () -> ()
@@ -84,7 +89,11 @@ pub struct RuntimeFuncIndices {
 }
 
 impl RuntimeFuncIndices {
-    pub fn new(base: u32) -> Self {
+    /// `base` is the function index where local runtime functions start
+    /// (after all imports). `alloc_import_idx` is the import slot of
+    /// `aver_runtime.rt_alloc` — used directly as `rt.alloc` since alloc
+    /// is no longer emitted as a local runtime function.
+    pub fn new(base: u32, alloc_import_idx: u32) -> Self {
         let mut i = base;
         let mut next = || {
             let idx = i;
@@ -92,7 +101,7 @@ impl RuntimeFuncIndices {
             idx
         };
         RuntimeFuncIndices {
-            alloc: next(),
+            alloc: alloc_import_idx,
             truncate: next(),
             collect_begin: next(),
             collect_end: next(),
@@ -157,6 +166,7 @@ impl RuntimeFuncIndices {
             str_to_upper: next(),
             int_from_str: next(),
             float_from_str: next(),
+            // count = number of LOCAL runtime functions only (alloc is imported).
             count: i - base,
             fd_write_import: 0,
             adapter: super::super::WasmAdapter::Aver,
@@ -596,6 +606,10 @@ pub fn lookup_type_index(
 }
 
 /// Get the type index for a given runtime function.
+///
+/// Note: `alloc` is an imported function (from `aver_runtime`), not a
+/// local runtime function — callers iterate only over local rt fns and
+/// must not pass alloc's index here.
 pub fn rt_type_index(
     rt: &RuntimeFuncIndices,
     rti: &RtTypeIndices,
@@ -603,11 +617,7 @@ pub fn rt_type_index(
     import_func_count: u32,
 ) -> u32 {
     let local_idx = func_idx - import_func_count;
-    let alloc_local = rt.alloc - import_func_count;
 
-    if local_idx == alloc_local {
-        return rti.alloc;
-    }
     if local_idx == rt.truncate - import_func_count {
         return rti.i32_to_empty;
     }

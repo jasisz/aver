@@ -14,51 +14,9 @@ const COLLECT_MARK_GLOBAL: u32 = 1;
 const COLLECT_FROM_GLOBAL: u32 = 2;
 const COLLECT_DST_GLOBAL: u32 = 3;
 
-/// $alloc(size: i32) -> i32
-pub(super) fn emit_alloc() -> Function {
-    let mut f = Function::new(vec![(5, ValType::I32)]); // locals: ptr, aligned, end, mem_bytes, grow_pages
-    f.instruction(&Instruction::GlobalGet(HEAP_PTR_GLOBAL));
-    f.instruction(&Instruction::LocalSet(1));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::I32Const(7));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::I32Const(-8i32));
-    f.instruction(&Instruction::I32And);
-    f.instruction(&Instruction::LocalSet(2));
-    f.instruction(&Instruction::GlobalGet(HEAP_PTR_GLOBAL));
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalSet(3));
-    f.instruction(&Instruction::MemorySize(0));
-    f.instruction(&Instruction::I32Const(16));
-    f.instruction(&Instruction::I32Shl);
-    f.instruction(&Instruction::LocalSet(4));
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::I32GtU);
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::LocalGet(4));
-    f.instruction(&Instruction::I32Sub);
-    f.instruction(&Instruction::I32Const(65535));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::I32Const(16));
-    f.instruction(&Instruction::I32ShrU);
-    f.instruction(&Instruction::LocalSet(5));
-    f.instruction(&Instruction::LocalGet(5));
-    f.instruction(&Instruction::MemoryGrow(0));
-    f.instruction(&Instruction::I32Const(-1));
-    f.instruction(&Instruction::I32Eq);
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-    f.instruction(&Instruction::Unreachable);
-    f.instruction(&Instruction::End);
-    f.instruction(&Instruction::End);
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::GlobalSet(HEAP_PTR_GLOBAL));
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::End);
-    f
-}
+// `$alloc` lives in the `aver_runtime` imported module (see
+// `runtime/wat/alloc.part.wat`); user.wasm imports it as
+// `aver_runtime.rt_alloc` and reaches it via `rt.alloc`.
 
 /// $truncate(mark: i32) -> ()
 pub(super) fn emit_truncate_to_mark() -> Function {
