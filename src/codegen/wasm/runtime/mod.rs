@@ -25,7 +25,10 @@ use wasm_encoder::Function;
 
 use super::value::*;
 
-pub use indices::{RuntimeFuncIndices, emit_base_type_section, lookup_type_index, rt_type_index};
+pub use indices::{
+    AverRuntimeImports, RuntimeFuncIndices, emit_base_type_section, lookup_type_index,
+    rt_type_index,
+};
 pub use wat_module::build_runtime_wasm;
 
 /// Scratch area for IO in linear memory. Reserved: bytes 0-127.
@@ -40,14 +43,14 @@ pub(crate) const IO_FLOAT_BUF: u32 = 48; // 48 bytes for float digits (48..95)
 
 /// Emit all runtime function bodies.
 ///
-/// `alloc` is intentionally absent — it lives in the `aver_runtime`
-/// imported module (Step 1 of the WAT runtime migration) and is
-/// referenced via `rt.alloc` (which holds its import index).
+/// Functions migrated to the `aver_runtime` imported WAT module are
+/// intentionally absent here — they live in `runtime/wat/*.part.wat`
+/// and are referenced through their import indices on `rt`.
+/// Migrated so far: alloc, truncate.
 #[allow(clippy::vec_init_then_push)]
 pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     let mut funcs = Vec::new();
 
-    funcs.push(alloc::emit_truncate_to_mark()); // $truncate
     funcs.push(alloc::emit_collect_begin()); // $collect_begin
     funcs.push(alloc::emit_collect_end(rt)); // $collect_end
     funcs.push(alloc::emit_rebase_i32()); // $rebase_i32

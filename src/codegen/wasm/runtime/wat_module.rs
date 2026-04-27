@@ -16,6 +16,7 @@
 
 const PRELUDE_WAT: &str = include_str!("wat/prelude.part.wat");
 const ALLOC_WAT: &str = include_str!("wat/alloc.part.wat");
+const TRUNCATE_WAT: &str = include_str!("wat/truncate.part.wat");
 
 /// Build the runtime module's WAT source by concatenating fragments
 /// inside a `(module ...)` wrapper. Order matters — prelude declares
@@ -26,6 +27,8 @@ fn runtime_wat_source() -> String {
     s.push_str(PRELUDE_WAT);
     s.push('\n');
     s.push_str(ALLOC_WAT);
+    s.push('\n');
+    s.push_str(TRUNCATE_WAT);
     s.push('\n');
     s.push(')');
     s
@@ -58,26 +61,23 @@ mod tests {
     }
 
     #[test]
-    fn runtime_exports_memory_and_alloc() {
+    fn runtime_exports_expected_symbols() {
         let bytes = build_runtime_wasm().expect("runtime WAT must parse");
-        let mut found_memory = false;
-        let mut found_alloc = false;
-        let mut found_heap_ptr = false;
+        let expected = ["memory", "heap_ptr", "rt_alloc", "rt_truncate"];
+        let mut found: std::collections::HashSet<&str> =
+            std::collections::HashSet::new();
         for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
             if let Ok(wasmparser::Payload::ExportSection(reader)) = payload {
                 for export in reader {
                     let export = export.expect("export entry");
-                    match export.name {
-                        "memory" => found_memory = true,
-                        "rt_alloc" => found_alloc = true,
-                        "heap_ptr" => found_heap_ptr = true,
-                        _ => {}
+                    if let Some(&name) = expected.iter().find(|&&n| n == export.name) {
+                        found.insert(name);
                     }
                 }
             }
         }
-        assert!(found_memory, "runtime must export memory");
-        assert!(found_alloc, "runtime must export rt_alloc");
-        assert!(found_heap_ptr, "runtime must export heap_ptr");
+        for name in expected {
+            assert!(found.contains(name), "runtime must export {}", name);
+        }
     }
 }

@@ -20,7 +20,7 @@ use crate::codegen::CodegenContext;
 use crate::ir::{ThinKind, classify_thin_fn_def, thin_body_plan_is_parent_thin_candidate};
 
 use super::expr::{ExprEmitter, StringLiteral, build_variant_registry};
-use super::runtime::{self, RuntimeFuncIndices};
+use super::runtime::{self, AverRuntimeImports, RuntimeFuncIndices};
 use super::types::{WasmType, aver_type_to_wasm};
 use super::value;
 
@@ -204,13 +204,23 @@ pub fn build_wasm_module(
 
     let mut import_section = ImportSection::new();
 
-    // aver_runtime imports come first — runtime owns memory and the bump
-    // allocator, user module reaches them via these import slots.
-    let alloc_import_idx: u32 = 0;
+    // aver_runtime imports come first — runtime owns memory and the
+    // migrated runtime functions; user module reaches them via these
+    // import slots. New runtime fns get appended as the WAT migration
+    // grows; keep the order in sync with `AverRuntimeImports`.
+    let aver_rt_imports = AverRuntimeImports {
+        rt_alloc: 0,
+        rt_truncate: 1,
+    };
     import_section.import(
         "aver_runtime",
         "rt_alloc",
         EntityType::Function(rti.alloc),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_truncate",
+        EntityType::Function(rti.i32_to_empty),
     );
     import_section.import(
         "aver_runtime",
@@ -232,7 +242,7 @@ pub fn build_wasm_module(
             shared: false,
         }),
     );
-    let mut import_func_count = 1u32; // rt_alloc occupies func slot 0
+    let mut import_func_count = 2u32; // rt_alloc, rt_truncate
     // Index of the write-to-stdout import (used by runtime's write_stdout helper)
     let mut write_stdout_import: Option<u32> = None;
 
@@ -339,7 +349,7 @@ pub fn build_wasm_module(
 
     module.section(&import_section);
 
-    let mut rt = RuntimeFuncIndices::new(import_func_count, alloc_import_idx);
+    let mut rt = RuntimeFuncIndices::new(import_func_count, aver_rt_imports);
     rt.fd_write_import = write_stdout_import.unwrap_or(0);
     rt.adapter = adapter;
     let trampoline_fn_base = import_func_count + rt.count;

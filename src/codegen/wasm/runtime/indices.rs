@@ -7,16 +7,26 @@
 
 use wasm_encoder::{TypeSection, ValType};
 
+/// Import slots for runtime functions that live in the `aver_runtime`
+/// module rather than as local user-module functions. The emitter fills
+/// this in as it declares each `aver_runtime.*` import; the runtime
+/// migration grows this struct one entry per migrated function.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AverRuntimeImports {
+    pub rt_alloc: u32,
+    pub rt_truncate: u32,
+}
+
 /// Index assignments for runtime functions within the module.
 ///
-/// `alloc` is special: it's an imported function from the `aver_runtime`
-/// module (Step 1 of the WAT runtime migration). All other entries are
-/// local function indices into the user module, starting at `base`
+/// Some entries are imported from the `aver_runtime` module (the WAT
+/// runtime migration is gradually moving everything there). The rest
+/// are local function indices into the user module, starting at `base`
 /// (which itself starts after all imports).
 #[derive(Debug, Clone, Copy)]
 pub struct RuntimeFuncIndices {
     pub alloc: u32,           // import index (aver_runtime.rt_alloc)
-    pub truncate: u32,        // (i32) -> ()
+    pub truncate: u32,        // import index (aver_runtime.rt_truncate)
     pub collect_begin: u32,   // (i32) -> ()
     pub collect_end: u32,     // () -> ()
     pub rebase_i32: u32,      // (i32) -> i32
@@ -90,10 +100,10 @@ pub struct RuntimeFuncIndices {
 
 impl RuntimeFuncIndices {
     /// `base` is the function index where local runtime functions start
-    /// (after all imports). `alloc_import_idx` is the import slot of
-    /// `aver_runtime.rt_alloc` — used directly as `rt.alloc` since alloc
-    /// is no longer emitted as a local runtime function.
-    pub fn new(base: u32, alloc_import_idx: u32) -> Self {
+    /// (after all imports). `imports` is the slot table for runtime
+    /// functions already migrated to the imported `aver_runtime` module
+    /// — those indices are used directly instead of bumping `base`.
+    pub fn new(base: u32, imports: AverRuntimeImports) -> Self {
         let mut i = base;
         let mut next = || {
             let idx = i;
@@ -101,8 +111,8 @@ impl RuntimeFuncIndices {
             idx
         };
         RuntimeFuncIndices {
-            alloc: alloc_import_idx,
-            truncate: next(),
+            alloc: imports.rt_alloc,
+            truncate: imports.rt_truncate,
             collect_begin: next(),
             collect_end: next(),
             rebase_i32: next(),
@@ -618,9 +628,6 @@ pub fn rt_type_index(
 ) -> u32 {
     let local_idx = func_idx - import_func_count;
 
-    if local_idx == rt.truncate - import_func_count {
-        return rti.i32_to_empty;
-    }
     if local_idx == rt.collect_begin - import_func_count {
         return rti.i32_to_empty;
     }

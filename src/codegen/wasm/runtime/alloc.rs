@@ -14,18 +14,10 @@ const COLLECT_MARK_GLOBAL: u32 = 1;
 const COLLECT_FROM_GLOBAL: u32 = 2;
 const COLLECT_DST_GLOBAL: u32 = 3;
 
-// `$alloc` lives in the `aver_runtime` imported module (see
-// `runtime/wat/alloc.part.wat`); user.wasm imports it as
-// `aver_runtime.rt_alloc` and reaches it via `rt.alloc`.
-
-/// $truncate(mark: i32) -> ()
-pub(super) fn emit_truncate_to_mark() -> Function {
-    let mut f = Function::new(vec![]);
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::GlobalSet(HEAP_PTR_GLOBAL));
-    f.instruction(&Instruction::End);
-    f
-}
+// `$alloc` and `$truncate` live in the `aver_runtime` imported module
+// (see `runtime/wat/{alloc,truncate}.part.wat`); user.wasm imports
+// them as `aver_runtime.{rt_alloc, rt_truncate}` and reaches them via
+// `rt.alloc` / `rt.truncate`.
 
 /// $collect_begin(mark: i32) -> ()
 pub(super) fn emit_collect_begin() -> Function {
