@@ -63,6 +63,8 @@ pub struct AverRuntimeImports {
     pub rt_byte_from_hex: u32,
     pub rt_char_from_code: u32,
     pub rt_str_char_at: u32,
+    pub rt_str_to_lower: u32,
+    pub rt_str_to_upper: u32,
 }
 
 /// Index assignments for runtime functions within the module.
@@ -220,8 +222,8 @@ impl RuntimeFuncIndices {
             str_split: next(),
             str_join: next(),
             str_replace: next(),
-            str_to_lower: next(),
-            str_to_upper: next(),
+            str_to_lower: imports.rt_str_to_lower,
+            str_to_upper: imports.rt_str_to_upper,
             int_from_str: next(),
             float_from_str: next(),
             // count = number of LOCAL runtime functions only (alloc is imported).
@@ -708,12 +710,6 @@ pub fn rt_type_index(
     }
     if local_idx == rt.str_replace - import_func_count {
         return rti.i32_i32_i32_to_i32;
-    }
-    if local_idx == rt.str_to_lower - import_func_count {
-        return rti.unwrap_i32;
-    }
-    if local_idx == rt.str_to_upper - import_func_count {
-        return rti.unwrap_i32;
     }
     if local_idx == rt.int_from_str - import_func_count {
         return rti.unwrap_i32;
