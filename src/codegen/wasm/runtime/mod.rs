@@ -53,7 +53,7 @@ pub(crate) const IO_FLOAT_BUF: u32 = 48; // 48 bytes for float digits (48..95)
 /// vec_from_list/get/len/set/new/to_list, int_to_str, float_to_str,
 /// i64_to_str_obj, f64_to_str_obj, str_len, char_to_code,
 /// byte_to_hex, byte_from_hex, char_from_code, str_char_at,
-/// str_to_lower, str_to_upper.
+/// str_to_lower, str_to_upper, str_trim.
 #[allow(clippy::vec_init_then_push)]
 pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     let mut funcs = Vec::new();
@@ -63,7 +63,6 @@ pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     funcs.push(alloc::emit_rebase_i32()); // $rebase_i32
     funcs.push(alloc::emit_retain_i32(rt)); // $retain_i32
     funcs.push(io::emit_fd_write_buf(rt)); // $fd_write_buf
-    funcs.push(strings::emit_str_trim(rt)); // $str_trim
     funcs.push(strings::emit_str_slice(rt)); // $str_slice
     funcs.push(strings::emit_str_chars(rt)); // $str_chars
     funcs.push(strings::emit_str_split(rt)); // $str_split
