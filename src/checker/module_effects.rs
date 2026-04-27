@@ -21,9 +21,9 @@ pub fn collect_module_effects_warnings_in(
     items: &[TopLevel],
     source_file: Option<&str>,
 ) -> Vec<CheckFinding> {
-    // Locate the module header. When `effects` is omitted entirely
-    // (legacy / 0.12-style), emit a single old-style warning if the
-    // module contains any function definitions — pure decision/type
+    // Locate the module header. If `effects` is omitted entirely
+    // and the module contains any function definitions, emit a soft
+    // nudge to declare the boundary explicitly. Pure decision/type
     // modules don't need a boundary.
     let Some((declared_opt, declared_line, module_name, module_line)) =
         items.iter().find_map(|i| match i {
@@ -52,7 +52,8 @@ pub fn collect_module_effects_warnings_in(
             fn_name: None,
             message: format!(
                 "module '{}' does not declare an effect boundary — \
-                 add `effects [...]` after `intent` (use `effects []` if the module is pure)",
+                 add `effects [...]` after `intent` listing the effects \
+                 functions in this module use",
                 module_name
             ),
             extra_spans: vec![],
@@ -158,9 +159,8 @@ mod tests {
 
     #[test]
     fn warns_when_module_omits_effects_block_with_fn() {
-        // Legacy / 0.12-style module with a function — we now flag
-        // the missing boundary so the user gets a nudge to declare
-        // it explicitly (even `effects []` for a pure module).
+        // Module with a function but no `effects [...]` gets a soft
+        // nudge to declare the boundary explicitly.
         let src = "module M\n\
                    \x20   intent = \"t\"\n\
                    \nfn greet() -> Unit\n\
