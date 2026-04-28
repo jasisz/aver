@@ -351,7 +351,7 @@ pub(super) enum Commands {
         /// runs standalone; `none` (default) leaves aver/* unresolved
         /// for the consumer host to satisfy. Ignored under
         /// `--target edge-wasm`.
-        #[arg(long, value_enum, alias = "adapter")]
+        #[arg(long, value_enum)]
         bridge: Option<WasmBridge>,
         /// Post-process generated WASM through a multi-stage size/speed
         /// pipeline (wasm-metadce → wasm-opt --converge --strip-*).

@@ -1,11 +1,11 @@
 ;; aver/* → wasi_snapshot_preview1.* translation shim.
 ;;
 ;; user.wasm always emits Aver-flavored host imports (aver/console_print,
-;; aver/print_value, ...) regardless of --adapter. Under --adapter wasi
-;; this module satisfies those imports by re-exporting them and
-;; translating each call into a wasi_snapshot_preview1 call. It shares
-;; aver_runtime's memory so it can read OBJ_STRING bytes and write
-;; iovec scratch in the same address space as user.wasm.
+;; aver/print_value, ...) regardless of how it is later deployed. Under
+;; `--bridge wasi` this module satisfies those imports by re-exporting
+;; them and translating each call into a wasi_snapshot_preview1 call.
+;; It shares aver_runtime's memory so it can read OBJ_STRING bytes and
+;; write iovec scratch in the same address space as user.wasm.
 ;;
 ;; Memory layout it uses (already reserved by aver_runtime IO_SCRATCH):
 ;;   0..7   : iovec  (i32 ptr, i32 len)

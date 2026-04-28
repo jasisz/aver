@@ -44,6 +44,31 @@
             margin: 1.75rem 0 0.6rem;
             color: var(--accent);
         }
+        .rt-design {
+            margin: 1.75rem 0 0;
+            padding: 1.15rem 1.35rem;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--accent);
+            border-radius: 10px;
+            color: var(--text);
+            line-height: 1.65;
+            font-size: 0.96rem;
+        }
+        .rt-design strong {
+            display: block;
+            font-size: 0.78rem;
+            font-weight: 650;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--accent);
+            margin-bottom: 0.5rem;
+        }
+        .rt-design em {
+            font-style: normal;
+            font-weight: 650;
+            color: var(--text);
+        }
         .rt-lede {
             color: var(--muted);
             font-size: 1.05rem;
@@ -212,6 +237,14 @@
         <code>aver compile --target edge-wasm --optimize size</code> —
         the runtime is cached once and shared across every program.
     </p>
+    <aside class="rt-design">
+        <strong>The model in one sentence.</strong>
+        Aver emits small, explicit WASM modules. The runtime is shared.
+        Effects are host-provided. WASI is just one bridge.
+        <em>Packaging</em> (bundled vs edge) and <em>effect host</em>
+        (JS / WASI / something else) are independent choices —
+        every combination ships.
+    </aside>
 
     <h2>Quick start</h2>
     <p>
@@ -241,9 +274,7 @@ user.instance.exports._start();</pre>
         Every <code>user.wasm</code> imports <code>aver/*</code>
         effects (<code>Console.print</code>,
         <code>Time.unixMs</code>, …) — the host environment
-        provides them. Packaging (bundled vs edge) and effect host
-        (JS / WASI / something else) are independent choices. Pick
-        one of each:
+        provides them. Three usual paths:
     </p>
 
     <h3 class="rt-subhead">JS host (browser, Node, Workers, Fastly Compute…)</h3>
@@ -346,8 +377,10 @@ function makeHostImports(memory) {
         <li><strong>aver_to_wasi.wasm</strong> — translation shim that
             satisfies a program's <code>aver/*</code> host imports
             against <code>wasi_snapshot_preview1.fd_write</code>.
-            Optional — needed only for wasmtime / Cloudflare Workers /
-            Fastly Compute, not for browser hosts.</li>
+            Optional — needed only when running through a WASI host
+            such as wasmtime or wasmer. Browser and edge JS hosts
+            (Cloudflare Workers, Fastly Compute, Node, Deno) provide
+            <code>aver/*</code> directly; they don't need this shim.</li>
         <li><strong>.wat</strong> — human-readable disassembly of each
             <code>.wasm</code>. Inspect what's actually in the binary.</li>
         <li><strong>CHECKSUMS.txt</strong> — sha256 sums for every file
