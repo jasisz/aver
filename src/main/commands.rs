@@ -3709,9 +3709,7 @@ fn emit_cloudflare_pack(out_path: &Path, wasm_name: &str, wasm_file: &Path) {
     // user keeps their wrangler.toml". A first run drops the
     // template; subsequent runs leave it alone.
     let wrangler_existed = wrangler_path.exists();
-    if !wrangler_existed
-        && let Err(e) = std::fs::write(&wrangler_path, wrangler_toml)
-    {
+    if !wrangler_existed && let Err(e) = std::fs::write(&wrangler_path, wrangler_toml) {
         eprintln!(
             "{}",
             format!("Failed to write {}: {}", wrangler_path.display(), e).red()
@@ -3719,11 +3717,7 @@ fn emit_cloudflare_pack(out_path: &Path, wasm_name: &str, wasm_file: &Path) {
         return;
     }
 
-    let wrangler_note = if wrangler_existed {
-        " (preserved)"
-    } else {
-        ""
-    };
+    let wrangler_note = if wrangler_existed { " (preserved)" } else { "" };
     println!(
         "{} {} + {}{} ({})",
         "  Pack".green().bold(),
