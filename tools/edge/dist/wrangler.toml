@@ -6,9 +6,6 @@ name = "aver-edge-demo"
 main = "worker.js"
 compatibility_date = "2024-11-01"
 
-[wasm_modules]
-app = "./app.wasm"
-
 # Custom domain. Requires `averlang.dev` zone in the same Cloudflare account.
 # Wrangler creates the DNS record + route on first deploy; subsequent deploys
 # update in place. Drop this block to ship to *.workers.dev only.
