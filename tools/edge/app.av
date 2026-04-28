@@ -1,9 +1,10 @@
 module Edge
     intent =
         "edge.averlang.dev — proof-of-Aver served from Cloudflare Workers."
-        "GET / returns a minimal HTML landing; GET /api returns the JSON manifesto."
-        "The handler is pure routing + string interpolation; the only effect"
-        "is Time.unixMs so the body advertises when the request was served."
+        "GET / returns the HTML landing; GET /api the JSON manifesto;"
+        "GET /llms.txt the LLM-readable description of this subdomain;"
+        "everything else gets a styled 404 (so favicon.ico etc. don't"
+        "fall back to the landing page)."
     exposes [handler]
     effects [Time]
 
@@ -57,6 +58,65 @@ fn landing(country: String) -> String
         ""
     ], "\n")
 
+fn notFoundHtml(path: String) -> String
+    ? "Styled 404 page — same typography/colour scheme as the landing."
+    String.join([
+        "<!doctype html>",
+        "<html lang=\"en\">",
+        "<head>",
+        "  <meta charset=\"utf-8\">",
+        "  <title>404 — edge.averlang.dev</title>",
+        "  <style>",
+        "    body {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; max-width: 720px; margin: 4rem auto; padding: 0 1rem; line-height: 1.55; color: #1a1a1a; }}",
+        "    h1 {{ font-size: 1.6rem; margin-bottom: 0.2rem; }}",
+        "    .sub {{ color: #666; margin-top: 0; }}",
+        "    code {{ background: #f3f3f3; padding: 0.1em 0.35em; border-radius: 3px; }}",
+        "    a {{ color: #1a4cdb; }}",
+        "  </style>",
+        "</head>",
+        "<body>",
+        "  <h1>404 — not on this edge.</h1>",
+        "  <p class=\"sub\">No route matched <code>{path}</code> on this Aver-served subdomain.</p>",
+        "  <p>Try one of the routes the handler does know:</p>",
+        "  <ul>",
+        "    <li><a href=\"/\">/</a> — the HTML landing</li>",
+        "    <li><a href=\"/api\">/api</a> — JSON manifesto</li>",
+        "    <li><a href=\"/llms.txt\">/llms.txt</a> — LLM-readable description of this subdomain</li>",
+        "  </ul>",
+        "</body>",
+        "</html>",
+        ""
+    ], "\n")
+
+fn llmsTxt() -> String
+    ? "Per-domain llms.txt for edge.averlang.dev — describes this subdomain to LLMs and points back to averlang.dev for the full language."
+    String.join([
+        "# edge.averlang.dev",
+        "",
+        "> A pure Aver `fn handler(req: HttpRequest) -> HttpResponse` compiled with `aver compile --preset cloudflare` and deployed to Cloudflare Workers. The whole handler is ~100 lines of Aver source; the only declared effect is `Time.unixMs`.",
+        "",
+        "- Source: [tools/edge/app.av](https://github.com/jasisz/aver/blob/main/tools/edge/app.av)",
+        "- Language: [averlang.dev](https://averlang.dev)",
+        "- Playground: [averlang.dev/playground](https://averlang.dev/playground/)",
+        "- Full LLM guide for the language: [averlang.dev/llms.txt](https://averlang.dev/llms.txt) and [averlang.dev/llms-full.txt](https://averlang.dev/llms-full.txt)",
+        "",
+        "## Routes",
+        "",
+        "- `GET /` — HTML landing page describing the deployment",
+        "- `GET /api` — JSON manifesto with the request's `cf-ipcountry` and a server-side `Time.unixMs()` timestamp",
+        "- `GET /llms.txt` — this file",
+        "- everything else — 404 (HTML, same look as the landing)",
+        "",
+        "## How the handler is wired",
+        "",
+        "`--preset cloudflare` expands to `--target wasm --bridge fetch --pack cloudflare`: a single bundled `app.wasm` (Aver runtime inlined via `wasm-merge`), a `worker.js` ES-module bootstrap that satisfies the `aver/*` host imports against the JS environment (`console.*`, `Date.now()`, `Math.random()`, Fetch API + JSPI for `Http.*`), and a `wrangler.toml`. Cloudflare Workers reject `WebAssembly.instantiate(bytes, …)` from runtime-fetched bytes, so the single-bundle shape is the only viable path; browsers / Deno / Bun can use the thinner `--target edge-wasm` shape with the runtime fetched from `averlang.dev/runtime/`.",
+        "",
+        "## What this URL is *not*",
+        "",
+        "This is the dogfood demo, not a service you should depend on. The route shape, manifesto fields, and even the codename of the deployment may change. For programmatic access to anything stable, follow the source link above and check the latest `app.av`.",
+        ""
+    ], "\n")
+
 fn jsonResponse(body: String) -> HttpResponse
     ? "200 OK with application/json content-type."
     HttpResponse(
@@ -73,17 +133,25 @@ fn htmlResponse(body: String) -> HttpResponse
         headers = { "content-type" => ["text/html; charset=utf-8"] },
     )
 
+fn textResponse(body: String) -> HttpResponse
+    ? "200 OK with text/plain content-type — used for /llms.txt."
+    HttpResponse(
+        status = 200,
+        body = body,
+        headers = { "content-type" => ["text/plain; charset=utf-8"] },
+    )
+
 fn notFound(path: String) -> HttpResponse
-    ? "404 with a plain-text body so favicon.ico, /robots.txt etc. don't get the HTML landing page."
+    ? "404 with a styled HTML body — keeps the look consistent with the landing page."
     HttpResponse(
         status = 404,
-        body = "Not found: {path}\n",
-        headers = { "content-type" => ["text/plain; charset=utf-8"] },
+        body = notFoundHtml(path),
+        headers = { "content-type" => ["text/html; charset=utf-8"] },
     )
 
 verify notFound
     notFound("/favicon.ico").status => 404
-    notFound("/whatever").body      => "Not found: /whatever\n"
+    notFound("/whatever").status    => 404
 
 fn firstHeader(values: List<String>) -> String
     ? "First entry of a header list, or '??' when empty."
@@ -108,10 +176,11 @@ verify extractCountry
     extractCountry(HttpRequest(method = "GET", path = "/", body = "", headers = {})) => "??"
 
 fn handler(req: HttpRequest) -> HttpResponse
-    ? "Routes by path. `/` returns HTML, `/api` returns JSON, everything else 404s."
+    ? "Routes by path. `/` HTML, `/api` JSON, `/llms.txt` plain text, everything else 404s."
     ! [Time.unixMs]
     country = extractCountry(req)
     match req.path
-        "/"    -> htmlResponse(landing(country))
-        "/api" -> jsonResponse(manifesto(country, Time.unixMs()))
-        _      -> notFound(req.path)
+        "/"          -> htmlResponse(landing(country))
+        "/api"       -> jsonResponse(manifesto(country, Time.unixMs()))
+        "/llms.txt"  -> textResponse(llmsTxt())
+        _            -> notFound(req.path)
