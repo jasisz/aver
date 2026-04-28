@@ -3374,6 +3374,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
     write_codegen_output(file, output_dir, "Rust", &build_hint, &output);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_compile_wasm(
     file: &str,
     output_dir: &str,
@@ -3396,6 +3397,7 @@ fn cmd_compile_wasm(
             pack,
             handler,
             optimize,
+            target,
         );
         eprintln!(
             "{}",
@@ -3503,7 +3505,7 @@ fn cmd_compile_wasm(
                     // independent of target/bridge — adds files,
                     // doesn't change the .wasm.
                     if let Some(super::cli::DeployPack::Cloudflare) = pack {
-                        emit_cloudflare_pack(&out_path, &wasm_name, &wasm_file);
+                        emit_cloudflare_pack(out_path, &wasm_name, &wasm_file);
                     }
                 } else {
                     // Pack is edge-only for now — bundled artifacts are
@@ -3752,21 +3754,20 @@ pub fn cmd_wasm_runtime(
     }
 
     let output_path = Path::new(output);
-    if let Some(parent) = output_path.parent() {
-        if !parent.as_os_str().is_empty() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                eprintln!(
-                    "{}",
-                    format!(
-                        "Failed to create output directory {}: {}",
-                        parent.display(),
-                        e
-                    )
-                    .red()
-                );
-                process::exit(1);
-            }
-        }
+    if let Some(parent) = output_path.parent()
+        && !parent.as_os_str().is_empty()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        eprintln!(
+            "{}",
+            format!(
+                "Failed to create output directory {}: {}",
+                parent.display(),
+                e
+            )
+            .red()
+        );
+        process::exit(1);
     }
     if let Err(e) = std::fs::write(output_path, &bytes) {
         eprintln!(
@@ -3828,8 +3829,7 @@ pub fn cmd_wasm_runtime(
                     process::exit(1);
                 }
                 println!(
-                    "{} WAT companion → {}",
-                    "       ".to_string(),
+                    "        WAT companion → {}",
                     wat_path.display().to_string().cyan()
                 );
             }

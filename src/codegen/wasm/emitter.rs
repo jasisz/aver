@@ -667,10 +667,10 @@ pub fn build_wasm_module(
         .map(|entry| entry.canonical_name.as_str())
         .collect();
     let needed = super::abi::collect_needed_imports(&ctx.fn_sigs, &user_fn_names, &host_import_set);
-    let mut emit_aver_import = |import_section: &mut ImportSection,
-                                host_imports: &mut HashMap<String, u32>,
-                                import_func_count: &mut u32,
-                                abi_entry: &super::abi::AbiImport|
+    let emit_aver_import = |import_section: &mut ImportSection,
+                            host_imports: &mut HashMap<String, u32>,
+                            import_func_count: &mut u32,
+                            abi_entry: &super::abi::AbiImport|
      -> Result<u32, String> {
         let type_idx = runtime::lookup_type_index(&rti, abi_entry.params, abi_entry.results)
             .ok_or_else(|| {
@@ -1270,11 +1270,7 @@ fn emit_plain_user_function(
         func.instruction(instr);
     }
     func.instruction(&Instruction::End);
-    let local_names: Vec<(String, u32)> = emitter
-        .locals
-        .into_iter()
-        .map(|(n, idx)| (n, idx))
-        .collect();
+    let local_names: Vec<(String, u32)> = emitter.locals.into_iter().collect();
     Ok((func, local_names))
 }
 

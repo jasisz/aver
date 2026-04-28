@@ -4,42 +4,35 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## 0.14.0 "Edge" (TBD)
 
-> _Aver's WASM stops being the slow option. Small explicit modules, a CDN-hostable runtime, host-provided effects — packaging and host as independent choices._
+> _Aver's WASM backend becomes a deployable edge target: small user modules, a shared runtime, and explicit host bridges._
 
 ### Added
-- **`response.headers` flow through `--bridge fetch`.** `HttpResponse(... headers = {...})` lowers to one `response_set_header(name, value)` host call per pair before the finalizing `response_text` — multi-value entries (`Set-Cookie`, `Vary`, …) preserve order without folding. The Cloudflare Workers pack bootstrap now emits a real `Headers` object on the native `Response`; the previous "headers dropped on the floor" placeholder is gone.
-- **`req.headers` and `Http.*` response headers bulk-transfer under `--bridge fetch`.** Reading `req.headers` calls the new `request_headers_load` host import, which walks the worker's `Request.headers` and builds a guest-side `Map<String, List<String>>` via `rt_map_from_list`. Same on the way back: `http_send` returns `(status, body, headers, err)` and the Ok branch writes the real headers HAMT into `HttpResponse.headers`. Multi-value Set-Cookie comes through `Headers.getSetCookie()` so individual cookies stay separate; other multi-value headers ride the spec's comma-joined collapse. End-to-end: `Map.get(req.headers, "x-test")` and `Map.get(resp.headers, "x-custom")` both return real values now.
-- **`Env.get` / `Env.set` everywhere.** `Env.get(name)` returns `Option<String>`; `Env.set(name, value)` is `(String, String) -> Unit`. Under `--bridge fetch` reads pull from the Workers `env` parameter; writes are no-ops (Workers' `env` is read-only). Under `--bridge wasip1` reads walk the WASI environ table via `wasi.environ_get` / `environ_sizes_get`; writes are no-ops (preview 1 has no `setenv`). VM and Rust codegen routes through process env directly. End-to-end verified: `[vars] API_KEY = "secret-from-wrangler"` in `wrangler.toml` flows through to `Option.Some("secret-from-wrangler")` in the Aver handler.
-- **`Http.get` / `.head` / `.delete` / `.post` / `.put` / `.patch` under `--bridge fetch`.** All six verbs share one generic `http_send(method, url, body, contentType)` host import, with request headers built up via `http_clear_request_headers` + per-entry `http_add_request_header` ahead of the send. The bridge wraps `http_send` with `WebAssembly.Suspending` so the synchronous WASM call point can suspend on `await fetch(...)`; the `aver_http_handle` export gets a matching `WebAssembly.promising` wrapper. Multi-value request headers travel via repeated `http_add_request_header` calls (preserves `Vary` / `Set-Cookie` ordering on the wire). Verified end-to-end on `wrangler dev`: `Http.post("https://httpbin.org/post", payload, "application/json", {"authorization" => ["Bearer …"]})` lands a 200 with the auth header on the request and the JSON echo body in the response. Hosts without JSPI (older Node, some embedders) fall back to a sync stub that returns `Result.Err`. The WASI bridge stub returns `Result.Err("Http.* not available under --bridge wasip1")` — wasi-http preview 2 lands in 0.15.
-- **`Console.warn`.** Routes to `console.warn` on JS hosts (distinct stream from `console.error`), to stderr (fd 2) under WASI. Previously `Console.warn` typechecked but the WASM emit collapsed all three `Console.*` calls to `console_print` regardless of severity — fixed alongside this addition: `Console.error` / `Console.warn` now actually go to the stderr-routed import, with the value formatted via `format_value` to keep the trailing newline on the same stream.
-- **Persistent HAMT for `Map`** (branching factor 16, structural sharing). `Map.get` / `Map.has` go from O(N) cons-walks to O(log N); `Map.len` is now an O(1) header read. 12k-entry build under wasmtime takes <5 ms.
-- **Any hashable type as `Map` key.** `Int` / `Float` / `Bool` / `String` plus user variants, tuples, records, lists — anything except `Fn` and `Unit`. The runtime walks heap values via `rt_deep_hash` / `rt_deep_eq`, dispatching on the `OBJ_KIND` header. Same rule across VM, Rust codegen, and WASM (the VM previously hashed heap keys by arena pointer — silent lookup miss when equal values landed in different slots).
-- **`--target edge-wasm`** — emits a thin `user.wasm` with `aver_runtime` left as an unresolved import, ready to pair with a separately-hosted runtime. Trivial program drops to ~280 B with `--optimize size`; playground games sit at 5–28 KiB of pure program logic.
-- **`--bridge wasip1`** — bundles the `aver_to_wasi.wasm` shim with `--target wasm`. The result imports only `wasi_snapshot_preview1.fd_write`, runs under wasmtime / wasmer with no JS host.
-- **`--optimize size|speed` pipeline** — `wasm-metadce` (with `_start` / `main` as the only outside-reachable roots) followed by `wasm-opt -Oz --converge --strip-producers --strip-target-features`. Snake drops 18.5 KiB → 6.5 KiB.
-- **Runtime CDN artifacts at `/runtime/`.** Every release publishes `aver_runtime.wasm` (~10 KiB) + `aver_to_wasi.wasm` (~684 B) + `.wat` companions + `CHECKSUMS.txt` per version, plus a `latest/` mirror and a `manifest.json`. Stable URLs: `/runtime/latest/aver_runtime.wasm` floating, `/runtime/v{X}/...` immutable.
-- **Playground games default to edge packaging.** Second game you click downloads only its program; the runtime is cached cross-game.
-- **WAT-source-of-truth runtime.** All 64 runtime fns moved from hand-written `wasm-encoder` Instruction streams to readable WAT in `src/codegen/wasm/runtime/wat/*.part.wat`, parsed once at startup. `user.wasm` imports them from a separate `aver_runtime` module; `--target wasm` re-merges everything via `wasm-merge`.
-- **Emit-time WASM validation.** `aver compile --target wasm` runs `wasmparser::Validator` before declaring success — emit-time bugs become compile errors instead of "module error" surprises at run time.
+- **`--target edge-wasm`** emits a thin `user.wasm` that imports a separately hosted `aver_runtime`, so browser and edge deployments can cache the runtime once.
+- **Host bridges:** `--bridge fetch` for JS/Workers-style hosts and `--bridge wasip1` for standalone WASI preview 1 execution.
+- **Cloudflare Workers pack output** with worker bootstrap files, WASM artifacts, runtime companions, checksums, and manifest data.
+- **WASM host coverage for `Env.*`, `Console.warn`, `Http.*`, request/response headers, and multi-value header flow.**
+- **Persistent HAMT `Map` runtime** with structural hashing/equality for all hashable key types and O(1) `Map.len`.
+- **`--optimize size|speed`** for the WASM optimization pipeline.
+- **Runtime artifacts at `/runtime/`**: `aver_runtime.wasm`, `aver_to_wasi.wasm`, WAT companions, checksums, versioned URLs, and `latest/`.
 
 ### Changed
-- **`Map` runtime ABI is polymorphic.** `rt_map_get(map, key: i64, kind: i32)`, `rt_map_set(map, key, kind, value: i64, value_ptr_flag)`, etc. — emitter extends scalar keys to i64 and pushes kind at every call site.
-- **HTTP headers are `Map<String, List<String>>`.** `HttpRequest.headers`, `HttpResponse.headers`, and the `Http.post` / `Http.put` / `Http.patch` headers parameter all switched from `List<Header>` to `Map<String, List<String>>`. Multi-value semantics now match the wire (RFC 9110 same-name fields, RFC 6265 multiple `Set-Cookie`); Go's `net/http.Header = map[string][]string` is the precedent. Keys are case-insensitive by convention — the runtime lowercases incoming names and user code is expected to do the same on outgoing. The built-in `Header` record is no longer referenced by any built-in field; existing user-defined `record Header { name: String, value: String }` types keep working but should migrate to the map shape.
+- **HTTP headers are `Map<String, List<String>>`** across request/response records and `Http.post` / `Http.put` / `Http.patch`.
+- **WASM map ABI is polymorphic**, with key kind and value pointer flags passed explicitly.
+- **WAT is the source of truth for the standalone runtime**, and emit-time WASM validation is part of the compile path.
 
 ### Removed
-- **`--wasm-opt oz|o3` → `--optimize size|speed`.** The flag drives a multi-tool pipeline now (metadce + opt + strip), not just `wasm-opt`. The old spelling is gone, not aliased.
-- **`--adapter` → `--bridge`.** Single canonical spelling.
-- **`--target wat` and `--target wasm+wat`.** Name section + `wasm-tools print` cover the use case via standard tooling.
+- **`--adapter` → `--bridge`** and **`--wasm-opt oz|o3` → `--optimize size|speed`**.
+- **`--target wat` and `--target wasm+wat`**; use standard WASM tooling for WAT output.
 
 ### Fixed
-- **`Map<Int, V>` and `Map<Float, V>`** no longer fail validation (pre-HAMT runtime took `key: i32` and used `str_eq`).
-- **`Map<Bool, V>`** no longer silently collapses both keys to one entry.
-- **VM `Map.get` respects structural equality** for heap keys regardless of arena layout.
+- WASM `Map<Int|Float|Bool, V>` validation and lookup issues.
+- VM map structural equality for heap keys.
+- Cloudflare/fetch bridge response headers no longer get dropped.
 
 ### Known limitations
-- **`Http.*` under `--bridge wasip1` returns a transport error.** WASI preview 1 has no native HTTP client. The right path here is a separate compilation target — `--target wasi-http` — that emits a Component Model module against the `wasi:http/proxy` world (preview 2's standardized HTTP shape), with the Aver `fn handler(req: HttpRequest) -> HttpResponse` mapping 1:1 to `wasi:http`'s `incoming-handler` interface. That's a 0.15+ ticket and lives alongside, not inside, the existing `--bridge wasip1` shim — Component Model is a different toolchain (component wasm, WIT worlds) and treating it as another bridge would conflate two distinct compilation models. Programs that need real HTTP today should run via a JS host (Workers, Deno, Bun) that satisfies `aver/http_send` directly.
-- **`Vector.set` on WASM is O(N) per call** (full `memory.copy` + realloc), ~10× slower than the VM's `Rc::make_mut` fast path. Mutating-loop benchmarks like `vector get_set 5k` stay 9× behind the VM. Escape-analysis-driven owned-mask is the 0.15 fix; the safe heap-ptr-freshness shortcut alone leaks immutability under aliased bindings, so it's not landing as-is. Pure-functional patterns (`Vector.fromList` once, `Vector.get` many times) are unaffected.
-- **`Map` build under WASM is ~1.5× slower than VM** for the `map build 5k` benchmark. HAMT `alloca` cost per insert dominates; same fix family as `Vector.set`.
+- `Http.*` under `--bridge wasip1` returns a transport error; real WASI HTTP belongs in a later Component Model target.
+- WASM `Vector.set` is still O(N) per call.
+- WASM map builds remain slower than the VM on large construction-heavy benchmarks.
 
 ## 0.13.0 "Limit" (2026-04-27)
 

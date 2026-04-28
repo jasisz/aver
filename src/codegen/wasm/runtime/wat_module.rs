@@ -164,92 +164,104 @@ mod tests {
     }
 
     #[test]
-    fn runtime_exports_expected_symbols() {
+    fn runtime_export_contract_is_exact() {
         let bytes = build_runtime_wasm().expect("runtime WAT must parse");
+        fn kind_name(kind: wasmparser::ExternalKind) -> &'static str {
+            match kind {
+                wasmparser::ExternalKind::Func => "func",
+                wasmparser::ExternalKind::Table => "table",
+                wasmparser::ExternalKind::Memory => "memory",
+                wasmparser::ExternalKind::Global => "global",
+                wasmparser::ExternalKind::Tag => "tag",
+            }
+        }
+
         let expected = [
-            "memory",
-            "heap_ptr",
-            "rt_alloc",
-            "rt_truncate",
-            "rt_obj_kind",
-            "rt_obj_tag",
-            "rt_obj_meta",
-            "rt_obj_field",
-            "rt_obj_field_f64",
-            "rt_obj_field_i32",
-            "rt_unwrap",
-            "rt_unwrap_f64",
-            "rt_unwrap_i32",
-            "rt_wrap",
-            "rt_wrap_f64",
-            "rt_wrap_i32",
-            "rt_str_eq",
-            "rt_str_concat",
-            "rt_list_cons",
-            "rt_list_cons_f64",
-            "rt_str_byte_len",
-            "rt_str_find",
-            "rt_str_starts_with",
-            "rt_str_ends_with",
-            "rt_str_contains",
-            "rt_list_take",
-            "rt_list_drop",
-            "rt_list_concat",
-            "rt_list_reverse",
-            "rt_list_contains",
-            "rt_list_zip",
-            "rt_map_get",
-            "rt_map_set",
-            "rt_map_has",
-            "rt_map_keys",
-            "rt_map_entries",
-            "rt_vec_from_list",
-            "rt_vec_get",
-            "rt_vec_len",
-            "rt_vec_set",
-            "rt_vec_new",
-            "rt_vec_to_list",
-            "rt_int_to_str",
-            "rt_float_to_str",
-            "rt_i64_to_str_obj",
-            "rt_f64_to_str_obj",
-            "rt_str_len",
-            "rt_char_to_code",
-            "rt_byte_to_hex",
-            "rt_byte_from_hex",
-            "rt_char_from_code",
-            "rt_str_char_at",
-            "rt_str_to_lower",
-            "rt_str_to_upper",
-            "rt_str_trim",
-            "rt_str_slice",
-            "rt_str_chars",
-            "rt_str_split",
-            "rt_str_join",
-            "rt_str_replace",
-            "rt_int_from_str",
-            "rt_float_from_str",
-            "rt_collect_begin",
-            "rt_rebase_i32",
-            "rt_collect_end",
-            "rt_retain_i32",
-            "collect_mark",
-            "collect_from",
-            "collect_dst",
+            ("memory", "memory"),
+            ("heap_ptr", "global"),
+            ("collect_mark", "global"),
+            ("collect_from", "global"),
+            ("collect_dst", "global"),
+            ("rt_alloc", "func"),
+            ("rt_truncate", "func"),
+            ("rt_obj_kind", "func"),
+            ("rt_obj_tag", "func"),
+            ("rt_obj_meta", "func"),
+            ("rt_obj_field", "func"),
+            ("rt_obj_field_f64", "func"),
+            ("rt_obj_field_i32", "func"),
+            ("rt_unwrap", "func"),
+            ("rt_unwrap_f64", "func"),
+            ("rt_unwrap_i32", "func"),
+            ("rt_wrap", "func"),
+            ("rt_wrap_f64", "func"),
+            ("rt_wrap_i32", "func"),
+            ("rt_str_eq", "func"),
+            ("rt_str_concat", "func"),
+            ("rt_list_cons", "func"),
+            ("rt_list_cons_f64", "func"),
+            ("rt_str_byte_len", "func"),
+            ("rt_str_find", "func"),
+            ("rt_str_starts_with", "func"),
+            ("rt_str_ends_with", "func"),
+            ("rt_str_contains", "func"),
+            ("rt_list_take", "func"),
+            ("rt_list_drop", "func"),
+            ("rt_list_concat", "func"),
+            ("rt_list_reverse", "func"),
+            ("rt_list_contains", "func"),
+            ("rt_list_zip", "func"),
+            ("rt_map_get", "func"),
+            ("rt_map_set", "func"),
+            ("rt_map_has", "func"),
+            ("rt_map_from_list", "func"),
+            ("rt_map_keys", "func"),
+            ("rt_map_entries", "func"),
+            ("rt_map_len", "func"),
+            ("rt_vec_from_list", "func"),
+            ("rt_vec_get", "func"),
+            ("rt_vec_len", "func"),
+            ("rt_vec_set", "func"),
+            ("rt_vec_new", "func"),
+            ("rt_vec_to_list", "func"),
+            ("rt_int_to_str", "func"),
+            ("rt_float_to_str", "func"),
+            ("rt_i64_to_str_obj", "func"),
+            ("rt_f64_to_str_obj", "func"),
+            ("rt_str_len", "func"),
+            ("rt_char_to_code", "func"),
+            ("rt_byte_to_hex", "func"),
+            ("rt_byte_from_hex", "func"),
+            ("rt_char_from_code", "func"),
+            ("rt_str_char_at", "func"),
+            ("rt_str_to_lower", "func"),
+            ("rt_str_to_upper", "func"),
+            ("rt_str_trim", "func"),
+            ("rt_str_slice", "func"),
+            ("rt_str_chars", "func"),
+            ("rt_str_copy_range", "func"),
+            ("rt_str_split", "func"),
+            ("rt_str_join", "func"),
+            ("rt_str_replace", "func"),
+            ("rt_int_from_str", "func"),
+            ("rt_float_from_str", "func"),
+            ("rt_collect_begin", "func"),
+            ("rt_rebase_i32", "func"),
+            ("rt_collect_end", "func"),
+            ("rt_retain_i32", "func"),
         ];
-        let mut found: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut expected = expected.to_vec();
+        expected.sort_unstable();
+        let mut actual = Vec::new();
         for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
             if let Ok(wasmparser::Payload::ExportSection(reader)) = payload {
                 for export in reader {
                     let export = export.expect("export entry");
-                    if let Some(&name) = expected.iter().find(|&&n| n == export.name) {
-                        found.insert(name);
-                    }
+                    actual.push((export.name, kind_name(export.kind)));
                 }
             }
         }
-        for name in expected {
-            assert!(found.contains(name), "runtime must export {}", name);
-        }
+        actual.sort_unstable();
+        assert_eq!(actual, expected, "aver_runtime export ABI changed");
     }
 }

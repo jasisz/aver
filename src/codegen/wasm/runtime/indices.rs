@@ -167,13 +167,7 @@ impl RuntimeFuncIndices {
     /// (after all imports). `imports` is the slot table for runtime
     /// functions already migrated to the imported `aver_runtime` module
     /// — those indices are used directly instead of bumping `base`.
-    pub fn new(base: u32, imports: AverRuntimeImports) -> Self {
-        let mut i = base;
-        let mut next = || {
-            let idx = i;
-            i += 1;
-            idx
-        };
+    pub fn new(_base: u32, imports: AverRuntimeImports) -> Self {
         RuntimeFuncIndices {
             alloc: imports.rt_alloc,
             truncate: imports.rt_truncate,
@@ -242,7 +236,7 @@ impl RuntimeFuncIndices {
             int_from_str: imports.rt_int_from_str,
             float_from_str: imports.rt_float_from_str,
             // No local runtime fns left — everything imports from aver_runtime.
-            count: i - base,
+            count: 0,
             adapter: super::super::WasmAdapter::Aver,
         }
     }
@@ -290,6 +284,7 @@ impl RuntimeFuncIndices {
             (self.map_keys, "map_keys"),
             (self.map_entries, "map_entries"),
             (self.map_len, "map_len"),
+            (self.map_from_list, "map_from_list"),
             (self.vec_from_list, "vec_from_list"),
             (self.vec_get, "vec_get"),
             (self.vec_len, "vec_len"),
@@ -803,13 +798,11 @@ pub fn lookup_type_index(
 /// local runtime function — callers iterate only over local rt fns and
 /// must not pass alloc's index here.
 pub fn rt_type_index(
-    rt: &RuntimeFuncIndices,
-    rti: &RtTypeIndices,
+    _rt: &RuntimeFuncIndices,
+    _rti: &RtTypeIndices,
     func_idx: u32,
     import_func_count: u32,
 ) -> u32 {
-    let local_idx = func_idx - import_func_count;
-
     panic!(
         "Unknown runtime function index: {} (base={})",
         func_idx, import_func_count

@@ -27,10 +27,14 @@ pub use wat_module::{build_aver_to_wasi_wasm, build_runtime_wasm};
 /// Layout: [0..7] iovec, [8..11] nwritten, [16..37] int_buf,
 ///         [40] newline/scratch byte, [48..95] float_buf (48 bytes)
 pub const IO_SCRATCH_SIZE: u32 = 128;
+#[allow(dead_code)]
 pub(crate) const IO_IOVEC: u32 = 0;
+#[allow(dead_code)]
 pub(crate) const IO_NWRITTEN: u32 = 8;
+#[allow(dead_code)]
 pub(crate) const IO_INT_BUF: u32 = 16;
 pub const NEWLINE_ADDR: u32 = 40;
+#[allow(dead_code)]
 pub(crate) const IO_FLOAT_BUF: u32 = 48; // 48 bytes for float digits (48..95)
 
 /// Emit local runtime function bodies. Always empty today — every

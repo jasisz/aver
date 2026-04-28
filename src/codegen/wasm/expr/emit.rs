@@ -1010,10 +1010,9 @@ impl<'a> ExprEmitter<'a> {
         if let Some(&clear_idx) = self.host_import_indices.get("http_clear_request_headers") {
             self.instructions.push(Instruction::Call(clear_idx));
         }
-        if has_body {
-            if let Some(&add_idx) = self.host_import_indices.get("http_add_request_header") {
-                self.emit_http_walk_headers(headers_local, add_idx);
-            }
+        if has_body && let Some(&add_idx) = self.host_import_indices.get("http_add_request_header")
+        {
+            self.emit_http_walk_headers(headers_local, add_idx);
         }
 
         let header_load = MemArg {

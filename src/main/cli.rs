@@ -139,10 +139,6 @@ pub(super) enum CompileTarget {
 }
 
 impl CompileTarget {
-    pub(super) fn emits_wasm_binary(self) -> bool {
-        matches!(self, CompileTarget::Wasm | CompileTarget::EdgeWasm)
-    }
-
     pub(super) fn needs_wasm_pipeline(self) -> bool {
         !matches!(self, CompileTarget::Rust)
     }
