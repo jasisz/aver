@@ -1,8 +1,9 @@
 # edge.averlang.dev
 
-A pure Aver `fn handler(req: HttpRequest) -> HttpResponse` compiled
+An Aver `fn handler(req: HttpRequest) -> HttpResponse` compiled
 with `aver compile --preset cloudflare` and deployed to Cloudflare
-Workers.
+Workers. The handler declares `! [Time.unixMs]` as its only runtime
+effect — routing, response bodies, and headers are pure Aver code.
 
 - `GET /` → minimal HTML landing page
 - `GET /api` → JSON manifesto with the request's `cf-ipcountry` and a

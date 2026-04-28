@@ -9,13 +9,13 @@ module Edge
     effects [Time]
 
 fn manifesto(country: String, ts: Int) -> String
-    ? "JSON body advertising what compiled and serves this request."
+    ? "JSON body advertising what compiled and serves this request. `cf_ipcountry` reflects the request origin per Cloudflare's GeoIP (the `cf-ipcountry` request header), not the location where the worker executes."
     String.join([
         "{{",
         "  \"language\": \"Aver\",",
         "  \"target\": \"wasm\",",
         "  \"runtime\": \"Cloudflare Workers\",",
-        "  \"country\": \"{country}\",",
+        "  \"cf_ipcountry\": \"{country}\",",
         "  \"served_at_unix_ms\": {ts},",
         "  \"pure_core\": true,",
         "  \"effects\": [\"Time.unixMs\"]",
@@ -24,7 +24,7 @@ fn manifesto(country: String, ts: Int) -> String
     ], "\n")
 
 verify manifesto
-    manifesto("PL", 0) => "{{\n  \"language\": \"Aver\",\n  \"target\": \"wasm\",\n  \"runtime\": \"Cloudflare Workers\",\n  \"country\": \"PL\",\n  \"served_at_unix_ms\": 0,\n  \"pure_core\": true,\n  \"effects\": [\"Time.unixMs\"]\n}}\n"
+    manifesto("PL", 0) => "{{\n  \"language\": \"Aver\",\n  \"target\": \"wasm\",\n  \"runtime\": \"Cloudflare Workers\",\n  \"cf_ipcountry\": \"PL\",\n  \"served_at_unix_ms\": 0,\n  \"pure_core\": true,\n  \"effects\": [\"Time.unixMs\"]\n}}\n"
 
 fn landing(country: String) -> String
     ? "Minimal HTML landing — explains what's happening."
@@ -45,14 +45,18 @@ fn landing(country: String) -> String
         "</head>",
         "<body>",
         "  <h1>This page is served by Aver.</h1>",
-        "  <p class=\"sub\">Compiled with <code>aver compile --preset cloudflare</code>, answering you from <strong>{country}</strong>.</p>",
-        "  <p>The endpoint behind this URL is a pure <code>fn handler(req: HttpRequest) -&gt; HttpResponse</code>. The only declared effect is <code>Time.unixMs</code>; everything else — routing, body, headers — is pure Aver string interpolation.</p>",
+        "  <p class=\"sub\">Compiled with <code>aver compile --preset cloudflare</code> and running as a Cloudflare Worker.</p>",
+        "  <p>The request enters a normal Aver function:</p>",
+        "  <pre>fn handler(req: HttpRequest) -&gt; HttpResponse",
+        "    ! [Time.unixMs]</pre>",
+        "  <p>Routing, response bodies, and headers are pure Aver code. The only declared runtime effect is the timestamp used by <code>/api</code>.</p>",
+        "  <p class=\"sub\">Cloudflare sees this request as: <strong>{country}</strong></p>",
         "  <h2>Endpoints</h2>",
         "  <ul>",
         "    <li><a href=\"/api\">/api</a> — JSON manifesto</li>",
         "    <li><a href=\"/llms.txt\">/llms.txt</a> — LLM-readable description of this subdomain</li>",
         "    <li><a href=\"https://averlang.dev\">averlang.dev</a> — the language</li>",
-        "    <li><a href=\"https://github.com/jasisz/aver\">github.com/jasisz/aver</a> — source</li>",
+        "    <li><a href=\"https://github.com/jasisz/aver/blob/main/tools/edge/app.av\">app.av on GitHub</a> — full handler source</li>",
         "  </ul>",
         "</body>",
         "</html>",
@@ -94,7 +98,7 @@ fn llmsTxt() -> String
     String.join([
         "# edge.averlang.dev",
         "",
-        "> A pure Aver `fn handler(req: HttpRequest) -> HttpResponse` compiled with `aver compile --preset cloudflare` and deployed to Cloudflare Workers. The whole handler is ~100 lines of Aver source; the only declared effect is `Time.unixMs`.",
+        "> An Aver `fn handler(req: HttpRequest) -> HttpResponse` compiled with `aver compile --preset cloudflare` and deployed to Cloudflare Workers. The handler declares `! [Time.unixMs]` as its only runtime effect; routing, response bodies, and headers are pure Aver code. ~100 lines of source.",
         "",
         "- Source: [tools/edge/app.av](https://github.com/jasisz/aver/blob/main/tools/edge/app.av)",
         "- Language: [averlang.dev](https://averlang.dev)",
