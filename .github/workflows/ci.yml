@@ -43,6 +43,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install WASM tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binaryen
+
       - name: Clippy (wasm)
         run: cargo clippy -p aver-lang --lib --bin aver --features wasm -- -D warnings
 
