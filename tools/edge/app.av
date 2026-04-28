@@ -50,6 +50,7 @@ fn landing(country: String) -> String
         "  <h2>Endpoints</h2>",
         "  <ul>",
         "    <li><a href=\"/api\">/api</a> — JSON manifesto</li>",
+        "    <li><a href=\"/llms.txt\">/llms.txt</a> — LLM-readable description of this subdomain</li>",
         "    <li><a href=\"https://averlang.dev\">averlang.dev</a> — the language</li>",
         "    <li><a href=\"https://github.com/jasisz/aver\">github.com/jasisz/aver</a> — source</li>",
         "  </ul>",
