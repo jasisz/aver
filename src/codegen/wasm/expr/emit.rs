@@ -844,7 +844,44 @@ impl<'a> ExprEmitter<'a> {
         self.emit_tuple_from_locals(&tuple_locals);
     }
 
-    fn emit_record_create(&mut self, _type_name: &str, fields: &[(String, Spanned<Expr>)]) {
+    fn emit_record_create(&mut self, type_name: &str, fields: &[(String, Spanned<Expr>)]) {
+        // Fetch-bridge lowering: `HttpResponse(status, body, headers)`
+        // construction becomes a host call into the JS bootstrap,
+        // which builds and stashes the actual Response. Returns an
+        // opaque handle (i32) that the user fn passes back through.
+        // Headers are dropped on the floor in 0.14 — adding chain
+        // builders (`response_with_header`) is straight follow-up.
+        if matches!(self.rt.adapter, super::super::WasmAdapter::Fetch)
+            && type_name == "HttpResponse"
+            && let Some(&import_idx) = self.host_import_indices.get("response_text")
+        {
+            let status = fields.iter().find(|(n, _)| n == "status").map(|(_, e)| e);
+            let body = fields.iter().find(|(n, _)| n == "body").map(|(_, e)| e);
+            if let (Some(status_expr), Some(body_expr)) = (status, body) {
+                let body_local = self.alloc_local(WasmType::I32);
+                // status: Int → i64 → i32
+                self.emit_expr(&status_expr.node);
+                self.instructions.push(Instruction::I32WrapI64);
+                // body: OBJ_STRING ptr → save, push ptr+len pair
+                self.emit_expr(&body_expr.node);
+                self.instructions.push(Instruction::LocalSet(body_local));
+                self.instructions.push(Instruction::LocalGet(body_local));
+                self.instructions.push(Instruction::I32Const(8));
+                self.instructions.push(Instruction::I32Add); // body_ptr
+                self.instructions.push(Instruction::LocalGet(body_local));
+                self.instructions.push(Instruction::I64Load(wasm_encoder::MemArg {
+                    offset: 0,
+                    align: 3,
+                    memory_index: 0,
+                }));
+                self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
+                self.instructions.push(Instruction::I64And);
+                self.instructions.push(Instruction::I32WrapI64); // body_len
+                self.instructions.push(Instruction::Call(import_idx));
+                return;
+            }
+        }
+
         let count = fields.len();
         let size = 8 + count * 8;
         let ptr_local = self.alloc_local(WasmType::I32);
@@ -1073,6 +1110,34 @@ impl<'a> ExprEmitter<'a> {
             Type::Named(name) => Some(name),
             _ => None,
         });
+
+        // Fetch-bridge lowering: a `req.method` style read on
+        // `HttpRequest` becomes a host call into the JS bootstrap
+        // (which has the actual Request object). Receiver is
+        // evaluated and discarded — the host has ambient request
+        // state, the wasm-side handle is opaque and never deref'd.
+        if matches!(self.rt.adapter, super::super::WasmAdapter::Fetch)
+            && base_type_name.as_deref() == Some("HttpRequest")
+        {
+            let import_name = match field_name {
+                "method" => Some("request_method"),
+                "url" | "path" => Some("request_url"),
+                "body" => Some("request_body"),
+                _ => None,
+            };
+            if let Some(name) = import_name
+                && let Some(&idx) = self.host_import_indices.get(name)
+            {
+                self.instructions.push(Instruction::Drop);
+                self.instructions.push(Instruction::Call(idx));
+                return;
+            }
+            // Unknown HttpRequest field under fetch bridge — fall
+            // through to standard record field access (will trap or
+            // return garbage at runtime; future expansion adds
+            // headers/queryParams via more imports).
+        }
+
         let field_idx = if let Some(ref type_name) = base_type_name {
             // Exact match: (type_name, field_name) → index
             self.type_fields

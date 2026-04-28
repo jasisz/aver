@@ -54,9 +54,16 @@ struct MutualTcoLayout {
 }
 
 /// Build a complete WASM module from the Aver codegen context.
+///
+/// `handler`, when set, names a top-level Aver fn that gets exported
+/// as `aver_http_handle` in addition to `_start` / `main`. Used by
+/// fetch-style deployment packs (Cloudflare Workers, Fastly Compute)
+/// to wire HTTP requests through the user's handler. Compiler emits
+/// an error if the named fn is missing.
 pub fn build_wasm_module(
     ctx: &CodegenContext,
     adapter: super::WasmAdapter,
+    handler: Option<&str>,
 ) -> Result<Vec<u8>, String> {
     let mut module = Module::new();
 
@@ -690,6 +697,31 @@ pub fn build_wasm_module(
             abi_entry,
         )?;
     }
+    // Under the Fetch adapter, declare the request/response host
+    // imports unconditionally — emit-side lowering of `req.method`
+    // and `HttpResponse(...)` reaches for them even when the user's
+    // effect declarations don't mention them by name. Aver-side the
+    // record idiom stays untouched; the host crossings only show up
+    // in the WASM ABI.
+    if matches!(adapter, super::WasmAdapter::Fetch) {
+        for effect in [
+            "Request.method",
+            "Request.url",
+            "Request.body",
+            "Response.text",
+        ] {
+            if let Some(abi_entry) = super::abi::lookup(effect)
+                && !host_imports.contains_key(abi_entry.import_name)
+            {
+                emit_aver_import(
+                    &mut import_section,
+                    &mut host_imports,
+                    &mut import_func_count,
+                    abi_entry,
+                )?;
+            }
+        }
+    }
     // Print.value / Format.value are part of the always-imported core
     // — emit_console_print delegates value rendering to print_value.
     if let Some(abi_entry) = super::abi::lookup("Print.value") {
@@ -836,6 +868,25 @@ pub fn build_wasm_module(
         // experimental `--invoke` and prints the i32 return).
         let start_idx = wasi_start_wrapper_idx.unwrap_or(main_idx);
         export_section.export("_start", ExportKind::Func, start_idx);
+    }
+
+    // HTTP handler export — driven by `--handler <name>` on the CLI.
+    // Pack bootstraps (worker.js for Cloudflare, etc.) call this
+    // export per request. Compiler errors if the named fn doesn't
+    // resolve at this point.
+    if let Some(handler_name) = handler {
+        match fn_indices.get(handler_name) {
+            Some(&fn_idx) => {
+                export_section.export("aver_http_handle", ExportKind::Func, fn_idx);
+            }
+            None => {
+                return Err(format!(
+                    "--handler refers to fn `{}` which doesn't exist in this program. \
+                     Define `fn {}(req: HttpRequest) -> HttpResponse` and try again.",
+                    handler_name, handler_name
+                ));
+            }
+        }
     }
 
     // Re-export the imported memory, heap_ptr global, and rt_alloc so

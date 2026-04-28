@@ -24,17 +24,30 @@ pub enum WasmAdapter {
     Aver,
     /// Compatibility: `wasi_snapshot_preview1` imports. Works with standalone wasmtime.
     Wasi,
+    /// Fetch-style JS host (Cloudflare Workers, Deno, Bun, …).
+    /// `aver/*` imports stay the same shape, but field access on
+    /// `HttpRequest` and construction of `HttpResponse` lower to
+    /// host calls (`request_method/url/body`, `response_text`)
+    /// instead of OBJ_RECORD reads/writes — the host owns the
+    /// actual request/response objects, the guest never deref's
+    /// the opaque handles.
+    Fetch,
 }
 
 /// Emit a WASM binary module from the Aver codegen context.
 pub fn emit_wasm(ctx: &CodegenContext) -> Result<Vec<u8>, String> {
-    emit_wasm_with_adapter(ctx, WasmAdapter::default())
+    emit_wasm_with_adapter(ctx, WasmAdapter::default(), None)
 }
 
-/// Emit a WASM binary module with the specified import ABI adapter.
+/// Emit a WASM binary module with the specified import ABI adapter
+/// and an optional HTTP handler — when `handler` is `Some(name)`,
+/// the named top-level fn is also exported as `aver_http_handle`
+/// for fetch-style deployment packs (Cloudflare Workers, Fastly
+/// Compute) that route requests through it.
 pub fn emit_wasm_with_adapter(
     ctx: &CodegenContext,
     adapter: WasmAdapter,
+    handler: Option<&str>,
 ) -> Result<Vec<u8>, String> {
-    emitter::build_wasm_module(ctx, adapter)
+    emitter::build_wasm_module(ctx, adapter, handler)
 }

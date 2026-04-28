@@ -151,6 +151,41 @@ pub const ABI_TABLE: &[AbiImport] = &[
         params: &[],
         results: &[ValType::F64],
     },
+    // --- Fetch / Request / Response (JS host bridge) ---
+    // Used by `--bridge fetch` deployments (Cloudflare Workers,
+    // Fastly Compute, Deno Deploy, …). Bootstrap (worker.js)
+    // implements these against Request/Response from the JS Fetch
+    // API. Lazy host imports — guest only pays the host crossing
+    // for fields it actually reads.
+    AbiImport {
+        effect: "Request.method",
+        import_name: "request_method",
+        params: &[],
+        results: &[ValType::I32], // OBJ_STRING ptr
+    },
+    AbiImport {
+        effect: "Request.url",
+        import_name: "request_url",
+        params: &[],
+        results: &[ValType::I32],
+    },
+    AbiImport {
+        effect: "Request.body",
+        import_name: "request_body",
+        params: &[],
+        results: &[ValType::I32],
+    },
+    // Response.text(status, body) → host stores status/body, returns
+    // an opaque handle (i32). The handle is what the user fn returns
+    // from the HTTP handler; the pack bootstrap reads stashed
+    // status/body to build the native Response.
+    AbiImport {
+        effect: "Response.text",
+        import_name: "response_text",
+        // status: i32, body_ptr: i32, body_len: i32
+        params: &[ValType::I32, ValType::I32, ValType::I32],
+        results: &[ValType::I32],
+    },
     // --- Time ---
     // Returns current time as milliseconds since Unix epoch.
     AbiImport {

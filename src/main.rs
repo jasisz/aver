@@ -183,6 +183,7 @@ fn main() {
             bridge,
             pack,
             preset,
+            handler,
             optimize,
         } => {
             let policy_mode = (*policy).unwrap_or(if *with_replay {
@@ -213,6 +214,7 @@ fn main() {
                 with_self_host_support: *with_self_host_support,
                 bridge: effective_bridge,
                 pack: effective_pack,
+                handler: handler.as_deref(),
                 optimize: *optimize,
             });
         }

@@ -395,6 +395,15 @@ pub(super) enum Commands {
         /// `--target` / `--bridge` / `--pack` — pick one shape of UX.
         #[arg(long, value_enum, conflicts_with_all = &["target", "bridge", "pack"])]
         preset: Option<DeployPreset>,
+        /// Top-level Aver function to expose as the HTTP handler in
+        /// the deployment pack. Must have signature
+        /// `Fn(HttpRequest) -> HttpResponse`. Compiler exports it
+        /// as `aver_http_handle`; the pack's bootstrap (worker.js
+        /// for Cloudflare, etc.) routes requests through it. No
+        /// magic detection of `HttpServer.listen` in `main` — the
+        /// handler is whatever you point this flag at.
+        #[arg(long)]
+        handler: Option<String>,
         /// Post-process generated WASM through a multi-stage size/speed
         /// pipeline (wasm-metadce → wasm-opt --converge --strip-*).
         /// Pass `size` for aggressive size reduction (`-Oz`) or `speed`

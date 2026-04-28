@@ -3297,6 +3297,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         with_self_host_support,
         bridge,
         pack,
+        handler,
         optimize,
     } = opts;
 
@@ -3310,6 +3311,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
             module_root_override,
             bridge,
             pack,
+            handler,
             optimize,
             target,
         );
@@ -3379,6 +3381,7 @@ fn cmd_compile_wasm(
     module_root_override: Option<&str>,
     bridge: Option<super::cli::WasmBridge>,
     pack: Option<super::cli::DeployPack>,
+    handler: Option<&str>,
     optimize: Option<super::cli::WasmOptMode>,
     target: super::cli::CompileTarget,
 ) {
@@ -3391,6 +3394,7 @@ fn cmd_compile_wasm(
             module_root_override,
             bridge,
             pack,
+            handler,
             optimize,
         );
         eprintln!(
@@ -3419,9 +3423,10 @@ fn cmd_compile_wasm(
         // wrapper and any future deployment-side hints.
         let wasm_adapter = match bridge {
             Some(super::cli::WasmBridge::Wasi) => codegen::wasm::WasmAdapter::Wasi,
+            Some(super::cli::WasmBridge::Fetch) => codegen::wasm::WasmAdapter::Fetch,
             _ => codegen::wasm::WasmAdapter::Aver,
         };
-        match codegen::wasm::emit_wasm_with_adapter(&ctx, wasm_adapter) {
+        match codegen::wasm::emit_wasm_with_adapter(&ctx, wasm_adapter, handler) {
             Ok(wasm_bytes) => {
                 if let Err(err) = validate_wasm_bytes(&wasm_bytes) {
                     eprintln!(
@@ -3685,10 +3690,38 @@ async function loadRuntime() {{
   return instance;
 }}
 
+// Per-request state the fetch-bridge host imports read and write.
+// Reset before each `aver_http_handle` invocation.
+let pending = null;
+
+function writeAverString(memory, alloc, encoder, text) {{
+  // Build an OBJ_STRING in guest memory: 8-byte header + UTF-8
+  // bytes. Header low 32 bits = byte length; kind=0 (OBJ_STRING)
+  // is the high byte and is naturally zero. Returns the ptr that
+  // the guest treats as a String.
+  const bytes = encoder.encode(text);
+  const ptr = alloc(bytes.length + 8);
+  const view = new DataView(memory.buffer);
+  view.setBigUint64(ptr, BigInt(bytes.length), true);
+  new Uint8Array(memory.buffer, ptr + 8, bytes.length).set(bytes);
+  return ptr;
+}}
+
 function makeAverImports() {{
   const decoder = new TextDecoder("utf-8");
+  const encoder = new TextEncoder();
   const readString = (ptr, len) =>
     decoder.decode(new Uint8Array(runtimeMemory.buffer, ptr, len));
+  // Lazy alloc helper — uses the guest-exported `alloc` symbol so
+  // String objects we hand back are first-class on the heap.
+  const alloc = (size) => {{
+    if (!userInstancePromise) {{
+      throw new Error("alloc called before user.wasm instantiated");
+    }}
+    // `userInstancePromise` resolves before host imports fire,
+    // but TS-style we still grab it lazily.
+    return globalThis.__aver_alloc(size);
+  }};
 
   return {{
     console_print: (ptr, len) => console.log(readString(ptr, len)),
@@ -3700,6 +3733,29 @@ function makeAverImports() {{
       return lo + BigInt(Math.floor(Math.random() * Number(span)));
     }},
     random_float: () => Math.random(),
+    // ─── Fetch bridge: HTTP request fields & response builder ────
+    // Each host import is a lazy crossing — guest pays only for
+    // the fields it reads.
+    request_method: () => writeAverString(
+      runtimeMemory, alloc, encoder, pending?.req?.method ?? "GET",
+    ),
+    request_url: () => writeAverString(
+      runtimeMemory, alloc, encoder,
+      pending?.req ? new URL(pending.req.url).pathname : "/",
+    ),
+    request_body: () => {{
+      // body() is sync from Aver's POV; if we already buffered it
+      // we hand back the OBJ_STRING, else empty. Bootstrap pre-reads
+      // the body before invoking the handler.
+      return writeAverString(runtimeMemory, alloc, encoder, pending?.body ?? "");
+    }},
+    response_text: (status, ptr, len) => {{
+      // Stash response data; native Response built post-handler.
+      pending.response = {{ status, body: readString(ptr, len) }};
+      // Return a non-zero sentinel so user code that checks the
+      // handle for truthiness is happy.
+      return 1;
+    }},
   }};
 }}
 
@@ -3710,6 +3766,11 @@ async function instantiateUser() {{
     aver: makeAverImports(),
   }};
   const {{ instance }} = await WebAssembly.instantiate(userWasm, imports);
+  // Host imports allocate OBJ_STRING handles via the guest-exported
+  // `alloc` symbol (the runtime's bump allocator). Stash it in a
+  // global so request_* / response_* imports can reach it without
+  // threading a closure through every call.
+  globalThis.__aver_alloc = instance.exports.alloc;
   return instance;
 }}
 
@@ -3719,9 +3780,38 @@ export default {{
   async fetch(request, env, ctx) {{
     if (!userInstancePromise) userInstancePromise = instantiateUser();
     const user = await userInstancePromise;
-    // For now: every request runs `_start` and returns a fixed
-    // response — handler-export pattern (proper Request/Response
-    // marshaling) is the next iteration.
+
+    // If --handler was passed, the user's HTTP handler is exported
+    // as `aver_http_handle`. We pre-read the body, stash request
+    // state, invoke the handler, then build a native Response from
+    // whatever the handler stashed via `response_text`.
+    if (typeof user.exports.aver_http_handle === "function") {{
+      const body = await request.text();
+      pending = {{ req: request, body, response: null }};
+      try {{
+        user.exports.aver_http_handle(0);
+      }} catch (e) {{
+        console.error("aver_http_handle threw:", e);
+        pending = null;
+        return new Response("Internal error\n", {{ status: 500 }});
+      }}
+      const resp = pending.response;
+      pending = null;
+      if (!resp) {{
+        return new Response(
+          "Handler returned without calling Response builder\n",
+          {{ status: 500 }},
+        );
+      }}
+      return new Response(resp.body, {{
+        status: resp.status,
+        headers: {{ "content-type": "text/plain;charset=utf-8" }},
+      }});
+    }}
+
+    // No --handler: run _start once for side-effect output, return
+    // a placeholder response. Useful for "Hello from Aver" demos
+    // that just want to prove the toolchain works.
     if (typeof user.exports._start === "function") {{
       user.exports._start();
     }} else if (typeof user.exports.main === "function") {{
@@ -4124,6 +4214,7 @@ pub(super) struct CompileOptions<'a> {
     pub(super) with_self_host_support: bool,
     pub(super) bridge: Option<super::cli::WasmBridge>,
     pub(super) pack: Option<super::cli::DeployPack>,
+    pub(super) handler: Option<&'a str>,
     pub(super) optimize: Option<super::cli::WasmOptMode>,
 }
 
