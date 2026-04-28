@@ -397,9 +397,8 @@ def build_runtime_artifacts(version: str, dry_run: bool) -> None:
         }}
         .rt-lede {{
             color: var(--muted);
-            font-size: 1.02rem;
+            font-size: 1.05rem;
             line-height: 1.6;
-            max-width: 60ch;
         }}
         .rt-lede code {{
             background: var(--inline-code-bg);
@@ -413,7 +412,6 @@ def build_runtime_artifacts(version: str, dry_run: bool) -> None:
         .rt-page p {{
             color: var(--muted);
             line-height: 1.6;
-            max-width: 60ch;
         }}
         .rt-page p code, .rt-list code {{
             background: var(--inline-code-bg);
@@ -530,7 +528,6 @@ def build_runtime_artifacts(version: str, dry_run: bool) -> None:
             color: var(--muted);
             line-height: 1.55;
             font-size: 0.93rem;
-            max-width: 65ch;
         }}
         .rt-list strong {{
             color: var(--text);
