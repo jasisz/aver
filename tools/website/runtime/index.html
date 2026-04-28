@@ -264,32 +264,28 @@ function makeHostImports(memory) {
     <h2>Standalone with WASI</h2>
     <p>
         For wasmtime / Cloudflare Workers / Fastly Compute — anywhere
-        without a JS host — bundle <code>aver_to_wasi.wasm</code>
-        alongside the runtime. It translates <code>aver/*</code>
-        imports into <code>wasi_snapshot_preview1.fd_write</code>
-        calls, so the only host the result needs is WASI itself.
+        without a JS host — let the CLI do the bundling. <code>--bridge
+        wasi</code> merges the runtime and <code>aver_to_wasi.wasm</code>
+        into a single self-contained binary whose only import is
+        <code>wasi_snapshot_preview1</code>:
     </p>
-    <pre><span class="rt-comment">// One-shot bundle (binaryen):</span>
-<span class="rt-prompt">$</span> wasm-merge \
-      aver_runtime.wasm  aver_runtime \
-      aver_to_wasi.wasm  aver         \
-      dist/mygame.wasm   program      \
-      --rename-export-conflicts        \
-      --enable-bulk-memory --enable-multivalue --enable-tail-call \
-      -o mygame-standalone.wasm
-
-<span class="rt-prompt">$</span> wasmtime mygame-standalone.wasm
-<span class="rt-comment"># Runs without any other host wiring.</span>
-
-<span class="rt-comment"># Or skip the merge and just wire all three modules at instantiate time
-# in any wasmtime::Linker / @bytecodealliance/preview2-shim setup.</span></pre>
+    <pre><span class="rt-prompt">$</span> aver compile mygame.av --target wasm --bridge wasi --optimize size -o dist/
+<span class="rt-prompt">$</span> wasmtime dist/mygame.wasm
+<span class="rt-comment"># Runs. No other host wiring needed.</span></pre>
     <p>
-        Coverage today: <code>Console.*</code> and
-        <code>Format.value</code> /
-        <code>Print.value</code>. Other <code>aver/*</code> effects
-        (<code>Disk.*</code>, <code>Tcp.*</code>, etc.) trap as
-        <code>unreachable</code> in the bridge — wire them through
-        the host directly until coverage lands.
+        The artifacts on this page (<code>aver_runtime.wasm</code> +
+        <code>aver_to_wasi.wasm</code>) are what that command bundles
+        internally — published here so that consumers who want to
+        deploy a thin user.wasm against a separately-hosted runtime
+        (CDN-cached, version-pinned) can wire the modules up at
+        instantiate time instead.
+    </p>
+    <p>
+        WASI bridge coverage today: <code>Console.*</code> and
+        <code>Format.value</code> / <code>Print.value</code>. Other
+        <code>aver/*</code> effects (<code>Disk.*</code>,
+        <code>Tcp.*</code>, etc.) trap as <code>unreachable</code> —
+        provide them through the host directly until coverage lands.
     </p>
 
     <h2>Releases</h2>
