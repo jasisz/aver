@@ -73,6 +73,18 @@ fn htmlResponse(body: String) -> HttpResponse
         headers = { "content-type" => ["text/html; charset=utf-8"] },
     )
 
+fn notFound(path: String) -> HttpResponse
+    ? "404 with a plain-text body so favicon.ico, /robots.txt etc. don't get the HTML landing page."
+    HttpResponse(
+        status = 404,
+        body = "Not found: {path}\n",
+        headers = { "content-type" => ["text/plain; charset=utf-8"] },
+    )
+
+verify notFound
+    notFound("/favicon.ico").status => 404
+    notFound("/whatever").body      => "Not found: /whatever\n"
+
 fn firstHeader(values: List<String>) -> String
     ? "First entry of a header list, or '??' when empty."
     v = Vector.fromList(values)
@@ -96,9 +108,10 @@ verify extractCountry
     extractCountry(HttpRequest(method = "GET", path = "/", body = "", headers = {})) => "??"
 
 fn handler(req: HttpRequest) -> HttpResponse
-    ? "Routes by path. /api returns JSON manifesto, anything else returns HTML."
+    ? "Routes by path. `/` returns HTML, `/api` returns JSON, everything else 404s."
     ! [Time.unixMs]
     country = extractCountry(req)
     match req.path
+        "/"    -> htmlResponse(landing(country))
         "/api" -> jsonResponse(manifesto(country, Time.unixMs()))
-        _      -> htmlResponse(landing(country))
+        _      -> notFound(req.path)
