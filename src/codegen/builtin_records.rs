@@ -51,9 +51,10 @@ impl BuiltinType {
             BuiltinType::Bool => Type::Bool,
             BuiltinType::Float => Type::Float,
             BuiltinType::ListOf(name) => Type::List(Box::new(Type::Named((*name).to_string()))),
-            BuiltinType::MapStrListStr => {
-                Type::Map(Box::new(Type::Str), Box::new(Type::List(Box::new(Type::Str))))
-            }
+            BuiltinType::MapStrListStr => Type::Map(
+                Box::new(Type::Str),
+                Box::new(Type::List(Box::new(Type::Str))),
+            ),
         }
     }
 }

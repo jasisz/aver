@@ -178,8 +178,7 @@ impl<'a> ExprEmitter<'a> {
                 // helper. Pre-HAMT this was an identity ("the list IS
                 // a map"); now `rt_map_get` and friends only know how
                 // to walk HAMT roots, so we have to materialize one.
-                let (key_kind, value_ptr_flag) =
-                    self.map_from_list_kind_and_ptr_flag(&args[0]);
+                let (key_kind, value_ptr_flag) = self.map_from_list_kind_and_ptr_flag(&args[0]);
                 self.instructions.push(Instruction::I32Const(key_kind));
                 self.instructions
                     .push(Instruction::I32Const(value_ptr_flag));
@@ -629,11 +628,12 @@ impl<'a> ExprEmitter<'a> {
                     self.instructions.push(Instruction::I32Const(8));
                     self.instructions.push(Instruction::I32Add); // name_ptr = OBJ_STRING + 8
                     self.instructions.push(Instruction::LocalGet(name_local));
-                    self.instructions.push(Instruction::I64Load(wasm_encoder::MemArg {
-                        offset: 0,
-                        align: 3,
-                        memory_index: 0,
-                    }));
+                    self.instructions
+                        .push(Instruction::I64Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 3,
+                            memory_index: 0,
+                        }));
                     self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
                     self.instructions.push(Instruction::I64And);
                     self.instructions.push(Instruction::I32WrapI64); // name_len
@@ -646,9 +646,7 @@ impl<'a> ExprEmitter<'a> {
                     self.instructions
                         .push(Instruction::I32Const(super::super::value::NONE_SENTINEL));
                     self.instructions.push(Instruction::I32Eq);
-                    self.emit_if(wasm_encoder::BlockType::Result(
-                        wasm_encoder::ValType::I32,
-                    ));
+                    self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
                     self.instructions
                         .push(Instruction::I32Const(super::super::value::NONE_SENTINEL));
                     self.emit_else();
@@ -680,11 +678,12 @@ impl<'a> ExprEmitter<'a> {
                     self.instructions.push(Instruction::I32Const(8));
                     self.instructions.push(Instruction::I32Add);
                     self.instructions.push(Instruction::LocalGet(name_local));
-                    self.instructions.push(Instruction::I64Load(wasm_encoder::MemArg {
-                        offset: 0,
-                        align: 3,
-                        memory_index: 0,
-                    }));
+                    self.instructions
+                        .push(Instruction::I64Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 3,
+                            memory_index: 0,
+                        }));
                     self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
                     self.instructions.push(Instruction::I64And);
                     self.instructions.push(Instruction::I32WrapI64);
@@ -694,11 +693,12 @@ impl<'a> ExprEmitter<'a> {
                     self.instructions.push(Instruction::I32Const(8));
                     self.instructions.push(Instruction::I32Add);
                     self.instructions.push(Instruction::LocalGet(value_local));
-                    self.instructions.push(Instruction::I64Load(wasm_encoder::MemArg {
-                        offset: 0,
-                        align: 3,
-                        memory_index: 0,
-                    }));
+                    self.instructions
+                        .push(Instruction::I64Load(wasm_encoder::MemArg {
+                            offset: 0,
+                            align: 3,
+                            memory_index: 0,
+                        }));
                     self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
                     self.instructions.push(Instruction::I64And);
                     self.instructions.push(Instruction::I32WrapI64);
@@ -797,7 +797,7 @@ impl<'a> ExprEmitter<'a> {
 
     pub(super) fn emit_console_print(&mut self, args: &[Spanned<Expr>], target_import: &str) {
         // Always emit Aver-style host calls regardless of --adapter.
-        // Under --adapter wasi the aver_to_wasi shim translates these
+        // Under --bridge wasip1 the aver_to_wasi shim translates these
         // into wasi_snapshot_preview1 calls; the user.wasm bytes are
         // identical in both modes.
         //

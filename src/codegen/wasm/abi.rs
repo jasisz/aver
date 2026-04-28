@@ -260,10 +260,14 @@ pub const ABI_TABLE: &[AbiImport] = &[
         // body_ptr, body_len,
         // ct_ptr, ct_len
         params: &[
-            ValType::I32, ValType::I32,
-            ValType::I32, ValType::I32,
-            ValType::I32, ValType::I32,
-            ValType::I32, ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
         ],
         // (status: i64, body_ptr: i32, headers_map: i32, err_ptr: i32)
         // The headers map is the OBJ_HAMT handle returned by the

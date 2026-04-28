@@ -400,16 +400,16 @@ pub struct RtTypeIndices {
     pub empty_to_i32_i32: u32,           // () -> (i32, i32)
     pub i32_to_i32_i32: u32,             // (i32) -> (i32, i32)
     pub i32_i64_to_empty: u32,           // (i32, i64) -> ()
-    pub i32_i32_i32_i32_to_empty: u32,   // (i32, i32, i32, i32) -> ()  — used by response_set_header
-    pub i32_i32_to_i64_i32_i32: u32,     // (i32, i32) -> (i64, i32, i32)  — legacy http_get
-    pub i32x8_to_i64_i32_i32: u32,       // (i32 ×8) -> (i64, i32, i32)    — legacy http_send (3-result)
-    pub i32x8_to_i64_i32_i32_i32: u32,   // (i32 ×8) -> (i64, i32, i32, i32) — http_send w/ headers
-    pub i32_i64_to_i32_i32: u32,         // (i32, i64) -> (i32, i32)
-    pub i64_i64_to_i64: u32,             // (i64, i64) -> i64
-    pub empty_to_i64: u32,               // () -> i64
-    pub empty_to_f64: u32,               // () -> f64
-    pub empty_to_empty: u32,             // () -> ()
-    pub count: u32,                      // total number of distinct base signatures
+    pub i32_i32_i32_i32_to_empty: u32, // (i32, i32, i32, i32) -> ()  — used by response_set_header
+    pub i32_i32_to_i64_i32_i32: u32,   // (i32, i32) -> (i64, i32, i32)  — legacy http_get
+    pub i32x8_to_i64_i32_i32: u32, // (i32 ×8) -> (i64, i32, i32)    — legacy http_send (3-result)
+    pub i32x8_to_i64_i32_i32_i32: u32, // (i32 ×8) -> (i64, i32, i32, i32) — http_send w/ headers
+    pub i32_i64_to_i32_i32: u32,   // (i32, i64) -> (i32, i32)
+    pub i64_i64_to_i64: u32,       // (i64, i64) -> i64
+    pub empty_to_i64: u32,         // () -> i64
+    pub empty_to_f64: u32,         // () -> f64
+    pub empty_to_empty: u32,       // () -> ()
+    pub count: u32,                // total number of distinct base signatures
 }
 
 /// Emit and intern all base signatures used by runtime helpers and ABI imports.
@@ -524,16 +524,28 @@ pub fn emit_base_type_section(type_section: &mut TypeSection) -> RtTypeIndices {
     let i32x8_to_i64_i32_i32 = registry.intern(
         type_section,
         &[
-            ValType::I32, ValType::I32, ValType::I32, ValType::I32,
-            ValType::I32, ValType::I32, ValType::I32, ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
         ],
         &[ValType::I64, ValType::I32, ValType::I32],
     );
     let i32x8_to_i64_i32_i32_i32 = registry.intern(
         type_section,
         &[
-            ValType::I32, ValType::I32, ValType::I32, ValType::I32,
-            ValType::I32, ValType::I32, ValType::I32, ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
         ],
         &[ValType::I64, ValType::I32, ValType::I32, ValType::I32],
     );
@@ -728,9 +740,7 @@ pub fn lookup_type_index(
     if params == [ValType::I32, ValType::I64] && results.is_empty() {
         return Some(rti.i32_i64_to_empty);
     }
-    if params == [ValType::I32, ValType::I32, ValType::I32, ValType::I32]
-        && results.is_empty()
-    {
+    if params == [ValType::I32, ValType::I32, ValType::I32, ValType::I32] && results.is_empty() {
         return Some(rti.i32_i32_i32_i32_to_empty);
     }
     if params == [ValType::I32, ValType::I32]
@@ -740,8 +750,14 @@ pub fn lookup_type_index(
     }
     if params
         == [
-            ValType::I32, ValType::I32, ValType::I32, ValType::I32,
-            ValType::I32, ValType::I32, ValType::I32, ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
         ]
         && results == [ValType::I64, ValType::I32, ValType::I32]
     {
@@ -749,8 +765,14 @@ pub fn lookup_type_index(
     }
     if params
         == [
-            ValType::I32, ValType::I32, ValType::I32, ValType::I32,
-            ValType::I32, ValType::I32, ValType::I32, ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
         ]
         && results == [ValType::I64, ValType::I32, ValType::I32, ValType::I32]
     {

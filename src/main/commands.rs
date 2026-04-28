@@ -3466,7 +3466,7 @@ fn cmd_compile_wasm(
                 //     is always merged in. Bridge controls the rest:
                 //       --bridge none  → only aver/* unresolved (host
                 //                         supplies effects)
-                //       --bridge wasi  → also merge the aver→wasi shim;
+                //       --bridge wasip1 → also merge the aver→wasi shim;
                 //                         result is a standalone WASI
                 //                         binary that runs under
                 //                         `wasmtime program.wasm` with
@@ -3503,11 +3503,7 @@ fn cmd_compile_wasm(
                     // independent of target/bridge — adds files,
                     // doesn't change the .wasm.
                     if let Some(super::cli::DeployPack::Cloudflare) = pack {
-                        emit_cloudflare_pack(
-                            &out_path,
-                            &wasm_name,
-                            &wasm_file,
-                        );
+                        emit_cloudflare_pack(&out_path, &wasm_name, &wasm_file);
                     }
                 } else {
                     // Pack is edge-only for now — bundled artifacts are
@@ -3587,8 +3583,12 @@ fn cmd_compile_wasm(
                                 finalize_wasm_artifact(&wasm_file, optimize);
                             let wasm_display = wasm_file.display().to_string().cyan();
                             let imports_note = match bridge_mode {
-                                super::cli::WasmBridge::Wasip1 => ", with runtime + aver→wasi bridge",
-                                super::cli::WasmBridge::Fetch => ", with runtime, imports aver/* (JS host)",
+                                super::cli::WasmBridge::Wasip1 => {
+                                    ", with runtime + aver→wasi bridge"
+                                }
+                                super::cli::WasmBridge::Fetch => {
+                                    ", with runtime, imports aver/* (JS host)"
+                                }
                                 super::cli::WasmBridge::None => {
                                     if uses_aver_effects {
                                         ", with runtime, imports aver/* (effects)"
@@ -3653,6 +3653,21 @@ fn wasm_imports_module(bytes: &[u8], module: &str) -> bool {
     false
 }
 
+/// `worker.js` template for the Cloudflare Workers pack. Lives as a
+/// real `.js` file under `src/main/templates/cloudflare/` so editor
+/// tooling (syntax highlighting, ESLint, prettier) treats it like
+/// JavaScript instead of a Rust-side `format!` literal. The single
+/// `__WASM_NAME__` placeholder is the only thing we substitute at
+/// pack time — everything else is identical across packs.
+#[cfg(feature = "wasm")]
+const CLOUDFLARE_WORKER_JS: &str = include_str!("templates/cloudflare/worker.js");
+
+/// `wrangler.toml` template for the Cloudflare Workers pack — same
+/// rationale as `CLOUDFLARE_WORKER_JS`. `__WASM_NAME__` is the only
+/// substitution.
+#[cfg(feature = "wasm")]
+const CLOUDFLARE_WRANGLER_TOML: &str = include_str!("templates/cloudflare/wrangler.toml");
+
 /// Drop a Cloudflare Workers deployment pack next to the compiled
 /// `user.wasm`: a `worker.js` bootstrap that loads the wasm and wires
 /// `aver/*` host imports against JS APIs (`console.log`, `Date.now()`,
@@ -3661,21 +3676,6 @@ fn wasm_imports_module(bytes: &[u8], module: &str) -> bool {
 /// — only `Console.*`, `Time.unixMs`, and `Random.*` are wired today;
 /// HTTP request handling lands in a follow-up.
 #[cfg(feature = "wasm")]
-/// `worker.js` template for the Cloudflare Workers pack. Lives as a
-/// real `.js` file under `src/main/templates/cloudflare/` so editor
-/// tooling (syntax highlighting, ESLint, prettier) treats it like
-/// JavaScript instead of a Rust-side `format!` literal. The single
-/// `__WASM_NAME__` placeholder is the only thing we substitute at
-/// pack time — everything else is identical across packs.
-const CLOUDFLARE_WORKER_JS: &str =
-    include_str!("templates/cloudflare/worker.js");
-
-/// `wrangler.toml` template for the Cloudflare Workers pack — same
-/// rationale as `CLOUDFLARE_WORKER_JS`. `__WASM_NAME__` is the only
-/// substitution.
-const CLOUDFLARE_WRANGLER_TOML: &str =
-    include_str!("templates/cloudflare/wrangler.toml");
-
 fn emit_cloudflare_pack(out_path: &Path, wasm_name: &str, wasm_file: &Path) {
     let worker_path = out_path.join("worker.js");
     let wrangler_path = out_path.join("wrangler.toml");
@@ -3850,6 +3850,20 @@ pub fn cmd_wasm_runtime(
             }
         }
     }
+}
+
+#[cfg(not(feature = "wasm"))]
+pub fn cmd_wasm_runtime(
+    _output: &str,
+    _artifact: super::cli::WasmRuntimeArtifact,
+    _optimize: Option<super::cli::WasmOptMode>,
+    _wat: bool,
+) {
+    eprintln!(
+        "{}",
+        "`aver wasm-runtime` requires building aver with `--features wasm`.".red()
+    );
+    process::exit(1);
 }
 
 /// Run the post-codegen WASM tail: optionally run wasm-opt. Returns

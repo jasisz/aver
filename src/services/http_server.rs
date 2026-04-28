@@ -269,12 +269,9 @@ fn parse_http_response_headers(val: Value) -> Result<HttpHeaders, RuntimeError> 
                 ));
             }
         };
-        let values = list_view(&v)
-            .ok_or_else(|| {
-                RuntimeError::Error(
-                    "HttpResponse.headers values must be List<String>".to_string(),
-                )
-            })?;
+        let values = list_view(&v).ok_or_else(|| {
+            RuntimeError::Error("HttpResponse.headers values must be List<String>".to_string())
+        })?;
         let mut buf = Vec::new();
         for item in values.iter() {
             match item {

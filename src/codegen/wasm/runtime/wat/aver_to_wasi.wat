@@ -2,7 +2,7 @@
 ;;
 ;; user.wasm always emits Aver-flavored host imports (aver/console_print,
 ;; aver/print_value, ...) regardless of how it is later deployed. Under
-;; `--bridge wasi` this module satisfies those imports by re-exporting
+;; `--bridge wasip1` this module satisfies those imports by re-exporting
 ;; them and translating each call into a wasi_snapshot_preview1 call.
 ;; It shares aver_runtime's memory so it can read OBJ_STRING bytes and
 ;; write iovec scratch in the same address space as user.wasm.
@@ -344,7 +344,7 @@
   ;; in mainstream wasmtime yet. The bridge satisfies the import so
   ;; user.wasm links, but every send returns a transport error so
   ;; programs branch through `Result.Err` instead of crashing.
-  ;; Real HTTP from `--bridge wasi` lands in 0.15 once preview 2
+  ;; Real HTTP from `--bridge wasip1` lands in 0.15 once preview 2
   ;; (or a JS host above wasmtime) is available.
   ;;
   ;; Build the error message bytes lazily into a fresh `rt_alloc`

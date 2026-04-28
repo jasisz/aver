@@ -54,7 +54,12 @@ fn run_wasm_iter(harness: &WasmHarness) {
         .func_wrap(
             "wasi_snapshot_preview1",
             "fd_write",
-            |_caller: Caller<'_, ()>, _fd: i32, _iovec_ptr: i32, _iovec_count: i32, _nwritten_ptr: i32| -> i32 { 0 },
+            |_caller: Caller<'_, ()>,
+             _fd: i32,
+             _iovec_ptr: i32,
+             _iovec_count: i32,
+             _nwritten_ptr: i32|
+             -> i32 { 0 },
         )
         .expect("stub fd_write");
     let instance = linker
@@ -451,10 +456,8 @@ fn comparison_benches(c: &mut Criterion) {
             compile_to_wasm(src, name)
         })
         .collect();
-    let wasm_harnesses: Vec<WasmHarness> = wasm_files
-        .iter()
-        .map(|p| build_wasm_harness(p))
-        .collect();
+    let wasm_harnesses: Vec<WasmHarness> =
+        wasm_files.iter().map(|p| build_wasm_harness(p)).collect();
 
     // Write source files for the real `aver run --self-host` path under one shared module root
     let self_host_root = tempfile::tempdir().expect("create self-host bench root");

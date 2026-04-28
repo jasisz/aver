@@ -385,7 +385,7 @@ pub(super) enum Commands {
         #[arg(long)]
         with_self_host_support: bool,
         /// Deployment-time bridge for WASM `aver/*` host imports.
-        /// `wasi` bundles the aver→wasi shim so `wasmtime program.wasm`
+        /// `wasip1` bundles the aver→wasi shim so `wasmtime program.wasm`
         /// runs standalone; `fetch` translates aver/* to JS host APIs
         /// (Cloudflare Workers, Deno, Bun); `none` (default) leaves
         /// aver/* unresolved for the consumer host to satisfy.

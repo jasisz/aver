@@ -113,7 +113,7 @@ pub fn build_runtime_wasm() -> Result<Vec<u8>, String> {
     wat::parse_str(&src).map_err(|e| format!("runtime WAT parse failed: {}", e))
 }
 
-/// Build the aver→WASI translation shim. Use under `--adapter wasi`
+/// Build the aver→WASI translation shim. Use under `--bridge wasip1`
 /// to satisfy user.wasm's `aver/*` imports against
 /// `wasi_snapshot_preview1.fd_write`.
 pub fn build_aver_to_wasi_wasm() -> Result<Vec<u8>, String> {

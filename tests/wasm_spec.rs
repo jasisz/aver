@@ -383,11 +383,11 @@ fn main()
         .arg("--target")
         .arg("wasm")
         .arg("--bridge")
-        .arg("wasi")
+        .arg("wasip1")
         .arg("-o")
         .arg(&output_dir)
         .output()
-        .expect("expected `aver compile --target wasm --bridge wasi` to run");
+        .expect("expected `aver compile --target wasm --bridge wasip1` to run");
     assert!(
         compile.status.success(),
         "WASI bundled compile failed:\n{}",

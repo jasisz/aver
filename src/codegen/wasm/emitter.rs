@@ -657,7 +657,7 @@ pub fn build_wasm_module(
     let mut import_func_count = 66u32; // 65 prior + rt_map_from_list
 
     // Aver-style host imports unconditionally, regardless of --adapter.
-    // Under --adapter wasi the `aver_to_wasi.wasm` shim re-exports the
+    // Under --bridge wasip1 the `aver_to_wasi.wasm` shim re-exports the
     // same `aver/*` symbol set (translating internally to
     // wasi_snapshot_preview1 calls). user.wasm bytes are identical in
     // both modes — only the deployment-time module that satisfies

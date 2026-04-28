@@ -7,7 +7,7 @@
 //! tables (`indices`) and the WAT → wasm bytes builder
 //! (`wat_module`).
 //!
-//! Under `--target wasm --bridge wasi`, an additional shim module
+//! Under `--target wasm --bridge wasip1`, an additional shim module
 //! (`runtime/wat/aver_to_wasi.wat`) translates `aver/*` host calls
 //! into `wasi_snapshot_preview1.*` so the program runs standalone
 //! under wasmtime.

@@ -884,11 +884,12 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::I32Const(8));
                 self.instructions.push(Instruction::I32Add); // body_ptr
                 self.instructions.push(Instruction::LocalGet(body_local));
-                self.instructions.push(Instruction::I64Load(wasm_encoder::MemArg {
-                    offset: 0,
-                    align: 3,
-                    memory_index: 0,
-                }));
+                self.instructions
+                    .push(Instruction::I64Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
                 self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
                 self.instructions.push(Instruction::I64And);
                 self.instructions.push(Instruction::I32WrapI64); // body_len
@@ -990,8 +991,7 @@ impl<'a> ExprEmitter<'a> {
             ct_local = self.alloc_local(WasmType::I32);
             body_local = self.alloc_local(WasmType::I32);
             url_local = self.alloc_local(WasmType::I32);
-            self.instructions
-                .push(Instruction::LocalSet(headers_local));
+            self.instructions.push(Instruction::LocalSet(headers_local));
             self.instructions.push(Instruction::LocalSet(ct_local));
             self.instructions.push(Instruction::LocalSet(body_local));
             self.instructions.push(Instruction::LocalSet(url_local));
@@ -1034,7 +1034,8 @@ impl<'a> ExprEmitter<'a> {
 
         // method (interned in the data section, always present)
         if let Some(&(offset, len)) = self.string_literals.get(method) {
-            self.instructions.push(Instruction::I32Const(offset as i32 + 8));
+            self.instructions
+                .push(Instruction::I32Const(offset as i32 + 8));
             self.instructions.push(Instruction::I32Const(len as i32));
         } else {
             self.codegen_error(format!(
@@ -1062,8 +1063,10 @@ impl<'a> ExprEmitter<'a> {
         let resp_body_local = self.alloc_local(WasmType::I32);
         let status_local = self.alloc_local(WasmType::I64);
         self.instructions.push(Instruction::LocalSet(err_local));
-        self.instructions.push(Instruction::LocalSet(resp_headers_local));
-        self.instructions.push(Instruction::LocalSet(resp_body_local));
+        self.instructions
+            .push(Instruction::LocalSet(resp_headers_local));
+        self.instructions
+            .push(Instruction::LocalSet(resp_body_local));
         self.instructions.push(Instruction::LocalSet(status_local));
 
         // Branch on err != 0 → Result.Err / Result.Ok.
@@ -1103,7 +1106,8 @@ impl<'a> ExprEmitter<'a> {
         }));
         // Field 1: body (OBJ_STRING ptr extended to i64)
         self.instructions.push(Instruction::LocalGet(resp_local));
-        self.instructions.push(Instruction::LocalGet(resp_body_local));
+        self.instructions
+            .push(Instruction::LocalGet(resp_body_local));
         self.instructions.push(Instruction::I64ExtendI32U);
         self.instructions.push(Instruction::I64Store(MemArg {
             offset: 16,
@@ -1114,7 +1118,8 @@ impl<'a> ExprEmitter<'a> {
         // host bulk-transferred from the upstream `Response.headers`
         // (or `0` when the host returned nothing — older bridges).
         self.instructions.push(Instruction::LocalGet(resp_local));
-        self.instructions.push(Instruction::LocalGet(resp_headers_local));
+        self.instructions
+            .push(Instruction::LocalGet(resp_headers_local));
         self.instructions.push(Instruction::I64ExtendI32U);
         self.instructions.push(Instruction::I64Store(MemArg {
             offset: 24,
@@ -1522,7 +1527,8 @@ impl<'a> ExprEmitter<'a> {
 
         // Fold the list of tuples into a HAMT.
         self.instructions.push(Instruction::I32Const(key_kind));
-        self.instructions.push(Instruction::I32Const(value_ptr_flag));
+        self.instructions
+            .push(Instruction::I32Const(value_ptr_flag));
         self.instructions
             .push(Instruction::Call(self.rt.map_from_list));
     }

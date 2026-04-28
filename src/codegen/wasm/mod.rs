@@ -4,7 +4,7 @@
 /// Uses native WASM types: Int → i64, Float → f64, Bool → i32, heap types → i32 ptr.
 ///
 /// Default output uses `aver/*` import ABI — host provides effect implementations.
-/// `--adapter wasi` mode emits WASI imports for standalone wasmtime execution.
+/// `--bridge wasip1` mode bundles a WASI preview-1 shim for standalone wasmtime execution.
 pub(crate) mod abi;
 mod emitter;
 mod expr;

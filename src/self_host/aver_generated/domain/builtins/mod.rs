@@ -1735,9 +1735,8 @@ pub fn httpResponseToVal(result: &Result<HttpResponse, AverStr>) -> Val {
 pub fn headersToVal(headers: aver_rt::HttpHeaders) -> Val {
     let mut out = aver_rt::AverMap::default();
     for (name, values) in headers.iter() {
-        let value_list = aver_rt::AverList::from_vec(
-            values.iter().cloned().map(Val::ValStr).collect(),
-        );
+        let value_list =
+            aver_rt::AverList::from_vec(values.iter().cloned().map(Val::ValStr).collect());
         out = out.insert(name.clone(), Val::ValList(value_list));
     }
     Val::ValMap(out)

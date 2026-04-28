@@ -118,9 +118,8 @@ fn http_request_to_val(request: crate::aver_rt::HttpRequest) -> Val {
 fn headers_to_val(headers: crate::aver_rt::HttpHeaders) -> Val {
     let mut out = crate::aver_rt::AverMap::default();
     for (name, values) in headers.iter() {
-        let value_list = crate::aver_rt::AverList::from_vec(
-            values.iter().cloned().map(Val::ValStr).collect(),
-        );
+        let value_list =
+            crate::aver_rt::AverList::from_vec(values.iter().cloned().map(Val::ValStr).collect());
         out = out.insert(name.clone(), Val::ValList(value_list));
     }
     Val::ValMap(out)

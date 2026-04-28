@@ -668,9 +668,9 @@ function makeHostImports(memory) {{
         <code>aver_to_wasi.wasm</code> shim — it satisfies
         <code>aver/*</code> imports against
         <code>wasi_snapshot_preview1.fd_write</code>. The CLI's
-        <code>--bridge wasi</code> bundles it for you in one step:
+        <code>--bridge wasip1</code> bundles it for you in one step:
     </p>
-    <pre><span class="rt-prompt">$</span> aver compile mygame.av --target wasm --bridge wasi --optimize size -o dist/
+    <pre><span class="rt-prompt">$</span> aver compile mygame.av --target wasm --bridge wasip1 --optimize size -o dist/
 <span class="rt-prompt">$</span> wasmtime dist/mygame.wasm
 <span class="rt-comment"># No other host wiring needed.</span></pre>
     <p>
