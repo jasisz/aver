@@ -144,6 +144,13 @@ pub const ABI_TABLE: &[AbiImport] = &[
         params: &[ValType::I64, ValType::I64], // min, max
         results: &[ValType::I64],
     },
+    // Returns a random float in [0.0, 1.0).
+    AbiImport {
+        effect: "Random.float",
+        import_name: "random_float",
+        params: &[],
+        results: &[ValType::F64],
+    },
     // --- Time ---
     // Returns current time as milliseconds since Unix epoch.
     AbiImport {

@@ -400,6 +400,7 @@ pub struct RtTypeIndices {
     pub i32_i64_to_i32_i32: u32,         // (i32, i64) -> (i32, i32)
     pub i64_i64_to_i64: u32,             // (i64, i64) -> i64
     pub empty_to_i64: u32,               // () -> i64
+    pub empty_to_f64: u32,               // () -> f64
     pub empty_to_empty: u32,             // () -> ()
     pub count: u32,                      // total number of distinct base signatures
 }
@@ -511,6 +512,7 @@ pub fn emit_base_type_section(type_section: &mut TypeSection) -> RtTypeIndices {
     let i64_i64_to_i64 =
         registry.intern(type_section, &[ValType::I64, ValType::I64], &[ValType::I64]);
     let empty_to_i64 = registry.intern(type_section, &[], &[ValType::I64]);
+    let empty_to_f64 = registry.intern(type_section, &[], &[ValType::F64]);
     let empty_to_empty = registry.intern(type_section, &[], &[]);
 
     RtTypeIndices {
@@ -559,6 +561,7 @@ pub fn emit_base_type_section(type_section: &mut TypeSection) -> RtTypeIndices {
         i32_i64_to_i32_i32,
         i64_i64_to_i64,
         empty_to_i64,
+        empty_to_f64,
         empty_to_empty,
         count: registry.count(),
     }
@@ -693,6 +696,9 @@ pub fn lookup_type_index(
     }
     if params.is_empty() && results == [ValType::I64] {
         return Some(rti.empty_to_i64);
+    }
+    if params.is_empty() && results == [ValType::F64] {
+        return Some(rti.empty_to_f64);
     }
     if params.is_empty() && results.is_empty() {
         return Some(rti.empty_to_empty);

@@ -20,6 +20,51 @@ use aver::resolver;
 use aver::source::parse_source;
 use aver::tco;
 use aver::vm;
+use wasmtime::{Caller, Engine, Linker, Module, Store};
+
+/// In-process embedded wasmtime harness — pre-built once per program,
+/// reused across every Criterion iteration. Eliminates the
+/// ~5-7 ms `wasmtime` binary cold-start that was floor-ing every WASM
+/// measurement (`fib(15)` 6.28 ms despite the actual fib taking
+/// nanoseconds). The bench programs are pure compute that don't
+/// touch host effects, so the linker only needs to stub
+/// `wasi_snapshot_preview1.fd_write` (the one import the WASI bridge
+/// declares unconditionally).
+struct WasmHarness {
+    engine: Engine,
+    module: Module,
+}
+
+fn build_wasm_harness(wasm_path: &std::path::Path) -> WasmHarness {
+    let bytes = std::fs::read(wasm_path).expect("read pre-compiled wasm");
+    let engine = Engine::default();
+    let module = Module::new(&engine, &bytes).expect("wasmtime compile module");
+    WasmHarness { engine, module }
+}
+
+fn run_wasm_iter(harness: &WasmHarness) {
+    let mut store = Store::new(&harness.engine, ());
+    let mut linker = Linker::new(&harness.engine);
+    // The bench programs return Int from main and never print; the
+    // bridge still emits a `(import "wasi_snapshot_preview1" "fd_write"
+    // ...)` declaration unconditionally, so the linker has to satisfy
+    // it before instantiate. A no-op stub returning 0 is enough since
+    // it's never called.
+    linker
+        .func_wrap(
+            "wasi_snapshot_preview1",
+            "fd_write",
+            |_caller: Caller<'_, ()>, _fd: i32, _iovec_ptr: i32, _iovec_count: i32, _nwritten_ptr: i32| -> i32 { 0 },
+        )
+        .expect("stub fd_write");
+    let instance = linker
+        .instantiate(&mut store, &harness.module)
+        .expect("instantiate user.wasm");
+    let start = instance
+        .get_typed_func::<(), ()>(&mut store, "_start")
+        .expect("_start export");
+    start.call(&mut store, ()).expect("wasm _start trap");
+}
 
 // ── Runners ──────────────────────────────────────────────────────────────────
 
@@ -317,7 +362,7 @@ fn main() -> Int
 
 struct BenchArtifacts<'a> {
     native_bin: &'a std::path::Path,
-    wasm_file: &'a std::path::Path,
+    wasm_harness: &'a WasmHarness,
     aver_bin: &'a str,
     module_root: &'a std::path::Path,
     source_file: &'a std::path::Path,
@@ -333,11 +378,12 @@ fn bench_all_modes(
         b.iter(|| run_vm(src));
     });
     group.bench_function(BenchmarkId::new("wasm", label), |b| {
-        // Pre-compiled WASI-bundled artifact + spawn `wasmtime` per
-        // iter — symmetric with how the codegen branch spawns its
-        // pre-built native binary. Removes the 10-15 ms aver compile
-        // cost that previously dominated every WASM measurement.
-        b.iter(|| run_external("wasmtime", &[artifacts.wasm_file.to_str().unwrap()]));
+        // In-process embedded wasmtime — Engine + Module compiled
+        // once in setup, b.iter creates a fresh Store + Instance and
+        // invokes `_start`. Symmetric with how `run_vm` runs the VM
+        // in-process; eliminates spawn cost and aver-compile cost,
+        // measures the actual run.
+        b.iter(|| run_wasm_iter(artifacts.wasm_harness));
     });
     group.bench_function(BenchmarkId::new("codegen", label), |b| {
         b.iter(|| run_external(artifacts.native_bin.to_str().unwrap(), &[]));
@@ -394,15 +440,20 @@ fn comparison_benches(c: &mut Criterion) {
         })
         .collect();
 
-    // Pre-compile WASM artifacts once so the bench loop can spawn
-    // `wasmtime` directly instead of measuring `aver compile` on
-    // every iteration.
+    // Pre-compile WASM artifacts once + build the embedded wasmtime
+    // harness per program: the Engine and Module are constructed in
+    // setup, only Instance creation + invoke happens per Criterion
+    // iter.
     let wasm_files: Vec<std::path::PathBuf> = tests
         .iter()
         .map(|(label, name, src)| {
             eprintln!("Compiling {} to WASI-bundled wasm...", label);
             compile_to_wasm(src, name)
         })
+        .collect();
+    let wasm_harnesses: Vec<WasmHarness> = wasm_files
+        .iter()
+        .map(|p| build_wasm_harness(p))
         .collect();
 
     // Write source files for the real `aver run --self-host` path under one shared module root
@@ -430,7 +481,7 @@ fn comparison_benches(c: &mut Criterion) {
         let mut group = c.benchmark_group(*label);
         let artifacts = BenchArtifacts {
             native_bin: &natives[i],
-            wasm_file: &wasm_files[i],
+            wasm_harness: &wasm_harnesses[i],
             aver_bin,
             module_root: self_host_root.path(),
             source_file: &source_files[i],

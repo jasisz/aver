@@ -33,6 +33,10 @@
     (func $rt_f64_to_str_obj (param f64) (result i32)))
   (import "wasi_snapshot_preview1" "fd_write"
     (func $wasi_fd_write (param i32 i32 i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "random_get"
+    (func $wasi_random_get (param i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "clock_time_get"
+    (func $wasi_clock_time_get (param i32 i64 i32) (result i32)))
 
   ;; "true" / "false" data literals at fixed offsets in shared memory.
   ;; Picked above IO_SCRATCH (128) but below the heap_base bumped on
@@ -287,4 +291,80 @@
     i32.const 0
   )
   (export "format_value" (func $format_value))
+
+  ;; ─── Random ─────────────────────────────────────────────────────────
+  ;; aver/random_int(min: i64, max: i64) -> i64
+  ;; Pull 8 random bytes via wasi.random_get into IO_INT_BUF (16..23),
+  ;; reduce mod (max - min + 1), shift to [min, max].
+  (func $random_int (param $min i64) (param $max i64) (result i64)
+    (local $range i64)
+    (local $bits i64)
+
+    i32.const 16   ;; IO_INT_BUF
+    i32.const 8
+    call $wasi_random_get
+    drop
+
+    i32.const 16
+    i64.load
+    local.set $bits
+
+    local.get $max
+    local.get $min
+    i64.sub
+    i64.const 1
+    i64.add
+    local.set $range
+
+    local.get $range
+    i64.eqz
+    if (result i64)
+      local.get $min
+    else
+      local.get $min
+      local.get $bits
+      local.get $range
+      i64.rem_u
+      i64.add
+    end
+  )
+  (export "random_int" (func $random_int))
+
+  ;; aver/random_float() -> f64 in [0.0, 1.0)
+  ;; Pull 8 random bytes, drop top 11 bits (so 53-bit mantissa fits),
+  ;; divide by 2^53.
+  (func $random_float (result f64)
+    i32.const 16
+    i32.const 8
+    call $wasi_random_get
+    drop
+
+    i32.const 16
+    i64.load
+    i64.const 11
+    i64.shr_u
+    f64.convert_i64_u
+    f64.const 9007199254740992  ;; 2^53
+    f64.div
+  )
+  (export "random_float" (func $random_float))
+
+  ;; ─── Time ───────────────────────────────────────────────────────────
+  ;; aver/time_unixMs() -> i64 (milliseconds since Unix epoch)
+  ;; wasi.clock_time_get(clockid, precision, *out_time) returns errno.
+  ;; Clock id 0 = REALTIME. Result is nanoseconds; divide by 1e6 → ms.
+  (func $time_unixMs (result i64)
+    i32.const 0               ;; clock id: REALTIME
+    i64.const 1000000         ;; precision (ns) — 1ms is plenty
+    i32.const 16              ;; *time_ptr (write into IO_INT_BUF)
+    call $wasi_clock_time_get
+    drop
+
+    i32.const 16
+    i64.load
+    i64.const 1000000
+    i64.div_u
+  )
+  (export "time_unixMs" (func $time_unixMs))
+
 )

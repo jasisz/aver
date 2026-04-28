@@ -1764,6 +1764,24 @@ fn run_wasm_with_host(wasm_bytes: &[u8], program_args: &[String]) -> Result<(), 
         })
         .map_err(|e| format!("Link error: {}", e))?;
 
+    // aver/random_float() -> f64 in [0.0, 1.0).
+    // The WASI bridge does this via `random_get`; this `aver run --wasm`
+    // path doesn't go through the bridge yet (TODO 0.15: use
+    // wasmtime-wasi + bridge instead of one func_wrap per effect), so
+    // we duplicate the impl in native Rust.
+    linker
+        .func_wrap("aver", "random_float", || -> f64 {
+            use std::collections::hash_map::RandomState;
+            use std::hash::{BuildHasher, Hasher};
+            let s = RandomState::new();
+            let mut h = s.build_hasher();
+            h.write_u8(0xA5);
+            // Take entropy as 53-bit mantissa, divide by 2^53 → [0.0, 1.0).
+            let bits = h.finish() >> 11;
+            (bits as f64) / ((1u64 << 53) as f64)
+        })
+        .map_err(|e| format!("Link error: {}", e))?;
+
     // aver/time_now() -> (i32, i32)  — returns ISO timestamp string in WASM memory
     linker
         .func_wrap(
@@ -3838,7 +3856,13 @@ fn run_optimize_pipeline_inner(
         std::fs::copy(wasm_file, &stage1_file)
             .map_err(|e| format!("Failed to stage runtime artifact for opt: {}", e))?;
     } else {
-        let graph_json = "[\n  { \"name\": \"outside\", \"root\": true, \"reaches\": [\"main_export\", \"start_export\"] },\n  { \"name\": \"main_export\", \"export\": \"main\" },\n  { \"name\": \"start_export\", \"export\": \"_start\" }\n]\n";
+        // The `memory` export is reachable from outside even though
+        // _start / main don't reference it directly: WASI host calls
+        // (fd_write, random_get, clock_time_get, …) read and write
+        // through it. Without this root, metadce strips the export
+        // and wasmtime rejects the module with "missing required
+        // memory export".
+        let graph_json = "[\n  { \"name\": \"outside\", \"root\": true, \"reaches\": [\"main_export\", \"start_export\", \"memory_export\"] },\n  { \"name\": \"main_export\", \"export\": \"main\" },\n  { \"name\": \"start_export\", \"export\": \"_start\" },\n  { \"name\": \"memory_export\", \"export\": \"memory\" }\n]\n";
         if let Err(e) = std::fs::write(&metadce_graph, graph_json) {
             return Err(format!(
                 "Failed to write wasm-metadce graph for {}: {}",

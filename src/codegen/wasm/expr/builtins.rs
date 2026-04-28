@@ -574,6 +574,14 @@ impl<'a> ExprEmitter<'a> {
                     self.emit_default_value(WasmType::I64);
                 }
             }
+            "Random.float" if args.is_empty() => {
+                if let Some(&idx) = self.host_import_indices.get("random_float") {
+                    self.instructions.push(Instruction::Call(idx));
+                } else {
+                    self.codegen_error("missing host import `random_float`");
+                    self.emit_default_value(WasmType::F64);
+                }
+            }
             "Console.readLine" if args.is_empty() => {
                 self.emit_host_string_import("console_readLine");
                 // Wrap string in Result.Ok — Console.readLine returns Result<String, String>
