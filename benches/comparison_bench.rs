@@ -84,6 +84,43 @@ fn compile_to_native(source: &str, name: &str) -> std::path::PathBuf {
     stable
 }
 
+/// Pre-compile an Aver source to a standalone WASI-bundled `.wasm` so
+/// the bench loop can spawn `wasmtime` on a stable file instead of
+/// re-running `aver compile` every iteration. Without this, the WASM
+/// number was dominated by lex/parse/typecheck/emit/wasm-merge cost
+/// per iter (~15 ms baseline) — same shape as how `compile_to_native`
+/// caches the codegen binary.
+fn compile_to_wasm(source: &str, name: &str) -> std::path::PathBuf {
+    let dir = tempfile::tempdir().expect("create wasm bench temp dir");
+    let src_path = dir.path().join("main.av");
+    std::fs::write(&src_path, source).expect("write source");
+
+    let out_dir = dir.path().join("out");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let status = Command::new(aver_bin)
+        .arg("compile")
+        .arg(&src_path)
+        .arg("--target")
+        .arg("wasm")
+        .arg("--bridge")
+        .arg("wasi")
+        .arg("--optimize")
+        .arg("size")
+        .arg("--name")
+        .arg(name)
+        .arg("-o")
+        .arg(&out_dir)
+        .status()
+        .expect("aver compile --target wasm");
+    assert!(status.success(), "aver compile --target wasm failed");
+
+    let built = out_dir.join(format!("{}.wasm", name));
+    let stable = std::env::temp_dir().join(format!("aver_bench_{}.wasm", name));
+    std::fs::copy(&built, &stable).expect("copy wasm artifact");
+    stable
+}
+
 fn write_temp_source(root: &std::path::Path, name: &str, source: &str) -> std::path::PathBuf {
     let path = root.join(format!("{}.av", name));
     let mut f = std::fs::File::create(&path).expect("create temp source file");
@@ -280,6 +317,7 @@ fn main() -> Int
 
 struct BenchArtifacts<'a> {
     native_bin: &'a std::path::Path,
+    wasm_file: &'a std::path::Path,
     aver_bin: &'a str,
     module_root: &'a std::path::Path,
     source_file: &'a std::path::Path,
@@ -295,18 +333,11 @@ fn bench_all_modes(
         b.iter(|| run_vm(src));
     });
     group.bench_function(BenchmarkId::new("wasm", label), |b| {
-        b.iter(|| {
-            run_external(
-                artifacts.aver_bin,
-                &[
-                    "run",
-                    artifacts.source_file.to_str().unwrap(),
-                    "--module-root",
-                    artifacts.module_root.to_str().unwrap(),
-                    "--wasm",
-                ],
-            )
-        });
+        // Pre-compiled WASI-bundled artifact + spawn `wasmtime` per
+        // iter — symmetric with how the codegen branch spawns its
+        // pre-built native binary. Removes the 10-15 ms aver compile
+        // cost that previously dominated every WASM measurement.
+        b.iter(|| run_external("wasmtime", &[artifacts.wasm_file.to_str().unwrap()]));
     });
     group.bench_function(BenchmarkId::new("codegen", label), |b| {
         b.iter(|| run_external(artifacts.native_bin.to_str().unwrap(), &[]));
@@ -363,6 +394,17 @@ fn comparison_benches(c: &mut Criterion) {
         })
         .collect();
 
+    // Pre-compile WASM artifacts once so the bench loop can spawn
+    // `wasmtime` directly instead of measuring `aver compile` on
+    // every iteration.
+    let wasm_files: Vec<std::path::PathBuf> = tests
+        .iter()
+        .map(|(label, name, src)| {
+            eprintln!("Compiling {} to WASI-bundled wasm...", label);
+            compile_to_wasm(src, name)
+        })
+        .collect();
+
     // Write source files for the real `aver run --self-host` path under one shared module root
     let self_host_root = tempfile::tempdir().expect("create self-host bench root");
     let source_files: Vec<std::path::PathBuf> = tests
@@ -388,6 +430,7 @@ fn comparison_benches(c: &mut Criterion) {
         let mut group = c.benchmark_group(*label);
         let artifacts = BenchArtifacts {
             native_bin: &natives[i],
+            wasm_file: &wasm_files[i],
             aver_bin,
             module_root: self_host_root.path(),
             source_file: &source_files[i],
