@@ -73,6 +73,10 @@ pub struct AverRuntimeImports {
     pub rt_str_replace: u32,
     pub rt_int_from_str: u32,
     pub rt_float_from_str: u32,
+    pub rt_collect_begin: u32,
+    pub rt_rebase_i32: u32,
+    pub rt_collect_end: u32,
+    pub rt_retain_i32: u32,
 }
 
 /// Index assignments for runtime functions within the module.
@@ -171,10 +175,10 @@ impl RuntimeFuncIndices {
         RuntimeFuncIndices {
             alloc: imports.rt_alloc,
             truncate: imports.rt_truncate,
-            collect_begin: next(),
-            collect_end: next(),
-            rebase_i32: next(),
-            retain_i32: next(),
+            collect_begin: imports.rt_collect_begin,
+            collect_end: imports.rt_collect_end,
+            rebase_i32: imports.rt_rebase_i32,
+            retain_i32: imports.rt_retain_i32,
             wrap: imports.rt_wrap,
             wrap_f64: imports.rt_wrap_f64,
             wrap_i32: imports.rt_wrap_i32,
@@ -686,18 +690,6 @@ pub fn rt_type_index(
 ) -> u32 {
     let local_idx = func_idx - import_func_count;
 
-    if local_idx == rt.collect_begin - import_func_count {
-        return rti.i32_to_empty;
-    }
-    if local_idx == rt.collect_end - import_func_count {
-        return rti.empty_to_empty;
-    }
-    if local_idx == rt.rebase_i32 - import_func_count {
-        return rti.unwrap_i32;
-    }
-    if local_idx == rt.retain_i32 - import_func_count {
-        return rti.unwrap_i32;
-    }
     if local_idx == rt.fd_write_buf - import_func_count {
         return rti.fd_write_buf;
     }

@@ -269,6 +269,10 @@ pub fn build_wasm_module(
         rt_str_replace: 57,
         rt_int_from_str: 58,
         rt_float_from_str: 59,
+        rt_collect_begin: 60,
+        rt_rebase_i32: 61,
+        rt_collect_end: 62,
+        rt_retain_i32: 63,
     };
     import_section.import(
         "aver_runtime",
@@ -572,6 +576,26 @@ pub fn build_wasm_module(
     );
     import_section.import(
         "aver_runtime",
+        "rt_collect_begin",
+        EntityType::Function(rti.i32_to_empty),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_rebase_i32",
+        EntityType::Function(rti.unwrap_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_collect_end",
+        EntityType::Function(rti.empty_to_empty),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_retain_i32",
+        EntityType::Function(rti.unwrap_i32),
+    );
+    import_section.import(
+        "aver_runtime",
         "memory",
         EntityType::Memory(MemoryType {
             minimum: 1,
@@ -590,7 +614,22 @@ pub fn build_wasm_module(
             shared: false,
         }),
     );
-    let mut import_func_count = 60u32; // prev 58 + int_from_str + float_from_str
+    // Compaction state globals: aver_runtime owns rt_collect_* /
+    // rt_rebase_i32 / rt_retain_i32, so the scratch globals they read
+    // and write live in aver_runtime too. Indices match what every
+    // surviving GlobalGet/Set in the prior emit looked up (1/2/3).
+    for name in ["collect_mark", "collect_from", "collect_dst"] {
+        import_section.import(
+            "aver_runtime",
+            name,
+            EntityType::Global(GlobalType {
+                val_type: ValType::I32,
+                mutable: true,
+                shared: false,
+            }),
+        );
+    }
+    let mut import_func_count = 64u32; // prev 60 + 4 collect/rebase/retain
     // Index of the write-to-stdout import (used by runtime's write_stdout helper)
     let mut write_stdout_import: Option<u32> = None;
 
@@ -765,21 +804,12 @@ pub fn build_wasm_module(
     let variant_registry = build_variant_registry(ctx);
 
     // -----------------------------------------------------------------------
-    // Global section — local globals start at index 1 (heap_ptr is the
-    // imported global at index 0, kept first to preserve every existing
-    // GlobalGet/Set(0) reference in runtime + user code).
+    // Global section — heap_ptr (idx 0) and collect_mark/from/dst
+    // (idx 1/2/3) are all imported from aver_runtime. variant_names_*
+    // (idx 4/5) are still local because their initializer offsets
+    // depend on each module's data section.
     // -----------------------------------------------------------------------
     let mut global_section = GlobalSection::new();
-    for _ in 0..3 {
-        global_section.global(
-            GlobalType {
-                val_type: ValType::I32,
-                mutable: true,
-                shared: false,
-            },
-            &ConstExpr::i32_const(0),
-        );
-    }
 
     // Variant name table: build tag→name mapping so hosts can display names.
     let variant_name_json = {
