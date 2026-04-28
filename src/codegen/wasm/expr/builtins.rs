@@ -19,7 +19,13 @@ impl<'a> ExprEmitter<'a> {
                 self.emit_args_get_import();
             }
             "Console.print" | "Console.error" | "Console.warn" => {
-                self.emit_console_print(args);
+                let target = match name {
+                    "Console.print" => "console_print",
+                    "Console.error" => "console_error",
+                    "Console.warn" => "console_warn",
+                    _ => unreachable!(),
+                };
+                self.emit_console_print(args, target);
             }
             "Terminal.enableRawMode"
             | "Terminal.disableRawMode"
@@ -592,6 +598,119 @@ impl<'a> ExprEmitter<'a> {
                     self.emit_default_value(WasmType::F64);
                 }
             }
+            "Http.get" if args.len() == 1 => {
+                self.emit_http_send("GET", args, false);
+            }
+            "Http.head" if args.len() == 1 => {
+                self.emit_http_send("HEAD", args, false);
+            }
+            "Http.delete" if args.len() == 1 => {
+                self.emit_http_send("DELETE", args, false);
+            }
+            "Http.post" if args.len() == 4 => {
+                self.emit_http_send("POST", args, true);
+            }
+            "Http.put" if args.len() == 4 => {
+                self.emit_http_send("PUT", args, true);
+            }
+            "Http.patch" if args.len() == 4 => {
+                self.emit_http_send("PATCH", args, true);
+            }
+            "Env.get" if args.len() == 1 => {
+                // args on stack: [name(i32 OBJ_STRING ptr)]
+                // Lower to:
+                //   ptr+8, len → env_get → i32 raw_handle
+                //   if raw_handle == -1: NONE_SENTINEL
+                //   else: rt_wrap(WRAP_SOME, raw_handle as i64, ptr_flag=1)
+                if let Some(&env_get_idx) = self.host_import_indices.get("env_get") {
+                    let name_local = self.alloc_local(WasmType::I32);
+                    self.instructions.push(Instruction::LocalSet(name_local));
+                    self.instructions.push(Instruction::LocalGet(name_local));
+                    self.instructions.push(Instruction::I32Const(8));
+                    self.instructions.push(Instruction::I32Add); // name_ptr = OBJ_STRING + 8
+                    self.instructions.push(Instruction::LocalGet(name_local));
+                    self.instructions.push(Instruction::I64Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
+                    self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
+                    self.instructions.push(Instruction::I64And);
+                    self.instructions.push(Instruction::I32WrapI64); // name_len
+                    self.instructions.push(Instruction::Call(env_get_idx));
+
+                    // Branch on -1 sentinel.
+                    let raw_local = self.alloc_local(WasmType::I32);
+                    self.instructions.push(Instruction::LocalSet(raw_local));
+                    self.instructions.push(Instruction::LocalGet(raw_local));
+                    self.instructions
+                        .push(Instruction::I32Const(super::super::value::NONE_SENTINEL));
+                    self.instructions.push(Instruction::I32Eq);
+                    self.emit_if(wasm_encoder::BlockType::Result(
+                        wasm_encoder::ValType::I32,
+                    ));
+                    self.instructions
+                        .push(Instruction::I32Const(super::super::value::NONE_SENTINEL));
+                    self.emit_else();
+                    self.instructions
+                        .push(Instruction::I32Const(super::super::value::WRAP_SOME as i32));
+                    self.instructions.push(Instruction::LocalGet(raw_local));
+                    self.instructions.push(Instruction::I64ExtendI32U);
+                    self.instructions.push(Instruction::I32Const(1)); // value_ptr_flag
+                    self.instructions.push(Instruction::Call(self.rt.wrap));
+                    self.emit_end();
+                } else {
+                    self.codegen_error("missing host import `env_get`");
+                    self.instructions.push(Instruction::Drop);
+                    self.instructions
+                        .push(Instruction::I32Const(super::super::value::NONE_SENTINEL));
+                }
+            }
+            "Env.set" if args.len() == 2 => {
+                // args on stack: [name(i32 OBJ_STRING), value(i32 OBJ_STRING)]
+                // Lower to: env_set(name+8, name_len, value+8, value_len)
+                if let Some(&env_set_idx) = self.host_import_indices.get("env_set") {
+                    let value_local = self.alloc_local(WasmType::I32);
+                    let name_local = self.alloc_local(WasmType::I32);
+                    self.instructions.push(Instruction::LocalSet(value_local));
+                    self.instructions.push(Instruction::LocalSet(name_local));
+
+                    // name_ptr, name_len
+                    self.instructions.push(Instruction::LocalGet(name_local));
+                    self.instructions.push(Instruction::I32Const(8));
+                    self.instructions.push(Instruction::I32Add);
+                    self.instructions.push(Instruction::LocalGet(name_local));
+                    self.instructions.push(Instruction::I64Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
+                    self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
+                    self.instructions.push(Instruction::I64And);
+                    self.instructions.push(Instruction::I32WrapI64);
+
+                    // value_ptr, value_len
+                    self.instructions.push(Instruction::LocalGet(value_local));
+                    self.instructions.push(Instruction::I32Const(8));
+                    self.instructions.push(Instruction::I32Add);
+                    self.instructions.push(Instruction::LocalGet(value_local));
+                    self.instructions.push(Instruction::I64Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
+                    self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
+                    self.instructions.push(Instruction::I64And);
+                    self.instructions.push(Instruction::I32WrapI64);
+
+                    self.instructions.push(Instruction::Call(env_set_idx));
+                } else {
+                    self.codegen_error("missing host import `env_set`");
+                    self.instructions.push(Instruction::Drop);
+                    self.instructions.push(Instruction::Drop);
+                }
+                self.instructions.push(Instruction::I32Const(0)); // Unit
+            }
             "Console.readLine" if args.is_empty() => {
                 self.emit_host_string_import("console_readLine");
                 // Wrap string in Result.Ok — Console.readLine returns Result<String, String>
@@ -676,15 +795,28 @@ impl<'a> ExprEmitter<'a> {
         }
     }
 
-    pub(super) fn emit_console_print(&mut self, args: &[Spanned<Expr>]) {
+    pub(super) fn emit_console_print(&mut self, args: &[Spanned<Expr>], target_import: &str) {
         // Always emit Aver-style host calls regardless of --adapter.
         // Under --adapter wasi the aver_to_wasi shim translates these
         // into wasi_snapshot_preview1 calls; the user.wasm bytes are
         // identical in both modes.
         //
-        // Value print delegated to host via aver/print_value(tag, val):
-        //   tag: 0=Int, 1=Float, 2=Bool, 3=String, 4=Heap, 5=Unit
-        // Newline appended via aver/console_print(scratch, 1).
+        // `target_import` picks the destination stream — `console_print`
+        // (stdout), `console_error` (stderr), or `console_warn` (stderr
+        // routed through `console.warn` on JS hosts). When the target
+        // is `console_print` we keep the old shape: value goes through
+        // `print_value` (a single host crossing that formats + writes
+        // in one shot), newline through `console_print`. For the
+        // stderr targets we have to format-then-write separately —
+        // value via `format_value` (returns ptr+len), then a
+        // `console_<target>` write — so the value lands on the right
+        // stream instead of always defaulting to stdout via print_value.
+        let route_through_format = target_import != "console_print";
+        if route_through_format {
+            self.emit_console_print_via_format(args, target_import);
+            return;
+        }
+
         if let Some(&print_idx) = self.host_import_indices.get("print_value") {
             let arg_aver_type = self.infer_aver_type(&args[0].node);
             let wt = self.infer_expr_type(&args[0].node);
@@ -747,6 +879,105 @@ impl<'a> ExprEmitter<'a> {
         ));
         self.instructions.push(Instruction::I32Const(1));
         self.instructions.push(Instruction::Call(console_print_idx));
+        self.instructions.push(Instruction::I32Const(0)); // Unit
+    }
+
+    /// Stderr-routed Console.error / Console.warn path: format the
+    /// value to (ptr, len) via `format_value`, then write through
+    /// the stderr-targeting host import. The legacy `print_value`
+    /// path always writes to stdout in the WASI bridge — using it
+    /// for `Console.error` would silently send errors to stdout,
+    /// which a console-aware caller (CI runner, log shipper) cannot
+    /// distinguish from `Console.print`. This path costs one extra
+    /// host crossing per call versus the stdout path; the routing
+    /// correctness wins.
+    fn emit_console_print_via_format(&mut self, args: &[Spanned<Expr>], target_import: &str) {
+        let target_idx = match self.host_import_indices.get(target_import).copied() {
+            Some(idx) => idx,
+            None => {
+                // No host is satisfying this target — drop the value to
+                // keep the stack typed; this matches the
+                // print_value-less fallback in the stdout path.
+                self.instructions.push(Instruction::Drop);
+                self.instructions.push(Instruction::I32Const(0));
+                return;
+            }
+        };
+        let format_idx = match self.host_import_indices.get("format_value").copied() {
+            Some(idx) => idx,
+            None => {
+                self.instructions.push(Instruction::Drop);
+                self.instructions.push(Instruction::I32Const(0));
+                return;
+            }
+        };
+
+        let arg_aver_type = self.infer_aver_type(&args[0].node);
+        let wt = self.infer_expr_type(&args[0].node);
+
+        let (tag, needs_convert) = match &arg_aver_type {
+            Some(Type::Int) => (0i32, false),
+            Some(Type::Float) => (1, true),
+            Some(Type::Bool) => (2, false),
+            Some(Type::Str) => (3, false),
+            Some(Type::Unit) => (5, false),
+            _ => match wt {
+                WasmType::I64 => (0, false),
+                WasmType::F64 => (1, true),
+                WasmType::I32 => (4, false),
+            },
+        };
+
+        if tag == 5 {
+            // Unit — nothing to print, but still emit the trailing
+            // newline so the stream stays line-oriented.
+            self.instructions.push(Instruction::Drop);
+        } else {
+            let val_local = self.alloc_local(WasmType::I64);
+            // Move the arg value into an i64 local matching format_value's
+            // (i32, i64) -> (i32, i32) signature.
+            match wt {
+                WasmType::I64 => {}
+                WasmType::F64 => {
+                    if needs_convert {
+                        self.instructions.push(Instruction::I64ReinterpretF64);
+                    }
+                }
+                WasmType::I32 => {
+                    if tag == 3 || tag == 4 {
+                        self.instructions.push(Instruction::I64ExtendI32U);
+                    } else {
+                        self.instructions.push(Instruction::I64ExtendI32S);
+                    }
+                }
+            }
+            self.instructions.push(Instruction::LocalSet(val_local));
+
+            // format_value(tag, val) — pushes (ptr, len) onto the stack.
+            self.instructions.push(Instruction::I32Const(tag));
+            self.instructions.push(Instruction::LocalGet(val_local));
+            self.instructions.push(Instruction::Call(format_idx));
+
+            // console_<target>(ptr, len) — drains the (ptr, len) pair.
+            self.instructions.push(Instruction::Call(target_idx));
+        }
+
+        // Trailing newline through the same target stream.
+        self.instructions.push(Instruction::I32Const(
+            super::super::runtime::NEWLINE_ADDR as i32,
+        ));
+        self.instructions.push(Instruction::I32Const(b'\n' as i32));
+        self.instructions
+            .push(Instruction::I32Store8(wasm_encoder::MemArg {
+                offset: 0,
+                align: 0,
+                memory_index: 0,
+            }));
+        self.instructions.push(Instruction::I32Const(
+            super::super::runtime::NEWLINE_ADDR as i32,
+        ));
+        self.instructions.push(Instruction::I32Const(1));
+        self.instructions.push(Instruction::Call(target_idx));
         self.instructions.push(Instruction::I32Const(0)); // Unit
     }
 

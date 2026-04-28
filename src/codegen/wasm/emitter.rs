@@ -109,6 +109,16 @@ pub fn build_wasm_module(
     // Always include "true" and "false" for Bool→String conversion in interpolation
     string_set.insert("true".to_string());
     string_set.insert("false".to_string());
+    // HTTP method names — emitted as constants by `Http.*` lowering
+    // (every call passes the method as a fixed string to the
+    // generic `http_send` host import). Force-interning here keeps
+    // the literals in the data section instead of allocating fresh
+    // OBJ_STRINGs per call. ~96 bytes total, present even if the
+    // program doesn't use Http — wasm-opt drops them under
+    // `--optimize size` when no `Http.*` site references them.
+    for method in ["GET", "HEAD", "DELETE", "POST", "PUT", "PATCH"] {
+        string_set.insert(method.to_string());
+    }
     let mut sorted_strings: Vec<String> = string_set.into_iter().collect();
     sorted_strings.sort();
 
@@ -716,6 +726,9 @@ pub fn build_wasm_module(
             "Request.body",
             "Response.text",
             "Response.setHeader",
+            "Http.send",
+            "Http.addRequestHeader",
+            "Http.clearRequestHeaders",
         ] {
             if let Some(abi_entry) = super::abi::lookup(effect)
                 && !host_imports.contains_key(abi_entry.import_name)

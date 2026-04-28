@@ -55,6 +55,15 @@ pub const ABI_TABLE: &[AbiImport] = &[
         params: &[ValType::I32, ValType::I32],
         results: &[],
     },
+    // Writes bytes to stderr at warning severity. Distinct from
+    // `Console.error` so JS hosts can route the two streams
+    // differently (`console.warn` vs `console.error`).
+    AbiImport {
+        effect: "Console.warn",
+        import_name: "console_warn",
+        params: &[ValType::I32, ValType::I32],
+        results: &[],
+    },
     // Reads a line from stdin. Host allocates string in WASM linear memory
     // using the exported `alloc` function, returns (ptr, len).
     AbiImport {
@@ -196,6 +205,84 @@ pub const ABI_TABLE: &[AbiImport] = &[
         import_name: "response_set_header",
         // name_ptr: i32, name_len: i32, value_ptr: i32, value_len: i32
         params: &[ValType::I32, ValType::I32, ValType::I32, ValType::I32],
+        results: &[],
+    },
+    // --- Http (client) ---
+    // All six methods (GET/HEAD/DELETE/POST/PUT/PATCH) share one
+    // generic host import. Method name comes through as a string
+    // arg; body and content-type are empty strings for the
+    // bodyless verbs. Request headers are pushed onto a
+    // host-maintained pending list via `http_add_request_header` /
+    // `http_clear_request_headers` before the `http_send` fires —
+    // same walk-and-set pattern as `response_set_header`.
+    //
+    // Multi-result return:
+    //   (status: i64, body_ptr: i32, err_ptr: i32)
+    //   - Transport ok: status > 0, body_ptr = OBJ_STRING handle,
+    //     err_ptr = 0 → wrapped `Result.Ok(HttpResponse{...})`.
+    //   - Transport err: status = 0, body_ptr = 0,
+    //     err_ptr = OBJ_STRING with the error message →
+    //     wrapped `Result.Err(msg)`.
+    //
+    // Response headers are an empty `Map` for 0.14 — bulk-transfer
+    // back into the guest's Map<String, List<String>> shape lands
+    // in 0.15. Same caveat applies to `req.headers` under the
+    // Fetch bridge.
+    //
+    // The JS host (Cloudflare Workers, Deno, Bun, browser
+    // playground) is expected to wrap `http_send` with
+    // `WebAssembly.Suspending` so the synchronous WASM call point
+    // can suspend on `await fetch(...)`. WASI preview 1 has no
+    // HTTP client at all, so the WASI shim returns a transport
+    // error — programs that need real HTTP under standalone
+    // wasmtime should wait for preview 2 wasi-http or run via
+    // a JS host instead.
+    AbiImport {
+        effect: "Http.send",
+        import_name: "http_send",
+        // method_ptr, method_len,
+        // url_ptr, url_len,
+        // body_ptr, body_len,
+        // ct_ptr, ct_len
+        params: &[
+            ValType::I32, ValType::I32,
+            ValType::I32, ValType::I32,
+            ValType::I32, ValType::I32,
+            ValType::I32, ValType::I32,
+        ],
+        results: &[ValType::I64, ValType::I32, ValType::I32],
+    },
+    AbiImport {
+        effect: "Http.addRequestHeader",
+        import_name: "http_add_request_header",
+        // name_ptr, name_len, value_ptr, value_len
+        params: &[ValType::I32, ValType::I32, ValType::I32, ValType::I32],
+        results: &[],
+    },
+    AbiImport {
+        effect: "Http.clearRequestHeaders",
+        import_name: "http_clear_request_headers",
+        params: &[],
+        results: &[],
+    },
+    // --- Env ---
+    // Process environment access. Reads return -1 for "name unset"
+    // (matches Aver's NONE_SENTINEL); on Some, the host hands back
+    // an OBJ_STRING pointer that the emitter wraps in `Option.Some`.
+    // Writes are best-effort: WASI preview 1 has no `setenv`, JS hosts
+    // get a frozen `env`, so most bridges treat `env_set` as a no-op.
+    // Aver's type system says `set: (String, String) -> Unit`, so
+    // we honour that contract regardless of host capability.
+    AbiImport {
+        effect: "Env.get",
+        import_name: "env_get",
+        params: &[ValType::I32, ValType::I32], // name_ptr, name_len
+        results: &[ValType::I32],              // -1 = None, OBJ_STRING ptr = Some
+    },
+    AbiImport {
+        effect: "Env.set",
+        import_name: "env_set",
+        params: &[ValType::I32, ValType::I32, ValType::I32, ValType::I32], // name+value
         results: &[],
     },
     // --- Time ---

@@ -41,12 +41,13 @@ function writeAverString(memory, alloc, encoder, text) {
 
 function makeAverImports() {
   const decoder = new TextDecoder("utf-8");
-  const encoder = new TextEncoder();
-  const readString = (ptr, len) =>
+  // Expose `readString` / `alloc` / `encoder` at module scope so
+  // the JSPI-suspending `http_send` (constructed lazily, outside
+  // this closure) can decode and allocate without re-deriving the
+  // helpers. The module-level placeholders get replaced here.
+  readString = (ptr, len) =>
     decoder.decode(new Uint8Array(runtimeMemory.buffer, ptr, len));
-  // Lazy alloc helper — uses the guest-exported `alloc` symbol so
-  // String objects we hand back are first-class on the heap.
-  const alloc = (size) => {
+  alloc = (size) => {
     if (!userInstancePromise) {
       throw new Error("alloc called before user.wasm instantiated");
     }
@@ -109,6 +110,56 @@ function makeAverImports() {
         readString(valuePtr, valueLen),
       ]);
     },
+    // ─── Env ───────────────────────────────────────────────
+    // Workers' `env` is the bag of bindings + secrets passed to
+    // `fetch(request, env, ctx)`. We stash it on `pending.env` for
+    // the duration of the handler call (see the fetch entrypoint
+    // below). Returns -1 (Aver's NONE_SENTINEL) when the name
+    // isn't bound, otherwise allocates a guest OBJ_STRING.
+    env_get: (namePtr, nameLen) => {
+      const name = readString(namePtr, nameLen);
+      const value = pending?.env?.[name];
+      if (typeof value !== "string") return -1;
+      return writeAverString(runtimeMemory, alloc, encoder, value);
+    },
+    // Workers `env` is read-only — `env_set` is a no-op so the
+    // typed contract `Env.set: (String, String) -> Unit` still
+    // holds without lying about persistence.
+    env_set: (_namePtr, _nameLen, _valuePtr, _valueLen) => {},
+    // ─── Http (client) ──────────────────────────────────────
+    // `Http.<verb>(...)` is a synchronous-looking wasm call that
+    // really has to `await fetch(...)` on the host. We bridge the
+    // sync↔async gap with the JS Promise Integration (JSPI)
+    // proposal: each suspending import is wrapped via
+    // `WebAssembly.Suspending(asyncFn)` (see `instantiateUser`),
+    // and the exported handler is wrapped with
+    // `WebAssembly.promising(wasmFn)` so a top-level `await`
+    // chains the suspension all the way back to the worker's
+    // `fetch` entrypoint.
+    //
+    // Browser, Workers, Deno, Bun all ship V8 / SpiderMonkey
+    // builds with JSPI enabled; if you target a runtime that
+    // doesn't have it, replace these with synchronous stubs that
+    // return a transport error.
+    //
+    // Request headers travel over a host-maintained pending list:
+    //   `http_clear_request_headers` resets it before each call,
+    //   `http_add_request_header(name, value)` appends an entry
+    //    (multi-value friendly via repeated calls),
+    //   `http_send(method, url, body, contentType)` consumes the
+    //    pending list, executes the fetch, returns
+    //    `(status, body, err)`.
+    http_clear_request_headers: () => {
+      pending.requestHeaders = [];
+    },
+    http_add_request_header: (namePtr, nameLen, valuePtr, valueLen) => {
+      if (!pending.requestHeaders) pending.requestHeaders = [];
+      pending.requestHeaders.push([
+        readString(namePtr, nameLen),
+        readString(valuePtr, valueLen),
+      ]);
+    },
+    http_send: makeSuspendingHttpSend(),
     // ─── Print/Format value ─────────────────────────────────────
     // The compiler imports these unconditionally: `print_value`
     // backs `Console.print(non-string)` and the format-debug paths,
@@ -130,6 +181,70 @@ function makeAverImports() {
     },
   };
 }
+
+// JSPI-suspending implementation of `aver/http_send`. The wasm
+// guest calls this synchronously; control suspends here while we
+// `await fetch(...)`, then resumes with the (status, body, err)
+// triple on the wasm stack. `WebAssembly.Suspending` is supported
+// out of the box in Cloudflare Workers / Deno / Bun / modern
+// browsers; runtimes without JSPI should swap this for a sync
+// stub that returns a transport error.
+function makeSuspendingHttpSend() {
+  if (typeof WebAssembly.Suspending !== "function") {
+    // No JSPI — fall back to a sync stub that always reports a
+    // transport failure. Programs branch on `Result.Err` instead
+    // of crashing on a missing import.
+    return (_m, _ml, _u, _ul, _b, _bl, _c, _cl) => {
+      const err = writeAverString(
+        runtimeMemory, alloc, encoder,
+        "Http.send: host has no JSPI; cannot await fetch synchronously",
+      );
+      return [0n, 0, err];
+    };
+  }
+  return new WebAssembly.Suspending(async (
+    methodPtr, methodLen, urlPtr, urlLen,
+    bodyPtr, bodyLen, ctPtr, ctLen,
+  ) => {
+    const method = readString(methodPtr, methodLen);
+    const url = readString(urlPtr, urlLen);
+    const body = bodyLen > 0 ? readString(bodyPtr, bodyLen) : null;
+    const contentType = ctLen > 0 ? readString(ctPtr, ctLen) : null;
+
+    const init = { method };
+    const headers = new Headers();
+    if (contentType) headers.set("content-type", contentType);
+    for (const [name, value] of pending.requestHeaders ?? []) {
+      headers.append(name, value);
+    }
+    if ([...headers].length > 0) init.headers = headers;
+    if (body !== null && method !== "GET" && method !== "HEAD") {
+      init.body = body;
+    }
+
+    try {
+      const resp = await fetch(url, init);
+      const respBody = await resp.text();
+      const bodyHandle = writeAverString(
+        runtimeMemory, alloc, encoder, respBody,
+      );
+      return [BigInt(resp.status), bodyHandle, 0];
+    } catch (e) {
+      const msg = e?.message ?? String(e);
+      const errHandle = writeAverString(runtimeMemory, alloc, encoder, msg);
+      return [0n, 0, errHandle];
+    }
+  });
+}
+
+// `readString` / `alloc` / `encoder` live inside `makeAverImports`'s
+// closure; pull module-level references so the JSPI-suspending
+// `http_send` (constructed when `makeAverImports` runs) can use
+// them at await-time without re-deriving the helpers. Initialized
+// to safe no-ops; replaced when `makeAverImports` fires.
+let readString = (_ptr, _len) => "";
+let alloc = (_size) => 0;
+let encoder = new TextEncoder();
 
 // Tag values follow Aver's runtime convention:
 //   0 = Int (i64 raw bits in `val`)
@@ -175,6 +290,26 @@ async function instantiateUser() {
   // global so request_* / response_* imports can reach it without
   // threading a closure through every call.
   globalThis.__aver_alloc = instance.exports.alloc;
+
+  // JSPI: when Http.* effects run, the wasm frame can suspend on
+  // `await fetch(...)` inside `http_send`. To let the suspension
+  // unwind back to a Promise, the entry the host calls must be
+  // wrapped with `WebAssembly.promising`. We stash the wrapped
+  // handler on a global so the worker's `fetch` entrypoint can
+  // call `await averHandle(0)` instead of poking `instance.exports`
+  // directly (its `aver_http_handle` slot is read-only).
+  if (
+    typeof instance.exports.aver_http_handle === "function" &&
+    typeof WebAssembly.promising === "function"
+  ) {
+    globalThis.__aver_http_handle = WebAssembly.promising(
+      instance.exports.aver_http_handle,
+    );
+  } else if (typeof instance.exports.aver_http_handle === "function") {
+    // No JSPI on this host — call sync. Programs that hit Http.*
+    // get a transport-error fallback from `makeSuspendingHttpSend`.
+    globalThis.__aver_http_handle = instance.exports.aver_http_handle;
+  }
   return instance;
 }
 
@@ -191,9 +326,13 @@ export default {
     // whatever the handler stashed via `response_text`.
     if (typeof user.exports.aver_http_handle === "function") {
       const body = await request.text();
-      pending = { req: request, body, response: null };
+      pending = { req: request, body, env, response: null, requestHeaders: [] };
       try {
-        user.exports.aver_http_handle(0);
+        // `__aver_http_handle` is the JSPI-wrapped entry — `await`
+        // it so any `Http.*` suspension chain resolves before we
+        // build the Response. Falls back to a sync call when
+        // JSPI isn't available (see `instantiateUser`).
+        await globalThis.__aver_http_handle(0);
       } catch (e) {
         console.error("aver_http_handle threw:", e);
         pending = null;

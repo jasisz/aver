@@ -401,6 +401,8 @@ pub struct RtTypeIndices {
     pub i32_to_i32_i32: u32,             // (i32) -> (i32, i32)
     pub i32_i64_to_empty: u32,           // (i32, i64) -> ()
     pub i32_i32_i32_i32_to_empty: u32,   // (i32, i32, i32, i32) -> ()  — used by response_set_header
+    pub i32_i32_to_i64_i32_i32: u32,     // (i32, i32) -> (i64, i32, i32)  — legacy http_get
+    pub i32x8_to_i64_i32_i32: u32,       // (i32 ×8) -> (i64, i32, i32)    — used by http_send
     pub i32_i64_to_i32_i32: u32,         // (i32, i64) -> (i32, i32)
     pub i64_i64_to_i64: u32,             // (i64, i64) -> i64
     pub empty_to_i64: u32,               // () -> i64
@@ -513,6 +515,19 @@ pub fn emit_base_type_section(type_section: &mut TypeSection) -> RtTypeIndices {
         &[ValType::I32, ValType::I32, ValType::I32, ValType::I32],
         &[],
     );
+    let i32_i32_to_i64_i32_i32 = registry.intern(
+        type_section,
+        &[ValType::I32, ValType::I32],
+        &[ValType::I64, ValType::I32, ValType::I32],
+    );
+    let i32x8_to_i64_i32_i32 = registry.intern(
+        type_section,
+        &[
+            ValType::I32, ValType::I32, ValType::I32, ValType::I32,
+            ValType::I32, ValType::I32, ValType::I32, ValType::I32,
+        ],
+        &[ValType::I64, ValType::I32, ValType::I32],
+    );
     let i32_i64_to_i32_i32 = registry.intern(
         type_section,
         &[ValType::I32, ValType::I64],
@@ -568,6 +583,8 @@ pub fn emit_base_type_section(type_section: &mut TypeSection) -> RtTypeIndices {
         i32_to_i32_i32,
         i32_i64_to_empty,
         i32_i32_i32_i32_to_empty,
+        i32_i32_to_i64_i32_i32,
+        i32x8_to_i64_i32_i32,
         i32_i64_to_i32_i32,
         i64_i64_to_i64,
         empty_to_i64,
@@ -609,6 +626,9 @@ pub fn lookup_type_index(
     }
     if params == [ValType::I32, ValType::I32] && results == [ValType::F64] {
         return Some(rti.obj_field_f64);
+    }
+    if params == [ValType::I32, ValType::I32] && results == [ValType::I32] {
+        return Some(rti.i32_i32_to_i32);
     }
     if params == [ValType::I64, ValType::I32, ValType::I32] && results == [ValType::I32] {
         return Some(rti.list_cons_i64);
@@ -702,6 +722,20 @@ pub fn lookup_type_index(
         && results.is_empty()
     {
         return Some(rti.i32_i32_i32_i32_to_empty);
+    }
+    if params == [ValType::I32, ValType::I32]
+        && results == [ValType::I64, ValType::I32, ValType::I32]
+    {
+        return Some(rti.i32_i32_to_i64_i32_i32);
+    }
+    if params
+        == [
+            ValType::I32, ValType::I32, ValType::I32, ValType::I32,
+            ValType::I32, ValType::I32, ValType::I32, ValType::I32,
+        ]
+        && results == [ValType::I64, ValType::I32, ValType::I32]
+    {
+        return Some(rti.i32x8_to_i64_i32_i32);
     }
     if params == [ValType::I32, ValType::I64] && results == [ValType::I32, ValType::I32] {
         return Some(rti.i32_i64_to_i32_i32);

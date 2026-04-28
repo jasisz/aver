@@ -936,6 +936,301 @@ impl<'a> ExprEmitter<'a> {
         self.instructions.push(Instruction::LocalGet(ptr_local));
     }
 
+    /// Lower an `Http.<method>(...)` call to the generic `http_send`
+    /// host import.
+    ///
+    /// `method` is the literal verb ("GET", "POST", …); the data
+    /// section is force-interned to carry it (see `string_literals`
+    /// setup in the emitter). `has_body` distinguishes the no-body
+    /// verbs (`GET` / `HEAD` / `DELETE`, args = `[url]`) from the
+    /// body-bearing ones (`POST` / `PUT` / `PATCH`, args = `[url,
+    /// body, contentType, headers: Map<String, List<String>>]`).
+    ///
+    /// The shape of every call is the same:
+    ///   1. Walk the request-headers Map (body verbs only) and push
+    ///      each `(name, value)` pair via
+    ///      `http_add_request_header` after a clear.
+    ///   2. Push (method_ptr, method_len, url_ptr, url_len,
+    ///      body_ptr, body_len, ct_ptr, ct_len) and call
+    ///      `http_send` — three results land on the stack:
+    ///      `(status: i64, body: i32, err: i32)`.
+    ///   3. Branch on `err != 0` to wrap as `Result.Err(msg)` /
+    ///      `Result.Ok(HttpResponse{status, body,
+    ///      headers = empty})`.
+    pub(super) fn emit_http_send(
+        &mut self,
+        method: &'static str,
+        args: &[Spanned<Expr>],
+        has_body: bool,
+    ) {
+        use wasm_encoder::{BlockType, MemArg, ValType};
+
+        let send_idx = match self.host_import_indices.get("http_send").copied() {
+            Some(idx) => idx,
+            None => {
+                self.codegen_error("missing host import `http_send`");
+                for _ in args {
+                    self.instructions.push(Instruction::Drop);
+                }
+                self.instructions.push(Instruction::I32Const(0));
+                return;
+            }
+        };
+
+        // Stash the arg OBJ_STRING / Map handles into locals so we
+        // can push (ptr, len) pairs in any order.
+        let url_local;
+        let body_local;
+        let ct_local;
+        let headers_local;
+        if has_body {
+            // args = [url, body, contentType, headers]
+            // Stack order at entry: url, body, ct, headers (top)
+            headers_local = self.alloc_local(WasmType::I32);
+            ct_local = self.alloc_local(WasmType::I32);
+            body_local = self.alloc_local(WasmType::I32);
+            url_local = self.alloc_local(WasmType::I32);
+            self.instructions
+                .push(Instruction::LocalSet(headers_local));
+            self.instructions.push(Instruction::LocalSet(ct_local));
+            self.instructions.push(Instruction::LocalSet(body_local));
+            self.instructions.push(Instruction::LocalSet(url_local));
+        } else {
+            url_local = self.alloc_local(WasmType::I32);
+            body_local = 0;
+            ct_local = 0;
+            headers_local = 0;
+            self.instructions.push(Instruction::LocalSet(url_local));
+        }
+
+        // Reset the host's pending request-headers list before each
+        // call so previous-request headers don't bleed through. Then
+        // walk the headers map and push entries via
+        // `http_add_request_header`.
+        if let Some(&clear_idx) = self.host_import_indices.get("http_clear_request_headers") {
+            self.instructions.push(Instruction::Call(clear_idx));
+        }
+        if has_body {
+            if let Some(&add_idx) = self.host_import_indices.get("http_add_request_header") {
+                self.emit_http_walk_headers(headers_local, add_idx);
+            }
+        }
+
+        let header_load = MemArg {
+            offset: 0,
+            align: 3,
+            memory_index: 0,
+        };
+        let push_str_pair = |this: &mut Self, str_local: u32| {
+            this.instructions.push(Instruction::LocalGet(str_local));
+            this.instructions.push(Instruction::I32Const(8));
+            this.instructions.push(Instruction::I32Add); // ptr
+            this.instructions.push(Instruction::LocalGet(str_local));
+            this.instructions.push(Instruction::I64Load(header_load));
+            this.instructions.push(Instruction::I64Const(0xFFFFFFFF));
+            this.instructions.push(Instruction::I64And);
+            this.instructions.push(Instruction::I32WrapI64); // len
+        };
+
+        // method (interned in the data section, always present)
+        if let Some(&(offset, len)) = self.string_literals.get(method) {
+            self.instructions.push(Instruction::I32Const(offset as i32 + 8));
+            self.instructions.push(Instruction::I32Const(len as i32));
+        } else {
+            self.codegen_error(format!(
+                "internal: HTTP method literal `{}` not interned",
+                method
+            ));
+            self.instructions.push(Instruction::I32Const(0));
+            self.instructions.push(Instruction::I32Const(0));
+        }
+        push_str_pair(self, url_local);
+        if has_body {
+            push_str_pair(self, body_local);
+            push_str_pair(self, ct_local);
+        } else {
+            // body, contentType — empty for the no-body verbs.
+            self.instructions.push(Instruction::I32Const(0));
+            self.instructions.push(Instruction::I32Const(0));
+            self.instructions.push(Instruction::I32Const(0));
+            self.instructions.push(Instruction::I32Const(0));
+        }
+        self.instructions.push(Instruction::Call(send_idx));
+        // Stack: [status: i64, body: i32, err: i32]
+        let err_local = self.alloc_local(WasmType::I32);
+        let resp_body_local = self.alloc_local(WasmType::I32);
+        let status_local = self.alloc_local(WasmType::I64);
+        self.instructions.push(Instruction::LocalSet(err_local));
+        self.instructions.push(Instruction::LocalSet(resp_body_local));
+        self.instructions.push(Instruction::LocalSet(status_local));
+
+        // Branch on err != 0 → Result.Err / Result.Ok.
+        self.instructions.push(Instruction::LocalGet(err_local));
+        self.emit_if(BlockType::Result(ValType::I32));
+        // Result.Err(err_string)
+        self.instructions
+            .push(Instruction::I32Const(super::super::value::WRAP_ERR as i32));
+        self.instructions.push(Instruction::LocalGet(err_local));
+        self.instructions.push(Instruction::I64ExtendI32U);
+        self.instructions.push(Instruction::I32Const(1)); // ptr_flag
+        self.instructions.push(Instruction::Call(self.rt.wrap));
+        self.emit_else();
+        // Result.Ok(HttpResponse{status, body, headers = empty Map})
+        let response_size: i32 = 8 + 3 * 8;
+        let resp_local = self.alloc_local(WasmType::I32);
+        self.instructions.push(Instruction::I32Const(response_size));
+        self.instructions.push(Instruction::Call(self.rt.alloc));
+        self.instructions.push(Instruction::LocalSet(resp_local));
+        // Header: OBJ_RECORD, ptr_flags = bits 1+2 (body & headers).
+        self.instructions.push(Instruction::LocalGet(resp_local));
+        self.instructions
+            .push(Instruction::I64Const(super::super::value::make_header(
+                super::super::value::OBJ_RECORD,
+                0,
+                0b110,
+                3,
+            ) as i64));
+        self.instructions.push(Instruction::I64Store(header_load));
+        // Field 0: status (i64)
+        self.instructions.push(Instruction::LocalGet(resp_local));
+        self.instructions.push(Instruction::LocalGet(status_local));
+        self.instructions.push(Instruction::I64Store(MemArg {
+            offset: 8,
+            align: 3,
+            memory_index: 0,
+        }));
+        // Field 1: body (OBJ_STRING ptr extended to i64)
+        self.instructions.push(Instruction::LocalGet(resp_local));
+        self.instructions.push(Instruction::LocalGet(resp_body_local));
+        self.instructions.push(Instruction::I64ExtendI32U);
+        self.instructions.push(Instruction::I64Store(MemArg {
+            offset: 16,
+            align: 3,
+            memory_index: 0,
+        }));
+        // Field 2: headers (empty Map for 0.14 — 0.15 follow-up
+        // bulk-transfers response headers back into the guest Map).
+        self.instructions.push(Instruction::LocalGet(resp_local));
+        self.instructions.push(Instruction::I64Const(0));
+        self.instructions.push(Instruction::I64Store(MemArg {
+            offset: 24,
+            align: 3,
+            memory_index: 0,
+        }));
+        // Wrap as Result.Ok
+        self.instructions
+            .push(Instruction::I32Const(super::super::value::WRAP_OK as i32));
+        self.instructions.push(Instruction::LocalGet(resp_local));
+        self.instructions.push(Instruction::I64ExtendI32U);
+        self.instructions.push(Instruction::I32Const(1));
+        self.instructions.push(Instruction::Call(self.rt.wrap));
+        self.emit_end();
+    }
+
+    /// Walk the headers Map<String, List<String>> in `headers_local`
+    /// and push each `(name, value)` via the host import at
+    /// `add_idx`. Same shape as `emit_fetch_apply_headers` but
+    /// targets the request-side import.
+    fn emit_http_walk_headers(&mut self, headers_local: u32, add_idx: u32) {
+        use wasm_encoder::{BlockType, MemArg};
+
+        let entries_local = self.alloc_local(WasmType::I32);
+        let entry_local = self.alloc_local(WasmType::I32);
+        let key_local = self.alloc_local(WasmType::I32);
+        let values_local = self.alloc_local(WasmType::I32);
+        let value_local = self.alloc_local(WasmType::I32);
+
+        let header_load = MemArg {
+            offset: 0,
+            align: 3,
+            memory_index: 0,
+        };
+
+        self.instructions.push(Instruction::LocalGet(headers_local));
+        self.instructions
+            .push(Instruction::Call(self.rt.map_entries));
+        self.instructions.push(Instruction::LocalSet(entries_local));
+
+        self.instructions.push(Instruction::Block(BlockType::Empty));
+        self.instructions.push(Instruction::Loop(BlockType::Empty));
+
+        self.instructions.push(Instruction::LocalGet(entries_local));
+        self.instructions.push(Instruction::I32Eqz);
+        self.instructions.push(Instruction::BrIf(1));
+
+        // entry = head(entries)
+        self.instructions.push(Instruction::LocalGet(entries_local));
+        self.instructions.push(Instruction::I32Const(0));
+        self.instructions
+            .push(Instruction::Call(self.rt.obj_field_i32));
+        self.instructions.push(Instruction::LocalSet(entry_local));
+
+        // key = entry.field[0]
+        self.instructions.push(Instruction::LocalGet(entry_local));
+        self.instructions.push(Instruction::I32Const(0));
+        self.instructions
+            .push(Instruction::Call(self.rt.obj_field_i32));
+        self.instructions.push(Instruction::LocalSet(key_local));
+
+        // values = entry.field[1]
+        self.instructions.push(Instruction::LocalGet(entry_local));
+        self.instructions.push(Instruction::I32Const(1));
+        self.instructions
+            .push(Instruction::Call(self.rt.obj_field_i32));
+        self.instructions.push(Instruction::LocalSet(values_local));
+
+        // for each value: http_add_request_header(name, value)
+        self.instructions.push(Instruction::Block(BlockType::Empty));
+        self.instructions.push(Instruction::Loop(BlockType::Empty));
+        self.instructions.push(Instruction::LocalGet(values_local));
+        self.instructions.push(Instruction::I32Eqz);
+        self.instructions.push(Instruction::BrIf(1));
+
+        self.instructions.push(Instruction::LocalGet(values_local));
+        self.instructions.push(Instruction::I32Const(0));
+        self.instructions
+            .push(Instruction::Call(self.rt.obj_field_i32));
+        self.instructions.push(Instruction::LocalSet(value_local));
+
+        self.instructions.push(Instruction::LocalGet(key_local));
+        self.instructions.push(Instruction::I32Const(8));
+        self.instructions.push(Instruction::I32Add);
+        self.instructions.push(Instruction::LocalGet(key_local));
+        self.instructions.push(Instruction::I64Load(header_load));
+        self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
+        self.instructions.push(Instruction::I64And);
+        self.instructions.push(Instruction::I32WrapI64);
+        self.instructions.push(Instruction::LocalGet(value_local));
+        self.instructions.push(Instruction::I32Const(8));
+        self.instructions.push(Instruction::I32Add);
+        self.instructions.push(Instruction::LocalGet(value_local));
+        self.instructions.push(Instruction::I64Load(header_load));
+        self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
+        self.instructions.push(Instruction::I64And);
+        self.instructions.push(Instruction::I32WrapI64);
+        self.instructions.push(Instruction::Call(add_idx));
+
+        self.instructions.push(Instruction::LocalGet(values_local));
+        self.instructions.push(Instruction::I32Const(1));
+        self.instructions
+            .push(Instruction::Call(self.rt.obj_field_i32));
+        self.instructions.push(Instruction::LocalSet(values_local));
+
+        self.instructions.push(Instruction::Br(0));
+        self.instructions.push(Instruction::End);
+        self.instructions.push(Instruction::End);
+
+        self.instructions.push(Instruction::LocalGet(entries_local));
+        self.instructions.push(Instruction::I32Const(1));
+        self.instructions
+            .push(Instruction::Call(self.rt.obj_field_i32));
+        self.instructions.push(Instruction::LocalSet(entries_local));
+
+        self.instructions.push(Instruction::Br(0));
+        self.instructions.push(Instruction::End);
+        self.instructions.push(Instruction::End);
+    }
+
     /// Walk a `Map<String, List<String>>` headers value and emit one
     /// `response_set_header(name_ptr, name_len, value_ptr, value_len)`
     /// host call per `(name, value)` pair. Multi-value entries
