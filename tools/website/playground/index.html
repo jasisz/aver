@@ -34,13 +34,13 @@
     <a class="intro-link" href="#about" data-show-about>What is Aver?</a>
     <a class="intro-link" href="#wasm" data-show-wasm>About WASM</a>
     <nav class="game-nav">
-        <button data-game="life">Life <small>15.8 KiB</small></button>
-        <button data-game="snake">Snake <small>12.4 KiB</small></button>
-        <button data-game="tetris">Tetris <small>17.1 KiB</small></button>
-        <button data-game="checkers" data-args="6">Checkers <small>28.5 KiB</small></button>
-        <button data-game="rogue">Rogue <small>35.4 KiB</small></button>
-        <button data-game="doom">Doom <small>28.4 KiB</small></button>
-        <button data-game="wumpus" data-console-game>Wumpus <small>13.2 KiB</small></button>
+        <button data-game="life">Life <small>8.6 KiB</small></button>
+        <button data-game="snake">Snake <small>5.0 KiB</small></button>
+        <button data-game="tetris">Tetris <small>9.9 KiB</small></button>
+        <button data-game="checkers" data-args="6">Checkers <small>21.4 KiB</small></button>
+        <button data-game="rogue">Rogue <small>28.3 KiB</small></button>
+        <button data-game="doom">Doom <small>21.5 KiB</small></button>
+        <button data-game="wumpus" data-console-game>Wumpus <small>5.9 KiB</small></button>
     </nav>
     <a class="intro-link" href="https://github.com/jasisz/aver" target="_blank">GitHub</a>
 </header>
@@ -226,7 +226,7 @@
             </div>
             <div class="about-feature">
                 <strong>Tiny binaries</strong>
-                <span>Snake ships at 12.4 KiB. Tetris is 17.1 KiB. A full roguelike with procedural generation is 35.4 KiB. <code>--wasm-opt oz</code> cuts current games by roughly half (48-59%).</span>
+                <span>Snake ships at 5.0 KiB. Tetris is 9.9 KiB. A full roguelike with procedural generation is 28.3 KiB. <code>--wasm-opt oz</code> cuts current games by roughly half (48-59%).</span>
             </div>
             <div class="about-feature">
                 <strong>Capability-based imports</strong>
@@ -239,7 +239,7 @@
         </div>
 
         <pre class="about-example">$ cargo install aver-lang
-$ aver compile game.av --target wasm --wasm-opt oz
+$ aver compile game.av --target wasm --optimize size
 Compiled game.av → game.wasm (8.2 KiB, wasm-opt -Oz)
 
 # drag game.wasm into the playground</pre>

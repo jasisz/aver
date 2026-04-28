@@ -52,14 +52,30 @@ pub(super) enum WasmBridge {
     Wasi,
 }
 
-/// Optional post-pass optimization for generated WASM modules.
+/// Which runtime artifact `aver wasm-runtime` emits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(super) enum WasmRuntimeArtifact {
+    /// The shared aver_runtime module (alloc, GC, str/list/map/vec ops).
+    #[value(name = "runtime")]
+    Runtime,
+    /// The aver→WASI translation shim that satisfies `aver/*` host
+    /// imports against `wasi_snapshot_preview1.fd_write`.
+    #[value(name = "wasi-bridge")]
+    WasiBridge,
+}
+
+/// Optional post-pass optimization mode for generated WASM modules.
+/// Triggers a multi-stage pipeline (wasm-metadce → wasm-opt with
+/// converge + strip-producers + strip-target-features), so the flag
+/// is `--optimize` rather than `--wasm-opt` — it does more than just
+/// invoking the `wasm-opt` binary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub(super) enum WasmOptMode {
     /// Optimize for runtime speed.
-    #[value(name = "o3")]
+    #[value(name = "speed")]
     O3,
     /// Optimize aggressively for binary size.
-    #[value(name = "oz")]
+    #[value(name = "size")]
     Oz,
 }
 
@@ -337,9 +353,36 @@ pub(super) enum Commands {
         /// `--target edge-wasm`.
         #[arg(long, value_enum, alias = "adapter")]
         bridge: Option<WasmBridge>,
-        /// Post-process generated WASM with wasm-opt (`o3` for speed, `oz` for size)
+        /// Post-process generated WASM through a multi-stage size/speed
+        /// pipeline (wasm-metadce → wasm-opt --converge --strip-*).
+        /// Pass `size` for aggressive size reduction (`-Oz`) or `speed`
+        /// for runtime tuning (`-O3`). Legacy alias: `--wasm-opt`.
+        #[arg(long, value_enum, alias = "wasm-opt")]
+        optimize: Option<WasmOptMode>,
+    },
+    /// Emit a standalone aver_runtime / aver_to_wasi artifact to disk.
+    /// Internal release tooling — used by tools/release/* to publish
+    /// per-version runtime modules to averlang.dev. Not part of the
+    /// user-facing CLI surface.
+    #[command(hide = true)]
+    WasmRuntime {
+        /// Output file path (e.g. dist/aver_runtime.wasm)
+        #[arg(short = 'o', long)]
+        output: String,
+        /// Which runtime artifact to emit. `runtime` (default) is the
+        /// shared aver_runtime module imported by every user.wasm;
+        /// `wasi-bridge` is the aver→wasi translation shim.
+        #[arg(long, value_enum, default_value = "runtime")]
+        artifact: WasmRuntimeArtifact,
+        /// Apply the same optimize pipeline used for user code, but
+        /// in library mode (every export is a DCE root). `size` runs
+        /// `-Oz --converge --strip-*`; `speed` is `-O3`. Default: raw.
         #[arg(long, value_enum)]
-        wasm_opt: Option<WasmOptMode>,
+        optimize: Option<WasmOptMode>,
+        /// Also emit a human-readable .wat companion next to the .wasm
+        /// (uses `wasm-tools print`).
+        #[arg(long)]
+        wat: bool,
     },
     /// Trace justifications: decisions, verify blocks, descriptions
     Why {
@@ -442,22 +485,22 @@ mod tests {
     }
 
     #[test]
-    fn compile_accepts_wasm_opt() {
+    fn compile_accepts_optimize() {
         let cli = Cli::parse_from([
             "aver",
             "compile",
             "examples/core/hello.av",
             "--target",
             "wasm",
-            "--wasm-opt",
-            "oz",
+            "--optimize",
+            "size",
         ]);
         match cli.command {
             Commands::Compile {
-                target, wasm_opt, ..
+                target, optimize, ..
             } => {
                 assert_eq!(target, CompileTarget::Wasm);
-                assert_eq!(wasm_opt, Some(WasmOptMode::Oz));
+                assert_eq!(optimize, Some(WasmOptMode::Oz));
             }
             _ => panic!("expected compile command"),
         }

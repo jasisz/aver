@@ -12,6 +12,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import re
 import shutil
 import subprocess
@@ -203,6 +205,219 @@ def regenerate_self_host(dry_run: bool) -> None:
     print(f"  Copied {sum(1 for _ in src_dest.rglob('*.rs'))} files to src/self_host/")
 
 
+def build_runtime_artifacts(version: str, dry_run: bool) -> None:
+    """Emit per-version runtime artifacts to tools/website/runtime/v{X}/.
+
+    These are what averlang.dev distributes for `--target edge-wasm`
+    consumers — the shared aver_runtime.wasm + aver_to_wasi.wasm bridge,
+    plus human-readable .wat companions, sha256 checksums, and a
+    README. Also refreshes `latest/` (mirror, not symlink — Cloudflare
+    Pages doesn't follow symlinks) and the top-level manifest.json
+    used by the runtime listing page.
+    """
+    print(f"Publishing runtime artifacts for v{version}...")
+    runtime_root = REPO_ROOT / "tools" / "website" / "runtime"
+    target_dir = runtime_root / f"v{version}"
+    if dry_run:
+        print(f"  [dry-run] would emit aver_runtime.wasm + aver_to_wasi.wasm to {target_dir}")
+        return
+
+    aver_bin = REPO_ROOT / "target" / "release" / "aver"
+    if not aver_bin.exists():
+        run(["cargo", "build", "--release", "--features", "wasm"])
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build the two artifacts with --optimize size + .wat companion.
+    runtime_path = target_dir / "aver_runtime.wasm"
+    bridge_path = target_dir / "aver_to_wasi.wasm"
+    run([
+        str(aver_bin), "wasm-runtime",
+        "--artifact", "runtime",
+        "--optimize", "size",
+        "--wat",
+        "--output", str(runtime_path),
+    ])
+    run([
+        str(aver_bin), "wasm-runtime",
+        "--artifact", "wasi-bridge",
+        "--optimize", "size",
+        "--wat",
+        "--output", str(bridge_path),
+    ])
+
+    # sha256 manifest. Stable order so diffs are clean across releases.
+    sha_file = target_dir / "CHECKSUMS.txt"
+    lines = []
+    for path in sorted(target_dir.iterdir()):
+        if path.is_file() and path.name not in ("CHECKSUMS.txt", "README.md"):
+            sha = hashlib.sha256(path.read_bytes()).hexdigest()
+            lines.append(f"{sha}  {path.name}\n")
+    sha_file.write_text("".join(lines))
+
+    # Per-version README — short, points users at the import surface
+    # they care about and lists the byte sizes for at-a-glance compare.
+    runtime_size = runtime_path.stat().st_size
+    bridge_size = bridge_path.stat().st_size
+    readme = (
+        f"# Aver runtime — v{version}\n"
+        f"\n"
+        f"Standalone WebAssembly modules for the Aver language runtime.\n"
+        f"Pair these with a thin `user.wasm` produced by\n"
+        f"`aver compile --target edge-wasm --optimize size`:\n"
+        f"\n"
+        f"- `aver_runtime.wasm` ({runtime_size:,} B) — alloc, GC, hashmap,\n"
+        f"  string/list/vector ops. Imported by every Aver program as the\n"
+        f"  `aver_runtime` module. Cached once per session.\n"
+        f"- `aver_to_wasi.wasm` ({bridge_size:,} B) — translation shim that\n"
+        f"  satisfies a program's `aver/*` host imports against\n"
+        f"  `wasi_snapshot_preview1.fd_write`. Optional, only needed if you\n"
+        f"  want to run a thin user.wasm under wasmtime / Cloudflare\n"
+        f"  Workers / Fastly Compute.\n"
+        f"\n"
+        f"`.wat` files are human-readable disassemblies, not required at\n"
+        f"runtime — they're shipped so you can inspect what the runtime\n"
+        f"actually contains.\n"
+        f"\n"
+        f"`CHECKSUMS.txt` lists sha256 sums of every binary file in this\n"
+        f"directory.\n"
+    )
+    (target_dir / "README.md").write_text(readme)
+
+    # Refresh latest/ as a flat mirror of this version. Cloudflare Pages
+    # serves static dirs and won't follow symlinks reliably, so we copy.
+    latest_dir = runtime_root / "latest"
+    if latest_dir.exists():
+        shutil.rmtree(latest_dir)
+    shutil.copytree(target_dir, latest_dir)
+
+    # Top-level manifest enumerating every published version. Consumers
+    # (CDN listing page, future installer) read this instead of crawling
+    # directory listings, which static hosts often disable.
+    manifest_path = runtime_root / "manifest.json"
+    versions = []
+    for entry in sorted(runtime_root.iterdir(), reverse=True):
+        if entry.is_dir() and entry.name.startswith("v"):
+            ver = entry.name[1:]
+            rt = entry / "aver_runtime.wasm"
+            br = entry / "aver_to_wasi.wasm"
+            if rt.exists() and br.exists():
+                versions.append({
+                    "version": ver,
+                    "runtime_bytes": rt.stat().st_size,
+                    "bridge_bytes": br.stat().st_size,
+                    "path": entry.name,
+                })
+    manifest_path.write_text(json.dumps({
+        "latest": versions[0]["version"] if versions else None,
+        "versions": versions,
+    }, indent=2) + "\n")
+
+    # Public listing page at /runtime/ — static HTML so static hosts
+    # (Cloudflare Pages) can serve it without JS or directory indexing.
+    rows = []
+    for v in versions:
+        ver = v["version"]
+        marker = "  <small>(latest)</small>" if ver == versions[0]["version"] else ""
+        rows.append(
+            f'      <tr>\n'
+            f'        <td><a href="v{ver}/">v{ver}</a>{marker}</td>\n'
+            f'        <td><a href="v{ver}/aver_runtime.wasm">aver_runtime.wasm</a>'
+            f' <small>({v["runtime_bytes"]:,} B)</small></td>\n'
+            f'        <td><a href="v{ver}/aver_to_wasi.wasm">aver_to_wasi.wasm</a>'
+            f' <small>({v["bridge_bytes"]:,} B)</small></td>\n'
+            f'        <td><a href="v{ver}/aver_runtime.wat">.wat</a> · '
+            f'<a href="v{ver}/CHECKSUMS.txt">sha256</a></td>\n'
+            f'      </tr>'
+        )
+    rows_html = "\n".join(rows) if rows else (
+        '      <tr><td colspan="4"><em>No releases yet.</em></td></tr>'
+    )
+    latest_ver = versions[0]["version"] if versions else "?"
+    index_html = f"""<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Aver runtime artifacts</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/svg+xml" href="../favicon.svg">
+    <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<main class="container" style="max-width: 880px; padding: 3rem 1.5rem;">
+    <p><a href="/">← averlang.dev</a></p>
+    <h1>Aver runtime artifacts</h1>
+    <p class="section-sub">
+        Standalone WebAssembly modules for the Aver language runtime.
+        Pair these with a thin <code>user.wasm</code> built via
+        <code>aver compile --target edge-wasm --optimize size</code> —
+        the runtime is cached once and shared across every program.
+    </p>
+
+    <h2>Quick start</h2>
+    <pre><code>$ aver compile mygame.av --target edge-wasm --optimize size -o dist/
+
+# Browser / wasmtime: instantiate runtime first, point user.wasm at it
+const runtime = await WebAssembly.instantiateStreaming(
+    fetch("https://averlang.dev/runtime/latest/aver_runtime.wasm"),
+    {{}}
+);
+const user = await WebAssembly.instantiateStreaming(
+    fetch("/dist/mygame.wasm"),
+    {{ aver_runtime: runtime.instance.exports, aver: hostImports }}
+);
+user.instance.exports._start();</code></pre>
+
+    <h2>Releases</h2>
+    <p>
+        Stable URL for the most recent release:
+        <code>/runtime/latest/aver_runtime.wasm</code>.
+        Per-version URLs below are immutable — pin to one for
+        reproducible deployments.
+    </p>
+    <table style="width: 100%; border-collapse: collapse;">
+      <thead>
+        <tr style="text-align: left; border-bottom: 1px solid var(--border, #ccc);">
+          <th>Version</th><th>Runtime</th><th>WASI bridge</th><th>Extras</th>
+        </tr>
+      </thead>
+      <tbody>
+{rows_html}
+      </tbody>
+    </table>
+
+    <h2>What's in here</h2>
+    <ul>
+        <li><strong>aver_runtime.wasm</strong> — alloc, GC, hashmap (HAMT),
+            string/list/vector ops. Imported as <code>aver_runtime</code>
+            by every <code>edge-wasm</code> binary.</li>
+        <li><strong>aver_to_wasi.wasm</strong> — translation shim that
+            satisfies a program's <code>aver/*</code> host imports
+            against <code>wasi_snapshot_preview1.fd_write</code>.
+            Optional, for wasmtime / Cloudflare Workers / Fastly.</li>
+        <li><strong>.wat</strong> — human-readable disassembly. Inspect
+            what's actually in the binary.</li>
+        <li><strong>CHECKSUMS.txt</strong> — sha256 sums for every file
+            in the directory.</li>
+    </ul>
+
+    <p class="section-sub">
+        Latest: <strong>v{latest_ver}</strong>.
+        Manifest: <a href="manifest.json">manifest.json</a>.
+    </p>
+</main>
+</body>
+</html>
+"""
+    (runtime_root / "index.html").write_text(index_html)
+
+    print(
+        f"  aver_runtime.wasm  {runtime_size:>6,} B"
+        f"  + aver_to_wasi.wasm  {bridge_size:>5,} B"
+        f"  → tools/website/runtime/v{version}/"
+    )
+
+
 def regenerate_playground(dry_run: bool) -> None:
     print("Regenerating playground WASM artifacts...")
     if dry_run:
@@ -333,6 +548,14 @@ def main() -> int:
     # 4. Regenerate playground
     if not args.skip_playground:
         regenerate_playground(dry_run)
+        print()
+
+    # 4.5 Publish per-version runtime artifacts (aver_runtime.wasm +
+    #     aver_to_wasi.wasm + .wat companions + checksums + manifest)
+    #     under tools/website/runtime/v{version}/. Skipped together with
+    #     playground because both depend on a release-built `aver` binary.
+    if not args.skip_playground:
+        build_runtime_artifacts(new_version, dry_run)
         print()
 
     # 5. Verify

@@ -1685,8 +1685,8 @@ fn run_wasm_with_host(wasm_bytes: &[u8], program_args: &[String]) -> Result<(), 
     // first; user.wasm imports memory/heap_ptr/rt_alloc from it.
     let runtime_bytes = aver::codegen::wasm::build_runtime_wasm()
         .map_err(|e| format!("Runtime build error: {e}"))?;
-    let runtime_module = Module::new(&engine, &runtime_bytes)
-        .map_err(|e| format!("Runtime module error: {e:#}"))?;
+    let runtime_module =
+        Module::new(&engine, &runtime_bytes).map_err(|e| format!("Runtime module error: {e:#}"))?;
 
     let module = Module::new(&engine, wasm_bytes).map_err(|e| format!("Module error: {e:#}"))?;
     let mut store = Store::new(&engine, ());
@@ -3278,7 +3278,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         guest_entry,
         with_self_host_support,
         bridge,
-        wasm_opt,
+        optimize,
     } = opts;
 
     // WASM-side targets (wasm / wat / wasm+wat): simplified pipeline,
@@ -3290,7 +3290,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
             project_name,
             module_root_override,
             bridge,
-            wasm_opt,
+            optimize,
             target,
         );
         return;
@@ -3358,7 +3358,7 @@ fn cmd_compile_wasm(
     project_name: Option<&str>,
     module_root_override: Option<&str>,
     bridge: Option<super::cli::WasmBridge>,
-    wasm_opt: Option<super::cli::WasmOptMode>,
+    optimize: Option<super::cli::WasmOptMode>,
     target: super::cli::CompileTarget,
 ) {
     #[cfg(not(feature = "wasm"))]
@@ -3369,7 +3369,7 @@ fn cmd_compile_wasm(
             project_name,
             module_root_override,
             bridge,
-            wasm_opt,
+            optimize,
         );
         eprintln!(
             "{}",
@@ -3452,8 +3452,7 @@ fn cmd_compile_wasm(
 
                 if is_edge {
                     let file_display = file.cyan();
-                    let (final_size, compile_suffix) =
-                        finalize_wasm_artifact(&wasm_file, wasm_opt);
+                    let (final_size, compile_suffix) = finalize_wasm_artifact(&wasm_file, optimize);
                     let wasm_display = wasm_file.display().to_string().cyan();
                     let imports_note = if uses_aver_effects {
                         ", imports aver_runtime.* + aver/* (effects)"
@@ -3521,7 +3520,8 @@ fn cmd_compile_wasm(
                         merge.arg(bridge_path).arg("aver");
                     }
                     merge.arg(&wasm_file).arg("program");
-                    merge.arg("--rename-export-conflicts")
+                    merge
+                        .arg("--rename-export-conflicts")
                         .arg("--enable-bulk-memory")
                         // Host imports like format_value return (i32, i32);
                         // emitter uses tail calls in TCO trampolines.
@@ -3541,12 +3541,10 @@ fn cmd_compile_wasm(
                             let _ = std::fs::rename(&merged_file, &wasm_file);
                             let file_display = file.cyan();
                             let (final_size, compile_suffix) =
-                                finalize_wasm_artifact(&wasm_file, wasm_opt);
+                                finalize_wasm_artifact(&wasm_file, optimize);
                             let wasm_display = wasm_file.display().to_string().cyan();
                             let imports_note = match bridge_mode {
-                                super::cli::WasmBridge::Wasi => {
-                                    ", with runtime + aver→wasi bridge"
-                                }
+                                super::cli::WasmBridge::Wasi => ", with runtime + aver→wasi bridge",
                                 super::cli::WasmBridge::None => {
                                     if uses_aver_effects {
                                         ", with runtime, imports aver/* (effects)"
@@ -3569,10 +3567,7 @@ fn cmd_compile_wasm(
                         }
                         Ok(out) => {
                             let stderr = String::from_utf8_lossy(&out.stderr);
-                            eprintln!(
-                                "{}",
-                                format!("wasm-merge failed: {}", stderr.trim()).red()
-                            );
+                            eprintln!("{}", format!("wasm-merge failed: {}", stderr.trim()).red());
                             let _ = std::fs::remove_file(&merged_file);
                             process::exit(1);
                         }
@@ -3627,6 +3622,138 @@ fn validate_wasm_bytes(bytes: &[u8]) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Emit the standalone aver_runtime / aver_to_wasi artifact. Internal
+/// release tooling — used by `tools/release/build_runtime_artifacts.py`
+/// to publish per-version runtime modules to averlang.dev.
+#[cfg(feature = "wasm")]
+pub fn cmd_wasm_runtime(
+    output: &str,
+    artifact: super::cli::WasmRuntimeArtifact,
+    optimize: Option<super::cli::WasmOptMode>,
+    wat: bool,
+) {
+    let bytes = match artifact {
+        super::cli::WasmRuntimeArtifact::Runtime => aver::codegen::wasm::build_runtime_wasm(),
+        super::cli::WasmRuntimeArtifact::WasiBridge => {
+            aver::codegen::wasm::build_aver_to_wasi_wasm()
+        }
+    };
+    let bytes = match bytes {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("{}", format!("Runtime build error: {}", e).red());
+            process::exit(1);
+        }
+    };
+    if let Err(e) = validate_wasm_bytes(&bytes) {
+        eprintln!(
+            "{}",
+            format!("Runtime artifact failed validation: {}", e).red()
+        );
+        process::exit(1);
+    }
+
+    let output_path = Path::new(output);
+    if let Some(parent) = output_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                eprintln!(
+                    "{}",
+                    format!(
+                        "Failed to create output directory {}: {}",
+                        parent.display(),
+                        e
+                    )
+                    .red()
+                );
+                process::exit(1);
+            }
+        }
+    }
+    if let Err(e) = std::fs::write(output_path, &bytes) {
+        eprintln!(
+            "{}",
+            format!("Failed to write {}: {}", output_path.display(), e).red()
+        );
+        process::exit(1);
+    }
+
+    let raw_size = bytes.len() as u64;
+    let final_size = if let Some(mode) = optimize {
+        match run_optimize_pipeline_library(output_path, mode) {
+            Ok(size) => size,
+            Err(e) => {
+                eprintln!("{}", e.red());
+                process::exit(1);
+            }
+        }
+    } else {
+        raw_size
+    };
+
+    let label = match artifact {
+        super::cli::WasmRuntimeArtifact::Runtime => "aver_runtime",
+        super::cli::WasmRuntimeArtifact::WasiBridge => "aver_to_wasi",
+    };
+    let opt_note = match optimize {
+        Some(super::cli::WasmOptMode::Oz) => " (optimized for size)",
+        Some(super::cli::WasmOptMode::O3) => " (optimized for speed)",
+        None => " (raw)",
+    };
+    println!(
+        "{} {} → {} ({}{})",
+        "Built".green().bold(),
+        label,
+        output_path.display().to_string().cyan(),
+        format_byte_size(final_size),
+        opt_note
+    );
+
+    if wat {
+        let wat_path = output_path.with_extension("wat");
+        let result = std::process::Command::new("wasm-tools")
+            .arg("print")
+            .arg(output_path)
+            .output();
+        match result {
+            Ok(out) if out.status.success() => {
+                if let Err(e) = std::fs::write(&wat_path, &out.stdout) {
+                    eprintln!(
+                        "{}",
+                        format!(
+                            "Failed to write WAT companion {}: {}",
+                            wat_path.display(),
+                            e
+                        )
+                        .red()
+                    );
+                    process::exit(1);
+                }
+                println!(
+                    "{} WAT companion → {}",
+                    "       ".to_string(),
+                    wat_path.display().to_string().cyan()
+                );
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                eprintln!(
+                    "{}",
+                    format!("wasm-tools print failed: {}", stderr.trim()).red()
+                );
+                process::exit(1);
+            }
+            Err(_) => {
+                eprintln!(
+                    "{}",
+                    "wasm-tools not found on PATH — install wasm-tools or omit --wat.".red()
+                );
+                process::exit(1);
+            }
+        }
+    }
+}
+
 /// Run the post-codegen WASM tail: optionally run wasm-opt. Returns
 /// (final_size, suffix) for the existing `Compiled X → Y (size, suffix)`
 /// print line.
@@ -3638,54 +3765,144 @@ fn validate_wasm_bytes(bytes: &[u8]) -> Result<(), String> {
 #[cfg(feature = "wasm")]
 fn finalize_wasm_artifact(
     wasm_file: &Path,
-    wasm_opt: Option<super::cli::WasmOptMode>,
+    optimize: Option<super::cli::WasmOptMode>,
 ) -> (u64, String) {
     let mut final_size = std::fs::metadata(wasm_file).map(|m| m.len()).unwrap_or(0);
     let mut compile_suffix = String::new();
-    if let Some(mode) = wasm_opt {
-        final_size = run_wasm_opt(wasm_file, mode).unwrap_or_else(|err| {
+    if let Some(mode) = optimize {
+        final_size = run_optimize_pipeline(wasm_file, mode).unwrap_or_else(|err| {
             eprintln!("{}", err.red());
             process::exit(1);
         });
-        compile_suffix = format!(", wasm-opt {}", wasm_opt_label(mode));
+        compile_suffix = format!(", optimized for {}", optimize_label(mode));
     }
     (final_size, compile_suffix)
 }
 
 #[cfg(feature = "wasm")]
-fn wasm_opt_label(mode: super::cli::WasmOptMode) -> &'static str {
+fn optimize_label(mode: super::cli::WasmOptMode) -> &'static str {
     match mode {
-        super::cli::WasmOptMode::O3 => "-O3",
-        super::cli::WasmOptMode::Oz => "-Oz",
+        super::cli::WasmOptMode::O3 => "speed",
+        super::cli::WasmOptMode::Oz => "size",
     }
 }
 
 #[cfg(feature = "wasm")]
-fn run_wasm_opt(wasm_file: &Path, mode: super::cli::WasmOptMode) -> Result<u64, String> {
+fn run_optimize_pipeline(wasm_file: &Path, mode: super::cli::WasmOptMode) -> Result<u64, String> {
+    run_optimize_pipeline_inner(wasm_file, mode, /* library = */ false)
+}
+
+/// Library-mode optimize: skip wasm-metadce (every export is a real
+/// public API root, not an artifact of bundling), apply only
+/// `-Oz --converge --strip-*`. Used by `aver wasm-runtime --optimize`.
+#[cfg(feature = "wasm")]
+fn run_optimize_pipeline_library(
+    wasm_file: &Path,
+    mode: super::cli::WasmOptMode,
+) -> Result<u64, String> {
+    run_optimize_pipeline_inner(wasm_file, mode, /* library = */ true)
+}
+
+#[cfg(feature = "wasm")]
+fn run_optimize_pipeline_inner(
+    wasm_file: &Path,
+    mode: super::cli::WasmOptMode,
+    library_mode: bool,
+) -> Result<u64, String> {
     let input_size = std::fs::metadata(wasm_file)
         .map(|meta| meta.len())
         .map_err(|e| format!("Failed to stat {}: {}", wasm_file.display(), e))?;
+    let stage1_file = wasm_file.with_extension("dce.wasm");
+    let metadce_graph = wasm_file.with_extension("metadce.json");
     let optimized_file = wasm_file.with_extension("opt.wasm");
     let opt_flag = match mode {
         super::cli::WasmOptMode::O3 => "-O3",
         super::cli::WasmOptMode::Oz => "-Oz",
     };
 
+    // Stage 1: meta-DCE on the cross-module reachability graph. After
+    // wasm-merge bundles aver_runtime + (optional bridge) + user, every
+    // runtime function (~70) is still exported — `-Oz` treats exports
+    // as DCE roots, so they survive even though bundled artifacts have
+    // no external caller. wasm-metadce takes a JSON describing what
+    // *outside* the module reaches, marks `_start`/`main` as the only
+    // entry points, and prunes everything else (including exports).
+    // No-op for `--target edge-wasm` artifacts (they already export
+    // only `_start`/`main`). We ship a minimal graph and let metadce
+    // discover the internal call tree.
+    //
+    // Library mode (`aver wasm-runtime`): every export is a real public
+    // API consumed by some external user.wasm — we cannot prune any of
+    // them. Skip the metadce stage entirely; copy input → stage1.
+    if library_mode {
+        std::fs::copy(wasm_file, &stage1_file)
+            .map_err(|e| format!("Failed to stage runtime artifact for opt: {}", e))?;
+    } else {
+        let graph_json = "[\n  { \"name\": \"outside\", \"root\": true, \"reaches\": [\"main_export\", \"start_export\"] },\n  { \"name\": \"main_export\", \"export\": \"main\" },\n  { \"name\": \"start_export\", \"export\": \"_start\" }\n]\n";
+        if let Err(e) = std::fs::write(&metadce_graph, graph_json) {
+            return Err(format!(
+                "Failed to write wasm-metadce graph for {}: {}",
+                wasm_file.display(),
+                e
+            ));
+        }
+        let dce_output = std::process::Command::new("wasm-metadce")
+            .arg(format!("--graph-file={}", metadce_graph.display()))
+            .arg("--enable-bulk-memory")
+            .arg("--enable-multivalue")
+            .arg("--enable-tail-call")
+            .arg(wasm_file)
+            .arg("-o")
+            .arg(&stage1_file)
+            .output()
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&metadce_graph);
+                format!(
+                    "Failed to run wasm-metadce for {}: {}. Install binaryen or compile without --optimize.",
+                    wasm_file.display(),
+                    e
+                )
+            })?;
+        let _ = std::fs::remove_file(&metadce_graph);
+
+        if !dce_output.status.success() {
+            let stderr = String::from_utf8_lossy(&dce_output.stderr);
+            let _ = std::fs::remove_file(&stage1_file);
+            return Err(format!(
+                "wasm-metadce failed for {}: {}",
+                wasm_file.display(),
+                stderr.trim()
+            ));
+        }
+    }
+
+    // Stage 2: aggressive optimization with --converge (run passes to
+    // fixed point) and metadata strip. -Oz already drops the name
+    // section; --strip-producers and --strip-target-features remove
+    // sections that survive otherwise and bloat merged artifacts.
     let output = std::process::Command::new("wasm-opt")
         .arg(opt_flag)
+        .arg("--converge")
+        .arg("--strip-producers")
+        .arg("--strip-target-features")
         .arg("--enable-bulk-memory")
         .arg("--enable-multivalue")
-        .arg(wasm_file)
+        .arg("--enable-tail-call")
+        .arg(&stage1_file)
         .arg("-o")
         .arg(&optimized_file)
         .output()
         .map_err(|e| {
+            let _ = std::fs::remove_file(&stage1_file);
             format!(
-                "Failed to run wasm-opt for {}: {}. Install binaryen or compile without --wasm-opt.",
+                "Failed to run wasm-opt {} for {}: {}. Install binaryen or compile without --optimize.",
+                opt_flag,
                 wasm_file.display(),
                 e
             )
         })?;
+
+    let _ = std::fs::remove_file(&stage1_file);
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -3714,7 +3931,7 @@ fn run_wasm_opt(wasm_file: &Path, mode: super::cli::WasmOptMode) -> Result<u64, 
     } else {
         format!("from {}", format_byte_size(input_size))
     };
-    let opt_summary = format!("{} {}", wasm_opt_label(mode), size_delta);
+    let opt_summary = format!("for {} {}", optimize_label(mode), size_delta);
     println!(
         "{} {} → {} ({})",
         "Optimized".green().bold(),
@@ -3737,7 +3954,7 @@ pub(super) struct CompileOptions<'a> {
     pub(super) guest_entry: Option<&'a str>,
     pub(super) with_self_host_support: bool,
     pub(super) bridge: Option<super::cli::WasmBridge>,
-    pub(super) wasm_opt: Option<super::cli::WasmOptMode>,
+    pub(super) optimize: Option<super::cli::WasmOptMode>,
 }
 
 pub(super) fn cmd_proof(

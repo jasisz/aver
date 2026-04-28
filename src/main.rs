@@ -179,7 +179,7 @@ fn main() {
             guest_entry,
             with_self_host_support,
             bridge,
-            wasm_opt,
+            optimize,
         } => {
             let policy_mode = (*policy).unwrap_or(if *with_replay {
                 CompilePolicyMode::Runtime
@@ -197,8 +197,16 @@ fn main() {
                 guest_entry: guest_entry.as_deref(),
                 with_self_host_support: *with_self_host_support,
                 bridge: *bridge,
-                wasm_opt: *wasm_opt,
+                optimize: *optimize,
             });
+        }
+        Commands::WasmRuntime {
+            output,
+            artifact,
+            optimize,
+            wat,
+        } => {
+            commands::cmd_wasm_runtime(output, *artifact, *optimize, *wat);
         }
         Commands::Why {
             file,

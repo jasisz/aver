@@ -160,9 +160,9 @@ def build_wasm(aver_bin: str) -> None:
             "compile",
             str(source),
             "--target",
-            "wasm",
-            "--wasm-opt",
-            "oz",
+            "edge-wasm",
+            "--optimize",
+            "size",
             "--name",
             game.slug,
             "-o",
@@ -213,7 +213,7 @@ def update_playground_index(text: str, sizes: dict[str, str]) -> str:
         f"Snake ships at {sizes['snake']}. "
         f"Tetris is {sizes['tetris']}. "
         f"A full roguelike with procedural generation is {sizes['rogue']}. "
-        "<code>--wasm-opt oz</code> cuts current games by roughly half (48-59%)."
+        "Built with <code>--target edge-wasm --optimize size</code> — runtime is shared across games, second load is just the thin user.wasm."
     )
 
     for game in GAMES:
@@ -248,7 +248,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Rebuild the playground: compiler (wasm-pack), game WASM (aver compile "
-            "--wasm-opt oz), mirrored sources, and website size labels."
+            "--target edge-wasm --optimize size), mirrored sources, and website size labels."
         )
     )
     parser.add_argument(

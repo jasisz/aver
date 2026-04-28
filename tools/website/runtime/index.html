@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Aver runtime artifacts</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/svg+xml" href="../favicon.svg">
+    <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<main class="container" style="max-width: 880px; padding: 3rem 1.5rem;">
+    <p><a href="/">← averlang.dev</a></p>
+    <h1>Aver runtime artifacts</h1>
+    <p class="section-sub">
+        Standalone WebAssembly modules for the Aver language runtime.
+        Pair these with a thin <code>user.wasm</code> built via
+        <code>aver compile --target edge-wasm --optimize size</code> —
+        the runtime is cached once and shared across every program.
+    </p>
+
+    <h2>Quick start</h2>
+    <pre><code>$ aver compile mygame.av --target edge-wasm --optimize size -o dist/
+
+# Browser / wasmtime: instantiate runtime first, point user.wasm at it
+const runtime = await WebAssembly.instantiateStreaming(
+    fetch("https://averlang.dev/runtime/latest/aver_runtime.wasm"),
+    {}
+);
+const user = await WebAssembly.instantiateStreaming(
+    fetch("/dist/mygame.wasm"),
+    { aver_runtime: runtime.instance.exports, aver: hostImports }
+);
+user.instance.exports._start();</code></pre>
+
+    <h2>Releases</h2>
+    <p>
+        Stable URL for the most recent release:
+        <code>/runtime/latest/aver_runtime.wasm</code>.
+        Per-version URLs below are immutable — pin to one for
+        reproducible deployments.
+    </p>
+    <table style="width: 100%; border-collapse: collapse;">
+      <thead>
+        <tr style="text-align: left; border-bottom: 1px solid var(--border, #ccc);">
+          <th>Version</th><th>Runtime</th><th>WASI bridge</th><th>Extras</th>
+        </tr>
+      </thead>
+      <tbody>
+      <tr>
+        <td><a href="v0.14.0/">v0.14.0</a>  <small>(latest)</small></td>
+        <td><a href="v0.14.0/aver_runtime.wasm">aver_runtime.wasm</a> <small>(10,510 B)</small></td>
+        <td><a href="v0.14.0/aver_to_wasi.wasm">aver_to_wasi.wasm</a> <small>(684 B)</small></td>
+        <td><a href="v0.14.0/aver_runtime.wat">.wat</a> · <a href="v0.14.0/CHECKSUMS.txt">sha256</a></td>
+      </tr>
+      </tbody>
+    </table>
+
+    <h2>What's in here</h2>
+    <ul>
+        <li><strong>aver_runtime.wasm</strong> — alloc, GC, hashmap (HAMT),
+            string/list/vector ops. Imported as <code>aver_runtime</code>
+            by every <code>edge-wasm</code> binary.</li>
+        <li><strong>aver_to_wasi.wasm</strong> — translation shim that
+            satisfies a program's <code>aver/*</code> host imports
+            against <code>wasi_snapshot_preview1.fd_write</code>.
+            Optional, for wasmtime / Cloudflare Workers / Fastly.</li>
+        <li><strong>.wat</strong> — human-readable disassembly. Inspect
+            what's actually in the binary.</li>
+        <li><strong>CHECKSUMS.txt</strong> — sha256 sums for every file
+            in the directory.</li>
+    </ul>
+
+    <p class="section-sub">
+        Latest: <strong>v0.14.0</strong>.
+        Manifest: <a href="manifest.json">manifest.json</a>.
+    </p>
+</main>
+</body>
+</html>
