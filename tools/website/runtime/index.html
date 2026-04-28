@@ -2,35 +2,295 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Aver runtime artifacts</title>
+    <title>Aver runtime · averlang.dev</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" type="image/svg+xml" href="../favicon.svg">
     <link rel="stylesheet" href="../style.css">
+    <style>
+        .rt-page {
+            max-width: 920px;
+            margin: 0 auto;
+            padding: 2.5rem 1.5rem 4rem;
+        }
+        .rt-back {
+            font-size: 0.9rem;
+            color: var(--muted);
+            text-decoration: none;
+            display: inline-block;
+            margin-bottom: 1.5rem;
+        }
+        .rt-back:hover { color: var(--accent); }
+        .rt-page h1 {
+            font-size: 2.25rem;
+            letter-spacing: -0.02em;
+            margin-bottom: 0.6rem;
+        }
+        .rt-page h2 {
+            font-size: 1.4rem;
+            letter-spacing: -0.01em;
+            margin: 2.5rem 0 0.9rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--border);
+        }
+        .rt-page h2:first-of-type {
+            border-top: none;
+            padding-top: 0;
+            margin-top: 2.5rem;
+        }
+        .rt-lede {
+            color: var(--muted);
+            font-size: 1.02rem;
+            line-height: 1.6;
+            max-width: 60ch;
+        }
+        .rt-lede code {
+            background: var(--inline-code-bg);
+            color: var(--inline-code-text);
+            border: 1px solid var(--inline-code-border);
+            padding: 0.08rem 0.4rem;
+            border-radius: 5px;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+        }
+        .rt-page p {
+            color: var(--muted);
+            line-height: 1.6;
+            max-width: 60ch;
+        }
+        .rt-page p code, .rt-list code {
+            background: var(--inline-code-bg);
+            color: var(--inline-code-text);
+            border: 1px solid var(--inline-code-border);
+            padding: 0.08rem 0.4rem;
+            border-radius: 5px;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+        }
+        .rt-page pre {
+            background: var(--code-surface);
+            color: #e2e8f0;
+            border: 1px solid var(--code-border);
+            border-radius: 10px;
+            padding: 1.1rem 1.25rem;
+            overflow-x: auto;
+            font-family: var(--font-mono);
+            font-size: 0.86rem;
+            line-height: 1.55;
+            margin: 0.5rem 0;
+        }
+        .rt-page pre .rt-comment { color: #94a3b8; }
+        .rt-page pre .rt-prompt { color: #f59e0b; }
+        .rt-releases {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1rem;
+            margin-top: 0.75rem;
+        }
+        .rt-release {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.1rem 1.25rem;
+            transition: border-color 0.18s, box-shadow 0.18s;
+        }
+        .rt-release:hover {
+            border-color: var(--accent);
+            box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+        }
+        .rt-release-head {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            margin-bottom: 0.85rem;
+        }
+        .rt-release-head h3 {
+            font-size: 1.1rem;
+            color: var(--text);
+            font-weight: 650;
+            letter-spacing: -0.01em;
+        }
+        .rt-pill {
+            background: var(--accent);
+            color: var(--btn-primary-text);
+            font-size: 0.7rem;
+            font-weight: 650;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            padding: 0.15rem 0.55rem;
+            border-radius: 999px;
+        }
+        .rt-downloads {
+            list-style: none;
+            margin: 0 0 0.85rem;
+            padding: 0;
+        }
+        .rt-downloads li { margin-bottom: 0.35rem; }
+        .rt-dl {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.5rem 0.75rem;
+            background: var(--inline-code-bg);
+            border: 1px solid var(--inline-code-border);
+            border-radius: 8px;
+            text-decoration: none;
+            color: var(--text);
+            font-family: var(--font-mono);
+            font-size: 0.82rem;
+            transition: border-color 0.18s, color 0.18s;
+        }
+        .rt-dl:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .rt-dl-size {
+            color: var(--muted);
+            font-size: 0.75rem;
+            white-space: nowrap;
+        }
+        .rt-dl:hover .rt-dl-size { color: var(--accent); }
+        .rt-extras {
+            font-size: 0.8rem;
+            color: var(--muted);
+            margin: 0;
+        }
+        .rt-extras a {
+            color: var(--muted);
+            text-decoration: none;
+            border-bottom: 1px dashed var(--border);
+        }
+        .rt-extras a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+        .rt-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            display: grid;
+            gap: 0.85rem;
+        }
+        .rt-list li {
+            color: var(--muted);
+            line-height: 1.55;
+            font-size: 0.93rem;
+            max-width: 65ch;
+        }
+        .rt-list strong {
+            color: var(--text);
+            font-weight: 650;
+        }
+        .rt-foot {
+            margin-top: 2.5rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--border);
+            font-size: 0.85rem;
+            color: var(--muted);
+        }
+        .rt-foot a { color: var(--accent); text-decoration: none; }
+        .rt-foot a:hover { text-decoration: underline; }
+        .rt-empty {
+            color: var(--muted);
+            font-style: italic;
+        }
+        @media (max-width: 600px) {
+            .rt-page h1 { font-size: 1.75rem; }
+            .rt-page pre { font-size: 0.78rem; padding: 0.85rem 0.95rem; }
+        }
+    </style>
 </head>
 <body>
-<main class="container" style="max-width: 880px; padding: 3rem 1.5rem;">
-    <p><a href="/">← averlang.dev</a></p>
-    <h1>Aver runtime artifacts</h1>
-    <p class="section-sub">
+<main class="rt-page">
+    <a class="rt-back" href="/">← averlang.dev</a>
+
+    <h1>Aver runtime</h1>
+    <p class="rt-lede">
         Standalone WebAssembly modules for the Aver language runtime.
-        Pair these with a thin <code>user.wasm</code> built via
+        Pair them with a thin <code>user.wasm</code> built via
         <code>aver compile --target edge-wasm --optimize size</code> —
         the runtime is cached once and shared across every program.
     </p>
 
     <h2>Quick start</h2>
-    <pre><code>$ aver compile mygame.av --target edge-wasm --optimize size -o dist/
+    <p>
+        A thin <code>user.wasm</code> imports two modules:
+        <code>aver_runtime</code> (from this CDN) and <code>aver</code>
+        (host effects you provide — see the next two sections for
+        browser and standalone shapes).
+    </p>
+    <pre><span class="rt-prompt">$</span> aver compile mygame.av --target edge-wasm --optimize size -o dist/
 
-# Browser / wasmtime: instantiate runtime first, point user.wasm at it
+<span class="rt-comment">// Three-step instantiate: runtime → host effects → user program</span>
 const runtime = await WebAssembly.instantiateStreaming(
     fetch("https://averlang.dev/runtime/latest/aver_runtime.wasm"),
     {}
 );
 const user = await WebAssembly.instantiateStreaming(
     fetch("/dist/mygame.wasm"),
-    { aver_runtime: runtime.instance.exports, aver: hostImports }
+    {
+        aver_runtime: runtime.instance.exports,
+        aver: makeHostImports(runtime.instance.exports.memory),
+    }
 );
-user.instance.exports._start();</code></pre>
+user.instance.exports._start();</pre>
+
+    <h2>Browser host shim</h2>
+    <p>
+        A minimal <code>aver/*</code> import set for browser hosts.
+        Strings and other heap values arrive as
+        <code>(ptr, len)</code> pairs into the runtime's linear
+        memory — read them through a typed-array view of
+        <code>runtime.exports.memory</code>.
+    </p>
+    <pre><span class="rt-comment">// Smallest viable shim — covers Console.* and one Time effect.</span>
+<span class="rt-comment">// Add more entries as your program declares more effects.</span>
+function makeHostImports(memory) {
+    const decoder = new TextDecoder("utf-8");
+    const readBytes = (ptr, len) =>
+        new Uint8Array(memory.buffer, ptr, len);
+    const readString = (ptr, len) =>
+        decoder.decode(readBytes(ptr, len));
+
+    return {
+        console_print: (ptr, len) =&gt; console.log(readString(ptr, len)),
+        console_error: (ptr, len) =&gt; console.error(readString(ptr, len)),
+        console_warn:  (ptr, len) =&gt; console.warn(readString(ptr, len)),
+        time_unixMs:   () =&gt; BigInt(Date.now()),
+        random_int:    (lo, hi) =&gt; {
+            const span = hi - lo + 1n;
+            return lo + BigInt(Math.floor(Math.random() * Number(span)));
+        },
+    };
+}</pre>
+
+    <h2>Standalone with WASI</h2>
+    <p>
+        For wasmtime / Cloudflare Workers / Fastly Compute — anywhere
+        without a JS host — bundle <code>aver_to_wasi.wasm</code>
+        alongside the runtime. It translates <code>aver/*</code>
+        imports into <code>wasi_snapshot_preview1.fd_write</code>
+        calls, so the only host the result needs is WASI itself.
+    </p>
+    <pre><span class="rt-comment">// One-shot bundle (binaryen):</span>
+<span class="rt-prompt">$</span> wasm-merge \
+      aver_runtime.wasm  aver_runtime \
+      aver_to_wasi.wasm  aver         \
+      dist/mygame.wasm   program      \
+      --rename-export-conflicts        \
+      --enable-bulk-memory --enable-multivalue --enable-tail-call \
+      -o mygame-standalone.wasm
+
+<span class="rt-prompt">$</span> wasmtime mygame-standalone.wasm
+<span class="rt-comment"># Runs without any other host wiring.</span>
+
+<span class="rt-comment"># Or skip the merge and just wire all three modules at instantiate time
+# in any wasmtime::Linker / @bytecodealliance/preview2-shim setup.</span></pre>
+    <p>
+        Coverage today: <code>Console.*</code> and
+        <code>Format.value</code> /
+        <code>Print.value</code>. Other <code>aver/*</code> effects
+        (<code>Disk.*</code>, <code>Tcp.*</code>, etc.) trap as
+        <code>unreachable</code> in the bridge — wire them through
+        the host directly until coverage lands.
+    </p>
 
     <h2>Releases</h2>
     <p>
@@ -39,40 +299,53 @@ user.instance.exports._start();</code></pre>
         Per-version URLs below are immutable — pin to one for
         reproducible deployments.
     </p>
-    <table style="width: 100%; border-collapse: collapse;">
-      <thead>
-        <tr style="text-align: left; border-bottom: 1px solid var(--border, #ccc);">
-          <th>Version</th><th>Runtime</th><th>WASI bridge</th><th>Extras</th>
-        </tr>
-      </thead>
-      <tbody>
-      <tr>
-        <td><a href="v0.14.0/">v0.14.0</a>  <small>(latest)</small></td>
-        <td><a href="v0.14.0/aver_runtime.wasm">aver_runtime.wasm</a> <small>(10,510 B)</small></td>
-        <td><a href="v0.14.0/aver_to_wasi.wasm">aver_to_wasi.wasm</a> <small>(684 B)</small></td>
-        <td><a href="v0.14.0/aver_runtime.wat">.wat</a> · <a href="v0.14.0/CHECKSUMS.txt">sha256</a></td>
-      </tr>
-      </tbody>
-    </table>
+    <div class="rt-releases">
+        <article class="rt-release">
+            <header class="rt-release-head">
+                <h3>v0.14.0</h3><span class="rt-pill">latest</span>
+            </header>
+            <ul class="rt-downloads">
+                <li>
+                    <a href="v0.14.0/aver_runtime.wasm" class="rt-dl">
+                        <span class="rt-dl-name">aver_runtime.wasm</span>
+                        <span class="rt-dl-size">10,510 B</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="v0.14.0/aver_to_wasi.wasm" class="rt-dl">
+                        <span class="rt-dl-name">aver_to_wasi.wasm</span>
+                        <span class="rt-dl-size">684 B</span>
+                    </a>
+                </li>
+            </ul>
+            <p class="rt-extras">
+                <a href="v0.14.0/">browse</a>
+                · <a href="v0.14.0/aver_runtime.wat">.wat</a>
+                · <a href="v0.14.0/CHECKSUMS.txt">sha256</a>
+                · <a href="v0.14.0/README.md">README</a>
+            </p>
+        </article>
+    </div>
 
-    <h2>What's in here</h2>
-    <ul>
+    <h2>What's in each release</h2>
+    <ul class="rt-list">
         <li><strong>aver_runtime.wasm</strong> — alloc, GC, hashmap (HAMT),
-            string/list/vector ops. Imported as <code>aver_runtime</code>
+            string / list / vector ops. Imported as <code>aver_runtime</code>
             by every <code>edge-wasm</code> binary.</li>
         <li><strong>aver_to_wasi.wasm</strong> — translation shim that
             satisfies a program's <code>aver/*</code> host imports
             against <code>wasi_snapshot_preview1.fd_write</code>.
-            Optional, for wasmtime / Cloudflare Workers / Fastly.</li>
-        <li><strong>.wat</strong> — human-readable disassembly. Inspect
-            what's actually in the binary.</li>
+            Optional — needed only for wasmtime / Cloudflare Workers /
+            Fastly Compute, not for browser hosts.</li>
+        <li><strong>.wat</strong> — human-readable disassembly of each
+            <code>.wasm</code>. Inspect what's actually in the binary.</li>
         <li><strong>CHECKSUMS.txt</strong> — sha256 sums for every file
             in the directory.</li>
     </ul>
 
-    <p class="section-sub">
+    <p class="rt-foot">
         Latest: <strong>v0.14.0</strong>.
-        Manifest: <a href="manifest.json">manifest.json</a>.
+        Programmatic discovery: <a href="manifest.json">manifest.json</a>.
     </p>
 </main>
 </body>

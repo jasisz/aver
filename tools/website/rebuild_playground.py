@@ -190,9 +190,12 @@ def replace_once(pattern: str, replacement: str, text: str, *, flags: int = 0) -
 
 def update_main_index(text: str, sizes: dict[str, str]) -> str:
     summary = (
-        "Seven games compiled directly from Aver to standalone WASM. "
-        "No emscripten, no GC, tiny inline runtime. "
-        f"Snake is {sizes['snake']}. A full roguelike is {sizes['rogue']}."
+        "Seven games compiled directly from Aver. The runtime — alloc, "
+        "GC, hashmap, string ops — is one ~10 KiB module loaded once. "
+        "Every game ships just its program logic: "
+        f"Snake {sizes['snake']}, full roguelike {sizes['rogue']}. "
+        "Browser caches the runtime; the second game you click downloads "
+        'only the program. <a href="runtime/">Pinned runtime versions →</a>'
     )
     text = replace_once(
         r'(<section class="games" id="demo">.*?<p class="section-sub">)(.*?)(</p>)',

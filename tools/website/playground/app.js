@@ -1639,11 +1639,12 @@ if (contextBtn) {
 }
 
 // Compile meta: compile time + raw WASM size + hover-only footnote
-// explaining the inline runtime. We tried lazy-loading binaryen from
-// three CDNs (unpkg 404s, esm.sh chokes on Node-style module.require,
-// skypack's build pipeline fails on binaryen's native wasm blob) —
-// three strikes, not worth keeping the code path. CLI users who want
-// the optimized size run `aver compile --wasm-opt oz` locally.
+// explaining the shared-runtime split. We tried lazy-loading binaryen
+// from three CDNs (unpkg 404s, esm.sh chokes on Node-style
+// module.require, skypack's build pipeline fails on binaryen's native
+// wasm blob) — three strikes, not worth keeping the code path. CLI
+// users who want the optimized size run
+// `aver compile --target edge-wasm --optimize size` locally.
 function clearCompileMeta() {
     if (dom.compileMeta) dom.compileMeta.textContent = "";
 }
@@ -1666,8 +1667,11 @@ function renderPrebuiltMeta(name, rawSize) {
     footnote.textContent = "*";
     footnote.title =
         "Game binaries are compiled by the CLI with `aver compile " +
-        "--wasm-opt oz` and served as static files. Edit any tab to " +
-        "fork — next ▶ Run recompiles the active file in the browser.";
+        "--target edge-wasm --optimize size` and served as static " +
+        "files. They're thin user.wasm modules — the runtime " +
+        "(alloc, GC, hashmap, strings) is loaded once and shared " +
+        "across every game. Edit any tab to fork — next ▶ Run " +
+        "recompiles the active file in the browser.";
     dom.compileMeta.appendChild(footnote);
 }
 
@@ -1689,11 +1693,12 @@ function renderCompileMeta(rawSize, compileMs) {
     footnote.className = "compile-footnote";
     footnote.textContent = "*";
     footnote.title =
-        "Raw WASM size, no wasm-opt. Includes Aver's inline runtime " +
-        "(bump allocator, strings, lists, maps). The CLI's " +
-        "`aver compile --wasm-opt oz` strips unused runtime and " +
-        "simplifies the generated code — a one-line program drops to " +
-        "~250 B, real programs roughly halve.";
+        "Raw size of just the program logic — the runtime " +
+        "(alloc, GC, hashmap, strings, lists) is a separate ~10 KiB " +
+        "module loaded once and shared across every program. " +
+        "The CLI's `aver compile --target edge-wasm --optimize size` " +
+        "strips this further with metadce + `-Oz --converge`; " +
+        "trivial programs drop to ~280 B.";
     dom.compileMeta.appendChild(footnote);
 }
 

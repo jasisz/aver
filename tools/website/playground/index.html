@@ -217,12 +217,12 @@
     <div class="about-card">
         <button class="about-close" data-close-wasm>&times;</button>
         <h2>Native WASM</h2>
-        <p class="about-tagline">No emscripten. No GC. Tiny inline runtime. Just your code.</p>
+        <p class="about-tagline">No emscripten. Shared runtime. Just your code.</p>
 
         <div class="about-features">
             <div class="about-feature">
                 <strong>Direct compilation</strong>
-                <span>Aver has its own WASM codegen — it emits WASM bytecode directly, not through Rust or C. No emscripten, no wasm-bindgen, no glue code. The binary contains only your program logic and a tiny bump allocator.</span>
+                <span>Aver has its own WASM codegen — it emits WASM bytecode directly, not through Rust or C. No emscripten, no wasm-bindgen, no glue code. The binary you ship is just your program logic; alloc, GC, hashmap, and string ops live in a separate runtime module everyone shares.</span>
             </div>
             <div class="about-feature">
                 <strong>Tiny binaries</strong>
@@ -239,10 +239,11 @@
         </div>
 
         <pre class="about-example">$ cargo install aver-lang
-$ aver compile game.av --target wasm --optimize size
-Compiled game.av → game.wasm (8.2 KiB, wasm-opt -Oz)
+$ aver compile game.av --target edge-wasm --optimize size
+Compiled game.av → game.wasm (5.0 KiB, optimized for size, imports aver_runtime.* + aver/* (effects))
 
-# drag game.wasm into the playground</pre>
+# drag game.wasm into the playground — it pairs with the
+# shared runtime served from /runtime/latest/aver_runtime.wasm</pre>
     </div>
 </div>
 
