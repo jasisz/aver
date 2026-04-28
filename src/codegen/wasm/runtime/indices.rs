@@ -121,7 +121,7 @@ pub struct RuntimeFuncIndices {
     pub list_contains: u32,   // (i32, i64) -> i32
     pub list_zip: u32,        // (i32, i32) -> i32
     pub map_get: u32,         // (i32, i64, i32) -> i32
-    pub map_set: u32,         // (i32, i64, i32, i64, i32) -> i32
+    pub map_set: u32,         // (i32, i64, i32, i64, i32, i32) -> i32  (last param: owned)
     pub map_has: u32,         // (i32, i64, i32) -> i32
     pub map_keys: u32,        // (i32) -> i32
     pub map_entries: u32,     // (i32) -> i32
@@ -386,7 +386,8 @@ pub struct RtTypeIndices {
     pub i32_i64_i32_to_i32: u32,         // (i32, i64, i32) -> i32
     pub i32_i32_i64_to_i32: u32,         // (i32, i32, i64) -> i32
     pub i32_i32_i64_i32_to_i32: u32,     // (i32, i32, i64, i32) -> i32
-    pub i32_i64_i32_i64_i32_to_i32: u32, // (i32, i64, i32, i64, i32) -> i32 (rt_map_set)
+    pub i32_i64_i32_i64_i32_to_i32: u32, // (i32, i64, i32, i64, i32) -> i32
+    pub i32_i64_i32_i64_i32_i32_to_i32: u32, // (i32, i64, i32, i64, i32, i32) -> i32 (rt_map_set with owned)
     pub i32_i64_i64_to_i32: u32,         // (i32, i64, i64) -> i32
     pub i64_i64_to_i32: u32,             // (i64, i64) -> i32
     pub i64_i64_i32_to_i32: u32,         // (i64, i64, i32) -> i32
@@ -478,6 +479,18 @@ pub fn emit_base_type_section(type_section: &mut TypeSection) -> RtTypeIndices {
         ],
         &[ValType::I32],
     );
+    let i32_i64_i32_i64_i32_i32_to_i32 = registry.intern(
+        type_section,
+        &[
+            ValType::I32,
+            ValType::I64,
+            ValType::I32,
+            ValType::I64,
+            ValType::I32,
+            ValType::I32,
+        ],
+        &[ValType::I32],
+    );
     let i32_i64_i64_to_i32 = registry.intern(
         type_section,
         &[ValType::I32, ValType::I64, ValType::I64],
@@ -546,6 +559,7 @@ pub fn emit_base_type_section(type_section: &mut TypeSection) -> RtTypeIndices {
         i32_i32_i64_to_i32,
         i32_i32_i64_i32_to_i32,
         i32_i64_i32_i64_i32_to_i32,
+        i32_i64_i32_i64_i32_i32_to_i32,
         i32_i64_i64_to_i32,
         i64_i64_to_i32,
         i64_i64_i32_to_i32,
@@ -654,6 +668,19 @@ pub fn lookup_type_index(
         && results == [ValType::I32]
     {
         return Some(rti.i32_i64_i32_i64_i32_to_i32);
+    }
+    if params
+        == [
+            ValType::I32,
+            ValType::I64,
+            ValType::I32,
+            ValType::I64,
+            ValType::I32,
+            ValType::I32,
+        ]
+        && results == [ValType::I32]
+    {
+        return Some(rti.i32_i64_i32_i64_i32_i32_to_i32);
     }
     if params == [ValType::I32, ValType::I64, ValType::I64] && results == [ValType::I32] {
         return Some(rti.i32_i64_i64_to_i32);

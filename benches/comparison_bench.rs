@@ -147,6 +147,30 @@ fn main() -> Int
     Map.len(m)
 "#;
 
+// Lookup-heavy companion to MAP_BUILD: builds the map once and then
+// hammers it with lookups. Linked-list maps were O(N) per get (and so
+// O(N²) over the workload); HAMT brings it down to O(log N). The
+// build phase remains in-bench so that build regressions still show
+// up — but the lookup phase dominates wall-clock for N≥1000.
+const MAP_LOOKUP_SRC: &str = r#"module Bench
+
+fn buildMap(n: Int, m: Map<String, Int>) -> Map<String, Int>
+    match n
+        0 -> m
+        _ -> buildMap(n - 1, Map.set(m, Int.toString(n), n))
+
+fn sumLookups(i: Int, m: Map<String, Int>, acc: Int) -> Int
+    match i
+        0 -> acc
+        _ -> match Map.get(m, Int.toString(i))
+            Option.Some(v) -> sumLookups(i - 1, m, acc + v)
+            Option.None -> sumLookups(i - 1, m, acc)
+
+fn main() -> Int
+    m = buildMap(2000, Map.empty())
+    sumLookups(20000, m, 0)
+"#;
+
 const MATCH_SRC: &str = r#"module Bench
 
 type Shape
@@ -309,6 +333,7 @@ fn comparison_benches(c: &mut Criterion) {
         ("countdown(20k)", "bench_countdown", COUNTDOWN_SRC),
         ("record access 20k", "bench_record", RECORD_SRC),
         ("map build 5k", "bench_map", MAP_BUILD_SRC),
+        ("map lookup 20k/2k", "bench_map_lookup", MAP_LOOKUP_SRC),
         ("pattern match 30k", "bench_match", MATCH_SRC),
         ("string interp 5k", "bench_string", STRING_SRC),
         ("vector get/set 5k", "bench_vector", VECTOR_SRC),

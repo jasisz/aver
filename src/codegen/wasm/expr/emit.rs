@@ -1240,13 +1240,19 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions
                     .push(Instruction::LocalSet(tmp_base + i as u32));
             }
-            // Yard semantics: skip when heap barely grew, full GC otherwise.
+            // Yard semantics: compact when this iteration's growth
+            // exceeds the threshold. The original 256-byte cutoff was
+            // calibrated for the linked-list map era (~24B per cons
+            // cell) and fires *every* iteration once HAMT or any other
+            // structurally-sharing data type allocates 4-5 nodes per
+            // step (~600B) — death by a thousand compactions. 16384
+            // matches the mutual-TCO branch's watermark threshold.
             if let Some(iter_mark) = self.iter_mark_local {
                 let fn_mark = self.boundary_mark_local.unwrap_or(iter_mark);
                 self.instructions.push(Instruction::GlobalGet(0));
                 self.instructions.push(Instruction::LocalGet(iter_mark));
                 self.instructions.push(Instruction::I32Sub);
-                self.instructions.push(Instruction::I32Const(256));
+                self.instructions.push(Instruction::I32Const(16384));
                 self.instructions.push(Instruction::I32GtU);
                 self.emit_if(wasm_encoder::BlockType::Empty);
                 self.instructions.push(Instruction::LocalGet(fn_mark));

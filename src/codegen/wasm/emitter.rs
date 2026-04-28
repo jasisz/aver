@@ -424,7 +424,7 @@ pub fn build_wasm_module(
     import_section.import(
         "aver_runtime",
         "rt_map_set",
-        EntityType::Function(rti.i32_i64_i32_i64_i32_to_i32),
+        EntityType::Function(rti.i32_i64_i32_i64_i32_i32_to_i32),
     );
     import_section.import(
         "aver_runtime",

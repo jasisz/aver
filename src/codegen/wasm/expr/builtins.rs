@@ -10,6 +10,22 @@ use super::super::types::WasmType;
 use super::super::value;
 use super::ExprEmitter;
 
+/// Is this expression a last-use read of a local slot? The IR's
+/// `last_use` pass annotates `Expr::Resolved` nodes whose slot is
+/// not referenced again afterwards — VM picks that up via
+/// `MOVE_LOCAL` / `CALL_BUILTIN_OWNED`, Rust codegen via
+/// `Rc::make_mut`. WASM uses it to flag mutating runtime calls
+/// (`Map.set`, `Vector.set`) as in-place-safe instead of forcing a
+/// fresh persistent copy.
+///
+/// Conservative on purpose: only `Expr::Resolved { last_use: true }`
+/// counts. Sub-expressions that bury a resolved slot inside another
+/// constructor may still be optimizable, but the call site doesn't
+/// own them in the same way and the analysis isn't alias-aware.
+fn expr_is_owned_last_use(expr: &Expr) -> bool {
+    matches!(expr, Expr::Resolved { last_use, .. } if last_use.0)
+}
+
 impl<'a> ExprEmitter<'a> {
     /// Emit a builtin call (Console.print, List.len, Float.fromInt etc.)
     pub(super) fn emit_builtin_call(&mut self, name: &str, args: &[Spanned<Expr>]) {
@@ -134,7 +150,17 @@ impl<'a> ExprEmitter<'a> {
             }
             "Map.set" if args.len() == 3 => {
                 // args on stack: [map(i32), key(?), value(?)]
-                // ABI: rt_map_set(map, key: i64, kind: i32, value: i64, value_ptr_flag: i32)
+                // ABI: rt_map_set(map, key: i64, kind: i32, value: i64, value_ptr_flag: i32, owned: i32)
+                //
+                // `owned` says "the caller will not read this map again
+                // through any local — mutate it in place along the
+                // insert path instead of doing a fresh path-copy".
+                // Set when the IR's last-use pass marked args[0] as the
+                // final read of a local slot (the `m = Map.set(m, k, v)`
+                // hot-loop pattern). VM uses this same signal via
+                // CALL_BUILTIN_OWNED, Rust codegen via Rc::make_mut;
+                // WASM ignored it before 0.14.
+                let owned = expr_is_owned_last_use(&args[0].node);
                 let value_is_ptr = self.expr_is_heap_ptr(&args[2].node);
                 let val_type = self.infer_expr_type(&args[2].node);
                 let value_local = self.alloc_local(WasmType::I64);
@@ -150,6 +176,8 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalGet(value_local));
                 self.instructions
                     .push(Instruction::I32Const(if value_is_ptr { 1 } else { 0 }));
+                self.instructions
+                    .push(Instruction::I32Const(if owned { 1 } else { 0 }));
                 self.instructions.push(Instruction::Call(self.rt.map_set));
             }
             "Map.len" if args.len() == 1 => {
