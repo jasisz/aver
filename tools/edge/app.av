@@ -12,7 +12,7 @@ fn manifesto(country: String, ts: Int) -> String
     String.join([
         "{{",
         "  \"language\": \"Aver\",",
-        "  \"target\": \"edge-wasm\",",
+        "  \"target\": \"wasm\",",
         "  \"runtime\": \"Cloudflare Workers\",",
         "  \"country\": \"{country}\",",
         "  \"served_at_unix_ms\": {ts},",
@@ -23,7 +23,7 @@ fn manifesto(country: String, ts: Int) -> String
     ], "\n")
 
 verify manifesto
-    manifesto("PL", 0) => "{{\n  \"language\": \"Aver\",\n  \"target\": \"edge-wasm\",\n  \"runtime\": \"Cloudflare Workers\",\n  \"country\": \"PL\",\n  \"served_at_unix_ms\": 0,\n  \"pure_core\": true,\n  \"effects\": [\"Time.unixMs\"]\n}}\n"
+    manifesto("PL", 0) => "{{\n  \"language\": \"Aver\",\n  \"target\": \"wasm\",\n  \"runtime\": \"Cloudflare Workers\",\n  \"country\": \"PL\",\n  \"served_at_unix_ms\": 0,\n  \"pure_core\": true,\n  \"effects\": [\"Time.unixMs\"]\n}}\n"
 
 fn landing(country: String) -> String
     ? "Minimal HTML landing — explains what's happening."
@@ -44,7 +44,7 @@ fn landing(country: String) -> String
         "</head>",
         "<body>",
         "  <h1>This page is served by Aver.</h1>",
-        "  <p class=\"sub\">Compiled to <code>--target edge-wasm</code>, packed for Cloudflare Workers, answering you from <strong>{country}</strong>.</p>",
+        "  <p class=\"sub\">Compiled with <code>aver compile --preset cloudflare</code>, answering you from <strong>{country}</strong>.</p>",
         "  <p>The endpoint behind this URL is a pure <code>fn handler(req: HttpRequest) -&gt; HttpResponse</code>. The only declared effect is <code>Time.unixMs</code>; everything else — routing, body, headers — is pure Aver string interpolation.</p>",
         "  <h2>Endpoints</h2>",
         "  <ul>",
