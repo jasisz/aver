@@ -1,0 +1,17 @@
+# Generated for edge.averlang.dev — regenerate with:
+#   aver compile tools/edge/app.av --preset cloudflare --handler handler -o tools/edge/dist
+# After regenerating, re-apply the `routes` block below.
+
+name = "aver-edge-demo"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+[wasm_modules]
+app = "./app.wasm"
+
+# Custom domain. Requires `averlang.dev` zone in the same Cloudflare account.
+# Wrangler creates the DNS record + route on first deploy; subsequent deploys
+# update in place. Drop this block to ship to *.workers.dev only.
+[[routes]]
+pattern = "edge.averlang.dev"
+custom_domain = true
