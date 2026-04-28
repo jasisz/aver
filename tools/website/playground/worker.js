@@ -25,13 +25,33 @@ async function ensureRuntime(runtimeBytes) {
     return instance;
 }
 
+/// Walk the WebAssembly imports and return true iff the module imports
+/// at least one symbol from `aver_runtime`. Used to detect whether
+/// the .wasm we're about to run is a thin user.wasm (needs runtime
+/// pre-instantiated and wired in) or a self-contained bundle from
+/// `aver compile --target wasm` (runtime is already embedded).
+async function moduleNeedsRuntime(wasmBytes) {
+    try {
+        const mod = await WebAssembly.compile(wasmBytes);
+        return WebAssembly.Module.imports(mod).some(i => i.module === "aver_runtime");
+    } catch (_) {
+        // If we can't compile up-front, fall back to "yes, instantiate
+        // runtime" — the actual instantiate below will surface the
+        // real error.
+        return true;
+    }
+}
+
 async function runModule(wasmBytes, runtimeBytes) {
     try {
         host.post({ type: "status", level: "info", text: "Instantiating module…" });
 
-        const runtime = await ensureRuntime(runtimeBytes);
         const userImports = host.createImports();
-        userImports.aver_runtime = runtime.exports;
+        const needsRuntime = await moduleNeedsRuntime(wasmBytes);
+        if (needsRuntime) {
+            const runtime = await ensureRuntime(runtimeBytes);
+            userImports.aver_runtime = runtime.exports;
+        }
 
         const { instance } = await WebAssembly.instantiate(wasmBytes, userImports);
         host.setInstance(instance);
