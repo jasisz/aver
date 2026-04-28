@@ -28,7 +28,7 @@ pub use indices::{
     AverRuntimeImports, RuntimeFuncIndices, emit_base_type_section, lookup_type_index,
     rt_type_index,
 };
-pub use wat_module::build_runtime_wasm;
+pub use wat_module::{build_aver_to_wasi_wasm, build_runtime_wasm};
 
 /// Scratch area for IO in linear memory. Reserved: bytes 0-127.
 /// Layout: [0..7] iovec, [8..11] nwritten, [16..37] int_buf,
@@ -56,11 +56,12 @@ pub(crate) const IO_FLOAT_BUF: u32 = 48; // 48 bytes for float digits (48..95)
 /// str_to_lower, str_to_upper, str_trim, str_slice, str_chars,
 /// str_split, str_join, str_replace, int_from_str, float_from_str,
 /// collect_begin, rebase_i32, collect_end, retain_i32.
+/// fd_write_buf removed — user.wasm now calls aver/console_print
+/// directly; the WASI translation lives in aver_to_wasi.wasm.
 #[allow(clippy::vec_init_then_push)]
 pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
     let mut funcs = Vec::new();
 
-    funcs.push(io::emit_fd_write_buf(rt)); // $fd_write_buf
 
     funcs
 }

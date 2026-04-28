@@ -178,7 +178,7 @@ fn main() {
             policy,
             guest_entry,
             with_self_host_support,
-            adapter,
+            bridge,
             wasm_opt,
         } => {
             let policy_mode = (*policy).unwrap_or(if *with_replay {
@@ -196,7 +196,7 @@ fn main() {
                 policy_mode: &policy_mode,
                 guest_entry: guest_entry.as_deref(),
                 with_self_host_support: *with_self_host_support,
-                adapter: *adapter,
+                bridge: *bridge,
                 wasm_opt: *wasm_opt,
             });
         }

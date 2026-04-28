@@ -3277,7 +3277,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         policy_mode,
         guest_entry,
         with_self_host_support,
-        adapter,
+        bridge,
         wasm_opt,
     } = opts;
 
@@ -3289,7 +3289,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
             output_dir,
             project_name,
             module_root_override,
-            adapter,
+            bridge,
             wasm_opt,
             target,
         );
@@ -3357,7 +3357,7 @@ fn cmd_compile_wasm(
     output_dir: &str,
     project_name: Option<&str>,
     module_root_override: Option<&str>,
-    adapter: Option<super::cli::WasmAdapter>,
+    bridge: Option<super::cli::WasmBridge>,
     wasm_opt: Option<super::cli::WasmOptMode>,
     target: super::cli::CompileTarget,
 ) {
@@ -3368,7 +3368,7 @@ fn cmd_compile_wasm(
             output_dir,
             project_name,
             module_root_override,
-            adapter,
+            bridge,
             wasm_opt,
         );
         eprintln!(
@@ -3391,8 +3391,12 @@ fn cmd_compile_wasm(
             false,
         );
 
-        let wasm_adapter = match adapter {
-            Some(super::cli::WasmAdapter::Wasi) => codegen::wasm::WasmAdapter::Wasi,
+        // user.wasm bytes are identical regardless of bridge — the
+        // adapter swap happens at bundle time. We still pass the
+        // bridge through to emit so it can shape the WASI _start
+        // wrapper and any future deployment-side hints.
+        let wasm_adapter = match bridge {
+            Some(super::cli::WasmBridge::Wasi) => codegen::wasm::WasmAdapter::Wasi,
             _ => codegen::wasm::WasmAdapter::Aver,
         };
         match codegen::wasm::emit_wasm_with_adapter(&ctx, wasm_adapter) {
@@ -3427,16 +3431,22 @@ fn cmd_compile_wasm(
                     process::exit(1);
                 }
 
-                // Two targets:
-                //   - EdgeWasm: thin user.wasm with aver_runtime.* (and any
-                //     aver/* effect / wasi fd_write) imports unresolved;
-                //     consumer instantiates against host/CDN-provided
-                //     runtimes.
-                //   - Wasm: 2-way wasm-merge of aver_runtime + user. Effect
-                //     imports (aver/* under Aver adapter, wasi fd_write
-                //     under Wasi adapter) intentionally remain unresolved —
-                //     the consumer host provides them at instantiate time.
+                // Two output shapes:
+                //   - EdgeWasm: thin user.wasm with aver_runtime.* + aver/*
+                //     all unresolved. Consumer (CDN-cached runtime, browser
+                //     playground) wires every import at instantiate time.
+                //   - Wasm: bundled artifact via wasm-merge. aver_runtime
+                //     is always merged in. Bridge controls the rest:
+                //       --bridge none  → only aver/* unresolved (host
+                //                         supplies effects)
+                //       --bridge wasi  → also merge the aver→wasi shim;
+                //                         result is a standalone WASI
+                //                         binary that runs under
+                //                         `wasmtime program.wasm` with
+                //                         only wasi_snapshot_preview1 as
+                //                         the open import.
                 let is_edge = matches!(target, super::cli::CompileTarget::EdgeWasm);
+                let bridge_mode = bridge.unwrap_or(super::cli::WasmBridge::None);
                 let uses_aver_effects = wasm_imports_module(&wasm_bytes, "aver");
                 let uses_wasi = wasm_imports_module(&wasm_bytes, "wasi_snapshot_preview1");
 
@@ -3462,9 +3472,7 @@ fn cmd_compile_wasm(
                         imports_note
                     );
                 } else {
-                    // Bundle aver_runtime + user into one artifact via
-                    // wasm-merge. Effect imports stay unresolved (host
-                    // wires them up at instantiate).
+                    // Bundle aver_runtime + (optional bridge) + user.
                     let runtime_bytes = match aver::codegen::wasm::build_runtime_wasm() {
                         Ok(b) => b,
                         Err(e) => {
@@ -3481,23 +3489,52 @@ fn cmd_compile_wasm(
                         process::exit(1);
                     }
 
+                    // Optional bridge module (today only `wasi`).
+                    let bridge_file = if matches!(bridge_mode, super::cli::WasmBridge::Wasi) {
+                        let bytes = match aver::codegen::wasm::build_aver_to_wasi_wasm() {
+                            Ok(b) => b,
+                            Err(e) => {
+                                eprintln!(
+                                    "{}",
+                                    format!("aver_to_wasi bridge build error: {}", e).red()
+                                );
+                                process::exit(1);
+                            }
+                        };
+                        let path = out_path.join(format!("{}_aver_to_wasi.wasm", wasm_name));
+                        if let Err(e) = std::fs::write(&path, &bytes) {
+                            eprintln!(
+                                "{}",
+                                format!("Failed to write aver_to_wasi shim: {}", e).red()
+                            );
+                            process::exit(1);
+                        }
+                        Some(path)
+                    } else {
+                        None
+                    };
+
                     let merged_file = out_path.join(format!("{}_merged.wasm", wasm_name));
-                    let merge_result = std::process::Command::new("wasm-merge")
-                        .arg(&runtime_file)
-                        .arg("aver_runtime")
-                        .arg(&wasm_file)
-                        .arg("program")
-                        .arg("--rename-export-conflicts")
+                    let mut merge = std::process::Command::new("wasm-merge");
+                    merge.arg(&runtime_file).arg("aver_runtime");
+                    if let Some(bridge_path) = &bridge_file {
+                        merge.arg(bridge_path).arg("aver");
+                    }
+                    merge.arg(&wasm_file).arg("program");
+                    merge.arg("--rename-export-conflicts")
                         .arg("--enable-bulk-memory")
                         // Host imports like format_value return (i32, i32);
                         // emitter uses tail calls in TCO trampolines.
                         .arg("--enable-multivalue")
                         .arg("--enable-tail-call")
                         .arg("-o")
-                        .arg(&merged_file)
-                        .output();
+                        .arg(&merged_file);
+                    let merge_result = merge.output();
 
                     let _ = std::fs::remove_file(&runtime_file);
+                    if let Some(bridge_path) = &bridge_file {
+                        let _ = std::fs::remove_file(bridge_path);
+                    }
 
                     match merge_result {
                         Ok(out) if out.status.success() => {
@@ -3506,12 +3543,19 @@ fn cmd_compile_wasm(
                             let (final_size, compile_suffix) =
                                 finalize_wasm_artifact(&wasm_file, wasm_opt);
                             let wasm_display = wasm_file.display().to_string().cyan();
-                            let imports_note = if uses_aver_effects {
-                                ", with runtime, imports aver/* (effects)"
-                            } else if uses_wasi {
-                                ", with runtime, imports wasi_snapshot_preview1.*"
-                            } else {
-                                ", with runtime"
+                            let imports_note = match bridge_mode {
+                                super::cli::WasmBridge::Wasi => {
+                                    ", with runtime + aver→wasi bridge"
+                                }
+                                super::cli::WasmBridge::None => {
+                                    if uses_aver_effects {
+                                        ", with runtime, imports aver/* (effects)"
+                                    } else if uses_wasi {
+                                        ", with runtime, imports wasi_snapshot_preview1.*"
+                                    } else {
+                                        ", with runtime"
+                                    }
+                                }
                             };
                             println!(
                                 "{} {} → {} ({}{}{})",
@@ -3692,7 +3736,7 @@ pub(super) struct CompileOptions<'a> {
     pub(super) policy_mode: &'a super::cli::CompilePolicyMode,
     pub(super) guest_entry: Option<&'a str>,
     pub(super) with_self_host_support: bool,
-    pub(super) adapter: Option<super::cli::WasmAdapter>,
+    pub(super) bridge: Option<super::cli::WasmBridge>,
     pub(super) wasm_opt: Option<super::cli::WasmOptMode>,
 }
 

@@ -109,7 +109,6 @@ pub struct RuntimeFuncIndices {
     pub list_cons_f64: u32,   // (f64, i32) -> i32
     pub int_to_str: u32,      // (i64, i32) -> i32
     pub float_to_str: u32,    // (f64, i32) -> i32
-    pub fd_write_buf: u32,    // (i32, i32) -> ()
     pub str_eq: u32,          // (i32, i32) -> i32
     pub str_concat: u32,      // (i32, i32) -> i32
     pub i64_to_str_obj: u32,  // (i64) -> i32
@@ -152,10 +151,9 @@ pub struct RuntimeFuncIndices {
     pub str_to_upper: u32,    // (i32) -> i32
     pub int_from_str: u32,    // (i32) -> i32
     pub float_from_str: u32,  // (i32) -> i32
-    /// Total number of runtime functions.
+    /// Total number of runtime functions still emitted locally
+    /// (zero today — every body lives in `aver_runtime`).
     pub count: u32,
-    /// Import function index for writing to stdout (either WASI fd_write or aver/console_print).
-    pub fd_write_import: u32,
     /// Which adapter mode is active.
     pub adapter: super::super::WasmAdapter,
 }
@@ -195,7 +193,6 @@ impl RuntimeFuncIndices {
             list_cons_f64: imports.rt_list_cons_f64,
             int_to_str: imports.rt_int_to_str,
             float_to_str: imports.rt_float_to_str,
-            fd_write_buf: next(),
             str_eq: imports.rt_str_eq,
             str_concat: imports.rt_str_concat,
             i64_to_str_obj: imports.rt_i64_to_str_obj,
@@ -238,9 +235,8 @@ impl RuntimeFuncIndices {
             str_to_upper: imports.rt_str_to_upper,
             int_from_str: imports.rt_int_from_str,
             float_from_str: imports.rt_float_from_str,
-            // count = number of LOCAL runtime functions only (alloc is imported).
+            // No local runtime fns left — everything imports from aver_runtime.
             count: i - base,
-            fd_write_import: 0,
             adapter: super::super::WasmAdapter::Aver,
         }
     }
@@ -272,7 +268,6 @@ impl RuntimeFuncIndices {
             (self.list_cons_f64, "list_cons_f64"),
             (self.int_to_str, "int_to_str"),
             (self.float_to_str, "float_to_str"),
-            (self.fd_write_buf, "fd_write_buf"),
             (self.str_eq, "str_eq"),
             (self.str_concat, "str_concat"),
             (self.i64_to_str_obj, "i64_to_str_obj"),
@@ -690,9 +685,6 @@ pub fn rt_type_index(
 ) -> u32 {
     let local_idx = func_idx - import_func_count;
 
-    if local_idx == rt.fd_write_buf - import_func_count {
-        return rti.fd_write_buf;
-    }
 
     panic!(
         "Unknown runtime function index: {} (base={})",

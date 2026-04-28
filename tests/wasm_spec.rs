@@ -390,12 +390,12 @@ fn main()
         .arg(&module_path)
         .arg("--target")
         .arg("wasm")
-        .arg("--adapter")
+        .arg("--bridge")
         .arg("wasi")
         .arg("-o")
         .arg(&output_dir)
         .output()
-        .expect("expected `aver compile --target wasm --adapter wasi` to run");
+        .expect("expected `aver compile --target wasm --bridge wasi` to run");
     assert!(
         compile.status.success(),
         "WASI bundled compile failed:\n{}",

@@ -12,7 +12,7 @@ mod runtime;
 mod types;
 pub(crate) mod value;
 
-pub use runtime::build_runtime_wasm;
+pub use runtime::{build_aver_to_wasi_wasm, build_runtime_wasm};
 
 use crate::codegen::CodegenContext;
 

@@ -35,12 +35,20 @@ pub(super) enum ProofVerifyMode {
     TheoremSkeleton,
 }
 
-/// WASM import ABI adapter mode.
+/// Deployment-time bridge that satisfies user.wasm's `aver/*` host
+/// imports. user.wasm bytes are identical regardless of bridge — the
+/// choice only affects what gets bundled with `--target wasm`. With
+/// `--target edge-wasm` the bridge is irrelevant (thin output, host
+/// wires imports at instantiate time).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub(super) enum WasmAdapter {
-    /// Default: aver/* capability imports. Requires a host that provides capabilities.
-    Aver,
-    /// Compatibility: WASI imports. Works with standalone wasmtime.
+pub(super) enum WasmBridge {
+    /// No bridge: aver/* imports left unresolved. Consumer host
+    /// (browser playground, `aver run --wasm`, custom edge runtime)
+    /// supplies them at instantiate time.
+    None,
+    /// Translate aver/* → wasi_snapshot_preview1.* via a bundled
+    /// shim. Lets `wasmtime program.wasm` run standalone without an
+    /// external host.
     Wasi,
 }
 
@@ -322,9 +330,13 @@ pub(super) enum Commands {
         /// Emit extra self-host-only runtime glue (FnStore callbacks, HttpServer bridge)
         #[arg(long)]
         with_self_host_support: bool,
-        /// WASM import ABI adapter (default: aver/* capability imports)
-        #[arg(long, value_enum)]
-        adapter: Option<WasmAdapter>,
+        /// Deployment-time bridge for WASM `aver/*` host imports.
+        /// `wasi` bundles the aver→wasi shim so `wasmtime program.wasm`
+        /// runs standalone; `none` (default) leaves aver/* unresolved
+        /// for the consumer host to satisfy. Ignored under
+        /// `--target edge-wasm`.
+        #[arg(long, value_enum, alias = "adapter")]
+        bridge: Option<WasmBridge>,
         /// Post-process generated WASM with wasm-opt (`o3` for speed, `oz` for size)
         #[arg(long, value_enum)]
         wasm_opt: Option<WasmOptMode>,

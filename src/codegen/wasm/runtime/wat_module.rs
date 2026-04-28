@@ -40,6 +40,11 @@ const STR_OPS_WAT: &str = include_str!("wat/str_ops.part.wat");
 const FROM_STR_WAT: &str = include_str!("wat/from_str.part.wat");
 const COLLECT_WAT: &str = include_str!("wat/collect.part.wat");
 
+/// `aver_to_wasi.wat` is a standalone module (full `(module …)`),
+/// not a fragment — it lives separately because its imports are
+/// `wasi_snapshot_preview1.*`, which the main runtime doesn't touch.
+const AVER_TO_WASI_WAT: &str = include_str!("wat/aver_to_wasi.wat");
+
 /// Build the runtime module's WAT source by concatenating fragments
 /// inside a `(module ...)` wrapper. Order matters — prelude declares
 /// memory and globals; later fragments reference them.
@@ -108,6 +113,14 @@ pub fn build_runtime_wasm() -> Result<Vec<u8>, String> {
     wat::parse_str(&src).map_err(|e| format!("runtime WAT parse failed: {}", e))
 }
 
+/// Build the aver→WASI translation shim. Use under `--adapter wasi`
+/// to satisfy user.wasm's `aver/*` imports against
+/// `wasi_snapshot_preview1.fd_write`.
+pub fn build_aver_to_wasi_wasm() -> Result<Vec<u8>, String> {
+    wat::parse_str(AVER_TO_WASI_WAT)
+        .map_err(|e| format!("aver_to_wasi WAT parse failed: {}", e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,6 +129,31 @@ mod tests {
     fn runtime_wat_parses_into_bytes() {
         let bytes = build_runtime_wasm().expect("runtime WAT must parse");
         assert!(bytes.starts_with(b"\0asm"), "expected wasm magic header");
+    }
+
+    #[test]
+    fn aver_to_wasi_bridge_parses_and_validates() {
+        let bytes = build_aver_to_wasi_wasm().expect("aver_to_wasi WAT must parse");
+        assert!(bytes.starts_with(b"\0asm"));
+        wasmparser::Validator::new()
+            .validate_all(&bytes)
+            .expect("aver_to_wasi wasm must validate");
+        let mut found_console = false;
+        let mut found_print_value = false;
+        for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
+            if let Ok(wasmparser::Payload::ExportSection(reader)) = payload {
+                for export in reader {
+                    let export = export.expect("export entry");
+                    match export.name {
+                        "console_print" => found_console = true,
+                        "print_value" => found_print_value = true,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        assert!(found_console, "bridge must export aver/console_print");
+        assert!(found_print_value, "bridge must export aver/print_value");
     }
 
     #[test]

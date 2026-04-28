@@ -630,114 +630,90 @@ pub fn build_wasm_module(
         );
     }
     let mut import_func_count = 64u32; // prev 60 + 4 collect/rebase/retain
-    // Index of the write-to-stdout import (used by runtime's write_stdout helper)
-    let mut write_stdout_import: Option<u32> = None;
 
-    match adapter {
-        super::WasmAdapter::Aver => {
-            // Collect needed ABI imports from user-defined function effects only
-            let user_fn_names: Vec<&str> = user_fns
-                .iter()
-                .map(|entry| entry.canonical_name.as_str())
-                .collect();
-            let needed =
-                super::abi::collect_needed_imports(&ctx.fn_sigs, &user_fn_names, &host_import_set);
-            for abi_entry in &needed {
-                let type_idx =
-                    runtime::lookup_type_index(&rti, abi_entry.params, abi_entry.results)
-                        .ok_or_else(|| {
-                            format!(
-                                "Missing WASM type mapping for ABI import {} ({:?} -> {:?})",
-                                abi_entry.import_name, abi_entry.params, abi_entry.results
-                            )
-                        })?;
-                let idx = import_func_count;
-                import_section.import(
-                    super::abi::ABI_MODULE,
-                    abi_entry.import_name,
-                    wasm_encoder::EntityType::Function(type_idx),
-                );
-                host_imports.insert(abi_entry.import_name.to_string(), idx);
-                if abi_entry.import_name == "console_print" {
-                    write_stdout_import = Some(idx);
-                }
-                import_func_count += 1;
-            }
-            // Runtime helpers reference console_print via fd_write_buf, so keep the
-            // import present even for otherwise pure modules.
-            if write_stdout_import.is_none() {
-                let abi_entry = super::abi::lookup("Console.print").unwrap();
-                let type_idx =
-                    runtime::lookup_type_index(&rti, abi_entry.params, abi_entry.results)
-                        .ok_or_else(|| {
-                            format!(
-                                "Missing WASM type mapping for ABI import {} ({:?} -> {:?})",
-                                abi_entry.import_name, abi_entry.params, abi_entry.results
-                            )
-                        })?;
-                let idx = import_func_count;
-                import_section.import(
-                    super::abi::ABI_MODULE,
-                    abi_entry.import_name,
-                    wasm_encoder::EntityType::Function(type_idx),
-                );
-                write_stdout_import = Some(idx);
-                import_func_count += 1;
-            }
-            // Always import print_value and format_value
-            if let Some(abi_entry) = super::abi::lookup("Print.value") {
-                let type_idx =
-                    runtime::lookup_type_index(&rti, abi_entry.params, abi_entry.results)
-                        .ok_or_else(|| {
-                            format!(
-                                "Missing WASM type mapping for ABI import {} ({:?} -> {:?})",
-                                abi_entry.import_name, abi_entry.params, abi_entry.results
-                            )
-                        })?;
-                let idx = import_func_count;
-                import_section.import(
-                    super::abi::ABI_MODULE,
-                    abi_entry.import_name,
-                    wasm_encoder::EntityType::Function(type_idx),
-                );
-                host_imports.insert(abi_entry.import_name.to_string(), idx);
-                import_func_count += 1;
-            }
-            if let Some(abi_entry) = super::abi::lookup("Format.value") {
-                let type_idx =
-                    runtime::lookup_type_index(&rti, abi_entry.params, abi_entry.results)
-                        .ok_or_else(|| {
-                            format!(
-                                "Missing WASM type mapping for ABI import {} ({:?} -> {:?})",
-                                abi_entry.import_name, abi_entry.params, abi_entry.results
-                            )
-                        })?;
-                let idx = import_func_count;
-                import_section.import(
-                    super::abi::ABI_MODULE,
-                    abi_entry.import_name,
-                    wasm_encoder::EntityType::Function(type_idx),
-                );
-                host_imports.insert(abi_entry.import_name.to_string(), idx);
-                import_func_count += 1;
-            }
-        }
-        super::WasmAdapter::Wasi => {
-            // WASI compatibility mode: import fd_write
+    // Aver-style host imports unconditionally, regardless of --adapter.
+    // Under --adapter wasi the `aver_to_wasi.wasm` shim re-exports the
+    // same `aver/*` symbol set (translating internally to
+    // wasi_snapshot_preview1 calls). user.wasm bytes are identical in
+    // both modes — only the deployment-time module that satisfies
+    // these imports differs.
+    let user_fn_names: Vec<&str> = user_fns
+        .iter()
+        .map(|entry| entry.canonical_name.as_str())
+        .collect();
+    let needed =
+        super::abi::collect_needed_imports(&ctx.fn_sigs, &user_fn_names, &host_import_set);
+    let mut emit_aver_import =
+        |import_section: &mut ImportSection,
+         host_imports: &mut HashMap<String, u32>,
+         import_func_count: &mut u32,
+         abi_entry: &super::abi::AbiImport|
+         -> Result<u32, String> {
+            let type_idx =
+                runtime::lookup_type_index(&rti, abi_entry.params, abi_entry.results).ok_or_else(
+                    || {
+                        format!(
+                            "Missing WASM type mapping for ABI import {} ({:?} -> {:?})",
+                            abi_entry.import_name, abi_entry.params, abi_entry.results
+                        )
+                    },
+                )?;
+            let idx = *import_func_count;
             import_section.import(
-                "wasi_snapshot_preview1",
-                "fd_write",
-                wasm_encoder::EntityType::Function(rti.wasi_fd_write),
+                super::abi::ABI_MODULE,
+                abi_entry.import_name,
+                wasm_encoder::EntityType::Function(type_idx),
             );
-            write_stdout_import = Some(import_func_count);
-            import_func_count += 1;
+            host_imports.insert(abi_entry.import_name.to_string(), idx);
+            *import_func_count += 1;
+            Ok(idx)
+        };
+
+    let mut have_console_print = false;
+    for abi_entry in &needed {
+        emit_aver_import(
+            &mut import_section,
+            &mut host_imports,
+            &mut import_func_count,
+            abi_entry,
+        )?;
+        if abi_entry.import_name == "console_print" {
+            have_console_print = true;
         }
+    }
+    // Console.print is always imported — emit_console_print uses it for
+    // the trailing newline even when user code doesn't call it directly.
+    if !have_console_print {
+        let abi_entry = super::abi::lookup("Console.print").unwrap();
+        emit_aver_import(
+            &mut import_section,
+            &mut host_imports,
+            &mut import_func_count,
+            abi_entry,
+        )?;
+    }
+    // Print.value / Format.value are part of the always-imported core
+    // — emit_console_print delegates value rendering to print_value.
+    if let Some(abi_entry) = super::abi::lookup("Print.value") {
+        emit_aver_import(
+            &mut import_section,
+            &mut host_imports,
+            &mut import_func_count,
+            abi_entry,
+        )?;
+    }
+    if let Some(abi_entry) = super::abi::lookup("Format.value") {
+        emit_aver_import(
+            &mut import_section,
+            &mut host_imports,
+            &mut import_func_count,
+            abi_entry,
+        )?;
     }
 
     module.section(&import_section);
 
     let mut rt = RuntimeFuncIndices::new(import_func_count, aver_rt_imports);
-    rt.fd_write_import = write_stdout_import.unwrap_or(0);
     rt.adapter = adapter;
     let trampoline_fn_base = import_func_count + rt.count;
     let user_fn_base = trampoline_fn_base + mutual_tco_layouts.len() as u32;
