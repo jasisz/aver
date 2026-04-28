@@ -23,25 +23,63 @@ let userMemory = null;
 let userExports = null;
 let pending = null;
 
-function writeAverString(text) {
-  // Build an OBJ_STRING in guest memory: 8-byte header + UTF-8
-  // bytes. Header low 32 bits = byte length; kind=0 (OBJ_STRING)
-  // is the high byte and is naturally zero. Returns the ptr that
-  // the guest treats as a String.
-  const bytes = encoder.encode(text);
-  const ptr = userExports.alloc(bytes.length + 8);
-  const view = new DataView(userMemory.buffer);
-  view.setBigUint64(ptr, BigInt(bytes.length), true);
-  new Uint8Array(userMemory.buffer, ptr + 8, bytes.length).set(bytes);
-  return ptr;
-}
+// Cached typed-array views over guest linear memory. JS `ArrayBuffer`
+// objects are detached (not just resized) when wasm calls
+// `memory.grow`, so any `DataView` / `Uint8Array` built before the
+// grow becomes unusable. We keep `cachedBuffer` as the identity of
+// the last buffer we saw; if it differs from `userMemory.buffer`
+// the views get rebuilt. Same pattern wasm-bindgen uses for its
+// generated shims; saves a `new DataView` + `new Uint8Array` per
+// host import on the hot path.
+let cachedBuffer = null;
+let cachedDataView = null;
+let cachedUint8 = null;
 
-function readString(ptr, len) {
-  return decoder.decode(new Uint8Array(userMemory.buffer, ptr, len));
+function refreshViews() {
+  if (cachedBuffer !== userMemory.buffer) {
+    cachedBuffer = userMemory.buffer;
+    cachedDataView = new DataView(cachedBuffer);
+    cachedUint8 = new Uint8Array(cachedBuffer);
+  }
 }
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8");
+
+function writeAverString(text) {
+  // Build an OBJ_STRING in guest memory: 8-byte header + UTF-8 bytes.
+  // Header low 32 bits = byte length; kind/tag/meta high bytes are
+  // naturally zero for plain strings.
+  //
+  // `encodeInto` writes UTF-8 directly into linear memory, skipping
+  // the intermediate `Uint8Array` `encoder.encode()` would allocate.
+  // We over-allocate `length * 3` (worst-case UTF-8 for any JS char,
+  // surrogate pairs already span two JS chars so the bound is safe)
+  // and trust the bump allocator — for our string sizes the unused
+  // slack is irrelevant.
+  const upper = text.length * 3;
+  const ptr = userExports.alloc(upper + 8);
+  // Refresh AFTER alloc: the bump allocator may trigger memory.grow
+  // which detaches the previous ArrayBuffer; cached views built
+  // before the grow would be unusable.
+  refreshViews();
+  const { written } = encoder.encodeInto(
+    text,
+    cachedUint8.subarray(ptr + 8, ptr + 8 + upper),
+  );
+  // Header as two i32 writes — avoids the BigInt round-trip a
+  // `setBigUint64` would force. The high 4 bytes (kind/tag/meta)
+  // are zero for plain OBJ_STRING; alloc returns un-zeroed bump
+  // memory so we explicitly clear them.
+  cachedDataView.setUint32(ptr, written, true);
+  cachedDataView.setUint32(ptr + 4, 0, true);
+  return ptr;
+}
+
+function readString(ptr, len) {
+  refreshViews();
+  return decoder.decode(cachedUint8.subarray(ptr, ptr + len));
+}
 
 function makeAverImports() {
   return {
@@ -163,9 +201,9 @@ function makeAverImports() {
       const ptr = writeAverString(text);
       // Two-result return — fetch-bridge ABI declares (ptr, len).
       // The OBJ_STRING handle's bytes start at ptr+8; the i32 length
-      // lives in the header low 32 bits.
-      const view = new DataView(userMemory.buffer);
-      const len = Number(view.getBigUint64(ptr, true) & 0xffffffffn);
+      // lives in the header low 32 bits. writeAverString already
+      // refreshed cachedDataView so we can read straight from it.
+      const len = cachedDataView.getUint32(ptr, true);
       return [ptr + 8, len];
     },
   };
@@ -242,28 +280,36 @@ const KIND_STR = 3;
 // head value (i64) + 8-byte tail (i32 sign-extended into an i64
 // slot).
 function consCell(headValue, tail, headPtrFlag) {
+  // Header: kind << 56 | head_ptr_flag << 32 | field_count(2).
+  // Decompose into two i32 writes — skips the BigInt construction
+  // we'd otherwise pay for the kind constant and the metadata.
+  // High 4 bytes: kind(8 bits) << 24 | tag(0) << 16 | meta(low 16).
+  // Low 4 bytes: field_count.
   const ptr = userExports.alloc(24);
-  const view = new DataView(userMemory.buffer);
-  // Header: kind << 56 | head_ptr_flag << 32 | field_count(2)
-  const header =
-    (OBJ_LIST_CONS << 56n) | (BigInt(headPtrFlag) << 32n) | 2n;
-  view.setBigUint64(ptr, header, true);
-  view.setBigUint64(ptr + 8, headValue, true);
-  view.setBigInt64(ptr + 16, BigInt(tail | 0), true);
+  refreshViews(); // alloc may have triggered memory.grow
+  const high = (Number(OBJ_LIST_CONS) << 24) | (headPtrFlag & 0xffff);
+  cachedDataView.setUint32(ptr, 2, true);
+  cachedDataView.setUint32(ptr + 4, high, true);
+  cachedDataView.setBigUint64(ptr + 8, headValue, true);
+  cachedDataView.setInt32(ptr + 16, tail | 0, true);
+  cachedDataView.setInt32(ptr + 20, 0, true);
   return ptr;
 }
 
 // Build an `OBJ_TUPLE` of two heap pointers — used for the
 // (name, values_list) entries that `rt_map_from_list` consumes.
 function tupleStrList(namePtr, valuesListPtr) {
+  // Same i32 split as consCell. Meta = 0b11 (both fields are heap
+  // ptrs) lives in the low 16 bits of the high word.
   const ptr = userExports.alloc(24);
-  const view = new DataView(userMemory.buffer);
-  // Header: kind=OBJ_TUPLE | meta=0b11 (both fields are heap ptrs)
-  // << 32 | field_count(2)
-  const header = (OBJ_TUPLE << 56n) | (3n << 32n) | 2n;
-  view.setBigUint64(ptr, header, true);
-  view.setBigUint64(ptr + 8, BigInt(namePtr), true);
-  view.setBigUint64(ptr + 16, BigInt(valuesListPtr), true);
+  refreshViews(); // alloc may have triggered memory.grow
+  const high = (Number(OBJ_TUPLE) << 24) | 0x3;
+  cachedDataView.setUint32(ptr, 2, true);
+  cachedDataView.setUint32(ptr + 4, high, true);
+  cachedDataView.setUint32(ptr + 8, namePtr, true);
+  cachedDataView.setUint32(ptr + 12, 0, true);
+  cachedDataView.setUint32(ptr + 16, valuesListPtr, true);
+  cachedDataView.setUint32(ptr + 20, 0, true);
   return ptr;
 }
 
@@ -334,11 +380,9 @@ function formatValueForHost(tag, val) {
     case 3: {
       const ptr = Number(val & 0xffffffffn);
       if (ptr === 0) return "";
-      const view = new DataView(userMemory.buffer);
-      const len = Number(view.getBigUint64(ptr, true) & 0xffffffffn);
-      return new TextDecoder("utf-8").decode(
-        new Uint8Array(userMemory.buffer, ptr + 8, len),
-      );
+      refreshViews();
+      const len = cachedDataView.getUint32(ptr, true);
+      return decoder.decode(cachedUint8.subarray(ptr + 8, ptr + 8 + len));
     }
     default: return "<heap>";
   }
