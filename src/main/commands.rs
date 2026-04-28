@@ -3422,7 +3422,7 @@ fn cmd_compile_wasm(
         // bridge through to emit so it can shape the WASI _start
         // wrapper and any future deployment-side hints.
         let wasm_adapter = match bridge {
-            Some(super::cli::WasmBridge::Wasi) => codegen::wasm::WasmAdapter::Wasi,
+            Some(super::cli::WasmBridge::Wasip1) => codegen::wasm::WasmAdapter::Wasi,
             Some(super::cli::WasmBridge::Fetch) => codegen::wasm::WasmAdapter::Fetch,
             _ => codegen::wasm::WasmAdapter::Aver,
         };
@@ -3532,7 +3532,7 @@ fn cmd_compile_wasm(
                     }
 
                     // Optional bridge module (today only `wasi`).
-                    let bridge_file = if matches!(bridge_mode, super::cli::WasmBridge::Wasi) {
+                    let bridge_file = if matches!(bridge_mode, super::cli::WasmBridge::Wasip1) {
                         let bytes = match aver::codegen::wasm::build_aver_to_wasi_wasm() {
                             Ok(b) => b,
                             Err(e) => {
@@ -3587,7 +3587,7 @@ fn cmd_compile_wasm(
                                 finalize_wasm_artifact(&wasm_file, optimize);
                             let wasm_display = wasm_file.display().to_string().cyan();
                             let imports_note = match bridge_mode {
-                                super::cli::WasmBridge::Wasi => ", with runtime + aver→wasi bridge",
+                                super::cli::WasmBridge::Wasip1 => ", with runtime + aver→wasi bridge",
                                 super::cli::WasmBridge::Fetch => ", with runtime, imports aver/* (JS host)",
                                 super::cli::WasmBridge::None => {
                                     if uses_aver_effects {

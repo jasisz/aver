@@ -48,8 +48,16 @@ pub(super) enum WasmBridge {
     None,
     /// Translate aver/* → wasi_snapshot_preview1.* via a bundled
     /// shim. Lets `wasmtime program.wasm` run standalone without an
-    /// external host.
-    Wasi,
+    /// external host. The "p1" matches the WASI spec community's
+    /// shorthand for preview 1 (paired with `wasip2`/`wasip3`
+    /// elsewhere) and pins this bridge to core-wasm preview 1
+    /// specifically. WASI 0.2 / Component Model gets its own
+    /// compilation target (`--target wasi-http`) rather than
+    /// another bridge, since it's a different model end-to-end
+    /// (component wasm output, WIT worlds, host-owned accept
+    /// loop) — not a swap-out shim.
+    #[value(name = "wasip1")]
+    Wasip1,
     /// Translate aver/* → JS host APIs (`console.log`, `Date.now()`,
     /// `crypto.getRandomValues`, the Fetch API). The right choice
     /// for any JS-environment edge runtime — Cloudflare Workers,
