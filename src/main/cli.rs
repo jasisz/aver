@@ -50,6 +50,36 @@ pub(super) enum WasmBridge {
     /// shim. Lets `wasmtime program.wasm` run standalone without an
     /// external host.
     Wasi,
+    /// Translate aver/* → JS host APIs (`console.log`, `Date.now()`,
+    /// `crypto.getRandomValues`, the Fetch API). The right choice
+    /// for any JS-environment edge runtime — Cloudflare Workers,
+    /// Fastly Compute (when bundled JS shim is acceptable), Deno
+    /// Deploy, Bun, Node. Pairs with `--target edge-wasm` and a
+    /// per-host deployment pack.
+    Fetch,
+}
+
+/// Deployment bundle pack. Independent of compiler target and bridge —
+/// the same `--target edge-wasm --bridge fetch` artifacts can be
+/// shipped to Cloudflare Workers, Fastly Compute, Deno Deploy, etc.;
+/// `--pack` decides which extra bootstrap files (worker.js,
+/// wrangler.toml, fastly.toml, …) the compiler drops next to
+/// user.wasm so the deployment is one `wrangler deploy` away.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(super) enum DeployPack {
+    /// No pack: just user.wasm, the host wires it up.
+    None,
+    /// Emit `worker.js` + `wrangler.toml` for `wrangler deploy`.
+    Cloudflare,
+}
+
+/// One-flag UX shortcut that expands to a `(target, bridge, pack)`
+/// preset. `--preset cloudflare` ≡ `--target edge-wasm --bridge fetch
+/// --pack cloudflare`. Equivalent CLI surface, fewer keystrokes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(super) enum DeployPreset {
+    /// edge-wasm + fetch bridge + Cloudflare worker.js/wrangler.toml.
+    Cloudflare,
 }
 
 /// Which runtime artifact `aver wasm-runtime` emits.
@@ -348,11 +378,23 @@ pub(super) enum Commands {
         with_self_host_support: bool,
         /// Deployment-time bridge for WASM `aver/*` host imports.
         /// `wasi` bundles the aver→wasi shim so `wasmtime program.wasm`
-        /// runs standalone; `none` (default) leaves aver/* unresolved
-        /// for the consumer host to satisfy. Ignored under
-        /// `--target edge-wasm`.
+        /// runs standalone; `fetch` translates aver/* to JS host APIs
+        /// (Cloudflare Workers, Deno, Bun); `none` (default) leaves
+        /// aver/* unresolved for the consumer host to satisfy.
         #[arg(long, value_enum)]
         bridge: Option<WasmBridge>,
+        /// Deployment bundle pack — drops extra files (worker.js,
+        /// wrangler.toml, …) next to user.wasm so the build is one
+        /// platform-CLI command away from running. Independent of
+        /// `--target` and `--bridge`.
+        #[arg(long, value_enum)]
+        pack: Option<DeployPack>,
+        /// One-flag preset that expands to a `(target, bridge, pack)`
+        /// triple. `cloudflare` ≡ `--target edge-wasm --bridge fetch
+        /// --pack cloudflare`. Mutually exclusive with explicit
+        /// `--target` / `--bridge` / `--pack` — pick one shape of UX.
+        #[arg(long, value_enum, conflicts_with_all = &["target", "bridge", "pack"])]
+        preset: Option<DeployPreset>,
         /// Post-process generated WASM through a multi-stage size/speed
         /// pipeline (wasm-metadce → wasm-opt --converge --strip-*).
         /// Pass `size` for aggressive size reduction (`-Oz`) or `speed`
