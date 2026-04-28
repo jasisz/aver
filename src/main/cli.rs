@@ -356,8 +356,8 @@ pub(super) enum Commands {
         /// Post-process generated WASM through a multi-stage size/speed
         /// pipeline (wasm-metadce → wasm-opt --converge --strip-*).
         /// Pass `size` for aggressive size reduction (`-Oz`) or `speed`
-        /// for runtime tuning (`-O3`). Legacy alias: `--wasm-opt`.
-        #[arg(long, value_enum, alias = "wasm-opt")]
+        /// for runtime tuning (`-O3`).
+        #[arg(long, value_enum)]
         optimize: Option<WasmOptMode>,
     },
     /// Emit a standalone aver_runtime / aver_to_wasi artifact to disk.

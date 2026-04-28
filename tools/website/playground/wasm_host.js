@@ -122,8 +122,14 @@ export class AverBrowserHost {
         this.lastFlushMs = 0;
     }
 
-    setInstance(instance) {
+    setInstance(instance, fallbackMemory) {
         this.instance = instance;
+        // In edge-wasm mode, user.wasm imports memory from aver_runtime
+        // and does not re-export it, so `instance.exports.memory` is
+        // undefined. Worker passes runtime.exports.memory as the
+        // fallback in that case; bundled artifacts continue to work
+        // with the instance's own export.
+        this.memory = instance.exports.memory ?? fallbackMemory;
         this.variantNames = this.loadVariantNames();
     }
 
@@ -134,7 +140,7 @@ export class AverBrowserHost {
             const ptr = exports.$variant_names_ptr?.value;
             const len = exports.$variant_names_len?.value;
             if (ptr == null || len == null || len === 0) return map;
-            const bytes = new Uint8Array(exports.memory.buffer, ptr, len);
+            const bytes = new Uint8Array(this.memory.buffer, ptr, len);
             const text = new TextDecoder().decode(bytes);
             for (const entry of text.split("|")) {
                 const colon = entry.indexOf(":");
@@ -350,11 +356,11 @@ export class AverBrowserHost {
     }
 
     memoryView() {
-        return new Uint8Array(this.instance.exports.memory.buffer);
+        return new Uint8Array(this.memory.buffer);
     }
 
     dataView() {
-        return new DataView(this.instance.exports.memory.buffer);
+        return new DataView(this.memory.buffer);
     }
 
     readBytes(ptr, len) {

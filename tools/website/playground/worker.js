@@ -48,13 +48,22 @@ async function runModule(wasmBytes, runtimeBytes) {
 
         const userImports = host.createImports();
         const needsRuntime = await moduleNeedsRuntime(wasmBytes);
+        let runtimeInstanceForMemory = null;
         if (needsRuntime) {
             const runtime = await ensureRuntime(runtimeBytes);
             userImports.aver_runtime = runtime.exports;
+            runtimeInstanceForMemory = runtime;
         }
 
         const { instance } = await WebAssembly.instantiate(wasmBytes, userImports);
-        host.setInstance(instance);
+        // Edge-wasm user.wasm imports memory from aver_runtime instead
+        // of exporting its own; pass the runtime's memory through so
+        // the host can read terminal output / variant names from the
+        // shared linear address space.
+        host.setInstance(
+            instance,
+            runtimeInstanceForMemory?.exports?.memory ?? null,
+        );
         host.postTerminalSnapshot();
         host.post({ type: "status", level: "success", text: "Running…" });
 
