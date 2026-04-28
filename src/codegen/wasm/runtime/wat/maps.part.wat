@@ -1789,23 +1789,14 @@
 )
 (export "rt_map_has" (func $rt_map_has))
 
-;; rt_map_set with owned-aware wrapper mutation. When `$owned == 1`
-;; (the IR's last-use pass marked the input map as the final read of
-;; a local slot), we mutate the existing wrapper in place — bumping
-;; its count and overwriting its root pointer — instead of allocating
-;; a fresh OBJ_HAMT cell. The HAMT path itself is still copy-on-write
-;; via $rt_hamt_set_at; cheap-but-safe owned mode that avoids one
-;; alloc per insert in `m = Map.set(m, k, v)` hot loops without
-;; needing to reason about deeper structural sharing.
 (func $rt_map_set
     (param $map i32) (param $key i64) (param $kind i32)
-    (param $value i64) (param $value_ptr_flag i32) (param $owned i32)
+    (param $value i64) (param $value_ptr_flag i32)
     (result i32)
   (local $hash i32)
   (local $old_root i32)
   (local $new_root i32)
   (local $old_count i32)
-  (local $new_count i32)
 
   local.get $key
   local.get $kind
@@ -1833,36 +1824,8 @@
   local.get $old_count
   global.get $g_hamt_delta
   i32.add
-  local.set $new_count
-
-  ;; Owned fast path: only takes effect when the input wrapper exists.
-  ;; A null `$map` (Map.empty case) always falls through to the alloc
-  ;; path so we get a real wrapper for the freshly built root.
-  local.get $owned
-  local.get $map
-  i32.const 0
-  i32.ne
-  i32.and
-  if (result i32)
-    ;; Reuse the existing wrapper: write count to field 1 and the new
-    ;; root pointer to field 0. Header (kind=12, meta=0b01, fields=2)
-    ;; stays untouched.
-    local.get $map
-    local.get $new_root
-    i64.extend_i32_u
-    i64.store offset=8
-
-    local.get $map
-    local.get $new_count
-    i64.extend_i32_u
-    i64.store offset=16
-
-    local.get $map
-  else
-    local.get $new_count
-    local.get $new_root
-    call $rt_hamt_alloc_wrapper
-  end
+  local.get $new_root
+  call $rt_hamt_alloc_wrapper
 )
 (export "rt_map_set" (func $rt_map_set))
 
