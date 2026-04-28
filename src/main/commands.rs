@@ -3481,7 +3481,12 @@ fn cmd_compile_wasm(
 
                 if is_edge {
                     let file_display = file.cyan();
-                    let (final_size, compile_suffix) = finalize_wasm_artifact(&wasm_file, optimize);
+                    // Edge artifacts are thin user.wasm modules — every
+                    // export is hit by an external host (compiler tests,
+                    // browser playground, edge worker), so metadce is
+                    // wrong here too.
+                    let (final_size, compile_suffix) =
+                        finalize_wasm_artifact(&wasm_file, optimize, MetadceMode::HostCallable);
                     let wasm_display = wasm_file.display().to_string().cyan();
                     let imports_note = if uses_aver_effects {
                         ", imports aver_runtime.* + aver/* (effects)"
@@ -3577,8 +3582,21 @@ fn cmd_compile_wasm(
                         Ok(out) if out.status.success() => {
                             let _ = std::fs::rename(&merged_file, &wasm_file);
                             let file_display = file.cyan();
+                            // Bundled-wasm metadce-mode picker: with the
+                            // fetch bridge the JS host has an open call
+                            // surface into the merged runtime (alloc,
+                            // aver_http_handle, rt_map_from_list, …),
+                            // so skip metadce. With wasip1 / none the
+                            // program runs to its `_start` / `main`
+                            // entry and the runtime helpers are pure
+                            // dead weight; let metadce prune them.
+                            let metadce_mode = match bridge_mode {
+                                super::cli::WasmBridge::Fetch => MetadceMode::HostCallable,
+                                super::cli::WasmBridge::Wasip1
+                                | super::cli::WasmBridge::None => MetadceMode::ProgramEntry,
+                            };
                             let (final_size, compile_suffix) =
-                                finalize_wasm_artifact(&wasm_file, optimize);
+                                finalize_wasm_artifact(&wasm_file, optimize, metadce_mode);
                             let wasm_display = wasm_file.display().to_string().cyan();
                             let imports_note = match bridge_mode {
                                 super::cli::WasmBridge::Wasip1 => {
@@ -3894,17 +3912,52 @@ pub fn cmd_wasm_runtime(
 /// (`wasm-tools print program.wasm`). For pre-opt builds, names survive;
 /// for post-opt, `wasm-opt -Oz` strips the section by design.
 #[cfg(feature = "wasm")]
+/// How wasm-metadce should treat the artifact when seeding its
+/// reachability graph. The graph decides which exports survive into
+/// `wasm-opt -Oz`'s root set; getting it wrong strips host-callable
+/// exports and breaks the runtime.
+///
+/// - `ProgramEntry`: classic standalone program — `_start` / `main`
+///   / `memory` are the only outside-reachable exports. Everything
+///   the runtime helpers happen to expose during `wasm-merge` gets
+///   pruned. Right shape for `--bridge wasip1` and `--bridge none`
+///   bundled outputs.
+/// - `HostCallable`: the host has an open-ended call surface into
+///   the bundled module — `alloc`, `aver_http_handle`, runtime
+///   helpers like `rt_map_from_list` for header bulk transfer, and
+///   anything else a future binding (KV, D1, …) might reach for.
+///   We can't enumerate the closed set up front, so skip metadce
+///   entirely; `wasm-opt -Oz` then keeps every export the emitter
+///   chose to leave on the module as a root. Right shape for
+///   `--bridge fetch` bundled output.
+/// - `Library`: every export is a published public API consumed by
+///   some external user.wasm; pruning any of them is wrong.
+///   Same skip-metadce path as `HostCallable`. Used by
+///   `aver wasm-runtime --optimize` (the standalone aver_runtime
+///   artifact and the aver→wasi shim).
+#[cfg(feature = "wasm")]
+#[derive(Copy, Clone)]
+enum MetadceMode {
+    ProgramEntry,
+    HostCallable,
+    Library,
+}
+
+#[cfg(feature = "wasm")]
 fn finalize_wasm_artifact(
     wasm_file: &Path,
     optimize: Option<super::cli::WasmOptMode>,
+    metadce_mode: MetadceMode,
 ) -> (u64, String) {
     let mut final_size = std::fs::metadata(wasm_file).map(|m| m.len()).unwrap_or(0);
     let mut compile_suffix = String::new();
     if let Some(mode) = optimize {
-        final_size = run_optimize_pipeline(wasm_file, mode).unwrap_or_else(|err| {
-            eprintln!("{}", err.red());
-            process::exit(1);
-        });
+        final_size = run_optimize_pipeline_inner(wasm_file, mode, metadce_mode).unwrap_or_else(
+            |err| {
+                eprintln!("{}", err.red());
+                process::exit(1);
+            },
+        );
         compile_suffix = format!(", optimized for {}", optimize_label(mode));
     }
     (final_size, compile_suffix)
@@ -3918,11 +3971,6 @@ fn optimize_label(mode: super::cli::WasmOptMode) -> &'static str {
     }
 }
 
-#[cfg(feature = "wasm")]
-fn run_optimize_pipeline(wasm_file: &Path, mode: super::cli::WasmOptMode) -> Result<u64, String> {
-    run_optimize_pipeline_inner(wasm_file, mode, /* library = */ false)
-}
-
 /// Library-mode optimize: skip wasm-metadce (every export is a real
 /// public API root, not an artifact of bundling), apply only
 /// `-Oz --converge --strip-*`. Used by `aver wasm-runtime --optimize`.
@@ -3931,14 +3979,14 @@ fn run_optimize_pipeline_library(
     wasm_file: &Path,
     mode: super::cli::WasmOptMode,
 ) -> Result<u64, String> {
-    run_optimize_pipeline_inner(wasm_file, mode, /* library = */ true)
+    run_optimize_pipeline_inner(wasm_file, mode, MetadceMode::Library)
 }
 
 #[cfg(feature = "wasm")]
 fn run_optimize_pipeline_inner(
     wasm_file: &Path,
     mode: super::cli::WasmOptMode,
-    library_mode: bool,
+    metadce_mode: MetadceMode,
 ) -> Result<u64, String> {
     let input_size = std::fs::metadata(wasm_file)
         .map(|meta| meta.len())
@@ -3962,54 +4010,62 @@ fn run_optimize_pipeline_inner(
     // only `_start`/`main`). We ship a minimal graph and let metadce
     // discover the internal call tree.
     //
-    // Library mode (`aver wasm-runtime`): every export is a real public
-    // API consumed by some external user.wasm — we cannot prune any of
-    // them. Skip the metadce stage entirely; copy input → stage1.
-    if library_mode {
-        std::fs::copy(wasm_file, &stage1_file)
-            .map_err(|e| format!("Failed to stage runtime artifact for opt: {}", e))?;
-    } else {
-        // The `memory` export is reachable from outside even though
-        // _start / main don't reference it directly: WASI host calls
-        // (fd_write, random_get, clock_time_get, …) read and write
-        // through it. Without this root, metadce strips the export
-        // and wasmtime rejects the module with "missing required
-        // memory export".
-        let graph_json = "[\n  { \"name\": \"outside\", \"root\": true, \"reaches\": [\"main_export\", \"start_export\", \"memory_export\"] },\n  { \"name\": \"main_export\", \"export\": \"main\" },\n  { \"name\": \"start_export\", \"export\": \"_start\" },\n  { \"name\": \"memory_export\", \"export\": \"memory\" }\n]\n";
-        if let Err(e) = std::fs::write(&metadce_graph, graph_json) {
-            return Err(format!(
-                "Failed to write wasm-metadce graph for {}: {}",
-                wasm_file.display(),
-                e
-            ));
+    // Stage 1: meta-DCE on the cross-module reachability graph. Only
+    // run for `ProgramEntry` artifacts — those have a small, closed
+    // set of outside-reachable exports (`_start`/`main`/`memory`),
+    // so pruning everything else is sound. `HostCallable` and
+    // `Library` artifacts skip this step: their export surface is
+    // either open-ended (host bindings reach for arbitrary runtime
+    // helpers) or fully public, so metadce would strip exports a
+    // real consumer needs.
+    match metadce_mode {
+        MetadceMode::Library | MetadceMode::HostCallable => {
+            std::fs::copy(wasm_file, &stage1_file)
+                .map_err(|e| format!("Failed to stage wasm for opt: {}", e))?;
         }
-        let dce_output = std::process::Command::new("wasm-metadce")
-            .arg(format!("--graph-file={}", metadce_graph.display()))
-            .arg("--enable-bulk-memory")
-            .arg("--enable-multivalue")
-            .arg("--enable-tail-call")
-            .arg(wasm_file)
-            .arg("-o")
-            .arg(&stage1_file)
-            .output()
-            .map_err(|e| {
-                let _ = std::fs::remove_file(&metadce_graph);
-                format!(
-                    "Failed to run wasm-metadce for {}: {}. Install binaryen or compile without --optimize.",
+        MetadceMode::ProgramEntry => {
+            // The `memory` export is reachable from outside even though
+            // _start / main don't reference it directly: WASI host calls
+            // (fd_write, random_get, clock_time_get, …) read and write
+            // through it. Without this root, metadce strips the export
+            // and wasmtime rejects the module with "missing required
+            // memory export".
+            let graph_json = "[\n  { \"name\": \"outside\", \"root\": true, \"reaches\": [\"main_export\", \"start_export\", \"memory_export\"] },\n  { \"name\": \"main_export\", \"export\": \"main\" },\n  { \"name\": \"start_export\", \"export\": \"_start\" },\n  { \"name\": \"memory_export\", \"export\": \"memory\" }\n]\n";
+            if let Err(e) = std::fs::write(&metadce_graph, graph_json) {
+                return Err(format!(
+                    "Failed to write wasm-metadce graph for {}: {}",
                     wasm_file.display(),
                     e
-                )
-            })?;
-        let _ = std::fs::remove_file(&metadce_graph);
+                ));
+            }
+            let dce_output = std::process::Command::new("wasm-metadce")
+                .arg(format!("--graph-file={}", metadce_graph.display()))
+                .arg("--enable-bulk-memory")
+                .arg("--enable-multivalue")
+                .arg("--enable-tail-call")
+                .arg(wasm_file)
+                .arg("-o")
+                .arg(&stage1_file)
+                .output()
+                .map_err(|e| {
+                    let _ = std::fs::remove_file(&metadce_graph);
+                    format!(
+                        "Failed to run wasm-metadce for {}: {}. Install binaryen or compile without --optimize.",
+                        wasm_file.display(),
+                        e
+                    )
+                })?;
+            let _ = std::fs::remove_file(&metadce_graph);
 
-        if !dce_output.status.success() {
-            let stderr = String::from_utf8_lossy(&dce_output.stderr);
-            let _ = std::fs::remove_file(&stage1_file);
-            return Err(format!(
-                "wasm-metadce failed for {}: {}",
-                wasm_file.display(),
-                stderr.trim()
-            ));
+            if !dce_output.status.success() {
+                let stderr = String::from_utf8_lossy(&dce_output.stderr);
+                let _ = std::fs::remove_file(&stage1_file);
+                return Err(format!(
+                    "wasm-metadce failed for {}: {}",
+                    wasm_file.display(),
+                    stderr.trim()
+                ));
+            }
         }
     }
 
