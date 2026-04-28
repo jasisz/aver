@@ -7,6 +7,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 > _Aver's WASM stops being the slow option. Small explicit modules, a CDN-hostable runtime, host-provided effects — packaging and host as independent choices._
 
 ### Added
+- **`response.headers` flow through `--bridge fetch`.** `HttpResponse(... headers = {...})` lowers to one `response_set_header(name, value)` host call per pair before the finalizing `response_text` — multi-value entries (`Set-Cookie`, `Vary`, …) preserve order without folding. The Cloudflare Workers pack bootstrap now emits a real `Headers` object on the native `Response`; the previous "headers dropped on the floor" placeholder is gone.
 - **Persistent HAMT for `Map`** (branching factor 16, structural sharing). `Map.get` / `Map.has` go from O(N) cons-walks to O(log N); `Map.len` is now an O(1) header read. 12k-entry build under wasmtime takes <5 ms.
 - **Any hashable type as `Map` key.** `Int` / `Float` / `Bool` / `String` plus user variants, tuples, records, lists — anything except `Fn` and `Unit`. The runtime walks heap values via `rt_deep_hash` / `rt_deep_eq`, dispatching on the `OBJ_KIND` header. Same rule across VM, Rust codegen, and WASM (the VM previously hashed heap keys by arena pointer — silent lookup miss when equal values landed in different slots).
 - **`--target edge-wasm`** — emits a thin `user.wasm` with `aver_runtime` left as an unresolved import, ready to pair with a separately-hosted runtime. Trivial program drops to ~280 B with `--optimize size`; playground games sit at 5–28 KiB of pure program logic.
@@ -19,6 +20,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Changed
 - **`Map` runtime ABI is polymorphic.** `rt_map_get(map, key: i64, kind: i32)`, `rt_map_set(map, key, kind, value: i64, value_ptr_flag)`, etc. — emitter extends scalar keys to i64 and pushes kind at every call site.
+- **HTTP headers are `Map<String, List<String>>`.** `HttpRequest.headers`, `HttpResponse.headers`, and the `Http.post` / `Http.put` / `Http.patch` headers parameter all switched from `List<Header>` to `Map<String, List<String>>`. Multi-value semantics now match the wire (RFC 9110 same-name fields, RFC 6265 multiple `Set-Cookie`); Go's `net/http.Header = map[string][]string` is the precedent. Keys are case-insensitive by convention — the runtime lowercases incoming names and user code is expected to do the same on outgoing. The built-in `Header` record is no longer referenced by any built-in field; existing user-defined `record Header { name: String, value: String }` types keep working but should migrate to the map shape.
 
 ### Removed
 - **`--wasm-opt oz|o3` → `--optimize size|speed`.** The flag drives a multi-tool pipeline now (metadce + opt + strip), not just `wasm-opt`. The old spelling is gone, not aliased.
@@ -29,6 +31,11 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 - **`Map<Int, V>` and `Map<Float, V>`** no longer fail validation (pre-HAMT runtime took `key: i32` and used `str_eq`).
 - **`Map<Bool, V>`** no longer silently collapses both keys to one entry.
 - **VM `Map.get` respects structural equality** for heap keys regardless of arena layout.
+
+### Known limitations
+- **`req.headers` under `--bridge fetch` returns an empty `Map`.** Reads still typecheck and run — `Map.get(req.headers, "authorization")` returns `Option.None` — but auth-by-header routing in Cloudflare Workers needs a 0.15 follow-up that wires bulk-transfer host imports for the request's `Headers`. URL/method/body and `response.headers` (write side) are fully wired; this only affects handlers that branch on incoming header values. `aver run` and other backends are unaffected (the host gives you the real headers).
+- **`Vector.set` on WASM is O(N) per call** (full `memory.copy` + realloc), ~10× slower than the VM's `Rc::make_mut` fast path. Mutating-loop benchmarks like `vector get_set 5k` stay 9× behind the VM. Escape-analysis-driven owned-mask is the 0.15 fix; the safe heap-ptr-freshness shortcut alone leaks immutability under aliased bindings, so it's not landing as-is. Pure-functional patterns (`Vector.fromList` once, `Vector.get` many times) are unaffected.
+- **`Map` build under WASM is ~1.5× slower than VM** for the `map build 5k` benchmark. HAMT `alloca` cost per insert dominates; same fix family as `Vector.set`.
 
 ## 0.13.0 "Limit" (2026-04-26)
 

@@ -281,6 +281,7 @@ pub fn build_wasm_module(
         rt_collect_end: 62,
         rt_retain_i32: 63,
         rt_map_len: 64,
+        rt_map_from_list: 65,
     };
     import_section.import("aver_runtime", "rt_alloc", EntityType::Function(rti.alloc));
     import_section.import(
@@ -605,6 +606,11 @@ pub fn build_wasm_module(
     );
     import_section.import(
         "aver_runtime",
+        "rt_map_from_list",
+        EntityType::Function(rti.i32_i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
         "memory",
         EntityType::Memory(MemoryType {
             minimum: 1,
@@ -638,7 +644,7 @@ pub fn build_wasm_module(
             }),
         );
     }
-    let mut import_func_count = 65u32; // 64 prior + rt_map_len
+    let mut import_func_count = 66u32; // 65 prior + rt_map_from_list
 
     // Aver-style host imports unconditionally, regardless of --adapter.
     // Under --adapter wasi the `aver_to_wasi.wasm` shim re-exports the
@@ -709,6 +715,7 @@ pub fn build_wasm_module(
             "Request.url",
             "Request.body",
             "Response.text",
+            "Response.setHeader",
         ] {
             if let Some(abi_entry) = super::abi::lookup(effect)
                 && !host_imports.contains_key(abi_entry.import_name)

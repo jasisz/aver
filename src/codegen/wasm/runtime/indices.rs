@@ -48,6 +48,7 @@ pub struct AverRuntimeImports {
     pub rt_map_keys: u32,
     pub rt_map_entries: u32,
     pub rt_map_len: u32,
+    pub rt_map_from_list: u32,
     pub rt_vec_from_list: u32,
     pub rt_vec_get: u32,
     pub rt_vec_len: u32,
@@ -126,6 +127,7 @@ pub struct RuntimeFuncIndices {
     pub map_keys: u32,        // (i32) -> i32
     pub map_entries: u32,     // (i32) -> i32
     pub map_len: u32,         // (i32) -> i64
+    pub map_from_list: u32,   // (i32, i32, i32) -> i32  — list, key_kind, value_ptr_flag
     pub vec_from_list: u32,   // (i32, i32) -> i32
     pub vec_get: u32,         // (i32, i64) -> i32
     pub vec_len: u32,         // (i32) -> i64
@@ -211,6 +213,7 @@ impl RuntimeFuncIndices {
             map_keys: imports.rt_map_keys,
             map_entries: imports.rt_map_entries,
             map_len: imports.rt_map_len,
+            map_from_list: imports.rt_map_from_list,
             vec_from_list: imports.rt_vec_from_list,
             vec_get: imports.rt_vec_get,
             vec_len: imports.rt_vec_len,
@@ -397,6 +400,7 @@ pub struct RtTypeIndices {
     pub empty_to_i32_i32: u32,           // () -> (i32, i32)
     pub i32_to_i32_i32: u32,             // (i32) -> (i32, i32)
     pub i32_i64_to_empty: u32,           // (i32, i64) -> ()
+    pub i32_i32_i32_i32_to_empty: u32,   // (i32, i32, i32, i32) -> ()  — used by response_set_header
     pub i32_i64_to_i32_i32: u32,         // (i32, i64) -> (i32, i32)
     pub i64_i64_to_i64: u32,             // (i64, i64) -> i64
     pub empty_to_i64: u32,               // () -> i64
@@ -504,6 +508,11 @@ pub fn emit_base_type_section(type_section: &mut TypeSection) -> RtTypeIndices {
     let i32_to_i32_i32 =
         registry.intern(type_section, &[ValType::I32], &[ValType::I32, ValType::I32]);
     let i32_i64_to_empty = registry.intern(type_section, &[ValType::I32, ValType::I64], &[]);
+    let i32_i32_i32_i32_to_empty = registry.intern(
+        type_section,
+        &[ValType::I32, ValType::I32, ValType::I32, ValType::I32],
+        &[],
+    );
     let i32_i64_to_i32_i32 = registry.intern(
         type_section,
         &[ValType::I32, ValType::I64],
@@ -558,6 +567,7 @@ pub fn emit_base_type_section(type_section: &mut TypeSection) -> RtTypeIndices {
         empty_to_i32_i32,
         i32_to_i32_i32,
         i32_i64_to_empty,
+        i32_i32_i32_i32_to_empty,
         i32_i64_to_i32_i32,
         i64_i64_to_i64,
         empty_to_i64,
@@ -687,6 +697,11 @@ pub fn lookup_type_index(
     }
     if params == [ValType::I32, ValType::I64] && results.is_empty() {
         return Some(rti.i32_i64_to_empty);
+    }
+    if params == [ValType::I32, ValType::I32, ValType::I32, ValType::I32]
+        && results.is_empty()
+    {
+        return Some(rti.i32_i32_i32_i32_to_empty);
     }
     if params == [ValType::I32, ValType::I64] && results == [ValType::I32, ValType::I32] {
         return Some(rti.i32_i64_to_i32_i32);

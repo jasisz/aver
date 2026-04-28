@@ -168,7 +168,17 @@ impl<'a> ExprEmitter<'a> {
                     .push(Instruction::Call(self.rt.map_entries));
             }
             "Map.fromList" if args.len() == 1 => {
-                // Identity -- list of tuples IS a map
+                // Fold the `List<(K, V)>` into a HAMT via the runtime
+                // helper. Pre-HAMT this was an identity ("the list IS
+                // a map"); now `rt_map_get` and friends only know how
+                // to walk HAMT roots, so we have to materialize one.
+                let (key_kind, value_ptr_flag) =
+                    self.map_from_list_kind_and_ptr_flag(&args[0]);
+                self.instructions.push(Instruction::I32Const(key_kind));
+                self.instructions
+                    .push(Instruction::I32Const(value_ptr_flag));
+                self.instructions
+                    .push(Instruction::Call(self.rt.map_from_list));
             }
             "Option.withDefault" if args.len() == 2 => {
                 // args: [option(i32), default]
@@ -1076,6 +1086,52 @@ impl<'a> ExprEmitter<'a> {
     /// For pointer kinds we zero-extend the i32 ptr (high bits must
     /// stay zero so i32.wrap_i64 round-trips). For Int/Bool we
     /// sign-extend; for Float we reinterpret f64 bits.
+    /// Static counterpart of `emit_map_key_normalize` for the Map
+    /// literal / `Map.fromList` paths, where the key is buried inside
+    /// a `List<(K, V)>` and we only have its declared element type.
+    /// Returns `(key_kind, value_ptr_flag)` so the emitter can push
+    /// them as constants ahead of the `rt_map_from_list` call.
+    pub(super) fn map_from_list_kind_and_ptr_flag(
+        &mut self,
+        list_expr: &Spanned<Expr>,
+    ) -> (i32, i32) {
+        let (key_ty, value_ty) = match self.infer_aver_type(&list_expr.node) {
+            Some(Type::List(inner)) => match *inner {
+                Type::Tuple(parts) if parts.len() == 2 => {
+                    let mut it = parts.into_iter();
+                    let k = it.next().unwrap_or(Type::Unknown);
+                    let v = it.next().unwrap_or(Type::Unknown);
+                    (Some(k), Some(v))
+                }
+                _ => (None, None),
+            },
+            _ => (None, None),
+        };
+        let key_kind = self.kind_for_aver_type(key_ty.as_ref());
+        let value_ptr_flag = self.value_is_heap_aver_type(value_ty.as_ref());
+        (key_kind, value_ptr_flag)
+    }
+
+    pub(super) fn kind_for_aver_type(&self, ty: Option<&Type>) -> i32 {
+        match ty {
+            Some(Type::Int) => 0,
+            Some(Type::Float) => 1,
+            Some(Type::Bool) => 2,
+            Some(Type::Str) => 3,
+            // Heap (records, lists, etc.) — runtime falls back to deep-eq.
+            _ => 4,
+        }
+    }
+
+    pub(super) fn value_is_heap_aver_type(&self, ty: Option<&Type>) -> i32 {
+        match ty {
+            Some(Type::Int) | Some(Type::Float) | Some(Type::Bool) => 0,
+            // Strings, lists, maps, vectors, records, variants, options,
+            // results, tuples — all heap pointers in the WASM ABI.
+            _ => 1,
+        }
+    }
+
     pub(super) fn emit_map_key_normalize(&mut self, key: &Spanned<Expr>) -> i32 {
         let wt = self.infer_expr_type(&key.node);
         let at = self.infer_aver_type(&key.node);

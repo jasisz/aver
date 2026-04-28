@@ -186,6 +186,18 @@ pub const ABI_TABLE: &[AbiImport] = &[
         params: &[ValType::I32, ValType::I32, ValType::I32],
         results: &[ValType::I32],
     },
+    // Response.set_header(name, value) → push (name, value) onto the
+    // pending Response's headers. Multi-value headers (Set-Cookie,
+    // Vary, …) are produced by calling this multiple times with the
+    // same name. The Fetch-bridge emitter inserts one call per entry
+    // when constructing `HttpResponse`.
+    AbiImport {
+        effect: "Response.setHeader",
+        import_name: "response_set_header",
+        // name_ptr: i32, name_len: i32, value_ptr: i32, value_len: i32
+        params: &[ValType::I32, ValType::I32, ValType::I32, ValType::I32],
+        results: &[],
+    },
     // --- Time ---
     // Returns current time as milliseconds since Unix epoch.
     AbiImport {

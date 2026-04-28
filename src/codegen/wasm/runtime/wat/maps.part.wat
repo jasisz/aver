@@ -1829,6 +1829,71 @@
 )
 (export "rt_map_set" (func $rt_map_set))
 
+;; rt_map_from_list — fold a `List<(K, V)>` into a HAMT by repeatedly
+;; calling `rt_map_set`. Keys all share `$key_kind` (the polymorphic
+;; key code that the emitter computes from the key's static type:
+;; 0=Int, 1=Float, 2=Bool, 3=String, 4=heap). Values share
+;; `$value_ptr_flag` (1 if values are heap pointers, 0 if scalar).
+;;
+;; Each list cell is OBJ_LIST_CONS with head = i64-stored tuple ptr,
+;; tail at offset 16. Each tuple is OBJ_TUPLE with field 0 = key
+;; (i64 raw bits) and field 1 = value (i64 raw bits) — exactly the
+;; encoding `rt_map_set` consumes.
+;;
+;; Replaces the pre-HAMT "list of tuples IS a map" identity that
+;; the emitter used for `Map.fromList` and `{k => v, …}` literals.
+(func $rt_map_from_list
+    (param $list i32) (param $key_kind i32) (param $value_ptr_flag i32)
+    (result i32)
+  (local $map i32)
+  (local $cur i32)
+  (local $tuple i32)
+
+  ;; map = empty map (null ptr — `rt_map_set` allocates the wrapper)
+  i32.const 0
+  local.set $map
+
+  local.get $list
+  local.set $cur
+
+  block
+    loop
+      local.get $cur
+      i32.eqz
+      br_if 1
+
+      ;; tuple = head(cur) — `i64.load offset=8` then truncate.
+      local.get $cur
+      i64.load offset=8
+      i32.wrap_i64
+      local.set $tuple
+
+      ;; map = rt_map_set(map, tuple.key, key_kind,
+      ;;                  tuple.value, value_ptr_flag)
+      local.get $map
+      local.get $tuple
+      i64.load offset=8                ;; tuple field 0 = key (i64)
+      local.get $key_kind
+      local.get $tuple
+      i64.load offset=16               ;; tuple field 1 = value (i64)
+      local.get $value_ptr_flag
+      call $rt_map_set
+      local.set $map
+
+      ;; cur = tail(cur)
+      local.get $cur
+      i64.load offset=16
+      i32.wrap_i64
+      local.set $cur
+
+      br 0
+    end
+  end
+
+  local.get $map
+)
+(export "rt_map_from_list" (func $rt_map_from_list))
+
 ;; ---------------------------------------------------------------------
 ;; Iteration: keys / entries / len
 ;; ---------------------------------------------------------------------
