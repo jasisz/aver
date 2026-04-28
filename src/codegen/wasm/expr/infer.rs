@@ -644,8 +644,10 @@ impl<'a> ExprEmitter<'a> {
             BuiltinType::Int => WasmType::I64,
             BuiltinType::Float => WasmType::F64,
             BuiltinType::Bool => WasmType::I32,
-            // Strings and lists are heap handles → I32 in WASM ABI.
-            BuiltinType::Str | BuiltinType::ListOf(_) => WasmType::I32,
+            // Strings, lists, and maps are heap handles → I32 in WASM ABI.
+            BuiltinType::Str | BuiltinType::ListOf(_) | BuiltinType::MapStrListStr => {
+                WasmType::I32
+            }
         }
     }
 

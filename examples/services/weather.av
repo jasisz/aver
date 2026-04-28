@@ -160,12 +160,12 @@ fn handleWeather(context: WeatherContext, req: HttpRequest) -> HttpResponse
     ? "Routes incoming HTTP request. GET /weather/<city> returns weather JSON."
     ! [Http.get, Tcp.readLine, Tcp.writeLine]
     match req.method == "GET"
-        false -> HttpResponse(status = 405, body = jsonErr("Method not allowed"), headers = [])
+        false -> HttpResponse(status = 405, body = jsonErr("Method not allowed"), headers = {})
         true  -> match extractCity(req.path)
-            Result.Err(msg) -> HttpResponse(status = 400, body = jsonErr(msg), headers = [])
+            Result.Err(msg) -> HttpResponse(status = 400, body = jsonErr(msg), headers = {})
             Result.Ok(city) -> match getWeather(context.config, context.conn, city)
-                Result.Ok(data)  -> HttpResponse(status = 200, body = jsonOk(city, data), headers = [])
-                Result.Err(msg)  -> HttpResponse(status = 502, body = jsonErr(msg), headers = [])
+                Result.Ok(data)  -> HttpResponse(status = 200, body = jsonOk(city, data), headers = {})
+                Result.Err(msg)  -> HttpResponse(status = 502, body = jsonErr(msg), headers = {})
 
 fn startServer(context: WeatherContext) -> Result<Unit, String>
     ? "Prints startup info and starts blocking HttpServer loop with explicit context."

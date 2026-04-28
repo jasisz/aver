@@ -64,12 +64,12 @@ fn jsonErr(msg: String) -> String
 verify jsonErr
     jsonErr("oops") => "{{\"error\":\"oops\"}}"
 
-fn jsonHeaders() -> List<Header>
-    ? "Standard JSON Content-Type headers."
-    [Header(name = "Content-Type", value = "application/json")]
+fn jsonHeaders() -> Map<String, List<String>>
+    ? "Standard JSON Content-Type headers (lowercase by HTTP convention)."
+    {"content-type" => ["application/json"]}
 
 verify jsonHeaders
-    jsonHeaders() => [Header(name = "Content-Type", value = "application/json")]
+    jsonHeaders() => {"content-type" => ["application/json"]}
 
 // --- response builders ---
 

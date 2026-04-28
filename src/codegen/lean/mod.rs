@@ -3836,11 +3836,11 @@ verify mirror law involutive
 fn firstOrMissing(xs: Vector<String>) -> Result<String, String>
     Option.toResult(Vector.get(xs, 0), "missing")
 
-fn defaultHeader() -> Header
-    Header(name = "Content-Type", value = "application/json")
+fn defaultHeaders() -> Map<String, List<String>>
+    {"content-type" => ["application/json"]}
 
 fn mkResponse(body: String) -> HttpResponse
-    HttpResponse(status = 200, body = body, headers = [defaultHeader()])
+    HttpResponse(status = 200, body = body, headers = defaultHeaders())
 
 fn requestPath(req: HttpRequest) -> String
     req.path
@@ -3853,11 +3853,12 @@ fn connPort(conn: Tcp.Connection) -> Int
         let out = transpile(&ctx);
         let lean = generated_lean_file(&out);
 
-        assert!(lean.contains("structure Header where"));
         assert!(lean.contains("structure HttpResponse where"));
         assert!(lean.contains("structure HttpRequest where"));
         assert!(lean.contains("structure Tcp_Connection where"));
         assert!(lean.contains("port : Int"));
+        // Headers field renders as the Map shape (Lean uses List of pairs).
+        assert!(lean.contains("List (String × List String)"));
     }
 
     #[test]

@@ -6,10 +6,6 @@ module MySql
     exposes [query, execute, ping]
     effects [Console, Http]
 
-record Header
-    name: String
-    value: String
-
 record DbConfig
     host: String
     database: String
@@ -84,12 +80,12 @@ fn pingUrl(config: DbConfig) -> String
 verify pingUrl
     pingUrl(DbConfig(host = "db.example.com", database = "shop", token = "t")) => "https://db.example.com/v1/health"
 
-fn authHeader(config: DbConfig) -> Header
-    ? "Constructs Authorization: Bearer header from DbConfig token."
-    Header(name = "Authorization", value = "Bearer {config.token}")
+fn authHeader(config: DbConfig) -> Map<String, List<String>>
+    ? "Builds the auth header map from DbConfig token (lowercase by HTTP convention)."
+    {"authorization" => ["Bearer {config.token}"]}
 
 verify authHeader
-    authHeader(DbConfig(host = "h", database = "d", token = "abc")) => Header(name = "Authorization", value = "Bearer abc")
+    authHeader(DbConfig(host = "h", database = "d", token = "abc")) => {"authorization" => ["Bearer abc"]}
 
 fn sqlBody(sql: String) -> String
     ? "Wraps SQL statement in JSON envelope expected by the gateway."
@@ -101,7 +97,7 @@ verify sqlBody
 fn query(config: DbConfig, sql: String) -> Result<String, String>
     ? "Executes SELECT. Returns Ok(rawJson) on success."
     ! [Http.post]
-    result = Http.post(queryUrl(config), sqlBody(sql), "application/json", [authHeader(config)])
+    result = Http.post(queryUrl(config), sqlBody(sql), "application/json", authHeader(config))
     match result
         Result.Err(msg) -> Result.Err("Transport error: {msg}")
         Result.Ok(resp) -> match is2xx(resp.status)
@@ -111,7 +107,7 @@ fn query(config: DbConfig, sql: String) -> Result<String, String>
 fn execute(config: DbConfig, sql: String) -> Result<String, String>
     ? "Executes non-SELECT statement. Returns Ok(rawJson) on success."
     ! [Http.post]
-    result = Http.post(executeUrl(config), sqlBody(sql), "application/json", [authHeader(config)])
+    result = Http.post(executeUrl(config), sqlBody(sql), "application/json", authHeader(config))
     match result
         Result.Err(msg) -> Result.Err("Transport error: {msg}")
         Result.Ok(resp) -> match is2xx(resp.status)

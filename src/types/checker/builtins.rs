@@ -6,13 +6,21 @@ impl TypeChecker {
 
         // Register built-in record field types for HttpResponse / HttpRequest and Header.
         // This enables checked dot-access: resp.status → Int, req.path → String, etc.
+        // HTTP headers are `Map<String, List<String>>` — multi-value
+        // semantics match HTTP (RFC 9110 same-name fields, RFC 6265
+        // Set-Cookie). Keys are case-insensitive by convention; the
+        // runtime normalizes incoming names to lowercase. Mirrors
+        // Go's `net/http.Header = map[string][]string`.
+        let header_map = || {
+            Type::Map(
+                Box::new(Type::Str),
+                Box::new(Type::List(Box::new(Type::Str))),
+            )
+        };
         let net_resp_fields: &[(&str, Type)] = &[
             ("status", Type::Int),
             ("body", Type::Str),
-            (
-                "headers",
-                Type::List(Box::new(Type::Named("Header".to_string()))),
-            ),
+            ("headers", header_map()),
         ];
         for (field, ty) in net_resp_fields {
             self.record_field_types.insert(
@@ -24,10 +32,7 @@ impl TypeChecker {
             ("method", Type::Str),
             ("path", Type::Str),
             ("body", Type::Str),
-            (
-                "headers",
-                Type::List(Box::new(Type::Named("Header".to_string()))),
-            ),
+            ("headers", header_map()),
         ];
         for (field, ty) in net_req_fields {
             self.record_field_types.insert(
@@ -96,7 +101,9 @@ impl TypeChecker {
                 Box::new(Type::Str),
             )
         };
-        let header_list = || Type::List(Box::new(Type::Named("Header".to_string())));
+        // Http.post/put/patch headers param: same shape as the
+        // record fields above (`Map<String, List<String>>`).
+        let header_list = header_map;
         let server_handler_effects = || {
             vec![
                 "Args.get".to_string(),
