@@ -1026,6 +1026,17 @@ impl NanValue {
             self.bits()
         }
     }
+
+    /// Structural hash that respects `eq_in` for every value shape:
+    /// two equal heap values (variants/tuples/records/lists/etc.) always
+    /// produce the same u64 regardless of arena layout. Used by Map
+    /// when the key type is anything beyond inline scalars.
+    pub fn map_key_hash_deep<T: ArenaTypes>(self, arena: &Arena<T>) -> u64 {
+        use core::hash::Hasher;
+        let mut hasher = DefaultHasher::new();
+        self.hash_in(&mut hasher, arena);
+        hasher.finish()
+    }
 }
 
 // -- Debug -----------------------------------------------------------------

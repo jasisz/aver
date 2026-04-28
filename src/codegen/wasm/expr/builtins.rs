@@ -126,56 +126,38 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::I32Const(0));
             }
             "Map.get" if args.len() == 2 => {
-                // args: [map(i32), key(i32)]
+                // args on stack: [map(i32), key(?)]
+                // ABI: rt_map_get(map: i32, key: i64, kind: i32) -> i32
+                let kind = self.emit_map_key_normalize(&args[1]);
+                self.instructions.push(Instruction::I32Const(kind));
                 self.instructions.push(Instruction::Call(self.rt.map_get));
             }
             "Map.set" if args.len() == 3 => {
-                // args: [map(i32), key(i32), value(?)]
-                // value needs to be i64 for map_set
+                // args on stack: [map(i32), key(?), value(?)]
+                // ABI: rt_map_set(map, key: i64, kind: i32, value: i64, value_ptr_flag: i32)
                 let value_is_ptr = self.expr_is_heap_ptr(&args[2].node);
                 let val_type = self.infer_expr_type(&args[2].node);
+                let value_local = self.alloc_local(WasmType::I64);
                 match val_type {
-                    WasmType::I64 => {} // already i64
+                    WasmType::I64 => {}
                     WasmType::I32 => self.instructions.push(Instruction::I64ExtendI32S),
                     WasmType::F64 => self.instructions.push(Instruction::I64ReinterpretF64),
                 }
+                self.instructions.push(Instruction::LocalSet(value_local));
+                // Stack now: [map, key]. Normalize key to i64 + kind.
+                let kind = self.emit_map_key_normalize(&args[1]);
+                self.instructions.push(Instruction::I32Const(kind));
+                self.instructions.push(Instruction::LocalGet(value_local));
                 self.instructions
                     .push(Instruction::I32Const(if value_is_ptr { 1 } else { 0 }));
                 self.instructions.push(Instruction::Call(self.rt.map_set));
             }
             "Map.len" if args.len() == 1 => {
-                // Walk cons list, count entries. Map ptr is on stack.
-                let map_local = self.alloc_local(WasmType::I32);
-                let count_local = self.alloc_local(WasmType::I64);
-                self.instructions.push(Instruction::LocalSet(map_local));
-                self.instructions.push(Instruction::I64Const(0));
-                self.instructions.push(Instruction::LocalSet(count_local));
-                self.instructions
-                    .push(Instruction::Block(wasm_encoder::BlockType::Empty));
-                self.block_depth += 1;
-                self.instructions
-                    .push(Instruction::Loop(wasm_encoder::BlockType::Empty));
-                self.block_depth += 1;
-                self.instructions.push(Instruction::LocalGet(map_local));
-                self.instructions.push(Instruction::I32Eqz);
-                self.instructions.push(Instruction::BrIf(1));
-                // count += 1
-                self.instructions.push(Instruction::LocalGet(count_local));
-                self.instructions.push(Instruction::I64Const(1));
-                self.instructions.push(Instruction::I64Add);
-                self.instructions.push(Instruction::LocalSet(count_local));
-                // map = tail (field 1)
-                self.instructions.push(Instruction::LocalGet(map_local));
-                self.instructions.push(Instruction::I32Const(1));
-                self.instructions
-                    .push(Instruction::Call(self.rt.obj_field_i32));
-                self.instructions.push(Instruction::LocalSet(map_local));
-                self.instructions.push(Instruction::Br(0));
-                self.emit_end();
-                self.emit_end();
-                self.instructions.push(Instruction::LocalGet(count_local));
+                self.instructions.push(Instruction::Call(self.rt.map_len));
             }
             "Map.has" if args.len() == 2 => {
+                let kind = self.emit_map_key_normalize(&args[1]);
+                self.instructions.push(Instruction::I32Const(kind));
                 self.instructions.push(Instruction::Call(self.rt.map_has));
             }
             "Map.keys" if args.len() == 1 => {
@@ -746,8 +728,7 @@ impl<'a> ExprEmitter<'a> {
             super::super::runtime::NEWLINE_ADDR as i32,
         ));
         self.instructions.push(Instruction::I32Const(1));
-        self.instructions
-            .push(Instruction::Call(console_print_idx));
+        self.instructions.push(Instruction::Call(console_print_idx));
         self.instructions.push(Instruction::I32Const(0)); // Unit
     }
 
@@ -1079,5 +1060,39 @@ impl<'a> ExprEmitter<'a> {
         let at = self.infer_aver_type(expr);
         self.emit_expr(expr);
         self.emit_stack_value_to_str(wt, at.as_ref());
+    }
+
+    /// Top-of-stack holds a Map key — normalize it to the i64 lane the
+    /// runtime expects and return the kind tag the runtime dispatches on:
+    ///   0 = Int, 1 = Float, 2 = Bool, 3 = String, 4 = Heap (deep-eq).
+    /// For pointer kinds we zero-extend the i32 ptr (high bits must
+    /// stay zero so i32.wrap_i64 round-trips). For Int/Bool we
+    /// sign-extend; for Float we reinterpret f64 bits.
+    pub(super) fn emit_map_key_normalize(&mut self, key: &Spanned<Expr>) -> i32 {
+        let wt = self.infer_expr_type(&key.node);
+        let at = self.infer_aver_type(&key.node);
+        let kind = match at.as_ref() {
+            Some(Type::Int) => 0,
+            Some(Type::Float) => 1,
+            Some(Type::Bool) => 2,
+            Some(Type::Str) => 3,
+            _ => match wt {
+                WasmType::I64 => 0,
+                WasmType::F64 => 1,
+                WasmType::I32 => 4,
+            },
+        };
+        match wt {
+            WasmType::I64 => {}
+            WasmType::F64 => self.instructions.push(Instruction::I64ReinterpretF64),
+            WasmType::I32 => {
+                if kind == 3 || kind == 4 {
+                    self.instructions.push(Instruction::I64ExtendI32U);
+                } else {
+                    self.instructions.push(Instruction::I64ExtendI32S);
+                }
+            }
+        }
+        kind
     }
 }

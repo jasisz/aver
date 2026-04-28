@@ -312,9 +312,21 @@ fn comparison_benches(c: &mut Criterion) {
         ("pattern match 30k", "bench_match", MATCH_SRC),
         ("string interp 5k", "bench_string", STRING_SRC),
         ("vector get/set 5k", "bench_vector", VECTOR_SRC),
-        ("newtype baseline 20k", "bench_newtype_bare", NEWTYPE_BARE_SRC),
-        ("newtype record 20k", "bench_newtype_record", NEWTYPE_RECORD_SRC),
-        ("newtype variant 20k", "bench_newtype_variant", NEWTYPE_VARIANT_SRC),
+        (
+            "newtype baseline 20k",
+            "bench_newtype_bare",
+            NEWTYPE_BARE_SRC,
+        ),
+        (
+            "newtype record 20k",
+            "bench_newtype_record",
+            NEWTYPE_RECORD_SRC,
+        ),
+        (
+            "newtype variant 20k",
+            "bench_newtype_variant",
+            NEWTYPE_VARIANT_SRC,
+        ),
     ];
 
     // Pre-compile all native binaries

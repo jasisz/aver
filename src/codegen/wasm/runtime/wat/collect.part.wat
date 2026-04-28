@@ -206,6 +206,14 @@
         i32.const 2
         i32.eq
         i32.or
+        local.get 3
+        i32.const 12
+        i32.eq
+        i32.or
+        local.get 3
+        i32.const 14
+        i32.eq
+        i32.or
         if ;; label = @3
           i32.const 0
           local.set 6
@@ -245,6 +253,48 @@
                 i64.extend_i32_s
                 i64.store
               end
+              local.get 6
+              i32.const 1
+              i32.add
+              local.set 6
+              br 0 (;@5;)
+            end
+          end
+        end
+        ;; HAMT_NODE (13) / HAMT_COLLISION (15): every field is a pointer.
+        local.get 3
+        i32.const 13
+        i32.eq
+        local.get 3
+        i32.const 15
+        i32.eq
+        i32.or
+        if ;; label = @3
+          i32.const 0
+          local.set 6
+          block ;; label = @4
+            loop ;; label = @5
+              local.get 6
+              local.get 5
+              i32.ge_u
+              br_if 1 (;@4;)
+              local.get 0
+              i32.const 8
+              i32.add
+              local.get 6
+              i32.const 8
+              i32.mul
+              i32.add
+              local.set 8
+              local.get 8
+              i64.load
+              i32.wrap_i64
+              call $rt_rebase_i32
+              local.set 7
+              local.get 8
+              local.get 7
+              i64.extend_i32_s
+              i64.store
               local.get 6
               i32.const 1
               i32.add
@@ -959,6 +1009,14 @@
             i32.const 2
             i32.eq
             i32.or
+            local.get 4
+            i32.const 12
+            i32.eq
+            i32.or
+            local.get 4
+            i32.const 14
+            i32.eq
+            i32.or
             if ;; label = @5
               i32.const 0
               local.set 7
@@ -998,6 +1056,48 @@
                     i64.extend_i32_s
                     i64.store
                   end
+                  local.get 7
+                  i32.const 1
+                  i32.add
+                  local.set 7
+                  br 0 (;@7;)
+                end
+              end
+            end
+            ;; HAMT_NODE (13) / HAMT_COLLISION (15): retain every field as ptr.
+            local.get 4
+            i32.const 13
+            i32.eq
+            local.get 4
+            i32.const 15
+            i32.eq
+            i32.or
+            if ;; label = @5
+              i32.const 0
+              local.set 7
+              block ;; label = @6
+                loop ;; label = @7
+                  local.get 7
+                  local.get 6
+                  i32.ge_u
+                  br_if 1 (;@6;)
+                  local.get 2
+                  i32.const 8
+                  i32.add
+                  local.get 7
+                  i32.const 8
+                  i32.mul
+                  i32.add
+                  local.set 9
+                  local.get 9
+                  i64.load
+                  i32.wrap_i64
+                  call $rt_retain_i32
+                  local.set 8
+                  local.get 9
+                  local.get 8
+                  i64.extend_i32_s
+                  i64.store
                   local.get 7
                   i32.const 1
                   i32.add

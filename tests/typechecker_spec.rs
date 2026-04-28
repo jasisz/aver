@@ -602,12 +602,14 @@ fn error_map_set_key_type_mismatch() {
 }
 
 #[test]
-fn error_map_key_type_must_be_hashable_scalar() {
+fn map_key_type_accepts_user_defined_via_deep_hash() {
+    // The HAMT runtime hashes any heap structure by value, so List<Int>
+    // (and other user-defined types) is a valid map key.
     let src = concat!(
-        "fn bad() -> Map<List<Int>, Int>\n",
+        "fn ok() -> Map<List<Int>, Int>\n",
         "    Map.fromList([([1], 2)])\n",
     );
-    assert_error_containing(src, "map key type must be Int, Float, String, or Bool");
+    assert_no_errors(src);
 }
 
 #[test]
@@ -620,12 +622,9 @@ fn error_map_from_list_requires_tuple_pairs() {
 }
 
 #[test]
-fn error_map_literal_key_must_be_hashable_scalar() {
-    let src = concat!("fn bad() -> Map<String, Int>\n", "    {[1] => 2}\n",);
-    assert_error_containing(
-        src,
-        "Map literal key type must be Int, Float, String, or Bool",
-    );
+fn map_literal_accepts_user_defined_keys() {
+    let src = concat!("fn ok() -> Map<List<Int>, Int>\n", "    {[1] => 2}\n",);
+    assert_no_errors(src);
 }
 
 #[test]

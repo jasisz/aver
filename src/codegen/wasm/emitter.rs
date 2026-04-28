@@ -273,12 +273,9 @@ pub fn build_wasm_module(
         rt_rebase_i32: 61,
         rt_collect_end: 62,
         rt_retain_i32: 63,
+        rt_map_len: 64,
     };
-    import_section.import(
-        "aver_runtime",
-        "rt_alloc",
-        EntityType::Function(rti.alloc),
-    );
+    import_section.import("aver_runtime", "rt_alloc", EntityType::Function(rti.alloc));
     import_section.import(
         "aver_runtime",
         "rt_truncate",
@@ -422,17 +419,17 @@ pub fn build_wasm_module(
     import_section.import(
         "aver_runtime",
         "rt_map_get",
-        EntityType::Function(rti.i32_i32_to_i32),
+        EntityType::Function(rti.i32_i64_i32_to_i32),
     );
     import_section.import(
         "aver_runtime",
         "rt_map_set",
-        EntityType::Function(rti.i32_i32_i64_i32_to_i32),
+        EntityType::Function(rti.i32_i64_i32_i64_i32_to_i32),
     );
     import_section.import(
         "aver_runtime",
         "rt_map_has",
-        EntityType::Function(rti.i32_i32_to_i32),
+        EntityType::Function(rti.i32_i64_i32_to_i32),
     );
     import_section.import(
         "aver_runtime",
@@ -596,6 +593,11 @@ pub fn build_wasm_module(
     );
     import_section.import(
         "aver_runtime",
+        "rt_map_len",
+        EntityType::Function(rti.unwrap_i64),
+    );
+    import_section.import(
+        "aver_runtime",
         "memory",
         EntityType::Memory(MemoryType {
             minimum: 1,
@@ -629,7 +631,7 @@ pub fn build_wasm_module(
             }),
         );
     }
-    let mut import_func_count = 64u32; // prev 60 + 4 collect/rebase/retain
+    let mut import_func_count = 65u32; // 64 prior + rt_map_len
 
     // Aver-style host imports unconditionally, regardless of --adapter.
     // Under --adapter wasi the `aver_to_wasi.wasm` shim re-exports the
@@ -641,33 +643,29 @@ pub fn build_wasm_module(
         .iter()
         .map(|entry| entry.canonical_name.as_str())
         .collect();
-    let needed =
-        super::abi::collect_needed_imports(&ctx.fn_sigs, &user_fn_names, &host_import_set);
-    let mut emit_aver_import =
-        |import_section: &mut ImportSection,
-         host_imports: &mut HashMap<String, u32>,
-         import_func_count: &mut u32,
-         abi_entry: &super::abi::AbiImport|
-         -> Result<u32, String> {
-            let type_idx =
-                runtime::lookup_type_index(&rti, abi_entry.params, abi_entry.results).ok_or_else(
-                    || {
-                        format!(
-                            "Missing WASM type mapping for ABI import {} ({:?} -> {:?})",
-                            abi_entry.import_name, abi_entry.params, abi_entry.results
-                        )
-                    },
-                )?;
-            let idx = *import_func_count;
-            import_section.import(
-                super::abi::ABI_MODULE,
-                abi_entry.import_name,
-                wasm_encoder::EntityType::Function(type_idx),
-            );
-            host_imports.insert(abi_entry.import_name.to_string(), idx);
-            *import_func_count += 1;
-            Ok(idx)
-        };
+    let needed = super::abi::collect_needed_imports(&ctx.fn_sigs, &user_fn_names, &host_import_set);
+    let mut emit_aver_import = |import_section: &mut ImportSection,
+                                host_imports: &mut HashMap<String, u32>,
+                                import_func_count: &mut u32,
+                                abi_entry: &super::abi::AbiImport|
+     -> Result<u32, String> {
+        let type_idx = runtime::lookup_type_index(&rti, abi_entry.params, abi_entry.results)
+            .ok_or_else(|| {
+                format!(
+                    "Missing WASM type mapping for ABI import {} ({:?} -> {:?})",
+                    abi_entry.import_name, abi_entry.params, abi_entry.results
+                )
+            })?;
+        let idx = *import_func_count;
+        import_section.import(
+            super::abi::ABI_MODULE,
+            abi_entry.import_name,
+            wasm_encoder::EntityType::Function(type_idx),
+        );
+        host_imports.insert(abi_entry.import_name.to_string(), idx);
+        *import_func_count += 1;
+        Ok(idx)
+    };
 
     let mut have_console_print = false;
     for abi_entry in &needed {
@@ -762,14 +760,13 @@ pub fn build_wasm_module(
     // Under the WASI adapter `_start` must be `() -> ()` so wasmtime can
     // dispatch it as a command. main carries an i32/i64/f64 return; emit
     // a void wrapper that calls main and drops its result.
-    let wasi_start_wrapper_idx: Option<u32> = if matches!(adapter, super::WasmAdapter::Wasi)
-        && fn_indices.contains_key("main")
-    {
-        function_section.function(rti.empty_to_empty);
-        Some(start_fn_idx + 1)
-    } else {
-        None
-    };
+    let wasi_start_wrapper_idx: Option<u32> =
+        if matches!(adapter, super::WasmAdapter::Wasi) && fn_indices.contains_key("main") {
+            function_section.function(rti.empty_to_empty);
+            Some(start_fn_idx + 1)
+        } else {
+            None
+        };
 
     module.section(&function_section);
 
@@ -1201,8 +1198,11 @@ fn emit_plain_user_function(
         func.instruction(instr);
     }
     func.instruction(&Instruction::End);
-    let local_names: Vec<(String, u32)> =
-        emitter.locals.into_iter().map(|(n, idx)| (n, idx)).collect();
+    let local_names: Vec<(String, u32)> = emitter
+        .locals
+        .into_iter()
+        .map(|(n, idx)| (n, idx))
+        .collect();
     Ok((func, local_names))
 }
 

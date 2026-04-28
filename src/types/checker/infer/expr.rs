@@ -425,12 +425,9 @@ impl TypeChecker {
                     let current_key = self.infer_type(key_expr);
                     let current_val = self.infer_type(value_expr);
 
-                    if !matches!(
-                        current_key,
-                        Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unknown
-                    ) {
+                    if matches!(current_key, Type::Fn { .. } | Type::Unit) {
                         self.error(format!(
-                            "Map literal key type must be Int, Float, String, or Bool (got {})",
+                            "Map literal key type must be hashable (got {})",
                             current_key.display()
                         ));
                     }

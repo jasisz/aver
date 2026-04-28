@@ -117,8 +117,7 @@ pub fn build_runtime_wasm() -> Result<Vec<u8>, String> {
 /// to satisfy user.wasm's `aver/*` imports against
 /// `wasi_snapshot_preview1.fd_write`.
 pub fn build_aver_to_wasi_wasm() -> Result<Vec<u8>, String> {
-    wat::parse_str(AVER_TO_WASI_WAT)
-        .map_err(|e| format!("aver_to_wasi WAT parse failed: {}", e))
+    wat::parse_str(AVER_TO_WASI_WAT).map_err(|e| format!("aver_to_wasi WAT parse failed: {}", e))
 }
 
 #[cfg(test)]
@@ -238,8 +237,7 @@ mod tests {
             "collect_from",
             "collect_dst",
         ];
-        let mut found: std::collections::HashSet<&str> =
-            std::collections::HashSet::new();
+        let mut found: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
             if let Ok(wasmparser::Payload::ExportSection(reader)) = payload {
                 for export in reader {

@@ -31,7 +31,11 @@ pub const OBJ_WRAPPER_F64: u64 = 7; // inner field is f64
 pub const OBJ_WRAPPER_I32: u64 = 8; // inner field is i32 (stored as i64)
 pub const OBJ_LIST_CONS_F64: u64 = 9; // head is f64, tail is i32 (stored as i64)
 pub const OBJ_VECTOR: u64 = 10; // flat array of i64 elements
-pub const OBJ_MAP_ENTRY: u64 = 11; // cons cell in association list (same layout as LIST_CONS)
+pub const OBJ_MAP_ENTRY: u64 = 11; // cons cell in association list (legacy; HAMT replaced this)
+pub const OBJ_HAMT: u64 = 12; // HAMT root wrapper (count + root_ptr)
+pub const OBJ_HAMT_NODE: u64 = 13; // HAMT internal node (bitmap + children)
+pub const OBJ_HAMT_LEAF: u64 = 14; // HAMT key/value leaf (carries hash + flags)
+pub const OBJ_HAMT_COLLISION: u64 = 15; // HAMT hash-collision bucket (list of leaves)
 
 // ---------------------------------------------------------------------------
 // Wrapper tags (Ok/Err/Some)

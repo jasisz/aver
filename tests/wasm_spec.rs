@@ -116,8 +116,8 @@ fn wasm_opt_oz_does_not_increase_size_for_snake() {
         .arg("examples/games/snake.av")
         .arg("--target")
         .arg("wasm")
-        .arg("--wasm-opt")
-        .arg("oz")
+        .arg("--optimize")
+        .arg("size")
         .arg("--name")
         .arg("snake_opt")
         .arg("-o")
@@ -234,7 +234,7 @@ fn main()
 }
 
 #[test]
-fn wasm_compile_rejects_int_map_keys_with_validation_error() {
+fn wasm_compile_validates_int_map_keys_successfully() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let module_path = write_temp_module(
@@ -261,19 +261,13 @@ fn main()
         .expect("expected `aver compile --target wasm` to run");
 
     assert!(
-        !output.status.success(),
-        "expected Map<Int, V> WASM compile to fail validation, but it succeeded:\n{}",
+        output.status.success(),
+        "expected Map<Int, V> WASM compile to pass validation:\n{}",
         format_output(&output)
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("WASM emit produced invalid bytecode"),
-        "expected emit-time validation error, got stderr:\n{}",
-        stderr
-    );
-    assert!(
-        !output_dir.join("main.wasm").exists(),
-        "expected no .wasm artifact when validation fails"
+        output_dir.join("main.wasm").exists(),
+        "expected main.wasm to exist when validation passes"
     );
 
     let _ = fs::remove_dir_all(module_path.parent().expect("temp module dir"));
@@ -281,7 +275,7 @@ fn main()
 }
 
 #[test]
-fn wasm_compile_rejects_float_map_keys_with_validation_error() {
+fn wasm_compile_validates_float_map_keys_successfully() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let module_path = write_temp_module(
@@ -308,15 +302,13 @@ fn main()
         .expect("expected `aver compile --target wasm` to run");
 
     assert!(
-        !output.status.success(),
-        "expected Map<Float, V> WASM compile to fail validation, but it succeeded:\n{}",
+        output.status.success(),
+        "expected Map<Float, V> WASM compile to pass validation:\n{}",
         format_output(&output)
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("WASM emit produced invalid bytecode"),
-        "expected emit-time validation error, got stderr:\n{}",
-        stderr
+        output_dir.join("main.wasm").exists(),
+        "expected main.wasm to exist when validation passes"
     );
 
     let _ = fs::remove_dir_all(module_path.parent().expect("temp module dir"));

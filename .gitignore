@@ -8,3 +8,12 @@ out/
 .env
 tools/wasm-runner/target/
 *.cwasm/
+
+# editor / OS junk
+.DS_Store
+**/.DS_Store
+__pycache__/
+*.pyc
+
+# editor packaging artifacts (built locally, not version-controlled)
+editors/vscode/*.vsix
