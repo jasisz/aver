@@ -3690,6 +3690,10 @@ fn emit_cloudflare_pack(out_path: &Path, wasm_name: &str, wasm_file: &Path) {
     let worker_js = CLOUDFLARE_WORKER_JS.replace("__WASM_NAME__", wasm_name);
     let wrangler_toml = CLOUDFLARE_WRANGLER_TOML.replace("__WASM_NAME__", wasm_name);
 
+    // worker.js is the host-bridge between user.wasm and the
+    // Workers JS environment — it tracks the compiler's `aver/*`
+    // import surface, so we always regenerate it. User edits to
+    // worker.js between regens are not the supported path.
     if let Err(e) = std::fs::write(&worker_path, worker_js) {
         eprintln!(
             "{}",
@@ -3697,7 +3701,17 @@ fn emit_cloudflare_pack(out_path: &Path, wasm_name: &str, wasm_file: &Path) {
         );
         return;
     }
-    if let Err(e) = std::fs::write(&wrangler_path, wrangler_toml) {
+
+    // wrangler.toml is *user-customisable* deployment config:
+    // worker name, custom domain routes, observability toggles,
+    // KV/D1 bindings, secrets, etc. Once written, never overwrite —
+    // the regen path is "compiler refreshes app.wasm and worker.js,
+    // user keeps their wrangler.toml". A first run drops the
+    // template; subsequent runs leave it alone.
+    let wrangler_existed = wrangler_path.exists();
+    if !wrangler_existed
+        && let Err(e) = std::fs::write(&wrangler_path, wrangler_toml)
+    {
         eprintln!(
             "{}",
             format!("Failed to write {}: {}", wrangler_path.display(), e).red()
@@ -3705,11 +3719,17 @@ fn emit_cloudflare_pack(out_path: &Path, wasm_name: &str, wasm_file: &Path) {
         return;
     }
 
+    let wrangler_note = if wrangler_existed {
+        " (preserved)"
+    } else {
+        ""
+    };
     println!(
-        "{} {} + {} ({})",
+        "{} {} + {}{} ({})",
         "  Pack".green().bold(),
         worker_path.display().to_string().cyan(),
         wrangler_path.display().to_string().cyan(),
+        wrangler_note.dimmed(),
         format!("Cloudflare Workers, paired with {}", wasm_file.display()).dimmed()
     );
 }

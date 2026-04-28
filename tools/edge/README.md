@@ -37,8 +37,10 @@ Deno / Bun can keep the thinner `--target edge-wasm` shape with a
 runtime fetched from `averlang.dev/runtime/`.
 
 The `wrangler.toml` checked in is pre-edited with the
-`edge.averlang.dev` route + observability — re-applying that block
-after a regen is the only manual step.
+`edge.averlang.dev` route + observability + worker name. Subsequent
+recompiles preserve it (the pack writes `wrangler.toml` only when
+it doesn't already exist), so the only file that changes on regen
+is `app.wasm` plus the `worker.js` bridge template.
 
 ## Deploy
 
@@ -71,7 +73,7 @@ curl -sI https://edge.averlang.dev/   # check content-type, cf-ray
 
 ## Iterating
 
-Edit `app.av`, re-run the compile command, re-apply the `routes`
-block in `dist/wrangler.toml` if it got overwritten, `wrangler
-deploy`. The fetch-bridge in `worker.js` rarely needs touching —
-it's the same template every Cloudflare-targeted Aver program uses.
+Edit `app.av`, re-run the compile command, `wrangler deploy`. The
+`wrangler.toml` is preserved across regens; the fetch-bridge in
+`worker.js` rarely needs touching by hand — it's the same template
+every Cloudflare-targeted Aver program uses.
