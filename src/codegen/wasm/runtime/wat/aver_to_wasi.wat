@@ -354,12 +354,22 @@
   ;; you're hitting a fallback path, not a hot loop". A static
   ;; data offset would be neater but coordinating it with user.wasm's
   ;; interned-literal table at merge time isn't worth the bytes.
+  ;; `request_headers_load` under WASI: there's no host-side
+  ;; request to read headers from (the WASI bridge runs Aver
+  ;; programs as standalone CLIs, not request handlers). Return
+  ;; empty Map handle (`0`) — `req.headers` on a CLI program has
+  ;; nothing to read from.
+  (func $request_headers_load (result i32)
+    i32.const 0
+  )
+  (export "request_headers_load" (func $request_headers_load))
+
   (func $http_send
         (param $method_ptr i32) (param $method_len i32)
         (param $url_ptr i32)    (param $url_len i32)
         (param $body_ptr i32)   (param $body_len i32)
         (param $ct_ptr i32)     (param $ct_len i32)
-        (result i64 i32 i32)
+        (result i64 i32 i32 i32)
     (local $msg_buf i32)
     (local $obj i32)
 
@@ -412,6 +422,7 @@
 
     i64.const 0
     i32.const 0
+    i32.const 0       ;; headers handle = 0 (empty Map)
     local.get $msg_buf
     i32.const 40
     call $alloc_obj_string_copy

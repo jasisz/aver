@@ -1056,11 +1056,13 @@ impl<'a> ExprEmitter<'a> {
             self.instructions.push(Instruction::I32Const(0));
         }
         self.instructions.push(Instruction::Call(send_idx));
-        // Stack: [status: i64, body: i32, err: i32]
+        // Stack: [status: i64, body: i32, headers: i32, err: i32]
         let err_local = self.alloc_local(WasmType::I32);
+        let resp_headers_local = self.alloc_local(WasmType::I32);
         let resp_body_local = self.alloc_local(WasmType::I32);
         let status_local = self.alloc_local(WasmType::I64);
         self.instructions.push(Instruction::LocalSet(err_local));
+        self.instructions.push(Instruction::LocalSet(resp_headers_local));
         self.instructions.push(Instruction::LocalSet(resp_body_local));
         self.instructions.push(Instruction::LocalSet(status_local));
 
@@ -1108,10 +1110,12 @@ impl<'a> ExprEmitter<'a> {
             align: 3,
             memory_index: 0,
         }));
-        // Field 2: headers (empty Map for 0.14 — 0.15 follow-up
-        // bulk-transfers response headers back into the guest Map).
+        // Field 2: headers — `Map<String, List<String>>` handle the
+        // host bulk-transferred from the upstream `Response.headers`
+        // (or `0` when the host returned nothing — older bridges).
         self.instructions.push(Instruction::LocalGet(resp_local));
-        self.instructions.push(Instruction::I64Const(0));
+        self.instructions.push(Instruction::LocalGet(resp_headers_local));
+        self.instructions.push(Instruction::I64ExtendI32U);
         self.instructions.push(Instruction::I64Store(MemArg {
             offset: 24,
             align: 3,
@@ -1556,16 +1560,21 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::Call(idx));
                 return;
             }
-            // `req.headers` under the Fetch bridge — bulk transfer of
-            // the host's Headers into a guest `Map<String, List<String>>`
-            // is a 0.15 follow-up. For 0.14 we hand back an empty Map
-            // so handlers that route by URL/method/body keep working;
-            // handlers that auth-check via headers see an empty
-            // multimap (`Map.get(req.headers, "authorization") =>
-            // Option.None`). Document via CHANGELOG.
+            // `req.headers` under the Fetch bridge — bulk-transfer
+            // the host's `Headers` into a guest
+            // `Map<String, List<String>>` via a single host crossing.
+            // The bootstrap walks `pending.req.headers`, allocates
+            // OBJ_STRINGs, and folds them through `rt_map_from_list`.
+            // Multi-value entries (Set-Cookie via `getSetCookie()`,
+            // Vary, …) keep separate values in the value list.
             if field_name == "headers" {
                 self.instructions.push(Instruction::Drop);
-                self.instructions.push(Instruction::I32Const(0));
+                if let Some(&idx) = self.host_import_indices.get("request_headers_load") {
+                    self.instructions.push(Instruction::Call(idx));
+                } else {
+                    self.codegen_error("missing host import `request_headers_load`");
+                    self.instructions.push(Instruction::I32Const(0));
+                }
                 return;
             }
             // Unknown HttpRequest field under fetch bridge — fall

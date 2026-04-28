@@ -724,6 +724,7 @@ pub fn build_wasm_module(
             "Request.method",
             "Request.url",
             "Request.body",
+            "Request.headersLoad",
             "Response.text",
             "Response.setHeader",
             "Http.send",

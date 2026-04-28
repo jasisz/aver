@@ -184,6 +184,21 @@ pub const ABI_TABLE: &[AbiImport] = &[
         params: &[],
         results: &[ValType::I32],
     },
+    // Bulk-transfer the request's `Headers` into a guest
+    // `Map<String, List<String>>`. Single host crossing — the JS
+    // bootstrap walks `request.headers`, allocates OBJ_STRING
+    // handles via the runtime's bump allocator, builds a list of
+    // (name, [value, …]) tuples, and folds the list into a HAMT
+    // root via `rt_map_from_list`. Multi-value entries
+    // (Set-Cookie via `getSetCookie()`, Vary, …) keep separate
+    // values in the value list. Returns the OBJ_HAMT handle
+    // (or `0` for an empty map).
+    AbiImport {
+        effect: "Request.headersLoad",
+        import_name: "request_headers_load",
+        params: &[],
+        results: &[ValType::I32],
+    },
     // Response.text(status, body) → host stores status/body, returns
     // an opaque handle (i32). The handle is what the user fn returns
     // from the HTTP handler; the pack bootstrap reads stashed
@@ -250,7 +265,11 @@ pub const ABI_TABLE: &[AbiImport] = &[
             ValType::I32, ValType::I32,
             ValType::I32, ValType::I32,
         ],
-        results: &[ValType::I64, ValType::I32, ValType::I32],
+        // (status: i64, body_ptr: i32, headers_map: i32, err_ptr: i32)
+        // The headers map is the OBJ_HAMT handle returned by the
+        // host's same `rt_map_from_list` round trip used for
+        // request.headers — empty (`0`) on transport error.
+        results: &[ValType::I64, ValType::I32, ValType::I32, ValType::I32],
     },
     AbiImport {
         effect: "Http.addRequestHeader",

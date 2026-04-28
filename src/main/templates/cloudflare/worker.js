@@ -19,6 +19,10 @@ async function loadRuntime() {
   const { instance } = await WebAssembly.instantiate(bytes, {});
   runtimeInstance = instance;
   runtimeMemory = instance.exports.memory;
+  // Expose the runtime exports at module scope so host-side
+  // header builders can call `rt_map_from_list` directly when
+  // bulk-transferring `Request.headers` / `Response.headers`.
+  runtimeExports = instance.exports;
   return instance;
 }
 
@@ -81,6 +85,11 @@ function makeAverImports() {
       // we hand back the OBJ_STRING, else empty. Bootstrap pre-reads
       // the body before invoking the handler.
       return writeAverString(runtimeMemory, alloc, encoder, pending?.body ?? "");
+    },
+    request_headers_load: () => {
+      const h = pending?.req?.headers;
+      if (!h) return 0;
+      return buildHeadersMap(h);
     },
     response_text: (status, ptr, len) => {
       // Stash response data; native Response built post-handler. The
@@ -199,7 +208,7 @@ function makeSuspendingHttpSend() {
         runtimeMemory, alloc, encoder,
         "Http.send: host has no JSPI; cannot await fetch synchronously",
       );
-      return [0n, 0, err];
+      return [0n, 0, 0, err];
     };
   }
   return new WebAssembly.Suspending(async (
@@ -228,11 +237,17 @@ function makeSuspendingHttpSend() {
       const bodyHandle = writeAverString(
         runtimeMemory, alloc, encoder, respBody,
       );
-      return [BigInt(resp.status), bodyHandle, 0];
+      // Bulk-transfer the upstream response headers into a guest
+      // `Map<String, List<String>>` so Aver code can read
+      // `resp.headers` (Content-Type, Set-Cookie, rate-limit
+      // headers, ETag, …). Empty Map (`0`) when the upstream
+      // sent nothing — same shape Aver code already handles.
+      const headersHandle = buildHeadersMap(resp.headers);
+      return [BigInt(resp.status), bodyHandle, headersHandle, 0];
     } catch (e) {
       const msg = e?.message ?? String(e);
       const errHandle = writeAverString(runtimeMemory, alloc, encoder, msg);
-      return [0n, 0, errHandle];
+      return [0n, 0, 0, errHandle];
     }
   });
 }
@@ -245,6 +260,103 @@ function makeSuspendingHttpSend() {
 let readString = (_ptr, _len) => "";
 let alloc = (_size) => 0;
 let encoder = new TextEncoder();
+
+// Reference to the loaded `aver_runtime` instance — populated by
+// `loadRuntime` once the module is instantiated. Host-side header
+// builders (`buildHeadersMap`) reach for `rt_map_from_list` here
+// to materialize a HAMT root from a list of (name, [value, …])
+// tuples without re-deriving the Map insertion logic.
+let runtimeExports = null;
+
+// Aver runtime kind tags / wrap codes the host needs when
+// hand-building heap objects (OBJ_LIST_CONS for cons cells,
+// OBJ_TUPLE for (name, values) entries). Mirrors
+// `src/codegen/wasm/value.rs`.
+const OBJ_LIST_CONS = 4n;
+const OBJ_TUPLE = 7n;
+const KIND_STR = 3;
+
+// Build an `OBJ_LIST_CONS` cell at a fresh allocation. Layout
+// matches `rt_list_cons` in the runtime: 8-byte header + 8-byte
+// head value (i64) + 8-byte tail (i32 sign-extended into an i64
+// slot).
+function consCell(headValue, tail, headPtrFlag) {
+  const ptr = alloc(24);
+  const view = new DataView(runtimeMemory.buffer);
+  // Header: kind << 56 | head_ptr_flag << 32 | field_count(2)
+  const header =
+    (OBJ_LIST_CONS << 56n) | (BigInt(headPtrFlag) << 32n) | 2n;
+  view.setBigUint64(ptr, header, true);
+  view.setBigUint64(ptr + 8, headValue, true);
+  view.setBigInt64(ptr + 16, BigInt(tail | 0), true);
+  return ptr;
+}
+
+// Build an `OBJ_TUPLE` of two heap pointers — used for the
+// (name, values_list) entries that `rt_map_from_list` consumes.
+function tupleStrList(namePtr, valuesListPtr) {
+  const ptr = alloc(24);
+  const view = new DataView(runtimeMemory.buffer);
+  // Header: kind=OBJ_TUPLE | meta=0b11 (both fields are heap ptrs)
+  // << 32 | field_count(2)
+  const header = (OBJ_TUPLE << 56n) | (3n << 32n) | 2n;
+  view.setBigUint64(ptr, header, true);
+  view.setBigUint64(ptr + 8, BigInt(namePtr), true);
+  view.setBigUint64(ptr + 16, BigInt(valuesListPtr), true);
+  return ptr;
+}
+
+// Walk a JS `Headers` object and return a guest-side
+// `Map<String, List<String>>` handle. Multi-value `Set-Cookie`
+// uses `getSetCookie()` (Web Fetch API) so individual cookies
+// land as separate list entries; everything else collapses
+// into a single-element list (the Headers iterator already
+// comma-joins same-name fields per RFC 9110 §5.3, which is the
+// shape Aver code receives).
+function buildHeadersMap(jsHeaders) {
+  if (!runtimeExports || typeof runtimeExports.rt_map_from_list !== "function") {
+    return 0;
+  }
+  let listTail = 0;
+
+  // Set-Cookie first (if available) so the resulting Map sees
+  // a real `["c1", "c2", …]` list under that name, not a
+  // comma-collapsed single-element value.
+  let cookies = [];
+  if (typeof jsHeaders.getSetCookie === "function") {
+    cookies = jsHeaders.getSetCookie();
+  }
+  if (cookies.length > 0) {
+    let valueList = 0;
+    for (let i = cookies.length - 1; i >= 0; i--) {
+      const cookieStr = writeAverString(
+        runtimeMemory, alloc, encoder, cookies[i],
+      );
+      valueList = consCell(BigInt(cookieStr), valueList, 1);
+    }
+    const nameStr = writeAverString(
+      runtimeMemory, alloc, encoder, "set-cookie",
+    );
+    const tuple = tupleStrList(nameStr, valueList);
+    listTail = consCell(BigInt(tuple), listTail, 1);
+  }
+
+  // Everything else — Headers iteration yields lowercase names
+  // already, so we don't have to normalise. Skip Set-Cookie since
+  // we handled it above (its iterator entries are also already
+  // collapsed into one comma-joined string by spec, which is wrong
+  // for Set-Cookie — `getSetCookie()` is the canonical reader).
+  for (const [name, value] of jsHeaders) {
+    if (name.toLowerCase() === "set-cookie") continue;
+    const nameStr = writeAverString(runtimeMemory, alloc, encoder, name);
+    const valueStr = writeAverString(runtimeMemory, alloc, encoder, value);
+    const valueList = consCell(BigInt(valueStr), 0, 1);
+    const tuple = tupleStrList(nameStr, valueList);
+    listTail = consCell(BigInt(tuple), listTail, 1);
+  }
+
+  return runtimeExports.rt_map_from_list(listTail, KIND_STR, 1);
+}
 
 // Tag values follow Aver's runtime convention:
 //   0 = Int (i64 raw bits in `val`)
