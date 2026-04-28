@@ -37,6 +37,13 @@
             padding-top: 0;
             margin-top: 2.5rem;
         }
+        .rt-subhead {
+            font-size: 1.05rem;
+            font-weight: 650;
+            letter-spacing: -0.005em;
+            margin: 1.75rem 0 0.6rem;
+            color: var(--accent);
+        }
         .rt-lede {
             color: var(--muted);
             font-size: 1.05rem;
@@ -229,22 +236,30 @@ const user = await WebAssembly.instantiateStreaming(
 );
 user.instance.exports._start();</pre>
 
-    <h2>Browser host shim</h2>
+    <h2>Wiring up effects</h2>
     <p>
-        A minimal <code>aver/*</code> import set for browser hosts.
-        Strings and other heap values arrive as
+        Every <code>user.wasm</code> imports <code>aver/*</code>
+        effects (<code>Console.print</code>,
+        <code>Time.unixMs</code>, …) — the host environment
+        provides them. Packaging (bundled vs edge) and effect host
+        (JS / WASI / something else) are independent choices. Pick
+        one of each:
+    </p>
+
+    <h3 class="rt-subhead">JS host (browser, Node, Workers, Fastly Compute…)</h3>
+    <p>
+        Provide the <code>aver/*</code> imports as plain JS
+        functions. Strings and other heap values arrive as
         <code>(ptr, len)</code> pairs into the runtime's linear
         memory — read them through a typed-array view of
         <code>runtime.exports.memory</code>.
     </p>
-    <pre><span class="rt-comment">// Smallest viable shim — covers Console.* and one Time effect.</span>
+    <pre><span class="rt-comment">// Smallest viable shim — covers Console.* + Time + Random.</span>
 <span class="rt-comment">// Add more entries as your program declares more effects.</span>
 function makeHostImports(memory) {
     const decoder = new TextDecoder("utf-8");
-    const readBytes = (ptr, len) =>
-        new Uint8Array(memory.buffer, ptr, len);
-    const readString = (ptr, len) =>
-        decoder.decode(readBytes(ptr, len));
+    const readString = (ptr, len) =&gt;
+        decoder.decode(new Uint8Array(memory.buffer, ptr, len));
 
     return {
         console_print: (ptr, len) =&gt; console.log(readString(ptr, len)),
@@ -258,31 +273,34 @@ function makeHostImports(memory) {
     };
 }</pre>
 
-    <h2>Standalone with WASI</h2>
+    <h3 class="rt-subhead">WASI host (wasmtime, wasmer, …)</h3>
     <p>
-        For wasmtime / Cloudflare Workers / Fastly Compute — anywhere
-        without a JS host — let the CLI do the bundling. <code>--bridge
-        wasi</code> merges the runtime and <code>aver_to_wasi.wasm</code>
-        into a single self-contained binary whose only import is
-        <code>wasi_snapshot_preview1</code>:
+        On runtimes without JS, use the prebuilt
+        <code>aver_to_wasi.wasm</code> shim — it satisfies
+        <code>aver/*</code> imports against
+        <code>wasi_snapshot_preview1.fd_write</code>. The CLI's
+        <code>--bridge wasi</code> bundles it for you in one step:
     </p>
     <pre><span class="rt-prompt">$</span> aver compile mygame.av --target wasm --bridge wasi --optimize size -o dist/
 <span class="rt-prompt">$</span> wasmtime dist/mygame.wasm
-<span class="rt-comment"># Runs. No other host wiring needed.</span></pre>
+<span class="rt-comment"># No other host wiring needed.</span></pre>
     <p>
-        The artifacts on this page (<code>aver_runtime.wasm</code> +
-        <code>aver_to_wasi.wasm</code>) are what that command bundles
-        internally — published here so that consumers who want to
-        deploy a thin user.wasm against a separately-hosted runtime
-        (CDN-cached, version-pinned) can wire the modules up at
-        instantiate time instead.
-    </p>
-    <p>
-        WASI bridge coverage today: <code>Console.*</code> and
+        Coverage today: <code>Console.*</code> and
         <code>Format.value</code> / <code>Print.value</code>. Other
         <code>aver/*</code> effects (<code>Disk.*</code>,
-        <code>Tcp.*</code>, etc.) trap as <code>unreachable</code> —
-        provide them through the host directly until coverage lands.
+        <code>Tcp.*</code>, etc.) trap as <code>unreachable</code>
+        in the bridge — wire them through the host directly until
+        coverage lands.
+    </p>
+
+    <h3 class="rt-subhead">Mixing edge packaging with any host</h3>
+    <p>
+        The artifacts on this page are the building blocks the CLI
+        bundles internally. Publish them once at the URLs below and
+        every <code>--target edge-wasm</code> binary you ship can
+        share that runtime — paired with whichever effect host fits
+        the deployment (browser shim above, the WASI bridge,
+        Cloudflare Workers' JS bindings, anything else).
     </p>
 
     <h2>Releases</h2>
