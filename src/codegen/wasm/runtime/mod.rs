@@ -1,28 +1,21 @@
-/// Emits inline WASM runtime functions for the typed ABI.
-///
-/// Native arithmetic uses WASM instructions directly (no runtime helpers).
-/// Runtime functions handle: allocation, heap objects, IO/print, string ops,
-/// list ops, vector ops, and map ops.
-///
-/// Split into submodules by domain:
-/// - `indices` — function/type index structs and dispatch
-/// - `alloc` — allocator, wrap/unwrap, object inspection
-/// - `io` — stdout writing, number formatting, value printing
-/// - `strings` — string equality, concatenation, numeric-to-string conversion
-/// - `lists` — cons cells and linked-list operations
-/// - `vectors` — flat array operations
-/// - `maps` — association-list map operations
-mod alloc;
+//! WASM runtime entry point.
+//!
+//! Every runtime fn (alloc/heap GC, obj inspection, str/list/map/vec
+//! ops, numeric formatting) lives in the WAT runtime under
+//! `runtime/wat/*.part.wat` and is imported by user.wasm from the
+//! `aver_runtime` module. This Rust crate just exposes the index
+//! tables (`indices`) and the WAT → wasm bytes builder
+//! (`wat_module`).
+//!
+//! Under `--target wasm --bridge wasi`, an additional shim module
+//! (`runtime/wat/aver_to_wasi.wat`) translates `aver/*` host calls
+//! into `wasi_snapshot_preview1.*` so the program runs standalone
+//! under wasmtime.
+
 mod indices;
-mod io;
-mod lists;
-mod maps;
-mod strings;
-mod vectors;
 mod wat_module;
 
 use wasm_encoder::Function;
-
 
 pub use indices::{
     AverRuntimeImports, RuntimeFuncIndices, emit_base_type_section, lookup_type_index,
@@ -40,28 +33,9 @@ pub(crate) const IO_INT_BUF: u32 = 16;
 pub const NEWLINE_ADDR: u32 = 40;
 pub(crate) const IO_FLOAT_BUF: u32 = 48; // 48 bytes for float digits (48..95)
 
-/// Emit all runtime function bodies.
-///
-/// Functions migrated to the `aver_runtime` imported WAT module are
-/// intentionally absent here — they live in `runtime/wat/*.part.wat`
-/// and are referenced through their import indices on `rt`.
-/// Migrated so far: alloc, truncate, obj_kind/tag/meta, obj_field
-/// (i64/f64/i32), unwrap (i64/f64/i32), wrap (i64/f64/i32), str_eq,
-/// str_concat, list_cons (i64/f64), str_byte_len, str_find,
-/// str_starts_with, str_ends_with, str_contains, list_take/drop/
-/// concat/reverse/contains/zip, map_get/set/has/keys/entries,
-/// vec_from_list/get/len/set/new/to_list, int_to_str, float_to_str,
-/// i64_to_str_obj, f64_to_str_obj, str_len, char_to_code,
-/// byte_to_hex, byte_from_hex, char_from_code, str_char_at,
-/// str_to_lower, str_to_upper, str_trim, str_slice, str_chars,
-/// str_split, str_join, str_replace, int_from_str, float_from_str,
-/// collect_begin, rebase_i32, collect_end, retain_i32.
-/// fd_write_buf removed — user.wasm now calls aver/console_print
-/// directly; the WASI translation lives in aver_to_wasi.wasm.
-#[allow(clippy::vec_init_then_push)]
-pub fn emit_runtime_functions(rt: &RuntimeFuncIndices) -> Vec<Function> {
-    let mut funcs = Vec::new();
-
-
-    funcs
+/// Emit local runtime function bodies. Always empty today — every
+/// runtime fn lives in `aver_runtime` (imported). Kept as a hook for
+/// any future Rust-side helper that prefers wasm-encoder over WAT.
+pub fn emit_runtime_functions(_rt: &RuntimeFuncIndices) -> Vec<Function> {
+    Vec::new()
 }
