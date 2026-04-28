@@ -195,8 +195,18 @@ fn main() {
             // stands for. Clap's `conflicts_with_all` already rejects
             // mixing --preset with explicit axes.
             let (effective_target, effective_bridge, effective_pack) = match preset {
+                // Cloudflare Workers reject `WebAssembly.instantiate(bytes, ...)`
+                // from runtime-fetched bytes, so the "thin user.wasm + imported
+                // runtime from CDN" shape of `--target edge-wasm` doesn't fly
+                // here — the runtime would have to be either bundled or bundle-
+                // imported anyway. Single bundled wasm via `--target wasm`
+                // (wasm-merge inlines aver_runtime.*) is the cleaner shape:
+                // worker.js statically imports one file, no two-instance dance.
+                // wasm-merge becomes a hard dep, but anyone shipping to CF
+                // already has the npm/Node toolchain — `brew install binaryen`
+                // is the same tier.
                 Some(cli::DeployPreset::Cloudflare) => (
-                    cli::CompileTarget::EdgeWasm,
+                    cli::CompileTarget::Wasm,
                     Some(cli::WasmBridge::Fetch),
                     Some(cli::DeployPack::Cloudflare),
                 ),

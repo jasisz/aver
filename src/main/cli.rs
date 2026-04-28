@@ -82,11 +82,20 @@ pub(super) enum DeployPack {
 }
 
 /// One-flag UX shortcut that expands to a `(target, bridge, pack)`
-/// preset. `--preset cloudflare` ≡ `--target edge-wasm --bridge fetch
+/// preset. `--preset cloudflare` ≡ `--target wasm --bridge fetch
 /// --pack cloudflare`. Equivalent CLI surface, fewer keystrokes.
+///
+/// Cloudflare Workers reject `WebAssembly.instantiate(bytes, …)` from
+/// runtime-fetched bytes (sandbox security). Only statically imported
+/// wasm modules are accepted, so `--target edge-wasm`'s "thin
+/// user.wasm + imported runtime from CDN" architecture doesn't apply
+/// on this host — the preset uses `--target wasm` (wasm-merge inlines
+/// the runtime into a single bundled module that worker.js imports
+/// statically). Browsers / Deno / Bun keep the edge-wasm shape via
+/// the runtime CDN at averlang.dev/runtime/.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub(super) enum DeployPreset {
-    /// edge-wasm + fetch bridge + Cloudflare worker.js/wrangler.toml.
+    /// wasm + fetch bridge + Cloudflare worker.js/wrangler.toml.
     Cloudflare,
 }
 

@@ -9,7 +9,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 ### Added
 - **`--target edge-wasm`** emits a thin `user.wasm` that imports a separately hosted `aver_runtime`, so browser and edge deployments can cache the runtime once.
 - **Host bridges:** `--bridge fetch` for JS/Workers-style hosts and `--bridge wasip1` for standalone WASI preview 1 execution.
-- **Cloudflare Workers pack output** with worker bootstrap files, WASM artifacts, runtime companions, checksums, and manifest data.
+- **Cloudflare Workers pack output (`--preset cloudflare`)** — drops `worker.js` (ES-module bootstrap that wires `aver/*` host imports against `console.*` / `Date.now()` / `Math.random()` / Fetch + JSPI for `Http.*`) and `wrangler.toml` next to a single bundled `user.wasm`. Cloudflare Workers reject `WebAssembly.instantiate(bytes, …)` from runtime-fetched bytes, so the preset uses `--target wasm` (runtime inlined via `wasm-merge`) for static-import shape; `--target edge-wasm` stays for browsers / Deno / Bun where the runtime CDN at `averlang.dev/runtime/` works. Runtime artifacts, checksums, and manifest are published independently under `/runtime/`.
 - **WASM host coverage for `Env.*`, `Console.warn`, `Http.*`, request/response headers, and multi-value header flow.**
 - **Persistent HAMT `Map` runtime** with structural hashing/equality for all hashable key types and O(1) `Map.len`.
 - **`--optimize size|speed`** for the WASM optimization pipeline.

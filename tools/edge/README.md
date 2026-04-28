@@ -1,8 +1,8 @@
 # edge.averlang.dev
 
-A pure Aver `fn handler(req: HttpRequest) -> HttpResponse` compiled to
-`--target edge-wasm --bridge fetch --pack cloudflare`, running on
-Cloudflare Workers.
+A pure Aver `fn handler(req: HttpRequest) -> HttpResponse` compiled
+with `aver compile --preset cloudflare` and deployed to Cloudflare
+Workers.
 
 - `GET /` → minimal HTML landing page
 - `GET /api` → JSON manifesto with the request's `cf-ipcountry` and a
@@ -26,48 +26,31 @@ cargo build --features wasm
     -o tools/edge/dist
 ```
 
-The compiler drops `app.wasm` + `worker.js` + `wrangler.toml` into
-`tools/edge/dist/`. The `wrangler.toml` checked in is pre-edited with
-the `edge.averlang.dev` route — re-applying it after a regen is the
-only manual step.
+`--preset cloudflare` expands to `--target wasm --bridge fetch --pack
+cloudflare`: a single bundled `app.wasm` (runtime inlined via
+`wasm-merge`), `worker.js` (ES-module bootstrap with `aver/*` host
+imports wired against `console.*` / `Date.now()` / `Math.random()` /
+Fetch + JSPI), and `wrangler.toml`. Cloudflare Workers reject
+`WebAssembly.instantiate(bytes, …)` from runtime-fetched bytes, so
+the single-bundle shape is the only viable path here — browsers /
+Deno / Bun can keep the thinner `--target edge-wasm` shape with a
+runtime fetched from `averlang.dev/runtime/`.
+
+The `wrangler.toml` checked in is pre-edited with the
+`edge.averlang.dev` route + observability — re-applying that block
+after a regen is the only manual step.
 
 ## Deploy
 
-The worker.js fetches the shared Aver runtime from
-`https://averlang.dev/runtime/latest/aver_runtime.wasm`, so
-**averlang.dev needs to be deployed first** (it serves the runtime
-asset with the right `Access-Control-Allow-Origin` / `Cross-Origin-Resource-Policy`
-headers from `tools/website/_headers`).
-
-### 1. Publish the runtime on averlang.dev
-
-```bash
-cd tools/website
-npx wrangler login                    # one-time
-npx wrangler deploy                   # ships index.html, _headers, runtime/, …
-```
-
-Verify the runtime is reachable with the right headers:
-
-```bash
-curl -I https://averlang.dev/runtime/v0.14.0/aver_runtime.wasm
-# Expect:
-#   content-type: application/wasm
-#   access-control-allow-origin: *
-#   cross-origin-resource-policy: cross-origin
-#   cache-control: public, max-age=31536000, immutable
-```
-
-### 2. Deploy the edge demo
-
 ```bash
 cd tools/edge/dist
+npx wrangler login                    # one-time, browser auth
 npx wrangler deploy                   # ships app.wasm + worker.js
 ```
 
 First deploy creates the `aver-edge-demo` worker plus the
-`edge.averlang.dev` route in the `averlang.dev` zone (DNS record gets
-auto-provisioned by wrangler when `custom_domain = true`).
+`edge.averlang.dev` route in the `averlang.dev` zone (DNS record
+gets auto-provisioned by wrangler when `custom_domain = true`).
 Subsequent deploys update in place.
 
 To verify locally before pushing:
@@ -88,7 +71,7 @@ curl -sI https://edge.averlang.dev/   # check content-type, cf-ray
 
 ## Iterating
 
-Edit `app.av`, re-run the compile command, re-apply the `routes` block
-in `dist/wrangler.toml` if it got overwritten, `wrangler deploy`. The
-fetch bridge in `worker.js` rarely needs touching — it's the same
-template every Cloudflare-targeted Aver program uses.
+Edit `app.av`, re-run the compile command, re-apply the `routes`
+block in `dist/wrangler.toml` if it got overwritten, `wrangler
+deploy`. The fetch-bridge in `worker.js` rarely needs touching —
+it's the same template every Cloudflare-targeted Aver program uses.

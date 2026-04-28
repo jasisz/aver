@@ -3508,10 +3508,6 @@ fn cmd_compile_wasm(
                         emit_cloudflare_pack(out_path, &wasm_name, &wasm_file);
                     }
                 } else {
-                    // Pack is edge-only for now — bundled artifacts are
-                    // already self-contained and don't need a host
-                    // bootstrap shim.
-                    let _ = pack;
                     // Bundle aver_runtime + (optional bridge) + user.
                     let runtime_bytes = match aver::codegen::wasm::build_runtime_wasm() {
                         Ok(b) => b,
@@ -3610,6 +3606,15 @@ fn cmd_compile_wasm(
                                 compile_suffix,
                                 imports_note
                             );
+                            // Deployment pack — drops platform-specific
+                            // bootstrap files next to the bundled wasm.
+                            // Cloudflare Workers reject runtime-fetched
+                            // wasm bytes, so the only viable shape on
+                            // CF is `--target wasm` (single bundled),
+                            // and the pack lives here too.
+                            if let Some(super::cli::DeployPack::Cloudflare) = pack {
+                                emit_cloudflare_pack(out_path, &wasm_name, &wasm_file);
+                            }
                         }
                         Ok(out) => {
                             let stderr = String::from_utf8_lossy(&out.stderr);
