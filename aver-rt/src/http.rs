@@ -1,4 +1,4 @@
-use crate::{AverList, AverStr, Header, HttpResponse};
+use crate::{AverList, AverStr, HttpHeaders, HttpResponse};
 
 pub fn get(url: &str) -> Result<HttpResponse, String> {
     simple_request("GET", url)
@@ -16,7 +16,7 @@ pub fn post(
     url: &str,
     body: &str,
     content_type: &str,
-    headers: &AverList<Header>,
+    headers: &HttpHeaders,
 ) -> Result<HttpResponse, String> {
     body_request("POST", url, body, content_type, headers)
 }
@@ -25,7 +25,7 @@ pub fn put(
     url: &str,
     body: &str,
     content_type: &str,
-    headers: &AverList<Header>,
+    headers: &HttpHeaders,
 ) -> Result<HttpResponse, String> {
     body_request("PUT", url, body, content_type, headers)
 }
@@ -34,7 +34,7 @@ pub fn patch(
     url: &str,
     body: &str,
     content_type: &str,
-    headers: &AverList<Header>,
+    headers: &HttpHeaders,
 ) -> Result<HttpResponse, String> {
     body_request("PATCH", url, body, content_type, headers)
 }
@@ -51,13 +51,15 @@ fn body_request(
     url: &str,
     body: &str,
     content_type: &str,
-    headers: &AverList<Header>,
+    headers: &HttpHeaders,
 ) -> Result<HttpResponse, String> {
     let mut req = ureq::request(method, url)
         .timeout(std::time::Duration::from_secs(10))
         .set("Content-Type", content_type);
-    for h in headers {
-        req = req.set(&h.name, &h.value);
+    for (name, values) in headers.iter() {
+        for value in values.iter() {
+            req = req.set(name.as_ref(), value.as_ref());
+        }
     }
     response_value(req.send_string(body))
 }
@@ -77,13 +79,19 @@ fn build_response(resp: ureq::Response) -> Result<HttpResponse, String> {
 
     let status = resp.status() as i64;
     let header_names = resp.headers_names();
-    let headers: Vec<Header> = header_names
-        .iter()
-        .map(|name| Header {
-            name: AverStr::from(name.as_str()),
-            value: AverStr::from(resp.header(name).unwrap_or("")),
-        })
-        .collect();
+    // Build Map<lowercase-name, List<value>>. ureq deduplicates same-name
+    // headers, so each `name` here is unique already; we still wrap in a
+    // single-element list to match the multi-value type shape.
+    let mut headers: HttpHeaders = HttpHeaders::default();
+    for name in &header_names {
+        let value = AverStr::from(resp.header(name).unwrap_or(""));
+        let key = AverStr::from(name.to_ascii_lowercase());
+        let entry = match headers.get(&key) {
+            Some(existing) => AverList::prepend(value, existing).reverse(),
+            None => AverList::from_vec(vec![value]),
+        };
+        headers = headers.insert(key, entry);
+    }
 
     let mut buf = Vec::new();
     let bytes_read = resp
@@ -98,6 +106,6 @@ fn build_response(resp: ureq::Response) -> Result<HttpResponse, String> {
     Ok(HttpResponse {
         status,
         body,
-        headers: AverList::from_vec(headers),
+        headers,
     })
 }

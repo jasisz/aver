@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
-use aver_rt::{AverList, Header, HttpResponse};
+use aver_rt::{AverList, AverStr, HttpResponse};
 
 use crate::nan_value::{Arena, NanValue, NanValueConvert};
 use crate::value::{RuntimeError, Value, list_from_vec, list_view};
@@ -109,41 +109,41 @@ fn str_arg(val: &Value, msg: &str) -> Result<String, RuntimeError> {
     }
 }
 
-fn parse_request_headers(val: &Value) -> Result<AverList<Header>, RuntimeError> {
-    let items = list_view(val)
-        .ok_or_else(|| RuntimeError::Error("Http: headers must be a List".to_string()))?;
-    let mut out = Vec::new();
-    for item in items.iter() {
-        let fields = match item {
-            Value::Record { fields, .. } => fields,
+fn parse_request_headers(val: &Value) -> Result<aver_rt::HttpHeaders, RuntimeError> {
+    let map = match val {
+        Value::Map(m) => m,
+        _ => {
+            return Err(RuntimeError::Error(
+                "Http: headers must be a Map<String, List<String>>".to_string(),
+            ));
+        }
+    };
+    let mut out = aver_rt::HttpHeaders::default();
+    for (k, v) in map.iter() {
+        let name = match k {
+            Value::Str(s) => s.to_ascii_lowercase(),
             _ => {
                 return Err(RuntimeError::Error(
-                    "Http: each header must be a record with 'name' and 'value' String fields"
-                        .to_string(),
+                    "Http: header map keys must be Strings".to_string(),
                 ));
             }
         };
-        let get = |key: &str| -> Result<String, RuntimeError> {
-            fields
-                .iter()
-                .find(|(k, _)| k == key)
-                .and_then(|(_, v)| {
-                    if let Value::Str(s) = v {
-                        Some(s.clone())
-                    } else {
-                        None
-                    }
-                })
-                .ok_or_else(|| {
-                    RuntimeError::Error(format!(
-                        "Http: header record must have a '{}' String field",
-                        key
-                    ))
-                })
-        };
-        out.push(Header::from_strings(get("name")?, get("value")?));
+        let values = list_view(v)
+            .ok_or_else(|| RuntimeError::Error("Http: header values must be a List".to_string()))?;
+        let mut buf = Vec::new();
+        for item in values.iter() {
+            match item {
+                Value::Str(s) => buf.push(AverStr::from(s.as_str())),
+                _ => {
+                    return Err(RuntimeError::Error(
+                        "Http: header values must be Strings".to_string(),
+                    ));
+                }
+            }
+        }
+        out = out.insert(AverStr::from(name), AverList::from_vec(buf));
     }
-    Ok(AverList::from_vec(out))
+    Ok(out)
 }
 
 fn response_value(result: Result<HttpResponse, String>) -> Result<Value, RuntimeError> {
@@ -186,25 +186,18 @@ pub fn call_nv(
 }
 
 fn http_response_to_value(resp: HttpResponse) -> Value {
-    let headers = resp
-        .headers
-        .into_iter()
-        .map(|header| Value::Record {
-            type_name: "Header".to_string(),
-            fields: vec![
-                ("name".to_string(), Value::Str(header.name.to_string())),
-                ("value".to_string(), Value::Str(header.value.to_string())),
-            ]
-            .into(),
-        })
-        .collect();
+    let mut headers = HashMap::new();
+    for (name, values) in resp.headers.iter() {
+        let value_list: Vec<Value> = values.iter().map(|v| Value::Str(v.to_string())).collect();
+        headers.insert(Value::Str(name.to_string()), list_from_vec(value_list));
+    }
 
     Value::Record {
         type_name: "HttpResponse".to_string(),
         fields: vec![
             ("status".to_string(), Value::Int(resp.status)),
             ("body".to_string(), Value::Str(resp.body.to_string())),
-            ("headers".to_string(), list_from_vec(headers)),
+            ("headers".to_string(), Value::Map(headers)),
         ]
         .into(),
     }

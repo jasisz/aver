@@ -219,43 +219,43 @@ paths = [<span class="hl-string">"./data/**"</span>]</pre>
 
 <!-- ── Demo ─────────────────────────────────────────────────────────── -->
 <section class="games" id="demo">
-    <h2>Native WASM, tiny binaries</h2>
-    <p class="section-sub">Seven games compiled directly from Aver to standalone WASM. No emscripten, no GC, tiny inline runtime. Snake is 6.4 KiB. A full roguelike is 29.8 KiB.</p>
+    <h2>Native WASM, shared runtime</h2>
+    <p class="section-sub">Seven games compiled directly from Aver. The runtime — alloc, GC, hashmap, string ops — is one ~10 KiB module loaded once. Every game ships just its program logic: Snake 5 KiB, full roguelike 28 KiB. Browser caches the runtime; the second game you click downloads only the program. <a href="runtime/">Pinned runtime versions →</a></p>
     <div class="games-grid">
         <a href="playground/?game=life" class="game-card">
             <div class="game-icon">🧬</div>
             <span>Game of Life</span>
-            <small>10.1 KiB</small>
+            <small>8.6 KiB</small>
         </a>
         <a href="playground/?game=snake" class="game-card">
             <div class="game-icon">🐍</div>
             <span>Snake</span>
-            <small>6.4 KiB</small>
+            <small>5.0 KiB</small>
         </a>
         <a href="playground/?game=tetris" class="game-card">
             <div class="game-icon">🧱</div>
             <span>Tetris</span>
-            <small>11.2 KiB</small>
+            <small>9.9 KiB</small>
         </a>
         <a href="playground/?game=checkers" class="game-card">
             <div class="game-icon">🏁</div>
             <span>Checkers</span>
-            <small>23.0 KiB</small>
+            <small>21.4 KiB</small>
         </a>
         <a href="playground/?game=rogue" class="game-card">
             <div class="game-icon">🗡️</div>
             <span>Roguelike</span>
-            <small>29.8 KiB</small>
+            <small>28.3 KiB</small>
         </a>
         <a href="playground/?game=doom" class="game-card">
             <div class="game-icon">👹</div>
             <span>Doom</span>
-            <small>23.3 KiB</small>
+            <small>21.5 KiB</small>
         </a>
         <a href="playground/?game=wumpus" class="game-card">
             <div class="game-icon">🦇</div>
             <span>Wumpus</span>
-            <small>7.7 KiB</small>
+            <small>5.9 KiB</small>
         </a>
     </div>
 </section>

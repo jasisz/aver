@@ -817,29 +817,47 @@ fn builtinHttpBodyInner(urlV: Val, bodyV: Val, ctV: Val, hdrsV: Val, method: Str
     body = Domain.Builtins.Helpers.expectStr(bodyV)?
     ct = Domain.Builtins.Helpers.expectStr(ctV)?
     match method
-        "post" -> Result.Ok(httpResponseToVal(Http.post(url, body, ct, [])))
-        "put" -> Result.Ok(httpResponseToVal(Http.put(url, body, ct, [])))
-        _ -> Result.Ok(httpResponseToVal(Http.patch(url, body, ct, [])))
+        "post" -> Result.Ok(httpResponseToVal(Http.post(url, body, ct, {})))
+        "put" -> Result.Ok(httpResponseToVal(Http.put(url, body, ct, {})))
+        _ -> Result.Ok(httpResponseToVal(Http.patch(url, body, ct, {})))
 
 fn httpResponseToVal(result: Result<HttpResponse, String>) -> Val
     ? "Convert host HttpResponse to Val."
     match result
-        Result.Ok(resp) -> Val.ValOk(Val.ValRecord("HttpResponse", [("status", Val.ValInt(resp.status)), ("body", Val.ValStr(resp.body)), ("headers", headersToVal(resp.headers, []))]))
+        Result.Ok(resp) -> Val.ValOk(Val.ValRecord("HttpResponse", [("status", Val.ValInt(resp.status)), ("body", Val.ValStr(resp.body)), ("headers", headersToVal(resp.headers))]))
         Result.Err(e) -> Val.ValErr(Val.ValStr(e))
 
 verify httpResponseToVal
     httpResponseToVal(Result.Err("fail")) => Val.ValErr(Val.ValStr("fail"))
-    httpResponseToVal(Result.Ok(HttpResponse(status = 200, body = "ok", headers = []))) => Val.ValOk(Val.ValRecord("HttpResponse", [("status", Val.ValInt(200)), ("body", Val.ValStr("ok")), ("headers", Val.ValList([]))]))
+    httpResponseToVal(Result.Ok(HttpResponse(status = 200, body = "ok", headers = {}))) => Val.ValOk(Val.ValRecord("HttpResponse", [("status", Val.ValInt(200)), ("body", Val.ValStr("ok")), ("headers", Val.ValMap(Map.empty()))]))
 
-fn headersToVal(headers: List<Header>, acc: List<Val>) -> Val
-    ? "Convert host Header list to Val list."
-    match headers
-        [] -> Val.ValList(List.reverse(acc))
-        [h, ..rest] -> headersToVal(rest, List.prepend(Val.ValRecord("Header", [("name", Val.ValStr(h.name)), ("value", Val.ValStr(h.value))]), acc))
+fn headersToVal(headers: Map<String, List<String>>) -> Val
+    ? "Convert host headers Map<String, List<String>> to a Val.ValMap whose values are Val.ValList of Val.ValStr."
+    Val.ValMap(headersToValMap(headers, Map.keys(headers), Map.empty()))
+
+fn headersToValMap(headers: Map<String, List<String>>, names: List<String>, acc: Map<String, Val>) -> Map<String, Val>
+    ? "Walk header keys, converting each value list to a Val.ValList."
+    match names
+        [] -> acc
+        [name, ..rest] -> headersToValMap(headers, rest, Map.set(acc, name, Val.ValList(stringsToValStrs(Option.withDefault(Map.get(headers, name), []), []))))
+
+fn stringsToValStrs(values: List<String>, acc: List<Val>) -> List<Val>
+    ? "Convert a list of strings into a list of Val.ValStr (tail-recursive)."
+    match values
+        [] -> List.reverse(acc)
+        [v, ..rest] -> stringsToValStrs(rest, List.prepend(Val.ValStr(v), acc))
+
+verify stringsToValStrs
+    stringsToValStrs([], []) => []
+    stringsToValStrs(["a", "b"], []) => [Val.ValStr("a"), Val.ValStr("b")]
+
+verify headersToValMap
+    headersToValMap(Map.empty(), [], Map.empty()) => Map.empty()
+    headersToValMap({"x" => ["Y"]}, ["x"], Map.empty()) => {"x" => Val.ValList([Val.ValStr("Y")])}
 
 verify headersToVal
-    headersToVal([], []) => Val.ValList([])
-    headersToVal([Header(name = "X", value = "Y")], []) => Val.ValList([Val.ValRecord("Header", [("name", Val.ValStr("X")), ("value", Val.ValStr("Y"))])])
+    headersToVal(Map.empty()) => Val.ValMap(Map.empty())
+    headersToVal({"x" => ["Y"]}) => Val.ValMap({"x" => Val.ValList([Val.ValStr("Y")])})
 
 fn builtinTcpSend(args: List<Val>) -> Result<Val, String>
     ? "Tcp.send(host, port, message) -> Result<String, String>."

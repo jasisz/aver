@@ -1,4 +1,4 @@
-use crate::{AverList, AverStr, Header, HttpRequest, HttpResponse};
+use crate::{AverList, AverStr, HttpHeaders, HttpRequest, HttpResponse};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
@@ -46,7 +46,7 @@ where
             &HttpResponse {
                 status: 500,
                 body: AverStr::from(format!("HttpServer: failed to set read timeout: {}", e)),
-                headers: AverList::empty(),
+                headers: HttpHeaders::default(),
             },
         );
         return;
@@ -57,7 +57,7 @@ where
             &HttpResponse {
                 status: 500,
                 body: AverStr::from(format!("HttpServer: failed to set write timeout: {}", e)),
-                headers: AverList::empty(),
+                headers: HttpHeaders::default(),
             },
         );
         return;
@@ -71,7 +71,7 @@ where
                 &HttpResponse {
                     status: 400,
                     body: AverStr::from(format!("Bad Request: {}", msg)),
-                    headers: AverList::empty(),
+                    headers: HttpHeaders::default(),
                 },
             );
             return;
@@ -112,7 +112,11 @@ fn parse_http_request(stream: &mut TcpStream) -> Result<HttpRequest, String> {
         .next()
         .ok_or_else(|| "missing HTTP version".to_string())?;
 
-    let mut headers = Vec::new();
+    // Build Map<lowercase-name, List<value>>. Multiple lines with the
+    // same name accumulate as separate values (RFC 9110 §5.3 — same
+    // semantics as comma-joining for non-Set-Cookie, kept structural
+    // so consumers can choose).
+    let mut headers: HttpHeaders = HttpHeaders::default();
     let mut content_length = 0usize;
 
     loop {
@@ -132,7 +136,7 @@ fn parse_http_request(stream: &mut TcpStream) -> Result<HttpRequest, String> {
         let (name, value) = trimmed
             .split_once(':')
             .ok_or_else(|| format!("malformed header: '{}'", trimmed))?;
-        let name = name.trim().to_string();
+        let name = name.trim().to_ascii_lowercase();
         let value = value.trim().to_string();
 
         if name.eq_ignore_ascii_case("Content-Length") {
@@ -144,7 +148,17 @@ fn parse_http_request(stream: &mut TcpStream) -> Result<HttpRequest, String> {
             }
         }
 
-        headers.push(Header::from_strings(name, value));
+        let key = AverStr::from(name);
+        let value = AverStr::from(value);
+        let entry = match headers.get(&key) {
+            Some(existing) => {
+                let mut buf: Vec<AverStr> = existing.iter().cloned().collect();
+                buf.push(value);
+                AverList::from_vec(buf)
+            }
+            None => AverList::from_vec(vec![value]),
+        };
+        headers = headers.insert(key, entry);
     }
 
     let mut body_bytes = vec![0_u8; content_length];
@@ -159,7 +173,7 @@ fn parse_http_request(stream: &mut TcpStream) -> Result<HttpRequest, String> {
         method: AverStr::from(method),
         path: AverStr::from(path),
         body: AverStr::from(body),
-        headers: AverList::from_vec(headers),
+        headers,
     })
 }
 
@@ -188,15 +202,15 @@ fn status_reason(status: i64) -> &'static str {
 }
 
 fn write_http_response(stream: &mut TcpStream, response: &HttpResponse) -> std::io::Result<()> {
-    let mut headers = response
-        .headers
-        .iter()
-        .filter(|h| {
-            !h.name.eq_ignore_ascii_case("Content-Length")
-                && !h.name.eq_ignore_ascii_case("Connection")
-        })
-        .map(|h| (h.name.to_string(), h.value.to_string()))
-        .collect::<Vec<_>>();
+    let mut headers: Vec<(String, String)> = Vec::new();
+    for (name, values) in response.headers.iter() {
+        if name.eq_ignore_ascii_case("Content-Length") || name.eq_ignore_ascii_case("Connection") {
+            continue;
+        }
+        for value in values.iter() {
+            headers.push((name.to_string(), value.to_string()));
+        }
+    }
 
     if !headers
         .iter()

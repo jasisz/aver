@@ -25,6 +25,8 @@ mod shared;
 mod why_cmd;
 
 use cli::{Cli, Commands, CompilePolicyMode};
+#[allow(unused_imports)]
+use cli::{CompileTarget, DeployPack, DeployPreset, WasmBridge};
 
 fn main() {
     let cli = Cli::parse();
@@ -178,27 +180,51 @@ fn main() {
             policy,
             guest_entry,
             with_self_host_support,
-            adapter,
-            wasm_opt,
+            bridge,
+            pack,
+            preset,
+            handler,
+            optimize,
         } => {
             let policy_mode = (*policy).unwrap_or(if *with_replay {
                 CompilePolicyMode::Runtime
             } else {
                 CompilePolicyMode::Embed
             });
+            // Expand --preset into the (target, bridge, pack) triple it
+            // stands for. Clap's `conflicts_with_all` already rejects
+            // mixing --preset with explicit axes.
+            let (effective_target, effective_bridge, effective_pack) = match preset {
+                Some(cli::DeployPreset::Cloudflare) => (
+                    cli::CompileTarget::EdgeWasm,
+                    Some(cli::WasmBridge::Fetch),
+                    Some(cli::DeployPack::Cloudflare),
+                ),
+                None => (*target, *bridge, *pack),
+            };
             commands::cmd_compile(commands::CompileOptions {
                 file,
                 output_dir: output,
                 project_name: name.as_deref(),
                 module_root_override: module_root.as_deref(),
-                target: *target,
+                target: effective_target,
                 with_replay: *with_replay,
                 policy_mode: &policy_mode,
                 guest_entry: guest_entry.as_deref(),
                 with_self_host_support: *with_self_host_support,
-                adapter: *adapter,
-                wasm_opt: *wasm_opt,
+                bridge: effective_bridge,
+                pack: effective_pack,
+                handler: handler.as_deref(),
+                optimize: *optimize,
             });
+        }
+        Commands::WasmRuntime {
+            output,
+            artifact,
+            optimize,
+            wat,
+        } => {
+            commands::cmd_wasm_runtime(output, *artifact, *optimize, *wat);
         }
         Commands::Why {
             file,

@@ -602,12 +602,14 @@ fn error_map_set_key_type_mismatch() {
 }
 
 #[test]
-fn error_map_key_type_must_be_hashable_scalar() {
+fn map_key_type_accepts_user_defined_via_deep_hash() {
+    // The HAMT runtime hashes any heap structure by value, so List<Int>
+    // (and other user-defined types) is a valid map key.
     let src = concat!(
-        "fn bad() -> Map<List<Int>, Int>\n",
+        "fn ok() -> Map<List<Int>, Int>\n",
         "    Map.fromList([([1], 2)])\n",
     );
-    assert_error_containing(src, "map key type must be Int, Float, String, or Bool");
+    assert_no_errors(src);
 }
 
 #[test]
@@ -620,12 +622,9 @@ fn error_map_from_list_requires_tuple_pairs() {
 }
 
 #[test]
-fn error_map_literal_key_must_be_hashable_scalar() {
-    let src = concat!("fn bad() -> Map<String, Int>\n", "    {[1] => 2}\n",);
-    assert_error_containing(
-        src,
-        "Map literal key type must be Int, Float, String, or Bool",
-    );
+fn map_literal_accepts_user_defined_keys() {
+    let src = concat!("fn ok() -> Map<List<Int>, Int>\n", "    {[1] => 2}\n",);
+    assert_no_errors(src);
 }
 
 #[test]
@@ -958,7 +957,7 @@ fn valid_network_post_with_effect() {
     let src = concat!(
         "fn send(url: String) -> Result<HttpResponse, String>\n",
         "    ! [Http.post]\n",
-        "    Http.post(url, \"{}\", \"application/json\", [])\n",
+        "    Http.post(url, \"{}\", \"application/json\", {})\n",
     );
     assert_no_errors(src);
 }
@@ -968,7 +967,7 @@ fn valid_network_post_with_typed_headers() {
     let src = concat!(
         "fn send(url: String) -> Result<HttpResponse, String>\n",
         "    ! [Http.post]\n",
-        "    headers = [Header(name = \"Authorization\", value = \"Bearer token\")]\n",
+        "    headers = {\"authorization\" => [\"Bearer token\"]}\n",
         "    Http.post(url, \"{}\", \"application/json\", headers)\n",
     );
     assert_no_errors(src);
@@ -981,7 +980,10 @@ fn error_network_post_headers_wrong_type() {
         "    ! [Http.post]\n",
         "    Http.post(url, \"{}\", \"application/json\", [\"bad\"])\n",
     );
-    assert_error_containing(src, "Argument 4 of 'Http.post': expected List<Header>");
+    assert_error_containing(
+        src,
+        "Argument 4 of 'Http.post': expected Map<String, List<String>>",
+    );
 }
 
 #[test]
@@ -1276,7 +1278,7 @@ fn error_tcp_ping_without_effect() {
 fn valid_http_server_listen_with_context() {
     let src = concat!(
         "fn handle(ctx: String, req: HttpRequest) -> HttpResponse\n",
-        "    HttpResponse(status = 200, body = ctx, headers = [])\n",
+        "    HttpResponse(status = 200, body = ctx, headers = {})\n",
         "fn main() -> Unit\n",
         "    ! [HttpServer.listenWith]\n",
         "    HttpServer.listenWith(8080, \"ok\", handle)\n",
@@ -1288,7 +1290,7 @@ fn valid_http_server_listen_with_context() {
 fn error_http_server_listen_with_bad_handler_signature_uses_any_in_message() {
     let src = concat!(
         "fn bad(ctx: Int, req: Int) -> HttpResponse\n",
-        "    HttpResponse(status = 200, body = \"ok\", headers = [])\n",
+        "    HttpResponse(status = 200, body = \"ok\", headers = {})\n",
         "fn main() -> Unit\n",
         "    ! [HttpServer.listenWith]\n",
         "    HttpServer.listenWith(8080, \"ok\", bad)\n",
@@ -1840,7 +1842,7 @@ fn valid_mix_explicit_effects() {
     let src = concat!(
         "fn mixed(url: String, path: String) -> Result<String, String>\n",
         "    ! [Http.post, Disk.readText]\n",
-        "    Http.post(url, \"{}\", \"application/json\", [])\n",
+        "    Http.post(url, \"{}\", \"application/json\", {})\n",
         "    Disk.readText(path)\n",
     );
     assert_no_errors(src);

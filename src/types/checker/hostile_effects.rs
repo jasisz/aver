@@ -377,7 +377,7 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 name: "normal_ok",
                 stub_fn_name: stub_name("normal_ok"),
                 stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, url: String) -> Result<HttpResponse, String>\n    ? \"honest: request succeeds with a 200 + small body\"\n    Result.Ok(HttpResponse(status = 200, body = \"ok\", headers = []))\n",
+                    "fn {}(path: BranchPath, n: Int, url: String) -> Result<HttpResponse, String>\n    ? \"honest: request succeeds with a 200 + small body\"\n    Result.Ok(HttpResponse(status = 200, body = \"ok\", headers = {{}}))\n",
                     stub_name("normal_ok")
                 ),
             },
@@ -395,7 +395,7 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 name: "normal_ok",
                 stub_fn_name: stub_name("normal_ok"),
                 stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, url: String, body: String, contentType: String, headers: List<Header>) -> Result<HttpResponse, String>\n    ? \"honest: write succeeds with a 200 + ack body\"\n    Result.Ok(HttpResponse(status = 200, body = \"ok\", headers = []))\n",
+                    "fn {}(path: BranchPath, n: Int, url: String, body: String, contentType: String, headers: Map<String, List<String>>) -> Result<HttpResponse, String>\n    ? \"honest: write succeeds with a 200 + ack body\"\n    Result.Ok(HttpResponse(status = 200, body = \"ok\", headers = {{}}))\n",
                     stub_name("normal_ok")
                 ),
             },
@@ -403,7 +403,7 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 name: "always_err",
                 stub_fn_name: stub_name("always_err"),
                 stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, url: String, body: String, contentType: String, headers: List<Header>) -> Result<HttpResponse, String>\n    ? \"hostile: write request fails — server unreachable\"\n    Result.Err(\"hostile: connection refused\")\n",
+                    "fn {}(path: BranchPath, n: Int, url: String, body: String, contentType: String, headers: Map<String, List<String>>) -> Result<HttpResponse, String>\n    ? \"hostile: write request fails — server unreachable\"\n    Result.Err(\"hostile: connection refused\")\n",
                     stub_name("always_err")
                 ),
             },

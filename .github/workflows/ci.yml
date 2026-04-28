@@ -43,6 +43,17 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install WASM tools
+        env:
+          BINARYEN_VERSION: version_129
+        run: |
+          curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/binaryen-${BINARYEN_VERSION}-x86_64-linux.tar.gz" -o binaryen.tar.gz
+          tar -xzf binaryen.tar.gz
+          echo "$PWD/binaryen-${BINARYEN_VERSION}/bin" >> "$GITHUB_PATH"
+          test -x "$PWD/binaryen-${BINARYEN_VERSION}/bin/wasm-merge"
+          test -x "$PWD/binaryen-${BINARYEN_VERSION}/bin/wasm-opt"
+          test -x "$PWD/binaryen-${BINARYEN_VERSION}/bin/wasm-metadce"
+
       - name: Clippy (wasm)
         run: cargo clippy -p aver-lang --lib --bin aver --features wasm -- -D warnings
 

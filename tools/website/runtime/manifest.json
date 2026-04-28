@@ -1,0 +1,11 @@
+{
+  "latest": "0.14.0",
+  "versions": [
+    {
+      "version": "0.14.0",
+      "runtime_bytes": 10510,
+      "bridge_bytes": 684,
+      "path": "v0.14.0"
+    }
+  ]
+}

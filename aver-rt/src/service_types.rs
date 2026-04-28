@@ -1,4 +1,4 @@
-use crate::{AverDisplay, AverList, AverStr};
+use crate::{AverDisplay, AverList, AverMap, AverStr};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct TerminalSize {
@@ -50,11 +50,17 @@ impl AverDisplay for Header {
     }
 }
 
+/// Multi-value HTTP headers, modelled as `Map<String, List<String>>` —
+/// matches RFC 9110 (same-name fields) and RFC 6265 (multiple
+/// Set-Cookie). Keys are case-insensitive by convention; runtime
+/// lowercases incoming names. Mirrors Go `net/http.Header`.
+pub type HttpHeaders = AverMap<AverStr, AverList<AverStr>>;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct HttpResponse {
     pub status: i64,
     pub body: AverStr,
-    pub headers: AverList<Header>,
+    pub headers: HttpHeaders,
 }
 
 impl AverDisplay for HttpResponse {
@@ -77,7 +83,7 @@ pub struct HttpRequest {
     pub method: AverStr,
     pub path: AverStr,
     pub body: AverStr,
-    pub headers: AverList<Header>,
+    pub headers: HttpHeaders,
 }
 
 impl AverDisplay for HttpRequest {

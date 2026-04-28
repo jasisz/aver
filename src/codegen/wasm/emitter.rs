@@ -10,9 +10,9 @@
 use std::collections::{HashMap, HashSet};
 
 use wasm_encoder::{
-    CodeSection, ConstExpr, DataSection, ExportKind, ExportSection, FunctionSection, GlobalSection,
-    GlobalType, ImportSection, Instruction, MemorySection, MemoryType, Module, TypeSection,
-    ValType,
+    CodeSection, ConstExpr, DataSection, EntityType, ExportKind, ExportSection, FunctionSection,
+    GlobalSection, GlobalType, ImportSection, IndirectNameMap, Instruction, MemoryType, Module,
+    NameMap, NameSection, StartSection, TypeSection, ValType,
 };
 
 use crate::ast::{Expr, FnBody, FnDef, Literal, Pattern, Stmt, StrPart, TopLevel};
@@ -20,7 +20,7 @@ use crate::codegen::CodegenContext;
 use crate::ir::{ThinKind, classify_thin_fn_def, thin_body_plan_is_parent_thin_candidate};
 
 use super::expr::{ExprEmitter, StringLiteral, build_variant_registry};
-use super::runtime::{self, RuntimeFuncIndices};
+use super::runtime::{self, AverRuntimeImports, RuntimeFuncIndices};
 use super::types::{WasmType, aver_type_to_wasm};
 use super::value;
 
@@ -54,9 +54,16 @@ struct MutualTcoLayout {
 }
 
 /// Build a complete WASM module from the Aver codegen context.
+///
+/// `handler`, when set, names a top-level Aver fn that gets exported
+/// as `aver_http_handle` in addition to `_start` / `main`. Used by
+/// fetch-style deployment packs (Cloudflare Workers, Fastly Compute)
+/// to wire HTTP requests through the user's handler. Compiler emits
+/// an error if the named fn is missing.
 pub fn build_wasm_module(
     ctx: &CodegenContext,
     adapter: super::WasmAdapter,
+    handler: Option<&str>,
 ) -> Result<Vec<u8>, String> {
     let mut module = Module::new();
 
@@ -102,6 +109,16 @@ pub fn build_wasm_module(
     // Always include "true" and "false" for Bool→String conversion in interpolation
     string_set.insert("true".to_string());
     string_set.insert("false".to_string());
+    // HTTP method names — emitted as constants by `Http.*` lowering
+    // (every call passes the method as a fixed string to the
+    // generic `http_send` host import). Force-interning here keeps
+    // the literals in the data section instead of allocating fresh
+    // OBJ_STRINGs per call. ~96 bytes total, present even if the
+    // program doesn't use Http — wasm-opt drops them under
+    // `--optimize size` when no `Http.*` site references them.
+    for method in ["GET", "HEAD", "DELETE", "POST", "PUT", "PATCH"] {
+        string_set.insert(method.to_string());
+    }
     let mut sorted_strings: Vec<String> = string_set.into_iter().collect();
     sorted_strings.sort();
 
@@ -194,122 +211,560 @@ pub fn build_wasm_module(
 
     // -----------------------------------------------------------------------
     // Import section — driven by ABI table or WASI adapter
+    //
+    // Layout (Step 1 of the WAT runtime migration):
+    //   0..3        aver_runtime.{rt_alloc, memory, heap_ptr}
+    //   3..3+N      aver/* effect host imports (Aver adapter) or WASI imports
     // -----------------------------------------------------------------------
     let has_effects = !needed_host_imports.is_empty();
     let mut host_imports: HashMap<String, u32> = HashMap::new();
 
     let mut import_section = ImportSection::new();
-    let mut import_func_count = 0u32;
-    // Index of the write-to-stdout import (used by runtime's write_stdout helper)
-    let mut write_stdout_import: Option<u32> = None;
 
-    match adapter {
-        super::WasmAdapter::Aver => {
-            // Collect needed ABI imports from user-defined function effects only
-            let user_fn_names: Vec<&str> = user_fns
-                .iter()
-                .map(|entry| entry.canonical_name.as_str())
-                .collect();
-            let needed =
-                super::abi::collect_needed_imports(&ctx.fn_sigs, &user_fn_names, &host_import_set);
-            for abi_entry in &needed {
-                let type_idx =
-                    runtime::lookup_type_index(&rti, abi_entry.params, abi_entry.results)
-                        .ok_or_else(|| {
-                            format!(
-                                "Missing WASM type mapping for ABI import {} ({:?} -> {:?})",
-                                abi_entry.import_name, abi_entry.params, abi_entry.results
-                            )
-                        })?;
-                let idx = import_func_count;
-                import_section.import(
-                    super::abi::ABI_MODULE,
-                    abi_entry.import_name,
-                    wasm_encoder::EntityType::Function(type_idx),
-                );
-                host_imports.insert(abi_entry.import_name.to_string(), idx);
-                if abi_entry.import_name == "console_print" {
-                    write_stdout_import = Some(idx);
-                }
-                import_func_count += 1;
-            }
-            // Runtime helpers reference console_print via fd_write_buf, so keep the
-            // import present even for otherwise pure modules.
-            if write_stdout_import.is_none() {
-                let abi_entry = super::abi::lookup("Console.print").unwrap();
-                let type_idx =
-                    runtime::lookup_type_index(&rti, abi_entry.params, abi_entry.results)
-                        .ok_or_else(|| {
-                            format!(
-                                "Missing WASM type mapping for ABI import {} ({:?} -> {:?})",
-                                abi_entry.import_name, abi_entry.params, abi_entry.results
-                            )
-                        })?;
-                let idx = import_func_count;
-                import_section.import(
-                    super::abi::ABI_MODULE,
-                    abi_entry.import_name,
-                    wasm_encoder::EntityType::Function(type_idx),
-                );
-                write_stdout_import = Some(idx);
-                import_func_count += 1;
-            }
-            // Always import print_value and format_value
-            if let Some(abi_entry) = super::abi::lookup("Print.value") {
-                let type_idx =
-                    runtime::lookup_type_index(&rti, abi_entry.params, abi_entry.results)
-                        .ok_or_else(|| {
-                            format!(
-                                "Missing WASM type mapping for ABI import {} ({:?} -> {:?})",
-                                abi_entry.import_name, abi_entry.params, abi_entry.results
-                            )
-                        })?;
-                let idx = import_func_count;
-                import_section.import(
-                    super::abi::ABI_MODULE,
-                    abi_entry.import_name,
-                    wasm_encoder::EntityType::Function(type_idx),
-                );
-                host_imports.insert(abi_entry.import_name.to_string(), idx);
-                import_func_count += 1;
-            }
-            if let Some(abi_entry) = super::abi::lookup("Format.value") {
-                let type_idx =
-                    runtime::lookup_type_index(&rti, abi_entry.params, abi_entry.results)
-                        .ok_or_else(|| {
-                            format!(
-                                "Missing WASM type mapping for ABI import {} ({:?} -> {:?})",
-                                abi_entry.import_name, abi_entry.params, abi_entry.results
-                            )
-                        })?;
-                let idx = import_func_count;
-                import_section.import(
-                    super::abi::ABI_MODULE,
-                    abi_entry.import_name,
-                    wasm_encoder::EntityType::Function(type_idx),
-                );
-                host_imports.insert(abi_entry.import_name.to_string(), idx);
-                import_func_count += 1;
-            }
-        }
-        super::WasmAdapter::Wasi => {
-            // WASI compatibility mode: import fd_write
-            import_section.import(
-                "wasi_snapshot_preview1",
-                "fd_write",
-                wasm_encoder::EntityType::Function(rti.wasi_fd_write),
-            );
-            write_stdout_import = Some(0);
-            import_func_count = 1;
+    // aver_runtime imports come first — runtime owns memory and the
+    // migrated runtime functions; user module reaches them via these
+    // import slots. New runtime fns get appended as the WAT migration
+    // grows; keep the order in sync with `AverRuntimeImports`.
+    let aver_rt_imports = AverRuntimeImports {
+        rt_alloc: 0,
+        rt_truncate: 1,
+        rt_obj_kind: 2,
+        rt_obj_tag: 3,
+        rt_obj_meta: 4,
+        rt_obj_field: 5,
+        rt_obj_field_f64: 6,
+        rt_obj_field_i32: 7,
+        rt_unwrap: 8,
+        rt_unwrap_f64: 9,
+        rt_unwrap_i32: 10,
+        rt_wrap: 11,
+        rt_wrap_f64: 12,
+        rt_wrap_i32: 13,
+        rt_str_eq: 14,
+        rt_str_concat: 15,
+        rt_list_cons: 16,
+        rt_list_cons_f64: 17,
+        rt_str_byte_len: 18,
+        rt_str_find: 19,
+        rt_str_starts_with: 20,
+        rt_str_ends_with: 21,
+        rt_str_contains: 22,
+        rt_list_take: 23,
+        rt_list_drop: 24,
+        rt_list_concat: 25,
+        rt_list_reverse: 26,
+        rt_list_contains: 27,
+        rt_list_zip: 28,
+        rt_map_get: 29,
+        rt_map_set: 30,
+        rt_map_has: 31,
+        rt_map_keys: 32,
+        rt_map_entries: 33,
+        rt_vec_from_list: 34,
+        rt_vec_get: 35,
+        rt_vec_len: 36,
+        rt_vec_set: 37,
+        rt_vec_new: 38,
+        rt_vec_to_list: 39,
+        rt_int_to_str: 40,
+        rt_float_to_str: 41,
+        rt_i64_to_str_obj: 42,
+        rt_f64_to_str_obj: 43,
+        rt_str_len: 44,
+        rt_char_to_code: 45,
+        rt_byte_to_hex: 46,
+        rt_byte_from_hex: 47,
+        rt_char_from_code: 48,
+        rt_str_char_at: 49,
+        rt_str_to_lower: 50,
+        rt_str_to_upper: 51,
+        rt_str_trim: 52,
+        rt_str_slice: 53,
+        rt_str_chars: 54,
+        rt_str_split: 55,
+        rt_str_join: 56,
+        rt_str_replace: 57,
+        rt_int_from_str: 58,
+        rt_float_from_str: 59,
+        rt_collect_begin: 60,
+        rt_rebase_i32: 61,
+        rt_collect_end: 62,
+        rt_retain_i32: 63,
+        rt_map_len: 64,
+        rt_map_from_list: 65,
+    };
+    import_section.import("aver_runtime", "rt_alloc", EntityType::Function(rti.alloc));
+    import_section.import(
+        "aver_runtime",
+        "rt_truncate",
+        EntityType::Function(rti.i32_to_empty),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_obj_kind",
+        EntityType::Function(rti.obj_kind),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_obj_tag",
+        EntityType::Function(rti.obj_tag),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_obj_meta",
+        EntityType::Function(rti.obj_meta),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_obj_field",
+        EntityType::Function(rti.obj_field_i64),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_obj_field_f64",
+        EntityType::Function(rti.obj_field_f64),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_obj_field_i32",
+        EntityType::Function(rti.obj_field_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_unwrap",
+        EntityType::Function(rti.unwrap_i64),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_unwrap_f64",
+        EntityType::Function(rti.unwrap_f64),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_unwrap_i32",
+        EntityType::Function(rti.unwrap_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_wrap",
+        EntityType::Function(rti.wrap_i64),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_wrap_f64",
+        EntityType::Function(rti.wrap_f64),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_wrap_i32",
+        EntityType::Function(rti.wrap_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_eq",
+        EntityType::Function(rti.i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_concat",
+        EntityType::Function(rti.i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_list_cons",
+        EntityType::Function(rti.list_cons_i64),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_list_cons_f64",
+        EntityType::Function(rti.list_cons_f64),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_byte_len",
+        EntityType::Function(rti.unwrap_i64),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_find",
+        EntityType::Function(rti.i32_i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_starts_with",
+        EntityType::Function(rti.i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_ends_with",
+        EntityType::Function(rti.i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_contains",
+        EntityType::Function(rti.i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_list_take",
+        EntityType::Function(rti.i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_list_drop",
+        EntityType::Function(rti.i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_list_concat",
+        EntityType::Function(rti.i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_list_reverse",
+        EntityType::Function(rti.unwrap_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_list_contains",
+        EntityType::Function(rti.i32_i64_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_list_zip",
+        EntityType::Function(rti.i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_map_get",
+        EntityType::Function(rti.i32_i64_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_map_set",
+        EntityType::Function(rti.i32_i64_i32_i64_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_map_has",
+        EntityType::Function(rti.i32_i64_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_map_keys",
+        EntityType::Function(rti.unwrap_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_map_entries",
+        EntityType::Function(rti.unwrap_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_vec_from_list",
+        EntityType::Function(rti.i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_vec_get",
+        EntityType::Function(rti.i32_i64_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_vec_len",
+        EntityType::Function(rti.unwrap_i64),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_vec_set",
+        EntityType::Function(rti.i32_i64_i64_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_vec_new",
+        EntityType::Function(rti.i64_i64_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_vec_to_list",
+        EntityType::Function(rti.unwrap_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_int_to_str",
+        EntityType::Function(rti.int_to_str),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_float_to_str",
+        EntityType::Function(rti.float_to_str),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_i64_to_str_obj",
+        EntityType::Function(rti.i64_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_f64_to_str_obj",
+        EntityType::Function(rti.f64_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_len",
+        EntityType::Function(rti.unwrap_i64),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_char_to_code",
+        EntityType::Function(rti.unwrap_i64),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_byte_to_hex",
+        EntityType::Function(rti.i64_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_byte_from_hex",
+        EntityType::Function(rti.unwrap_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_char_from_code",
+        EntityType::Function(rti.i64_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_char_at",
+        EntityType::Function(rti.i32_i64_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_to_lower",
+        EntityType::Function(rti.unwrap_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_to_upper",
+        EntityType::Function(rti.unwrap_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_trim",
+        EntityType::Function(rti.unwrap_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_slice",
+        EntityType::Function(rti.i32_i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_chars",
+        EntityType::Function(rti.unwrap_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_split",
+        EntityType::Function(rti.i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_join",
+        EntityType::Function(rti.i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_str_replace",
+        EntityType::Function(rti.i32_i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_int_from_str",
+        EntityType::Function(rti.unwrap_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_float_from_str",
+        EntityType::Function(rti.unwrap_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_collect_begin",
+        EntityType::Function(rti.i32_to_empty),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_rebase_i32",
+        EntityType::Function(rti.unwrap_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_collect_end",
+        EntityType::Function(rti.empty_to_empty),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_retain_i32",
+        EntityType::Function(rti.unwrap_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_map_len",
+        EntityType::Function(rti.unwrap_i64),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_map_from_list",
+        EntityType::Function(rti.i32_i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "memory",
+        EntityType::Memory(MemoryType {
+            minimum: 1,
+            maximum: None,
+            memory64: false,
+            shared: false,
+            page_size_log2: None,
+        }),
+    );
+    import_section.import(
+        "aver_runtime",
+        "heap_ptr",
+        EntityType::Global(GlobalType {
+            val_type: ValType::I32,
+            mutable: true,
+            shared: false,
+        }),
+    );
+    // Compaction state globals: aver_runtime owns rt_collect_* /
+    // rt_rebase_i32 / rt_retain_i32, so the scratch globals they read
+    // and write live in aver_runtime too. Indices match what every
+    // surviving GlobalGet/Set in the prior emit looked up (1/2/3).
+    for name in ["collect_mark", "collect_from", "collect_dst"] {
+        import_section.import(
+            "aver_runtime",
+            name,
+            EntityType::Global(GlobalType {
+                val_type: ValType::I32,
+                mutable: true,
+                shared: false,
+            }),
+        );
+    }
+    let mut import_func_count = 66u32; // 65 prior + rt_map_from_list
+
+    // Aver-style host imports unconditionally, regardless of --adapter.
+    // Under --bridge wasip1 the `aver_to_wasi.wasm` shim re-exports the
+    // same `aver/*` symbol set (translating internally to
+    // wasi_snapshot_preview1 calls). user.wasm bytes are identical in
+    // both modes — only the deployment-time module that satisfies
+    // these imports differs.
+    let user_fn_names: Vec<&str> = user_fns
+        .iter()
+        .map(|entry| entry.canonical_name.as_str())
+        .collect();
+    let needed = super::abi::collect_needed_imports(&ctx.fn_sigs, &user_fn_names, &host_import_set);
+    let emit_aver_import = |import_section: &mut ImportSection,
+                            host_imports: &mut HashMap<String, u32>,
+                            import_func_count: &mut u32,
+                            abi_entry: &super::abi::AbiImport|
+     -> Result<u32, String> {
+        let type_idx = runtime::lookup_type_index(&rti, abi_entry.params, abi_entry.results)
+            .ok_or_else(|| {
+                format!(
+                    "Missing WASM type mapping for ABI import {} ({:?} -> {:?})",
+                    abi_entry.import_name, abi_entry.params, abi_entry.results
+                )
+            })?;
+        let idx = *import_func_count;
+        import_section.import(
+            super::abi::ABI_MODULE,
+            abi_entry.import_name,
+            wasm_encoder::EntityType::Function(type_idx),
+        );
+        host_imports.insert(abi_entry.import_name.to_string(), idx);
+        *import_func_count += 1;
+        Ok(idx)
+    };
+
+    let mut have_console_print = false;
+    for abi_entry in &needed {
+        emit_aver_import(
+            &mut import_section,
+            &mut host_imports,
+            &mut import_func_count,
+            abi_entry,
+        )?;
+        if abi_entry.import_name == "console_print" {
+            have_console_print = true;
         }
     }
-
-    if import_func_count > 0 {
-        module.section(&import_section);
+    // Console.print is always imported — emit_console_print uses it for
+    // the trailing newline even when user code doesn't call it directly.
+    if !have_console_print {
+        let abi_entry = super::abi::lookup("Console.print").unwrap();
+        emit_aver_import(
+            &mut import_section,
+            &mut host_imports,
+            &mut import_func_count,
+            abi_entry,
+        )?;
+    }
+    // Under the Fetch adapter, declare the request/response host
+    // imports unconditionally — emit-side lowering of `req.method`
+    // and `HttpResponse(...)` reaches for them even when the user's
+    // effect declarations don't mention them by name. Aver-side the
+    // record idiom stays untouched; the host crossings only show up
+    // in the WASM ABI.
+    if matches!(adapter, super::WasmAdapter::Fetch) {
+        for effect in [
+            "Request.method",
+            "Request.url",
+            "Request.body",
+            "Request.headersLoad",
+            "Response.text",
+            "Response.setHeader",
+            "Http.send",
+            "Http.addRequestHeader",
+            "Http.clearRequestHeaders",
+        ] {
+            if let Some(abi_entry) = super::abi::lookup(effect)
+                && !host_imports.contains_key(abi_entry.import_name)
+            {
+                emit_aver_import(
+                    &mut import_section,
+                    &mut host_imports,
+                    &mut import_func_count,
+                    abi_entry,
+                )?;
+            }
+        }
+    }
+    // Print.value / Format.value are part of the always-imported core
+    // — emit_console_print delegates value rendering to print_value.
+    if let Some(abi_entry) = super::abi::lookup("Print.value") {
+        emit_aver_import(
+            &mut import_section,
+            &mut host_imports,
+            &mut import_func_count,
+            abi_entry,
+        )?;
+    }
+    if let Some(abi_entry) = super::abi::lookup("Format.value") {
+        emit_aver_import(
+            &mut import_section,
+            &mut host_imports,
+            &mut import_func_count,
+            abi_entry,
+        )?;
     }
 
-    let mut rt = RuntimeFuncIndices::new(import_func_count);
-    rt.fd_write_import = write_stdout_import.unwrap_or(0);
+    module.section(&import_section);
+
+    let mut rt = RuntimeFuncIndices::new(import_func_count, aver_rt_imports);
     rt.adapter = adapter;
     let trampoline_fn_base = import_func_count + rt.count;
     let user_fn_base = trampoline_fn_base + mutual_tco_layouts.len() as u32;
@@ -349,46 +804,38 @@ pub fn build_wasm_module(
         }
     }
 
+    // The start function bumps the imported heap_ptr past the user's
+    // static data on instantiate. Without this the runtime's allocator
+    // (initialized to 128) would scribble over the data section.
+    let start_fn_idx = user_fn_base + user_fns.len() as u32;
+    function_section.function(rti.empty_to_empty);
+
+    // Under the WASI adapter `_start` must be `() -> ()` so wasmtime can
+    // dispatch it as a command. main carries an i32/i64/f64 return; emit
+    // a void wrapper that calls main and drops its result.
+    let wasi_start_wrapper_idx: Option<u32> =
+        if matches!(adapter, super::WasmAdapter::Wasi) && fn_indices.contains_key("main") {
+            function_section.function(rti.empty_to_empty);
+            Some(start_fn_idx + 1)
+        } else {
+            None
+        };
+
     module.section(&function_section);
 
-    // -----------------------------------------------------------------------
-    // Memory section
-    // -----------------------------------------------------------------------
-    let mut memory_section = MemorySection::new();
-    memory_section.memory(MemoryType {
-        minimum: 1,
-        maximum: None,
-        memory64: false,
-        shared: false,
-        page_size_log2: None,
-    });
-    module.section(&memory_section);
+    // Memory and the heap_ptr global are imported from aver_runtime; no
+    // local memory section is emitted.
 
     // Build variant registry early — needed for global section (name table)
     let variant_registry = build_variant_registry(ctx);
 
     // -----------------------------------------------------------------------
-    // Global section
+    // Global section — heap_ptr (idx 0) and collect_mark/from/dst
+    // (idx 1/2/3) are all imported from aver_runtime. variant_names_*
+    // (idx 4/5) are still local because their initializer offsets
+    // depend on each module's data section.
     // -----------------------------------------------------------------------
     let mut global_section = GlobalSection::new();
-    global_section.global(
-        GlobalType {
-            val_type: ValType::I32,
-            mutable: true,
-            shared: false,
-        },
-        &ConstExpr::i32_const(heap_base),
-    );
-    for _ in 0..3 {
-        global_section.global(
-            GlobalType {
-                val_type: ValType::I32,
-                mutable: true,
-                shared: false,
-            },
-            &ConstExpr::i32_const(0),
-        );
-    }
 
     // Variant name table: build tag→name mapping so hosts can display names.
     let variant_name_json = {
@@ -437,13 +884,37 @@ pub fn build_wasm_module(
 
     if let Some(&main_idx) = fn_indices.get("main") {
         export_section.export("main", ExportKind::Func, main_idx);
-        export_section.export("_start", ExportKind::Func, main_idx);
+        // Under WASI adapter point `_start` at the void wrapper so the
+        // module is a valid wasi command (else wasmtime falls back to
+        // experimental `--invoke` and prints the i32 return).
+        let start_idx = wasi_start_wrapper_idx.unwrap_or(main_idx);
+        export_section.export("_start", ExportKind::Func, start_idx);
     }
 
-    export_section.export("memory", ExportKind::Memory, 0);
+    // HTTP handler export — driven by `--handler <name>` on the CLI.
+    // Pack bootstraps (worker.js for Cloudflare, etc.) call this
+    // export per request. Compiler errors if the named fn doesn't
+    // resolve at this point.
+    if let Some(handler_name) = handler {
+        match fn_indices.get(handler_name) {
+            Some(&fn_idx) => {
+                export_section.export("aver_http_handle", ExportKind::Func, fn_idx);
+            }
+            None => {
+                return Err(format!(
+                    "--handler refers to fn `{}` which doesn't exist in this program. \
+                     Define `fn {}(req: HttpRequest) -> HttpResponse` and try again.",
+                    handler_name, handler_name
+                ));
+            }
+        }
+    }
 
-    // Export $alloc so hosts can allocate guest memory for strings
-    // returned by host imports (readLine, readKey, format_value, etc.)
+    // Re-export the imported memory, heap_ptr global, and rt_alloc so
+    // hosts that look them up on the user instance (variant-name table
+    // reader, host-side guest-string writer) keep working without
+    // needing a handle to the runtime instance.
+    export_section.export("memory", ExportKind::Memory, 0);
     export_section.export("alloc", ExportKind::Func, rt.alloc);
     export_section.export("$heap_ptr", ExportKind::Global, 0);
     export_section.export("$variant_names_ptr", ExportKind::Global, 4);
@@ -452,9 +923,22 @@ pub fn build_wasm_module(
     module.section(&export_section);
 
     // -----------------------------------------------------------------------
+    // Start section — runs the heap_ptr init before _start so the
+    // imported allocator skips the user's static data.
+    // -----------------------------------------------------------------------
+    module.section(&StartSection {
+        function_index: start_fn_idx,
+    });
+
+    // -----------------------------------------------------------------------
     // Code section
     // -----------------------------------------------------------------------
     let mut code_section = CodeSection::new();
+
+    // Per-function local names collected during emission, keyed by absolute
+    // function index (post imports + runtime + tco trampolines). Fed into
+    // the wasm name section so disassembly shows aver source identifiers.
+    let mut user_fn_local_names: Vec<(u32, Vec<(String, u32)>)> = Vec::new();
 
     // Runtime function bodies
     let rt_funcs = runtime::emit_runtime_functions(&rt);
@@ -506,7 +990,7 @@ pub fn build_wasm_module(
             continue;
         }
 
-        let func = emit_plain_user_function(
+        let (func, locals) = emit_plain_user_function(
             entry,
             &fn_indices,
             &rt,
@@ -518,6 +1002,40 @@ pub fn build_wasm_module(
             tco_fns.contains(&entry.canonical_name),
         )?;
         code_section.function(&func);
+        if let Some(&fn_idx) = fn_indices.get(&entry.canonical_name) {
+            user_fn_local_names.push((fn_idx, locals));
+        }
+    }
+
+    // Start function: bump heap_ptr to heap_base on instantiate. The
+    // runtime ships with heap_ptr = 128 (top of IO scratch); the user's
+    // static data lives at 128..heap_base, so without this the first
+    // alloc would scribble over its own string table.
+    {
+        let mut start_fn = wasm_encoder::Function::new(Vec::new());
+        start_fn.instruction(&Instruction::I32Const(heap_base));
+        start_fn.instruction(&Instruction::GlobalSet(0));
+        start_fn.instruction(&Instruction::End);
+        code_section.function(&start_fn);
+    }
+
+    // WASI _start wrapper body: call main, drop its result.
+    if wasi_start_wrapper_idx.is_some()
+        && let Some(&main_idx) = fn_indices.get("main")
+    {
+        let main_ret_type = ctx
+            .fn_sigs
+            .get("main")
+            .map(|(_, ret_type, _)| aver_type_to_wasm(ret_type))
+            .unwrap_or(WasmType::I32);
+        let mut wrapper = wasm_encoder::Function::new(Vec::new());
+        wrapper.instruction(&Instruction::Call(main_idx));
+        // main always returns one value (Aver functions return exactly
+        // one wasm value via the typed ABI). Drop it.
+        let _ = main_ret_type;
+        wrapper.instruction(&Instruction::Drop);
+        wrapper.instruction(&Instruction::End);
+        code_section.function(&wrapper);
     }
 
     module.section(&code_section);
@@ -534,6 +1052,59 @@ pub fn build_wasm_module(
         );
         module.section(&data_section);
     }
+
+    // -----------------------------------------------------------------------
+    // Name section: maps every function index back to a stable identifier so
+    // `wasm-tools print` (and `aver compile --target wat`) read like source
+    // instead of `call 18`. Stripped automatically by `wasm-opt -Oz` for
+    // production builds, kept for dev/debug/audit pipelines.
+    // -----------------------------------------------------------------------
+    let mut func_names = NameMap::new();
+    let mut named: Vec<(u32, String)> = Vec::new();
+    for (name, idx) in &host_imports {
+        // Skip marker entries (Aver-qualified names like "Console.print"
+        // are existence flags, their idx 0 collides with rt_alloc).
+        if name.contains('.') {
+            continue;
+        }
+        if *idx > 0 || !needed_host_imports.is_empty() {
+            named.push((*idx, format!("host_{}", name.replace('/', "_"))));
+        }
+    }
+    for (idx, name) in rt.name_pairs() {
+        named.push((idx, format!("rt_{}", name)));
+    }
+    for (name, idx) in &fn_indices {
+        named.push((*idx, name.clone()));
+    }
+    named.push((start_fn_idx, "__aver_init_heap".to_string()));
+    named.sort_by_key(|(idx, _)| *idx);
+    named.dedup_by_key(|(idx, _)| *idx);
+    for (idx, name) in &named {
+        func_names.append(*idx, name);
+    }
+    let mut name_section = NameSection::new();
+    name_section.functions(&func_names);
+
+    // Per-function local names: aver-source identifiers (params + lets)
+    // surface as `local.set $tuple_ptr` instead of `local.set 4` after
+    // disassembly. Runtime function locals stay numbered for now —
+    // each runtime/*.rs `Function::new(...)` would need a parallel
+    // labelled-locals construction; tracked as a follow-up.
+    user_fn_local_names.sort_by_key(|(idx, _)| *idx);
+    let mut local_names = IndirectNameMap::new();
+    for (fn_idx, locals) in &user_fn_local_names {
+        let mut sorted = locals.clone();
+        sorted.sort_by_key(|(_, idx)| *idx);
+        sorted.dedup_by_key(|(_, idx)| *idx);
+        let mut map = NameMap::new();
+        for (name, idx) in &sorted {
+            map.append(*idx, name);
+        }
+        local_names.append(*fn_idx, &map);
+    }
+    name_section.locals(&local_names);
+    module.section(&name_section);
 
     Ok(module.finish())
 }
@@ -604,7 +1175,7 @@ fn emit_plain_user_function(
     variant_registry: &HashMap<(String, String), super::expr::VariantInfo>,
     host_imports: &HashMap<String, u32>,
     needs_tco: bool,
-) -> Result<wasm_encoder::Function, String> {
+) -> Result<(wasm_encoder::Function, Vec<(String, u32)>), String> {
     let mut emitter = ExprEmitter::new(
         fn_indices,
         rt,
@@ -699,7 +1270,8 @@ fn emit_plain_user_function(
         func.instruction(instr);
     }
     func.instruction(&Instruction::End);
-    Ok(func)
+    let local_names: Vec<(String, u32)> = emitter.locals.into_iter().collect();
+    Ok((func, local_names))
 }
 
 fn build_mutual_tco_groups(

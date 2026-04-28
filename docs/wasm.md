@@ -9,18 +9,18 @@ This backend compiles Aver to standalone `.wasm` modules with a typed ABI:
 
 Default output uses the `aver/*` import ABI. That keeps the generated module host-neutral: the same `.wasm` can run under the built-in wasmtime host, a browser JS shim, or a custom embedder.
 
-## Adapters
+## Bridges
 
 - `aver compile app.av --target wasm`
   Emits `aver/*` imports such as `aver/console_print`, `aver/time_unixMs`, `aver/format_value`.
-- `aver compile app.av --target wasm --wasm-opt oz`
-  Post-processes the emitted module with `wasm-opt -Oz` for smaller binaries.
-- `aver compile app.av --target wasm --wasm-opt o3`
-  Post-processes the emitted module with `wasm-opt -O3` for speed-oriented optimization.
-- `aver compile app.av --target wasm --adapter wasi`
-  Emits WASI imports for standalone `wasmtime`.
+- `aver compile app.av --target wasm --optimize size`
+  Post-processes the emitted module for smaller binaries.
+- `aver compile app.av --target wasm --optimize speed`
+  Post-processes the emitted module for speed-oriented optimization.
+- `aver compile app.av --target wasm --bridge wasip1`
+  Bundles the WASI preview-1 bridge for standalone `wasmtime`.
 
-`--wasm-opt` requires `binaryen` (`wasm-opt`) to be installed. The toolchain passes the required WASM feature flags automatically because Aver modules use bulk-memory ops and multi-value imports.
+`--optimize` requires `binaryen` (`wasm-metadce` and `wasm-opt`) to be installed. The toolchain passes the required WASM feature flags automatically because Aver modules use bulk-memory ops and multi-value imports.
 
 ### String deduplication
 
@@ -166,4 +166,4 @@ From the repo root:
 python3 tools/website/rebuild_playground.py
 ```
 
-This syncs mirrored game sources under `tools/website/playground/sources/`, rebuilds the shipped `.wasm` files with `--wasm-opt oz`, and refreshes the size labels shown on the website.
+This syncs mirrored game sources under `tools/website/playground/sources/`, rebuilds the shipped `.wasm` files with `--optimize size`, and refreshes the size labels shown on the website.

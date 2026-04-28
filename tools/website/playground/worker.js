@@ -2,11 +2,68 @@ import { AverBrowserHost } from "./wasm_host.js";
 
 const host = new AverBrowserHost((message, transfer) => self.postMessage(message, transfer ?? []));
 
-async function runModule(wasmBytes) {
+// aver_runtime owns memory + the bump allocator (see 0.14 Edge Step 1).
+// Cache the instance: it's stateless across runs from the user's POV
+// (start fn re-bumps heap_ptr per user instantiation), so one runtime
+// instance can be re-used for every user.wasm we run in this worker.
+let runtimeInstance = null;
+let runtimeBytesCache = null;
+
+async function ensureRuntime(runtimeBytes) {
+    if (runtimeBytes && runtimeBytes !== runtimeBytesCache) {
+        runtimeBytesCache = runtimeBytes;
+        runtimeInstance = null;
+    }
+    if (runtimeInstance) return runtimeInstance;
+    if (!runtimeBytesCache) {
+        throw new Error(
+            "aver_runtime bytes missing — main thread must send them before the first run."
+        );
+    }
+    const { instance } = await WebAssembly.instantiate(runtimeBytesCache, {});
+    runtimeInstance = instance;
+    return instance;
+}
+
+/// Walk the WebAssembly imports and return true iff the module imports
+/// at least one symbol from `aver_runtime`. Used to detect whether
+/// the .wasm we're about to run is a thin user.wasm (needs runtime
+/// pre-instantiated and wired in) or a self-contained bundle from
+/// `aver compile --target wasm` (runtime is already embedded).
+async function moduleNeedsRuntime(wasmBytes) {
+    try {
+        const mod = await WebAssembly.compile(wasmBytes);
+        return WebAssembly.Module.imports(mod).some(i => i.module === "aver_runtime");
+    } catch (_) {
+        // If we can't compile up-front, fall back to "yes, instantiate
+        // runtime" — the actual instantiate below will surface the
+        // real error.
+        return true;
+    }
+}
+
+async function runModule(wasmBytes, runtimeBytes) {
     try {
         host.post({ type: "status", level: "info", text: "Instantiating module…" });
-        const { instance } = await WebAssembly.instantiate(wasmBytes, host.createImports());
-        host.setInstance(instance);
+
+        const userImports = host.createImports();
+        const needsRuntime = await moduleNeedsRuntime(wasmBytes);
+        let runtimeInstanceForMemory = null;
+        if (needsRuntime) {
+            const runtime = await ensureRuntime(runtimeBytes);
+            userImports.aver_runtime = runtime.exports;
+            runtimeInstanceForMemory = runtime;
+        }
+
+        const { instance } = await WebAssembly.instantiate(wasmBytes, userImports);
+        // Edge-wasm user.wasm imports memory from aver_runtime instead
+        // of exporting its own; pass the runtime's memory through so
+        // the host can read terminal output / variant names from the
+        // shared linear address space.
+        host.setInstance(
+            instance,
+            runtimeInstanceForMemory?.exports?.memory ?? null,
+        );
         host.postTerminalSnapshot();
         host.post({ type: "status", level: "success", text: "Running…" });
 
@@ -40,9 +97,17 @@ self.onmessage = (event) => {
         return;
     }
 
+    if (type === "runtime-bytes") {
+        // Cache the aver_runtime wasm so subsequent runs don't re-fetch
+        // it. Sent once by the main thread after compiler init.
+        runtimeBytesCache = event.data.runtimeBytes;
+        runtimeInstance = null;
+        return;
+    }
+
     if (type === "run") {
         host.setProgramArgs(event.data.programArgs ?? []);
-        runModule(event.data.wasmBytes);
+        runModule(event.data.wasmBytes, event.data.runtimeBytes);
         return;
     }
 

@@ -1631,7 +1631,7 @@ pub fn builtinHttpBodyInner(
                 let __effect_arg0 = url;
                 let __effect_arg1 = body;
                 let __effect_arg2 = ct;
-                let __effect_arg3 = aver_rt::AverList::empty();
+                let __effect_arg3 = aver_rt::HttpHeaders::default();
                 crate::cancel_checkpoint();
                 aver_replay::invoke_effect(
                     "Http.post",
@@ -1658,7 +1658,7 @@ pub fn builtinHttpBodyInner(
                     let __effect_arg0 = url;
                     let __effect_arg1 = body;
                     let __effect_arg2 = ct;
-                    let __effect_arg3 = aver_rt::AverList::empty();
+                    let __effect_arg3 = aver_rt::HttpHeaders::default();
                     crate::cancel_checkpoint();
                     aver_replay::invoke_effect(
                         "Http.put",
@@ -1684,7 +1684,7 @@ pub fn builtinHttpBodyInner(
                     let __effect_arg0 = url;
                     let __effect_arg1 = body;
                     let __effect_arg2 = ct;
-                    let __effect_arg3 = aver_rt::AverList::empty();
+                    let __effect_arg3 = aver_rt::HttpHeaders::default();
                     crate::cancel_checkpoint();
                     aver_replay::invoke_effect(
                         "Http.patch",
@@ -1720,31 +1720,26 @@ pub fn httpResponseToVal(result: &Result<HttpResponse, AverStr>) -> Val {
             aver_rt::AverList::from_vec(vec![
                 (AverStr::from("status"), Val::ValInt(resp.status.clone())),
                 (AverStr::from("body"), Val::ValStr(resp.body.clone())),
-                (
-                    AverStr::from("headers"),
-                    headersToVal(resp.headers.clone(), aver_rt::AverList::empty()),
-                ),
+                (AverStr::from("headers"), headersToVal(resp.headers.clone())),
             ]),
         ))),
         Err(e) => Val::ValErr(std::sync::Arc::new(Val::ValStr(e))),
     }
 }
 
-/// Convert host Header list to Val list.
+/// Convert host headers (`Map<String, List<String>>`) to a Val::ValMap.
+/// Matches the new `HttpResponse.headers` type — keys are case-insensitive
+/// (already lowercased by the runtime on the way in), values stay as a
+/// list to preserve multi-value semantics (Set-Cookie, Vary, …).
 #[inline(always)]
-pub fn headersToVal(
-    mut headers: aver_rt::AverList<Header>,
-    mut acc: aver_rt::AverList<Val>,
-) -> Val {
-    loop {
-        crate::cancel_checkpoint();
-        return aver_list_match!(headers, [] => Val::ValList(acc.reverse()), [h, rest] => { {
-            let __tmp1 = aver_rt::AverList::prepend(Val::ValRecord(AverStr::from("Header"), aver_rt::AverList::from_vec(vec![(AverStr::from("name"), Val::ValStr(h.name.clone())), (AverStr::from("value"), Val::ValStr(h.value.clone()))])), &acc);
-            headers = rest;
-            acc = __tmp1;
-            continue;
-        } });
+pub fn headersToVal(headers: aver_rt::HttpHeaders) -> Val {
+    let mut out = aver_rt::AverMap::default();
+    for (name, values) in headers.iter() {
+        let value_list =
+            aver_rt::AverList::from_vec(values.iter().cloned().map(Val::ValStr).collect());
+        out = out.insert(name.clone(), Val::ValList(value_list));
     }
+    Val::ValMap(out)
 }
 
 /// Tcp.send(host, port, message) -> Result<String, String>.

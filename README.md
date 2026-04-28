@@ -223,8 +223,8 @@ All commands use the bytecode VM. For VM internals, see [docs/vm.md](docs/vm.md)
 # Compile to .wasm (requires --features wasm)
 aver compile hello.av --target wasm
 
-# Compile with WASI adapter for standalone wasmtime
-aver compile hello.av --target wasm --adapter wasi
+# Compile with the WASI preview-1 bridge for standalone wasmtime
+aver compile hello.av --target wasm --bridge wasip1
 
 # Run via built-in WASM host
 aver run hello.av --wasm

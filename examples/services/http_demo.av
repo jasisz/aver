@@ -5,10 +5,6 @@ module HttpDemo
         "This keeps signatures minimal and explicit."
     effects [Console, Http]
 
-record Header
-    name: String
-    value: String
-
 decision HttpAsCapability
     date = "2025-01-01"
     reason =
@@ -36,8 +32,8 @@ fn checkStatus(url: String) -> Result<Int, String>
 fn post(url: String, payload: String, token: String) -> Result<HttpResponse, String>
     ? "POST JSON with a Bearer token. Builds the Authorization header explicitly."
     ! [Http.post]
-    auth = Header(name = "Authorization", value = "Bearer {token}")
-    Http.post(url, payload, "application/json", [auth])
+    headers = {"authorization" => ["Bearer {token}"]}
+    Http.post(url, payload, "application/json", headers)
 
 fn main() -> Unit
     ! [Console.print, Http.get, Http.post]

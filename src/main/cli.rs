@@ -35,23 +35,85 @@ pub(super) enum ProofVerifyMode {
     TheoremSkeleton,
 }
 
-/// WASM import ABI adapter mode.
+/// Deployment-time bridge that satisfies user.wasm's `aver/*` host
+/// imports. user.wasm bytes are identical regardless of bridge — the
+/// choice only affects what gets bundled with `--target wasm`. With
+/// `--target edge-wasm` the bridge is irrelevant (thin output, host
+/// wires imports at instantiate time).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub(super) enum WasmAdapter {
-    /// Default: aver/* capability imports. Requires a host that provides capabilities.
-    Aver,
-    /// Compatibility: WASI imports. Works with standalone wasmtime.
-    Wasi,
+pub(super) enum WasmBridge {
+    /// No bridge: aver/* imports left unresolved. Consumer host
+    /// (browser playground, `aver run --wasm`, custom edge runtime)
+    /// supplies them at instantiate time.
+    None,
+    /// Translate aver/* → wasi_snapshot_preview1.* via a bundled
+    /// shim. Lets `wasmtime program.wasm` run standalone without an
+    /// external host. The "p1" matches the WASI spec community's
+    /// shorthand for preview 1 (paired with `wasip2`/`wasip3`
+    /// elsewhere) and pins this bridge to core-wasm preview 1
+    /// specifically. WASI 0.2 / Component Model gets its own
+    /// compilation target (`--target wasi-http`) rather than
+    /// another bridge, since it's a different model end-to-end
+    /// (component wasm output, WIT worlds, host-owned accept
+    /// loop) — not a swap-out shim.
+    #[value(name = "wasip1")]
+    Wasip1,
+    /// Translate aver/* → JS host APIs (`console.log`, `Date.now()`,
+    /// `crypto.getRandomValues`, the Fetch API). The right choice
+    /// for any JS-environment edge runtime — Cloudflare Workers,
+    /// Fastly Compute (when bundled JS shim is acceptable), Deno
+    /// Deploy, Bun, Node. Pairs with `--target edge-wasm` and a
+    /// per-host deployment pack.
+    Fetch,
 }
 
-/// Optional post-pass optimization for generated WASM modules.
+/// Deployment bundle pack. Independent of compiler target and bridge —
+/// the same `--target edge-wasm --bridge fetch` artifacts can be
+/// shipped to Cloudflare Workers, Fastly Compute, Deno Deploy, etc.;
+/// `--pack` decides which extra bootstrap files (worker.js,
+/// wrangler.toml, fastly.toml, …) the compiler drops next to
+/// user.wasm so the deployment is one `wrangler deploy` away.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(super) enum DeployPack {
+    /// No pack: just user.wasm, the host wires it up.
+    None,
+    /// Emit `worker.js` + `wrangler.toml` for `wrangler deploy`.
+    Cloudflare,
+}
+
+/// One-flag UX shortcut that expands to a `(target, bridge, pack)`
+/// preset. `--preset cloudflare` ≡ `--target edge-wasm --bridge fetch
+/// --pack cloudflare`. Equivalent CLI surface, fewer keystrokes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(super) enum DeployPreset {
+    /// edge-wasm + fetch bridge + Cloudflare worker.js/wrangler.toml.
+    Cloudflare,
+}
+
+/// Which runtime artifact `aver wasm-runtime` emits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(super) enum WasmRuntimeArtifact {
+    /// The shared aver_runtime module (alloc, GC, str/list/map/vec ops).
+    #[value(name = "runtime")]
+    Runtime,
+    /// The aver→WASI translation shim that satisfies `aver/*` host
+    /// imports against `wasi_snapshot_preview1.fd_write`.
+    #[value(name = "wasi-bridge")]
+    WasiBridge,
+}
+
+/// Optional post-pass optimization mode for generated WASM modules.
+/// Triggers a multi-stage pipeline (wasm-metadce → wasm-opt with
+/// converge + strip-producers + strip-target-features), so the flag
+/// is `--optimize` rather than `--wasm-opt` — it does more than just
+/// invoking the `wasm-opt` binary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub(super) enum WasmOptMode {
     /// Optimize for runtime speed.
-    #[value(name = "o3")]
+    #[value(name = "speed")]
     O3,
     /// Optimize aggressively for binary size.
-    #[value(name = "oz")]
+    #[value(name = "size")]
     Oz,
 }
 
@@ -62,9 +124,24 @@ pub(super) enum CompileTarget {
     #[default]
     #[value(name = "rust")]
     Rust,
-    /// Generate a .wasm binary (requires --features wasm).
+    /// Generate a single bundled .wasm binary (data-structure runtime
+    /// inlined, effects merged via wasm-merge). Requires --features wasm
+    /// and `wasm-merge` (binaryen) in PATH if the program uses effects.
     #[value(name = "wasm")]
     Wasm,
+    /// Generate a thin .wasm that imports the data-structure runtime and
+    /// effect host as separate modules (zero external tooling required).
+    /// Designed for browser playgrounds, edge runtimes (Cloudflare Workers,
+    /// Fastly Compute@Edge), and dev workflows where the runtime is shared
+    /// between programs.
+    #[value(name = "edge-wasm")]
+    EdgeWasm,
+}
+
+impl CompileTarget {
+    pub(super) fn needs_wasm_pipeline(self) -> bool {
+        !matches!(self, CompileTarget::Rust)
+    }
 }
 
 /// Runtime policy handling for generated Rust projects.
@@ -303,12 +380,64 @@ pub(super) enum Commands {
         /// Emit extra self-host-only runtime glue (FnStore callbacks, HttpServer bridge)
         #[arg(long)]
         with_self_host_support: bool,
-        /// WASM import ABI adapter (default: aver/* capability imports)
+        /// Deployment-time bridge for WASM `aver/*` host imports.
+        /// `wasip1` bundles the aver→wasi shim so `wasmtime program.wasm`
+        /// runs standalone; `fetch` translates aver/* to JS host APIs
+        /// (Cloudflare Workers, Deno, Bun); `none` (default) leaves
+        /// aver/* unresolved for the consumer host to satisfy.
         #[arg(long, value_enum)]
-        adapter: Option<WasmAdapter>,
-        /// Post-process generated WASM with wasm-opt (`o3` for speed, `oz` for size)
+        bridge: Option<WasmBridge>,
+        /// Deployment bundle pack — drops extra files (worker.js,
+        /// wrangler.toml, …) next to user.wasm so the build is one
+        /// platform-CLI command away from running. Independent of
+        /// `--target` and `--bridge`.
         #[arg(long, value_enum)]
-        wasm_opt: Option<WasmOptMode>,
+        pack: Option<DeployPack>,
+        /// One-flag preset that expands to a `(target, bridge, pack)`
+        /// triple. `cloudflare` ≡ `--target edge-wasm --bridge fetch
+        /// --pack cloudflare`. Mutually exclusive with explicit
+        /// `--target` / `--bridge` / `--pack` — pick one shape of UX.
+        #[arg(long, value_enum, conflicts_with_all = &["target", "bridge", "pack"])]
+        preset: Option<DeployPreset>,
+        /// Top-level Aver function to expose as the HTTP handler in
+        /// the deployment pack. Must have signature
+        /// `Fn(HttpRequest) -> HttpResponse`. Compiler exports it
+        /// as `aver_http_handle`; the pack's bootstrap (worker.js
+        /// for Cloudflare, etc.) routes requests through it. No
+        /// magic detection of `HttpServer.listen` in `main` — the
+        /// handler is whatever you point this flag at.
+        #[arg(long)]
+        handler: Option<String>,
+        /// Post-process generated WASM through a multi-stage size/speed
+        /// pipeline (wasm-metadce → wasm-opt --converge --strip-*).
+        /// Pass `size` for aggressive size reduction (`-Oz`) or `speed`
+        /// for runtime tuning (`-O3`).
+        #[arg(long, value_enum)]
+        optimize: Option<WasmOptMode>,
+    },
+    /// Emit a standalone aver_runtime / aver_to_wasi artifact to disk.
+    /// Internal release tooling — used by tools/release/* to publish
+    /// per-version runtime modules to averlang.dev. Not part of the
+    /// user-facing CLI surface.
+    #[command(hide = true)]
+    WasmRuntime {
+        /// Output file path (e.g. dist/aver_runtime.wasm)
+        #[arg(short = 'o', long)]
+        output: String,
+        /// Which runtime artifact to emit. `runtime` (default) is the
+        /// shared aver_runtime module imported by every user.wasm;
+        /// `wasi-bridge` is the aver→wasi translation shim.
+        #[arg(long, value_enum, default_value = "runtime")]
+        artifact: WasmRuntimeArtifact,
+        /// Apply the same optimize pipeline used for user code, but
+        /// in library mode (every export is a DCE root). `size` runs
+        /// `-Oz --converge --strip-*`; `speed` is `-O3`. Default: raw.
+        #[arg(long, value_enum)]
+        optimize: Option<WasmOptMode>,
+        /// Also emit a human-readable .wat companion next to the .wasm
+        /// (uses `wasm-tools print`).
+        #[arg(long)]
+        wat: bool,
     },
     /// Trace justifications: decisions, verify blocks, descriptions
     Why {
@@ -411,22 +540,22 @@ mod tests {
     }
 
     #[test]
-    fn compile_accepts_wasm_opt() {
+    fn compile_accepts_optimize() {
         let cli = Cli::parse_from([
             "aver",
             "compile",
             "examples/core/hello.av",
             "--target",
             "wasm",
-            "--wasm-opt",
-            "oz",
+            "--optimize",
+            "size",
         ]);
         match cli.command {
             Commands::Compile {
-                target, wasm_opt, ..
+                target, optimize, ..
             } => {
                 assert_eq!(target, CompileTarget::Wasm);
-                assert_eq!(wasm_opt, Some(WasmOptMode::Oz));
+                assert_eq!(optimize, Some(WasmOptMode::Oz));
             }
             _ => panic!("expected compile command"),
         }

@@ -209,10 +209,7 @@ fn from_list(args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 fn is_hashable_key(value: &Value) -> bool {
-    matches!(
-        value,
-        Value::Int(_) | Value::Float(_) | Value::Str(_) | Value::Bool(_)
-    )
+    !matches!(value, Value::Fn(_))
 }
 
 fn ensure_hashable_key(name: &str, value: &Value) -> Result<(), RuntimeError> {
@@ -220,7 +217,7 @@ fn ensure_hashable_key(name: &str, value: &Value) -> Result<(), RuntimeError> {
         Ok(())
     } else {
         Err(RuntimeError::Error(format!(
-            "{}: key must be Int, Float, String, or Bool",
+            "{}: key must be hashable (functions are not)",
             name
         )))
     }
@@ -312,7 +309,11 @@ pub fn call_nv(
 }
 
 fn is_hashable_nv(v: NanValue) -> bool {
-    v.is_int() || v.is_float() || v.is_string() || v.is_bool()
+    // Functions are the only Aver value not hashable — see the `Value`
+    // path above. Everything else (variants, tuples, records, lists,
+    // vectors, wrappers, scalars) participates in `hash_in` and
+    // `eq_in`.
+    !v.is_fn()
 }
 
 fn ensure_hashable_nv(name: &str, v: NanValue) -> Result<(), RuntimeError> {
@@ -320,14 +321,14 @@ fn ensure_hashable_nv(name: &str, v: NanValue) -> Result<(), RuntimeError> {
         Ok(())
     } else {
         Err(RuntimeError::Error(format!(
-            "{}: key must be Int, Float, String, or Bool",
+            "{}: key must be hashable (functions are not)",
             name
         )))
     }
 }
 
 fn nv_key_bits(v: NanValue, arena: &Arena) -> u64 {
-    v.map_key_hash(arena)
+    v.map_key_hash_deep(arena)
 }
 
 fn empty_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {

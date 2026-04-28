@@ -797,24 +797,20 @@ fn map_from_list_and_entries_roundtrip() {
 }
 
 #[test]
-fn map_set_rejects_non_scalar_key() {
-    let result = try_eval("Map.set(Map.empty(), [1], 42)");
-    let err = result.expect_err("expected runtime error for non-scalar key");
-    assert!(
-        err.contains("key must be Int, Float, String, or Bool"),
-        "unexpected error: {}",
-        err
+fn map_accepts_list_key_with_structural_hash() {
+    // Aver maps now hash by value across every shape, so List<Int>
+    // (and any other heap structure) participates as a key.
+    assert_eq!(
+        eval("Map.get(Map.set(Map.empty(), [1, 2], 42), [1, 2])"),
+        Value::Some(Box::new(Value::Int(42)))
     );
 }
 
 #[test]
-fn map_literal_rejects_non_scalar_key() {
-    let result = try_eval("{[1] => 42}");
-    let err = result.expect_err("expected runtime error for non-scalar map key");
-    assert!(
-        err.contains("key must be Int, Float, String, or Bool"),
-        "unexpected error: {}",
-        err
+fn map_literal_accepts_list_key() {
+    assert_eq!(
+        eval("Map.get({[1] => 42}, [1])"),
+        Value::Some(Box::new(Value::Int(42)))
     );
 }
 

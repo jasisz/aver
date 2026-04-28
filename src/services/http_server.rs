@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
-use aver_rt::{AverList, Header, HttpRequest, HttpResponse};
+use aver_rt::{AverList, AverStr, HttpHeaders, HttpRequest, HttpResponse};
 
 use crate::nan_value::{Arena, NanValue};
 use crate::value::{RuntimeError, Value, list_from_vec, list_view};
@@ -162,30 +162,23 @@ where
             Err(e) => HttpResponse {
                 status: 500,
                 body: aver_rt::AverStr::from(format!("HttpServer handler return error: {}", e)),
-                headers: AverList::empty(),
+                headers: HttpHeaders::default(),
             },
         },
         Err(e) => HttpResponse {
             status: 500,
             body: aver_rt::AverStr::from(format!("HttpServer handler execution error: {}", e)),
-            headers: AverList::empty(),
+            headers: HttpHeaders::default(),
         },
     }
 }
 
 fn http_request_to_value(req: HttpRequest) -> Value {
-    let headers = req
-        .headers
-        .into_iter()
-        .map(|header| Value::Record {
-            type_name: "Header".to_string(),
-            fields: vec![
-                ("name".to_string(), Value::Str(header.name.to_string())),
-                ("value".to_string(), Value::Str(header.value.to_string())),
-            ]
-            .into(),
-        })
-        .collect::<Vec<_>>();
+    let mut headers = HashMap::new();
+    for (name, values) in req.headers.iter() {
+        let value_list: Vec<Value> = values.iter().map(|v| Value::Str(v.to_string())).collect();
+        headers.insert(Value::Str(name.to_string()), list_from_vec(value_list));
+    }
 
     Value::Record {
         type_name: "HttpRequest".to_string(),
@@ -193,7 +186,7 @@ fn http_request_to_value(req: HttpRequest) -> Value {
             ("method".to_string(), Value::Str(req.method.to_string())),
             ("path".to_string(), Value::Str(req.path.to_string())),
             ("body".to_string(), Value::Str(req.body.to_string())),
-            ("headers".to_string(), list_from_vec(headers)),
+            ("headers".to_string(), Value::Map(headers)),
         ]
         .into(),
     }
@@ -218,7 +211,7 @@ fn http_response_from_value(val: Value) -> Result<HttpResponse, RuntimeError> {
 
     let mut status = None;
     let mut body = None;
-    let mut headers = AverList::empty();
+    let mut headers = HttpHeaders::default();
 
     for (name, value) in fields.iter() {
         match name.as_str() {
@@ -256,40 +249,42 @@ fn http_response_from_value(val: Value) -> Result<HttpResponse, RuntimeError> {
     })
 }
 
-fn parse_http_response_headers(val: Value) -> Result<AverList<Header>, RuntimeError> {
-    let list = list_view(&val).ok_or_else(|| {
-        RuntimeError::Error("HttpResponse.headers must be List<Header>".to_string())
-    })?;
+fn parse_http_response_headers(val: Value) -> Result<HttpHeaders, RuntimeError> {
+    let map = match val {
+        Value::Map(m) => m,
+        _ => {
+            return Err(RuntimeError::Error(
+                "HttpResponse.headers must be Map<String, List<String>>".to_string(),
+            ));
+        }
+    };
 
-    let mut out = Vec::new();
-    for item in list.iter() {
-        let fields = match item {
-            Value::Record { fields, .. } => fields,
+    let mut out = HttpHeaders::default();
+    for (k, v) in map.into_iter() {
+        let name = match k {
+            Value::Str(s) => s.to_ascii_lowercase(),
             _ => {
                 return Err(RuntimeError::Error(
-                    "HttpResponse.headers entries must be Header records".to_string(),
+                    "HttpResponse.headers keys must be Strings".to_string(),
                 ));
             }
         };
-
-        let mut name = None;
-        let mut value = None;
-        for (field_name, field_val) in fields.iter() {
-            match (field_name.as_str(), field_val) {
-                ("name", Value::Str(s)) => name = Some(aver_rt::AverStr::from(s.as_str())),
-                ("value", Value::Str(s)) => value = Some(aver_rt::AverStr::from(s.as_str())),
-                _ => {}
+        let values = list_view(&v).ok_or_else(|| {
+            RuntimeError::Error("HttpResponse.headers values must be List<String>".to_string())
+        })?;
+        let mut buf = Vec::new();
+        for item in values.iter() {
+            match item {
+                Value::Str(s) => buf.push(AverStr::from(s.as_str())),
+                _ => {
+                    return Err(RuntimeError::Error(
+                        "HttpResponse.headers values must be Strings".to_string(),
+                    ));
+                }
             }
         }
-
-        let name = name.ok_or_else(|| {
-            RuntimeError::Error("HttpResponse header missing String 'name'".to_string())
-        })?;
-        let value = value.ok_or_else(|| {
-            RuntimeError::Error("HttpResponse header missing String 'value'".to_string())
-        })?;
-        out.push(Header { name, value });
+        out = out.insert(AverStr::from(name), AverList::from_vec(buf));
     }
 
-    Ok(AverList::from_vec(out))
+    Ok(out)
 }

@@ -958,7 +958,7 @@ fn aver_verify_trace_http_get_generative_output_end_to_end() {
          \n\
          fn fakeFetch(path: BranchPath, n: Int, url: String) -> Result<HttpResponse, String>\n\
          \x20   ? \"deterministic fake fetch\"\n\
-         \x20   Result.Ok(HttpResponse(status = 200, body = \"hello\", headers = []))\n\
+         \x20   Result.Ok(HttpResponse(status = 200, body = \"hello\", headers = {}))\n\
          \n\
          fn fetch() -> Result<HttpResponse, String>\n\
          \x20   ? \"fetches\"\n\
@@ -1573,7 +1573,7 @@ fn aver_verify_trace_case_rhs_wraps_to_indented_next_line() {
          \n\
          fn fakeFetch(path: BranchPath, n: Int, url: String) -> Result<HttpResponse, String>\n\
          \x20   ? \"deterministic\"\n\
-         \x20   Result.Ok(HttpResponse(status = 200, body = \"ok\", headers = []))\n\
+         \x20   Result.Ok(HttpResponse(status = 200, body = \"ok\", headers = {}))\n\
          \n\
          fn app() -> Result<HttpResponse, String>\n\
          \x20   ? \"fetch one\"\n\

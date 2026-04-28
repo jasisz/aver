@@ -1,0 +1,104 @@
+module Edge
+    intent =
+        "edge.averlang.dev — proof-of-Aver served from Cloudflare Workers."
+        "GET / returns a minimal HTML landing; GET /api returns the JSON manifesto."
+        "The handler is pure routing + string interpolation; the only effect"
+        "is Time.unixMs so the body advertises when the request was served."
+    exposes [handler]
+    effects [Time]
+
+fn manifesto(country: String, ts: Int) -> String
+    ? "JSON body advertising what compiled and serves this request."
+    String.join([
+        "{{",
+        "  \"language\": \"Aver\",",
+        "  \"target\": \"edge-wasm\",",
+        "  \"runtime\": \"Cloudflare Workers\",",
+        "  \"country\": \"{country}\",",
+        "  \"served_at_unix_ms\": {ts},",
+        "  \"pure_core\": true,",
+        "  \"effects\": [\"Time.unixMs\"]",
+        "}}",
+        ""
+    ], "\n")
+
+verify manifesto
+    manifesto("PL", 0) => "{{\n  \"language\": \"Aver\",\n  \"target\": \"edge-wasm\",\n  \"runtime\": \"Cloudflare Workers\",\n  \"country\": \"PL\",\n  \"served_at_unix_ms\": 0,\n  \"pure_core\": true,\n  \"effects\": [\"Time.unixMs\"]\n}}\n"
+
+fn landing(country: String) -> String
+    ? "Minimal HTML landing — explains what's happening."
+    String.join([
+        "<!doctype html>",
+        "<html lang=\"en\">",
+        "<head>",
+        "  <meta charset=\"utf-8\">",
+        "  <title>edge.averlang.dev — served by Aver</title>",
+        "  <style>",
+        "    body {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; max-width: 720px; margin: 4rem auto; padding: 0 1rem; line-height: 1.55; color: #1a1a1a; }}",
+        "    h1 {{ font-size: 1.6rem; margin-bottom: 0.2rem; }}",
+        "    .sub {{ color: #666; margin-top: 0; }}",
+        "    code {{ background: #f3f3f3; padding: 0.1em 0.35em; border-radius: 3px; }}",
+        "    pre {{ background: #f3f3f3; padding: 1rem; border-radius: 6px; overflow: auto; font-size: 0.9rem; }}",
+        "    a {{ color: #1a4cdb; }}",
+        "  </style>",
+        "</head>",
+        "<body>",
+        "  <h1>This page is served by Aver.</h1>",
+        "  <p class=\"sub\">Compiled to <code>--target edge-wasm</code>, packed for Cloudflare Workers, answering you from <strong>{country}</strong>.</p>",
+        "  <p>The endpoint behind this URL is a pure <code>fn handler(req: HttpRequest) -&gt; HttpResponse</code>. The only declared effect is <code>Time.unixMs</code>; everything else — routing, body, headers — is pure Aver string interpolation.</p>",
+        "  <h2>Endpoints</h2>",
+        "  <ul>",
+        "    <li><a href=\"/api\">/api</a> — JSON manifesto</li>",
+        "    <li><a href=\"https://averlang.dev\">averlang.dev</a> — the language</li>",
+        "    <li><a href=\"https://github.com/jasisz/aver\">github.com/jasisz/aver</a> — source</li>",
+        "  </ul>",
+        "</body>",
+        "</html>",
+        ""
+    ], "\n")
+
+fn jsonResponse(body: String) -> HttpResponse
+    ? "200 OK with application/json content-type."
+    HttpResponse(
+        status = 200,
+        body = body,
+        headers = { "content-type" => ["application/json; charset=utf-8"] },
+    )
+
+fn htmlResponse(body: String) -> HttpResponse
+    ? "200 OK with text/html content-type."
+    HttpResponse(
+        status = 200,
+        body = body,
+        headers = { "content-type" => ["text/html; charset=utf-8"] },
+    )
+
+fn firstHeader(values: List<String>) -> String
+    ? "First entry of a header list, or '??' when empty."
+    v = Vector.fromList(values)
+    match Vector.get(v, 0)
+        Option.Some(c) -> c
+        Option.None    -> "??"
+
+verify firstHeader
+    firstHeader(["PL"])       => "PL"
+    firstHeader(["PL", "DE"]) => "PL"
+    firstHeader([])           => "??"
+
+fn extractCountry(req: HttpRequest) -> String
+    ? "Reads the Cloudflare-injected cf-ipcountry header; falls back to '??'."
+    match Map.get(req.headers, "cf-ipcountry")
+        Option.Some(values) -> firstHeader(values)
+        Option.None         -> "??"
+
+verify extractCountry
+    extractCountry(HttpRequest(method = "GET", path = "/", body = "", headers = {"cf-ipcountry" => ["PL"]})) => "PL"
+    extractCountry(HttpRequest(method = "GET", path = "/", body = "", headers = {})) => "??"
+
+fn handler(req: HttpRequest) -> HttpResponse
+    ? "Routes by path. /api returns JSON manifesto, anything else returns HTML."
+    ! [Time.unixMs]
+    country = extractCountry(req)
+    match req.path
+        "/api" -> jsonResponse(manifesto(country, Time.unixMs()))
+        _      -> htmlResponse(landing(country))

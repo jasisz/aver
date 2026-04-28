@@ -174,7 +174,7 @@ pub fn parse_type_str_strict(s: &str) -> Result<Type, String> {
             if let Some(inner) = strip_wrapper(s, "Map<", ">") {
                 if let Some((key_s, value_s)) = split_top_level_comma(inner) {
                     let key_ty = parse_type_str_strict(key_s)?;
-                    if !matches!(key_ty, Type::Int | Type::Float | Type::Str | Type::Bool) {
+                    if matches!(key_ty, Type::Fn(..) | Type::Unit) {
                         return Err(s.to_string());
                     }
                     let value_ty = parse_type_str_strict(value_s)?;
@@ -645,7 +645,10 @@ mod tests {
         assert!(parse_type_str_strict("Result<Int>").is_err());
         assert!(parse_type_str_strict("Option<Int, String>").is_err());
         assert!(parse_type_str_strict("Map<Int>").is_err());
-        assert!(parse_type_str_strict("Map<List<Int>, String>").is_err());
+        // List/User-type keys are now valid — HAMT runtime hashes deeply.
+        assert!(parse_type_str_strict("Map<List<Int>, String>").is_ok());
+        // Functions still cannot be hashed.
+        assert!(parse_type_str_strict("Map<Fn(Int) -> Int, String>").is_err());
         assert!(parse_type_str_strict("(Int)").is_err());
         assert!(parse_type_str_strict("Fn(Int) Int").is_err());
         assert!(parse_type_str_strict("Fn(Int) -> ! [Console]").is_err());

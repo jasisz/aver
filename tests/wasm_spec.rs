@@ -30,6 +30,14 @@ fn wasm_opt_available() -> bool {
         .unwrap_or(false)
 }
 
+fn wasmtime_available() -> bool {
+    Command::new("wasmtime")
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
 fn write_temp_module(prefix: &str, source: &str) -> PathBuf {
     let dir = temp_output_dir(prefix);
     fs::create_dir_all(&dir).expect("create temp module dir");
@@ -108,8 +116,8 @@ fn wasm_opt_oz_does_not_increase_size_for_snake() {
         .arg("examples/games/snake.av")
         .arg("--target")
         .arg("wasm")
-        .arg("--wasm-opt")
-        .arg("oz")
+        .arg("--optimize")
+        .arg("size")
         .arg("--name")
         .arg("snake_opt")
         .arg("-o")
@@ -223,4 +231,194 @@ fn main()
     );
 
     let _ = fs::remove_dir_all(module_path.parent().expect("temp module dir"));
+}
+
+#[test]
+fn wasm_compile_validates_int_map_keys_successfully() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let module_path = write_temp_module(
+        "aver-wasm-validate-int-map",
+        r#"module Tmp
+
+fn main()
+    ! [Console.print]
+    m = Map.set(Map.empty(), 1, "one")
+    Console.print("{Map.len(m)}")
+"#,
+    );
+    let output_dir = temp_output_dir("aver-wasm-validate-int-map-out");
+
+    let output = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg(&module_path)
+        .arg("--target")
+        .arg("wasm")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("expected `aver compile --target wasm` to run");
+
+    assert!(
+        output.status.success(),
+        "expected Map<Int, V> WASM compile to pass validation:\n{}",
+        format_output(&output)
+    );
+    assert!(
+        output_dir.join("main.wasm").exists(),
+        "expected main.wasm to exist when validation passes"
+    );
+
+    let _ = fs::remove_dir_all(module_path.parent().expect("temp module dir"));
+    let _ = fs::remove_dir_all(&output_dir);
+}
+
+#[test]
+fn wasm_compile_validates_float_map_keys_successfully() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let module_path = write_temp_module(
+        "aver-wasm-validate-float-map",
+        r#"module Tmp
+
+fn main()
+    ! [Console.print]
+    m = Map.set(Map.empty(), 1.5, "one-and-a-half")
+    Console.print("{Map.len(m)}")
+"#,
+    );
+    let output_dir = temp_output_dir("aver-wasm-validate-float-map-out");
+
+    let output = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg(&module_path)
+        .arg("--target")
+        .arg("wasm")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("expected `aver compile --target wasm` to run");
+
+    assert!(
+        output.status.success(),
+        "expected Map<Float, V> WASM compile to pass validation:\n{}",
+        format_output(&output)
+    );
+    assert!(
+        output_dir.join("main.wasm").exists(),
+        "expected main.wasm to exist when validation passes"
+    );
+
+    let _ = fs::remove_dir_all(module_path.parent().expect("temp module dir"));
+    let _ = fs::remove_dir_all(&output_dir);
+}
+
+#[test]
+fn wasm_compile_validates_string_map_keys_successfully() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let module_path = write_temp_module(
+        "aver-wasm-validate-string-map",
+        r#"module Tmp
+
+fn main()
+    ! [Console.print]
+    m = Map.set(Map.empty(), "k", 1)
+    Console.print("{Map.len(m)}")
+"#,
+    );
+    let output_dir = temp_output_dir("aver-wasm-validate-string-map-out");
+
+    let output = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg(&module_path)
+        .arg("--target")
+        .arg("wasm")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("expected `aver compile --target wasm` to run");
+
+    assert!(
+        output.status.success(),
+        "expected Map<String, Int> WASM compile to pass validation:\n{}",
+        format_output(&output)
+    );
+    assert!(
+        output_dir.join("main.wasm").exists(),
+        "expected main.wasm to exist when validation passes"
+    );
+
+    let _ = fs::remove_dir_all(module_path.parent().expect("temp module dir"));
+    let _ = fs::remove_dir_all(&output_dir);
+}
+
+#[test]
+fn wasi_bundled_runs_under_wasmtime_standalone() {
+    if !wasmtime_available() {
+        eprintln!("skipping WASI bundled smoke test: wasmtime not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let module_path = write_temp_module(
+        "aver-wasi-bundled",
+        r#"module Tmp
+
+fn main()
+    ! [Console.print]
+    n = 42
+    Console.print("Number: {n}")
+"#,
+    );
+    let output_dir = temp_output_dir("aver-wasi-bundled-out");
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg(&module_path)
+        .arg("--target")
+        .arg("wasm")
+        .arg("--bridge")
+        .arg("wasip1")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("expected `aver compile --target wasm --bridge wasip1` to run");
+    assert!(
+        compile.status.success(),
+        "WASI bundled compile failed:\n{}",
+        format_output(&compile)
+    );
+    let wasm_file = output_dir.join("main.wasm");
+    assert!(wasm_file.exists(), "expected main.wasm to be emitted");
+
+    let run = Command::new("wasmtime")
+        .arg(&wasm_file)
+        .output()
+        .expect("expected wasmtime to run");
+    assert!(
+        run.status.success(),
+        "wasmtime run failed:\n{}",
+        format_output(&run)
+    );
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(
+        stdout.trim(),
+        "Number: 42",
+        "wasi-bundled stdout mismatch:\n{}",
+        format_output(&run)
+    );
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        !stderr.contains("--invoke"),
+        "wasmtime should treat _start as a wasi command, got stderr:\n{}",
+        stderr
+    );
+
+    let _ = fs::remove_dir_all(module_path.parent().expect("temp module dir"));
+    let _ = fs::remove_dir_all(&output_dir);
 }

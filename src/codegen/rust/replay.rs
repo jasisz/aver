@@ -285,7 +285,7 @@ impl aver_replay::ReplayValue for aver_rt::HttpResponse {
             body: <aver_rt::AverStr as ReplayValue>::from_replay_json(
                 fields.get("body").ok_or_else(|| "$record HttpResponse missing field 'body'".to_string())?,
             )?,
-            headers: <aver_rt::AverList<aver_rt::Header> as ReplayValue>::from_replay_json(
+            headers: <aver_rt::HttpHeaders as ReplayValue>::from_replay_json(
                 fields.get("headers").ok_or_else(|| "$record HttpResponse missing field 'headers'".to_string())?,
             )?,
         })
@@ -325,7 +325,7 @@ fn http_server_type_impls() -> String {
             body: <aver_rt::AverStr as ReplayValue>::from_replay_json(
                 fields.get("body").ok_or_else(|| "$record HttpRequest missing field 'body'".to_string())?,
             )?,
-            headers: <aver_rt::AverList<aver_rt::Header> as ReplayValue>::from_replay_json(
+            headers: <aver_rt::HttpHeaders as ReplayValue>::from_replay_json(
                 fields.get("headers").ok_or_else(|| "$record HttpRequest missing field 'headers'".to_string())?,
             )?,
         })

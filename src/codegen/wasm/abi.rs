@@ -55,6 +55,15 @@ pub const ABI_TABLE: &[AbiImport] = &[
         params: &[ValType::I32, ValType::I32],
         results: &[],
     },
+    // Writes bytes to stderr at warning severity. Distinct from
+    // `Console.error` so JS hosts can route the two streams
+    // differently (`console.warn` vs `console.error`).
+    AbiImport {
+        effect: "Console.warn",
+        import_name: "console_warn",
+        params: &[ValType::I32, ValType::I32],
+        results: &[],
+    },
     // Reads a line from stdin. Host allocates string in WASM linear memory
     // using the exported `alloc` function, returns (ptr, len).
     AbiImport {
@@ -143,6 +152,161 @@ pub const ABI_TABLE: &[AbiImport] = &[
         import_name: "random_int",
         params: &[ValType::I64, ValType::I64], // min, max
         results: &[ValType::I64],
+    },
+    // Returns a random float in [0.0, 1.0).
+    AbiImport {
+        effect: "Random.float",
+        import_name: "random_float",
+        params: &[],
+        results: &[ValType::F64],
+    },
+    // --- Fetch / Request / Response (JS host bridge) ---
+    // Used by `--bridge fetch` deployments (Cloudflare Workers,
+    // Fastly Compute, Deno Deploy, …). Bootstrap (worker.js)
+    // implements these against Request/Response from the JS Fetch
+    // API. Lazy host imports — guest only pays the host crossing
+    // for fields it actually reads.
+    AbiImport {
+        effect: "Request.method",
+        import_name: "request_method",
+        params: &[],
+        results: &[ValType::I32], // OBJ_STRING ptr
+    },
+    AbiImport {
+        effect: "Request.url",
+        import_name: "request_url",
+        params: &[],
+        results: &[ValType::I32],
+    },
+    AbiImport {
+        effect: "Request.body",
+        import_name: "request_body",
+        params: &[],
+        results: &[ValType::I32],
+    },
+    // Bulk-transfer the request's `Headers` into a guest
+    // `Map<String, List<String>>`. Single host crossing — the JS
+    // bootstrap walks `request.headers`, allocates OBJ_STRING
+    // handles via the runtime's bump allocator, builds a list of
+    // (name, [value, …]) tuples, and folds the list into a HAMT
+    // root via `rt_map_from_list`. Multi-value entries
+    // (Set-Cookie via `getSetCookie()`, Vary, …) keep separate
+    // values in the value list. Returns the OBJ_HAMT handle
+    // (or `0` for an empty map).
+    AbiImport {
+        effect: "Request.headersLoad",
+        import_name: "request_headers_load",
+        params: &[],
+        results: &[ValType::I32],
+    },
+    // Response.text(status, body) → host stores status/body, returns
+    // an opaque handle (i32). The handle is what the user fn returns
+    // from the HTTP handler; the pack bootstrap reads stashed
+    // status/body to build the native Response.
+    AbiImport {
+        effect: "Response.text",
+        import_name: "response_text",
+        // status: i32, body_ptr: i32, body_len: i32
+        params: &[ValType::I32, ValType::I32, ValType::I32],
+        results: &[ValType::I32],
+    },
+    // Response.set_header(name, value) → push (name, value) onto the
+    // pending Response's headers. Multi-value headers (Set-Cookie,
+    // Vary, …) are produced by calling this multiple times with the
+    // same name. The Fetch-bridge emitter inserts one call per entry
+    // when constructing `HttpResponse`.
+    AbiImport {
+        effect: "Response.setHeader",
+        import_name: "response_set_header",
+        // name_ptr: i32, name_len: i32, value_ptr: i32, value_len: i32
+        params: &[ValType::I32, ValType::I32, ValType::I32, ValType::I32],
+        results: &[],
+    },
+    // --- Http (client) ---
+    // All six methods (GET/HEAD/DELETE/POST/PUT/PATCH) share one
+    // generic host import. Method name comes through as a string
+    // arg; body and content-type are empty strings for the
+    // bodyless verbs. Request headers are pushed onto a
+    // host-maintained pending list via `http_add_request_header` /
+    // `http_clear_request_headers` before the `http_send` fires —
+    // same walk-and-set pattern as `response_set_header`.
+    //
+    // Multi-result return:
+    //   (status: i64, body_ptr: i32, err_ptr: i32)
+    //   - Transport ok: status > 0, body_ptr = OBJ_STRING handle,
+    //     err_ptr = 0 → wrapped `Result.Ok(HttpResponse{...})`.
+    //   - Transport err: status = 0, body_ptr = 0,
+    //     err_ptr = OBJ_STRING with the error message →
+    //     wrapped `Result.Err(msg)`.
+    //
+    // Response headers are an empty `Map` for 0.14 — bulk-transfer
+    // back into the guest's Map<String, List<String>> shape lands
+    // in 0.15. Same caveat applies to `req.headers` under the
+    // Fetch bridge.
+    //
+    // The JS host (Cloudflare Workers, Deno, Bun, browser
+    // playground) is expected to wrap `http_send` with
+    // `WebAssembly.Suspending` so the synchronous WASM call point
+    // can suspend on `await fetch(...)`. WASI preview 1 has no
+    // HTTP client at all, so the WASI shim returns a transport
+    // error — programs that need real HTTP under standalone
+    // wasmtime should wait for preview 2 wasi-http or run via
+    // a JS host instead.
+    AbiImport {
+        effect: "Http.send",
+        import_name: "http_send",
+        // method_ptr, method_len,
+        // url_ptr, url_len,
+        // body_ptr, body_len,
+        // ct_ptr, ct_len
+        params: &[
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+        ],
+        // (status: i64, body_ptr: i32, headers_map: i32, err_ptr: i32)
+        // The headers map is the OBJ_HAMT handle returned by the
+        // host's same `rt_map_from_list` round trip used for
+        // request.headers — empty (`0`) on transport error.
+        results: &[ValType::I64, ValType::I32, ValType::I32, ValType::I32],
+    },
+    AbiImport {
+        effect: "Http.addRequestHeader",
+        import_name: "http_add_request_header",
+        // name_ptr, name_len, value_ptr, value_len
+        params: &[ValType::I32, ValType::I32, ValType::I32, ValType::I32],
+        results: &[],
+    },
+    AbiImport {
+        effect: "Http.clearRequestHeaders",
+        import_name: "http_clear_request_headers",
+        params: &[],
+        results: &[],
+    },
+    // --- Env ---
+    // Process environment access. Reads return -1 for "name unset"
+    // (matches Aver's NONE_SENTINEL); on Some, the host hands back
+    // an OBJ_STRING pointer that the emitter wraps in `Option.Some`.
+    // Writes are best-effort: WASI preview 1 has no `setenv`, JS hosts
+    // get a frozen `env`, so most bridges treat `env_set` as a no-op.
+    // Aver's type system says `set: (String, String) -> Unit`, so
+    // we honour that contract regardless of host capability.
+    AbiImport {
+        effect: "Env.get",
+        import_name: "env_get",
+        params: &[ValType::I32, ValType::I32], // name_ptr, name_len
+        results: &[ValType::I32],              // -1 = None, OBJ_STRING ptr = Some
+    },
+    AbiImport {
+        effect: "Env.set",
+        import_name: "env_set",
+        params: &[ValType::I32, ValType::I32, ValType::I32, ValType::I32], // name+value
+        results: &[],
     },
     // --- Time ---
     // Returns current time as milliseconds since Unix epoch.

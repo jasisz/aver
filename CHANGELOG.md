@@ -2,6 +2,38 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.14.0 "Edge" (TBD)
+
+> _Aver's WASM backend becomes a deployable edge target: small user modules, a shared runtime, and explicit host bridges._
+
+### Added
+- **`--target edge-wasm`** emits a thin `user.wasm` that imports a separately hosted `aver_runtime`, so browser and edge deployments can cache the runtime once.
+- **Host bridges:** `--bridge fetch` for JS/Workers-style hosts and `--bridge wasip1` for standalone WASI preview 1 execution.
+- **Cloudflare Workers pack output** with worker bootstrap files, WASM artifacts, runtime companions, checksums, and manifest data.
+- **WASM host coverage for `Env.*`, `Console.warn`, `Http.*`, request/response headers, and multi-value header flow.**
+- **Persistent HAMT `Map` runtime** with structural hashing/equality for all hashable key types and O(1) `Map.len`.
+- **`--optimize size|speed`** for the WASM optimization pipeline.
+- **Runtime artifacts at `/runtime/`**: `aver_runtime.wasm`, `aver_to_wasi.wasm`, WAT companions, checksums, versioned URLs, and `latest/`.
+
+### Changed
+- **HTTP headers are `Map<String, List<String>>`** across request/response records and `Http.post` / `Http.put` / `Http.patch`.
+- **WASM map ABI is polymorphic**, with key kind and value pointer flags passed explicitly.
+- **WAT is the source of truth for the standalone runtime**, and emit-time WASM validation is part of the compile path.
+
+### Removed
+- **`--adapter` → `--bridge`** and **`--wasm-opt oz|o3` → `--optimize size|speed`**.
+- **`--target wat` and `--target wasm+wat`**; use standard WASM tooling for WAT output.
+
+### Fixed
+- WASM `Map<Int|Float|Bool, V>` validation and lookup issues.
+- VM map structural equality for heap keys.
+- Cloudflare/fetch bridge response headers no longer get dropped.
+
+### Known limitations
+- `Http.*` under `--bridge wasip1` returns a transport error; real WASI HTTP belongs in a later Component Model target.
+- WASM `Vector.set` is still O(N) per call.
+- WASM map builds remain slower than the VM on large construction-heavy benchmarks.
+
 ## 0.13.0 "Limit" (2026-04-27)
 
 > _Pure core. Explicit shell. Auditable boundary. Aver learns to say no — at the module's edge, to extra calls, to hostile worlds._

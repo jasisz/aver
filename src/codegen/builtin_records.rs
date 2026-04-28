@@ -30,6 +30,13 @@ pub enum BuiltinType {
     Float,
     /// `List<T>` / `seq<T>` of another built-in record.
     ListOf(&'static str),
+    /// `Map<String, List<String>>` — used by `HttpResponse.headers`
+    /// and `HttpRequest.headers`. Multi-value semantics match HTTP
+    /// (RFC 9110: same-name fields, plus RFC 6265 Set-Cookie). Keys
+    /// are case-insensitive by convention; runtime normalizes
+    /// incoming names to lowercase, user code is expected to do the
+    /// same on outgoing (mirrors Go `net/http.Header`).
+    MapStrListStr,
 }
 
 impl BuiltinType {
@@ -44,6 +51,10 @@ impl BuiltinType {
             BuiltinType::Bool => Type::Bool,
             BuiltinType::Float => Type::Float,
             BuiltinType::ListOf(name) => Type::List(Box::new(Type::Named((*name).to_string()))),
+            BuiltinType::MapStrListStr => Type::Map(
+                Box::new(Type::Str),
+                Box::new(Type::List(Box::new(Type::Str))),
+            ),
         }
     }
 }
@@ -124,10 +135,10 @@ pub const BUILTIN_RECORDS: &[BuiltinRecord] = &[
             },
             BuiltinField {
                 name: "headers",
-                ty: BuiltinType::ListOf("Header"),
+                ty: BuiltinType::MapStrListStr,
             },
         ],
-        depends_on: &["Header"],
+        depends_on: &[],
         doc: "Returned by classified `Http.get`/`.head`/`.delete`/`.post`/`.put`/`.patch`.",
     },
     BuiltinRecord {
@@ -147,10 +158,10 @@ pub const BUILTIN_RECORDS: &[BuiltinRecord] = &[
             },
             BuiltinField {
                 name: "headers",
-                ty: BuiltinType::ListOf("Header"),
+                ty: BuiltinType::MapStrListStr,
             },
         ],
-        depends_on: &["Header"],
+        depends_on: &[],
         doc: "Server-side request record (used by lifted server-handler proofs).",
     },
     BuiltinRecord {
@@ -202,6 +213,9 @@ fn lean_type(ty: &BuiltinType) -> String {
         BuiltinType::Bool => "Bool".to_string(),
         BuiltinType::Float => "Float".to_string(),
         BuiltinType::ListOf(name) => format!("List {}", name.replace('.', "_")),
+        // Lean has no first-class Map; mirror `type_to_lean` and use a
+        // list of pairs as the Map representation.
+        BuiltinType::MapStrListStr => "List (String × List String)".to_string(),
     }
 }
 
@@ -213,6 +227,7 @@ fn dafny_type(ty: &BuiltinType) -> String {
         BuiltinType::Bool => "bool".to_string(),
         BuiltinType::Float => "real".to_string(),
         BuiltinType::ListOf(name) => format!("seq<{}>", name.replace('.', "_")),
+        BuiltinType::MapStrListStr => "map<string, seq<string>>".to_string(),
     }
 }
 
@@ -336,7 +351,7 @@ mod tests {
         let dafny = render_dafny(r);
         assert_eq!(
             dafny,
-            "datatype HttpResponse = HttpResponse(status: int, body: string, headers: seq<Header>)"
+            "datatype HttpResponse = HttpResponse(status: int, body: string, headers: map<string, seq<string>>)"
         );
     }
 
@@ -376,8 +391,10 @@ mod tests {
 
     #[test]
     fn dependencies_listed_for_http_records() {
-        assert_eq!(find("HttpResponse").unwrap().depends_on, &["Header"]);
-        assert_eq!(find("HttpRequest").unwrap().depends_on, &["Header"]);
+        // Headers field is `Map<String, List<String>>` (built-in shape),
+        // not `List<Header>`, so HTTP records have no Header dependency.
+        assert!(find("HttpResponse").unwrap().depends_on.is_empty());
+        assert!(find("HttpRequest").unwrap().depends_on.is_empty());
         assert!(find("Header").unwrap().depends_on.is_empty());
     }
 }
