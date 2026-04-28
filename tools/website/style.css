@@ -311,6 +311,15 @@ body { overflow-x: hidden; }
     font-size: 1rem;
 }
 
+.section-sub a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+}
+
+.section-sub a:hover { text-decoration-thickness: 2px; }
+
 .features h2 { margin-bottom: 1.25rem; }
 
 .features-grid {
