@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.14.1 (TBD)
+## 0.14.1 (2026-04-29)
 
 ### Removed
 - **`Header` record.** 0.14 standardised HTTP headers as `Map<String, List<String>>` across every backend; the per-entry `Header { name, value }` record left over from the old `List<Header>` shape was unreachable from any built-in HTTP type and is now retired. User code that constructed `Header` literals must now build a `Map<String, List<String>>` directly.
