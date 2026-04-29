@@ -109,9 +109,11 @@ pub fn build_wasm_module(
     // handle; only the fetch bridge knows how to materialise them.
     if !matches!(adapter, super::WasmAdapter::Fetch) {
         let uses_http = |ty: &str| ty == "HttpRequest" || ty == "HttpResponse";
-        if let Some(fd) = user_fns.iter().map(|e| e.fd).find(|fd| {
-            uses_http(&fd.return_type) || fd.params.iter().any(|(_, t)| uses_http(t))
-        }) {
+        if let Some(fd) = user_fns
+            .iter()
+            .map(|e| e.fd)
+            .find(|fd| uses_http(&fd.return_type) || fd.params.iter().any(|(_, t)| uses_http(t)))
+        {
             let bridge_hint = match adapter {
                 super::WasmAdapter::Wasi => " (currently `--bridge wasip1`)",
                 super::WasmAdapter::Aver => " (no `--bridge`)",
