@@ -190,8 +190,8 @@ fn fractalResponse() -> HttpResponse
     HttpResponse(
         status = 200,
         body = Fractal.page(
-            Fractal.render(70, 16, 60, Fractal.fullView()),
-            Fractal.render(70, 16, 100, Fractal.seahorseView()),
+            Fractal.render(80, 18, 80, Fractal.fullView()),
+            Fractal.render(80, 18, 150, Fractal.seahorseView()),
         ),
         headers = { "content-type" => ["text/html; charset=utf-8"] },
     )

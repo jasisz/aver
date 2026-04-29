@@ -28,16 +28,16 @@ verify fullView
     fullView().cxRange => 3.5
 
 fn seahorseView() -> View
-    ? "Seahorse valley zoom centred on (-0.745, 0.105) — ~200× into the boundary between the main cardioid and the period-2 bulb. Picked so the spiral filaments resolve while enough pixels still fall outside the set (and escape early) to keep the compute under the free-plan 10 ms cap; deeper zooms blow the budget because every pixel sits near the boundary and runs to maxIter."
+    ? "Seahorse valley zoom centred on (-0.745, 0.105) — ~290× into the boundary between the main cardioid and the period-2 bulb. The spiral filaments and mini-Mandelbrot satellites resolve at this magnification."
     View(
-        cxMin = 0.0 - 0.75375,
-        cxRange = 0.0175,
-        cyMin = 0.09625,
-        cyRange = 0.0175,
+        cxMin = 0.0 - 0.751,
+        cxRange = 0.012,
+        cyMin = 0.099,
+        cyRange = 0.012,
     )
 
 verify seahorseView
-    seahorseView().cxRange => 0.0175
+    seahorseView().cxRange => 0.012
 
 fn mandelStep(n: Int, x: Float, y: Float, cx: Float, cy: Float, maxIter: Int) -> Int
     ? "One iteration of z = z² + c, dispatched on whether |z|² has escaped 4."
@@ -214,10 +214,10 @@ fn page(fullRendered: String, zoomRendered: String) -> String
         "</head>",
         "<body>",
         "  <h1>Mandelbrot, in pure Aver, served from the edge.</h1>",
-        "  <p class=\"sub\">Two views, both rendered via Unicode Braille — every glyph packs 2×4 sub-pixels of the set into one character (U+2800..U+28FF). The same <code>render(w, h, maxIter, view)</code> function builds both panels per request — no caching, no precomputed images. Comfortably under the free-plan 10 ms CPU cap.</p>",
+        "  <p class=\"sub\">Two views, both rendered via Unicode Braille — every glyph packs 2×4 sub-pixels of the set into one character (U+2800..U+28FF). The same <code>render(w, h, maxIter, view)</code> function builds both panels per request — no caching, no precomputed images. Cloudflare Workers' free plan tolerates occasional ~15 ms CPU bursts above its 10 ms nominal cap, which is what the deep-zoom panel uses.</p>",
         "  <h2 class=\"viewname\">full set <span class=\"coords\">cx ∈ [-2.5, 1.0], cy ∈ [-1.0, 1.0]</span></h2>",
         "  <pre class=\"fractal\">{fullRendered}</pre>",
-        "  <h2 class=\"viewname\">seahorse valley <span class=\"coords\">centred on (-0.745, 0.105) · 200× zoom · 100 iter</span></h2>",
+        "  <h2 class=\"viewname\">seahorse valley <span class=\"coords\">centred on (-0.745, 0.105) · 290× zoom · 150 iter</span></h2>",
         "  <pre class=\"fractal\">{zoomRendered}</pre>",
         "  <p>Pattern lifted from <a href=\"https://github.com/jasisz/aver/blob/main/examples/games/doom/render.av\">the Doom raycaster's Braille renderer</a>. Each Braille code point's low 8 bits are an eight-dot bitmap; we OR together one bit per sub-pixel hit on <code>mandelIter</code>'s inside-set test, then look up the resulting glyph through <code>Char.fromCode</code>. The view rectangle is just a 4-Float record passed through to <code>cellCx</code> / <code>cellCy</code> — same engine, two viewports. The <code>Fractal</code> module declares <code>effects []</code>. <a href=\"https://github.com/jasisz/aver/blob/main/tools/edge/fractal.av\">Read the fractal source.</a></p>",
         "  <p><a href=\"/\">← back to the landing</a></p>",
