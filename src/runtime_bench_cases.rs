@@ -4,6 +4,19 @@ pub struct CoreBenchCase {
     pub source: &'static str,
 }
 
+impl CoreBenchCase {
+    pub fn module_root(&self) -> Option<&'static str> {
+        match self.slug {
+            "json_roundtrip_200" => Some("examples"),
+            _ => None,
+        }
+    }
+
+    pub fn source_is_module(&self) -> bool {
+        self.source.trim_start().starts_with("module ")
+    }
+}
+
 const FIBONACCI: &str = "\
 fn fib(n: Int) -> Int
     match n < 2
@@ -82,6 +95,34 @@ record Order\n    id: Int\n    amount: Int\n    valid: Bool\n\nfn processOrder(o
 const LIST_GET_OR: &str = "\
 fn build(n: Int, acc: List<Int>) -> List<Int>\n    match n == 0\n        true -> List.reverse(acc)\n        false -> build(n - 1, List.prepend(n, acc))\n\nfn scan(v: Vector<Int>, size: Int, i: Int, acc: Int) -> Int\n    match i == size\n        true -> acc\n        false -> scan(v, size, i + 1, acc + Option.withDefault(Vector.get(v, i), 0))\n\nfn main() -> Int\n    xs = build(10000, [])\n    v = Vector.fromList(xs)\n    scan(v, 10000, 0, 0) + scan(v, 10000, 0, 0) + scan(v, 10000, 0, 0)\n";
 
+const JSON_ROUNDTRIP: &str = r#"module Bench
+    intent =
+        "Runtime benchmark case for the pure JSON module."
+        "Parses and re-serializes a nested object repeatedly."
+    depends [Data.Json]
+    effects [Console]
+
+fn sampleJson() -> String
+    "{{\"service\":\"aver\",\"score\":14,\"edge\":true,\"items\":[1,2,3,{{\"name\":\"json\",\"ok\":true}}],\"meta\":{{\"target\":\"edge-wasm\",\"runtime\":\"cloudflare\"}}}}"
+
+fn roundtripLen(raw: String) -> Int
+    match Data.Json.fromString(raw)
+        Result.Err(_) -> 0
+        Result.Ok(value) -> String.len(Data.Json.toString(value))
+
+fn loop(n: Int, raw: String, acc: Int) -> Int
+    match n == 0
+        true -> acc
+        false -> loop(n - 1, raw, acc + roundtripLen(raw))
+
+fn benchMain() -> Int
+    loop(200, sampleJson(), 0)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{benchMain()}")
+"#;
+
 pub const CORE_BENCH_CASES: &[CoreBenchCase] = &[
     CoreBenchCase {
         slug: "fib_25",
@@ -157,5 +198,10 @@ pub const CORE_BENCH_CASES: &[CoreBenchCase] = &[
         slug: "list_get_or_30k",
         name: "list_get_or(30K)",
         source: LIST_GET_OR,
+    },
+    CoreBenchCase {
+        slug: "json_roundtrip_200",
+        name: "json_roundtrip(200)",
+        source: JSON_ROUNDTRIP,
     },
 ];

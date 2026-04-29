@@ -475,47 +475,59 @@ fn write_core_source(case: &CoreBenchCase, output_dir: &Path) -> Result<PathBuf,
     let dir = output_dir.join("core_sources");
     fs::create_dir_all(&dir).map_err(|e| format!("cannot create '{}': {}", dir.display(), e))?;
     let path = dir.join(format!("{}.av", case.slug));
-    let renamed = case.source.replacen("fn main()", "fn benchMain()", 1);
-    let wrapped = format!(
-        "module Bench\n    intent =\n        \"Runtime benchmark case.\"\n\n{}\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(\"{{benchMain()}}\")\n",
-        renamed
-    );
+    let wrapped = if case.source_is_module() {
+        case.source.to_string()
+    } else {
+        let renamed = case.source.replacen("fn main()", "fn benchMain()", 1);
+        format!(
+            "module Bench\n    intent =\n        \"Runtime benchmark case.\"\n\n{}\n\nfn main() -> Unit\n    ! [Console.print]\n    Console.print(\"{{benchMain()}}\")\n",
+            renamed
+        )
+    };
     fs::write(&path, wrapped).map_err(|e| format!("cannot write '{}': {}", path.display(), e))?;
     Ok(path)
 }
 
 fn run_core_once(
     runtime: RuntimeKind,
-    repo_root: &Path,
-    aver_bin: &Path,
+    ctx: &RunContext<'_>,
     source_path: &Path,
-    generated_bin: &Path,
+    module_root: Option<&Path>,
 ) -> Result<String, String> {
     match runtime {
         RuntimeKind::Vm => {
-            let mut cmd = Command::new(aver_bin);
-            cmd.current_dir(repo_root).arg("run").arg(source_path);
+            let mut cmd = Command::new(ctx.aver_bin);
+            cmd.current_dir(ctx.repo_root).arg("run").arg(source_path);
+            if let Some(root) = module_root {
+                cmd.arg("--module-root").arg(root);
+            }
             run_capture(&mut cmd, "core vm run")
         }
         RuntimeKind::Wasm => {
-            let mut cmd = Command::new(aver_bin);
-            cmd.current_dir(repo_root)
+            let mut cmd = Command::new(ctx.aver_bin);
+            cmd.current_dir(ctx.repo_root)
                 .arg("run")
                 .arg(source_path)
                 .arg("--wasm");
+            if let Some(root) = module_root {
+                cmd.arg("--module-root").arg(root);
+            }
             run_capture(&mut cmd, "core wasm run")
         }
         RuntimeKind::Generated => {
-            let mut cmd = Command::new(generated_bin);
-            cmd.current_dir(repo_root);
+            let mut cmd = Command::new(ctx.generated_bin);
+            cmd.current_dir(ctx.repo_root);
             run_capture(&mut cmd, "core generated run")
         }
         RuntimeKind::SelfHost => {
-            let mut cmd = Command::new(aver_bin);
-            cmd.current_dir(repo_root)
+            let mut cmd = Command::new(ctx.aver_bin);
+            cmd.current_dir(ctx.repo_root)
                 .arg("run")
                 .arg(source_path)
                 .arg("--self-host");
+            if let Some(root) = module_root {
+                cmd.arg("--module-root").arg(root);
+            }
             run_capture(&mut cmd, "core selfhost run")
         }
     }
@@ -523,22 +535,21 @@ fn run_core_once(
 
 fn bench_core_runtime(
     runtime: RuntimeKind,
-    repo_root: &Path,
-    aver_bin: &Path,
+    ctx: &RunContext<'_>,
     source_path: &Path,
-    generated_bin: &Path,
+    module_root: Option<&Path>,
     warmup: usize,
     iters: usize,
 ) -> Result<(f64, String), String> {
     for _ in 0..warmup {
-        let _ = run_core_once(runtime, repo_root, aver_bin, source_path, generated_bin)?;
+        let _ = run_core_once(runtime, ctx, source_path, module_root)?;
     }
 
     let mut times = Vec::new();
     let mut last_output = String::new();
     for _ in 0..iters {
         let started = Instant::now();
-        last_output = run_core_once(runtime, repo_root, aver_bin, source_path, generated_bin)?;
+        last_output = run_core_once(runtime, ctx, source_path, module_root)?;
         times.push(started.elapsed().as_secs_f64() * 1000.0);
     }
     Ok((median(times), last_output))
@@ -608,6 +619,8 @@ fn benchmark_core(
     let mut results = Vec::new();
     for case in cases {
         let source_path = write_core_source(case, &cfg.output_dir)?;
+        let module_root = case.module_root().map(|root| repo_root.join(root));
+        let module_root = module_root.as_deref();
         let generated_output = cfg
             .output_dir
             .join("generated")
@@ -619,47 +632,48 @@ fn benchmark_core(
             aver_bin,
             GeneratedProjectSpec {
                 file: &source_path,
-                module_root: None,
+                module_root,
                 output_dir: &generated_output,
                 project_name: &generated_name,
                 override_main: None,
             },
             cfg.rebuild,
         )?;
+        let ctx = RunContext {
+            repo_root,
+            aver_bin,
+            generated_bin: &generated_bin,
+        };
 
         let (vm_ms, vm_out) = bench_core_runtime(
             RuntimeKind::Vm,
-            repo_root,
-            aver_bin,
+            &ctx,
             &source_path,
-            &generated_bin,
+            module_root,
             cfg.warmup,
             cfg.iters,
         )?;
         let (wasm_ms, wasm_out) = bench_core_runtime(
             RuntimeKind::Wasm,
-            repo_root,
-            aver_bin,
+            &ctx,
             &source_path,
-            &generated_bin,
+            module_root,
             cfg.warmup,
             cfg.iters,
         )?;
         let (generated_ms, generated_out) = bench_core_runtime(
             RuntimeKind::Generated,
-            repo_root,
-            aver_bin,
+            &ctx,
             &source_path,
-            &generated_bin,
+            module_root,
             cfg.warmup,
             cfg.iters,
         )?;
         let (selfhost_ms, selfhost_out) = bench_core_runtime(
             RuntimeKind::SelfHost,
-            repo_root,
-            aver_bin,
+            &ctx,
             &source_path,
-            &generated_bin,
+            module_root,
             cfg.warmup,
             cfg.iters,
         )?;
