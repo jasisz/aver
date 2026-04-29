@@ -76,28 +76,59 @@ def bump_patch(version: str) -> str:
     return ".".join(parts)
 
 
+# Reverse dep map: which crates pin which (downstream pins upstream).
+# Whenever a crate bumps, every downstream that pins it must bump too —
+# otherwise its already-published version on crates.io still references
+# the old upstream version, and resolving the new aver-lang against it
+# fails (`required by package X, all possible versions conflict`).
+DOWNSTREAM_PINS = {
+    "aver-rt": ["aver-memory", "aver-lang"],
+    "aver-memory": ["aver-lang"],
+    "aver-lang": ["aver-lsp"],
+}
+
+
 def compute_new_versions(old_versions: dict[str, str], new_main: str) -> dict[str, str]:
-    """Compute new versions: aver-lang gets the specified version,
-    subcrates with changes get a patch bump."""
-    new = {}
+    """Compute new versions for every crate.
+
+    aver-lang gets the requested version. Other crates patch-bump if
+    either (a) they have direct changes since last tag, or (b) any crate
+    they pin (transitively) is bumping — because their published copy
+    pins the old upstream version and would block resolution.
+    """
+    last_tag = subprocess.run(
+        ["git", "describe", "--tags", "--abbrev=0"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    ).stdout.strip()
+
+    new = dict(old_versions)
     new["aver-lang"] = new_main
+
+    # Pass 1: direct changes since last tag
     for crate in CRATE_ORDER:
         if crate == "aver-lang":
             continue
-        # Check if crate has changes since last tag
-        last_tag = subprocess.run(
-            ["git", "describe", "--tags", "--abbrev=0"],
-            cwd=REPO_ROOT, capture_output=True, text=True,
-        ).stdout.strip()
         result = subprocess.run(
             ["git", "log", f"{last_tag}..HEAD", "--oneline", "--", f"{VERSION_FILES[crate].parent}/"],
             cwd=REPO_ROOT, capture_output=True, text=True,
         )
-        has_changes = bool(result.stdout.strip())
-        if has_changes:
+        if result.stdout.strip():
             new[crate] = bump_patch(old_versions[crate])
-        else:
-            new[crate] = old_versions[crate]
+
+    # Pass 2: cascade — any crate whose upstream bumps must also bump.
+    # Iterate to fixpoint (chain length ≤ #crates).
+    for _ in range(len(CRATE_ORDER)):
+        changed = False
+        for upstream, downstreams in DOWNSTREAM_PINS.items():
+            if new[upstream] == old_versions[upstream]:
+                continue
+            for ds in downstreams:
+                if new[ds] == old_versions[ds]:
+                    new[ds] = bump_patch(old_versions[ds]) if ds != "aver-lang" else new_main
+                    changed = True
+        if not changed:
+            break
+
     return new
 
 
