@@ -3592,8 +3592,9 @@ fn cmd_compile_wasm(
                             // dead weight; let metadce prune them.
                             let metadce_mode = match bridge_mode {
                                 super::cli::WasmBridge::Fetch => MetadceMode::HostCallable,
-                                super::cli::WasmBridge::Wasip1
-                                | super::cli::WasmBridge::None => MetadceMode::ProgramEntry,
+                                super::cli::WasmBridge::Wasip1 | super::cli::WasmBridge::None => {
+                                    MetadceMode::ProgramEntry
+                                }
                             };
                             let (final_size, compile_suffix) =
                                 finalize_wasm_artifact(&wasm_file, optimize, metadce_mode);
@@ -3952,12 +3953,11 @@ fn finalize_wasm_artifact(
     let mut final_size = std::fs::metadata(wasm_file).map(|m| m.len()).unwrap_or(0);
     let mut compile_suffix = String::new();
     if let Some(mode) = optimize {
-        final_size = run_optimize_pipeline_inner(wasm_file, mode, metadce_mode).unwrap_or_else(
-            |err| {
+        final_size =
+            run_optimize_pipeline_inner(wasm_file, mode, metadce_mode).unwrap_or_else(|err| {
                 eprintln!("{}", err.red());
                 process::exit(1);
-            },
-        );
+            });
         compile_suffix = format!(", optimized for {}", optimize_label(mode));
     }
     (final_size, compile_suffix)
