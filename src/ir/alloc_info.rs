@@ -111,9 +111,9 @@ fn expr_allocates<P: AllocPolicy>(
         }
         Expr::Match { subject, arms } => {
             expr_allocates(&subject.node, user_allocates, policy)
-                || arms.iter().any(|a| {
-                    expr_allocates(&a.body.node, user_allocates, policy)
-                })
+                || arms
+                    .iter()
+                    .any(|a| expr_allocates(&a.body.node, user_allocates, policy))
         }
     }
 }
@@ -140,9 +140,7 @@ fn body_allocates<P: AllocPolicy>(
     policy: &P,
 ) -> bool {
     body.stmts().iter().any(|s| match s {
-        Stmt::Binding(_, _, e) | Stmt::Expr(e) => {
-            expr_allocates(&e.node, user_allocates, policy)
-        }
+        Stmt::Binding(_, _, e) | Stmt::Expr(e) => expr_allocates(&e.node, user_allocates, policy),
     })
 }
 
@@ -156,10 +154,7 @@ fn body_allocates<P: AllocPolicy>(
 ///
 /// Once a fn flips to `true` it never reverts, so the loop is monotone
 /// and converges in at most `fns.len()` iterations.
-pub fn compute_alloc_info<P: AllocPolicy>(
-    fns: &[&FnDef],
-    policy: &P,
-) -> HashMap<String, bool> {
+pub fn compute_alloc_info<P: AllocPolicy>(fns: &[&FnDef], policy: &P) -> HashMap<String, bool> {
     let mut info: HashMap<String, bool> = fns
         .iter()
         .map(|fd| {
@@ -292,10 +287,7 @@ mod tests {
         // wrapperFn calls makeListInner — also allocates by transitivity.
         let inner = fn_def_pure("makeListInner", Expr::List(vec![lit_int(1)]));
 
-        let call = Expr::FnCall(
-            Box::new(sp(Expr::Ident("makeListInner".into()))),
-            vec![],
-        );
+        let call = Expr::FnCall(Box::new(sp(Expr::Ident("makeListInner".into()))), vec![]);
         let wrapper = fn_def_pure("wrapperFn", call);
 
         let info = compute_alloc_info(&[&inner, &wrapper], &TestPolicy);

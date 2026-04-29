@@ -1690,9 +1690,8 @@ impl<'a> ExprEmitter<'a> {
             // inside arg expressions still see the *old* slot values
             // because we evaluate every arg (push to wasm stack) before
             // any LocalSet, then drain the stack in reverse.
-            let direct_to_slots = self.mutual_tco_uniform
-                && self.is_no_alloc
-                && param_slots.len() == args.len();
+            let direct_to_slots =
+                self.mutual_tco_uniform && self.is_no_alloc && param_slots.len() == args.len();
 
             for arg in args {
                 self.emit_expr(&arg.node);

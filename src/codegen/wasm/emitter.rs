@@ -109,18 +109,14 @@ pub fn build_wasm_module(
     // never produce garbage, so the boundary mark save, rt_truncate call,
     // and TCO watermark check are all dead work.
     let alloc_policy = super::WasmAllocPolicy;
-    let alloc_fn_defs: Vec<&crate::ast::FnDef> =
-        user_fns.iter().map(|e| e.fd).collect();
-    let alloc_info_by_local_name =
-        crate::ir::compute_alloc_info(&alloc_fn_defs, &alloc_policy);
+    let alloc_fn_defs: Vec<&crate::ast::FnDef> = user_fns.iter().map(|e| e.fd).collect();
+    let alloc_info_by_local_name = crate::ir::compute_alloc_info(&alloc_fn_defs, &alloc_policy);
     // Map from canonical (module-prefixed) name → no-alloc flag, since
     // the lookup above is keyed by the local fn name.
     let no_alloc_by_canonical: HashMap<String, bool> = user_fns
         .iter()
         .map(|e| {
-            let allocates = *alloc_info_by_local_name
-                .get(&e.fd.name)
-                .unwrap_or(&true);
+            let allocates = *alloc_info_by_local_name.get(&e.fd.name).unwrap_or(&true);
             (e.canonical_name.clone(), !allocates)
         })
         .collect();
@@ -1397,15 +1393,15 @@ fn build_mutual_tco_layout(
     // otherwise copies every arg through fresh temporaries to a
     // member-specific slot block.
     let first_param_types = param_types_for_entry(ctx, first_entry);
-    let first_wasm_types: Vec<WasmType> = first_param_types
-        .iter()
-        .map(aver_type_to_wasm)
-        .collect();
+    let first_wasm_types: Vec<WasmType> = first_param_types.iter().map(aver_type_to_wasm).collect();
     let uniform_signature = group.member_indices.iter().all(|&idx| {
         let entry = &user_fns[idx];
         let pt = param_types_for_entry(ctx, entry);
         pt.len() == first_param_types.len()
-            && pt.iter().map(aver_type_to_wasm).eq(first_wasm_types.iter().copied())
+            && pt
+                .iter()
+                .map(aver_type_to_wasm)
+                .eq(first_wasm_types.iter().copied())
     });
 
     let mut slots = Vec::new();
@@ -1429,7 +1425,10 @@ fn build_mutual_tco_layout(
                 local_index
             })
             .collect();
-        next_local += first_param_types.len() as u32;
+        // next_local advance not needed — every member maps to the
+        // shared row, so subsequent allocations restart from the slot
+        // count below in the per-member loop.
+        let _ = next_local;
 
         for (member_id, member_index) in group.member_indices.iter().copied().enumerate() {
             let entry = &user_fns[member_index];
