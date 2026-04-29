@@ -1,0 +1,12 @@
+module Bench
+    intent = "Local timing harness for Fractal.render — predicts whether the live /fractal endpoint will fit under Cloudflare Workers' free-plan 10 ms CPU budget. Not deployed."
+    depends [Fractal]
+    exposes [main]
+    effects [Console.print, Time.unixMs]
+
+fn main() -> Unit
+    ! [Console.print, Time.unixMs]
+    t0 = Time.unixMs()
+    rendered = Fractal.render(200, 80, 80)
+    t1 = Time.unixMs()
+    Console.print("render(200, 80, 80): {Int.toString(t1 - t0)} ms, {Int.toString(String.len(rendered))} chars")
