@@ -780,15 +780,29 @@ def publish(new_versions: dict[str, str], old_versions: dict[str, str], dry_run:
             run(cmd)
 
 
+def codename_for(version: str, changelog: str) -> str | None:
+    """Find the codename declared on this version's CHANGELOG header.
+
+    Only thematic releases (X.Y.0) carry a codename — patches stay plain
+    so the release-list signal stays tight: codename = milestone, no
+    codename = bugfix in that era.
+    """
+    m = re.search(rf'^## {re.escape(version)} "([^"]+)"', changelog, re.MULTILINE)
+    return m.group(1) if m else None
+
+
 def git_commit_tag_push(version: str, dry_run: bool) -> None:
     msg = f"Release {version}"
     tag = f"v{version}"
+    changelog = (REPO_ROOT / "CHANGELOG.md").read_text()
+    codename = codename_for(version, changelog)
+    title = f'Aver {version} "{codename}"' if codename else f"Aver {version}"
 
     if dry_run:
         print(f"  [dry-run] git add + commit: {msg}")
         print(f"  [dry-run] git tag {tag}")
         print(f"  [dry-run] git push + push tags")
-        print(f"  [dry-run] gh release create {tag}")
+        print(f"  [dry-run] gh release create {tag} --title {title!r}")
         return
 
     run(["git", "add", "-A"])
@@ -797,14 +811,12 @@ def git_commit_tag_push(version: str, dry_run: bool) -> None:
     run(["git", "push"])
     run(["git", "push", "--tags"])
 
-    # GitHub release from CHANGELOG
-    changelog = (REPO_ROOT / "CHANGELOG.md").read_text()
-    # Extract section for this version
+    # Extract release notes for this version's section
     pattern = rf"## {re.escape(version)}.*?\n(.*?)(?=\n## |\Z)"
     m = re.search(pattern, changelog, re.DOTALL)
     notes = m.group(1).strip() if m else f"Release {version}"
 
-    run(["gh", "release", "create", tag, "--title", f"Aver {version}", "--notes", notes])
+    run(["gh", "release", "create", tag, "--title", title, "--notes", notes])
 
 
 def parse_args() -> argparse.Namespace:
