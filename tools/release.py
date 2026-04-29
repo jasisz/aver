@@ -76,15 +76,15 @@ def bump_patch(version: str) -> str:
     return ".".join(parts)
 
 
-# Reverse dep map: which crates pin which (downstream pins upstream).
-# Whenever a crate bumps, every downstream that pins it must bump too —
-# otherwise its already-published version on crates.io still references
-# the old upstream version, and resolving the new aver-lang against it
-# fails (`required by package X, all possible versions conflict`).
-DOWNSTREAM_PINS = {
-    "aver-rt": ["aver-memory", "aver-lang"],
-    "aver-memory": ["aver-lang"],
-    "aver-lang": ["aver-lsp"],
+# Cascade cases where a downstream MUST bump because skipping it would
+# block `cargo publish aver-lang` on a dep-resolution conflict:
+# `aver-lang` resolves both `aver-rt` and `aver-memory`. If `aver-rt`
+# bumps but `aver-memory` stays at its already-published version, that
+# version still pins the old `aver-rt` exactly — cargo can't satisfy
+# both. Other downstream crates (`aver-lsp`) are leaves and never
+# block publish, so they bump only on their own changes.
+PUBLISH_BLOCKERS = {
+    "aver-rt": ["aver-memory"],
 }
 
 
@@ -92,9 +92,9 @@ def compute_new_versions(old_versions: dict[str, str], new_main: str) -> dict[st
     """Compute new versions for every crate.
 
     aver-lang gets the requested version. Other crates patch-bump if
-    either (a) they have direct changes since last tag, or (b) any crate
-    they pin (transitively) is bumping — because their published copy
-    pins the old upstream version and would block resolution.
+    either (a) they have direct changes since last tag, or (b) skipping
+    their bump would create a publish-time resolution conflict for
+    aver-lang (see PUBLISH_BLOCKERS).
     """
     last_tag = subprocess.run(
         ["git", "describe", "--tags", "--abbrev=0"],
@@ -115,16 +115,16 @@ def compute_new_versions(old_versions: dict[str, str], new_main: str) -> dict[st
         if result.stdout.strip():
             new[crate] = bump_patch(old_versions[crate])
 
-    # Pass 2: cascade — any crate whose upstream bumps must also bump.
-    # Iterate to fixpoint (chain length ≤ #crates).
+    # Pass 2: forced cascade only for publish-blockers. Fixpoint in
+    # case of multi-step chains (rt→memory→… if we ever add another).
     for _ in range(len(CRATE_ORDER)):
         changed = False
-        for upstream, downstreams in DOWNSTREAM_PINS.items():
+        for upstream, blockers in PUBLISH_BLOCKERS.items():
             if new[upstream] == old_versions[upstream]:
                 continue
-            for ds in downstreams:
+            for ds in blockers:
                 if new[ds] == old_versions[ds]:
-                    new[ds] = bump_patch(old_versions[ds]) if ds != "aver-lang" else new_main
+                    new[ds] = bump_patch(old_versions[ds])
                     changed = True
         if not changed:
             break
