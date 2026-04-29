@@ -2,9 +2,12 @@ module Edge
     intent =
         "edge.averlang.dev — proof-of-Aver served from Cloudflare Workers."
         "GET / returns the HTML landing; GET /api the JSON manifesto;"
-        "GET /llms.txt the LLM-readable description of this subdomain;"
-        "everything else gets a styled 404 (so favicon.ico etc. don't"
-        "fall back to the landing page)."
+        "GET /fractal a server-rendered ASCII Mandelbrot computed in pure"
+        "Aver per request (logic in the Fractal module); GET /llms.txt the"
+        "LLM-readable description of this subdomain; everything else gets"
+        "a styled 404 (so favicon.ico etc. don't fall back to the landing"
+        "page)."
+    depends [Fractal]
     exposes [handler]
     effects [Time]
 
@@ -54,6 +57,7 @@ fn landing(country: String) -> String
         "  <h2>Endpoints</h2>",
         "  <ul>",
         "    <li><a href=\"/api\">/api</a> — JSON manifesto</li>",
+        "    <li><a href=\"/fractal\">/fractal</a> — server-rendered ASCII Mandelbrot, pure Aver compute per request</li>",
         "    <li><a href=\"/llms.txt\">/llms.txt</a> — LLM-readable description of this subdomain</li>",
         "    <li><a href=\"https://averlang.dev\">averlang.dev</a> — the language</li>",
         "    <li><a href=\"https://github.com/jasisz/aver/blob/main/tools/edge/app.av\">app.av on GitHub</a> — full handler source</li>",
@@ -109,6 +113,7 @@ fn llmsTxt() -> String
         "",
         "- `GET /` — HTML landing page describing the deployment",
         "- `GET /api` — JSON manifesto with the request's `cf-ipcountry` and a server-side `Time.unixMs()` timestamp",
+        "- `GET /fractal` — server-rendered 80×30 ASCII Mandelbrot, recomputed in pure Aver on every request. Logic lives in `fractal.av` (a separate module declaring `effects []`); the route handler injects `Time.unixMs` only to time the render",
         "- `GET /llms.txt` — this file",
         "- everything else — 404 (HTML, same look as the landing)",
         "",
@@ -180,12 +185,25 @@ verify extractCountry
     extractCountry(HttpRequest(method = "GET", path = "/", body = "", headers = {"cf-ipcountry" => ["PL"]})) => "PL"
     extractCountry(HttpRequest(method = "GET", path = "/", body = "", headers = {})) => "??"
 
+fn fractalResponse() -> HttpResponse
+    ? "Renders an ASCII Mandelbrot per request and returns it as styled HTML, including the wall-clock time spent in pure Aver compute. Logic lives in the Fractal module — this function only injects Time.unixMs and wraps the result in an HttpResponse."
+    ! [Time.unixMs]
+    t0 = Time.unixMs()
+    rendered = Fractal.render(80, 30, 32)
+    t1 = Time.unixMs()
+    HttpResponse(
+        status = 200,
+        body = Fractal.page(rendered, t1 - t0),
+        headers = { "content-type" => ["text/html; charset=utf-8"] },
+    )
+
 fn handler(req: HttpRequest) -> HttpResponse
-    ? "Routes by path. `/` HTML, `/api` JSON, `/llms.txt` plain text, everything else 404s."
+    ? "Routes by path. `/` HTML, `/api` JSON, `/fractal` ASCII Mandelbrot, `/llms.txt` plain text, everything else 404s."
     ! [Time.unixMs]
     country = extractCountry(req)
     match req.path
         "/"          -> htmlResponse(landing(country))
         "/api"       -> jsonResponse(manifesto(country, Time.unixMs()))
+        "/fractal"   -> fractalResponse()
         "/llms.txt"  -> textResponse(llmsTxt())
         _            -> notFound(req.path)

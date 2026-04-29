@@ -1,0 +1,128 @@
+module Fractal
+    intent =
+        "Pure-Aver ASCII Mandelbrot used by the /fractal route on"
+        "edge.averlang.dev. No effects: every character is the output of"
+        "recursive numeric functions, fed through a fixed gradient."
+        "render() does the compute; page() wraps it in HTML."
+    exposes [render, page]
+    effects []
+
+fn mandelStep(n: Int, x: Float, y: Float, cx: Float, cy: Float, maxIter: Int) -> Int
+    ? "One iteration of z = z² + c, dispatched on whether |z|² has escaped 4."
+    x2 = x * x
+    y2 = y * y
+    match (x2 + y2) > 4.0
+        true  -> n
+        false -> mandelIter(n + 1, x2 - y2 + cx, 2.0 * x * y + cy, cx, cy, maxIter)
+
+verify mandelStep
+    mandelStep(7, 3.0, 0.0, 0.0, 0.0, 50) => 7
+    mandelStep(0, 0.0, 0.0, 0.0, 0.0, 50) => 50
+
+fn mandelIter(n: Int, x: Float, y: Float, cx: Float, cy: Float, maxIter: Int) -> Int
+    ? "Iterates z = z² + c until |z|² > 4 or maxIter; returns the escape iteration count. TCO-eligible mutual recursion via mandelStep."
+    match n >= maxIter
+        true  -> maxIter
+        false -> mandelStep(n, x, y, cx, cy, maxIter)
+
+verify mandelIter
+    mandelIter(0, 0.0, 0.0, 0.0, 0.0, 50) => 50
+    mandelIter(0, 0.0, 0.0, 3.0, 0.0, 50) => 1
+    mandelIter(0, 0.0, 0.0, 2.0, 0.0, 50) => 2
+
+fn pickChar(iter: Int, maxIter: Int) -> String
+    ? "Picks a gradient character for an escape iteration count below maxIter."
+    chars = " .:-=+*#%"
+    idx = iter * 9 / maxIter
+    match String.charAt(chars, idx)
+        Option.Some(c) -> c
+        Option.None    -> " "
+
+verify pickChar
+    pickChar(0, 50)  => " "
+    pickChar(25, 50) => "="
+    pickChar(45, 50) => "%"
+
+fn asciiChar(iter: Int, maxIter: Int) -> String
+    ? "Maps an escape iteration count to a 10-step ASCII gradient. Points inside the set render as `@`, the densest character; rapid-escape points render as space."
+    match iter >= maxIter
+        true  -> "@"
+        false -> pickChar(iter, maxIter)
+
+verify asciiChar
+    asciiChar(50, 50) => "@"
+    asciiChar(0, 50)  => " "
+    asciiChar(45, 50) => "%"
+
+fn pixel(col: Int, row: Int, w: Int, h: Int, maxIter: Int) -> String
+    ? "Renders one ASCII char at (col,row) over the standard view window: cx in [-2.5, 1.0], cy in [-1.0, 1.0]."
+    cx = (Int.toFloat(col) / Int.toFloat(w)) * 3.5 - 2.5
+    cy = (Int.toFloat(row) / Int.toFloat(h)) * 2.0 - 1.0
+    asciiChar(mandelIter(0, 0.0, 0.0, cx, cy, maxIter), maxIter)
+
+verify pixel
+    pixel(0, 0, 1, 1, 50) => " "
+
+fn rowChars(col: Int, row: Int, w: Int, h: Int, maxIter: Int, acc: List<String>) -> List<String>
+    ? "Folds across columns, prepending each rendered pixel; reverses on completion."
+    match col >= w
+        true  -> List.reverse(acc)
+        false -> rowChars(col + 1, row, w, h, maxIter, List.prepend(pixel(col, row, w, h, maxIter), acc))
+
+verify rowChars
+    rowChars(0, 0, 0, 1, 50, []) => []
+    rowChars(0, 0, 1, 1, 50, []) => [" "]
+
+fn renderRow(row: Int, w: Int, h: Int, maxIter: Int) -> String
+    ? "Joins one row of pixels into a single text line."
+    String.join(rowChars(0, row, w, h, maxIter, []), "")
+
+verify renderRow
+    renderRow(0, 0, 1, 50) => ""
+    renderRow(0, 1, 1, 50) => " "
+
+fn allRows(row: Int, w: Int, h: Int, maxIter: Int, acc: List<String>) -> List<String>
+    ? "Folds across rows, accumulating each rendered line."
+    match row >= h
+        true  -> List.reverse(acc)
+        false -> allRows(row + 1, w, h, maxIter, List.prepend(renderRow(row, w, h, maxIter), acc))
+
+verify allRows
+    allRows(0, 1, 0, 50, []) => []
+    allRows(0, 1, 1, 50, []) => [" "]
+
+fn render(w: Int, h: Int, maxIter: Int) -> String
+    ? "Public entry: renders an ASCII Mandelbrot of size w×h with the given iteration cap."
+    String.join(allRows(0, w, h, maxIter, []), "\n")
+
+verify render
+    render(0, 0, 50) => ""
+    render(1, 1, 50) => " "
+
+fn page(rendered: String, renderMs: Int) -> String
+    ? "HTML page wrapping a rendered ASCII fractal. Pure string assembly — no IO."
+    String.join([
+        "<!doctype html>",
+        "<html lang=\"en\">",
+        "<head>",
+        "  <meta charset=\"utf-8\">",
+        "  <title>edge.averlang.dev — Mandelbrot from pure Aver</title>",
+        "  <style>",
+        "    body {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; max-width: 940px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; color: #1a1a1a; background: #fafafa; }}",
+        "    h1 {{ font-size: 1.4rem; margin-bottom: 0.2rem; }}",
+        "    .sub {{ color: #666; margin-top: 0; font-size: 0.92rem; }}",
+        "    pre.fractal {{ background: #0f0f0f; color: #d4f7d4; padding: 1rem; border-radius: 8px; overflow: auto; font-size: 0.72rem; line-height: 1.05; letter-spacing: 0.04em; box-shadow: 0 1px 4px rgba(0,0,0,0.18); }}",
+        "    a {{ color: #1a4cdb; }}",
+        "    code {{ background: #f3f3f3; padding: 0.1em 0.35em; border-radius: 3px; }}",
+        "  </style>",
+        "</head>",
+        "<body>",
+        "  <h1>Mandelbrot, in pure Aver, served from the edge.</h1>",
+        "  <p class=\"sub\">{Int.toString(renderMs)} ms of pure compute on this Cloudflare Worker — every character below came out of recursive Aver functions compiled to WebAssembly. No caching, the fractal is recomputed on every request.</p>",
+        "  <pre class=\"fractal\">{rendered}</pre>",
+        "  <p>The image is the output of <code>mandelIter</code>: a recursive function that iterates <code>z = z² + c</code> until it escapes a radius of 2 or hits the iteration cap. <code>String.charAt</code> picks a character from a 10-step gradient based on the escape count. The only declared runtime effect on this route is <code>! [Time.unixMs]</code>, used for the timer above — the <code>Fractal</code> module itself declares <code>effects []</code>. <a href=\"https://github.com/jasisz/aver/blob/main/tools/edge/fractal.av\">Read the source.</a></p>",
+        "  <p><a href=\"/\">← back to the landing</a></p>",
+        "</body>",
+        "</html>",
+        ""
+    ], "\n")

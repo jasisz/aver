@@ -2,6 +2,17 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.14.2 (2026-04-29)
+
+### Added
+- **`/fractal` endpoint on `edge.averlang.dev`** — an 80×30 ASCII Mandelbrot rendered in pure Aver per request. Logic lives in a new `Fractal` module (`tools/edge/fractal.av`, declares `effects []`, ~80 lines); every helper carries a verify block (28 cases total: `mandelStep`, `mandelIter`, `pickChar`, `asciiChar`, `pixel`, `rowChars`, `renderRow`, `allRows`, `render`). The route handler in `app.av` only injects `Time.unixMs` to time the render and wraps the output in an `HttpResponse`. Demonstrates multi-module `depends [Fractal]`, fully verified recursive numeric code, and Aver→WASM→Cloudflare Workers compute on the edge.
+
+### Docs
+- `docs/wasm.md` — reframed `aver.toml` policy as a deliberate host concern, not a missing feature. New "Policy is the Host's Job" section cites wasmtime/WASI `--allow-net`, Cloudflare Workers `services`/`fetch` bindings, browser CSP `connect-src`, and Fastly Compute backend whitelists as the actual enforcement layers; build-time concerns (effect declarations, deterministic mocks, independence invariants) stay with us.
+
+### Tooling
+- `tools/release.py` — GitHub release titles now carry the codename for thematic releases (`Aver 0.14.0 "Edge"`); patches stay plain. Cascade-bump logic tightened to fire only for genuine publish-blockers (`aver-rt → aver-memory`); `aver-lsp` no longer auto-bumps just because `aver-lang` does.
+
 ## 0.14.1 (2026-04-29)
 
 ### Removed

@@ -8,12 +8,19 @@ effect — routing, response bodies, and headers are pure Aver code.
 - `GET /` → minimal HTML landing page
 - `GET /api` → JSON manifesto with the request's `cf-ipcountry` and a
   server-side `Time.unixMs()` timestamp
+- `GET /fractal` → server-rendered ASCII Mandelbrot, recomputed in
+  pure Aver per request
 
 ## Source
 
-`app.av` — the whole program. Single module, ~100 lines, declares
-`! [Time]` as its only effect. Pure routing + string interpolation
-otherwise.
+- `app.av` — module `Edge`: routing + HTML/JSON/404 responses.
+  Declares `! [Time]`, depends on `Fractal`.
+- `fractal.av` — module `Fractal`: pure recursive Mandelbrot renderer
+  + HTML wrapper. Declares `effects []`. Verified end-to-end through
+  `mandelStep`, `mandelIter`, `pickChar`, `pixel`, `rowChars`,
+  `renderRow`, `allRows`, `render` — every helper has a verify block.
+- `aver.toml` — single suppression for `missing-verify` on
+  `Fractal.page` (HTML template, no branching logic).
 
 ## Build
 
