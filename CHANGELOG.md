@@ -2,6 +2,18 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.14.1 (TBD)
+
+### Removed
+- **`Header` record.** 0.14 standardised HTTP headers as `Map<String, List<String>>` across every backend; the per-entry `Header { name, value }` record left over from the old `List<Header>` shape was unreachable from any built-in HTTP type and is now retired. User code that constructed `Header` literals must now build a `Map<String, List<String>>` directly.
+
+### Fixed
+- **`Http.post` / `Http.put` / `Http.patch` oracle signature** now reports the headers parameter as `Map<String, List<String>>` instead of the stale `List<Header>` from the pre-0.14 shape. Verify-mode mocks and effect classification see the correct type.
+- **Self-host codegen template** (`--with-self-host-support`) emitted `headers: AverList<Header>` for HTTP request/response handling. Now emits `headers: HttpHeaders` (= `AverMap<AverStr, AverList<AverStr>>`), matching the runtime shape every other backend already used.
+
+### Docs
+- `docs/services.md`: `Http.*` signatures and `HttpRequest` / `HttpResponse` records updated to the `Map<String, List<String>>` headers shape.
+
 ## 0.14.0 "Edge" (2026-04-29)
 
 > _Aver's WASM backend becomes a deployable edge target: small user modules, a shared runtime, and explicit host bridges._

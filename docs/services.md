@@ -206,12 +206,11 @@ Source: `src/services/http.rs`
 | `Http.get` | `String -> Result<HttpResponse, String>` | |
 | `Http.head` | `String -> Result<HttpResponse, String>` | |
 | `Http.delete` | `String -> Result<HttpResponse, String>` | |
-| `Http.post` | `(String, String, String, List<Header>) -> Result<HttpResponse, String>` | url, body, content-type, headers |
-| `Http.put` | `(String, String, String, List<Header>) -> Result<HttpResponse, String>` | |
-| `Http.patch` | `(String, String, String, List<Header>) -> Result<HttpResponse, String>` | |
+| `Http.post` | `(String, String, String, Map<String, List<String>>) -> Result<HttpResponse, String>` | url, body, content-type, headers |
+| `Http.put` | `(String, String, String, Map<String, List<String>>) -> Result<HttpResponse, String>` | |
+| `Http.patch` | `(String, String, String, Map<String, List<String>>) -> Result<HttpResponse, String>` | |
 
-`HttpResponse` record: `{ status: Int, body: String, headers: List<Header> }`.
-`Header` record: `{ name: String, value: String }`.
+`HttpResponse` record: `{ status: Int, body: String, headers: Map<String, List<String>> }`. Headers are a multimap — a single name can carry multiple values (Set-Cookie, Vary, …).
 
 ### `HttpServer` namespace — use `! [HttpServer.listen]` or `! [HttpServer.listenWith]`
 
@@ -228,9 +227,9 @@ This is the main intended use of function values in Aver: named handlers and cal
 
 The handler itself still uses exact method-level effects such as `Http.get`, `Tcp.readLine`, or `Console.print`. The server call does not widen those into namespace-level grants.
 
-`HttpRequest` record: `{ method: String, path: String, body: String, headers: List<Header> }`.
-`HttpResponse` record: `{ status: Int, body: String, headers: List<Header> }`.
-`Header` record: `{ name: String, value: String }`.
+`HttpRequest` record: `{ method: String, path: String, body: String, headers: Map<String, List<String>> }`.
+`HttpResponse` record: `{ status: Int, body: String, headers: Map<String, List<String>> }`.
+Header keys are case-insensitive by convention (the runtime normalises incoming names to lowercase; outgoing should match).
 
 The caller declares only `HttpServer.listen` / `HttpServer.listenWith`. The handler carries its own `! [...]` declaration; its effects are checked on the handler function itself rather than copied onto the caller.
 
