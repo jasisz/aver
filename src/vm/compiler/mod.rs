@@ -154,6 +154,18 @@ fn compile_program_inner(
     compiler.code.symbols = compiler.symbols.clone();
     classify::classify_thin_functions(&mut compiler.code, arena)?;
 
+    // The VM mutual-TCO path (`TAIL_CALL_KNOWN`) replaces a frame in
+    // place and runs `finalize_frame_locals_for_tail_call`, which already
+    // short-circuits to a no-op when `young_len == arena_mark` and the
+    // yard/handoff lengths are unchanged. For pure no-alloc loops
+    // (mandelStep ↔ mandelIter etc.) those checks always pass at
+    // runtime, so the bytecode-level thin classifier rejecting them
+    // costs nothing in this scenario — bench confirms 0% delta from
+    // upgrading `chunk.thin` via `compute_alloc_info`. The shared
+    // `VmAllocPolicy` is kept available for future passes (e.g. eliding
+    // the runtime length comparisons themselves, or skipping frame mark
+    // bookkeeping) but isn't applied here.
+
     Ok((compiler.code, compiler.globals))
 }
 
