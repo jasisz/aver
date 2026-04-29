@@ -20,6 +20,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 - **WASM map ABI is polymorphic**, with key kind and value pointer flags passed explicitly.
 - **WAT is the source of truth for the standalone runtime**, and emit-time WASM validation is part of the compile path.
 - **WASM `Vector.set` owned-mutate fast path.** Fused `Option.withDefault(Vector.set(v, i, x), v)` where `v` is a `Resolved` local with `last_use = true` lowers to an inline bounds check + `i64.store` on the existing heap object — same trick the VM has used for TCO loops. Zero allocations per call vs the previous full-array memcopy. Drops the "WASM `Vector.set` is still O(N)" 0.14-known-limitation.
+- **WASM `Map` runtime: replaced HAMT with flat hashtable + `Map.set` owned-mutate.** Aver-rt (Rust runtime, used by Rust codegen + VM via aver-memory) was already on `Rc<HashMap>` with `Rc::make_mut`; only WASM still carried a HAMT-style tree. Single-allocation flat layout (header + capacity word + power-of-2 bucket array, 24-byte buckets), open-addressing with linear probing, load factor 0.7. `rt_map_set_owned` mutates the bucket array in place when last-use analysis proves sole ownership — emitter dispatches it for `Map.set(m, k, v)` with `m` a `Resolved` slot, `last_use = true`. Boundary GC compaction taught about the new kind=12 layout (size dispatch reads capacity from offset 8, rebase + retain walks every occupied bucket). On the `map build 5k` bench WASM drops from **1.93 ms → 963 µs**, ~28% faster than the VM (which has `set_nv_owned` but is interpreted vs wasmtime's native). Drops the "WASM map builds remain slower than the VM" 0.14-known-limitation.
 
 ### Removed
 - **`--adapter` → `--bridge`** and **`--wasm-opt oz|o3` → `--optimize size|speed`**.
@@ -32,7 +33,6 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Known limitations
 - `Http.*` under `--bridge wasip1` returns a transport error; real WASI HTTP belongs in a later Component Model target.
-- WASM map builds remain slower than the VM on large construction-heavy benchmarks (`Map.set` doesn't yet take the owned-mutate fast path that `Vector.set` does — HAMT structural copy on every update).
 
 ## 0.13.0 "Limit" (2026-04-27)
 
