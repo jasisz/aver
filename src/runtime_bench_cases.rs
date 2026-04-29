@@ -7,7 +7,7 @@ pub struct CoreBenchCase {
 impl CoreBenchCase {
     pub fn module_root(&self) -> Option<&'static str> {
         match self.slug {
-            "json_roundtrip_200" => Some("examples"),
+            "json_roundtrip_1k" => Some("examples"),
             _ => None,
         }
     }
@@ -103,7 +103,7 @@ const JSON_ROUNDTRIP: &str = r#"module Bench
     effects [Console]
 
 fn sampleJson() -> String
-    "{{\"service\":\"aver\",\"score\":14,\"edge\":true,\"items\":[1,2,3,{{\"name\":\"json\",\"ok\":true}}],\"meta\":{{\"target\":\"edge-wasm\",\"runtime\":\"cloudflare\"}}}}"
+    "{{\"service\":\"aver\",\"version\":\"0.14\",\"score\":14,\"edge\":true,\"runtime\":{{\"target\":\"edge-wasm\",\"provider\":\"cloudflare\",\"packed\":true,\"preset\":\"cloudflare\"}},\"items\":[{{\"name\":\"json\",\"ok\":true,\"size\":136}},{{\"name\":\"wasm\",\"ok\":true,\"size\":4800}},{{\"name\":\"worker\",\"ok\":true,\"regions\":[\"waw\",\"iad\",\"nrt\"]}}],\"meta\":{{\"commit\":\"a9e6924\",\"notes\":[\"pure\",\"typed\",\"effects\"],\"limits\":{{\"cold_start\":0,\"external_fetch\":false}}}}}}"
 
 fn roundtripLen(raw: String) -> Int
     match Data.Json.fromString(raw)
@@ -116,7 +116,7 @@ fn loop(n: Int, raw: String, acc: Int) -> Int
         false -> loop(n - 1, raw, acc + roundtripLen(raw))
 
 fn benchMain() -> Int
-    loop(200, sampleJson(), 0)
+    loop(1000, sampleJson(), 0)
 
 fn main() -> Unit
     ! [Console.print]
@@ -200,8 +200,8 @@ pub const CORE_BENCH_CASES: &[CoreBenchCase] = &[
         source: LIST_GET_OR,
     },
     CoreBenchCase {
-        slug: "json_roundtrip_200",
-        name: "json_roundtrip(200)",
+        slug: "json_roundtrip_1k",
+        name: "json_roundtrip(1K)",
         source: JSON_ROUNDTRIP,
     },
 ];
