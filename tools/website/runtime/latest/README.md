@@ -4,10 +4,10 @@ Standalone WebAssembly modules for the Aver language runtime.
 Pair these with a thin `user.wasm` produced by
 `aver compile --target edge-wasm --optimize size`:
 
-- `aver_runtime.wasm` (10,510 B) — alloc, GC, hashmap,
+- `aver_runtime.wasm` (10,123 B) — alloc, GC, hashmap,
   string/list/vector ops. Imported by every Aver program as the
   `aver_runtime` module. Cached once per session.
-- `aver_to_wasi.wasm` (684 B) — translation shim that
+- `aver_to_wasi.wasm` (1,914 B) — translation shim that
   satisfies a program's `aver/*` host imports against
   `wasi_snapshot_preview1.fd_write`. Optional, only needed if you
   want to run a thin user.wasm under wasmtime / Cloudflare

@@ -3,8 +3,8 @@
   "versions": [
     {
       "version": "0.14.0",
-      "runtime_bytes": 10510,
-      "bridge_bytes": 684,
+      "runtime_bytes": 10123,
+      "bridge_bytes": 1914,
       "path": "v0.14.0"
     }
   ]

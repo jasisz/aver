@@ -175,21 +175,24 @@ fn val_to_headers(value: Val) -> Result<crate::aver_rt::HttpHeaders, AverStr> {
     };
 
     let mut out = crate::aver_rt::HttpHeaders::default();
-    for (name, values_val) in items.iter() {
-        let Val::ValList(values) = values_val else {
-            return Err(AverStr::from("HttpResponse.headers values must be Lists"));
+    for (key, value) in items.iter() {
+        let Val::ValList(values) = value else {
+            return Err(AverStr::from(
+                "HttpResponse.headers values must be List<String>",
+            ));
         };
-        let mut buf = Vec::new();
-        for v in values.to_vec() {
-            match v {
-                Val::ValStr(s) => buf.push(s),
-                _ => return Err(AverStr::from("HttpResponse.headers values must be Strings")),
+        let mut value_strs = Vec::new();
+        for entry in values.to_vec() {
+            match entry {
+                Val::ValStr(s) => value_strs.push(s),
+                _ => {
+                    return Err(AverStr::from(
+                        "HttpResponse.headers value entries must be String",
+                    ));
+                }
             }
         }
-        // Lowercase the key on the way in — convention is symmetric
-        // with what the runtime applies for incoming requests.
-        let key = AverStr::from(name.to_ascii_lowercase());
-        out = out.insert(key, crate::aver_rt::AverList::from_vec(buf));
+        out = out.insert(key.clone(), crate::aver_rt::AverList::from_vec(value_strs));
     }
 
     Ok(out)

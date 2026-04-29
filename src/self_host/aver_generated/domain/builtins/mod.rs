@@ -1631,7 +1631,7 @@ pub fn builtinHttpBodyInner(
                 let __effect_arg0 = url;
                 let __effect_arg1 = body;
                 let __effect_arg2 = ct;
-                let __effect_arg3 = aver_rt::HttpHeaders::default();
+                let __effect_arg3 = HashMap::new();
                 crate::cancel_checkpoint();
                 aver_replay::invoke_effect(
                     "Http.post",
@@ -1658,7 +1658,7 @@ pub fn builtinHttpBodyInner(
                     let __effect_arg0 = url;
                     let __effect_arg1 = body;
                     let __effect_arg2 = ct;
-                    let __effect_arg3 = aver_rt::HttpHeaders::default();
+                    let __effect_arg3 = HashMap::new();
                     crate::cancel_checkpoint();
                     aver_replay::invoke_effect(
                         "Http.put",
@@ -1684,7 +1684,7 @@ pub fn builtinHttpBodyInner(
                     let __effect_arg0 = url;
                     let __effect_arg1 = body;
                     let __effect_arg2 = ct;
-                    let __effect_arg3 = aver_rt::HttpHeaders::default();
+                    let __effect_arg3 = HashMap::new();
                     crate::cancel_checkpoint();
                     aver_replay::invoke_effect(
                         "Http.patch",
@@ -1720,26 +1720,63 @@ pub fn httpResponseToVal(result: &Result<HttpResponse, AverStr>) -> Val {
             aver_rt::AverList::from_vec(vec![
                 (AverStr::from("status"), Val::ValInt(resp.status.clone())),
                 (AverStr::from("body"), Val::ValStr(resp.body.clone())),
-                (AverStr::from("headers"), headersToVal(resp.headers.clone())),
+                (AverStr::from("headers"), headersToVal(&resp.headers)),
             ]),
         ))),
         Err(e) => Val::ValErr(std::sync::Arc::new(Val::ValStr(e))),
     }
 }
 
-/// Convert host headers (`Map<String, List<String>>`) to a Val::ValMap.
-/// Matches the new `HttpResponse.headers` type — keys are case-insensitive
-/// (already lowercased by the runtime on the way in), values stay as a
-/// list to preserve multi-value semantics (Set-Cookie, Vary, …).
+/// Convert host headers Map<String, List<String>> to a Val.ValMap whose values are Val.ValList of Val.ValStr.
 #[inline(always)]
-pub fn headersToVal(headers: aver_rt::HttpHeaders) -> Val {
-    let mut out = aver_rt::AverMap::default();
-    for (name, values) in headers.iter() {
-        let value_list =
-            aver_rt::AverList::from_vec(values.iter().cloned().map(Val::ValStr).collect());
-        out = out.insert(name.clone(), Val::ValList(value_list));
+pub fn headersToVal(headers: &aver_rt::AverMap<AverStr, aver_rt::AverList<AverStr>>) -> Val {
+    crate::cancel_checkpoint();
+    Val::ValMap(headersToValMap(
+        headers.clone(),
+        {
+            let mut ks: Vec<_> = headers.keys().cloned().collect();
+            ks.sort();
+            aver_rt::AverList::from_vec(ks)
+        },
+        HashMap::new(),
+    ))
+}
+
+/// Walk header keys, converting each value list to a Val.ValList.
+#[inline(always)]
+pub fn headersToValMap(
+    mut headers: aver_rt::AverMap<AverStr, aver_rt::AverList<AverStr>>,
+    mut names: aver_rt::AverList<AverStr>,
+    mut acc: aver_rt::AverMap<AverStr, Val>,
+) -> aver_rt::AverMap<AverStr, Val> {
+    loop {
+        crate::cancel_checkpoint();
+        return aver_list_match!(names, [] => acc, [name, rest] => { {
+            let __tmp0 = headers.clone();
+            let __tmp2 = acc.insert_owned(name.clone(), Val::ValList(stringsToValStrs(headers.get(&name).cloned().unwrap_or(aver_rt::AverList::empty()), aver_rt::AverList::empty())));
+            headers = __tmp0;
+            names = rest;
+            acc = __tmp2;
+            continue;
+        } });
     }
-    Val::ValMap(out)
+}
+
+/// Convert a list of strings into a list of Val.ValStr (tail-recursive).
+#[inline(always)]
+pub fn stringsToValStrs(
+    mut values: aver_rt::AverList<AverStr>,
+    mut acc: aver_rt::AverList<Val>,
+) -> aver_rt::AverList<Val> {
+    loop {
+        crate::cancel_checkpoint();
+        return aver_list_match!(values, [] => acc.reverse(), [v, rest] => { {
+            let __tmp1 = aver_rt::AverList::prepend(Val::ValStr(v), &acc);
+            values = rest;
+            acc = __tmp1;
+            continue;
+        } });
+    }
 }
 
 /// Tcp.send(host, port, message) -> Result<String, String>.
