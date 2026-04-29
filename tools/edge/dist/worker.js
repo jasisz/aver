@@ -99,6 +99,9 @@ function makeAverImports() {
     request_url: () => writeAverString(
       pending?.req ? new URL(pending.req.url).pathname : "/",
     ),
+    request_query: () => writeAverString(
+      pending?.req ? new URL(pending.req.url).search.slice(1) : "",
+    ),
     request_body: () => {
       // body() is sync from Aver's POV; if we already buffered it
       // we hand back the OBJ_STRING, else empty. Bootstrap pre-reads
