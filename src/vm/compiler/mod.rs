@@ -178,7 +178,15 @@ fn compile_program_inner(
             let allocates = *alloc_info.get(&fd.name).unwrap_or(&true);
             if !allocates {
                 if let Some(fn_id) = compiler.code.find(&fd.name) {
-                    compiler.code.functions[fn_id as usize].no_alloc = true;
+                    let chunk = &mut compiler.code.functions[fn_id as usize];
+                    chunk.no_alloc = true;
+                    // No-alloc bodies always satisfy `can_fast_return`'s
+                    // runtime length-equality guards, so promote them into
+                    // the thin fast-return class. The bytecode classifier
+                    // rejected them for unrelated reasons (mutual TCO call,
+                    // body size > MAX_PARENT_THIN, etc.) but for return
+                    // purposes there's nothing left to do.
+                    chunk.thin = true;
                 }
             }
         }

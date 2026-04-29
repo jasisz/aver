@@ -253,16 +253,30 @@ impl VM {
                         self.stack.push(NanValue::UNIT);
                     }
 
-                    let yard_len = self.arena.yard_len() as u32;
+                    // Pure no-alloc targets never grow young/yard/handoff,
+                    // so the entry marks are never compared on return —
+                    // dummy zeros save three length reads per call. The
+                    // matching skip lives in RETURN's fast path
+                    // (`chunk.thin = true` for no-alloc fns; runtime
+                    // length checks always pass).
+                    let (arena_mark, yard_mark, handoff_mark) = if target.no_alloc {
+                        (0, 0, 0)
+                    } else {
+                        (
+                            self.arena.young_len() as u32,
+                            self.arena.yard_len() as u32,
+                            self.arena.handoff_len() as u32,
+                        )
+                    };
                     self.frames.push(CallFrame {
                         fn_id: target_fn_id,
                         ip: 0,
                         bp: new_bp as u32,
                         local_count: target.local_count,
-                        arena_mark: self.arena.young_len() as u32,
-                        yard_base: yard_len,
-                        yard_mark: yard_len,
-                        handoff_mark: self.arena.handoff_len() as u32,
+                        arena_mark,
+                        yard_base: yard_mark,
+                        yard_mark,
+                        handoff_mark,
                         globals_dirty: false,
                         yard_dirty: false,
                         handoff_dirty: false,
@@ -522,21 +536,34 @@ impl VM {
                     let argc = read_u8!(code, ip) as usize;
                     let _owned_mask = read_u8!(code, ip);
                     let args_start = self.stack.len() - argc;
-                    let frame_mark = self.frames.last().unwrap().arena_mark;
-                    let yard_mark = self.frames.last().unwrap().yard_mark;
-                    let handoff_mark = self.frames.last().unwrap().handoff_mark;
-                    let globals_dirty = self.frames.last().unwrap().globals_dirty;
-                    let yard_dirty = self.frames.last().unwrap().yard_dirty;
-                    let mut promoted_args = self.stack[args_start..].to_vec();
-                    self.finalize_frame_locals_for_tail_call(
-                        frame_mark,
-                        yard_mark,
-                        handoff_mark,
-                        globals_dirty,
-                        yard_dirty,
-                        &mut promoted_args,
-                    );
-                    self.stack[bp..(argc + bp)].copy_from_slice(&promoted_args[..argc]);
+
+                    // Self-TCO mirror of the TAIL_CALL_KNOWN no-alloc skip:
+                    // if the current chunk is alloc-free, the finalizer
+                    // call is guaranteed no-op. Existing TAIL_CALL_SELF_THIN
+                    // covers self-recursive thin chunks; this branch picks
+                    // up bodies that the bytecode classifier rejected for
+                    // unrelated reasons (e.g. local_count > MAX) but
+                    // `compute_alloc_info` still proves alloc-free.
+                    let self_no_alloc = self.code.functions[fn_id as usize].no_alloc;
+                    if !self_no_alloc {
+                        let frame_mark = self.frames.last().unwrap().arena_mark;
+                        let yard_mark = self.frames.last().unwrap().yard_mark;
+                        let handoff_mark = self.frames.last().unwrap().handoff_mark;
+                        let globals_dirty = self.frames.last().unwrap().globals_dirty;
+                        let yard_dirty = self.frames.last().unwrap().yard_dirty;
+                        let mut promoted_args = self.stack[args_start..].to_vec();
+                        self.finalize_frame_locals_for_tail_call(
+                            frame_mark,
+                            yard_mark,
+                            handoff_mark,
+                            globals_dirty,
+                            yard_dirty,
+                            &mut promoted_args,
+                        );
+                        self.stack[bp..(argc + bp)].copy_from_slice(&promoted_args[..argc]);
+                    } else {
+                        self.stack.copy_within(args_start..args_start + argc, bp);
+                    }
                     let lc = self.frames.last().unwrap().local_count as usize;
                     for i in argc..lc {
                         self.stack[bp + i] = NanValue::UNIT;
@@ -652,9 +679,33 @@ impl VM {
                         continue;
                     }
 
-                    let mut result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let frame_no_alloc = self.code.functions[fn_id as usize].no_alloc;
+                    let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let frame = self.frames.pop().unwrap();
                     self.stack.truncate(frame.bp as usize);
+
+                    // Pure no-alloc bodies never produced young/yard/handoff
+                    // survivors, so the standard `can_fast_return` length
+                    // checks (and the `flatten_deep_list` guard above) are
+                    // unnecessary. CALL_KNOWN parks dummy `arena_mark = 0`
+                    // for these frames; we short-circuit straight to the
+                    // caller without consulting it.
+                    if frame_no_alloc {
+                        if self.frames.len() == caller_depth {
+                            return Ok(result);
+                        }
+                        let caller = self.frames.last().unwrap();
+                        let caller_fn_id = caller.fn_id;
+                        let caller_ip = caller.ip as usize;
+                        let caller_bp = caller.bp as usize;
+                        self.stack.push(result);
+                        fn_id = caller_fn_id;
+                        ip = caller_ip;
+                        bp = caller_bp;
+                        continue;
+                    }
+
+                    let mut result = result;
                     // Flatten deep lists before frame return to avoid stack
                     // overflow during arena evacuation of Prepend/Concat chains.
                     if !self.can_fast_return(&frame) {
