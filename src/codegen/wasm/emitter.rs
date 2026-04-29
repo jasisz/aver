@@ -102,6 +102,31 @@ pub fn build_wasm_module(
         }
     }
 
+    // Reject HTTP types under non-fetch adapters with a friendly message,
+    // before the per-fn emit hits the broken record-shape codegen and
+    // produces invalid bytecode. `HttpRequest` / `HttpResponse` carry
+    // `Map<String, List<String>>` headers and a host-supplied request
+    // handle; only the fetch bridge knows how to materialise them.
+    if !matches!(adapter, super::WasmAdapter::Fetch) {
+        let uses_http = |ty: &str| ty == "HttpRequest" || ty == "HttpResponse";
+        if let Some(fd) = user_fns.iter().map(|e| e.fd).find(|fd| {
+            uses_http(&fd.return_type) || fd.params.iter().any(|(_, t)| uses_http(t))
+        }) {
+            let bridge_hint = match adapter {
+                super::WasmAdapter::Wasi => " (currently `--bridge wasip1`)",
+                super::WasmAdapter::Aver => " (no `--bridge`)",
+                super::WasmAdapter::Fetch => unreachable!(),
+            };
+            return Err(format!(
+                "fn `{}` uses HttpRequest/HttpResponse, which only the fetch bridge can lower{}.\n\
+                 Use one of:\n\
+                 \x20 --preset cloudflare        # Cloudflare Workers (fetch + bundling)\n\
+                 \x20 --bridge fetch             # bare fetch bridge (browsers, Deno, Bun)",
+                fd.name, bridge_hint
+            ));
+        }
+    }
+
     let mutual_tco_groups = build_mutual_tco_groups(ctx, &user_fns);
 
     // Per-fn heap-allocation classification (shared `src/ir/alloc_info.rs`).
@@ -751,6 +776,7 @@ pub fn build_wasm_module(
         for effect in [
             "Request.method",
             "Request.url",
+            "Request.query",
             "Request.body",
             "Request.headersLoad",
             "Response.text",

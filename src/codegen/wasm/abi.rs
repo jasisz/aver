@@ -179,6 +179,12 @@ pub const ABI_TABLE: &[AbiImport] = &[
         results: &[ValType::I32],
     },
     AbiImport {
+        effect: "Request.query",
+        import_name: "request_query",
+        params: &[],
+        results: &[ValType::I32],
+    },
+    AbiImport {
         effect: "Request.body",
         import_name: "request_body",
         params: &[],

@@ -138,6 +138,10 @@ pub const BUILTIN_RECORDS: &[BuiltinRecord] = &[
                 ty: BuiltinType::Str,
             },
             BuiltinField {
+                name: "query",
+                ty: BuiltinType::Str,
+            },
+            BuiltinField {
                 name: "body",
                 ty: BuiltinType::Str,
             },

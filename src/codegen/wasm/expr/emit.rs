@@ -1568,6 +1568,7 @@ impl<'a> ExprEmitter<'a> {
             let import_name = match field_name {
                 "method" => Some("request_method"),
                 "url" | "path" => Some("request_url"),
+                "query" => Some("request_query"),
                 "body" => Some("request_body"),
                 _ => None,
             };
