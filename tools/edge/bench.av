@@ -7,6 +7,6 @@ module Bench
 fn main() -> Unit
     ! [Console.print, Time.unixMs]
     t0 = Time.unixMs()
-    rendered = Fractal.render(200, 80, 80)
+    rendered = Fractal.render(80, 24, 80)
     t1 = Time.unixMs()
-    Console.print("render(200, 80, 80): {Int.toString(t1 - t0)} ms, {Int.toString(String.len(rendered))} chars")
+    Console.print("render(80, 24, 80): {Int.toString(t1 - t0)} ms, {Int.toString(String.len(rendered))} chars")

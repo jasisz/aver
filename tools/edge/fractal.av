@@ -1,9 +1,11 @@
 module Fractal
     intent =
-        "Pure-Aver ASCII Mandelbrot used by the /fractal route on"
-        "edge.averlang.dev. No effects: every character is the output of"
-        "recursive numeric functions, fed through a fixed gradient."
-        "render() does the compute; page() wraps it in HTML."
+        "Pure-Aver Mandelbrot rendered via Unicode Braille (U+2800..U+28FF)."
+        "Each character represents a 2×4 grid of sub-pixels — eight"
+        "mandelIter samples per char, one bit per sample, packed into the"
+        "low 8 bits of the Braille code-point. Pattern lifted from"
+        "examples/games/doom/render.av. No effects: render() builds the"
+        "string, page() wraps it in HTML."
     exposes [render, page]
     effects []
 
@@ -30,77 +32,139 @@ verify mandelIter
     mandelIter(0, 0.0, 0.0, 3.0, 0.0, 50) => 1
     mandelIter(0, 0.0, 0.0, 2.0, 0.0, 50) => 2
 
-fn pickChar(iter: Int, maxIter: Int) -> String
-    ? "Picks a gradient character for an escape iteration count below maxIter. 24-step gradient: 22 ASCII characters (HTML-safe — no <, >, or &) followed by two Unicode shaded blocks for the densest non-set steps."
-    chars = " .,'-:;!~+=*?#XOSMW%@$▒▓"
-    idx = iter * 23 / maxIter
-    match String.charAt(chars, idx)
-        Option.Some(c) -> c
+fn brailleBase() -> Int
+    ? "Unicode code point for empty Braille pattern (U+2800)."
+    10240
+
+verify brailleBase
+    brailleBase() => 10240
+
+fn brailleChar(bits: Int) -> String
+    ? "Convert an 8-bit dot mask to a Braille Unicode character. Bits 0..7 map to the eight Braille dots; the lowest 6 bits are the standard 6-dot pattern, bits 6 and 7 are the bottom row of the 8-dot extension."
+    match Char.fromCode(brailleBase() + bits)
+        Option.Some(ch) -> ch
         Option.None    -> " "
 
-verify pickChar
-    pickChar(0, 50)  => " "
-    pickChar(25, 50) => "*"
-    pickChar(45, 50) => "@"
+verify brailleChar
+    String.len(brailleChar(0))   => 1
+    String.len(brailleChar(255)) => 1
 
-fn asciiChar(iter: Int, maxIter: Int) -> String
-    ? "Maps an escape iteration count to a 25-level gradient (24 escape steps + a full block for points inside the set). Lightest = rapid-escape, darkest = inside the set."
-    match iter >= maxIter
-        true  -> "█"
-        false -> pickChar(iter, maxIter)
+fn dotBitLeft(row: Int) -> Int
+    ? "Bit value for the left column at sub-pixel row 0..3."
+    match row
+        0 -> 1
+        1 -> 2
+        2 -> 4
+        3 -> 64
+        _ -> 0
 
-verify asciiChar
-    asciiChar(50, 50) => "█"
-    asciiChar(0, 50)  => " "
-    asciiChar(45, 50) => "@"
+verify dotBitLeft
+    dotBitLeft(0) => 1
+    dotBitLeft(3) => 64
+    dotBitLeft(9) => 0
 
-fn pixel(col: Int, row: Int, w: Int, h: Int, maxIter: Int) -> String
-    ? "Renders one ASCII char at (col,row) over the standard view window: cx in [-2.5, 1.0], cy in [-1.0, 1.0]."
-    cx = (Int.toFloat(col) / Int.toFloat(w)) * 3.5 - 2.5
-    cy = (Int.toFloat(row) / Int.toFloat(h)) * 2.0 - 1.0
-    asciiChar(mandelIter(0, 0.0, 0.0, cx, cy, maxIter), maxIter)
+fn dotBitRight(row: Int) -> Int
+    ? "Bit value for the right column at sub-pixel row 0..3."
+    match row
+        0 -> 8
+        1 -> 16
+        2 -> 32
+        3 -> 128
+        _ -> 0
 
-verify pixel
-    pixel(0, 0, 1, 1, 50) => " "
+verify dotBitRight
+    dotBitRight(0) => 8
+    dotBitRight(3) => 128
+    dotBitRight(9) => 0
 
-fn rowChars(col: Int, row: Int, w: Int, h: Int, maxIter: Int, acc: List<String>) -> List<String>
-    ? "Folds across columns, prepending each rendered pixel; reverses on completion."
-    match col >= w
+fn dot(cx: Float, cy: Float, maxIter: Int, bitVal: Int) -> Int
+    ? "Returns bitVal if (cx, cy) is inside the Mandelbrot set under the given iteration cap, else 0. Single sub-pixel sampling."
+    match mandelIter(0, 0.0, 0.0, cx, cy, maxIter) >= maxIter
+        true  -> bitVal
+        false -> 0
+
+verify dot
+    dot(0.0, 0.0, 50, 1)   => 1
+    dot(3.0, 0.0, 50, 1)   => 0
+    dot(0.0, 0.0, 50, 128) => 128
+
+fn cellCx(charCol: Int, dx: Int, charsW: Int) -> Float
+    ? "Sub-pixel column → Mandelbrot cx coordinate. Full view: cx ∈ [-2.5, 1.0]."
+    pixelX = charCol * 2 + dx
+    pixelW = charsW * 2
+    Int.toFloat(pixelX) / Int.toFloat(pixelW) * 3.5 - 2.5
+
+verify cellCx
+    cellCx(0, 0, 1) => 0.0 - 2.5
+    cellCx(0, 1, 2) => 0.0 - 1.625
+
+fn cellCy(charRow: Int, dy: Int, charsH: Int) -> Float
+    ? "Sub-pixel row → Mandelbrot cy coordinate. Full view: cy ∈ [-1.0, 1.0]."
+    pixelY = charRow * 4 + dy
+    pixelH = charsH * 4
+    Int.toFloat(pixelY) / Int.toFloat(pixelH) * 2.0 - 1.0
+
+verify cellCy
+    cellCy(0, 0, 1) => 0.0 - 1.0
+    cellCy(0, 1, 1) => 0.0 - 0.5
+
+fn brailleCell(charCol: Int, charRow: Int, charsW: Int, charsH: Int, maxIter: Int) -> String
+    ? "Render one Braille character by sampling all eight sub-pixels through the Mandelbrot set and OR-ing their bit values."
+    cxL = cellCx(charCol, 0, charsW)
+    cxR = cellCx(charCol, 1, charsW)
+    cy0 = cellCy(charRow, 0, charsH)
+    cy1 = cellCy(charRow, 1, charsH)
+    cy2 = cellCy(charRow, 2, charsH)
+    cy3 = cellCy(charRow, 3, charsH)
+    b0 = dot(cxL, cy0, maxIter, dotBitLeft(0))
+    b1 = dot(cxL, cy1, maxIter, dotBitLeft(1))
+    b2 = dot(cxL, cy2, maxIter, dotBitLeft(2))
+    b3 = dot(cxL, cy3, maxIter, dotBitLeft(3))
+    b4 = dot(cxR, cy0, maxIter, dotBitRight(0))
+    b5 = dot(cxR, cy1, maxIter, dotBitRight(1))
+    b6 = dot(cxR, cy2, maxIter, dotBitRight(2))
+    b7 = dot(cxR, cy3, maxIter, dotBitRight(3))
+    brailleChar(b0 + b1 + b2 + b3 + b4 + b5 + b6 + b7)
+
+verify brailleCell
+    String.len(brailleCell(0, 0, 1, 1, 50)) => 1
+
+fn cellRow(col: Int, row: Int, charsW: Int, charsH: Int, maxIter: Int, acc: List<String>) -> List<String>
+    ? "Folds across one row of Braille cells, prepending each rendered char; reverses on completion."
+    match col >= charsW
         true  -> List.reverse(acc)
-        false -> rowChars(col + 1, row, w, h, maxIter, List.prepend(pixel(col, row, w, h, maxIter), acc))
+        false -> cellRow(col + 1, row, charsW, charsH, maxIter, List.prepend(brailleCell(col, row, charsW, charsH, maxIter), acc))
 
-verify rowChars
-    rowChars(0, 0, 0, 1, 50, []) => []
-    rowChars(0, 0, 1, 1, 50, []) => [" "]
+verify cellRow
+    cellRow(0, 0, 0, 1, 50, []) => []
+    String.len(String.join(cellRow(0, 0, 2, 1, 50, []), "")) => 2
 
-fn renderRow(row: Int, w: Int, h: Int, maxIter: Int) -> String
-    ? "Joins one row of pixels into a single text line."
-    String.join(rowChars(0, row, w, h, maxIter, []), "")
+fn renderRow(row: Int, charsW: Int, charsH: Int, maxIter: Int) -> String
+    ? "Joins one row of Braille cells into a single text line."
+    String.join(cellRow(0, row, charsW, charsH, maxIter, []), "")
 
 verify renderRow
     renderRow(0, 0, 1, 50) => ""
-    renderRow(0, 1, 1, 50) => " "
 
-fn allRows(row: Int, w: Int, h: Int, maxIter: Int, acc: List<String>) -> List<String>
-    ? "Folds across rows, accumulating each rendered line."
-    match row >= h
+fn allRows(row: Int, charsW: Int, charsH: Int, maxIter: Int, acc: List<String>) -> List<String>
+    ? "Folds across char-rows, accumulating each rendered line."
+    match row >= charsH
         true  -> List.reverse(acc)
-        false -> allRows(row + 1, w, h, maxIter, List.prepend(renderRow(row, w, h, maxIter), acc))
+        false -> allRows(row + 1, charsW, charsH, maxIter, List.prepend(renderRow(row, charsW, charsH, maxIter), acc))
 
 verify allRows
     allRows(0, 1, 0, 50, []) => []
-    allRows(0, 1, 1, 50, []) => [" "]
+    String.len(String.join(allRows(0, 2, 2, 50, []), "")) => 4
 
-fn render(w: Int, h: Int, maxIter: Int) -> String
-    ? "Public entry: renders an ASCII Mandelbrot of size w×h with the given iteration cap."
-    String.join(allRows(0, w, h, maxIter, []), "\n")
+fn render(charsW: Int, charsH: Int, maxIter: Int) -> String
+    ? "Public entry: renders a Braille-encoded ASCII Mandelbrot of charsW × charsH characters (covering 2*charsW × 4*charsH logical sub-pixels)."
+    String.join(allRows(0, charsW, charsH, maxIter, []), "\n")
 
 verify render
     render(0, 0, 50) => ""
-    render(1, 1, 50) => " "
 
 fn page(rendered: String) -> String
-    ? "HTML page wrapping a rendered ASCII fractal. Pure string assembly — no IO."
+    ? "HTML page wrapping a rendered Braille fractal. Pure string assembly — no IO."
     String.join([
         "<!doctype html>",
         "<html lang=\"en\">",
@@ -108,19 +172,19 @@ fn page(rendered: String) -> String
         "  <meta charset=\"utf-8\">",
         "  <title>edge.averlang.dev — Mandelbrot from pure Aver</title>",
         "  <style>",
-        "    body {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; max-width: 1040px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; color: #1a1a1a; background: #fafafa; }}",
+        "    body {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; color: #1a1a1a; background: #fafafa; }}",
         "    h1 {{ font-size: 1.4rem; margin-bottom: 0.2rem; }}",
         "    .sub {{ color: #666; margin-top: 0; font-size: 0.92rem; }}",
-        "    pre.fractal {{ background: #0f0f0f; color: #d4f7d4; padding: 1rem; border-radius: 8px; overflow: auto; font-size: 0.7rem; line-height: 1.0; letter-spacing: 0.06em; box-shadow: 0 1px 4px rgba(0,0,0,0.18); }}",
+        "    pre.fractal {{ background: #0f0f0f; color: #d4f7d4; padding: 1rem; border-radius: 8px; font-size: clamp(0.5rem, 1.45vw, 0.95rem); line-height: 1.0; letter-spacing: 0; box-shadow: 0 1px 4px rgba(0,0,0,0.18); white-space: pre; width: max-content; max-width: 100%; margin: 0 auto; box-sizing: border-box; overflow-x: auto; }}",
         "    a {{ color: #1a4cdb; }}",
         "    code {{ background: #f3f3f3; padding: 0.1em 0.35em; border-radius: 3px; }}",
         "  </style>",
         "</head>",
         "<body>",
         "  <h1>Mandelbrot, in pure Aver, served from the edge.</h1>",
-        "  <p class=\"sub\">200×80 grid, max 80 iterations per pixel, 25-level gradient (24 ASCII/Unicode escape steps + a full block for points inside the set). Recomputed in pure Aver on every request — no caching. ~6 ms compute locally / ~8-9 ms on this Worker, comfortably under the free-plan 10 ms CPU cap. (Cloudflare freezes the wall clock to request time, so we don't print a per-request render duration.)</p>",
+        "  <p class=\"sub\">Rendered via Unicode Braille — every glyph below packs 2×4 sub-pixels of the set into one character (U+2800..U+28FF). At 80×24 chars the image carries a 160×96 sub-pixel resolution while staying compact on screen. Recomputed in pure Aver on every request — no caching. ~6 ms compute on this Worker, comfortably under the free-plan 10 ms CPU cap.</p>",
         "  <pre class=\"fractal\">{rendered}</pre>",
-        "  <p>Output of <code>mandelIter</code> — a recursive function that iterates <code>z = z² + c</code> until it escapes radius 2 or hits the cap. <code>pickChar</code> picks a character from a 24-step ASCII + Unicode gradient based on the escape count; points inside the set render as a full block <code>█</code>. The <code>Fractal</code> module declares <code>effects []</code>. <a href=\"https://github.com/jasisz/aver/blob/main/tools/edge/fractal.av\">Read the source.</a></p>",
+        "  <p>Pattern lifted from <a href=\"https://github.com/jasisz/aver/blob/main/examples/games/doom/render.av\">the Doom raycaster's Braille renderer</a>. Each Braille code point's low 8 bits are exactly an eight-dot bitmap; we OR together one bit per sub-pixel hit on <code>mandelIter</code>'s inside-set test, then look up the resulting glyph through <code>Char.fromCode</code>. The <code>Fractal</code> module declares <code>effects []</code>. <a href=\"https://github.com/jasisz/aver/blob/main/tools/edge/fractal.av\">Read the fractal source.</a></p>",
         "  <p><a href=\"/\">← back to the landing</a></p>",
         "</body>",
         "</html>",
