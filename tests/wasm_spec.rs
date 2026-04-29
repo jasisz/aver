@@ -422,3 +422,301 @@ fn main()
     let _ = fs::remove_dir_all(module_path.parent().expect("temp module dir"));
     let _ = fs::remove_dir_all(&output_dir);
 }
+
+// ─── Memory & GC stress suite ──────────────────────────────────────────
+//
+// Each of these compiles a small Aver program, runs it under
+// `aver run --wasm` (built-in wasmtime host), and checks stdout.
+// The shape is "do enough work that the boundary GC fires + the
+// runtime allocates+rebases survivors", then assert the program
+// produces the *exact* expected output. A corrupted heap or
+// dropped survivor will diverge silently otherwise.
+
+fn run_wasm_and_collect(prefix: &str, source: &str) -> String {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let module_path = write_temp_module(prefix, source);
+    let output = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("run")
+        .arg(&module_path)
+        .arg("--wasm")
+        .output()
+        .expect("expected `aver run --wasm` to execute");
+    let _ = fs::remove_dir_all(module_path.parent().expect("temp module dir"));
+    assert!(
+        output.status.success(),
+        "{} WASM run failed:\n{}",
+        prefix,
+        format_output(&output)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// Map.set on the same key 1000 times with distinct values must leave
+/// the map at length 1 carrying the last write. A broken probe / wrong
+/// owned-mutate / GC tombstone bug would either grow the count or lose
+/// the latest value.
+#[test]
+fn wasm_run_map_overwrite_same_key_keeps_count_one() {
+    let stdout = run_wasm_and_collect(
+        "aver-wasm-stress-map-overwrite",
+        r#"module Tmp
+
+fn loop(m: Map<String, Int>, i: Int, n: Int) -> Map<String, Int>
+    match i >= n
+        true  -> m
+        false -> loop(Map.set(m, "k", i), i + 1, n)
+
+fn main()
+    ! [Console.print]
+    m = loop(Map.empty(), 0, 1000)
+    Console.print(Int.toString(List.len(Map.entries(m))))
+    Console.print(Int.toString(Option.withDefault(Map.get(m, "k"), -1)))
+"#,
+    );
+    assert_eq!(stdout, "1\n999", "overwrite stress diverged:\n{}", stdout);
+}
+
+/// Build a 20 000-entry Map<String, Int> via TCO, then read every
+/// single key back. Forces ~12 capacity doublings (8 → 16384) and
+/// many GC compactions because the heap grows past 16 KiB watermark.
+/// Asserts: count == 20000 and the sum-of-values is the expected
+/// closed-form result, so any silently-dropped entry shifts the sum.
+#[test]
+fn wasm_run_map_twenty_thousand_unique_keys_round_trip() {
+    let stdout = run_wasm_and_collect(
+        "aver-wasm-stress-map-20k",
+        r#"module Tmp
+
+fn build(m: Map<String, Int>, i: Int, n: Int) -> Map<String, Int>
+    match i >= n
+        true  -> m
+        false -> build(Map.set(m, Int.toString(i), i), i + 1, n)
+
+fn sum(m: Map<String, Int>, i: Int, n: Int, acc: Int) -> Int
+    match i >= n
+        true  -> acc
+        false -> sum(m, i + 1, n, acc + Option.withDefault(Map.get(m, Int.toString(i)), -1))
+
+fn main()
+    ! [Console.print]
+    m = build(Map.empty(), 0, 20000)
+    Console.print(Int.toString(List.len(Map.entries(m))))
+    Console.print(Int.toString(sum(m, 0, 20000, 0)))
+"#,
+    );
+    // sum 0..19999 = 19999 * 20000 / 2 = 199990000
+    assert_eq!(
+        stdout, "20000\n199990000",
+        "20k round-trip diverged:\n{}",
+        stdout
+    );
+}
+
+/// Vector.set in a 10 000-iteration TCO loop with a 10 000-element
+/// flat vector. Owned-mutate fast path emits inline `i64.store`; the
+/// boundary GC must not be confused by the large flat allocation
+/// living across many iterations. Asserts that every cell holds the
+/// value we wrote.
+#[test]
+fn wasm_run_vector_ten_thousand_in_place_writes_round_trip() {
+    let stdout = run_wasm_and_collect(
+        "aver-wasm-stress-vec-10k",
+        r#"module Tmp
+
+fn fill(v: Vector<Int>, i: Int, n: Int) -> Vector<Int>
+    match i >= n
+        true  -> v
+        false -> fill(Option.withDefault(Vector.set(v, i, i + 1), v), i + 1, n)
+
+fn sum(v: Vector<Int>, i: Int, n: Int, acc: Int) -> Int
+    match i >= n
+        true  -> acc
+        false -> sum(v, i + 1, n, acc + Option.withDefault(Vector.get(v, i), 0))
+
+fn main()
+    ! [Console.print]
+    v = fill(Vector.new(10000, 0), 0, 10000)
+    Console.print(Int.toString(sum(v, 0, 10000, 0)))
+"#,
+    );
+    // sum 1..10000 = 10000 * 10001 / 2 = 50005000
+    assert_eq!(stdout, "50005000", "vec stress diverged:\n{}", stdout);
+}
+
+/// Two collections mutated in lockstep inside a single TCO frame —
+/// catches GC bugs where compaction handles one kind correctly and
+/// the other not. Both Map and Vector see owned-mutate dispatch.
+#[test]
+fn wasm_run_mixed_map_vector_lockstep_in_tco() {
+    let stdout = run_wasm_and_collect(
+        "aver-wasm-stress-mixed-mv",
+        r#"module Tmp
+
+record Acc
+    m: Map<Int, Int>
+    v: Vector<Int>
+
+fn step(a: Acc, i: Int, n: Int) -> Acc
+    match i >= n
+        true  -> a
+        false -> step(
+            Acc(
+                m = Map.set(a.m, i, i * 2),
+                v = Option.withDefault(Vector.set(a.v, i, i * 3), a.v),
+            ),
+            i + 1,
+            n,
+        )
+
+fn main()
+    ! [Console.print]
+    a = step(Acc(m = Map.empty(), v = Vector.new(2000, 0)), 0, 2000)
+    Console.print(Int.toString(List.len(Map.entries(a.m))))
+    Console.print(Int.toString(Option.withDefault(Map.get(a.m, 1500), -1)))
+    Console.print(Int.toString(Option.withDefault(Vector.get(a.v, 1500), -1)))
+"#,
+    );
+    assert_eq!(
+        stdout, "2000\n3000\n4500",
+        "mixed M+V stress diverged:\n{}",
+        stdout
+    );
+}
+
+/// String keys carried across many compactions. Because strings live
+/// on the heap, GC must rebase each key cell when it walks an
+/// occupied bucket — wrong key_kind detection, missing meta byte, or
+/// a stale offset would corrupt the key and the lookup would miss.
+#[test]
+fn wasm_run_string_key_map_survives_compaction() {
+    let stdout = run_wasm_and_collect(
+        "aver-wasm-stress-strkey-gc",
+        r#"module Tmp
+
+fn build(m: Map<String, Int>, i: Int, n: Int) -> Map<String, Int>
+    match i >= n
+        true  -> m
+        false -> build(Map.set(m, "key-" + Int.toString(i), i), i + 1, n)
+
+fn main()
+    ! [Console.print]
+    m = build(Map.empty(), 0, 5000)
+    Console.print(Int.toString(Option.withDefault(Map.get(m, "key-0"), -1)))
+    Console.print(Int.toString(Option.withDefault(Map.get(m, "key-2500"), -1)))
+    Console.print(Int.toString(Option.withDefault(Map.get(m, "key-4999"), -1)))
+    Console.print(Int.toString(Option.withDefault(Map.get(m, "missing"), -1)))
+"#,
+    );
+    assert_eq!(
+        stdout, "0\n2500\n4999\n-1",
+        "string-key stress diverged:\n{}",
+        stdout
+    );
+}
+
+/// Many short-lived string allocations inside a TCO loop while a
+/// long-lived string is preserved across iterations. The short-lived
+/// ones become garbage every iter; compaction must not mistakenly
+/// reclaim the long-lived one. We read the long string back at the
+/// end to confirm it's still intact.
+#[test]
+fn wasm_run_garbage_strings_do_not_corrupt_survivors() {
+    let stdout = run_wasm_and_collect(
+        "aver-wasm-stress-gc-strings",
+        r#"module Tmp
+
+fn churn(keep: String, i: Int, n: Int) -> String
+    match i >= n
+        true  -> keep
+        false -> churn(keep, i + 1, n)
+
+fn main()
+    ! [Console.print]
+    survivor = "I should still be here at the end"
+    final = churn(survivor, 0, 50000)
+    Console.print(final)
+"#,
+    );
+    assert_eq!(
+        stdout,
+        "I should still be here at the end",
+        "long-lived string corrupted:\n{}",
+        stdout
+    );
+}
+
+/// A nested data structure (record holds Map holds list of records)
+/// reaches every kind of pointer-ish heap object the runtime
+/// supports. After a forced compaction the structure must read back
+/// identically — any wrong pointer rebase blows up either a load or
+/// a length lookup.
+#[test]
+fn wasm_run_deeply_nested_record_map_list_round_trips() {
+    let stdout = run_wasm_and_collect(
+        "aver-wasm-stress-nested",
+        r#"module Tmp
+
+record Pair
+    a: String
+    b: Int
+
+fn buildList(acc: List<Pair>, i: Int, n: Int) -> List<Pair>
+    match i >= n
+        true  -> acc
+        false -> buildList(List.prepend(Pair(a = Int.toString(i), b = i), acc), i + 1, n)
+
+fn buildMap(m: Map<Int, List<Pair>>, i: Int, n: Int) -> Map<Int, List<Pair>>
+    match i >= n
+        true  -> m
+        false -> buildMap(Map.set(m, i, buildList([], 0, 10)), i + 1, n)
+
+fn main()
+    ! [Console.print]
+    m = buildMap(Map.empty(), 0, 500)
+    Console.print(Int.toString(List.len(Map.entries(m))))
+    Console.print(Int.toString(List.len(Option.withDefault(Map.get(m, 250), []))))
+"#,
+    );
+    assert_eq!(
+        stdout, "500\n10",
+        "nested-record stress diverged:\n{}",
+        stdout
+    );
+}
+
+/// Force at least 13 capacity doublings (8 → 16 → … → 32768) by
+/// inserting a tight power-of-two boundary. This drives the resize
+/// path repeatedly, so the rehash + bucket rebuild must not lose
+/// any entry. Tombstones never come into play — we only insert.
+#[test]
+fn wasm_run_map_resize_through_thirteen_doublings() {
+    let stdout = run_wasm_and_collect(
+        "aver-wasm-stress-resize",
+        r#"module Tmp
+
+fn fill(m: Map<Int, Int>, i: Int, n: Int) -> Map<Int, Int>
+    match i >= n
+        true  -> m
+        false -> fill(Map.set(m, i, i), i + 1, n)
+
+fn check(m: Map<Int, Int>, i: Int, n: Int, acc: Int) -> Int
+    match i >= n
+        true  -> acc
+        false -> check(m, i + 1, n, acc + Option.withDefault(Map.get(m, i), -1))
+
+fn main()
+    ! [Console.print]
+    m = fill(Map.empty(), 0, 25000)
+    Console.print(Int.toString(List.len(Map.entries(m))))
+    Console.print(Int.toString(check(m, 0, 25000, 0)))
+"#,
+    );
+    // Sum 0..24999 = 24999*25000/2 = 312487500
+    assert_eq!(
+        stdout, "25000\n312487500",
+        "resize stress diverged:\n{}",
+        stdout
+    );
+}
