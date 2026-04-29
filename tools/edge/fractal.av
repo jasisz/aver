@@ -5,9 +5,39 @@ module Fractal
         "mandelIter samples per char, one bit per sample, packed into the"
         "low 8 bits of the Braille code-point. Pattern lifted from"
         "examples/games/doom/render.av. No effects: render() builds the"
-        "string, page() wraps it in HTML."
-    exposes [render, page]
+        "string, page() wraps a full-view + seahorse-zoom pair in HTML."
+    exposes [render, page, fullView, seahorseView, View]
     effects []
+
+record View
+    cxMin: Float
+    cxRange: Float
+    cyMin: Float
+    cyRange: Float
+
+fn fullView() -> View
+    ? "Standard Mandelbrot view: cx ∈ [-2.5, 1.0], cy ∈ [-1.0, 1.0]."
+    View(
+        cxMin = 0.0 - 2.5,
+        cxRange = 3.5,
+        cyMin = 0.0 - 1.0,
+        cyRange = 2.0,
+    )
+
+verify fullView
+    fullView().cxRange => 3.5
+
+fn seahorseView() -> View
+    ? "Zoom into the seahorse valley north of the period-2 bulb. ~100× zoom relative to the full set, picked to fit cleanly inside the free-plan 10 ms budget while still exposing the filament structure that the unzoomed view smears out."
+    View(
+        cxMin = 0.0 - 0.7625,
+        cxRange = 0.035,
+        cyMin = 0.0925,
+        cyRange = 0.035,
+    )
+
+verify seahorseView
+    seahorseView().cxRange => 0.035
 
 fn mandelStep(n: Int, x: Float, y: Float, cx: Float, cy: Float, maxIter: Int) -> Int
     ? "One iteration of z = z² + c, dispatched on whether |z|² has escaped 4."
@@ -88,34 +118,34 @@ verify dot
     dot(3.0, 0.0, 50, 1)   => 0
     dot(0.0, 0.0, 50, 128) => 128
 
-fn cellCx(charCol: Int, dx: Int, charsW: Int) -> Float
-    ? "Sub-pixel column → Mandelbrot cx coordinate. Full view: cx ∈ [-2.5, 1.0]."
+fn cellCx(charCol: Int, dx: Int, charsW: Int, view: View) -> Float
+    ? "Sub-pixel column → Mandelbrot cx coordinate, parameterised by the view rectangle."
     pixelX = charCol * 2 + dx
     pixelW = charsW * 2
-    Int.toFloat(pixelX) / Int.toFloat(pixelW) * 3.5 - 2.5
+    Int.toFloat(pixelX) / Int.toFloat(pixelW) * view.cxRange + view.cxMin
 
 verify cellCx
-    cellCx(0, 0, 1) => 0.0 - 2.5
-    cellCx(0, 1, 2) => 0.0 - 1.625
+    cellCx(0, 0, 1, fullView()) => 0.0 - 2.5
+    cellCx(0, 1, 2, fullView()) => 0.0 - 1.625
 
-fn cellCy(charRow: Int, dy: Int, charsH: Int) -> Float
-    ? "Sub-pixel row → Mandelbrot cy coordinate. Full view: cy ∈ [-1.0, 1.0]."
+fn cellCy(charRow: Int, dy: Int, charsH: Int, view: View) -> Float
+    ? "Sub-pixel row → Mandelbrot cy coordinate, parameterised by the view rectangle."
     pixelY = charRow * 4 + dy
     pixelH = charsH * 4
-    Int.toFloat(pixelY) / Int.toFloat(pixelH) * 2.0 - 1.0
+    Int.toFloat(pixelY) / Int.toFloat(pixelH) * view.cyRange + view.cyMin
 
 verify cellCy
-    cellCy(0, 0, 1) => 0.0 - 1.0
-    cellCy(0, 1, 1) => 0.0 - 0.5
+    cellCy(0, 0, 1, fullView()) => 0.0 - 1.0
+    cellCy(0, 1, 1, fullView()) => 0.0 - 0.5
 
-fn brailleCell(charCol: Int, charRow: Int, charsW: Int, charsH: Int, maxIter: Int) -> String
-    ? "Render one Braille character by sampling all eight sub-pixels through the Mandelbrot set and OR-ing their bit values."
-    cxL = cellCx(charCol, 0, charsW)
-    cxR = cellCx(charCol, 1, charsW)
-    cy0 = cellCy(charRow, 0, charsH)
-    cy1 = cellCy(charRow, 1, charsH)
-    cy2 = cellCy(charRow, 2, charsH)
-    cy3 = cellCy(charRow, 3, charsH)
+fn brailleCell(charCol: Int, charRow: Int, charsW: Int, charsH: Int, maxIter: Int, view: View) -> String
+    ? "Render one Braille character by sampling all eight sub-pixels of the cell through the Mandelbrot set and OR-ing their bit values."
+    cxL = cellCx(charCol, 0, charsW, view)
+    cxR = cellCx(charCol, 1, charsW, view)
+    cy0 = cellCy(charRow, 0, charsH, view)
+    cy1 = cellCy(charRow, 1, charsH, view)
+    cy2 = cellCy(charRow, 2, charsH, view)
+    cy3 = cellCy(charRow, 3, charsH, view)
     b0 = dot(cxL, cy0, maxIter, dotBitLeft(0))
     b1 = dot(cxL, cy1, maxIter, dotBitLeft(1))
     b2 = dot(cxL, cy2, maxIter, dotBitLeft(2))
@@ -127,44 +157,44 @@ fn brailleCell(charCol: Int, charRow: Int, charsW: Int, charsH: Int, maxIter: In
     brailleChar(b0 + b1 + b2 + b3 + b4 + b5 + b6 + b7)
 
 verify brailleCell
-    String.len(brailleCell(0, 0, 1, 1, 50)) => 1
+    String.len(brailleCell(0, 0, 1, 1, 50, fullView())) => 1
 
-fn cellRow(col: Int, row: Int, charsW: Int, charsH: Int, maxIter: Int, acc: List<String>) -> List<String>
+fn cellRow(col: Int, row: Int, charsW: Int, charsH: Int, maxIter: Int, view: View, acc: List<String>) -> List<String>
     ? "Folds across one row of Braille cells, prepending each rendered char; reverses on completion."
     match col >= charsW
         true  -> List.reverse(acc)
-        false -> cellRow(col + 1, row, charsW, charsH, maxIter, List.prepend(brailleCell(col, row, charsW, charsH, maxIter), acc))
+        false -> cellRow(col + 1, row, charsW, charsH, maxIter, view, List.prepend(brailleCell(col, row, charsW, charsH, maxIter, view), acc))
 
 verify cellRow
-    cellRow(0, 0, 0, 1, 50, []) => []
-    String.len(String.join(cellRow(0, 0, 2, 1, 50, []), "")) => 2
+    cellRow(0, 0, 0, 1, 50, fullView(), []) => []
+    String.len(String.join(cellRow(0, 0, 2, 1, 50, fullView(), []), "")) => 2
 
-fn renderRow(row: Int, charsW: Int, charsH: Int, maxIter: Int) -> String
+fn renderRow(row: Int, charsW: Int, charsH: Int, maxIter: Int, view: View) -> String
     ? "Joins one row of Braille cells into a single text line."
-    String.join(cellRow(0, row, charsW, charsH, maxIter, []), "")
+    String.join(cellRow(0, row, charsW, charsH, maxIter, view, []), "")
 
 verify renderRow
-    renderRow(0, 0, 1, 50) => ""
+    renderRow(0, 0, 1, 50, fullView()) => ""
 
-fn allRows(row: Int, charsW: Int, charsH: Int, maxIter: Int, acc: List<String>) -> List<String>
+fn allRows(row: Int, charsW: Int, charsH: Int, maxIter: Int, view: View, acc: List<String>) -> List<String>
     ? "Folds across char-rows, accumulating each rendered line."
     match row >= charsH
         true  -> List.reverse(acc)
-        false -> allRows(row + 1, charsW, charsH, maxIter, List.prepend(renderRow(row, charsW, charsH, maxIter), acc))
+        false -> allRows(row + 1, charsW, charsH, maxIter, view, List.prepend(renderRow(row, charsW, charsH, maxIter, view), acc))
 
 verify allRows
-    allRows(0, 1, 0, 50, []) => []
-    String.len(String.join(allRows(0, 2, 2, 50, []), "")) => 4
+    allRows(0, 1, 0, 50, fullView(), []) => []
+    String.len(String.join(allRows(0, 2, 2, 50, fullView(), []), "")) => 4
 
-fn render(charsW: Int, charsH: Int, maxIter: Int) -> String
-    ? "Public entry: renders a Braille-encoded ASCII Mandelbrot of charsW × charsH characters (covering 2*charsW × 4*charsH logical sub-pixels)."
-    String.join(allRows(0, charsW, charsH, maxIter, []), "\n")
+fn render(charsW: Int, charsH: Int, maxIter: Int, view: View) -> String
+    ? "Public entry: renders a Braille-encoded Mandelbrot of charsW × charsH characters (covering 2*charsW × 4*charsH logical sub-pixels) over the given view rectangle."
+    String.join(allRows(0, charsW, charsH, maxIter, view, []), "\n")
 
 verify render
-    render(0, 0, 50) => ""
+    render(0, 0, 50, fullView()) => ""
 
-fn page(rendered: String) -> String
-    ? "HTML page wrapping a rendered Braille fractal. Pure string assembly — no IO."
+fn page(fullRendered: String, zoomRendered: String) -> String
+    ? "HTML page wrapping two Braille fractals: the full Mandelbrot view and a zoom into the seahorse valley. Pure string assembly — no IO."
     String.join([
         "<!doctype html>",
         "<html lang=\"en\">",
@@ -175,6 +205,8 @@ fn page(rendered: String) -> String
         "    body {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; color: #1a1a1a; background: #fafafa; }}",
         "    h1 {{ font-size: 1.4rem; margin-bottom: 0.2rem; }}",
         "    .sub {{ color: #666; margin-top: 0; font-size: 0.92rem; }}",
+        "    h2.viewname {{ font-size: 1.0rem; margin: 1.6rem 0 0.4rem; color: #444; font-weight: 650; }}",
+        "    h2.viewname .coords {{ color: #888; font-weight: 400; font-size: 0.85rem; margin-left: 0.4rem; }}",
         "    pre.fractal {{ background: #0f0f0f; color: #d4f7d4; padding: 1rem; border-radius: 8px; font-size: clamp(0.5rem, 1.45vw, 0.95rem); line-height: 1.0; letter-spacing: 0; box-shadow: 0 1px 4px rgba(0,0,0,0.18); white-space: pre; width: max-content; max-width: 100%; margin: 0 auto; box-sizing: border-box; overflow-x: auto; }}",
         "    a {{ color: #1a4cdb; }}",
         "    code {{ background: #f3f3f3; padding: 0.1em 0.35em; border-radius: 3px; }}",
@@ -182,9 +214,12 @@ fn page(rendered: String) -> String
         "</head>",
         "<body>",
         "  <h1>Mandelbrot, in pure Aver, served from the edge.</h1>",
-        "  <p class=\"sub\">Rendered via Unicode Braille — every glyph below packs 2×4 sub-pixels of the set into one character (U+2800..U+28FF). At 80×24 chars the image carries a 160×96 sub-pixel resolution while staying compact on screen. Recomputed in pure Aver on every request — no caching. ~6 ms compute on this Worker, comfortably under the free-plan 10 ms CPU cap.</p>",
-        "  <pre class=\"fractal\">{rendered}</pre>",
-        "  <p>Pattern lifted from <a href=\"https://github.com/jasisz/aver/blob/main/examples/games/doom/render.av\">the Doom raycaster's Braille renderer</a>. Each Braille code point's low 8 bits are exactly an eight-dot bitmap; we OR together one bit per sub-pixel hit on <code>mandelIter</code>'s inside-set test, then look up the resulting glyph through <code>Char.fromCode</code>. The <code>Fractal</code> module declares <code>effects []</code>. <a href=\"https://github.com/jasisz/aver/blob/main/tools/edge/fractal.av\">Read the fractal source.</a></p>",
+        "  <p class=\"sub\">Two views, both rendered via Unicode Braille — every glyph packs 2×4 sub-pixels of the set into one character (U+2800..U+28FF). The same <code>render(w, h, maxIter, view)</code> function builds both panels per request — no caching, no precomputed images. Comfortably under the free-plan 10 ms CPU cap.</p>",
+        "  <h2 class=\"viewname\">full set <span class=\"coords\">cx ∈ [-2.5, 1.0], cy ∈ [-1.0, 1.0]</span></h2>",
+        "  <pre class=\"fractal\">{fullRendered}</pre>",
+        "  <h2 class=\"viewname\">seahorse valley <span class=\"coords\">cx ∈ [-0.7625, -0.7275], cy ∈ [0.0925, 0.1275] · 100× zoom</span></h2>",
+        "  <pre class=\"fractal\">{zoomRendered}</pre>",
+        "  <p>Pattern lifted from <a href=\"https://github.com/jasisz/aver/blob/main/examples/games/doom/render.av\">the Doom raycaster's Braille renderer</a>. Each Braille code point's low 8 bits are an eight-dot bitmap; we OR together one bit per sub-pixel hit on <code>mandelIter</code>'s inside-set test, then look up the resulting glyph through <code>Char.fromCode</code>. The view rectangle is just a 4-Float record passed through to <code>cellCx</code> / <code>cellCy</code> — same engine, two viewports. The <code>Fractal</code> module declares <code>effects []</code>. <a href=\"https://github.com/jasisz/aver/blob/main/tools/edge/fractal.av\">Read the fractal source.</a></p>",
         "  <p><a href=\"/\">← back to the landing</a></p>",
         "</body>",
         "</html>",

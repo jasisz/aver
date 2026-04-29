@@ -186,10 +186,13 @@ verify extractCountry
     extractCountry(HttpRequest(method = "GET", path = "/", body = "", headers = {})) => "??"
 
 fn fractalResponse() -> HttpResponse
-    ? "Renders a Braille-encoded Mandelbrot per request and returns it as styled HTML. 80×24 char-cells = 160×96 logical sub-pixels (each Braille glyph is 2×4 dots), 80-iteration cap; ~6 ms compute on Cloudflare Workers, comfortably inside the free-plan 10 ms CPU budget. The Fractal module is fully pure (effects []), so this function only wraps the rendered string in an HttpResponse."
+    ? "Renders two Braille-encoded Mandelbrot views per request — the full set plus a 350× zoom into the seahorse valley — and returns them as styled HTML. The same Fractal.render entry serves both views, parameterised by a View record. Compute fits inside the free-plan 10 ms CPU budget."
     HttpResponse(
         status = 200,
-        body = Fractal.page(Fractal.render(80, 24, 80)),
+        body = Fractal.page(
+            Fractal.render(60, 14, 60, Fractal.fullView()),
+            Fractal.render(60, 14, 80, Fractal.seahorseView()),
+        ),
         headers = { "content-type" => ["text/html; charset=utf-8"] },
     )
 
