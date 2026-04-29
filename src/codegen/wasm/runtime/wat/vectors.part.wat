@@ -1,9 +1,15 @@
-;; Flat-array vector operations. Layout:
-;;   offset 0   : 8-byte header — kind = OBJ_VECTOR (10), meta carries
+;; Persistent vector operations. Flat vectors keep the original layout:
+;;   offset 0   : header — kind = OBJ_VECTOR (10), meta bit 0 carries
 ;;                 the element-ptr flag, low 32 bits hold the length.
-;;   offset 8+i*8: i64 cell per element (8-byte stride for either i64
-;;                 scalars or i32 pointers, sign-extended at write time
-;;                 by callers).
+;;   offset 8+i*8: i64 cell per element.
+;;
+;; Vector.set returns a tiny patch vector instead of copying the flat array:
+;;   meta bit 1 set
+;;   offset 8  : base vector pointer
+;;   offset 16 : patched index
+;;   offset 24 : patched value
+;;
+;; This keeps Vector.set O(1) while preserving immutable old-vector semantics.
 ;; rt_vec_get / rt_vec_set return Option (rt_wrap with WRAP_SOME or
 ;; the NONE_SENTINEL i32 value -1).
 
@@ -104,6 +110,52 @@
 )
 (export "rt_vec_from_list" (func $rt_vec_from_list))
 
+(func $rt_vec_get_cell (param $vec i32) (param $idx i32) (result i64)
+  (local $cur i32)
+
+  local.get $vec
+  local.set $cur
+
+  block
+    loop
+      local.get $cur
+      call $rt_obj_meta
+      i32.const 2
+      i32.and
+      i32.eqz
+      if
+        local.get $cur
+        local.get $idx
+        i32.const 8
+        i32.mul
+        i32.add
+        i64.load offset=8
+        return
+      end
+
+      local.get $cur
+      i64.load offset=16
+      local.get $idx
+      i64.extend_i32_s
+      i64.eq
+      if
+        local.get $cur
+        i64.load offset=24
+        return
+      end
+
+      local.get $cur
+      i64.load offset=8
+      i32.wrap_i64
+      local.set $cur
+      br 0
+    end
+  end
+
+  unreachable
+)
+(export "rt_vec_get_cell" (func $rt_vec_get_cell))
+
 (func $rt_vec_get (param $vec i32) (param $idx i64) (result i32)
   (local $len i32)
   (local $i i32)
@@ -138,10 +190,7 @@
     i32.const 2    ;; WRAP_SOME
     local.get $vec
     local.get $i
-    i32.const 8
-    i32.mul
-    i32.add
-    i64.load offset=8
+    call $rt_vec_get_cell
     local.get $meta
     i32.const 1
     i32.and
@@ -152,9 +201,9 @@
 
 (func $rt_vec_set (param $vec i32) (param $idx i64) (param $val i64) (result i32)
   (local $len i32)
-  (local $new_vec i32)
+  (local $patch i32)
   (local $i i32)
-  (local $bytes i32)
+  (local $meta i32)
 
   local.get $vec
   i64.load
@@ -177,41 +226,121 @@
   if (result i32)
     i32.const -1
   else
-    ;; bytes = 8 + len*8
-    i32.const 8
-    local.get $len
-    i32.const 8
-    i32.mul
-    i32.add
-    local.set $bytes
-
-    local.get $bytes
-    call $rt_alloc
-    local.set $new_vec
-
-    ;; copy entire old vector
-    local.get $new_vec
     local.get $vec
-    local.get $bytes
-    memory.copy
+    call $rt_obj_meta
+    i32.const 1
+    i32.and
+    local.set $meta
 
-    ;; overwrite element at idx
-    local.get $new_vec
-    local.get $i
-    i32.const 8
-    i32.mul
-    i32.add
-    local.get $val
+    i32.const 32
+    call $rt_alloc
+    local.set $patch
+
+    ;; header = OBJ_VECTOR | elem_ptr_flag | patch_flag | len
+    local.get $patch
+    i64.const 0x0A00000000000000
+    local.get $meta
+    i32.const 2
+    i32.or
+    i64.extend_i32_u
+    i64.const 32
+    i64.shl
+    i64.or
+    local.get $len
+    i64.extend_i32_u
+    i64.or
+    i64.store
+
+    local.get $patch
+    local.get $vec
+    i64.extend_i32_u
     i64.store offset=8
 
+    local.get $patch
+    local.get $idx
+    i64.store offset=16
+
+    local.get $patch
+    local.get $val
+    i64.store offset=24
+
     i32.const 2   ;; WRAP_SOME
-    local.get $new_vec
+    local.get $patch
     i64.extend_i32_u
     i32.const 1
     call $rt_wrap
   end
 )
 (export "rt_vec_set" (func $rt_vec_set))
+
+(func $rt_vec_set_or_keep (param $vec i32) (param $idx i64) (param $val i64) (result i32)
+  (local $len i32)
+  (local $i i32)
+  (local $patch i32)
+  (local $meta i32)
+
+  local.get $vec
+  i64.load
+  i64.const 0xFFFFFFFF
+  i64.and
+  i32.wrap_i64
+  local.set $len
+
+  local.get $idx
+  i32.wrap_i64
+  local.set $i
+
+  local.get $i
+  i32.const 0
+  i32.lt_s
+  local.get $i
+  local.get $len
+  i32.ge_s
+  i32.or
+  if (result i32)
+    local.get $vec
+  else
+    local.get $vec
+    call $rt_obj_meta
+    i32.const 1
+    i32.and
+    local.set $meta
+
+    i32.const 32
+    call $rt_alloc
+    local.set $patch
+
+    local.get $patch
+    i64.const 0x0A00000000000000
+    local.get $meta
+    i32.const 2
+    i32.or
+    i64.extend_i32_u
+    i64.const 32
+    i64.shl
+    i64.or
+    local.get $len
+    i64.extend_i32_u
+    i64.or
+    i64.store
+
+    local.get $patch
+    local.get $vec
+    i64.extend_i32_u
+    i64.store offset=8
+
+    local.get $patch
+    local.get $idx
+    i64.store offset=16
+
+    local.get $patch
+    local.get $val
+    i64.store offset=24
+
+    local.get $patch
+  end
+)
+(export "rt_vec_set_or_keep" (func $rt_vec_set_or_keep))
 
 (func $rt_vec_new (param $size i64) (param $fill i64) (param $fill_ptr_flag i32) (result i32)
   (local $len i32)
@@ -310,10 +439,7 @@
       ;; acc = cons(vec[idx], acc, head_ptr_flag)
       local.get $vec
       local.get $idx
-      i32.const 8
-      i32.mul
-      i32.add
-      i64.load offset=8
+      call $rt_vec_get_cell
 
       local.get $acc
 

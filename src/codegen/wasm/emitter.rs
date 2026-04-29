@@ -292,6 +292,8 @@ pub fn build_wasm_module(
         rt_retain_i32: 63,
         rt_map_len: 64,
         rt_map_from_list: 65,
+        rt_vec_set_or_keep: 66,
+        rt_vec_get_cell: 67,
     };
     import_section.import("aver_runtime", "rt_alloc", EntityType::Function(rti.alloc));
     import_section.import(
@@ -621,6 +623,16 @@ pub fn build_wasm_module(
     );
     import_section.import(
         "aver_runtime",
+        "rt_vec_set_or_keep",
+        EntityType::Function(rti.i32_i64_i64_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_vec_get_cell",
+        EntityType::Function(rti.obj_field_i64),
+    );
+    import_section.import(
+        "aver_runtime",
         "memory",
         EntityType::Memory(MemoryType {
             minimum: 1,
@@ -654,7 +666,7 @@ pub fn build_wasm_module(
             }),
         );
     }
-    let mut import_func_count = 66u32; // 65 prior + rt_map_from_list
+    let mut import_func_count = 68u32; // 67 prior + rt_vec_get_cell
 
     // Aver-style host imports unconditionally, regardless of --adapter.
     // Under --bridge wasip1 the `aver_to_wasi.wasm` shim re-exports the

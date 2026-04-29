@@ -222,6 +222,8 @@ mod tests {
             ("rt_vec_get", "func"),
             ("rt_vec_len", "func"),
             ("rt_vec_set", "func"),
+            ("rt_vec_set_or_keep", "func"),
+            ("rt_vec_get_cell", "func"),
             ("rt_vec_new", "func"),
             ("rt_vec_to_list", "func"),
             ("rt_int_to_str", "func"),

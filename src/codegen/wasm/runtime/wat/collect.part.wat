@@ -81,51 +81,70 @@
         local.get 10
         i32.wrap_i64
         local.set 5
+        ;; Size dispatch. Special-case OBJ_VECTOR patch nodes first
+        ;; (kind == 10 with meta bit 1 set): they're always 32 bytes
+        ;; regardless of the logical `len` field carried by the
+        ;; header — that len mirrors the base vector for fast Map
+        ;; semantics, but the on-heap allocation is always
+        ;; (header + base_ptr + idx + val) = 32 bytes.
         local.get 3
-        i32.const 0
+        i32.const 10
         i32.eq
+        local.get 4
+        i32.const 2
+        i32.and
+        i32.const 0
+        i32.ne
+        i32.and
         if (result i32) ;; label = @3
-          i32.const 8
-          local.get 5
-          i32.add
-          i32.const 7
-          i32.add
-          i32.const -8
-          i32.and
+          i32.const 32
         else
           local.get 3
-          i32.const 3
+          i32.const 0
           i32.eq
-          local.get 3
-          i32.const 7
-          i32.eq
-          i32.or
-          local.get 3
-          i32.const 8
-          i32.eq
-          i32.or
           if (result i32) ;; label = @4
-            i32.const 16
+            i32.const 8
+            local.get 5
+            i32.add
+            i32.const 7
+            i32.add
+            i32.const -8
+            i32.and
           else
             local.get 3
-            i32.const 4
+            i32.const 3
             i32.eq
             local.get 3
-            i32.const 9
+            i32.const 7
             i32.eq
             i32.or
             local.get 3
-            i32.const 11
+            i32.const 8
             i32.eq
             i32.or
             if (result i32) ;; label = @5
-              i32.const 24
+              i32.const 16
             else
-              i32.const 8
-              local.get 5
-              i32.const 8
-              i32.mul
-              i32.add
+              local.get 3
+              i32.const 4
+              i32.eq
+              local.get 3
+              i32.const 9
+              i32.eq
+              i32.or
+              local.get 3
+              i32.const 11
+              i32.eq
+              i32.or
+              if (result i32) ;; label = @6
+                i32.const 24
+              else
+                i32.const 8
+                local.get 5
+                i32.const 8
+                i32.mul
+                i32.add
+              end
             end
           end
         end
@@ -308,39 +327,73 @@
         i32.eq
         if ;; label = @3
           local.get 4
-          i32.const 1
+          i32.const 2
           i32.and
           if ;; label = @4
-            i32.const 0
-            local.set 6
-            block ;; label = @5
-              loop ;; label = @6
-                local.get 6
-                local.get 5
-                i32.ge_u
-                br_if 1 (;@5;)
-                local.get 0
-                i32.const 8
-                i32.add
-                local.get 6
-                i32.const 8
-                i32.mul
-                i32.add
-                local.set 8
-                local.get 8
-                i64.load
-                i32.wrap_i64
-                call $rt_rebase_i32
-                local.set 7
-                local.get 8
-                local.get 7
-                i64.extend_i32_s
-                i64.store
-                local.get 6
-                i32.const 1
-                i32.add
-                local.set 6
-                br 0 (;@6;)
+            ;; Patch vector: rebase base_ptr at offset 8 (always a
+            ;; heap pointer to another vector), and rebase the
+            ;; patched value at offset 24 only if elem_ptr_flag is
+            ;; set. The patched_idx at offset 16 is always a plain
+            ;; i64 number — never rebased.
+            local.get 0
+            i64.load offset=8
+            i32.wrap_i64
+            call $rt_rebase_i32
+            local.set 7
+            local.get 0
+            local.get 7
+            i64.extend_i32_s
+            i64.store offset=8
+            local.get 4
+            i32.const 1
+            i32.and
+            if ;; label = @5
+              local.get 0
+              i64.load offset=24
+              i32.wrap_i64
+              call $rt_rebase_i32
+              local.set 7
+              local.get 0
+              local.get 7
+              i64.extend_i32_s
+              i64.store offset=24
+            end
+          else
+            local.get 4
+            i32.const 1
+            i32.and
+            if ;; label = @4
+              i32.const 0
+              local.set 6
+              block ;; label = @5
+                loop ;; label = @6
+                  local.get 6
+                  local.get 5
+                  i32.ge_u
+                  br_if 1 (;@5;)
+                  local.get 0
+                  i32.const 8
+                  i32.add
+                  local.get 6
+                  i32.const 8
+                  i32.mul
+                  i32.add
+                  local.set 8
+                  local.get 8
+                  i64.load
+                  i32.wrap_i64
+                  call $rt_rebase_i32
+                  local.set 7
+                  local.get 8
+                  local.get 7
+                  i64.extend_i32_s
+                  i64.store
+                  local.get 6
+                  i32.const 1
+                  i32.add
+                  local.set 6
+                  br 0 (;@6;)
+                end
               end
             end
           end
@@ -441,6 +494,22 @@
             local.get 11
             i32.wrap_i64
             local.set 6
+            ;; OBJ_VECTOR patch nodes are always 32 bytes (header +
+            ;; base_ptr + patched_idx + patched_val). Special-case
+            ;; before the generic `8 + len*8` fallthrough so the
+            ;; copy size matches the actual allocation.
+            local.get 4
+            i32.const 10
+            i32.eq
+            local.get 5
+            i32.const 2
+            i32.and
+            i32.const 0
+            i32.ne
+            i32.and
+            if (result i32) ;; label = @5
+              i32.const 32
+            else
             local.get 4
             i32.const 0
             i32.eq
@@ -488,6 +557,7 @@
                   i32.add
                 end
               end
+            end
             end
             local.set 3
             local.get 3
@@ -1111,39 +1181,72 @@
             i32.eq
             if ;; label = @5
               local.get 5
-              i32.const 1
+              i32.const 2
               i32.and
               if ;; label = @6
-                i32.const 0
-                local.set 7
-                block ;; label = @7
-                  loop ;; label = @8
-                    local.get 7
-                    local.get 6
-                    i32.ge_u
-                    br_if 1 (;@7;)
-                    local.get 2
-                    i32.const 8
-                    i32.add
-                    local.get 7
-                    i32.const 8
-                    i32.mul
-                    i32.add
-                    local.set 9
-                    local.get 9
-                    i64.load
-                    i32.wrap_i64
-                    call $rt_retain_i32
-                    local.set 8
-                    local.get 9
-                    local.get 8
-                    i64.extend_i32_s
-                    i64.store
-                    local.get 7
-                    i32.const 1
-                    i32.add
-                    local.set 7
-                    br 0 (;@8;)
+                ;; Patch vector retain: deep-copy base_ptr at
+                ;; offset 8 (always heap pointer) and patched_val
+                ;; at offset 24 only when elem_ptr_flag is set.
+                ;; offset 16 is the patched index (plain i64).
+                local.get 2
+                i64.load offset=8
+                i32.wrap_i64
+                call $rt_retain_i32
+                local.set 8
+                local.get 2
+                local.get 8
+                i64.extend_i32_s
+                i64.store offset=8
+                local.get 5
+                i32.const 1
+                i32.and
+                if ;; label = @7
+                  local.get 2
+                  i64.load offset=24
+                  i32.wrap_i64
+                  call $rt_retain_i32
+                  local.set 8
+                  local.get 2
+                  local.get 8
+                  i64.extend_i32_s
+                  i64.store offset=24
+                end
+              else
+                local.get 5
+                i32.const 1
+                i32.and
+                if ;; label = @6
+                  i32.const 0
+                  local.set 7
+                  block ;; label = @7
+                    loop ;; label = @8
+                      local.get 7
+                      local.get 6
+                      i32.ge_u
+                      br_if 1 (;@7;)
+                      local.get 2
+                      i32.const 8
+                      i32.add
+                      local.get 7
+                      i32.const 8
+                      i32.mul
+                      i32.add
+                      local.set 9
+                      local.get 9
+                      i64.load
+                      i32.wrap_i64
+                      call $rt_retain_i32
+                      local.set 8
+                      local.get 9
+                      local.get 8
+                      i64.extend_i32_s
+                      i64.store
+                      local.get 7
+                      i32.const 1
+                      i32.add
+                      local.set 7
+                      br 0 (;@8;)
+                    end
                   end
                 end
               end
