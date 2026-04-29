@@ -343,6 +343,19 @@ impl<'a> ExprEmitter<'a> {
             }
 
             CallPlan::Builtin(ref name) => {
+                // Fast path: Option.withDefault(Vector.set(v, i, x), v) where
+                // `v` is a `Resolved` slot whose `last_use` is true. Same
+                // shape as the VM's owned-arg dispatch — last-use analysis
+                // guarantees no further read of the slot after this
+                // expression, so the heap object behind the slot has no
+                // observer once we're done. Mutate the cell in place,
+                // return the same slot. Zero allocations.
+                if name == "Option.withDefault"
+                    && args.len() == 2
+                    && self.try_emit_vec_set_owned_keep(&args[0], &args[1])
+                {
+                    return;
+                }
                 // Fast path: Option.withDefault(Vector.get(v, i), default_literal)
                 // → inline bounds check + direct load, no wrapper allocation.
                 if name == "Option.withDefault"
@@ -1804,6 +1817,127 @@ impl<'a> ExprEmitter<'a> {
     }
 
     // -----------------------------------------------------------------------
+    /// Try to emit `Option.withDefault(Vector.set(v, i, x), v)` as an
+    /// inline owned-mutate + return-the-same-slot, when `v` is a
+    /// `Resolved` local whose `last_use` flag is set. Mirrors the VM's
+    /// `vec_set_nv_owned` path: the heap object behind the slot has no
+    /// observer past this expression (last-use analysis guarantees it),
+    /// so we can skip the copy and just `i64.store` the new cell.
+    ///
+    /// Returns the original slot pointer regardless of whether the index
+    /// was in bounds — that's how the fused `Option.withDefault(_, v)`
+    /// shape is meant to behave (out-of-bounds keeps the original).
+    fn try_emit_vec_set_owned_keep(
+        &mut self,
+        option_expr: &Spanned<Expr>,
+        default_expr: &Spanned<Expr>,
+    ) -> bool {
+        // option_expr must be `Vector.set(v, i, x)` — three args.
+        let Expr::FnCall(callee, inner_args) = &option_expr.node else {
+            return false;
+        };
+        if inner_args.len() != 3 {
+            return false;
+        }
+        let inner_plan = classify_call_plan(&callee.node, &self.ir_ctx());
+        if !matches!(inner_plan, CallPlan::Builtin(ref n) if n == "Vector.set") {
+            return false;
+        }
+
+        // The first arg of `Vector.set` and the `default_expr` of
+        // `Option.withDefault` must be the SAME local slot — that's
+        // what makes the fused shape meaningful.
+        let vec_arg = &inner_args[0].node;
+        if vec_arg != &default_expr.node {
+            return false;
+        }
+
+        // The vec arg must be a `Resolved` slot with `last_use = true`.
+        // Anything else (composite expression, non-last-use) means the
+        // heap object is potentially observed elsewhere — bail out to
+        // the regular copy-on-write path.
+        let Expr::Resolved {
+            name, last_use, ..
+        } = vec_arg
+        else {
+            return false;
+        };
+        if !last_use.0 {
+            return false;
+        }
+        let Some(&vec_local_idx) = self.locals.get(name) else {
+            return false;
+        };
+
+        // Allocate scratch locals for the mutate. We don't reuse the
+        // resolved local for `idx` / `val` because the source-side
+        // expressions might themselves load from other locals.
+        let idx_local = self.alloc_local(WasmType::I64);
+        let val_local = self.alloc_local(WasmType::I64);
+        let len_local = self.alloc_local(WasmType::I32);
+        let i_local = self.alloc_local(WasmType::I32);
+
+        // Evaluate idx (i64) and val (i64) onto stack, stash into locals.
+        self.emit_expr(&inner_args[1].node);
+        self.instructions.push(Instruction::LocalSet(idx_local));
+        self.emit_expr(&inner_args[2].node);
+        match self.infer_expr_type(&inner_args[2].node) {
+            WasmType::I64 => {}
+            WasmType::I32 => self.instructions.push(Instruction::I64ExtendI32S),
+            WasmType::F64 => self.instructions.push(Instruction::I64ReinterpretF64),
+        }
+        self.instructions.push(Instruction::LocalSet(val_local));
+
+        // len = header & 0xFFFFFFFF.
+        self.instructions
+            .push(Instruction::LocalGet(vec_local_idx));
+        self.instructions
+            .push(Instruction::I64Load(wasm_encoder::MemArg {
+                offset: 0,
+                align: 3,
+                memory_index: 0,
+            }));
+        self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
+        self.instructions.push(Instruction::I64And);
+        self.instructions.push(Instruction::I32WrapI64);
+        self.instructions.push(Instruction::LocalSet(len_local));
+        // i = i32(idx).
+        self.instructions.push(Instruction::LocalGet(idx_local));
+        self.instructions.push(Instruction::I32WrapI64);
+        self.instructions.push(Instruction::LocalSet(i_local));
+
+        // if (i >= 0 && i < len): vec[i] = val
+        self.instructions.push(Instruction::LocalGet(i_local));
+        self.instructions.push(Instruction::I32Const(0));
+        self.instructions.push(Instruction::I32GeS);
+        self.instructions.push(Instruction::LocalGet(i_local));
+        self.instructions.push(Instruction::LocalGet(len_local));
+        self.instructions.push(Instruction::I32LtS);
+        self.instructions.push(Instruction::I32And);
+        self.emit_if(wasm_encoder::BlockType::Empty);
+        // addr = vec + i*8
+        self.instructions
+            .push(Instruction::LocalGet(vec_local_idx));
+        self.instructions.push(Instruction::LocalGet(i_local));
+        self.instructions.push(Instruction::I32Const(8));
+        self.instructions.push(Instruction::I32Mul);
+        self.instructions.push(Instruction::I32Add);
+        self.instructions.push(Instruction::LocalGet(val_local));
+        // Store with offset 8 to skip the 8-byte object header.
+        self.instructions
+            .push(Instruction::I64Store(wasm_encoder::MemArg {
+                offset: 8,
+                align: 3,
+                memory_index: 0,
+            }));
+        self.emit_end();
+
+        // Result of the whole expression: the (possibly-mutated) vec.
+        self.instructions
+            .push(Instruction::LocalGet(vec_local_idx));
+        true
+    }
+
     /// Try to emit `Option.withDefault(Vector.get(v, i), default)` as inline
     /// bounds check + direct load, avoiding the Option wrapper allocation.
     /// Returns true if the pattern was matched and code was emitted.

@@ -19,6 +19,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 - **HTTP headers are `Map<String, List<String>>`** across request/response records and `Http.post` / `Http.put` / `Http.patch`.
 - **WASM map ABI is polymorphic**, with key kind and value pointer flags passed explicitly.
 - **WAT is the source of truth for the standalone runtime**, and emit-time WASM validation is part of the compile path.
+- **WASM `Vector.set` owned-mutate fast path.** Fused `Option.withDefault(Vector.set(v, i, x), v)` where `v` is a `Resolved` local with `last_use = true` lowers to an inline bounds check + `i64.store` on the existing heap object — same trick the VM has used for TCO loops. Zero allocations per call vs the previous full-array memcopy. Drops the "WASM `Vector.set` is still O(N)" 0.14-known-limitation.
 
 ### Removed
 - **`--adapter` → `--bridge`** and **`--wasm-opt oz|o3` → `--optimize size|speed`**.
@@ -31,8 +32,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Known limitations
 - `Http.*` under `--bridge wasip1` returns a transport error; real WASI HTTP belongs in a later Component Model target.
-- WASM `Vector.set` is still O(N) per call.
-- WASM map builds remain slower than the VM on large construction-heavy benchmarks.
+- WASM map builds remain slower than the VM on large construction-heavy benchmarks (`Map.set` doesn't yet take the owned-mutate fast path that `Vector.set` does — HAMT structural copy on every update).
 
 ## 0.13.0 "Limit" (2026-04-27)
 
