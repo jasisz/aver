@@ -139,6 +139,7 @@ fn reentrant_call_function_returns_nested_result_without_resuming_caller() {
         thin: true,
         parent_thin: false,
         leaf: false,
+        no_alloc: false,
         source_file: String::new(),
         line_table: Vec::new(),
     });
@@ -154,6 +155,7 @@ fn reentrant_call_function_returns_nested_result_without_resuming_caller() {
         thin: true,
         parent_thin: false,
         leaf: false,
+        no_alloc: false,
         source_file: String::new(),
         line_table: Vec::new(),
     });
@@ -201,6 +203,7 @@ fn collect_live_vm_roots_drops_callback_only_stable_values() {
         thin: false,
         parent_thin: false,
         leaf: false,
+        no_alloc: false,
         source_file: String::new(),
         line_table: Vec::new(),
     });
@@ -246,6 +249,7 @@ fn profiling_tracks_opcodes_and_fast_returns() {
         thin: true,
         parent_thin: false,
         leaf: false,
+        no_alloc: false,
         source_file: String::new(),
         line_table: Vec::new(),
     });

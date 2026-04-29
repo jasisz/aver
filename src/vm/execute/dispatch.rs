@@ -579,24 +579,39 @@ impl VM {
                     let target_fn_id = read_u16!(code, ip) as u32;
                     let argc = read_u8!(code, ip) as usize;
                     let _owned_mask = read_u8!(code, ip);
-                    let target_local_count = self.code.get(target_fn_id).local_count;
+                    let target = self.code.get(target_fn_id);
+                    let target_local_count = target.local_count;
+                    let target_no_alloc = target.no_alloc;
 
                     let args_start = self.stack.len() - argc;
-                    let frame_mark = self.frames.last().unwrap().arena_mark;
-                    let yard_mark = self.frames.last().unwrap().yard_mark;
-                    let handoff_mark = self.frames.last().unwrap().handoff_mark;
-                    let globals_dirty = self.frames.last().unwrap().globals_dirty;
-                    let yard_dirty = self.frames.last().unwrap().yard_dirty;
-                    let mut promoted_args = self.stack[args_start..].to_vec();
-                    self.finalize_frame_locals_for_tail_call(
-                        frame_mark,
-                        yard_mark,
-                        handoff_mark,
-                        globals_dirty,
-                        yard_dirty,
-                        &mut promoted_args,
-                    );
-                    self.stack[bp..(argc + bp)].copy_from_slice(&promoted_args[..argc]);
+                    if !target_no_alloc {
+                        // Pure no-alloc targets (e.g. mandelStep ↔ mandelIter)
+                        // never produce frame-local young/yard/handoff
+                        // survivors, so the boundary finalizer would always
+                        // fall through to its no-op branch. Skipping the
+                        // call shaves a handful of length reads + branches
+                        // per iteration in tight numeric loops.
+                        let frame_mark = self.frames.last().unwrap().arena_mark;
+                        let yard_mark = self.frames.last().unwrap().yard_mark;
+                        let handoff_mark = self.frames.last().unwrap().handoff_mark;
+                        let globals_dirty = self.frames.last().unwrap().globals_dirty;
+                        let yard_dirty = self.frames.last().unwrap().yard_dirty;
+                        let mut promoted_args = self.stack[args_start..].to_vec();
+                        self.finalize_frame_locals_for_tail_call(
+                            frame_mark,
+                            yard_mark,
+                            handoff_mark,
+                            globals_dirty,
+                            yard_dirty,
+                            &mut promoted_args,
+                        );
+                        self.stack[bp..(argc + bp)].copy_from_slice(&promoted_args[..argc]);
+                    } else {
+                        // Args already on the stack at the right position
+                        // (no relocation needed when the finalizer is a
+                        // no-op). Just slot them into the frame's locals.
+                        self.stack.copy_within(args_start..args_start + argc, bp);
+                    }
 
                     let new_lc = target_local_count as usize;
                     let new_end = bp + new_lc;
