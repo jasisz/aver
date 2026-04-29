@@ -246,7 +246,7 @@ fn page(fullRendered: String, zoomRendered: String) -> String
         "</head>",
         "<body>",
         "  <h1>Mandelbrot, in pure Aver, served from the edge.</h1>",
-        "  <p class=\"sub\">Two views, both rendered via Unicode Braille — every glyph packs 2×4 sub-pixels into one character (U+2800..U+28FF). 100×24 chars per panel = 200×96 sub-pixel resolution. The same <code>render(w, h, maxIter, view)</code> function builds both panels per request, no caching. Speed-up trick: cardioid + period-2 bulb pre-tests reject ~70% of inside-set pixels in ~5 ops each, before any iteration runs.</p>",
+        "  <p class=\"sub\">Two views, both rendered via Unicode Braille — every glyph packs 2×4 sub-pixels into one character (U+2800..U+28FF). 80×24 chars per panel = 160×96 sub-pixel resolution. The same <code>render(w, h, maxIter, view)</code> function builds both panels per request, no caching. Speed-up trick: cardioid + period-2 bulb pre-tests reject ~70% of inside-set pixels in ~5 ops each, before any iteration runs.</p>",
         "  <h2 class=\"viewname\">full set <span class=\"coords\">cx ∈ [-2.5, 1.0], cy ∈ [-1.0, 1.0]</span></h2>",
         "  <pre class=\"fractal\">{fullRendered}</pre>",
         "  <h2 class=\"viewname\">seahorse valley <span class=\"coords\">centred on (-0.7463, 0.1102) · 290× zoom · 150 iter</span></h2>",
