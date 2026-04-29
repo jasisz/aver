@@ -20,36 +20,6 @@ impl AverDisplay for TerminalSize {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub struct Header {
-    pub name: AverStr,
-    pub value: AverStr,
-}
-
-impl Header {
-    /// Convenience constructor from owned Strings (used by runtime internals).
-    pub fn from_strings(name: String, value: String) -> Self {
-        Self {
-            name: AverStr::from(name),
-            value: AverStr::from(value),
-        }
-    }
-}
-
-impl AverDisplay for Header {
-    fn aver_display(&self) -> String {
-        format!(
-            "Header(name: {}, value: {})",
-            self.name.aver_display_inner(),
-            self.value.aver_display_inner()
-        )
-    }
-
-    fn aver_display_inner(&self) -> String {
-        self.aver_display()
-    }
-}
-
 /// Multi-value HTTP headers, modelled as `Map<String, List<String>>` —
 /// matches RFC 9110 (same-name fields) and RFC 6265 (multiple
 /// Set-Cookie). Keys are case-insensitive by convention; runtime

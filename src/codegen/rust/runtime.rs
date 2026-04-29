@@ -218,7 +218,7 @@ pub fn generate_tcp_types() -> String {
 
 /// Bring shared HTTP record types into the generated program.
 pub fn generate_http_types() -> String {
-    "pub use aver_rt::{Header, HttpResponse};".to_string()
+    "pub use aver_rt::HttpResponse;".to_string()
 }
 
 /// Bring shared HTTP server request type into the generated program.

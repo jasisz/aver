@@ -40,12 +40,6 @@ impl TypeChecker {
                 ty.clone(),
             );
         }
-        let header_fields: &[(&str, Type)] = &[("name", Type::Str), ("value", Type::Str)];
-        for (field, ty) in header_fields {
-            self.record_field_types
-                .insert(crate::visibility::member_key("Header", field), ty.clone());
-        }
-
         // Oracle v1: EffectEvent = { method: String, args: List<Unknown> }.
         // `args` element type is heterogeneous across effects (Int for
         // Random.int, Str for Console.print<T=Str>, etc.) — v0 types it

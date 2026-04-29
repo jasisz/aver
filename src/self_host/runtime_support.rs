@@ -177,6 +177,6 @@ where
 
 pub use aver_rt::TcpConnection as Tcp_Connection;
 
-pub use aver_rt::{Header, HttpResponse};
+pub use aver_rt::HttpResponse;
 
 pub use aver_rt::HttpRequest;

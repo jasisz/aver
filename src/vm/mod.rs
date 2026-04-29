@@ -34,7 +34,6 @@ pub fn register_service_types(arena: &mut crate::nan_value::Arena) {
             "headers".into(),
         ],
     );
-    arena.register_record_type("Header", vec!["name".into(), "value".into()]);
     arena.register_record_type(
         "Tcp.Connection",
         vec!["id".into(), "host".into(), "port".into()],

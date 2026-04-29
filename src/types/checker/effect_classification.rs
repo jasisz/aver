@@ -70,8 +70,10 @@ pub enum RuntimeType {
     ResultStrStr,
     ResultListStrStr,
     HttpResponseResult,
-    /// `List<Header>` — the headers argument on `Http.post/put/patch`.
-    ListHeader,
+    /// `Map<String, List<String>>` — the headers argument on
+    /// `Http.post/put/patch`. Matches the runtime `HttpHeaders` type
+    /// and the `HttpRequest`/`HttpResponse` `headers` field.
+    MapStrListStr,
     /// `Terminal.Size` record — the return of `Terminal.size`.
     TerminalSize,
     /// `Tcp.Connection` opaque token — argument/return of `Tcp.*` session methods.
@@ -101,7 +103,10 @@ impl RuntimeType {
                 Box::new(Type::Named("HttpResponse".to_string())),
                 Box::new(Type::Str),
             ),
-            RuntimeType::ListHeader => Type::List(Box::new(Type::Named("Header".to_string()))),
+            RuntimeType::MapStrListStr => Type::Map(
+                Box::new(Type::Str),
+                Box::new(Type::List(Box::new(Type::Str))),
+            ),
             RuntimeType::TerminalSize => Type::Named("Terminal.Size".to_string()),
             RuntimeType::TcpConnection => Type::Named("Tcp.Connection".to_string()),
             RuntimeType::ResultTcpConnectionStr => Type::Result(
@@ -215,7 +220,7 @@ const CLASSIFICATIONS: &[EffectClassification] = &[
             RuntimeType::Str,
             RuntimeType::Str,
             RuntimeType::Str,
-            RuntimeType::ListHeader,
+            RuntimeType::MapStrListStr,
         ],
         runtime_return: RuntimeType::HttpResponseResult,
     },
@@ -226,7 +231,7 @@ const CLASSIFICATIONS: &[EffectClassification] = &[
             RuntimeType::Str,
             RuntimeType::Str,
             RuntimeType::Str,
-            RuntimeType::ListHeader,
+            RuntimeType::MapStrListStr,
         ],
         runtime_return: RuntimeType::HttpResponseResult,
     },
@@ -237,7 +242,7 @@ const CLASSIFICATIONS: &[EffectClassification] = &[
             RuntimeType::Str,
             RuntimeType::Str,
             RuntimeType::Str,
-            RuntimeType::ListHeader,
+            RuntimeType::MapStrListStr,
         ],
         runtime_return: RuntimeType::HttpResponseResult,
     },
@@ -738,7 +743,7 @@ mod tests {
     #[test]
     fn oracle_signature_for_http_post_has_four_runtime_params() {
         let sig = oracle_signature("Http.post").unwrap();
-        // (BranchPath, Int, Str, Str, Str, List<Header>) -> Result<HttpResponse, String>
+        // (BranchPath, Int, Str, Str, Str, Map<Str, List<Str>>) -> Result<HttpResponse, String>
         match sig {
             Type::Fn(params, ret, _) => {
                 assert_eq!(params.len(), 6);
@@ -748,10 +753,14 @@ mod tests {
                 assert_eq!(params[3], Type::Str);
                 assert_eq!(params[4], Type::Str);
                 match &params[5] {
-                    Type::List(inner) => {
-                        assert!(matches!(&**inner, Type::Named(n) if n == "Header"));
+                    Type::Map(key, value) => {
+                        assert_eq!(**key, Type::Str);
+                        match &**value {
+                            Type::List(inner) => assert_eq!(**inner, Type::Str),
+                            other => panic!("expected Map<Str, List<Str>>, got {:?}", other),
+                        }
                     }
-                    other => panic!("expected List<Header>, got {:?}", other),
+                    other => panic!("expected Map<Str, List<Str>>, got {:?}", other),
                 }
                 match *ret {
                     Type::Result(ok, err) => {

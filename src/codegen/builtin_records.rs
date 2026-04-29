@@ -108,21 +108,6 @@ impl BuiltinRecord {
 /// All built-in record types in declaration order.
 pub const BUILTIN_RECORDS: &[BuiltinRecord] = &[
     BuiltinRecord {
-        aver_name: "Header",
-        fields: &[
-            BuiltinField {
-                name: "name",
-                ty: BuiltinType::Str,
-            },
-            BuiltinField {
-                name: "value",
-                ty: BuiltinType::Str,
-            },
-        ],
-        depends_on: &[],
-        doc: "HTTP header pair shared by `HttpResponse` / `HttpRequest`.",
-    },
-    BuiltinRecord {
         aver_name: "HttpResponse",
         fields: &[
             BuiltinField {
@@ -336,16 +321,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn header_renders_to_lean_structure() {
-        let h = find("Header").unwrap();
-        let lean = render_lean(h);
-        assert!(lean.starts_with("structure Header where"));
-        assert!(lean.contains("name : String"));
-        assert!(lean.contains("value : String"));
-        assert!(lean.contains("deriving Repr, BEq, Inhabited, DecidableEq"));
-    }
-
-    #[test]
     fn http_response_renders_to_dafny_datatype() {
         let r = find("HttpResponse").unwrap();
         let dafny = render_dafny(r);
@@ -392,9 +367,10 @@ mod tests {
     #[test]
     fn dependencies_listed_for_http_records() {
         // Headers field is `Map<String, List<String>>` (built-in shape),
-        // not `List<Header>`, so HTTP records have no Header dependency.
+        // so HTTP records carry no record-level dependency. The legacy
+        // `Header` record was retired in 0.14.1 — confirm it's gone.
         assert!(find("HttpResponse").unwrap().depends_on.is_empty());
         assert!(find("HttpRequest").unwrap().depends_on.is_empty());
-        assert!(find("Header").unwrap().depends_on.is_empty());
+        assert!(find("Header").is_none());
     }
 }

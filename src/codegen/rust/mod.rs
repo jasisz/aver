@@ -77,9 +77,8 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
         .as_ref()
         .is_some_and(|config| config.independence_mode == crate::config::IndependenceMode::Cancel);
     let used_services = detect_used_services(ctx);
-    let needs_http_types = needs_named_type(ctx, "Header")
-        || needs_named_type(ctx, "HttpResponse")
-        || needs_named_type(ctx, "HttpRequest");
+    let needs_http_types =
+        needs_named_type(ctx, "HttpResponse") || needs_named_type(ctx, "HttpRequest");
     let needs_tcp_types = needs_named_type(ctx, "Tcp.Connection");
     let needs_terminal_types = needs_named_type(ctx, "Terminal.Size");
 
@@ -520,7 +519,7 @@ fn is_shared_runtime_type(td: &TypeDef) -> bool {
     matches!(
         td,
         TypeDef::Product { name, .. }
-            if matches!(name.as_str(), "Header" | "HttpResponse" | "HttpRequest")
+            if matches!(name.as_str(), "HttpResponse" | "HttpRequest")
     )
 }
 

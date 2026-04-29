@@ -230,36 +230,7 @@ fn replay_variant_field_type(type_name: &str, field_type: &str) -> String {
 }
 
 fn http_type_impls() -> String {
-    r#"impl aver_replay::ReplayValue for aver_rt::Header {
-    fn to_replay_json(&self) -> serde_json::Value {
-        let mut fields = serde_json::Map::new();
-        fields.insert("name".to_string(), ReplayValue::to_replay_json(&self.name));
-        fields.insert("value".to_string(), ReplayValue::to_replay_json(&self.value));
-        let mut payload = serde_json::Map::new();
-        payload.insert("type".to_string(), serde_json::Value::String("Header".to_string()));
-        payload.insert("fields".to_string(), serde_json::Value::Object(fields));
-        aver_replay::wrap_marker("$record", serde_json::Value::Object(payload))
-    }
-
-    fn from_replay_json(value: &serde_json::Value) -> Result<Self, String> {
-        let payload = aver_replay::expect_marker(value, "$record")?;
-        let obj = aver_replay::expect_object(payload, "$record")?;
-        let fields = aver_replay::expect_object(
-            obj.get("fields").ok_or_else(|| "$record missing field 'fields'".to_string())?,
-            "$record.fields",
-        )?;
-        Ok(Self {
-            name: <aver_rt::AverStr as ReplayValue>::from_replay_json(
-                fields.get("name").ok_or_else(|| "$record Header missing field 'name'".to_string())?,
-            )?,
-            value: <aver_rt::AverStr as ReplayValue>::from_replay_json(
-                fields.get("value").ok_or_else(|| "$record Header missing field 'value'".to_string())?,
-            )?,
-        })
-    }
-}
-
-impl aver_replay::ReplayValue for aver_rt::HttpResponse {
+    r#"impl aver_replay::ReplayValue for aver_rt::HttpResponse {
     fn to_replay_json(&self) -> serde_json::Value {
         let mut fields = serde_json::Map::new();
         fields.insert("status".to_string(), ReplayValue::to_replay_json(&self.status));
