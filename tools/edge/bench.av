@@ -1,17 +1,14 @@
 module Bench
-    intent = "Bench seahorse with various sizes/iters/zoom."
+    intent = "Local timing harness for Fractal.render — predicts whether the live /fractal endpoint will fit under Cloudflare Workers' free-plan 10 ms CPU budget. Not deployed."
     depends [Fractal]
     exposes [main]
     effects [Console.print, Time.unixMs]
 
-fn ctw(c: Float, r: Float) -> Fractal.View
-    Fractal.View(cxMin = c - r / 2.0, cxRange = r, cyMin = 0.105 - r / 2.0, cyRange = r)
-
 fn main() -> Unit
     ! [Console.print, Time.unixMs]
     t0 = Time.unixMs()
-    full = Fractal.render(100, 24, 80, Fractal.fullView())
+    full = Fractal.render(80, 18, 80, Fractal.fullView())
     t1 = Time.unixMs()
-    zoom = Fractal.render(100, 24, 150, ctw(0.0 - 0.745, 0.012))
+    zoom = Fractal.render(80, 18, 150, Fractal.seahorseView())
     t2 = Time.unixMs()
-    Console.print("full(100x24,80)={Int.toString(t1 - t0)}ms sea(100x24,150,r=0.012)={Int.toString(t2 - t1)}ms total={Int.toString(t2 - t0)}ms")
+    Console.print("full(80x18,80)={Int.toString(t1 - t0)}ms sea(80x18,150)={Int.toString(t2 - t1)}ms total={Int.toString(t2 - t0)}ms")
