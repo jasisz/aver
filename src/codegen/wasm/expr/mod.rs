@@ -143,6 +143,12 @@ pub(super) struct ExprEmitter<'a> {
     /// watermark check) is dead work and gets elided. Set up front by
     /// `emit_plain_user_function` and `emit_mutual_tco_trampoline`.
     pub is_no_alloc: bool,
+    /// Uniform-signature mutual-TCO group: every member shares the same
+    /// WASM-typed param list, so the trampoline keeps a single shared
+    /// slot row. Tail-calls within the group can write args directly to
+    /// the target slots in reverse stack order, skipping the per-iter
+    /// "evaluate → tmp → target" double copy.
+    pub mutual_tco_uniform: bool,
 }
 
 impl<'a> ExprEmitter<'a> {
@@ -185,6 +191,7 @@ impl<'a> ExprEmitter<'a> {
             is_thin: false,
             is_parent_thin: false,
             is_no_alloc: false,
+            mutual_tco_uniform: false,
         }
     }
 

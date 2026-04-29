@@ -1619,6 +1619,7 @@ fn emit_mutual_tco_trampoline(
     }
     emitter.next_local = 1 + layout.slots.len() as u32;
     emitter.is_no_alloc = is_no_alloc;
+    emitter.mutual_tco_uniform = layout.uniform_signature;
     if !is_no_alloc {
         let boundary_mark_local = emitter.alloc_local(WasmType::I32);
         emitter.boundary_mark_local = Some(boundary_mark_local);

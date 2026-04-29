@@ -1682,19 +1682,36 @@ impl<'a> ExprEmitter<'a> {
             self.mutual_tco_dispatch_local,
             self.mutual_tco_targets.get(&resolved_name).cloned(),
         ) {
+            // Uniform-signature mutual-TCO + no-alloc body: the trampoline
+            // keeps one shared slot row, and there is no GC compaction to
+            // run between iterations, so the standard
+            // "eval → tmp → target" double copy collapses into a single
+            // reverse-order write directly into the target slots. Reads
+            // inside arg expressions still see the *old* slot values
+            // because we evaluate every arg (push to wasm stack) before
+            // any LocalSet, then drain the stack in reverse.
+            let direct_to_slots = self.mutual_tco_uniform
+                && self.is_no_alloc
+                && param_slots.len() == args.len();
+
             for arg in args {
                 self.emit_expr(&arg.node);
             }
 
-            let tmp_base = self.next_local;
-            for arg in args {
-                let wt = self.infer_expr_type(&arg.node);
-                self.alloc_local(wt);
-            }
-            for i in (0..args.len()).rev() {
-                self.instructions
-                    .push(Instruction::LocalSet(tmp_base + i as u32));
-            }
+            let tmp_base = if direct_to_slots {
+                u32::MAX // unused
+            } else {
+                let base = self.next_local;
+                for arg in args {
+                    let wt = self.infer_expr_type(&arg.node);
+                    self.alloc_local(wt);
+                }
+                for i in (0..args.len()).rev() {
+                    self.instructions
+                        .push(Instruction::LocalSet(base + i as u32));
+                }
+                base
+            };
             // Mutual TCO: adaptive compaction based on garbage accumulation.
             // Compact when heap has grown >16KB beyond the post-compaction
             // watermark. This is safe against the drawRows truncation issue
@@ -1740,10 +1757,19 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalGet(mark_local));
                 self.emit_tco_compaction(args, tmp_base);
             }
-            for (i, slot) in param_slots.iter().enumerate() {
-                self.instructions
-                    .push(Instruction::LocalGet(tmp_base + i as u32));
-                self.instructions.push(Instruction::LocalSet(*slot));
+            if direct_to_slots {
+                // Args are still on the wasm stack, in left-to-right order.
+                // Drain to target slots in reverse so the rightmost arg
+                // pops first.
+                for slot in param_slots.iter().rev() {
+                    self.instructions.push(Instruction::LocalSet(*slot));
+                }
+            } else {
+                for (i, slot) in param_slots.iter().enumerate() {
+                    self.instructions
+                        .push(Instruction::LocalGet(tmp_base + i as u32));
+                    self.instructions.push(Instruction::LocalSet(*slot));
+                }
             }
             self.instructions
                 .push(Instruction::I32Const(member_id as i32));
