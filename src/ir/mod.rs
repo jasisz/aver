@@ -1,3 +1,4 @@
+mod alloc_info;
 mod body;
 mod calls;
 pub mod last_use;
@@ -5,6 +6,7 @@ mod leaf;
 mod matches;
 pub mod vars;
 
+pub use alloc_info::{AllocPolicy, compute_alloc_info};
 pub use body::{
     BodyBindingPlan, BodyExprPlan, BodyPlan, ThinBodyCtx, ThinBodyPlan, ThinKind,
     classify_body_expr_plan, classify_body_plan, classify_thin_body_plan, classify_thin_fn_def,

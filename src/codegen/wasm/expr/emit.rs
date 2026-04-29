@@ -1568,6 +1568,7 @@ impl<'a> ExprEmitter<'a> {
             let import_name = match field_name {
                 "method" => Some("request_method"),
                 "url" | "path" => Some("request_url"),
+                "query" => Some("request_query"),
                 "body" => Some("request_body"),
                 _ => None,
             };
@@ -1682,26 +1683,49 @@ impl<'a> ExprEmitter<'a> {
             self.mutual_tco_dispatch_local,
             self.mutual_tco_targets.get(&resolved_name).cloned(),
         ) {
+            // Uniform-signature mutual-TCO + no-alloc body: the trampoline
+            // keeps one shared slot row, and there is no GC compaction to
+            // run between iterations, so the standard
+            // "eval → tmp → target" double copy collapses into a single
+            // reverse-order write directly into the target slots. Reads
+            // inside arg expressions still see the *old* slot values
+            // because we evaluate every arg (push to wasm stack) before
+            // any LocalSet, then drain the stack in reverse.
+            let direct_to_slots =
+                self.mutual_tco_uniform && self.is_no_alloc && param_slots.len() == args.len();
+
             for arg in args {
                 self.emit_expr(&arg.node);
             }
 
-            let tmp_base = self.next_local;
-            for arg in args {
-                let wt = self.infer_expr_type(&arg.node);
-                self.alloc_local(wt);
-            }
-            for i in (0..args.len()).rev() {
-                self.instructions
-                    .push(Instruction::LocalSet(tmp_base + i as u32));
-            }
+            let tmp_base = if direct_to_slots {
+                u32::MAX // unused
+            } else {
+                let base = self.next_local;
+                for arg in args {
+                    let wt = self.infer_expr_type(&arg.node);
+                    self.alloc_local(wt);
+                }
+                for i in (0..args.len()).rev() {
+                    self.instructions
+                        .push(Instruction::LocalSet(base + i as u32));
+                }
+                base
+            };
             // Mutual TCO: adaptive compaction based on garbage accumulation.
             // Compact when heap has grown >16KB beyond the post-compaction
             // watermark. This is safe against the drawRows truncation issue
             // (which masks per-iteration growth from iter_mark) because
             // watermark tracks absolute growth since last compaction, not
             // per-iteration delta.
-            if let Some(iter_mark) = self.iter_mark_local {
+            //
+            // Pure no-alloc groups (mandelStep ↔ mandelIter, etc.) elide
+            // this entirely — `is_no_alloc` is set up front by
+            // `emit_mutual_tco_trampoline`, and `iter_mark_local` is left
+            // None alongside it, so the branches below all fall through.
+            if self.is_no_alloc {
+                // intentionally empty
+            } else if let Some(iter_mark) = self.iter_mark_local {
                 let fn_mark = self.boundary_mark_local.unwrap_or(iter_mark);
                 if let Some(watermark) = self.gc_watermark_local {
                     // if (heap_ptr - watermark > 8192) → compact + reset watermark
@@ -1733,10 +1757,19 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalGet(mark_local));
                 self.emit_tco_compaction(args, tmp_base);
             }
-            for (i, slot) in param_slots.iter().enumerate() {
-                self.instructions
-                    .push(Instruction::LocalGet(tmp_base + i as u32));
-                self.instructions.push(Instruction::LocalSet(*slot));
+            if direct_to_slots {
+                // Args are still on the wasm stack, in left-to-right order.
+                // Drain to target slots in reverse so the rightmost arg
+                // pops first.
+                for slot in param_slots.iter().rev() {
+                    self.instructions.push(Instruction::LocalSet(*slot));
+                }
+            } else {
+                for (i, slot) in param_slots.iter().enumerate() {
+                    self.instructions
+                        .push(Instruction::LocalGet(tmp_base + i as u32));
+                    self.instructions.push(Instruction::LocalSet(*slot));
+                }
             }
             self.instructions
                 .push(Instruction::I32Const(member_id as i32));
@@ -1774,7 +1807,12 @@ impl<'a> ExprEmitter<'a> {
             // structurally-sharing data type allocates 4-5 nodes per
             // step (~600B) — death by a thousand compactions. 16384
             // matches the mutual-TCO branch's watermark threshold.
-            if let Some(iter_mark) = self.iter_mark_local {
+            //
+            // Pure no-alloc self-recursive fns skip the whole compaction
+            // pass — they don't generate garbage to begin with.
+            if self.is_no_alloc {
+                // intentionally empty
+            } else if let Some(iter_mark) = self.iter_mark_local {
                 let fn_mark = self.boundary_mark_local.unwrap_or(iter_mark);
                 self.instructions.push(Instruction::GlobalGet(0));
                 self.instructions.push(Instruction::LocalGet(iter_mark));

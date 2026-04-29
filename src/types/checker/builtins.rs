@@ -31,6 +31,7 @@ impl TypeChecker {
         let net_req_fields: &[(&str, Type)] = &[
             ("method", Type::Str),
             ("path", Type::Str),
+            ("query", Type::Str),
             ("body", Type::Str),
             ("headers", header_map()),
         ];

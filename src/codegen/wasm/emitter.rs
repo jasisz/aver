@@ -51,6 +51,11 @@ struct MutualTcoLayout {
     slots: Vec<MutualTcoSlot>,
     member_ids: HashMap<usize, u32>,
     member_param_locals: HashMap<usize, Vec<u32>>,
+    /// All members share the exact same WASM-typed signature. The slot
+    /// table collapses to a single shared row, so wrappers must pass
+    /// their own params positionally rather than through the
+    /// per-member-owned-slot scheme.
+    uniform_signature: bool,
 }
 
 /// Build a complete WASM module from the Aver codegen context.
@@ -97,7 +102,51 @@ pub fn build_wasm_module(
         }
     }
 
+    // Reject HTTP types under non-fetch adapters with a friendly message,
+    // before the per-fn emit hits the broken record-shape codegen and
+    // produces invalid bytecode. `HttpRequest` / `HttpResponse` carry
+    // `Map<String, List<String>>` headers and a host-supplied request
+    // handle; only the fetch bridge knows how to materialise them.
+    if !matches!(adapter, super::WasmAdapter::Fetch) {
+        let uses_http = |ty: &str| ty == "HttpRequest" || ty == "HttpResponse";
+        if let Some(fd) = user_fns
+            .iter()
+            .map(|e| e.fd)
+            .find(|fd| uses_http(&fd.return_type) || fd.params.iter().any(|(_, t)| uses_http(t)))
+        {
+            let bridge_hint = match adapter {
+                super::WasmAdapter::Wasi => " (currently `--bridge wasip1`)",
+                super::WasmAdapter::Aver => " (no `--bridge`)",
+                super::WasmAdapter::Fetch => unreachable!(),
+            };
+            return Err(format!(
+                "fn `{}` uses HttpRequest/HttpResponse, which only the fetch bridge can lower{}.\n\
+                 Use one of:\n\
+                 \x20 --preset cloudflare        # Cloudflare Workers (fetch + bundling)\n\
+                 \x20 --bridge fetch             # bare fetch bridge (browsers, Deno, Bun)",
+                fd.name, bridge_hint
+            ));
+        }
+    }
+
     let mutual_tco_groups = build_mutual_tco_groups(ctx, &user_fns);
+
+    // Per-fn heap-allocation classification (shared `src/ir/alloc_info.rs`).
+    // Fns flagged as no-alloc skip GC framing emission below — their bodies
+    // never produce garbage, so the boundary mark save, rt_truncate call,
+    // and TCO watermark check are all dead work.
+    let alloc_policy = super::WasmAllocPolicy;
+    let alloc_fn_defs: Vec<&crate::ast::FnDef> = user_fns.iter().map(|e| e.fd).collect();
+    let alloc_info_by_local_name = crate::ir::compute_alloc_info(&alloc_fn_defs, &alloc_policy);
+    // Map from canonical (module-prefixed) name → no-alloc flag, since
+    // the lookup above is keyed by the local fn name.
+    let no_alloc_by_canonical: HashMap<String, bool> = user_fns
+        .iter()
+        .map(|e| {
+            let allocates = *alloc_info_by_local_name.get(&e.fd.name).unwrap_or(&true);
+            (e.canonical_name.clone(), !allocates)
+        })
+        .collect();
 
     // -----------------------------------------------------------------------
     // Collect string literals from AST
@@ -729,6 +778,7 @@ pub fn build_wasm_module(
         for effect in [
             "Request.method",
             "Request.url",
+            "Request.query",
             "Request.body",
             "Request.headersLoad",
             "Response.text",
@@ -972,6 +1022,15 @@ pub fn build_wasm_module(
     }
 
     for (group, layout) in mutual_tco_groups.iter().zip(&mutual_tco_layouts) {
+        // A trampoline can elide its watermark + boundary framing iff
+        // every member of the group is no-alloc — even one allocating
+        // member taints the whole loop.
+        let group_is_no_alloc = group.member_indices.iter().all(|&idx| {
+            no_alloc_by_canonical
+                .get(&user_fns[idx].canonical_name)
+                .copied()
+                .unwrap_or(false)
+        });
         let func = emit_mutual_tco_trampoline(
             group,
             layout,
@@ -983,6 +1042,7 @@ pub fn build_wasm_module(
             ctx,
             &variant_registry,
             &host_imports,
+            group_is_no_alloc,
         )?;
         code_section.function(&func);
     }
@@ -996,6 +1056,10 @@ pub fn build_wasm_module(
             continue;
         }
 
+        let entry_is_no_alloc = no_alloc_by_canonical
+            .get(&entry.canonical_name)
+            .copied()
+            .unwrap_or(false);
         let (func, locals) = emit_plain_user_function(
             entry,
             &fn_indices,
@@ -1006,6 +1070,7 @@ pub fn build_wasm_module(
             &variant_registry,
             &host_imports,
             tco_fns.contains(&entry.canonical_name),
+            entry_is_no_alloc,
         )?;
         code_section.function(&func);
         if let Some(&fn_idx) = fn_indices.get(&entry.canonical_name) {
@@ -1181,6 +1246,7 @@ fn emit_plain_user_function(
     variant_registry: &HashMap<(String, String), super::expr::VariantInfo>,
     host_imports: &HashMap<String, u32>,
     needs_tco: bool,
+    is_no_alloc: bool,
 ) -> Result<(wasm_encoder::Function, Vec<(String, u32)>), String> {
     let mut emitter = ExprEmitter::new(
         fn_indices,
@@ -1222,7 +1288,8 @@ fn emit_plain_user_function(
             .as_ref()
             .is_some_and(thin_body_plan_is_parent_thin_candidate);
 
-    if !(emitter.is_thin || emitter.is_parent_thin) {
+    emitter.is_no_alloc = is_no_alloc;
+    if !(emitter.is_thin || emitter.is_parent_thin || emitter.is_no_alloc) {
         let boundary_mark_local = emitter.alloc_local(WasmType::I32);
         emitter.boundary_mark_local = Some(boundary_mark_local);
         emitter.instructions.push(Instruction::GlobalGet(0));
@@ -1265,10 +1332,12 @@ fn emit_plain_user_function(
         emitter.emit_end();
     }
 
-    emitter.emit_boundary_truncate_or_compact_for_stack_value(
-        emitter.fn_return_type,
-        emitter.fn_return_is_heap,
-    );
+    if !emitter.is_no_alloc {
+        emitter.emit_boundary_truncate_or_compact_for_stack_value(
+            emitter.fn_return_type,
+            emitter.fn_return_is_heap,
+        );
+    }
 
     let locals = build_emitter_locals(&emitter, entry.fd.params.len() as u32);
     let mut func = wasm_encoder::Function::new(locals);
@@ -1343,35 +1412,90 @@ fn build_mutual_tco_layout(
 ) -> Result<MutualTcoLayout, String> {
     let first_entry = &user_fns[group.member_indices[0]];
     let return_type = ret_wasm_type_for_entry(ctx, first_entry);
+
+    // When every member shares the exact wasm signature (same param-types
+    // list in the same order), the trampoline can collapse its slot
+    // table to a single shared row. A peer call then writes its args
+    // into the same locals it would have written if it had been a
+    // self-tail-call, eliminating the per-iter "reshape" pass that
+    // otherwise copies every arg through fresh temporaries to a
+    // member-specific slot block.
+    let first_param_types = param_types_for_entry(ctx, first_entry);
+    let first_wasm_types: Vec<WasmType> = first_param_types.iter().map(aver_type_to_wasm).collect();
+    let uniform_signature = group.member_indices.iter().all(|&idx| {
+        let entry = &user_fns[idx];
+        let pt = param_types_for_entry(ctx, entry);
+        pt.len() == first_param_types.len()
+            && pt
+                .iter()
+                .map(aver_type_to_wasm)
+                .eq(first_wasm_types.iter().copied())
+    });
+
     let mut slots = Vec::new();
     let mut member_ids = HashMap::new();
     let mut member_param_locals = HashMap::new();
     let mut next_local = 1u32;
 
-    for (member_id, member_index) in group.member_indices.iter().copied().enumerate() {
-        let entry = &user_fns[member_index];
-        let member_return_type = ret_wasm_type_for_entry(ctx, entry);
-        if member_return_type != return_type {
-            return Err(format!(
-                "mutual TCO group `{}` has mismatched return types (`{}` vs `{}`)",
-                group.trampoline_name, first_entry.canonical_name, entry.canonical_name
-            ));
-        }
+    if uniform_signature {
+        // One shared slot block. Owner indices are recorded against the
+        // first member purely for diagnostic / metadata purposes — every
+        // member resolves to the same `param_locals` vector.
+        let shared_locals: Vec<u32> = (0..first_param_types.len())
+            .map(|i| {
+                let local_index = next_local + i as u32;
+                slots.push(MutualTcoSlot {
+                    owner_index: group.member_indices[0],
+                    owner_param_index: i,
+                    wasm_type: first_wasm_types[i],
+                    aver_type: first_param_types[i].clone(),
+                });
+                local_index
+            })
+            .collect();
+        // next_local advance not needed — every member maps to the
+        // shared row, so subsequent allocations restart from the slot
+        // count below in the per-member loop.
+        let _ = next_local;
 
-        let param_types = param_types_for_entry(ctx, entry);
-        let mut param_locals = Vec::new();
-        for (param_index, aver_type) in param_types.into_iter().enumerate() {
-            slots.push(MutualTcoSlot {
-                owner_index: member_index,
-                owner_param_index: param_index,
-                wasm_type: aver_type_to_wasm(&aver_type),
-                aver_type,
-            });
-            param_locals.push(next_local);
-            next_local += 1;
+        for (member_id, member_index) in group.member_indices.iter().copied().enumerate() {
+            let entry = &user_fns[member_index];
+            let member_return_type = ret_wasm_type_for_entry(ctx, entry);
+            if member_return_type != return_type {
+                return Err(format!(
+                    "mutual TCO group `{}` has mismatched return types (`{}` vs `{}`)",
+                    group.trampoline_name, first_entry.canonical_name, entry.canonical_name
+                ));
+            }
+            member_ids.insert(member_index, member_id as u32);
+            member_param_locals.insert(member_index, shared_locals.clone());
         }
-        member_ids.insert(member_index, member_id as u32);
-        member_param_locals.insert(member_index, param_locals);
+    } else {
+        for (member_id, member_index) in group.member_indices.iter().copied().enumerate() {
+            let entry = &user_fns[member_index];
+            let member_return_type = ret_wasm_type_for_entry(ctx, entry);
+            if member_return_type != return_type {
+                return Err(format!(
+                    "mutual TCO group `{}` has mismatched return types (`{}` vs `{}`)",
+                    group.trampoline_name, first_entry.canonical_name, entry.canonical_name
+                ));
+            }
+
+            let param_types = param_types_for_entry(ctx, entry);
+            let mut param_locals = Vec::new();
+            for (param_index, aver_type) in param_types.into_iter().enumerate() {
+                slots.push(MutualTcoSlot {
+                    owner_index: member_index,
+                    owner_param_index: param_index,
+                    wasm_type: aver_type_to_wasm(&aver_type),
+                    aver_type,
+                });
+                param_locals.push(next_local);
+                next_local += 1;
+            }
+            member_ids.insert(member_index, member_id as u32);
+            member_param_locals.insert(member_index, param_locals);
+        }
     }
 
     Ok(MutualTcoLayout {
@@ -1382,6 +1506,7 @@ fn build_mutual_tco_layout(
         slots,
         member_ids,
         member_param_locals,
+        uniform_signature,
     })
 }
 
@@ -1394,11 +1519,20 @@ fn emit_mutual_tco_wrapper(
     func.instruction(&Instruction::I32Const(
         *layout.member_ids.get(&entry_index).unwrap_or(&0) as i32,
     ));
-    for slot in &layout.slots {
-        if slot.owner_index == entry_index {
-            func.instruction(&Instruction::LocalGet(slot.owner_param_index as u32));
-        } else {
-            emit_default_value_to_func(&mut func, slot.wasm_type);
+    if layout.uniform_signature {
+        // All members share the slot table positionally — every wrapper
+        // forwards its own params straight through; no per-slot owner
+        // check, no defaults.
+        for i in 0..layout.slots.len() {
+            func.instruction(&Instruction::LocalGet(i as u32));
+        }
+    } else {
+        for slot in &layout.slots {
+            if slot.owner_index == entry_index {
+                func.instruction(&Instruction::LocalGet(slot.owner_param_index as u32));
+            } else {
+                emit_default_value_to_func(&mut func, slot.wasm_type);
+            }
         }
     }
     func.instruction(&Instruction::Call(layout.trampoline_fn_idx));
@@ -1466,6 +1600,7 @@ fn emit_mutual_tco_trampoline(
     ctx: &CodegenContext,
     variant_registry: &HashMap<(String, String), super::expr::VariantInfo>,
     host_imports: &HashMap<String, u32>,
+    is_no_alloc: bool,
 ) -> Result<wasm_encoder::Function, String> {
     let mut emitter = ExprEmitter::new(
         fn_indices,
@@ -1510,26 +1645,35 @@ fn emit_mutual_tco_trampoline(
             .insert(local_index, slot.aver_type.clone());
     }
     emitter.next_local = 1 + layout.slots.len() as u32;
-    let boundary_mark_local = emitter.alloc_local(WasmType::I32);
-    emitter.boundary_mark_local = Some(boundary_mark_local);
-    emitter.instructions.push(Instruction::GlobalGet(0));
-    emitter
-        .instructions
-        .push(Instruction::LocalSet(boundary_mark_local));
+    emitter.is_no_alloc = is_no_alloc;
+    emitter.mutual_tco_uniform = layout.uniform_signature;
+    if !is_no_alloc {
+        let boundary_mark_local = emitter.alloc_local(WasmType::I32);
+        emitter.boundary_mark_local = Some(boundary_mark_local);
+        emitter.instructions.push(Instruction::GlobalGet(0));
+        emitter
+            .instructions
+            .push(Instruction::LocalSet(boundary_mark_local));
 
-    // Yard semantics: per-iteration mark for mutual TCO trampoline.
-    let iter_mark = emitter.alloc_local(WasmType::I32);
-    emitter.iter_mark_local = Some(iter_mark);
+        // Yard semantics: per-iteration mark for mutual TCO trampoline.
+        let iter_mark = emitter.alloc_local(WasmType::I32);
+        emitter.iter_mark_local = Some(iter_mark);
 
-    // Watermark: heap_ptr after last compaction. Compact when garbage
-    // (heap_ptr - watermark) exceeds threshold. Adaptive — compacts
-    // only when actual garbage warrants it, not on a fixed schedule.
-    let gc_watermark = emitter.alloc_local(WasmType::I32);
-    emitter.gc_watermark_local = Some(gc_watermark);
-    emitter.instructions.push(Instruction::GlobalGet(0));
-    emitter
-        .instructions
-        .push(Instruction::LocalSet(gc_watermark));
+        // Watermark: heap_ptr after last compaction. Compact when garbage
+        // (heap_ptr - watermark) exceeds threshold. Adaptive — compacts
+        // only when actual garbage warrants it, not on a fixed schedule.
+        let gc_watermark = emitter.alloc_local(WasmType::I32);
+        emitter.gc_watermark_local = Some(gc_watermark);
+        emitter.instructions.push(Instruction::GlobalGet(0));
+        emitter
+            .instructions
+            .push(Instruction::LocalSet(gc_watermark));
+    }
+    // Pure no-alloc trampolines (mandelStep ↔ mandelIter, etc.) leave
+    // boundary_mark_local / iter_mark_local / gc_watermark_local as None.
+    // The watermark-check site in `expr/emit.rs` and the boundary-truncate
+    // call below both branch on these Options, so leaving them None
+    // collapses the GC framing to nothing.
 
     emitter
         .instructions
@@ -1539,9 +1683,12 @@ fn emit_mutual_tco_trampoline(
     emitter.block_depth += 1;
     emitter.enable_tco_loop();
 
-    // Save heap_ptr at iteration start.
-    emitter.instructions.push(Instruction::GlobalGet(0));
-    emitter.instructions.push(Instruction::LocalSet(iter_mark));
+    // Save heap_ptr at iteration start. Skipped when the whole group is
+    // no-alloc — there's no garbage to mark off.
+    if let Some(iter_mark) = emitter.iter_mark_local {
+        emitter.instructions.push(Instruction::GlobalGet(0));
+        emitter.instructions.push(Instruction::LocalSet(iter_mark));
+    }
 
     emit_mutual_dispatch_chain(&mut emitter, group, layout, user_fns, 0);
 
@@ -1550,10 +1697,12 @@ fn emit_mutual_tco_trampoline(
     }
 
     emitter.emit_end();
-    emitter.emit_boundary_truncate_or_compact_for_stack_value(
-        emitter.fn_return_type,
-        emitter.fn_return_is_heap,
-    );
+    if !emitter.is_no_alloc {
+        emitter.emit_boundary_truncate_or_compact_for_stack_value(
+            emitter.fn_return_type,
+            emitter.fn_return_is_heap,
+        );
+    }
 
     let locals = build_emitter_locals(&emitter, 1 + layout.slots.len() as u32);
     let mut func = wasm_encoder::Function::new(locals);

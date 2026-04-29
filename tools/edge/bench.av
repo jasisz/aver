@@ -7,8 +7,9 @@ module Bench
 fn main() -> Unit
     ! [Console.print, Time.unixMs]
     t0 = Time.unixMs()
-    full = Fractal.render(80, 24, 80, Fractal.fullView())
+    full = Fractal.render(200, 120, 100, Fractal.fullView())
     t1 = Time.unixMs()
-    zoom = Fractal.render(80, 24, 150, Fractal.seahorseView())
+    seahorse = Fractal.viewFromQuery("cx=-0.7463&cy=0.1102&w=0.012")
+    zoom = Fractal.render(200, 120, 220, seahorse)
     t2 = Time.unixMs()
-    Console.print("full(80x24,80)={Int.toString(t1 - t0)}ms sea(80x24,150)={Int.toString(t2 - t1)}ms total={Int.toString(t2 - t0)}ms")
+    Console.print("full(200x120,100)={Int.toString(t1 - t0)}ms[{Int.toString(String.len(full))}B] zoom(200x120,220)={Int.toString(t2 - t1)}ms[{Int.toString(String.len(zoom))}B] total={Int.toString(t2 - t0)}ms")

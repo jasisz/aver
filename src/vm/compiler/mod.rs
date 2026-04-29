@@ -104,6 +104,7 @@ fn compile_program_inner(
                     thin: false,
                     parent_thin: false,
                     leaf: false,
+                    no_alloc: false,
                     source_file: String::new(),
                     line_table: Vec::new(),
                 });
@@ -153,6 +154,41 @@ fn compile_program_inner(
     compiler.compile_top_level(items, arena)?;
     compiler.code.symbols = compiler.symbols.clone();
     classify::classify_thin_functions(&mut compiler.code, arena)?;
+
+    // Lowering-level no-alloc analysis (shared `ir::compute_alloc_info`).
+    // Annotates each chunk so the dispatch loop can skip the runtime
+    // length-compare guard inside `finalize_frame_locals_for_tail_call`
+    // when the target body is provably alloc-free. The WASM backend uses
+    // the same pass to skip boundary framing entirely; here the VM's
+    // `TAIL_CALL_KNOWN` site shortcuts a few ops per iteration.
+    let user_fn_defs: Vec<&crate::ast::FnDef> = items
+        .iter()
+        .filter_map(|item| {
+            if let TopLevel::FnDef(fd) = item {
+                Some(fd)
+            } else {
+                None
+            }
+        })
+        .collect();
+    if !user_fn_defs.is_empty() {
+        let policy = super::VmAllocPolicy;
+        let alloc_info = crate::ir::compute_alloc_info(&user_fn_defs, &policy);
+        for fd in &user_fn_defs {
+            let allocates = *alloc_info.get(&fd.name).unwrap_or(&true);
+            if !allocates && let Some(fn_id) = compiler.code.find(&fd.name) {
+                let chunk = &mut compiler.code.functions[fn_id as usize];
+                chunk.no_alloc = true;
+                // No-alloc bodies always satisfy `can_fast_return`'s
+                // runtime length-equality guards, so promote them into
+                // the thin fast-return class. The bytecode classifier
+                // rejected them for unrelated reasons (mutual TCO call,
+                // body size > MAX_PARENT_THIN, etc.) but for return
+                // purposes there's nothing left to do.
+                chunk.thin = true;
+            }
+        }
+    }
 
     Ok((compiler.code, compiler.globals))
 }
@@ -287,6 +323,7 @@ impl ProgramCompiler {
                     thin: false,
                     parent_thin: false,
                     leaf: false,
+                    no_alloc: false,
                     source_file: String::new(),
                     line_table: Vec::new(),
                 });
@@ -743,6 +780,7 @@ impl<'a> FnCompiler<'a> {
             thin: false,
             parent_thin: false,
             leaf: false,
+            no_alloc: false,
             source_file: self.source_file,
             line_table: self.line_table,
         }

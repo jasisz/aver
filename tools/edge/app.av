@@ -182,19 +182,32 @@ fn extractCountry(req: HttpRequest) -> String
         Option.None         -> "??"
 
 verify extractCountry
-    extractCountry(HttpRequest(method = "GET", path = "/", body = "", headers = {"cf-ipcountry" => ["PL"]})) => "PL"
-    extractCountry(HttpRequest(method = "GET", path = "/", body = "", headers = {})) => "??"
+    extractCountry(HttpRequest(method = "GET", path = "/", query = "", body = "", headers = {"cf-ipcountry" => ["PL"]})) => "PL"
+    extractCountry(HttpRequest(method = "GET", path = "/", query = "", body = "", headers = {})) => "??"
 
-fn fractalResponse() -> HttpResponse
-    ? "Renders two Braille-encoded Mandelbrot views per request — the full set plus a 350× zoom into the seahorse valley — and returns them as styled HTML. The same Fractal.render entry serves both views, parameterised by a View record. Compute fits inside the free-plan 10 ms CPU budget."
+fn fractalResponse(query: String) -> HttpResponse
+    ? "Renders one coloured half-block Mandelbrot view, with cx / cy / w taken from the query string (defaults to the full set). Grid + iter both tier on `view.cxRange` (`gridWFor` / `gridHFor` / `iterFor`) so total compute stays roughly constant across zoom depths — shallow views get max resolution at low iter, deep views get smaller grid + more iter. No caching — every click really does re-render in pure Aver, that's the whole demo."
+    view = Fractal.viewFromQuery(query)
     HttpResponse(
         status = 200,
         body = Fractal.page(
-            Fractal.render(80, 24, 80, Fractal.fullView()),
-            Fractal.render(80, 24, 150, Fractal.seahorseView()),
+            Fractal.render(
+                Fractal.gridWFor(view.cxRange),
+                Fractal.gridHFor(view.cxRange),
+                Fractal.iterFor(view.cxRange),
+                view,
+            ),
+            view,
         ),
-        headers = { "content-type" => ["text/html; charset=utf-8"] },
+        headers = {
+            "content-type"  => ["text/html; charset=utf-8"],
+            "cache-control" => ["no-store"],
+        },
     )
+
+verify fractalResponse
+    fractalResponse("").status            => 200
+    fractalResponse("w=0.5").status       => 200
 
 fn handler(req: HttpRequest) -> HttpResponse
     ? "Routes by path. `/` HTML, `/api` JSON, `/fractal` ASCII Mandelbrot, `/llms.txt` plain text, everything else 404s."
@@ -203,6 +216,6 @@ fn handler(req: HttpRequest) -> HttpResponse
     match req.path
         "/"          -> htmlResponse(landing(country))
         "/api"       -> jsonResponse(manifesto(country, Time.unixMs()))
-        "/fractal"   -> fractalResponse()
+        "/fractal"   -> fractalResponse(req.query)
         "/llms.txt"  -> textResponse(llmsTxt())
         _            -> notFound(req.path)
