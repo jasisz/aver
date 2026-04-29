@@ -65,11 +65,31 @@ The WASM backend uses a single bump-heap allocator (`$alloc`) with boundary comp
 
 **Exported globals**: modules export `$heap_ptr` (bump allocator position) for host-side memory inspection, and `$alloc(size: i32) -> i32` so hosts can allocate guest memory safely for strings returned from host imports.
 
+## Policy is the Host's Job
+
+The WASM artifact does **not** embed `aver.toml` runtime policy, and this is deliberate — not a missing feature.
+
+What lives where:
+
+- **What the program declares it needs** — effect imports, deterministic mocks for replay, independence-mode invariants. This is build-time semantics. Stays with us, encoded in the WASM module (or a sidecar manifest).
+- **What the program is allowed to do at runtime** — URL/host whitelists, filesystem scoping, rate limits, capability tokens. This is enforcement. Belongs to the host.
+
+Every wasm host already has a richer enforcement model than `aver.toml` could express portably:
+
+- **wasmtime / WASI** — `--allow-net=api.foo.com:443`, `--dir=/tmp`, capability tokens per instance
+- **Cloudflare Workers** — `services` / `fetch` bindings per domain in `wrangler.toml`
+- **Browser** — CSP `connect-src`, CORS, fetch hooks
+- **Fastly Compute** — backend whitelist in service config
+
+A trap on a missing import is a free `deny`. Re-encoding the same allow/deny rules into the WASM artifact would be at best a duplicate of what the host already enforces, at worst security theater (build-time declaration with no runtime teeth).
+
+So: `aver.toml` stays fully effective for VM and `--self-host` execution (where we own the runtime). For `--target wasm` / `--target edge-wasm`, the only fields with a job to do are the build-time ones (deterministic mocks, independence cancel) — the rest is the host's deployment config.
+
 ## Limitations
 
-- **`aver.toml` policy** — the WASM binary does not embed runtime policy. Effect restrictions (`hosts`, `paths`, `keys`) are the host's responsibility. The built-in host does not yet read `aver.toml`. Independence mode (`cancel` vs `complete`) has no effect since WASM execution is single-threaded.
 - **Module graph is compile-time only** — regular multi-module `depends [...]` works when the full graph resolves under the chosen `--module-root`, but the backend emits one standalone module, not separately linked WASM modules.
 - **Services** — the built-in host provides Console, Terminal, Random, Time, and math. Disk, Http, Tcp, Env, and Args are not available.
+- **Independence mode** — `cancel` vs `complete` has no effect since WASM execution is single-threaded.
 
 ## Optimized Patterns
 
