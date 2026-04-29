@@ -156,7 +156,27 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalGet(value_local));
                 self.instructions
                     .push(Instruction::I32Const(if value_is_ptr { 1 } else { 0 }));
-                self.instructions.push(Instruction::Call(self.rt.map_set));
+                // Owned-mutate fast path: when last-use analysis proves
+                // the map argument is the sole observer, call the
+                // _owned variant. The flat-hashtable runtime mutates
+                // the bucket array in place — zero alloc on update,
+                // zero alloc on insert (until load factor triggers a
+                // resize). Mirrors the VM's `set_nv_owned` dispatch.
+                // Owned-mutate fast path: when last-use analysis proves
+                // the map argument is the sole observer, call the
+                // _owned variant. The flat-hashtable runtime mutates
+                // the bucket array in place — zero alloc on update,
+                // amortized O(1) on insert (resize still allocates a
+                // fresh table). Mirrors the VM's `set_nv_owned` dispatch.
+                let target = if matches!(
+                    &args[0].node,
+                    Expr::Resolved { last_use, .. } if last_use.0
+                ) {
+                    self.rt.map_set_owned
+                } else {
+                    self.rt.map_set
+                };
+                self.instructions.push(Instruction::Call(target));
             }
             "Map.len" if args.len() == 1 => {
                 self.instructions.push(Instruction::Call(self.rt.map_len));

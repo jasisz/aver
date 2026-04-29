@@ -44,6 +44,7 @@ pub struct AverRuntimeImports {
     pub rt_list_zip: u32,
     pub rt_map_get: u32,
     pub rt_map_set: u32,
+    pub rt_map_set_owned: u32,
     pub rt_map_has: u32,
     pub rt_map_keys: u32,
     pub rt_map_entries: u32,
@@ -123,6 +124,7 @@ pub struct RuntimeFuncIndices {
     pub list_zip: u32,        // (i32, i32) -> i32
     pub map_get: u32,         // (i32, i64, i32) -> i32
     pub map_set: u32,         // (i32, i64, i32, i64, i32) -> i32
+    pub map_set_owned: u32,   // (i32, i64, i32, i64, i32) -> i32 — owned-mutate
     pub map_has: u32,         // (i32, i64, i32) -> i32
     pub map_keys: u32,        // (i32) -> i32
     pub map_entries: u32,     // (i32) -> i32
@@ -203,6 +205,7 @@ impl RuntimeFuncIndices {
             list_zip: imports.rt_list_zip,
             map_get: imports.rt_map_get,
             map_set: imports.rt_map_set,
+            map_set_owned: imports.rt_map_set_owned,
             map_has: imports.rt_map_has,
             map_keys: imports.rt_map_keys,
             map_entries: imports.rt_map_entries,
@@ -280,6 +283,7 @@ impl RuntimeFuncIndices {
             (self.list_zip, "list_zip"),
             (self.map_get, "map_get"),
             (self.map_set, "map_set"),
+            (self.map_set_owned, "map_set_owned"),
             (self.map_has, "map_has"),
             (self.map_keys, "map_keys"),
             (self.map_entries, "map_entries"),

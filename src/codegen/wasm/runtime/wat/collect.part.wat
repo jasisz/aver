@@ -48,7 +48,7 @@
     end
   )
   (func $rt_collect_end
-    (local i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i64)
+    (local i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i64 i32 i64)
     global.get $heap_ptr
     global.set $collect_dst
     global.get $collect_from
@@ -81,6 +81,22 @@
         local.get 10
         i32.wrap_i64
         local.set 5
+        ;; Size dispatch. OBJ_MAP (kind=12) is special-cased first: it
+        ;; carries `count` in the header low 32 (= local 5) but its
+        ;; on-heap size is `16 + capacity * 24` where capacity lives
+        ;; in the lower 32 bits of the i64 cell at offset 8.
+        local.get 3
+        i32.const 12
+        i32.eq
+        if (result i32) ;; label = @3
+          i32.const 16
+          local.get 0
+          i64.load offset=8
+          i32.wrap_i64
+          i32.const 24
+          i32.mul
+          i32.add
+        else
         local.get 3
         i32.const 0
         i32.eq
@@ -128,6 +144,7 @@
               i32.add
             end
           end
+        end
         end
         local.set 2
         local.get 3
@@ -207,10 +224,6 @@
         i32.eq
         i32.or
         local.get 3
-        i32.const 12
-        i32.eq
-        i32.or
-        local.get 3
         i32.const 14
         i32.eq
         i32.or
@@ -257,6 +270,94 @@
               i32.const 1
               i32.add
               local.set 6
+              br 0 (;@5;)
+            end
+          end
+        end
+        ;; OBJ_MAP (kind=12) — flat hashtable. Walk every occupied
+        ;; bucket and rebase its key (when key_kind ∈ {3,4} → heap
+        ;; pointer) and value (when meta bit 0 = value_ptr_flag is
+        ;; set). Bucket layout: state(4B) hash(4B) key(8B) value(8B).
+        ;; Key_kind lives in capacity word bits 32..39.
+        local.get 3
+        i32.const 12
+        i32.eq
+        if ;; label = @3
+          ;; cap into local 6, key_kind into local 7, vflag into local 8
+          local.get 0
+          i64.load offset=8
+          local.tee 12
+          i32.wrap_i64
+          local.set 6
+          local.get 12
+          i64.const 32
+          i64.shr_u
+          i64.const 0xFF
+          i64.and
+          i32.wrap_i64
+          local.set 7
+          local.get 4
+          i32.const 1
+          i32.and
+          local.set 8
+          ;; key_is_ptr = (kkind == 3) || (kkind == 4)
+          local.get 7
+          i32.const 3
+          i32.eq
+          local.get 7
+          i32.const 4
+          i32.eq
+          i32.or
+          local.set 9
+          ;; loop i in 0..cap, bucket addr in local 11
+          i32.const 0
+          local.set 7
+          block ;; label = @4
+            loop ;; label = @5
+              local.get 7
+              local.get 6
+              i32.ge_u
+              br_if 1 (;@4;)
+              local.get 0
+              i32.const 16
+              i32.add
+              local.get 7
+              i32.const 24
+              i32.mul
+              i32.add
+              local.set 11
+              local.get 11
+              i32.load
+              i32.const 1
+              i32.eq
+              if ;; only rebase occupied
+                ;; key cell at offset 8 — rebase if key_kind is ptr
+                local.get 9
+                if
+                  local.get 11
+                  local.get 11
+                  i64.load offset=8
+                  i32.wrap_i64
+                  call $rt_rebase_i32
+                  i64.extend_i32_s
+                  i64.store offset=8
+                end
+                ;; value cell at offset 16 — rebase if value_ptr_flag
+                local.get 8
+                if
+                  local.get 11
+                  local.get 11
+                  i64.load offset=16
+                  i32.wrap_i64
+                  call $rt_rebase_i32
+                  i64.extend_i32_s
+                  i64.store offset=16
+                end
+              end
+              local.get 7
+              i32.const 1
+              i32.add
+              local.set 7
               br 0 (;@5;)
             end
           end
@@ -389,7 +490,7 @@
     global.set $heap_ptr
   )
   (func $rt_retain_i32 (param i32) (result i32)
-    (local i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i64)
+    (local i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i64 i32 i64)
     local.get 0
     i32.const 0
     i32.le_s
@@ -441,6 +542,20 @@
             local.get 11
             i32.wrap_i64
             local.set 6
+            ;; OBJ_MAP (kind=12) special-case: size = 16 + cap * 24
+            ;; where cap is in low 32 bits of capacity word at offset 8.
+            local.get 4
+            i32.const 12
+            i32.eq
+            if (result i32) ;; label = @5
+              i32.const 16
+              local.get 1
+              i64.load offset=8
+              i32.wrap_i64
+              i32.const 24
+              i32.mul
+              i32.add
+            else
             local.get 4
             i32.const 0
             i32.eq
@@ -488,6 +603,7 @@
                   i32.add
                 end
               end
+            end
             end
             local.set 3
             local.get 3
@@ -1010,10 +1126,6 @@
             i32.eq
             i32.or
             local.get 4
-            i32.const 12
-            i32.eq
-            i32.or
-            local.get 4
             i32.const 14
             i32.eq
             i32.or
@@ -1055,6 +1167,89 @@
                     local.get 8
                     i64.extend_i32_s
                     i64.store
+                  end
+                  local.get 7
+                  i32.const 1
+                  i32.add
+                  local.set 7
+                  br 0 (;@7;)
+                end
+              end
+            end
+            ;; OBJ_MAP (kind=12) — flat hashtable. Retain key + value
+            ;; in every occupied bucket. Same logic as the rebase walk
+            ;; in collect_end but with rt_retain_i32. Key_kind sits in
+            ;; the capacity word bits 32..39; value_ptr_flag in the
+            ;; header meta byte's bit 0.
+            local.get 4
+            i32.const 12
+            i32.eq
+            if ;; label = @5
+              local.get 2
+              i64.load offset=8
+              local.tee 13
+              i32.wrap_i64
+              local.set 6
+              local.get 13
+              i64.const 32
+              i64.shr_u
+              i64.const 0xFF
+              i64.and
+              i32.wrap_i64
+              local.set 7
+              local.get 5
+              i32.const 1
+              i32.and
+              local.set 8
+              local.get 7
+              i32.const 3
+              i32.eq
+              local.get 7
+              i32.const 4
+              i32.eq
+              i32.or
+              local.set 9
+              i32.const 0
+              local.set 7
+              block ;; label = @6
+                loop ;; label = @7
+                  local.get 7
+                  local.get 6
+                  i32.ge_u
+                  br_if 1 (;@6;)
+                  local.get 2
+                  i32.const 16
+                  i32.add
+                  local.get 7
+                  i32.const 24
+                  i32.mul
+                  i32.add
+                  local.set 12
+                  local.get 12
+                  i32.load
+                  i32.const 1
+                  i32.eq
+                  if ;; only retain occupied buckets
+                    local.get 9
+                    if
+                      local.get 12
+                      local.get 12
+                      i64.load offset=8
+                      i32.wrap_i64
+                      call $rt_retain_i32
+                      i64.extend_i32_s
+                      i64.store offset=8
+                    end
+                    local.get 8
+                    if
+                      local.get 12
+                      local.get 12
+                      i64.load offset=16
+                      i32.wrap_i64
+                      call $rt_retain_i32
+                      i64.extend_i32_s
+                      i64.store offset=16
+                    end
                   end
                   local.get 7
                   i32.const 1

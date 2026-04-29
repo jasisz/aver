@@ -213,6 +213,7 @@ mod tests {
             ("rt_list_zip", "func"),
             ("rt_map_get", "func"),
             ("rt_map_set", "func"),
+            ("rt_map_set_owned", "func"),
             ("rt_map_has", "func"),
             ("rt_map_from_list", "func"),
             ("rt_map_keys", "func"),
