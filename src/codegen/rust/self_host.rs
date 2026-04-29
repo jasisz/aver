@@ -122,30 +122,19 @@ fn http_request_to_val(request: crate::aver_rt::HttpRequest) -> Val {
             (AverStr::from("method"), Val::ValStr(request.method)),
             (AverStr::from("path"), Val::ValStr(request.path)),
             (AverStr::from("body"), Val::ValStr(request.body)),
-            (
-                AverStr::from("headers"),
-                Val::ValList(headers_to_val(request.headers)),
-            ),
+            (AverStr::from("headers"), headers_to_val(request.headers)),
         ]),
     )
 }
 
-fn headers_to_val(headers: crate::aver_rt::AverList<crate::aver_rt::Header>) -> crate::aver_rt::AverList<Val> {
-    crate::aver_rt::AverList::from_vec(
-        headers
-            .to_vec()
-            .into_iter()
-            .map(|header| {
-                Val::ValRecord(
-                    AverStr::from("Header"),
-                    crate::aver_rt::AverList::from_vec(vec![
-                        (AverStr::from("name"), Val::ValStr(header.name)),
-                        (AverStr::from("value"), Val::ValStr(header.value)),
-                    ]),
-                )
-            })
-            .collect(),
-    )
+fn headers_to_val(headers: crate::aver_rt::HttpHeaders) -> Val {
+    let mut out = crate::aver_rt::AverMap::default();
+    for (name, values) in headers.iter() {
+        let value_list =
+            crate::aver_rt::AverList::from_vec(values.iter().cloned().map(Val::ValStr).collect());
+        out = out.insert(name.clone(), Val::ValList(value_list));
+    }
+    Val::ValMap(out)
 }
 
 fn val_to_http_response(value: Val) -> Result<crate::aver_rt::HttpResponse, AverStr> {
@@ -162,7 +151,7 @@ fn val_to_http_response(value: Val) -> Result<crate::aver_rt::HttpResponse, Aver
 
     let mut status = None;
     let mut body = None;
-    let mut headers = crate::aver_rt::AverList::empty();
+    let mut headers = crate::aver_rt::HttpHeaders::default();
 
     for (field_name, field_value) in fields.to_vec() {
         match &*field_name {
@@ -188,47 +177,42 @@ fn val_to_http_response(value: Val) -> Result<crate::aver_rt::HttpResponse, Aver
     })
 }
 
-fn val_to_headers(value: Val) -> Result<crate::aver_rt::AverList<crate::aver_rt::Header>, AverStr> {
-    let Val::ValList(items) = value else {
-        return Err(AverStr::from("HttpResponse.headers must be List<Header>"));
+fn val_to_headers(value: Val) -> Result<crate::aver_rt::HttpHeaders, AverStr> {
+    let Val::ValMap(items) = value else {
+        return Err(AverStr::from(
+            "HttpResponse.headers must be Map<String, List<String>>",
+        ));
     };
 
-    let mut out = Vec::new();
-    for item in items.to_vec() {
-        let Val::ValRecord(_, fields) = item else {
-            return Err(AverStr::from("HttpResponse.headers entries must be Header records"));
+    let mut out = crate::aver_rt::HttpHeaders::default();
+    for (key, value) in items.iter() {
+        let Val::ValList(values) = value else {
+            return Err(AverStr::from(
+                "HttpResponse.headers values must be List<String>",
+            ));
         };
-
-        let mut name = None;
-        let mut value = None;
-        for (field_name, field_value) in fields.to_vec() {
-            match &*field_name {
-                "name" => match field_value {
-                    Val::ValStr(s) => name = Some(s),
-                    _ => return Err(AverStr::from("Header.name must be String")),
-                },
-                "value" => match field_value {
-                    Val::ValStr(s) => value = Some(s),
-                    _ => return Err(AverStr::from("Header.value must be String")),
-                },
-                _ => {}
+        let mut value_strs = Vec::new();
+        for entry in values.to_vec() {
+            match entry {
+                Val::ValStr(s) => value_strs.push(s),
+                _ => {
+                    return Err(AverStr::from(
+                        "HttpResponse.headers value entries must be String",
+                    ));
+                }
             }
         }
-
-        out.push(crate::aver_rt::Header {
-            name: name.ok_or_else(|| AverStr::from("Header.name is required"))?,
-            value: value.ok_or_else(|| AverStr::from("Header.value is required"))?,
-        });
+        out = out.insert(key.clone(), crate::aver_rt::AverList::from_vec(value_strs));
     }
 
-    Ok(crate::aver_rt::AverList::from_vec(out))
+    Ok(out)
 }
 
 fn http_error_response(message: String) -> crate::aver_rt::HttpResponse {
     crate::aver_rt::HttpResponse {
         status: 500,
         body: AverStr::from(message),
-        headers: crate::aver_rt::AverList::empty(),
+        headers: crate::aver_rt::HttpHeaders::default(),
     }
 }
 "#;
