@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.14.0 "Edge" (TBD)
+## 0.14.0 "Edge" (2026-04-29)
 
 > _Aver's WASM backend becomes a deployable edge target: small user modules, a shared runtime, and explicit host bridges._
 
