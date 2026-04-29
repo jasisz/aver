@@ -640,8 +640,7 @@ fn main()
 "#,
     );
     assert_eq!(
-        stdout,
-        "I should still be here at the end",
+        stdout, "I should still be here at the end",
         "long-lived string corrupted:\n{}",
         stdout
     );

@@ -366,7 +366,11 @@ fn cross_mixed_map_vector_tco_self_host() {
 
 #[test]
 fn cross_nested_record_map_list_vm() {
-    assert_eq_with_label("VM", &run_vm("aver-cross-nested-vm", NESTED_SRC), NESTED_OUT);
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-nested-vm", NESTED_SRC),
+        NESTED_OUT,
+    );
 }
 #[test]
 fn cross_nested_record_map_list_wasm() {
