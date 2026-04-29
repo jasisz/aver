@@ -99,6 +99,27 @@ pub fn build_wasm_module(
 
     let mutual_tco_groups = build_mutual_tco_groups(ctx, &user_fns);
 
+    // Per-fn heap-allocation classification (shared `src/ir/alloc_info.rs`).
+    // Fns flagged as no-alloc skip GC framing emission below — their bodies
+    // never produce garbage, so the boundary mark save, rt_truncate call,
+    // and TCO watermark check are all dead work.
+    let alloc_policy = super::WasmAllocPolicy;
+    let alloc_fn_defs: Vec<&crate::ast::FnDef> =
+        user_fns.iter().map(|e| e.fd).collect();
+    let alloc_info_by_local_name =
+        crate::ir::compute_alloc_info(&alloc_fn_defs, &alloc_policy);
+    // Map from canonical (module-prefixed) name → no-alloc flag, since
+    // the lookup above is keyed by the local fn name.
+    let no_alloc_by_canonical: HashMap<String, bool> = user_fns
+        .iter()
+        .map(|e| {
+            let allocates = *alloc_info_by_local_name
+                .get(&e.fd.name)
+                .unwrap_or(&true);
+            (e.canonical_name.clone(), !allocates)
+        })
+        .collect();
+
     // -----------------------------------------------------------------------
     // Collect string literals from AST
     // -----------------------------------------------------------------------
@@ -972,6 +993,15 @@ pub fn build_wasm_module(
     }
 
     for (group, layout) in mutual_tco_groups.iter().zip(&mutual_tco_layouts) {
+        // A trampoline can elide its watermark + boundary framing iff
+        // every member of the group is no-alloc — even one allocating
+        // member taints the whole loop.
+        let group_is_no_alloc = group.member_indices.iter().all(|&idx| {
+            no_alloc_by_canonical
+                .get(&user_fns[idx].canonical_name)
+                .copied()
+                .unwrap_or(false)
+        });
         let func = emit_mutual_tco_trampoline(
             group,
             layout,
@@ -983,6 +1013,7 @@ pub fn build_wasm_module(
             ctx,
             &variant_registry,
             &host_imports,
+            group_is_no_alloc,
         )?;
         code_section.function(&func);
     }
@@ -996,6 +1027,10 @@ pub fn build_wasm_module(
             continue;
         }
 
+        let entry_is_no_alloc = no_alloc_by_canonical
+            .get(&entry.canonical_name)
+            .copied()
+            .unwrap_or(false);
         let (func, locals) = emit_plain_user_function(
             entry,
             &fn_indices,
@@ -1006,6 +1041,7 @@ pub fn build_wasm_module(
             &variant_registry,
             &host_imports,
             tco_fns.contains(&entry.canonical_name),
+            entry_is_no_alloc,
         )?;
         code_section.function(&func);
         if let Some(&fn_idx) = fn_indices.get(&entry.canonical_name) {
@@ -1181,6 +1217,7 @@ fn emit_plain_user_function(
     variant_registry: &HashMap<(String, String), super::expr::VariantInfo>,
     host_imports: &HashMap<String, u32>,
     needs_tco: bool,
+    is_no_alloc: bool,
 ) -> Result<(wasm_encoder::Function, Vec<(String, u32)>), String> {
     let mut emitter = ExprEmitter::new(
         fn_indices,
@@ -1222,7 +1259,8 @@ fn emit_plain_user_function(
             .as_ref()
             .is_some_and(thin_body_plan_is_parent_thin_candidate);
 
-    if !(emitter.is_thin || emitter.is_parent_thin) {
+    emitter.is_no_alloc = is_no_alloc;
+    if !(emitter.is_thin || emitter.is_parent_thin || emitter.is_no_alloc) {
         let boundary_mark_local = emitter.alloc_local(WasmType::I32);
         emitter.boundary_mark_local = Some(boundary_mark_local);
         emitter.instructions.push(Instruction::GlobalGet(0));
@@ -1265,10 +1303,12 @@ fn emit_plain_user_function(
         emitter.emit_end();
     }
 
-    emitter.emit_boundary_truncate_or_compact_for_stack_value(
-        emitter.fn_return_type,
-        emitter.fn_return_is_heap,
-    );
+    if !emitter.is_no_alloc {
+        emitter.emit_boundary_truncate_or_compact_for_stack_value(
+            emitter.fn_return_type,
+            emitter.fn_return_is_heap,
+        );
+    }
 
     let locals = build_emitter_locals(&emitter, entry.fd.params.len() as u32);
     let mut func = wasm_encoder::Function::new(locals);
@@ -1466,6 +1506,7 @@ fn emit_mutual_tco_trampoline(
     ctx: &CodegenContext,
     variant_registry: &HashMap<(String, String), super::expr::VariantInfo>,
     host_imports: &HashMap<String, u32>,
+    is_no_alloc: bool,
 ) -> Result<wasm_encoder::Function, String> {
     let mut emitter = ExprEmitter::new(
         fn_indices,
@@ -1510,26 +1551,34 @@ fn emit_mutual_tco_trampoline(
             .insert(local_index, slot.aver_type.clone());
     }
     emitter.next_local = 1 + layout.slots.len() as u32;
-    let boundary_mark_local = emitter.alloc_local(WasmType::I32);
-    emitter.boundary_mark_local = Some(boundary_mark_local);
-    emitter.instructions.push(Instruction::GlobalGet(0));
-    emitter
-        .instructions
-        .push(Instruction::LocalSet(boundary_mark_local));
+    emitter.is_no_alloc = is_no_alloc;
+    if !is_no_alloc {
+        let boundary_mark_local = emitter.alloc_local(WasmType::I32);
+        emitter.boundary_mark_local = Some(boundary_mark_local);
+        emitter.instructions.push(Instruction::GlobalGet(0));
+        emitter
+            .instructions
+            .push(Instruction::LocalSet(boundary_mark_local));
 
-    // Yard semantics: per-iteration mark for mutual TCO trampoline.
-    let iter_mark = emitter.alloc_local(WasmType::I32);
-    emitter.iter_mark_local = Some(iter_mark);
+        // Yard semantics: per-iteration mark for mutual TCO trampoline.
+        let iter_mark = emitter.alloc_local(WasmType::I32);
+        emitter.iter_mark_local = Some(iter_mark);
 
-    // Watermark: heap_ptr after last compaction. Compact when garbage
-    // (heap_ptr - watermark) exceeds threshold. Adaptive — compacts
-    // only when actual garbage warrants it, not on a fixed schedule.
-    let gc_watermark = emitter.alloc_local(WasmType::I32);
-    emitter.gc_watermark_local = Some(gc_watermark);
-    emitter.instructions.push(Instruction::GlobalGet(0));
-    emitter
-        .instructions
-        .push(Instruction::LocalSet(gc_watermark));
+        // Watermark: heap_ptr after last compaction. Compact when garbage
+        // (heap_ptr - watermark) exceeds threshold. Adaptive — compacts
+        // only when actual garbage warrants it, not on a fixed schedule.
+        let gc_watermark = emitter.alloc_local(WasmType::I32);
+        emitter.gc_watermark_local = Some(gc_watermark);
+        emitter.instructions.push(Instruction::GlobalGet(0));
+        emitter
+            .instructions
+            .push(Instruction::LocalSet(gc_watermark));
+    }
+    // Pure no-alloc trampolines (mandelStep ↔ mandelIter, etc.) leave
+    // boundary_mark_local / iter_mark_local / gc_watermark_local as None.
+    // The watermark-check site in `expr/emit.rs` and the boundary-truncate
+    // call below both branch on these Options, so leaving them None
+    // collapses the GC framing to nothing.
 
     emitter
         .instructions
@@ -1539,9 +1588,12 @@ fn emit_mutual_tco_trampoline(
     emitter.block_depth += 1;
     emitter.enable_tco_loop();
 
-    // Save heap_ptr at iteration start.
-    emitter.instructions.push(Instruction::GlobalGet(0));
-    emitter.instructions.push(Instruction::LocalSet(iter_mark));
+    // Save heap_ptr at iteration start. Skipped when the whole group is
+    // no-alloc — there's no garbage to mark off.
+    if let Some(iter_mark) = emitter.iter_mark_local {
+        emitter.instructions.push(Instruction::GlobalGet(0));
+        emitter.instructions.push(Instruction::LocalSet(iter_mark));
+    }
 
     emit_mutual_dispatch_chain(&mut emitter, group, layout, user_fns, 0);
 
@@ -1550,10 +1602,12 @@ fn emit_mutual_tco_trampoline(
     }
 
     emitter.emit_end();
-    emitter.emit_boundary_truncate_or_compact_for_stack_value(
-        emitter.fn_return_type,
-        emitter.fn_return_is_heap,
-    );
+    if !emitter.is_no_alloc {
+        emitter.emit_boundary_truncate_or_compact_for_stack_value(
+            emitter.fn_return_type,
+            emitter.fn_return_is_heap,
+        );
+    }
 
     let locals = build_emitter_locals(&emitter, 1 + layout.slots.len() as u32);
     let mut func = wasm_encoder::Function::new(locals);

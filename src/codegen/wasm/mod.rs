@@ -6,11 +6,14 @@
 /// Default output uses `aver/*` import ABI — host provides effect implementations.
 /// `--bridge wasip1` mode bundles a WASI preview-1 shim for standalone wasmtime execution.
 pub(crate) mod abi;
+mod alloc_policy;
 mod emitter;
 mod expr;
 mod runtime;
 mod types;
 pub(crate) mod value;
+
+pub(crate) use alloc_policy::WasmAllocPolicy;
 
 pub use runtime::{build_aver_to_wasi_wasm, build_runtime_wasm};
 

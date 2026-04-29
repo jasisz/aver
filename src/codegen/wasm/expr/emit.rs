@@ -1701,7 +1701,14 @@ impl<'a> ExprEmitter<'a> {
             // (which masks per-iteration growth from iter_mark) because
             // watermark tracks absolute growth since last compaction, not
             // per-iteration delta.
-            if let Some(iter_mark) = self.iter_mark_local {
+            //
+            // Pure no-alloc groups (mandelStep ↔ mandelIter, etc.) elide
+            // this entirely — `is_no_alloc` is set up front by
+            // `emit_mutual_tco_trampoline`, and `iter_mark_local` is left
+            // None alongside it, so the branches below all fall through.
+            if self.is_no_alloc {
+                // intentionally empty
+            } else if let Some(iter_mark) = self.iter_mark_local {
                 let fn_mark = self.boundary_mark_local.unwrap_or(iter_mark);
                 if let Some(watermark) = self.gc_watermark_local {
                     // if (heap_ptr - watermark > 8192) → compact + reset watermark
@@ -1774,7 +1781,12 @@ impl<'a> ExprEmitter<'a> {
             // structurally-sharing data type allocates 4-5 nodes per
             // step (~600B) — death by a thousand compactions. 16384
             // matches the mutual-TCO branch's watermark threshold.
-            if let Some(iter_mark) = self.iter_mark_local {
+            //
+            // Pure no-alloc self-recursive fns skip the whole compaction
+            // pass — they don't generate garbage to begin with.
+            if self.is_no_alloc {
+                // intentionally empty
+            } else if let Some(iter_mark) = self.iter_mark_local {
                 let fn_mark = self.boundary_mark_local.unwrap_or(iter_mark);
                 self.instructions.push(Instruction::GlobalGet(0));
                 self.instructions.push(Instruction::LocalGet(iter_mark));

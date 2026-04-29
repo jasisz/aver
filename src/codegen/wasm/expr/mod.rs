@@ -137,6 +137,12 @@ pub(super) struct ExprEmitter<'a> {
     pub is_thin: bool,
     /// Parent-thin frame: borrow caller young lane; skip local boundary cleanup.
     pub is_parent_thin: bool,
+    /// Pure no-alloc frame: classified by the shared `ir::compute_alloc_info`
+    /// pass against `WasmAllocPolicy`. The body never produces a heap object,
+    /// so all GC framing (boundary mark save, rt_truncate at exit, TCO
+    /// watermark check) is dead work and gets elided. Set up front by
+    /// `emit_plain_user_function` and `emit_mutual_tco_trampoline`.
+    pub is_no_alloc: bool,
 }
 
 impl<'a> ExprEmitter<'a> {
@@ -178,6 +184,7 @@ impl<'a> ExprEmitter<'a> {
             fn_return_is_heap: false,
             is_thin: false,
             is_parent_thin: false,
+            is_no_alloc: false,
         }
     }
 
