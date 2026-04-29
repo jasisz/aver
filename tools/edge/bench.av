@@ -1,5 +1,5 @@
 module Bench
-    intent = "Local timing harness for Fractal.render — predicts whether the live /fractal endpoint will fit under Cloudflare Workers' free-plan 10 ms CPU budget. Not deployed."
+    intent = "Bench Mandelbrot at various sizes."
     depends [Fractal]
     exposes [main]
     effects [Console.print, Time.unixMs]
@@ -7,8 +7,8 @@ module Bench
 fn main() -> Unit
     ! [Console.print, Time.unixMs]
     t0 = Time.unixMs()
-    full = Fractal.render(80, 18, 80, Fractal.fullView())
+    full = Fractal.render(100, 24, 80, Fractal.fullView())
     t1 = Time.unixMs()
-    zoom = Fractal.render(80, 18, 150, Fractal.seahorseView())
+    zoom = Fractal.render(100, 24, 200, Fractal.seahorseView())
     t2 = Time.unixMs()
-    Console.print("full(80x18,80)={Int.toString(t1 - t0)}ms sea(80x18,150)={Int.toString(t2 - t1)}ms total={Int.toString(t2 - t0)}ms")
+    Console.print("full(100x24,80)={Int.toString(t1 - t0)}ms sea(100x24,200)={Int.toString(t2 - t1)}ms total={Int.toString(t2 - t0)}ms")
