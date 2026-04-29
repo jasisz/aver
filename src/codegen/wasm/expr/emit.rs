@@ -343,15 +343,6 @@ impl<'a> ExprEmitter<'a> {
             }
 
             CallPlan::Builtin(ref name) => {
-                // Fast path: Option.withDefault(Vector.set(v, i, value), v)
-                // -> bounds check + in-place cell store, no vector copy and no
-                // Option wrapper. This mirrors the VM/Rust fused lowering.
-                if name == "Option.withDefault"
-                    && args.len() == 2
-                    && self.try_emit_vec_set_or_keep(&args[0], &args[1])
-                {
-                    return;
-                }
                 // Fast path: Option.withDefault(Vector.get(v, i), default_literal)
                 // → inline bounds check + direct load, no wrapper allocation.
                 if name == "Option.withDefault"
@@ -1816,35 +1807,6 @@ impl<'a> ExprEmitter<'a> {
     /// Try to emit `Option.withDefault(Vector.get(v, i), default)` as inline
     /// bounds check + direct load, avoiding the Option wrapper allocation.
     /// Returns true if the pattern was matched and code was emitted.
-    fn try_emit_vec_set_or_keep(
-        &mut self,
-        option_expr: &Spanned<Expr>,
-        default_expr: &Spanned<Expr>,
-    ) -> bool {
-        let Expr::FnCall(callee, inner_args) = &option_expr.node else {
-            return false;
-        };
-        if inner_args.len() != 3 || default_expr != &inner_args[0] {
-            return false;
-        }
-        let inner_plan = classify_call_plan(&callee.node, &self.ir_ctx());
-        if !matches!(inner_plan, CallPlan::Builtin(ref n) if n == "Vector.set") {
-            return false;
-        }
-
-        self.emit_expr(&inner_args[0].node);
-        self.emit_expr(&inner_args[1].node);
-        self.emit_expr(&inner_args[2].node);
-        match self.infer_expr_type(&inner_args[2].node) {
-            WasmType::I64 => {}
-            WasmType::I32 => self.instructions.push(Instruction::I64ExtendI32S),
-            WasmType::F64 => self.instructions.push(Instruction::I64ReinterpretF64),
-        }
-        self.instructions
-            .push(Instruction::Call(self.rt.vec_set_or_keep));
-        true
-    }
-
     fn try_emit_vec_get_or_default(
         &mut self,
         option_expr: &Spanned<Expr>,
@@ -1907,17 +1869,18 @@ impl<'a> ExprEmitter<'a> {
         // Out of bounds: default literal
         self.emit_literal(default_lit);
         self.emit_else();
-        // In bounds: rt_vec_get_cell walks patch chains. The
-        // previous shape (inline `i64.load offset=8 + i*8`) baked
-        // in the flat-vector layout assumption — for a patch node
-        // that would read the base pointer as if it were the
-        // element value. The runtime helper handles both flat and
-        // patch layouts; for a flat vector the cost is just the
-        // direct call + `meta & 2` test branching to the flat load.
+        // In bounds: load vec[i] directly
         self.instructions.push(Instruction::LocalGet(vec_local));
         self.instructions.push(Instruction::LocalGet(i_local));
+        self.instructions.push(Instruction::I32Const(8));
+        self.instructions.push(Instruction::I32Mul);
+        self.instructions.push(Instruction::I32Add);
         self.instructions
-            .push(Instruction::Call(self.rt.vec_get_cell));
+            .push(Instruction::I64Load(wasm_encoder::MemArg {
+                offset: 8,
+                align: 3,
+                memory_index: 0,
+            }));
         // Convert i64 to result type if needed
         match result_type {
             WasmType::I64 => {}

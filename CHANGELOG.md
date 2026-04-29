@@ -19,7 +19,6 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 - **HTTP headers are `Map<String, List<String>>`** across request/response records and `Http.post` / `Http.put` / `Http.patch`.
 - **WASM map ABI is polymorphic**, with key kind and value pointer flags passed explicitly.
 - **WAT is the source of truth for the standalone runtime**, and emit-time WASM validation is part of the compile path.
-- **WASM `Vector.set` is O(1) via persistent patch nodes.** Each `Vector.set` allocates a 32-byte patch (base pointer, patched index, patched value) instead of memcopying the entire flat array; reads walk the patch chain via `rt_vec_get_cell` until they hit the deepest base. The compaction GC understands the new layout (size dispatch, mark, rebase). Matches the VM and Rust-codegen lowering — fused `Option.withDefault(Vector.set(v, i, x), v)` calls `rt_vec_set_or_keep` and bypasses the Option wrapper entirely.
 
 ### Removed
 - **`--adapter` → `--bridge`** and **`--wasm-opt oz|o3` → `--optimize size|speed`**.
@@ -32,6 +31,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Known limitations
 - `Http.*` under `--bridge wasip1` returns a transport error; real WASI HTTP belongs in a later Component Model target.
+- WASM `Vector.set` is still O(N) per call.
 - WASM map builds remain slower than the VM on large construction-heavy benchmarks.
 
 ## 0.13.0 "Limit" (2026-04-27)

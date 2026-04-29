@@ -154,7 +154,7 @@ fn compile_to_wasm(source: &str, name: &str) -> std::path::PathBuf {
         .arg("--target")
         .arg("wasm")
         .arg("--bridge")
-        .arg("wasip1")
+        .arg("wasi")
         .arg("--optimize")
         .arg("size")
         .arg("--name")

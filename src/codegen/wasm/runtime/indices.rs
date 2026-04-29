@@ -51,10 +51,8 @@ pub struct AverRuntimeImports {
     pub rt_map_from_list: u32,
     pub rt_vec_from_list: u32,
     pub rt_vec_get: u32,
-    pub rt_vec_get_cell: u32,
     pub rt_vec_len: u32,
     pub rt_vec_set: u32,
-    pub rt_vec_set_or_keep: u32,
     pub rt_vec_new: u32,
     pub rt_vec_to_list: u32,
     pub rt_int_to_str: u32,
@@ -132,10 +130,8 @@ pub struct RuntimeFuncIndices {
     pub map_from_list: u32,   // (i32, i32, i32) -> i32  — list, key_kind, value_ptr_flag
     pub vec_from_list: u32,   // (i32, i32) -> i32
     pub vec_get: u32,         // (i32, i64) -> i32
-    pub vec_get_cell: u32,    // (i32, i32) -> i64  — raw cell load, walks patch chain
     pub vec_len: u32,         // (i32) -> i64
     pub vec_set: u32,         // (i32, i64, i64) -> i32
-    pub vec_set_or_keep: u32, // (i32, i64, i64) -> i32
     pub vec_new: u32,         // (i64, i64, i32) -> i32
     pub vec_to_list: u32,     // (i32) -> i32
     pub str_len: u32,         // (i32) -> i64
@@ -214,10 +210,8 @@ impl RuntimeFuncIndices {
             map_from_list: imports.rt_map_from_list,
             vec_from_list: imports.rt_vec_from_list,
             vec_get: imports.rt_vec_get,
-            vec_get_cell: imports.rt_vec_get_cell,
             vec_len: imports.rt_vec_len,
             vec_set: imports.rt_vec_set,
-            vec_set_or_keep: imports.rt_vec_set_or_keep,
             vec_new: imports.rt_vec_new,
             vec_to_list: imports.rt_vec_to_list,
             str_len: imports.rt_str_len,
@@ -293,10 +287,8 @@ impl RuntimeFuncIndices {
             (self.map_from_list, "map_from_list"),
             (self.vec_from_list, "vec_from_list"),
             (self.vec_get, "vec_get"),
-            (self.vec_get_cell, "vec_get_cell"),
             (self.vec_len, "vec_len"),
             (self.vec_set, "vec_set"),
-            (self.vec_set_or_keep, "vec_set_or_keep"),
             (self.vec_new, "vec_new"),
             (self.vec_to_list, "vec_to_list"),
             (self.str_len, "str_len"),
