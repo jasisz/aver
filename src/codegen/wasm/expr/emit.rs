@@ -1856,10 +1856,7 @@ impl<'a> ExprEmitter<'a> {
         // Anything else (composite expression, non-last-use) means the
         // heap object is potentially observed elsewhere — bail out to
         // the regular copy-on-write path.
-        let Expr::Resolved {
-            name, last_use, ..
-        } = vec_arg
-        else {
+        let Expr::Resolved { name, last_use, .. } = vec_arg else {
             return false;
         };
         if !last_use.0 {
@@ -1889,8 +1886,7 @@ impl<'a> ExprEmitter<'a> {
         self.instructions.push(Instruction::LocalSet(val_local));
 
         // len = header & 0xFFFFFFFF.
-        self.instructions
-            .push(Instruction::LocalGet(vec_local_idx));
+        self.instructions.push(Instruction::LocalGet(vec_local_idx));
         self.instructions
             .push(Instruction::I64Load(wasm_encoder::MemArg {
                 offset: 0,
@@ -1916,8 +1912,7 @@ impl<'a> ExprEmitter<'a> {
         self.instructions.push(Instruction::I32And);
         self.emit_if(wasm_encoder::BlockType::Empty);
         // addr = vec + i*8
-        self.instructions
-            .push(Instruction::LocalGet(vec_local_idx));
+        self.instructions.push(Instruction::LocalGet(vec_local_idx));
         self.instructions.push(Instruction::LocalGet(i_local));
         self.instructions.push(Instruction::I32Const(8));
         self.instructions.push(Instruction::I32Mul);
@@ -1933,8 +1928,7 @@ impl<'a> ExprEmitter<'a> {
         self.emit_end();
 
         // Result of the whole expression: the (possibly-mutated) vec.
-        self.instructions
-            .push(Instruction::LocalGet(vec_local_idx));
+        self.instructions.push(Instruction::LocalGet(vec_local_idx));
         true
     }
 
