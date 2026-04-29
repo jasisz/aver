@@ -51,6 +51,11 @@ struct MutualTcoLayout {
     slots: Vec<MutualTcoSlot>,
     member_ids: HashMap<usize, u32>,
     member_param_locals: HashMap<usize, Vec<u32>>,
+    /// All members share the exact same WASM-typed signature. The slot
+    /// table collapses to a single shared row, so wrappers must pass
+    /// their own params positionally rather than through the
+    /// per-member-owned-slot scheme.
+    uniform_signature: bool,
 }
 
 /// Build a complete WASM module from the Aver codegen context.
@@ -1383,35 +1388,87 @@ fn build_mutual_tco_layout(
 ) -> Result<MutualTcoLayout, String> {
     let first_entry = &user_fns[group.member_indices[0]];
     let return_type = ret_wasm_type_for_entry(ctx, first_entry);
+
+    // When every member shares the exact wasm signature (same param-types
+    // list in the same order), the trampoline can collapse its slot
+    // table to a single shared row. A peer call then writes its args
+    // into the same locals it would have written if it had been a
+    // self-tail-call, eliminating the per-iter "reshape" pass that
+    // otherwise copies every arg through fresh temporaries to a
+    // member-specific slot block.
+    let first_param_types = param_types_for_entry(ctx, first_entry);
+    let first_wasm_types: Vec<WasmType> = first_param_types
+        .iter()
+        .map(aver_type_to_wasm)
+        .collect();
+    let uniform_signature = group.member_indices.iter().all(|&idx| {
+        let entry = &user_fns[idx];
+        let pt = param_types_for_entry(ctx, entry);
+        pt.len() == first_param_types.len()
+            && pt.iter().map(aver_type_to_wasm).eq(first_wasm_types.iter().copied())
+    });
+
     let mut slots = Vec::new();
     let mut member_ids = HashMap::new();
     let mut member_param_locals = HashMap::new();
     let mut next_local = 1u32;
 
-    for (member_id, member_index) in group.member_indices.iter().copied().enumerate() {
-        let entry = &user_fns[member_index];
-        let member_return_type = ret_wasm_type_for_entry(ctx, entry);
-        if member_return_type != return_type {
-            return Err(format!(
-                "mutual TCO group `{}` has mismatched return types (`{}` vs `{}`)",
-                group.trampoline_name, first_entry.canonical_name, entry.canonical_name
-            ));
-        }
+    if uniform_signature {
+        // One shared slot block. Owner indices are recorded against the
+        // first member purely for diagnostic / metadata purposes — every
+        // member resolves to the same `param_locals` vector.
+        let shared_locals: Vec<u32> = (0..first_param_types.len())
+            .map(|i| {
+                let local_index = next_local + i as u32;
+                slots.push(MutualTcoSlot {
+                    owner_index: group.member_indices[0],
+                    owner_param_index: i,
+                    wasm_type: first_wasm_types[i],
+                    aver_type: first_param_types[i].clone(),
+                });
+                local_index
+            })
+            .collect();
+        next_local += first_param_types.len() as u32;
 
-        let param_types = param_types_for_entry(ctx, entry);
-        let mut param_locals = Vec::new();
-        for (param_index, aver_type) in param_types.into_iter().enumerate() {
-            slots.push(MutualTcoSlot {
-                owner_index: member_index,
-                owner_param_index: param_index,
-                wasm_type: aver_type_to_wasm(&aver_type),
-                aver_type,
-            });
-            param_locals.push(next_local);
-            next_local += 1;
+        for (member_id, member_index) in group.member_indices.iter().copied().enumerate() {
+            let entry = &user_fns[member_index];
+            let member_return_type = ret_wasm_type_for_entry(ctx, entry);
+            if member_return_type != return_type {
+                return Err(format!(
+                    "mutual TCO group `{}` has mismatched return types (`{}` vs `{}`)",
+                    group.trampoline_name, first_entry.canonical_name, entry.canonical_name
+                ));
+            }
+            member_ids.insert(member_index, member_id as u32);
+            member_param_locals.insert(member_index, shared_locals.clone());
         }
-        member_ids.insert(member_index, member_id as u32);
-        member_param_locals.insert(member_index, param_locals);
+    } else {
+        for (member_id, member_index) in group.member_indices.iter().copied().enumerate() {
+            let entry = &user_fns[member_index];
+            let member_return_type = ret_wasm_type_for_entry(ctx, entry);
+            if member_return_type != return_type {
+                return Err(format!(
+                    "mutual TCO group `{}` has mismatched return types (`{}` vs `{}`)",
+                    group.trampoline_name, first_entry.canonical_name, entry.canonical_name
+                ));
+            }
+
+            let param_types = param_types_for_entry(ctx, entry);
+            let mut param_locals = Vec::new();
+            for (param_index, aver_type) in param_types.into_iter().enumerate() {
+                slots.push(MutualTcoSlot {
+                    owner_index: member_index,
+                    owner_param_index: param_index,
+                    wasm_type: aver_type_to_wasm(&aver_type),
+                    aver_type,
+                });
+                param_locals.push(next_local);
+                next_local += 1;
+            }
+            member_ids.insert(member_index, member_id as u32);
+            member_param_locals.insert(member_index, param_locals);
+        }
     }
 
     Ok(MutualTcoLayout {
@@ -1422,6 +1479,7 @@ fn build_mutual_tco_layout(
         slots,
         member_ids,
         member_param_locals,
+        uniform_signature,
     })
 }
 
@@ -1434,11 +1492,20 @@ fn emit_mutual_tco_wrapper(
     func.instruction(&Instruction::I32Const(
         *layout.member_ids.get(&entry_index).unwrap_or(&0) as i32,
     ));
-    for slot in &layout.slots {
-        if slot.owner_index == entry_index {
-            func.instruction(&Instruction::LocalGet(slot.owner_param_index as u32));
-        } else {
-            emit_default_value_to_func(&mut func, slot.wasm_type);
+    if layout.uniform_signature {
+        // All members share the slot table positionally — every wrapper
+        // forwards its own params straight through; no per-slot owner
+        // check, no defaults.
+        for i in 0..layout.slots.len() {
+            func.instruction(&Instruction::LocalGet(i as u32));
+        }
+    } else {
+        for slot in &layout.slots {
+            if slot.owner_index == entry_index {
+                func.instruction(&Instruction::LocalGet(slot.owner_param_index as u32));
+            } else {
+                emit_default_value_to_func(&mut func, slot.wasm_type);
+            }
         }
     }
     func.instruction(&Instruction::Call(layout.trampoline_fn_idx));
