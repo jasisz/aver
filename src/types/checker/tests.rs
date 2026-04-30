@@ -289,3 +289,72 @@ fn main() -> Int
         "did not expect Option.withDefault error on Option arg, got: {errs:?}"
     );
 }
+
+#[test]
+fn http_server_listen_with_rejects_mismatched_context() {
+    // listenWith carries a user-defined context type; the second arg's
+    // type must match the handler's first parameter type. Builtin sigs
+    // can't express this with the current type system (no parametric
+    // polymorphism), so it's enforced as a cross-arg check.
+    let items = parse_items(
+        r#"
+record AppCtx
+    config: String
+
+fn handler(ctx: AppCtx, req: HttpRequest) -> HttpResponse
+    HttpResponse(status = 200, body = "ok", headers = Map.empty())
+
+fn main() -> Unit
+    ! [HttpServer.listenWith]
+    HttpServer.listenWith(8080, "wrong_kind_of_context", handler)
+"#,
+    );
+    let errs = errors(items);
+    assert!(
+        errs.iter().any(|e| e.contains(
+            "Argument 2 of 'HttpServer.listenWith': context type String must match handler's first parameter type AppCtx"
+        )),
+        "expected listenWith context-handler mismatch error, got: {errs:?}"
+    );
+}
+
+#[test]
+fn http_server_listen_with_accepts_matched_context() {
+    let items = parse_items(
+        r#"
+record AppCtx
+    config: String
+
+fn handler(ctx: AppCtx, req: HttpRequest) -> HttpResponse
+    HttpResponse(status = 200, body = ctx.config, headers = Map.empty())
+
+fn main(ctx: AppCtx) -> Unit
+    ! [HttpServer.listenWith]
+    HttpServer.listenWith(8080, ctx, handler)
+"#,
+    );
+    let errs = errors(items);
+    assert!(
+        !errs.iter().any(|e| e.contains("HttpServer.listenWith") && e.contains("context type")),
+        "did not expect listenWith context-handler error, got: {errs:?}"
+    );
+}
+
+#[test]
+fn self_host_runtime_listen_rejects_non_handler() {
+    // SelfHostRuntime.httpServerListen used to accept any second arg
+    // (Type::Unknown), letting callers pass an Int where a handler
+    // function was expected. Now caught.
+    let items = parse_items(
+        r#"
+fn main(notAHandler: Int) -> Result<Unit, String>
+    ! [HttpServer.listen]
+    Result.Ok(SelfHostRuntime.httpServerListen(8080, notAHandler))
+"#,
+    );
+    let errs = errors(items);
+    assert!(
+        errs.iter().any(|e| e.contains("SelfHostRuntime.httpServerListen") && e.contains("Int")),
+        "expected SelfHostRuntime.httpServerListen handler-shape error, got: {errs:?}"
+    );
+}

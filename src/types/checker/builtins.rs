@@ -217,13 +217,13 @@ impl TypeChecker {
             ),
             (
                 "SelfHostRuntime.httpServerListen",
-                &[Type::Int, Type::Unknown],
+                &[Type::Int, http_handler()],
                 disk_unit(),
                 &["HttpServer.listen"],
             ),
             (
                 "SelfHostRuntime.httpServerListenWith",
-                &[Type::Int, Type::Unknown, Type::Unknown],
+                &[Type::Int, Type::Unknown, http_handler_with_context()],
                 disk_unit(),
                 &["HttpServer.listenWith"],
             ),

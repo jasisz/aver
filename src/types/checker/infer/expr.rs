@@ -263,6 +263,35 @@ impl TypeChecker {
                     if let Some(sig) = self.find_fn_sig(&display_name).cloned() {
                         let ret = check_call(self, &display_name, sig);
                         validate_special_call(self, &display_name, args);
+                        // Cross-arg validation for `listenWith` family: the
+                        // context arg (#2) must match the handler's first
+                        // parameter type. Builtin sigs use `Type::Unknown`
+                        // for context to allow any user-defined type, so
+                        // this linkage is enforced here rather than via
+                        // standard arg-type matching.
+                        if matches!(
+                            display_name.as_str(),
+                            "HttpServer.listenWith" | "SelfHostRuntime.httpServerListenWith"
+                        ) && arg_types.len() == 3
+                            && let Type::Fn(handler_params, _, _) = &arg_types[2]
+                            && let Some(expected_ctx) = handler_params.first()
+                        {
+                            let actual_ctx = &arg_types[1];
+                            if !matches!(expected_ctx, Type::Unknown)
+                                && !matches!(actual_ctx, Type::Unknown)
+                                && !Self::constraint_compatible(actual_ctx, expected_ctx)
+                            {
+                                self.error_at_line(
+                                    err_line,
+                                    format!(
+                                        "Argument 2 of '{}': context type {} must match handler's first parameter type {}",
+                                        display_name,
+                                        actual_ctx.display(),
+                                        expected_ctx.display(),
+                                    ),
+                                );
+                            }
+                        }
                         return ret;
                     }
                 }
