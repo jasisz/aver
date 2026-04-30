@@ -359,7 +359,7 @@ verify paletteChar
 
 fn halfBlockChar(top: Int, bot: Int) -> String
     ? "Single-cell half-block HTML: `<i c=XY>▀</i>` where XY are two base-32 chars — first is the top sub-pixel palette index (0..u, then v reserved), second is the bottom. CSS attribute selectors `i[c^=C]` and `i[c$=C]` pick fg / bg colours from a shared 31-entry palette. Only used by verify cases now; live rendering goes through `runHtml` to consolidate adjacent identical cells."
-    String.join(["<i c=", paletteChar(top), paletteChar(bot), ">▀</i>"], "")
+    "<i c={paletteChar(top)}{paletteChar(bot)}>▀</i>"
 
 verify halfBlockChar
     halfBlockChar(0, 0)   => "<i c=00>▀</i>"
@@ -377,7 +377,7 @@ verify buildRunChars
     buildRunChars(3, []) => ["▀", "▀", "▀"]
 
 fn runHtml(top: Int, bot: Int, count: Int) -> String
-    ? "Emit a run of `count` adjacent half-block cells sharing palette indices (top, bot) as a single `<i c=XY>▀▀▀…</i>` tag. Run-length encoding the per-row palette stream cuts HTML output by ~2-3× on solid in-set regions and modestly elsewhere; one wrapping tag instead of `count` separate ones, matching CSS attribute selectors still hit."
+    ? "Emit a run of `count` adjacent half-block cells sharing palette indices (top, bot) as a single `<i c=XY>▀▀▀…</i>` tag. Run-length encoding the per-row palette stream cuts HTML output by ~2-3× on solid in-set regions and modestly elsewhere; one wrapping tag instead of `count` separate ones, matching CSS attribute selectors still hit. Uses `String.join` over a 6-element list rather than string interpolation: current Aver lowering of interpolation chains N-1 `str_concat` calls (each allocating a new buffer the size of the cumulative string), whereas `String.join` walks the list once and allocates a single buffer of the total size — measurably cheaper on a hot path called once per run times thousands of runs per request. Will become equivalent once the planned deforestation lowering fuses both shapes to a buffer-write loop."
     match count <= 0
         true  -> ""
         false -> String.join([
