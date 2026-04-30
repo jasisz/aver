@@ -2,6 +2,16 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## Unreleased
+
+### Fixed
+- **`Result.withDefault` / `Option.withDefault` / `Option.toResult` first-arg validation.** All three combinators were registered with `Type::Unknown` parameters in `src/types/checker/builtins.rs`, so `Result.withDefault(Vector.get(v, i), 0)` (Vector.get returns `Option<T>`, not `Result<T, E>`) compiled cleanly through `aver check` and silently returned the default at runtime — every lookup folded to the fallback value with no error surfaced. The special-case handlers in `infer/expr.rs` already had the right return-type inference but skipped argument validation; they now emit a real type error when the first argument is not the expected wrapper. `Type::Unknown` still flows through as escape hatch for genuinely polymorphic returns.
+- **`HttpServer.listenWith` context-handler type linkage.** The second argument (user-defined context) and the handler's first parameter must share the same type — in the `weather.av` style, both are `WeatherContext`. The builtin sig leaves context as `Type::Unknown` (Aver builtins don't carry parametric polymorphism), so the linkage is enforced as a cross-arg check after the standard sig-based validation: extract the handler's `Type::Fn` first param, compare with the inferred type of the context arg, emit a type error on mismatch. Same logic covers `SelfHostRuntime.httpServerListenWith`.
+- **`SelfHostRuntime.httpServerListen{,With}` handler typing.** Both aliases declared their handler parameter as `Type::Unknown`, so callers could pass an `Int` where a `Fn(HttpRequest) -> HttpResponse` was expected and the compile would proceed past type-check. Tightened to `http_handler()` / `http_handler_with_context()` to mirror the public `HttpServer.listen{,With}` shape.
+
+### Edge demo
+- **Mandelbrot smooth coloring + 4×4 Bayer dither + 30-color palette.** The chief visible artefact in `/fractal` was iso-band stepping in smooth gradient regions (each integer-iter step jumped to a new palette index). Mandelbrot escape now returns continuous escape time via linear interpolation between the previous and current `|z|²` (no `Float.log2` in stdlib needed) and the palette lookup applies a 4×4 ordered Bayer dither so fractional `nu` translates into a 16-level sub-band pattern between adjacent palette entries. Palette doubled from 16 to 30 cyclic entries (interpolated between the previous keypoints) encoded as two base-32 chars per cell — same per-cell bandwidth, twice the colour resolution. Iter caps lowered (deepest 5000 → 1200) to fit Cloudflare Workers free-tier CPU budget after earlier 1102 hits; the chaotic-boundary salt-and-pepper that remains is fundamental aliasing of a chaotic iter field onto a discrete grid and would need supersampling or log-based smoothing to reduce further. Footer also picks up a top-level GitHub link next to the per-file `source` link.
+
 ## 0.14.2 (2026-04-29)
 
 ### Added
