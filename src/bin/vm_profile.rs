@@ -1,11 +1,9 @@
 use std::fs;
 use std::path::Path;
 
+use aver::ir::{PipelineConfig, TypecheckMode, pipeline};
 use aver::nan_value::Arena;
-use aver::resolver;
 use aver::source::{parse_source, require_module_declaration};
-use aver::tco;
-use aver::types::checker::run_type_check_full;
 use aver::vm::{self, VM, VmProfileReport};
 
 const WORKFLOW_MODULE_ROOT: &str = "projects/workflow_engine";
@@ -235,9 +233,19 @@ fn run_vm_command(
         fs::read_to_string(file).map_err(|e| format!("Cannot open file '{}': {}", file, e))?;
     let mut items = parse_source(&source).map_err(|e| e.to_string())?;
     require_module_declaration(&items, file).map_err(|e| e.to_string())?;
-    tco::transform_program(&mut items);
 
-    let tc_result = run_type_check_full(&items, Some(module_root));
+    // VM profiler runs the canonical full pipeline so the numbers reflect
+    // what `aver run` actually executes.
+    let pipeline_result = pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full {
+                base_dir: Some(module_root),
+            }),
+            ..Default::default()
+        },
+    );
+    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
     if !tc_result.errors.is_empty() {
         let errors = tc_result
             .errors
@@ -247,8 +255,6 @@ fn run_vm_command(
             .join("\n");
         return Err(errors);
     }
-
-    resolver::resolve_program(&mut items);
 
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);

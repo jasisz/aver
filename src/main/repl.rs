@@ -6,7 +6,6 @@ use colored::Colorize;
 use aver::ast::{Expr, FnBody, FnDef, Spanned, Stmt, TopLevel, TypeDef};
 use aver::checker::{expr_to_str, merge_verify_blocks};
 use aver::nan_value::{Arena, NanValueConvert};
-use aver::resolver;
 use aver::source::parse_source;
 use aver::types::checker::run_type_check_with_base;
 use aver::value::{Value, aver_repr};
@@ -295,8 +294,9 @@ fn repl_execute(accumulated: &[TopLevel], new_items: &[TopLevel]) -> Result<(), 
     let verify_blocks = merge_verify_blocks(&program);
     let verify_plans = build_verify_plans(&mut program, &verify_blocks, &all_effects);
 
-    // Compile and run once.
-    resolver::resolve_program(&mut program);
+    // Compile and run once. REPL only needs the resolver — TCO + traversal
+    // would be wasted on the throwaway snippet AST.
+    aver::ir::pipeline::resolve(&mut program);
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
     let (code, globals) = vm::compile_program_with_modules(&program, &mut arena, None, "<repl>")

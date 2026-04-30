@@ -19,8 +19,7 @@ use crate::call_graph::{
     direct_calls, find_recursive_fns, recursive_callsite_counts, recursive_scc_ids,
 };
 use crate::checker::expr_to_str;
-use crate::tco;
-use crate::types::checker::{TypeCheckResult, run_type_check_full};
+use crate::types::checker::TypeCheckResult;
 use crate::verify_law::canonical_spec_ref;
 
 // ─── Canonical, CLI-shaped FileContext ────────────────────────────────────────
@@ -785,7 +784,7 @@ fn fn_has_tail_call(fd: &FnDef) -> bool {
 
 fn compute_context_fn_flags(items: &[TopLevel], module_root: Option<&str>) -> ContextFnFlags {
     let mut transformed = items.to_vec();
-    tco::transform_program(&mut transformed);
+    crate::ir::pipeline::tco(&mut transformed);
     let tco_fns = transformed
         .iter()
         .filter_map(|item| match item {
@@ -798,7 +797,12 @@ fn compute_context_fn_flags(items: &[TopLevel], module_root: Option<&str>) -> Co
     let recursive_scc_id = recursive_scc_ids(&transformed);
     let mut memo_qual = HashMap::new();
 
-    let tc_result = run_type_check_full(&transformed, module_root);
+    let tc_result = crate::ir::pipeline::typecheck(
+        &transformed,
+        &crate::ir::TypecheckMode::Full {
+            base_dir: module_root,
+        },
+    );
     if !tc_result.errors.is_empty() {
         for item in &transformed {
             if let TopLevel::FnDef(fd) = item {

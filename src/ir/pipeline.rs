@@ -1,22 +1,25 @@
 //! Ordered compiler pass pipeline — the single source of truth for what
 //! happens between `parse_*` and `codegen::*` / `vm::*`.
 //!
-//! Before this module the sequence
+//! Two layers of API:
 //!
-//! ```text
-//! tco → typecheck → interp_lower → buffer_build → resolve
-//! ```
+//! - **Per-stage entry points** (`pipeline::tco`, `pipeline::typecheck`,
+//!   `pipeline::interp_lower`, `pipeline::buffer_build`, `pipeline::resolve`)
+//!   — each pass exposed individually. Diagnostic and test sites that only
+//!   need one or two passes call these directly. There is no other path
+//!   into a pass; `crate::tco::transform_program` etc. are still public
+//!   internally but new code should not reach for them.
 //!
-//! lived inline in five different call sites (cmd_run_vm,
-//! build_codegen_context, load_module_recursive, replay_cmd,
-//! playground::*). Adding a new pass meant editing each by hand;
-//! adding `--emit-ir-after=PASS` would have meant editing each
-//! again. Funnel everything through `pipeline::run` instead.
+//! - **Pipeline orchestrator** (`pipeline::run`) — walks all five stages
+//!   in fixed order, gating each on a per-stage boolean in
+//!   [`PipelineConfig`]. Stages that are off are skipped silently. This
+//!   is what `aver run`, `aver compile`, replay, and the playground use.
 //!
-//! Stages are fixed-order. Buffer-build needs `Expr::TailCall` from
-//! TCO; the resolver assumes traversal lowering is done; the proof
-//! exporters need to skip traversal because they consume source-level
-//! IR. Reordering is not a knob — disabling individual stages is.
+//! Stages are fixed-order. Buffer-build needs `Expr::TailCall` from TCO,
+//! the resolver assumes traversal lowering is done; what is configurable
+//! is which stages run, not their ordering. There is **no** bundled
+//! "traversal lowering" toggle — `run_interp_lower` and `run_buffer_build`
+//! are independent flags so callers can mix them however they need.
 
 use crate::ast::TopLevel;
 use crate::source::LoadedModule;
@@ -43,40 +46,38 @@ impl PipelineStage {
     }
 }
 
-/// Optional typecheck driver. `None` (the field default) skips typecheck.
+/// Hook callback fired after every pipeline stage that ran. Receives the
+/// stage label and the (post-mutation) item slice. Drives `--emit-ir-after=PASS`.
+pub type AfterPassHook<'a> = Box<dyn FnMut(PipelineStage, &[TopLevel]) + 'a>;
+
+/// Optional typecheck driver.
 pub enum TypecheckMode<'a> {
     /// `run_type_check_full(items, base_dir)`.
     Full { base_dir: Option<&'a str> },
     /// `run_type_check_with_loaded(items, loaded)` for in-memory module trees
-    /// (playground virtual fs).
+    /// (playground virtual fs, multi-file ad-hoc compiles).
     WithLoaded(&'a [LoadedModule]),
 }
 
 pub struct PipelineConfig<'a> {
-    /// Run interpolation lowering + buffer-build deforestation. Disabled
-    /// for proof exporters (Lean/Dafny) — they want source-level IR.
-    pub apply_traversal_lowering: bool,
-    /// Run resolver after the traversal passes. Disabled by some test paths
-    /// that only need TCO output.
-    pub run_resolve: bool,
-    /// How to drive the type checker, or `None` to skip it.
+    pub run_tco: bool,
+    /// `Some(mode)` runs the type checker with that driver; `None` skips it.
     pub typecheck: Option<TypecheckMode<'a>>,
-    /// Stop after the named stage. The pipeline returns early without
-    /// running later stages even if their flags are set.
-    pub stop_after: Option<PipelineStage>,
-    /// Hook fired after every stage that ran. Receives the stage label
-    /// and the (post-mutation) item slice. Plumbed in for upcoming
-    /// `--emit-ir-after=PASS` support; today's callers leave it `None`.
-    pub on_after_pass: Option<Box<dyn FnMut(PipelineStage, &[TopLevel]) + 'a>>,
+    pub run_interp_lower: bool,
+    pub run_buffer_build: bool,
+    pub run_resolve: bool,
+    /// Hook fired after every stage that ran.
+    pub on_after_pass: Option<AfterPassHook<'a>>,
 }
 
 impl<'a> Default for PipelineConfig<'a> {
     fn default() -> Self {
         Self {
-            apply_traversal_lowering: true,
-            run_resolve: true,
+            run_tco: true,
             typecheck: None,
-            stop_after: None,
+            run_interp_lower: true,
+            run_buffer_build: true,
+            run_resolve: true,
             on_after_pass: None,
         }
     }
@@ -85,68 +86,94 @@ impl<'a> Default for PipelineConfig<'a> {
 #[derive(Default)]
 pub struct PipelineResult {
     /// Typecheck output, present iff `config.typecheck` was set. Callers
-    /// inspect `.errors` and decide what to do — pipeline does not exit.
+    /// inspect `.errors` and decide what to do — the orchestrator does not
+    /// exit on its own.
     pub typecheck: Option<TypeCheckResult>,
     /// `(rewrites, synthesized)` from the buffer-build pass when it ran.
     pub buffer_build_stats: Option<(usize, usize)>,
 }
 
-/// Run the canonical compiler pipeline on `items`.
+// ── Per-stage entry points ──────────────────────────────────────────
+
+/// Tail-call rewrite pass.
+pub fn tco(items: &mut [TopLevel]) {
+    crate::tco::transform_program(items);
+}
+
+/// Run the type checker against `items` using the provided driver.
+/// Pure read-only — never mutates the AST.
+pub fn typecheck(items: &[TopLevel], mode: &TypecheckMode<'_>) -> TypeCheckResult {
+    match mode {
+        TypecheckMode::Full { base_dir } => run_type_check_full(items, *base_dir),
+        TypecheckMode::WithLoaded(loaded) => run_type_check_with_loaded(items, loaded),
+    }
+}
+
+/// Lower `"a${x}b"` interpolation literals into the buffer pipeline.
+/// Skipped by proof exporters (Lean/Dafny) which want the source-level form.
+pub fn interp_lower(items: &mut [TopLevel]) {
+    crate::ir::lower_interpolation_pass(items);
+}
+
+/// Buffer-build deforestation pass — detects `String.join(<builder>(args, []), sep)`
+/// shapes, rewrites them to `__buf_finalize(<builder>__buffered(...))`, and
+/// appends the synthesized buffered variants to `items`. Returns `(rewrites, synthesized)`.
+pub fn buffer_build(items: &mut Vec<TopLevel>) -> (usize, usize) {
+    crate::ir::run_buffer_build_pass(items)
+}
+
+/// Resolve locals + annotate last-use information across the program.
+pub fn resolve(items: &mut [TopLevel]) {
+    crate::resolver::resolve_program(items);
+}
+
+// ── Orchestrator ────────────────────────────────────────────────────
+
+/// Run the canonical compiler pipeline on `items`. Each stage is gated
+/// on its corresponding `PipelineConfig` flag — disabled stages are
+/// skipped without complaint.
 ///
-/// If typecheck is enabled and surfaces errors, later stages are skipped
-/// so callers can render the diagnostics without seeing partially-lowered
-/// IR. The typecheck result is still in `PipelineResult::typecheck`.
-pub fn run(items: &mut Vec<TopLevel>, mut config: PipelineConfig<'_>) -> PipelineResult {
+/// If typecheck runs and surfaces errors, later stages are skipped so
+/// callers can render diagnostics without seeing partially-lowered IR.
+/// The typecheck result still lands in `PipelineResult::typecheck`.
+pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineResult {
     let mut result = PipelineResult::default();
 
-    crate::tco::transform_program(items);
-    fire(&mut config, PipelineStage::Tco, items);
-    if config.stop_after == Some(PipelineStage::Tco) {
-        return result;
+    if cfg.run_tco {
+        tco(items);
+        fire(&mut cfg, PipelineStage::Tco, items);
     }
 
-    if let Some(mode) = config.typecheck.as_ref() {
-        let tc = match mode {
-            TypecheckMode::Full { base_dir } => run_type_check_full(items, *base_dir),
-            TypecheckMode::WithLoaded(loaded) => run_type_check_with_loaded(items, loaded),
-        };
+    if let Some(mode) = cfg.typecheck.as_ref() {
+        let tc = typecheck(items, mode);
         let has_errors = !tc.errors.is_empty();
         result.typecheck = Some(tc);
-        fire(&mut config, PipelineStage::Typecheck, items);
+        fire(&mut cfg, PipelineStage::Typecheck, items);
         if has_errors {
             return result;
         }
     }
-    if config.stop_after == Some(PipelineStage::Typecheck) {
-        return result;
+
+    if cfg.run_interp_lower {
+        interp_lower(items);
+        fire(&mut cfg, PipelineStage::InterpLower, items);
     }
 
-    if config.apply_traversal_lowering {
-        crate::ir::lower_interpolation_pass(items);
-    }
-    fire(&mut config, PipelineStage::InterpLower, items);
-    if config.stop_after == Some(PipelineStage::InterpLower) {
-        return result;
+    if cfg.run_buffer_build {
+        result.buffer_build_stats = Some(buffer_build(items));
+        fire(&mut cfg, PipelineStage::BufferBuild, items);
     }
 
-    if config.apply_traversal_lowering {
-        result.buffer_build_stats = Some(crate::ir::run_buffer_build_pass(items));
+    if cfg.run_resolve {
+        resolve(items);
+        fire(&mut cfg, PipelineStage::Resolve, items);
     }
-    fire(&mut config, PipelineStage::BufferBuild, items);
-    if config.stop_after == Some(PipelineStage::BufferBuild) {
-        return result;
-    }
-
-    if config.run_resolve {
-        crate::resolver::resolve_program(items);
-    }
-    fire(&mut config, PipelineStage::Resolve, items);
 
     result
 }
 
-fn fire(config: &mut PipelineConfig<'_>, stage: PipelineStage, items: &[TopLevel]) {
-    if let Some(cb) = config.on_after_pass.as_mut() {
+fn fire(cfg: &mut PipelineConfig<'_>, stage: PipelineStage, items: &[TopLevel]) {
+    if let Some(cb) = cfg.on_after_pass.as_mut() {
         cb(stage, items);
     }
 }

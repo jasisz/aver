@@ -30,7 +30,8 @@ pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::Full { base_dir: None }),
-            apply_traversal_lowering: false,
+            run_interp_lower: false,
+            run_buffer_build: false,
             ..Default::default()
         },
     );
@@ -80,7 +81,8 @@ pub fn compile_project_to_wasm(
         &mut entry_items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
-            apply_traversal_lowering: false,
+            run_interp_lower: false,
+            run_buffer_build: false,
             ..Default::default()
         },
     );
@@ -118,7 +120,8 @@ fn build_ctx(source: &str) -> Result<codegen::CodegenContext, String> {
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::Full { base_dir: None }),
-            apply_traversal_lowering: false,
+            run_interp_lower: false,
+            run_buffer_build: false,
             run_resolve: false,
             ..Default::default()
         },
@@ -183,7 +186,8 @@ fn build_project_ctx(
         &mut entry_items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
-            apply_traversal_lowering: false,
+            run_interp_lower: false,
+            run_buffer_build: false,
             ..Default::default()
         },
     );
@@ -255,7 +259,8 @@ fn loaded_to_module_info(m: LoadedModule) -> codegen::ModuleInfo {
     crate::ir::pipeline::run(
         &mut items,
         PipelineConfig {
-            apply_traversal_lowering: false,
+            run_interp_lower: false,
+            run_buffer_build: false,
             ..Default::default()
         },
     );
@@ -605,7 +610,8 @@ fn run_record_inner(
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
-            apply_traversal_lowering: false,
+            run_interp_lower: false,
+            run_buffer_build: false,
             ..Default::default()
         },
     );
@@ -748,7 +754,8 @@ fn replay_run_inner(
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
-            apply_traversal_lowering: false,
+            run_interp_lower: false,
+            run_buffer_build: false,
             ..Default::default()
         },
     );

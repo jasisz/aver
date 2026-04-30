@@ -2095,8 +2095,8 @@ pub(super) fn cmd_run_self_hosted(
                 typecheck: Some(aver::ir::TypecheckMode::Full {
                     base_dir: Some(&mr),
                 }),
-                stop_after: Some(aver::ir::PipelineStage::Typecheck),
-                apply_traversal_lowering: false,
+                run_interp_lower: false,
+                run_buffer_build: false,
                 run_resolve: false,
                 ..Default::default()
             },
@@ -2298,7 +2298,7 @@ fn run_check_for_file(
             // unreachable. Pure info today; the 0.15+ deforestation
             // lowering rewrites these pairs into buffer-write loops.
             let mut tco_items = items.clone();
-            aver::tco::transform_program(&mut tco_items);
+            aver::ir::pipeline::tco(&mut tco_items);
             let fn_defs: Vec<&aver::ast::FnDef> = tco_items
                 .iter()
                 .filter_map(|it| match it {
@@ -3249,17 +3249,19 @@ fn build_codegen_context(
         process::exit(1);
     }
 
-    // Compiler pipeline. `apply_traversal_lowering` is the proof-export
-    // toggle — Lean/Dafny exporters want source-level IR, runtime backends
-    // (VM/WASM/Rust) want the deforested form. See `aver::ir::pipeline`
-    // for the canonical stage order and invariants.
+    // Compiler pipeline. The `apply_traversal_lowering` parameter at the
+    // command-level API is the proof-export distinction — Lean/Dafny
+    // exporters want source-level IR (interp_lower + buffer_build off),
+    // runtime backends (VM/WASM/Rust) want the deforested form. See
+    // `aver::ir::pipeline` for the canonical stage order and invariants.
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
             typecheck: Some(aver::ir::TypecheckMode::Full {
                 base_dir: Some(&module_root),
             }),
-            apply_traversal_lowering,
+            run_interp_lower: apply_traversal_lowering,
+            run_buffer_build: apply_traversal_lowering,
             ..Default::default()
         },
     );
@@ -3281,8 +3283,12 @@ fn build_codegen_context(
             .to_string()
     });
 
-    // Load dependent modules for codegen
-    let modules = load_compile_deps(&items, &module_root);
+    // Load dependent modules for codegen. Dep modules go through the same
+    // pipeline as the entry — the `apply_traversal_lowering` flag is
+    // forwarded so proof exporters get source-level IR end-to-end (without
+    // this thread, dep modules would always run interp_lower + buffer_build
+    // even when the entry skipped them).
+    let modules = load_compile_deps(&items, &module_root, apply_traversal_lowering);
 
     let use_runtime_policy = matches!(policy_mode, super::cli::CompilePolicyMode::Runtime);
     let use_scoped_runtime = with_replay || use_runtime_policy;
@@ -4343,7 +4349,16 @@ fn cmd_proof_dafny(file: &str, output_dir: &str, ctx: &codegen::CodegenContext) 
 }
 
 /// Load dependent modules for codegen (recursive, with circular import detection).
-fn load_compile_deps(items: &[TopLevel], module_root: &str) -> Vec<ModuleInfo> {
+///
+/// `apply_traversal_lowering` mirrors the entry-module flag — proof exporters
+/// (Lean/Dafny) want source-level IR end-to-end, so they pass `false` and the
+/// dep modules also stay un-deforested. Runtime backends (VM/WASM/Rust) pass
+/// `true` so the buffer-build pass fires on sinks living in dep modules too.
+fn load_compile_deps(
+    items: &[TopLevel],
+    module_root: &str,
+    apply_traversal_lowering: bool,
+) -> Vec<ModuleInfo> {
     let module = items.iter().find_map(|i| {
         if let TopLevel::Module(m) = i {
             Some(m)
@@ -4359,7 +4374,13 @@ fn load_compile_deps(items: &[TopLevel], module_root: &str) -> Vec<ModuleInfo> {
     let mut loaded = std::collections::HashSet::new();
 
     for dep_name in &module.depends {
-        load_module_recursive(dep_name, module_root, &mut result, &mut loaded);
+        load_module_recursive(
+            dep_name,
+            module_root,
+            apply_traversal_lowering,
+            &mut result,
+            &mut loaded,
+        );
     }
 
     result
@@ -4368,6 +4389,7 @@ fn load_compile_deps(items: &[TopLevel], module_root: &str) -> Vec<ModuleInfo> {
 fn load_module_recursive(
     name: &str,
     module_root: &str,
+    apply_traversal_lowering: bool,
     result: &mut Vec<ModuleInfo>,
     loaded: &mut std::collections::HashSet<String>,
 ) {
@@ -4410,12 +4432,19 @@ fn load_module_recursive(
         process::exit(1);
     }
 
-    // Dep modules go through the same pipeline as the entry — without
-    // traversal lowering on dep modules, sinks living there (e.g.
-    // Fractal's `allRows`) compile unchanged and the bench shows zero
-    // perf delta. Typecheck runs at the entry-module level via
-    // `build_codegen_context`, so we skip it here.
-    aver::ir::pipeline::run(&mut items, aver::ir::PipelineConfig::default());
+    // Dep modules go through the same pipeline as the entry, with the
+    // same traversal-lowering decision threaded from the top level so
+    // proof exporters get source-level IR end-to-end. Typecheck runs at
+    // the entry-module level via `build_codegen_context`, so we skip it
+    // here.
+    aver::ir::pipeline::run(
+        &mut items,
+        aver::ir::PipelineConfig {
+            run_interp_lower: apply_traversal_lowering,
+            run_buffer_build: apply_traversal_lowering,
+            ..Default::default()
+        },
+    );
 
     let depends = items
         .iter()
@@ -4437,7 +4466,7 @@ fn load_module_recursive(
         }
     }) {
         for dep in &mod_block.depends {
-            load_module_recursive(dep, module_root, result, loaded);
+            load_module_recursive(dep, module_root, apply_traversal_lowering, result, loaded);
         }
     }
 

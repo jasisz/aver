@@ -279,8 +279,13 @@ impl ProgramCompiler {
         mut mod_items: Vec<TopLevel>,
         arena: &mut Arena,
     ) -> Result<(), CompileError> {
-        crate::tco::transform_program(&mut mod_items);
-        crate::resolver::resolve_program(&mut mod_items);
+        // Internal VM dep-loading: TCO + resolver only. Caller already ran
+        // the full canonical pipeline on the entry; this path runs on
+        // freshly parsed dep items that are otherwise unprepared. Idempotent
+        // with `load_module_recursive`'s pipeline call when both touch the
+        // same module.
+        crate::ir::pipeline::tco(&mut mod_items);
+        crate::ir::pipeline::resolve(&mut mod_items);
 
         // Register types in Arena with qualified aliases.
         for mt in visibility::collect_module_types(&mod_items) {

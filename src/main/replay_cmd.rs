@@ -184,16 +184,18 @@ fn replay_recording_file_vm(
     let source = read_file(&replay_program_file)?;
     let mut items = parse_file(&source)?;
 
-    // Replay path skips traversal lowering (preserved from pre-pipeline
-    // behavior — recordings made before 0.15 reference the unlowered IR;
-    // re-enabling it on replay would be a separate compatibility audit).
+    // Replay path skips interp_lower / buffer_build (preserved from
+    // pre-pipeline behavior — recordings made before 0.15 reference the
+    // unlowered IR; re-enabling traversal on replay would be a separate
+    // compatibility audit).
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
             typecheck: Some(aver::ir::TypecheckMode::Full {
                 base_dir: Some(&replay_module_root),
             }),
-            apply_traversal_lowering: false,
+            run_interp_lower: false,
+            run_buffer_build: false,
             ..Default::default()
         },
     );
