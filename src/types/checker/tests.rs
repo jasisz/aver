@@ -215,3 +215,77 @@ fn nested_tuple_union_still_reports_missing_case() {
     );
     assert_eq!(hit.expect("checked above").line, 13);
 }
+
+fn parse_items(src: &str) -> Vec<TopLevel> {
+    let mut lexer = crate::lexer::Lexer::new(src);
+    let tokens = lexer.tokenize().expect("lex failed");
+    let mut parser = crate::parser::Parser::new(tokens);
+    parser.parse().expect("parse failed")
+}
+
+#[test]
+fn result_with_default_rejects_option_argument() {
+    // Regression: `Result.withDefault(Vector.get(...), 0)` is a foot-gun —
+    // `Vector.get` returns `Option<T>` but `Result.withDefault` silently
+    // accepted it (sigs were both Unknown -> Unknown), passed `aver check`,
+    // and at runtime returned the default for every lookup. Now caught at
+    // type-check time.
+    let items = parse_items(
+        r#"
+fn main() -> Int
+    Result.withDefault(Vector.get(Vector.fromList([1, 2, 3]), 0), 99)
+"#,
+    );
+    let errs = errors(items);
+    assert!(
+        errs.iter().any(|e| e
+            .contains("Argument 1 of 'Result.withDefault': expected Result<T, E>, got Option")),
+        "expected Result.withDefault type error on Option arg, got: {errs:?}"
+    );
+}
+
+#[test]
+fn option_with_default_rejects_result_argument() {
+    let items = parse_items(
+        r#"
+fn main() -> Int
+    Option.withDefault(Int.mod(7, 3), 0)
+"#,
+    );
+    let errs = errors(items);
+    assert!(
+        errs.iter().any(|e| e
+            .contains("Argument 1 of 'Option.withDefault': expected Option<T>, got Result")),
+        "expected Option.withDefault type error on Result arg, got: {errs:?}"
+    );
+}
+
+#[test]
+fn result_with_default_accepts_result_argument() {
+    let items = parse_items(
+        r#"
+fn main() -> Int
+    Result.withDefault(Int.mod(7, 3), 0)
+"#,
+    );
+    let errs = errors(items);
+    assert!(
+        !errs.iter().any(|e| e.contains("Result.withDefault")),
+        "did not expect Result.withDefault error on Result arg, got: {errs:?}"
+    );
+}
+
+#[test]
+fn option_with_default_accepts_option_argument() {
+    let items = parse_items(
+        r#"
+fn main() -> Int
+    Option.withDefault(Vector.get(Vector.fromList([1, 2, 3]), 0), 99)
+"#,
+    );
+    let errs = errors(items);
+    assert!(
+        !errs.iter().any(|e| e.contains("Option.withDefault")),
+        "did not expect Option.withDefault error on Option arg, got: {errs:?}"
+    );
+}

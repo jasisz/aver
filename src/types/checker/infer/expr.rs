@@ -214,16 +214,43 @@ impl TypeChecker {
                         "Option.withDefault"
                             // (Option<T>, T) -> T
                             if arg_types.len() == 2 => {
+                                if !matches!(&arg_types[0], Type::Option(_) | Type::Unknown) {
+                                    self.error_at_line(
+                                        err_line,
+                                        format!(
+                                            "Argument 1 of 'Option.withDefault': expected Option<T>, got {}",
+                                            arg_types[0].display()
+                                        ),
+                                    );
+                                }
                                 return arg_types[1].clone();
                             }
                         "Result.withDefault"
                             // (Result<T, E>, T) -> T
                             if arg_types.len() == 2 => {
+                                if !matches!(&arg_types[0], Type::Result(_, _) | Type::Unknown) {
+                                    self.error_at_line(
+                                        err_line,
+                                        format!(
+                                            "Argument 1 of 'Result.withDefault': expected Result<T, E>, got {}",
+                                            arg_types[0].display()
+                                        ),
+                                    );
+                                }
                                 return arg_types[1].clone();
                             }
                         "Option.toResult"
                             // (Option<T>, E) -> Result<T, E>
                             if arg_types.len() == 2 => {
+                                if !matches!(&arg_types[0], Type::Option(_) | Type::Unknown) {
+                                    self.error_at_line(
+                                        err_line,
+                                        format!(
+                                            "Argument 1 of 'Option.toResult': expected Option<T>, got {}",
+                                            arg_types[0].display()
+                                        ),
+                                    );
+                                }
                                 let t = match &arg_types[0] {
                                     Type::Option(inner) => *inner.clone(),
                                     _ => Type::Unknown,
