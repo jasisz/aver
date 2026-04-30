@@ -2274,6 +2274,31 @@ fn run_check_for_file(
                     suppressed_count
                 ));
             }
+            // Perf-shape note: detect canonical buffer-build sink fns —
+            // tail-recursive `List.prepend → reverse` builders that the
+            // 0.15+ deforestation lowering will fuse to a buffer-write
+            // loop when called from `String.join`. Pure info; no
+            // behavior change today.
+            let mut tco_items = items.clone();
+            aver::tco::transform_program(&mut tco_items);
+            let fn_defs: Vec<&aver::ast::FnDef> = tco_items
+                .iter()
+                .filter_map(|it| match it {
+                    TopLevel::FnDef(fd) => Some(fd),
+                    _ => None,
+                })
+                .collect();
+            let sinks = aver::ir::compute_buffer_build_sinks(&fn_defs);
+            if !sinks.is_empty() {
+                let mut names: Vec<&str> = sinks.keys().map(|s| s.as_str()).collect();
+                names.sort();
+                summary_parts.push(format!(
+                    "{} {} buffer-build sink(s): {}",
+                    "↻".cyan(),
+                    sinks.len(),
+                    names.join(", ")
+                ));
+            }
             println!("  {}", summary_parts.join(" | "));
         }
 
