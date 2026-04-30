@@ -1444,6 +1444,76 @@ impl VM {
                     }
                 }
 
+                BUFFER_NEW => {
+                    // cap_hint is currently advisory — a `String::with_capacity` hint.
+                    // Reuse a freed slot if available to keep the pool from
+                    // unbounded growth across many buffer cycles.
+                    let cap_hint = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let cap = cap_hint.as_int(&self.arena).max(0) as usize;
+                    let idx = if let Some(slot) = self.buffer_pool.iter().position(Option::is_none) {
+                        self.buffer_pool[slot] = Some(String::with_capacity(cap));
+                        slot
+                    } else {
+                        self.buffer_pool.push(Some(String::with_capacity(cap)));
+                        self.buffer_pool.len() - 1
+                    };
+                    self.stack.push(NanValue::new_int(idx as i64, &mut self.arena));
+                }
+
+                BUFFER_APPEND_STR => {
+                    let s = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let buf = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let idx = buf.as_int(&self.arena) as usize;
+                    // Materialise the source bytes into an owned String first
+                    // so the arena borrow is dropped before we re-borrow
+                    // `self.buffer_pool`. The clone is a single small alloc
+                    // per append; for large strings it's a single memcpy.
+                    let owned: String = self.arena.get_string_value(s).to_string();
+                    let slot = self
+                        .buffer_pool
+                        .get_mut(idx)
+                        .and_then(Option::as_mut)
+                        .ok_or_else(|| {
+                            VmError::runtime("BUFFER_APPEND_STR: invalid buffer handle")
+                        })?;
+                    slot.push_str(&owned);
+                    self.stack.push(buf);
+                }
+
+                BUFFER_APPEND_SEP_UNLESS_FIRST => {
+                    let sep = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let buf = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let idx = buf.as_int(&self.arena) as usize;
+                    let sep_bytes: String = self.arena.get_string_value(sep).to_string();
+                    let slot = self
+                        .buffer_pool
+                        .get_mut(idx)
+                        .and_then(Option::as_mut)
+                        .ok_or_else(|| {
+                            VmError::runtime(
+                                "BUFFER_APPEND_SEP_UNLESS_FIRST: invalid buffer handle",
+                            )
+                        })?;
+                    if !slot.is_empty() {
+                        slot.push_str(&sep_bytes);
+                    }
+                    self.stack.push(buf);
+                }
+
+                BUFFER_FINALIZE => {
+                    let buf = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let idx = buf.as_int(&self.arena) as usize;
+                    let s = self
+                        .buffer_pool
+                        .get_mut(idx)
+                        .and_then(Option::take)
+                        .ok_or_else(|| {
+                            VmError::runtime("BUFFER_FINALIZE: invalid buffer handle")
+                        })?;
+                    let str_value = NanValue::new_string_value(&s, &mut self.arena);
+                    self.stack.push(str_value);
+                }
+
                 UNWRAP_RESULT_OR => {
                     let default = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;

@@ -287,6 +287,34 @@ pub const VECTOR_SET: u8 = 0x84;
 /// Stack: [vector, index, value] → [vector]
 pub const VECTOR_SET_OR_KEEP: u8 = 0x85;
 
+// -- Deforestation buffer (0.15 Traversal) -----------------------------------
+//
+// Mutable byte-buffer scratch backing the synthesizer's `__buf_*` intrinsics.
+// Buffer values travel as opaque `Int(handle)` NanValues — handles are
+// indices into `vm.buffer_pool: Vec<Option<String>>`. This keeps Buffer
+// out of `ArenaEntry` (no exhaustiveness ripples) and out of GC marking
+// (handle is an inline value, the underlying String lives on the host
+// heap unaffected by frame compactions). Buffers are use-once: created
+// by `BUFFER_NEW`, mutated through `BUFFER_APPEND_*`, finalized to an
+// arena `String` (Rc<str>) by `BUFFER_FINALIZE` which also frees the slot.
+
+/// Allocate a fresh String buffer. Pop cap_hint:i64 → push handle:Int(buffer_idx).
+pub const BUFFER_NEW: u8 = 0x90;
+
+/// Append the bytes of a string to a buffer. Pop str, pop buf →
+/// push buf (same handle). The String pointed to by `buf.handle` is
+/// mutated in place via `String::push_str`.
+pub const BUFFER_APPEND_STR: u8 = 0x91;
+
+/// Append separator only when buffer is non-empty. Pop sep, pop buf →
+/// push buf. No-op for the first append, so the synthesized `__buffered`
+/// loop body can place the separator before each element uniformly.
+pub const BUFFER_APPEND_SEP_UNLESS_FIRST: u8 = 0x92;
+
+/// Drain a buffer into an arena `OBJ_STRING`. Pop buf → push string.
+/// Frees the underlying `vm.buffer_pool` slot; the handle becomes invalid.
+pub const BUFFER_FINALIZE: u8 = 0x93;
+
 /// Opcode name for debug/disassembly.
 pub fn opcode_name(op: u8) -> &'static str {
     match op {
@@ -357,6 +385,10 @@ pub fn opcode_name(op: u8) -> &'static str {
         VECTOR_GET_OR => "VECTOR_GET_OR",
         VECTOR_SET => "VECTOR_SET",
         VECTOR_SET_OR_KEEP => "VECTOR_SET_OR_KEEP",
+        BUFFER_NEW => "BUFFER_NEW",
+        BUFFER_APPEND_STR => "BUFFER_APPEND_STR",
+        BUFFER_APPEND_SEP_UNLESS_FIRST => "BUFFER_APPEND_SEP_UNLESS_FIRST",
+        BUFFER_FINALIZE => "BUFFER_FINALIZE",
         CALL_PAR => "CALL_PAR",
         NOP => "NOP",
         _ => "UNKNOWN",
@@ -371,7 +403,8 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
         | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | LIST_NIL | LIST_CONS
         | LIST_LEN | LIST_PREPEND | UNWRAP_OR | UNWRAP_RESULT_OR | CONCAT | VECTOR_GET
-        | VECTOR_SET | NOP => 0,
+        | VECTOR_SET | BUFFER_NEW | BUFFER_APPEND_STR | BUFFER_APPEND_SEP_UNLESS_FIRST
+        | BUFFER_FINALIZE | NOP => 0,
 
         // 1-byte
         LOAD_LOCAL | MOVE_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD

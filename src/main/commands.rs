@@ -1041,6 +1041,13 @@ pub(super) fn cmd_run_vm(
         process::exit(1);
     }
 
+    // 0.15 Traversal — buffer-build deforestation pass. Same hook
+    // point as the codegen pipeline (between TCO and resolver). VM
+    // dispatches `__buf_*` intrinsics directly to dedicated opcodes
+    // (BUFFER_NEW / APPEND / APPEND_SEP_UNLESS_FIRST / FINALIZE)
+    // backed by `vm.buffer_pool`.
+    let _traversal_stats = aver::ir::run_buffer_build_pass(&mut items);
+
     // Resolver
     resolver::resolve_program(&mut items);
 

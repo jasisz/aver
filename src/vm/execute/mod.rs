@@ -25,6 +25,12 @@ pub struct VM {
     error_ip: u32,
     /// Cooperative cancellation flag — set by sibling threads on error.
     cancelled: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Mutable scratch buffers for the deforestation lowering's `__buf_*`
+    /// intrinsics (0.15 Traversal). Slots are `Option<String>` so finalize
+    /// can take ownership and leave a tombstone; `BUFFER_NEW` reuses freed
+    /// slots before extending. The pool lives on the host heap, opaque to
+    /// the arena GC — buffer handles travel as `Int(idx)` NanValues.
+    buffer_pool: Vec<Option<String>>,
 }
 
 enum ReturnControl {
@@ -50,6 +56,7 @@ impl VM {
             error_fn_id: 0,
             error_ip: 0,
             cancelled: None,
+            buffer_pool: Vec::new(),
         }
     }
 

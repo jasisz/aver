@@ -10,6 +10,21 @@ use crate::vm::builtin::VmBuiltin;
 use crate::vm::opcode::*;
 use crate::vm::symbol::VmSymbolTable;
 
+/// Map a synthesized deforestation intrinsic name to its VM opcode.
+/// Returns `None` for anything that isn't one of the four `__buf_*`
+/// intrinsics or whose arity doesn't match. Arity is checked here so
+/// a stray user-level identifier collision (very unlikely given the
+/// `__` prefix) doesn't accidentally lower to a buffer op.
+fn buffer_intrinsic_opcode(name: &str, argc: usize) -> Option<u8> {
+    match (name, argc) {
+        ("__buf_new", 1) => Some(BUFFER_NEW),
+        ("__buf_append", 2) => Some(BUFFER_APPEND_STR),
+        ("__buf_append_sep_unless_first", 2) => Some(BUFFER_APPEND_SEP_UNLESS_FIRST),
+        ("__buf_finalize", 1) => Some(BUFFER_FINALIZE),
+        _ => None,
+    }
+}
+
 struct VmCallCtx<'compiler, 'a> {
     compiler: &'compiler FnCompiler<'a>,
 }
@@ -169,6 +184,24 @@ impl<'a> FnCompiler<'a> {
         fn_expr: &Spanned<Expr>,
         args: &[Spanned<Expr>],
     ) -> Result<(), CompileError> {
+        // 0.15 Traversal: deforestation buffer intrinsics. The synth
+        // pass replaces canonical `String.join(<fn>(args, []), sep)`
+        // shapes with `__buf_finalize(<fn>__buffered(args.., __buf_new(...), sep))`,
+        // and `<fn>__buffered`'s body is built from `__buf_append` /
+        // `__buf_append_sep_unless_first`. None of these are user-visible —
+        // they only ever appear synthesized — so we recognise them
+        // before regular builtin resolution and emit dedicated opcodes
+        // backed by `vm.buffer_pool` (a host-side `Vec<Option<String>>`).
+        if let Expr::Ident(name) = &fn_expr.node {
+            if let Some(opcode) = buffer_intrinsic_opcode(name, args.len()) {
+                for arg in args {
+                    self.compile_expr(arg)?;
+                }
+                self.emit_op(opcode);
+                return Ok(());
+            }
+        }
+
         let call_ctx = VmCallCtx { compiler: self };
         if let Some(plan) = classify_forward_call_parts(&fn_expr.node, args, &call_ctx) {
             let Some(target) = self.call_plan_to_target(plan.target.clone()) else {
