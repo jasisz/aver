@@ -310,6 +310,43 @@ fn emit_builtin_call_inner(
     let emit_arg = |idx: usize| emit_expr(&args[idx], ctx, ectx);
 
     match name {
+        // ---- 0.15 Traversal: deforestation intrinsics ----
+        // The compiler synthesizes `<fn>__buffered` variants that
+        // thread a `Buffer` through what was a `List<String>` accumulator,
+        // and rewrites `String.join(<fn>(args, []), sep)` call sites to
+        // `__buf_finalize(<fn>__buffered(args.., __buf_new(8192), sep))`.
+        // On Rust target `Buffer = String`, so the intrinsics expand to
+        // the obvious `String::with_capacity` / `push_str` / `AverStr::from`.
+        // Each take their `buf` argument by value and return it back so
+        // they fit cleanly into the loop-rebind shape the synthesizer emits.
+        "__buf_new" => {
+            let cap = emit_arg(0);
+            Some(format!(
+                "aver_rt::Buffer::with_capacity(({}) as usize)",
+                cap
+            ))
+        }
+        "__buf_append" => {
+            let buf = emit_arg(0);
+            let s = emit_arg(1);
+            Some(format!(
+                "{{ let mut __b = {}; __b.push_str(&{}); __b }}",
+                buf, s
+            ))
+        }
+        "__buf_append_sep_unless_first" => {
+            let buf = emit_arg(0);
+            let sep = emit_arg(1);
+            Some(format!(
+                "{{ let mut __b = {}; if !__b.is_empty() {{ __b.push_str(&{}); }} __b }}",
+                buf, sep
+            ))
+        }
+        "__buf_finalize" => {
+            let buf = emit_arg(0);
+            Some(format!("aver_rt::AverStr::from({})", buf))
+        }
+
         // ---- Console ----
         "Console.print" => {
             let arg = emit_arg(0);

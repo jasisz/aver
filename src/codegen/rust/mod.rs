@@ -231,6 +231,7 @@ fn render_root_main(
         "#[macro_use] extern crate aver_rt;".to_string(),
         "pub use ::aver_rt::AverMap as HashMap;".to_string(),
         "pub use ::aver_rt::AverStr;".to_string(),
+        "pub use ::aver_rt::Buffer;".to_string(),
         String::new(),
         "mod runtime_support;".to_string(),
         "pub use runtime_support::*;".to_string(),
