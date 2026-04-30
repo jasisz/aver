@@ -218,6 +218,34 @@ pub fn build_context(
         .filter(|fd| fd.name.ends_with("__buffered"))
         .cloned()
         .collect();
+    // 0.15 Traversal — register signatures for the four buffer-build
+    // internal intrinsics. Without these in fn_sigs, downstream
+    // `infer_aver_type` on `__buf_append(...)` etc. returns None and
+    // `expr_is_heap_ptr` falls through to false — meaning TCO
+    // compaction doesn't retain the buffer pointer across GC, the
+    // buffer object gets relocated by collect_end, and the next
+    // iteration reads through the stale pointer producing
+    // `memory access out of bounds` traps. Buffer parses to
+    // Type::Named("Buffer") which is_heap_type accepts.
+    {
+        let buffer_ty = || crate::types::Type::Named("Buffer".to_string());
+        let str_ty = || crate::types::Type::Str;
+        let int_ty = || crate::types::Type::Int;
+        let intrinsic_sigs: &[(&str, Vec<crate::types::Type>, crate::types::Type)] = &[
+            ("__buf_new", vec![int_ty()], buffer_ty()),
+            ("__buf_append", vec![buffer_ty(), str_ty()], buffer_ty()),
+            (
+                "__buf_append_sep_unless_first",
+                vec![buffer_ty(), str_ty()],
+                buffer_ty(),
+            ),
+            ("__buf_finalize", vec![buffer_ty()], str_ty()),
+        ];
+        for (name, params, ret) in intrinsic_sigs {
+            fn_sigs.insert(name.to_string(), (params.clone(), ret.clone(), vec![]));
+        }
+    }
+
     // Inject signatures for synthesized variants into fn_sigs so the
     // WASM emitter's type-section pass produces correct param/return
     // wasm types (the fallback path emits `all-i64` which breaks

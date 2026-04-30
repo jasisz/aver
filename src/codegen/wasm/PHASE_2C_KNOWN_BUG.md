@@ -1,62 +1,96 @@
-# Phase 2c.3 — known bug after rewrite wires up
+# Phase 2c — root cause for fractal CF runtime crash
 
-After Phase 2c.3a/b/c/d landed, `aver compile` on a program with a
-buffer-build fusion site (e.g. fractal's `String.join(allRows(.., []), "\n")`)
-produces:
+After Phase 2c.3a/b/c/d landed, fractal compiles cleanly under
+`--preset cloudflare`, the wasm validates, the runtime helpers
+are wired, the synthesized `<fn>__buffered` body has
+retain/rebase calls covering view + buf + sep across TCO
+compaction. Local execution under wasmtime works (`aver run --wasm`
+on a multi-module bench reproducing the same shape passes 1000
+iterations cleanly). But Cloudflare deploy returns 500 with:
 
-    WASM emit produced invalid bytecode: type mismatch: expected i32, found i64 (at offset 0xbf1)
+    aver_http_handle threw: RuntimeError: memory access out of bounds
 
-The detection + synthesis + rewrite layers are correct — verified by:
+## Root cause
 
-- `aver check` reports the right sink + fusion-site count.
-- `synthesize_buffered_variants` builds the expected buffered FnDef
-  with proper threading via expression composition (test
-  `synthesizes_buffered_variant_from_real_builder` covers shape).
-- `find_fusion_sites` finds the canonical case in fractal.av.
+The synthesized buffered fn's false-arm body uses expression
+composition for buffer threading:
 
-The breakage is in the WASM emit of the rewritten / synthesized
-code. Likely causes (to investigate):
+    __buf_append(__buf_append_sep_unless_first(__buf, __sep),
+                 renderRow(row, charsW, ..., view))
 
-1. The synthesized FnDef param type `Buffer` parses as
-   `Type::Named("Buffer")`, which `aver_type_to_wasm` correctly
-   maps to `WasmType::I32`. But the body's `__buf_append` /
-   `__buf_finalize` calls might leave i64 on the stack somewhere
-   the emitter expects i32 (Buffer is an i32 ptr; the i32→i64
-   confusion suggests one of the intrinsic dispatches has a wrong
-   instruction sequence).
+WASM evaluation order leaves the buffer pointer on the stack
+between the two intrinsic calls:
 
-2. The call to `<fn>__buffered` from the rewritten fusion site
-   might not resolve to a fn index because the buffered variant
-   is appended as a plain `TopLevel::FnDef` — the WASM emitter
-   walks `ctx.items` for user fns AND `ctx.synthesized_buffered_fns`,
-   so we now have BOTH copies in the list. Duplicate entry might
-   be confusing fn-index resolution. (Check `user_fns` collection
-   logic in `src/codegen/wasm/emitter.rs`.)
+    1. push __buf, __sep       (param i32s)
+    2. call sep_unless_first   (pops 2, pushes 1 i32 buf)
+                               # stack: [.., buf]
+    3. push args for renderRow (row, charsW, ..., view)
+    4. call renderRow          # ALLOCATES — may trigger GC
+                               # stack: [.., buf (STALE), elem]
+    5. call __buf_append       # uses stale buf
 
-3. The synthesized body uses `Expr::TailCall(target)` where
-   `target = "<fn>__buffered"`. After resolver runs, the target
-   string in `TailCallData` stays the same — but the emitter's
-   tail-call lowering looks up by name in `mutual_tco_members` /
-   `fn_indices`. The buffered variant might not be classified
-   into the right tail-call group.
+Between step 2 and step 5 the WASM stack carries an i32 heap
+pointer that's NOT a GC root. When step 4's renderRow allocates
+enough to cross the watermark, `rt_collect_*` runs, the buffer
+object gets compacted to a new location, and step 5 reads through
+the now-stale pointer. Result: OOB access.
 
-Next session: verify by adding a `wasm-tools print` dump of the
-emitted user.wasm BEFORE wasm-merge bundles in the runtime — that
-will show where the i64 sneaks in. Most likely fix: drop the
-duplicate-entry path (run `run_buffer_build_pass` BEFORE
-`build_context` parses fn_defs out of items, so synthesized fns
-flow through `items → fn_defs` once instead of being added twice).
+The TCO compaction retain/rebase logic correctly handles
+inter-iteration buffer threading (frame-level), but it doesn't
+help with intra-expression GC during a single iteration.
 
-What's already on this branch that's sound:
+## Fix design (C' refined — what the review originally hinted at)
 
-- Phase 2b runtime helpers (rt_buffer_new/append_str/finalize)
-- Phase 2c.1 emitter import wiring
-- Phase 2c.2 synthesizer with C'-correct buffer threading
-- Phase 2c.3a ctx field for synthesized fns
-- Phase 2c.3b emitter user_fns iteration over synth list
-- Phase 2c.3c sep-unless-first conditional dispatch + new/finalize dispatch
-- Phase 2c.3d AST rewrite + classify_named_callee recognition + commands.rs pre-resolver wiring
+The C' review explicitly said: thread buffer through Stmt::Binding
+sequence, not expression composition. I used composition for
+brevity. The bindings approach would naturally route each
+intermediate through a local slot, which Aver's frame compaction
+already retains across mid-expression GC.
 
-Type-check + verify tests all green; the breakage shows only when
-emitting WASM bytes from a program containing a fusion site.
-Programs without sinks compile fine.
+Match-arm bodies are single expressions in Aver's AST, so the
+sequencing has to live somewhere else. Approach: synthesize TWO
+fns per matched buffer-build:
+
+    fn <fn>__buffered(args, __buf, __sep) -> Buffer
+        match terminating_cond
+            true  -> __buf
+            false -> <fn>__buffered_step(args, __buf, __sep)
+
+    fn <fn>__buffered_step(args, __buf, __sep) -> Buffer
+        __buf1 = __buf_append_sep_unless_first(__buf, __sep)
+        __elem = renderRow(args)
+        __buf2 = __buf_append(__buf1, __elem)
+        <fn>__buffered(next_args, __buf2, __sep)
+
+Each Stmt::Binding (`__buf1`, `__elem`, `__buf2`) compiles to a
+fn-local slot. Aver's standard fn-body compaction analysis already
+treats those slots as GC roots. Mid-expression allocation in
+`__elem`'s computation can move objects, and the stored `__buf1`
+gets rebased along with everything else in the frame.
+
+`<fn>__buffered_step` is just a normal fn call from `<fn>__buffered`,
+so its arg-passing already runs through the standard call
+convention with proper retain/rebase coverage.
+
+## What's solid as-is on this branch
+
+- Phase 1: detection (sinks + fusion sites)
+- Phase 1.5: aver check diagnostic surfacing both
+- Phase 2a: ConsumerKind enum
+- Phase 2b: WASM runtime helpers (rt_buffer_new/append/finalize +
+  OBJ_BUFFER kind=13 + GC dispatch + ABI export contract test)
+- Phase 2c.1: emitter import wiring
+- Phase 2c.2: synthesizer (current expression-composition shape;
+  needs the helper-fn restructuring above to fix the GC issue)
+- Phase 2c.3a/b/c/d: ctx threading, builtin dispatch (__buf_new/
+  append/append_sep_unless_first/finalize), classify_named_callee
+  recognition, run_buffer_build_pass + commands.rs wiring
+- Phase 2c.3 follow-up: type-wrap on i64→i32 cap, dep-module
+  pre-pass invocation, dedup of synth in build_context vs items,
+  sig injection (fn_sigs entries for synthesized variants AND for
+  the four __buf_* intrinsics so infer_aver_type returns
+  Type::Named("Buffer") and TCO compaction retains the buf).
+
+The detection/synthesis/rewrite pipeline is structurally correct.
+The remaining work is just the synthesizer body shape — replacing
+expression composition with the two-fn helper approach.
