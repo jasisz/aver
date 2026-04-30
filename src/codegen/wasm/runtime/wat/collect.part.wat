@@ -137,11 +137,30 @@
             if (result i32) ;; label = @5
               i32.const 24
             else
-              i32.const 8
-              local.get 5
-              i32.const 8
-              i32.mul
-              i32.add
+              ;; OBJ_BUFFER (kind=13) — size = 16 + align8(cap),
+              ;; cap stored as i64 at offset 8. Payload is raw bytes
+              ;; with no inner pointers, so the rebase passes below
+              ;; skip it (no kind==13 check anywhere outside size).
+              local.get 3
+              i32.const 13
+              i32.eq
+              if (result i32) ;; label = @6
+                i32.const 16
+                local.get 0
+                i64.load offset=8
+                i32.wrap_i64
+                i32.const 7
+                i32.add
+                i32.const -8
+                i32.and
+                i32.add
+              else
+                i32.const 8
+                local.get 5
+                i32.const 8
+                i32.mul
+                i32.add
+              end
             end
           end
         end
@@ -596,11 +615,29 @@
                 if (result i32) ;; label = @7
                   i32.const 24
                 else
-                  i32.const 8
-                  local.get 6
-                  i32.const 8
-                  i32.mul
-                  i32.add
+                  ;; OBJ_BUFFER (kind=13) — size = 16 + align8(cap)
+                  ;; for the retain pass, identical to the size dispatch
+                  ;; in collect_end above.
+                  local.get 4
+                  i32.const 13
+                  i32.eq
+                  if (result i32) ;; label = @8
+                    i32.const 16
+                    local.get 1
+                    i64.load offset=8
+                    i32.wrap_i64
+                    i32.const 7
+                    i32.add
+                    i32.const -8
+                    i32.and
+                    i32.add
+                  else
+                    i32.const 8
+                    local.get 6
+                    i32.const 8
+                    i32.mul
+                    i32.add
+                  end
                 end
               end
             end

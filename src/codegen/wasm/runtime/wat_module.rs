@@ -39,6 +39,7 @@ const STR_TRIM_WAT: &str = include_str!("wat/str_trim.part.wat");
 const STR_OPS_WAT: &str = include_str!("wat/str_ops.part.wat");
 const FROM_STR_WAT: &str = include_str!("wat/from_str.part.wat");
 const COLLECT_WAT: &str = include_str!("wat/collect.part.wat");
+const BUFFER_WAT: &str = include_str!("wat/buffer.part.wat");
 
 /// `aver_to_wasi.wat` is a standalone module (full `(module …)`),
 /// not a fragment — it lives separately because its imports are
@@ -101,6 +102,8 @@ fn runtime_wat_source() -> String {
     s.push('\n');
     s.push_str(COLLECT_WAT);
     s.push('\n');
+    s.push_str(BUFFER_WAT);
+    s.push('\n');
     s.push(')');
     s
 }
@@ -161,6 +164,88 @@ mod tests {
         wasmparser::Validator::new()
             .validate_all(&bytes)
             .expect("runtime wasm must validate");
+    }
+
+    /// End-to-end exercise of the buffer helpers: allocate two source
+    /// `OBJ_STRING`s by hand, build a buffer, append both, finalize,
+    /// and verify the resulting `OBJ_STRING` payload matches the
+    /// concatenation. Initial cap is intentionally smaller than the
+    /// first append so the grow path runs at least once.
+    #[test]
+    fn buffer_helpers_round_trip_string_concat() {
+        use wasmtime::{Engine, Instance, Module, Store, TypedFunc};
+
+        let bytes = build_runtime_wasm().expect("runtime WAT must parse");
+        let engine = Engine::default();
+        let module = Module::new(&engine, &bytes).expect("module load");
+        let mut store = Store::new(&engine, ());
+        let instance = Instance::new(&mut store, &module, &[]).expect("instantiate");
+
+        let memory = instance
+            .get_memory(&mut store, "memory")
+            .expect("memory export");
+        let alloc: TypedFunc<i32, i32> = instance
+            .get_typed_func(&mut store, "rt_alloc")
+            .expect("rt_alloc");
+        let buf_new: TypedFunc<i32, i32> = instance
+            .get_typed_func(&mut store, "rt_buffer_new")
+            .expect("rt_buffer_new");
+        let buf_append: TypedFunc<(i32, i32), i32> = instance
+            .get_typed_func(&mut store, "rt_buffer_append_str")
+            .expect("rt_buffer_append_str");
+        let buf_finalize: TypedFunc<i32, i32> = instance
+            .get_typed_func(&mut store, "rt_buffer_finalize")
+            .expect("rt_buffer_finalize");
+
+        // Helper: allocate an OBJ_STRING with the given bytes. Header
+        // = (0 << 56) | len at offset 0, payload at offset 8. Aligns
+        // total size to 8 for compatibility with the bump allocator.
+        let mut alloc_str = |store: &mut Store<()>, bytes: &[u8]| -> i32 {
+            let len = bytes.len() as i32;
+            let aligned = (len + 7) & !7;
+            let ptr = alloc.call(&mut *store, 8 + aligned).expect("alloc");
+            let header = (len as u64) | (0u64 << 56);
+            memory
+                .write(&mut *store, ptr as usize, &header.to_le_bytes())
+                .expect("write header");
+            memory
+                .write(&mut *store, (ptr + 8) as usize, bytes)
+                .expect("write payload");
+            ptr
+        };
+
+        let str_a = alloc_str(&mut store, b"hello, ");
+        let str_b = alloc_str(&mut store, b"world!");
+
+        // Cap intentionally below first append's length to force grow.
+        let buf = buf_new.call(&mut store, 4).expect("buffer_new");
+        let buf = buf_append
+            .call(&mut store, (buf, str_a))
+            .expect("append str_a");
+        let buf = buf_append
+            .call(&mut store, (buf, str_b))
+            .expect("append str_b");
+        let finalized = buf_finalize.call(&mut store, buf).expect("finalize");
+
+        // Read the finalized header and payload.
+        let mut header_bytes = [0u8; 8];
+        memory
+            .read(&store, finalized as usize, &mut header_bytes)
+            .expect("read header");
+        let header = u64::from_le_bytes(header_bytes);
+        let kind = (header >> 56) & 0xFF;
+        let len = (header & 0xFFFF_FFFF) as usize;
+        assert_eq!(kind, 0, "finalized object must be OBJ_STRING (kind=0)");
+        assert_eq!(len, b"hello, world!".len(), "len must equal total bytes");
+
+        let mut payload = vec![0u8; len];
+        memory
+            .read(&store, (finalized + 8) as usize, &mut payload)
+            .expect("read payload");
+        assert_eq!(
+            payload, b"hello, world!",
+            "payload must equal concatenated input bytes"
+        );
     }
 
     #[test]
@@ -250,6 +335,9 @@ mod tests {
             ("rt_rebase_i32", "func"),
             ("rt_collect_end", "func"),
             ("rt_retain_i32", "func"),
+            ("rt_buffer_new", "func"),
+            ("rt_buffer_append_str", "func"),
+            ("rt_buffer_finalize", "func"),
         ];
         let mut expected = expected.to_vec();
         expected.sort_unstable();
