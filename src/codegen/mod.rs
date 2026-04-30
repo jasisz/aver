@@ -72,6 +72,16 @@ pub struct CodegenContext {
     /// Functions that are part of a mutual-TCO SCC group (emitted as trampoline + wrappers).
     /// Functions NOT in this set but with TailCalls are emitted as plain self-TCO loops.
     pub mutual_tco_members: HashSet<String>,
+    /// Buffer-build sink fns (`List.prepend`/`reverse` builders consumed
+    /// by `String.join`). The Rust backend emits a `<fn>__buffered`
+    /// variant alongside each entry; the WASM backend rewrites bodies
+    /// to call `rt_buffer_*` helpers. Detection lives in `ir::buffer_build`.
+    pub buffer_build_sinks: HashMap<String, crate::ir::BufferBuildShape>,
+    /// Fusion sites detected for `String.join(<sink>(...), sep)` calls.
+    /// Each entry pairs an enclosing fn + line + sink fn name; the
+    /// emitter rewrites these call expressions to use buffered variants
+    /// in place of the producer + consumer chain.
+    pub buffer_fusion_sites: Vec<crate::ir::FusionSite>,
 }
 
 /// Output files from a codegen backend.
@@ -176,6 +186,15 @@ pub fn build_context(
         }
     }
 
+    // Detect buffer-build sinks + their fusion sites once. Both the
+    // Rust and WASM backends consume the same analysis; downstream
+    // emit logic looks them up by name. Detection requires
+    // post-TCO `Expr::TailCall` nodes — `items` here is post-tco per
+    // the build_context contract — so no extra transform needed.
+    let detect_fns: Vec<&FnDef> = fn_defs.iter().chain(modules.iter().flat_map(|m| m.fn_defs.iter())).collect();
+    let buffer_build_sinks = crate::ir::compute_buffer_build_sinks(&detect_fns);
+    let buffer_fusion_sites = crate::ir::find_fusion_sites(&detect_fns, &buffer_build_sinks);
+
     CodegenContext {
         items,
         fn_sigs,
@@ -194,5 +213,7 @@ pub fn build_context(
         emit_self_host_support: false,
         extra_fn_defs: Vec::new(),
         mutual_tco_members,
+        buffer_build_sinks,
+        buffer_fusion_sites,
     }
 }
