@@ -386,6 +386,70 @@ mod tests {
         );
     }
 
+    /// End-to-end: parse a small Aver source, run TCO, then detect.
+    /// The TCO transform is what produces `Expr::TailCall` nodes from
+    /// raw `Expr::FnCall` self-recursion; detection runs on the post-TCO
+    /// AST.
+    #[test]
+    fn detects_via_parser_after_tco() {
+        let src = r#"
+fn build(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true  -> List.reverse(acc)
+        false -> build(n - 1, List.prepend(n, acc))
+"#;
+        let mut lexer = crate::lexer::Lexer::new(src);
+        let tokens = lexer.tokenize().expect("lex");
+        let mut parser = crate::parser::Parser::new(tokens);
+        let mut items = parser.parse().expect("parse");
+        crate::tco::transform_program(&mut items);
+        let fns: Vec<&FnDef> = items
+            .iter()
+            .filter_map(|it| match it {
+                crate::ast::TopLevel::FnDef(fd) => Some(fd),
+                _ => None,
+            })
+            .collect();
+        let info = compute_buffer_build_sinks(&fns);
+        let shape = info
+            .get("build")
+            .expect("expected end-to-end shape match for canonical builder");
+        assert_eq!(shape.acc_param_idx, 1);
+        assert_eq!(shape.acc_param_name, "acc");
+    }
+
+    /// Counter-test: a recursive fn that returns `acc` directly (no
+    /// reverse) — semantically valid Aver, but its result order is
+    /// reversed relative to natural read order, so deforestation can't
+    /// safely rewrite to a forward-emit buffer loop without explicit
+    /// authorisation. Detector must reject it.
+    #[test]
+    fn rejects_via_parser_when_true_arm_returns_bare_acc() {
+        let src = r#"
+fn build(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true  -> acc
+        false -> build(n - 1, List.prepend(n, acc))
+"#;
+        let mut lexer = crate::lexer::Lexer::new(src);
+        let tokens = lexer.tokenize().expect("lex");
+        let mut parser = crate::parser::Parser::new(tokens);
+        let mut items = parser.parse().expect("parse");
+        crate::tco::transform_program(&mut items);
+        let fns: Vec<&FnDef> = items
+            .iter()
+            .filter_map(|it| match it {
+                crate::ast::TopLevel::FnDef(fd) => Some(fd),
+                _ => None,
+            })
+            .collect();
+        let info = compute_buffer_build_sinks(&fns);
+        assert!(
+            info.is_empty(),
+            "fn returning bare acc must not be detected as a deforestation candidate"
+        );
+    }
+
     #[test]
     fn detects_acc_param_at_arbitrary_index() {
         // Builder where the List<T> param is first, not last.
