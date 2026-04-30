@@ -9,15 +9,14 @@ mod matches;
 pub mod vars;
 
 pub use alloc_info::{AllocPolicy, compute_alloc_info};
-pub use buffer_build::{
-    BufferBuildShape, ConsumerKind, FusionSite, compute_buffer_build_sinks, find_fusion_sites,
-    rewrite_fusion_sites, run_buffer_build_pass, synthesize_buffered_variants,
-};
-pub use interp_lower::lower_interpolation_pass;
 pub use body::{
     BodyBindingPlan, BodyExprPlan, BodyPlan, ThinBodyCtx, ThinBodyPlan, ThinKind,
     classify_body_expr_plan, classify_body_plan, classify_thin_body_plan, classify_thin_fn_def,
     thin_body_plan_is_parent_thin_candidate, thin_kind_is_parent_thin_candidate,
+};
+pub use buffer_build::{
+    BufferBuildShape, ConsumerKind, FusionSite, compute_buffer_build_sinks, find_fusion_sites,
+    rewrite_fusion_sites, run_buffer_build_pass, synthesize_buffered_variants,
 };
 pub use calls::{
     CallLowerCtx, CallPlan, ForwardArg, ForwardCallPlan, SemanticCallee, SemanticConstructor,
@@ -25,6 +24,7 @@ pub use calls::{
     classify_forward_call_parts, classify_forward_call_plan, classify_forward_fn_body,
     classify_tail_call_plan, expr_to_dotted_name, is_builtin_namespace,
 };
+pub use interp_lower::lower_interpolation_pass;
 pub use leaf::{LeafOp, classify_leaf_op};
 pub use matches::{
     BoolCompareOp, BoolMatchShape, BoolSubjectPlan, DispatchArmPlan, DispatchBindingPlan,

@@ -1450,14 +1450,16 @@ impl VM {
                     // unbounded growth across many buffer cycles.
                     let cap_hint = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let cap = cap_hint.as_int(&self.arena).max(0) as usize;
-                    let idx = if let Some(slot) = self.buffer_pool.iter().position(Option::is_none) {
+                    let idx = if let Some(slot) = self.buffer_pool.iter().position(Option::is_none)
+                    {
                         self.buffer_pool[slot] = Some(String::with_capacity(cap));
                         slot
                     } else {
                         self.buffer_pool.push(Some(String::with_capacity(cap)));
                         self.buffer_pool.len() - 1
                     };
-                    self.stack.push(NanValue::new_int(idx as i64, &mut self.arena));
+                    self.stack
+                        .push(NanValue::new_int(idx as i64, &mut self.arena));
                 }
 
                 BUFFER_APPEND_STR => {

@@ -203,7 +203,10 @@ pub fn build_context(
     // resolver pass having already run, sinks/sites should be the
     // same set (sinks are fns, not call sites; fusion sites were
     // rewritten away so the post-rewrite count is zero in normal flow).
-    let detect_fns: Vec<&FnDef> = fn_defs.iter().chain(modules.iter().flat_map(|m| m.fn_defs.iter())).collect();
+    let detect_fns: Vec<&FnDef> = fn_defs
+        .iter()
+        .chain(modules.iter().flat_map(|m| m.fn_defs.iter()))
+        .collect();
     let buffer_build_sinks = crate::ir::compute_buffer_build_sinks(&detect_fns);
     let buffer_fusion_sites = crate::ir::find_fusion_sites(&detect_fns, &buffer_build_sinks);
     // The synthesizer already ran in the pre-resolver compile pass

@@ -165,9 +165,9 @@ pub struct RuntimeFuncIndices {
     pub int_from_str: u32,    // (i32) -> i32
     pub float_from_str: u32,  // (i32) -> i32
     /// 0.15 Traversal — buffer-build deforestation runtime helpers.
-    pub buffer_new: u32,         // (i32) -> i32
-    pub buffer_append_str: u32,  // (i32, i32) -> i32
-    pub buffer_finalize: u32,    // (i32) -> i32
+    pub buffer_new: u32, // (i32) -> i32
+    pub buffer_append_str: u32, // (i32, i32) -> i32
+    pub buffer_finalize: u32, // (i32) -> i32
     /// Total number of runtime functions still emitted locally
     /// (zero today — every body lives in `aver_runtime`).
     pub count: u32,

@@ -400,11 +400,38 @@ pub fn opcode_name(op: u8) -> &'static str {
 pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
     match op {
         // 0-byte (stack-only)
-        POP | DUP | LOAD_UNIT | LOAD_TRUE | LOAD_FALSE | ADD | SUB | MUL | DIV | MOD | NEG
-        | NOT | EQ | LT | GT | RETURN | PROPAGATE_ERR | LIST_HEAD_TAIL | LIST_NIL | LIST_CONS
-        | LIST_LEN | LIST_PREPEND | UNWRAP_OR | UNWRAP_RESULT_OR | CONCAT | VECTOR_GET
-        | VECTOR_SET | BUFFER_NEW | BUFFER_APPEND_STR | BUFFER_APPEND_SEP_UNLESS_FIRST
-        | BUFFER_FINALIZE | NOP => 0,
+        POP
+        | DUP
+        | LOAD_UNIT
+        | LOAD_TRUE
+        | LOAD_FALSE
+        | ADD
+        | SUB
+        | MUL
+        | DIV
+        | MOD
+        | NEG
+        | NOT
+        | EQ
+        | LT
+        | GT
+        | RETURN
+        | PROPAGATE_ERR
+        | LIST_HEAD_TAIL
+        | LIST_NIL
+        | LIST_CONS
+        | LIST_LEN
+        | LIST_PREPEND
+        | UNWRAP_OR
+        | UNWRAP_RESULT_OR
+        | CONCAT
+        | VECTOR_GET
+        | VECTOR_SET
+        | BUFFER_NEW
+        | BUFFER_APPEND_STR
+        | BUFFER_APPEND_SEP_UNLESS_FIRST
+        | BUFFER_FINALIZE
+        | NOP => 0,
 
         // 1-byte
         LOAD_LOCAL | MOVE_LOCAL | STORE_LOCAL | CALL_VALUE | RECORD_GET | EXTRACT_FIELD

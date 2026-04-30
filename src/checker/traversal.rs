@@ -1,3 +1,4 @@
+#![allow(clippy::doc_lazy_continuation)]
 //! Traversal-pass lints — surfaces antipatterns that the buffer-build
 //! deforestation pass deliberately *does not* fuse.
 //!
@@ -40,10 +41,7 @@ use crate::ir::{BufferBuildShape, compute_buffer_build_sinks};
 
 use super::CheckFinding;
 
-pub fn collect_traversal_warnings_in(
-    items: &[TopLevel],
-    file: Option<&str>,
-) -> Vec<CheckFinding> {
+pub fn collect_traversal_warnings_in(items: &[TopLevel], file: Option<&str>) -> Vec<CheckFinding> {
     let fn_refs: Vec<&FnDef> = items
         .iter()
         .filter_map(|it| match it {
@@ -249,9 +247,7 @@ fn visit_subexprs(
                 recurse(&arm.body);
             }
         }
-        Expr::List(items)
-        | Expr::Tuple(items)
-        | Expr::IndependentProduct(items, _) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for it in items.iter() {
                 recurse(it);
             }
@@ -311,11 +307,7 @@ fn is_dotted(expr: &Expr, module: &str, member: &str) -> bool {
 }
 
 fn line_of(s: &Spanned<Expr>, fallback: usize) -> usize {
-    if s.line > 0 {
-        s.line
-    } else {
-        fallback
-    }
+    if s.line > 0 { s.line } else { fallback }
 }
 
 fn make_finding(
@@ -326,7 +318,7 @@ fn make_finding(
     message: String,
 ) -> CheckFinding {
     let _ = Pattern::Wildcard; // touch the import so a future extension that
-                                // pattern-matches doesn't trip the unused-import lint
+    // pattern-matches doesn't trip the unused-import lint
     CheckFinding {
         line,
         module: module_name.clone(),
@@ -344,9 +336,8 @@ mod tests {
     use crate::tco;
 
     fn parse_and_lower(src: &str) -> Vec<TopLevel> {
-        let mut items = parse_source(src).unwrap_or_else(|e| {
-            panic!("parse error: {}\n--- source ---\n{}\n--- end ---", e, src)
-        });
+        let mut items = parse_source(src)
+            .unwrap_or_else(|e| panic!("parse error: {}\n--- source ---\n{}\n--- end ---", e, src));
         tco::transform_program(&mut items);
         items
     }
@@ -393,9 +384,9 @@ mod tests {
         let items = parse_and_lower(&src);
         let warnings = collect_traversal_warnings_in(&items, None);
         assert!(
-            warnings
-                .iter()
-                .any(|w| w.message.contains("List.reverse") && w.message.contains("prepend-builder")),
+            warnings.iter().any(
+                |w| w.message.contains("List.reverse") && w.message.contains("prepend-builder")
+            ),
             "expected standalone List.reverse warning"
         );
     }

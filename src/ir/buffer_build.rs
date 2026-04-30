@@ -173,17 +173,10 @@ fn visit_subexprs(
     out: &mut Vec<FusionSite>,
 ) {
     let line_of = |s: &crate::ast::Spanned<Expr>| {
-        if s.line > 0 {
-            s.line
-        } else {
-            fallback_line
-        }
+        if s.line > 0 { s.line } else { fallback_line }
     };
     match expr {
-        Expr::Literal(_)
-        | Expr::Ident(_)
-        | Expr::Resolved { .. }
-        | Expr::Constructor(_, None) => {}
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {}
         Expr::Constructor(_, Some(inner)) | Expr::Attr(inner, _) | Expr::ErrorProp(inner) => {
             walk_expr_for_fusion_sites(&inner.node, line_of(inner), enclosing_fn, sinks, out);
         }
@@ -203,13 +196,7 @@ fn visit_subexprs(
             walk_expr_for_fusion_sites(&r.node, line_of(r), enclosing_fn, sinks, out);
         }
         Expr::Match { subject, arms } => {
-            walk_expr_for_fusion_sites(
-                &subject.node,
-                line_of(subject),
-                enclosing_fn,
-                sinks,
-                out,
-            );
+            walk_expr_for_fusion_sites(&subject.node, line_of(subject), enclosing_fn, sinks, out);
             for arm in arms {
                 walk_expr_for_fusion_sites(
                     &arm.body.node,
@@ -304,16 +291,15 @@ fn match_buffer_build_shape(fd: &FnDef) -> Option<BufferBuildShape> {
     // [_, .._] -> recurse(... prepend(_, acc)) }`. The reverse lives at
     // the caller, e.g. `List.reverse(<this>(args, []))` (see the
     // `BufferBuildKind` doc above for context).
-    if let Some((nil_body, cons_body)) = pair_nil_cons_arms(arms) {
-        if is_ident_named(nil_body, &acc_name)
-            && is_self_tail_with_prepend_acc(cons_body, &fd.name, acc_idx, &acc_name)
-        {
-            return Some(BufferBuildShape {
-                acc_param_idx: acc_idx,
-                acc_param_name: acc_name,
-                kind: BufferBuildKind::ExternalReverse,
-            });
-        }
+    if let Some((nil_body, cons_body)) = pair_nil_cons_arms(arms)
+        && is_ident_named(nil_body, &acc_name)
+        && is_self_tail_with_prepend_acc(cons_body, &fd.name, acc_idx, &acc_name)
+    {
+        return Some(BufferBuildShape {
+            acc_param_idx: acc_idx,
+            acc_param_name: acc_name,
+            kind: BufferBuildKind::ExternalReverse,
+        });
     }
 
     None
@@ -589,10 +575,10 @@ pub fn synthesize_buffered_variants(
 ) -> Vec<FnDef> {
     let mut out = Vec::new();
     for fd in fns {
-        if let Some(shape) = sinks.get(&fd.name) {
-            if let Some(buffered) = build_buffered_variant(fd, shape) {
-                out.push(buffered);
-            }
+        if let Some(shape) = sinks.get(&fd.name)
+            && let Some(buffered) = build_buffered_variant(fd, shape)
+        {
+            out.push(buffered);
         }
     }
     out
@@ -604,18 +590,6 @@ pub fn synthesize_buffered_variants(
 /// keeps downstream visitors happy).
 fn sp_at(line: usize, expr: Expr) -> Spanned<Expr> {
     Spanned { node: expr, line }
-}
-
-/// Build `<Module>.<member>(args...)` as a Spanned<Expr>.
-fn dotted_call(line: usize, module: &str, member: &str, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
-    let callee = sp_at(
-        line,
-        Expr::Attr(
-            Box::new(sp_at(line, Expr::Ident(module.to_string()))),
-            member.to_string(),
-        ),
-    );
-    sp_at(line, Expr::FnCall(Box::new(callee), args))
 }
 
 /// Build `<intrinsic>(args...)` as a Spanned<Expr>. Intrinsic names
@@ -717,10 +691,7 @@ fn rewrite_one_fn(fd: &mut FnDef, sinks: &HashMap<String, BufferBuildShape>) {
 ///
 /// The rewrite is recursive: nested fusion sites (a fusion site
 /// inside another fusion site's args) all get rewritten in one pass.
-pub fn rewrite_fusion_sites(
-    fn_defs: &mut [FnDef],
-    sinks: &HashMap<String, BufferBuildShape>,
-) {
+pub fn rewrite_fusion_sites(fn_defs: &mut [FnDef], sinks: &HashMap<String, BufferBuildShape>) {
     if sinks.is_empty() {
         return;
     }
@@ -741,10 +712,7 @@ pub fn rewrite_fusion_sites(
 /// place. Rewrite is "outermost first" — if the whole expression is
 /// a fusion site, transform it before descending into the new shape's
 /// children, so we don't double-rewrite.
-fn rewrite_expr_in_place(
-    expr: &mut Spanned<Expr>,
-    sinks: &HashMap<String, BufferBuildShape>,
-) {
+fn rewrite_expr_in_place(expr: &mut Spanned<Expr>, sinks: &HashMap<String, BufferBuildShape>) {
     if let Some(replacement) = try_rewrite_fusion_site(expr, sinks) {
         *expr = replacement;
         // The replacement contains the original elem expressions
@@ -759,15 +727,9 @@ fn rewrite_expr_in_place(
 /// Recurse into the children of an Expr, applying `rewrite_expr_in_place`
 /// to each. Mirrors the shape coverage of `walk_expr_for_fusion_sites`
 /// in this module so we don't miss any node kind.
-fn descend_into_subexprs(
-    expr: &mut Spanned<Expr>,
-    sinks: &HashMap<String, BufferBuildShape>,
-) {
+fn descend_into_subexprs(expr: &mut Spanned<Expr>, sinks: &HashMap<String, BufferBuildShape>) {
     match &mut expr.node {
-        Expr::Literal(_)
-        | Expr::Ident(_)
-        | Expr::Resolved { .. }
-        | Expr::Constructor(_, None) => {}
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {}
         Expr::Constructor(_, Some(inner)) | Expr::Attr(inner, _) | Expr::ErrorProp(inner) => {
             rewrite_expr_in_place(inner, sinks);
         }
@@ -876,17 +838,14 @@ fn try_rewrite_fusion_site(
     let mut buffered_args: Vec<Spanned<Expr>> = inner_args
         .iter()
         .enumerate()
-        .filter_map(|(i, a)| (i != shape.acc_param_idx).then(|| a.clone()))
+        .filter_map(|(i, a)| (i != shape.acc_param_idx).then_some(a).cloned())
         .collect();
     buffered_args.push(buf_new);
     buffered_args.push(sep_expr);
     let buffered_call = sp_at(
         line,
         Expr::FnCall(
-            Box::new(sp_at(
-                line,
-                Expr::Ident(format!("{}__buffered", sink_name)),
-            )),
+            Box::new(sp_at(line, Expr::Ident(format!("{}__buffered", sink_name)))),
             buffered_args,
         ),
     );
@@ -1052,7 +1011,7 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
         .params
         .iter()
         .enumerate()
-        .filter_map(|(i, p)| (i != shape.acc_param_idx).then(|| p.clone()))
+        .filter_map(|(i, p)| (i != shape.acc_param_idx).then_some(p).cloned())
         .collect();
     new_params.push((buf_name.to_string(), "Buffer".to_string()));
     new_params.push((sep_name.to_string(), "String".to_string()));
@@ -1097,10 +1056,7 @@ mod tests {
     }
 
     fn dotted(module: &str, member: &str) -> Spanned<Expr> {
-        sp(Expr::Attr(
-            Box::new(ident(module)),
-            member.to_string(),
-        ))
+        sp(Expr::Attr(Box::new(ident(module)), member.to_string()))
     }
 
     fn call(callee: Spanned<Expr>, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
@@ -1112,10 +1068,7 @@ mod tests {
     /// with prepend(col, acc).
     fn canonical_builder(name: &str) -> FnDef {
         let true_body = call(dotted("List", "reverse"), vec![ident("acc")]);
-        let prepend = call(
-            dotted("List", "prepend"),
-            vec![ident("col"), ident("acc")],
-        );
+        let prepend = call(dotted("List", "prepend"), vec![ident("col"), ident("acc")]);
         let false_body = sp(Expr::TailCall(Box::new(TailCallData {
             target: name.to_string(),
             args: vec![
@@ -1417,7 +1370,11 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
         let sinks = compute_buffer_build_sinks(&fns);
         assert!(sinks.contains_key("build"));
         let synthesized = synthesize_buffered_variants(&fns, &sinks);
-        assert_eq!(synthesized.len(), 1, "expected exactly one synthesized variant");
+        assert_eq!(
+            synthesized.len(),
+            1,
+            "expected exactly one synthesized variant"
+        );
         let bf = &synthesized[0];
 
         // Name + signature shape.
@@ -1507,10 +1464,7 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
         // to extract the element expression. Keep the body and the
         // params consistent so we exercise the real path.
         let true_body = call(dotted("List", "reverse"), vec![ident("acc")]);
-        let prepend = call(
-            dotted("List", "prepend"),
-            vec![ident("col"), ident("acc")],
-        );
+        let prepend = call(dotted("List", "prepend"), vec![ident("col"), ident("acc")]);
         // Tail call: build(prepend(col, acc), col + 1)
         // — acc-position arg is at index 0, col+1 at index 1.
         let false_body = sp(Expr::TailCall(Box::new(TailCallData {
@@ -1633,10 +1587,7 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
         // sink + `String.join(List.reverse(<sink>(args, [])), sep)` call
         // site should detect, synth, and rewrite as a single fusion.
         let nil_body = ident("acc");
-        let prepend = call(
-            dotted("List", "prepend"),
-            vec![ident("h"), ident("acc")],
-        );
+        let prepend = call(dotted("List", "prepend"), vec![ident("h"), ident("acc")]);
         let cons_body = sp(Expr::TailCall(Box::new(TailCallData {
             target: "build".to_string(),
             args: vec![ident("t"), prepend],
@@ -1668,7 +1619,9 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
             resolution: None,
         };
         let info = compute_buffer_build_sinks(&[&sink]);
-        let shape = info.get("build").expect("external-reverse sink should be detected");
+        let shape = info
+            .get("build")
+            .expect("external-reverse sink should be detected");
         assert_eq!(shape.kind, BufferBuildKind::ExternalReverse);
         assert_eq!(shape.acc_param_idx, 1);
 
@@ -1702,7 +1655,10 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
             crate::ast::TopLevel::FnDef(caller),
         ];
         let (sites, synth) = run_buffer_build_pass(&mut items);
-        assert_eq!(sites, 1, "external-reverse pattern should be one fusion site");
+        assert_eq!(
+            sites, 1,
+            "external-reverse pattern should be one fusion site"
+        );
         assert_eq!(synth, 1, "exactly one buffered variant for the used sink");
 
         // The synthesized variant should be appended.

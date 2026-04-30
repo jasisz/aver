@@ -38,7 +38,7 @@ use std::iter::FusedIterator;
 /// Internal builder for the deforestation lowering (0.15 Traversal).
 /// Backs `__buf_*` intrinsics emitted when the compiler fuses
 /// `String.join(<builder>(...), sep)` shapes — `String::with_capacity`
-/// + `push_str` is exactly the right shape, no GC dance needed.
+/// plus `push_str` is exactly the right shape, no GC dance needed.
 /// User code never sees this directly; it lives strictly between
 /// `__buf_new` and `__buf_finalize` inside synthesized helpers.
 pub type Buffer = String;

@@ -238,8 +238,9 @@ fn main() -> Int
     );
     let errs = errors(items);
     assert!(
-        errs.iter().any(|e| e
-            .contains("Argument 1 of 'Result.withDefault': expected Result<T, E>, got Option")),
+        errs.iter()
+            .any(|e| e
+                .contains("Argument 1 of 'Result.withDefault': expected Result<T, E>, got Option")),
         "expected Result.withDefault type error on Option arg, got: {errs:?}"
     );
 }
@@ -254,8 +255,9 @@ fn main() -> Int
     );
     let errs = errors(items);
     assert!(
-        errs.iter().any(|e| e
-            .contains("Argument 1 of 'Option.withDefault': expected Option<T>, got Result")),
+        errs.iter()
+            .any(|e| e
+                .contains("Argument 1 of 'Option.withDefault': expected Option<T>, got Result")),
         "expected Option.withDefault type error on Result arg, got: {errs:?}"
     );
 }
@@ -335,7 +337,9 @@ fn main(ctx: AppCtx) -> Unit
     );
     let errs = errors(items);
     assert!(
-        !errs.iter().any(|e| e.contains("HttpServer.listenWith") && e.contains("context type")),
+        !errs
+            .iter()
+            .any(|e| e.contains("HttpServer.listenWith") && e.contains("context type")),
         "did not expect listenWith context-handler error, got: {errs:?}"
     );
 }
@@ -354,7 +358,8 @@ fn main(notAHandler: Int) -> Result<Unit, String>
     );
     let errs = errors(items);
     assert!(
-        errs.iter().any(|e| e.contains("SelfHostRuntime.httpServerListen") && e.contains("Int")),
+        errs.iter()
+            .any(|e| e.contains("SelfHostRuntime.httpServerListen") && e.contains("Int")),
         "expected SelfHostRuntime.httpServerListen handler-shape error, got: {errs:?}"
     );
 }

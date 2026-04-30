@@ -33,7 +33,7 @@ use crate::ast::{Expr, Literal, Spanned, Stmt, StrPart, TopLevel};
 
 /// Walk every fn body / stmt / expression in `items` and replace each
 /// `Expr::InterpolatedStr` in place with the buffer pipeline above.
-pub fn lower_interpolation_pass(items: &mut Vec<TopLevel>) {
+pub fn lower_interpolation_pass(items: &mut [TopLevel]) {
     for item in items.iter_mut() {
         if let TopLevel::FnDef(fd) = item {
             let body_arc = std::sync::Arc::make_mut(&mut fd.body);

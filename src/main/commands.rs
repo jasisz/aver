@@ -1327,6 +1327,7 @@ pub(super) fn cmd_run_wasm(
             &super::cli::CompilePolicyMode::Embed,
             None,
             false,
+            true, // apply_traversal_lowering — `aver run --wasm` is runtime
         );
 
         // Compile to WASM with aver/* ABI
@@ -3218,6 +3219,7 @@ fn build_codegen_context(
     policy_mode: &super::cli::CompilePolicyMode,
     guest_entry: Option<&str>,
     with_self_host_support: bool,
+    apply_traversal_lowering: bool,
 ) -> (codegen::CodegenContext, String) {
     let module_root = resolve_module_root(module_root_override);
     let source = match read_file(file) {
@@ -3257,8 +3259,16 @@ fn build_codegen_context(
     // TCO and resolver because both detection and rewrite match on
     // `Expr::Ident` / `Expr::TailCall` shapes that the resolver
     // pass would later replace with `Expr::Resolved` nodes.
-    aver::ir::lower_interpolation_pass(&mut items);
-    let _traversal_stats = aver::ir::run_buffer_build_pass(&mut items);
+    //
+    // Skipped for proof export: Lean/Dafny codegen wants source-level
+    // IR (functional, no `__buf_*` runtime intrinsics it can't lower
+    // back to a proof obligation). The peer-review's three-IR-levels
+    // model in action — runtime backends get the optimized form, proof
+    // exporters get the source-level shape.
+    if apply_traversal_lowering {
+        aver::ir::lower_interpolation_pass(&mut items);
+        let _traversal_stats = aver::ir::run_buffer_build_pass(&mut items);
+    }
 
     // Resolve locals + annotate last-use (unified across all backends)
     resolver::resolve_program(&mut items);
@@ -3403,6 +3413,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         policy_mode,
         guest_entry,
         with_self_host_support,
+        true, // apply_traversal_lowering — Rust target wants the optimized form
     );
     if let Err(err) = validate_self_host_guest_entry_contract(&ctx) {
         eprintln!("{}", err.red());
@@ -3464,6 +3475,7 @@ fn cmd_compile_wasm(
             &super::cli::CompilePolicyMode::Embed,
             None,
             false,
+            true, // apply_traversal_lowering — WASM target gets optimized form
         );
 
         // user.wasm bytes are identical regardless of bridge — the
@@ -4225,6 +4237,7 @@ pub(super) fn cmd_proof(
         &super::cli::CompilePolicyMode::Embed,
         None,
         false,
+        false, // apply_traversal_lowering — proof export wants source-level IR
     );
 
     // Oracle v1: aver proof only models `?!` in complete mode. If the
