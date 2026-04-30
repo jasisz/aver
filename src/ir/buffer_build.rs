@@ -27,17 +27,48 @@ use std::sync::Arc;
 
 use crate::ast::{Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, TailCallData};
 
+/// Where the matched builder puts the `List.reverse` step that gives
+/// the result its forward order.
+///
+/// `prepend(elem, acc)` builds the accumulator in reverse-of-input
+/// order. To get a forward list (the order we'd hand to `String.join`)
+/// it has to be reversed exactly once. Two equally common Aver idioms
+/// place that reverse in different spots:
+///
+/// - `InternalReverse`: the sink itself has `true -> List.reverse(acc)`
+///   in its base case. Caller writes `String.join(<sink>(args, []), sep)`.
+///   This is the classic "loop with reversed accumulator + reverse on
+///   exit" shape.
+/// - `ExternalReverse`: the sink has `[] -> acc` (no reverse) and
+///   matches on the input list directly. Caller writes
+///   `String.join(List.reverse(<sink>(args, [])), sep)`. Common in the
+///   payment_ops / workflow_engine codebases under the `*Into` naming
+///   convention (e.g. `serializeEntriesInto`, `filterSubjectInto`).
+///
+/// Both shapes lower to the same buffered variant — appending in
+/// processing order (which is forward order of the input) yields the
+/// final string in the right order without any explicit reverse.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BufferBuildKind {
+    InternalReverse,
+    ExternalReverse,
+}
+
 /// Information about a fn that matches the buffer-build sink shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BufferBuildShape {
     /// 0-based index of the `acc: List<T>` parameter in the fn signature.
     /// Identifies which arg in tail-call positions threads the
-    /// accumulator and which `Ident` in the `true` arm is the reversed
-    /// return value.
+    /// accumulator and which `Ident` in the base-case arm is returned.
     pub acc_param_idx: usize,
     /// The accumulator parameter's binding name (looked up in tail-call
-    /// args and in the `List.reverse(<name>)` return).
+    /// args and in the base-case return position).
     pub acc_param_name: String,
+    /// Which of the two reverse-placement idioms this sink follows;
+    /// determines (a) what shape the original base arm has and (b)
+    /// whether the call site is `String.join(<sink>(...), sep)` or
+    /// `String.join(List.reverse(<sink>(...)), sep)`.
+    pub kind: BufferBuildKind,
 }
 
 /// What the matched builder feeds into. Different consumers compile
@@ -120,18 +151,13 @@ fn walk_expr_for_fusion_sites(
     if let Expr::FnCall(callee, args) = expr {
         // Is this `String.join(<inner>, _)`?
         if is_dotted_ident(&callee.node, "String", "join") && args.len() == 2 {
-            // Is the first argument a call to one of the matched sinks?
-            if let Expr::FnCall(inner_callee, _) = &args[0].node {
-                if let Expr::Ident(inner_name) = &inner_callee.node {
-                    if sinks.contains_key(inner_name) {
-                        out.push(FusionSite {
-                            enclosing_fn: enclosing_fn.to_string(),
-                            line: expr_line,
-                            sink_fn: inner_name.clone(),
-                            consumer: ConsumerKind::StringJoin,
-                        });
-                    }
-                }
+            if let Some(inner_name) = sink_name_from_consumer_arg(&args[0].node, sinks) {
+                out.push(FusionSite {
+                    enclosing_fn: enclosing_fn.to_string(),
+                    line: expr_line,
+                    sink_fn: inner_name,
+                    consumer: ConsumerKind::StringJoin,
+                });
             }
         }
     }
@@ -244,11 +270,18 @@ fn match_buffer_build_shape(fd: &FnDef) -> Option<BufferBuildShape> {
     // match the textual form. Aver's surface syntax accepts both
     // `List<T>` and (rarely) `[T]`-like sugar; canonical form is
     // `List<T>`.
+    // Take the *rightmost* List<...> parameter as the accumulator. The
+    // InternalReverse shape (`fn build(n: Int, acc: List<T>)`) typically
+    // has only one list param; the ExternalReverse shape often has two
+    // (`fn build(input: List<T>, acc: List<U>)`) and the accumulator is
+    // by convention the last argument. Picking the first match would
+    // misidentify `input` as the accumulator and the rest of the
+    // detection would silently fail.
     let (acc_idx, acc_name) = fd
         .params
         .iter()
         .enumerate()
-        .find(|(_, (_, ty))| is_list_type_str(ty))
+        .rfind(|(_, (_, ty))| is_list_type_str(ty))
         .map(|(i, (name, _))| (i, name.clone()))?;
 
     // Body must be a single expression statement holding the match.
@@ -258,26 +291,101 @@ fn match_buffer_build_shape(fd: &FnDef) -> Option<BufferBuildShape> {
         _ => return None,
     };
 
-    // Subject is some boolean condition; we don't constrain its shape,
-    // only that the two arms cover `true` and `false`.
-    let _ = subject_expr;
-    let (true_body, false_body) = pair_bool_arms(arms)?;
-
-    // True arm: `List.reverse(<acc>)`.
-    if !is_list_reverse_of(true_body, &acc_name) {
-        return None;
+    // Try the InternalReverse shape first: `match <bool> { true -> List.reverse(acc); false -> recurse(... prepend(_, acc)) }`.
+    if let Some((true_body, false_body)) = pair_bool_arms(arms) {
+        let _ = subject_expr;
+        if is_list_reverse_of(true_body, &acc_name)
+            && is_self_tail_with_prepend_acc(false_body, &fd.name, &acc_name)
+        {
+            return Some(BufferBuildShape {
+                acc_param_idx: acc_idx,
+                acc_param_name: acc_name,
+                kind: BufferBuildKind::InternalReverse,
+            });
+        }
     }
 
-    // False arm: tail-call to self with one arg being
-    // `List.prepend(<anything>, <acc>)`.
-    if !is_self_tail_with_prepend_acc(false_body, &fd.name, &acc_name) {
-        return None;
+    // Otherwise try the ExternalReverse shape: `match <list> { [] -> acc;
+    // [_, .._] -> recurse(... prepend(_, acc)) }`. The reverse lives at
+    // the caller, e.g. `List.reverse(<this>(args, []))` (see the
+    // `BufferBuildKind` doc above for context).
+    if let Some((nil_body, cons_body)) = pair_nil_cons_arms(arms) {
+        if is_ident_named(nil_body, &acc_name)
+            && is_self_tail_with_prepend_acc(cons_body, &fd.name, &acc_name)
+        {
+            return Some(BufferBuildShape {
+                acc_param_idx: acc_idx,
+                acc_param_name: acc_name,
+                kind: BufferBuildKind::ExternalReverse,
+            });
+        }
     }
 
-    Some(BufferBuildShape {
-        acc_param_idx: acc_idx,
-        acc_param_name: acc_name,
-    })
+    None
+}
+
+/// Match a 2-arm match where one arm is `[]` and the other is
+/// `[head, ..tail]`. Returns `(nil_body, cons_body)` (both as `&Expr`,
+/// matching `pair_bool_arms`). `None` if the arms don't exactly cover
+/// those two patterns.
+fn pair_nil_cons_arms(arms: &[MatchArm]) -> Option<(&Expr, &Expr)> {
+    if arms.len() != 2 {
+        return None;
+    }
+    let mut nil_body: Option<&Expr> = None;
+    let mut cons_body: Option<&Expr> = None;
+    for arm in arms {
+        match &arm.pattern {
+            Pattern::EmptyList => nil_body = Some(&arm.body.node),
+            Pattern::Cons(_, _) => cons_body = Some(&arm.body.node),
+            _ => return None,
+        }
+    }
+    match (nil_body, cons_body) {
+        (Some(n), Some(c)) => Some((n, c)),
+        _ => None,
+    }
+}
+
+/// True if `expr` is just an identifier reference to `name`.
+fn is_ident_named(expr: &Expr, name: &str) -> bool {
+    matches!(expr, Expr::Ident(n) if n == name)
+}
+
+/// Recognise a `String.join` first-arg as either a direct sink call or
+/// a `List.reverse(<sink>(args, []))` wrapper. Returns the matched
+/// sink fn name when the kind matches the shape we expect:
+///   InternalReverse sinks → only the direct call form
+///   ExternalReverse sinks → only the `List.reverse(...)` form
+/// Returning the name only when the kinds line up keeps us from
+/// accidentally fusing a sink against a call site that's missing
+/// its required reverse (or has an extraneous one).
+fn sink_name_from_consumer_arg(
+    expr: &Expr,
+    sinks: &HashMap<String, BufferBuildShape>,
+) -> Option<String> {
+    // Direct: `<sink>(args, ...)`.
+    if let Expr::FnCall(callee, _) = expr
+        && let Expr::Ident(name) = &callee.node
+        && let Some(shape) = sinks.get(name)
+        && matches!(shape.kind, BufferBuildKind::InternalReverse)
+    {
+        return Some(name.clone());
+    }
+
+    // `List.reverse(<sink>(args, ...))`.
+    if let Expr::FnCall(rev_callee, rev_args) = expr
+        && is_dotted_ident(&rev_callee.node, "List", "reverse")
+        && rev_args.len() == 1
+        && let Expr::FnCall(inner_callee, _) = &rev_args[0].node
+        && let Expr::Ident(name) = &inner_callee.node
+        && let Some(shape) = sinks.get(name)
+        && matches!(shape.kind, BufferBuildKind::ExternalReverse)
+    {
+        return Some(name.clone());
+    }
+
+    None
 }
 
 /// True if a parameter type-string parses as `List<...>`.
@@ -675,8 +783,20 @@ fn try_rewrite_fusion_site(
     if outer_args.len() != 2 {
         return None;
     }
-    // First arg of String.join must be a call to a matched fn.
-    let (inner_callee, inner_args) = match &outer_args[0].node {
+    // First arg of String.join is either a direct sink call (for
+    // InternalReverse sinks) or `List.reverse(<sink>(...))` (for
+    // ExternalReverse sinks). Peel off the optional `List.reverse`
+    // wrapper, then recover the sink call below.
+    let consumer_arg = &outer_args[0].node;
+    let inner_call_expr = if let Expr::FnCall(rev_callee, rev_args) = consumer_arg
+        && is_dotted_ident(&rev_callee.node, "List", "reverse")
+        && rev_args.len() == 1
+    {
+        &rev_args[0].node
+    } else {
+        consumer_arg
+    };
+    let (inner_callee, inner_args) = match inner_call_expr {
         Expr::FnCall(c, a) => (c, a),
         _ => return None,
     };
@@ -685,6 +805,19 @@ fn try_rewrite_fusion_site(
         _ => return None,
     };
     let shape = sinks.get(&sink_name)?;
+    // The consumer-arg shape must match the sink's reverse-placement
+    // idiom. A bare `<sink>(...)` only fuses against InternalReverse;
+    // `List.reverse(<sink>(...))` only fuses against ExternalReverse.
+    // Mismatched pairings would silently drop or double-reverse.
+    let saw_external_reverse = !std::ptr::eq(inner_call_expr, consumer_arg);
+    let kinds_align = match (saw_external_reverse, &shape.kind) {
+        (false, BufferBuildKind::InternalReverse) => true,
+        (true, BufferBuildKind::ExternalReverse) => true,
+        _ => false,
+    };
+    if !kinds_align {
+        return None;
+    }
     // Acc-position arg must be a literal empty List. Otherwise the
     // initial accumulator carries elements that the buffered variant
     // would drop on the floor.
@@ -732,7 +865,12 @@ fn try_rewrite_fusion_site(
 /// (defensive: detection should have caught this, but if the body
 /// changed shape between detection and synthesis, skip).
 fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef> {
-    // Original body: `match cond { true → List.reverse(acc); false → tail-call }`.
+    // Original body: `match <subject> { <terminating-arm>; <recursive-arm> }`.
+    // The two BufferBuildKind variants pair different patterns:
+    //   InternalReverse: `true -> List.reverse(acc)`, `false -> recurse(...)`.
+    //   ExternalReverse: `[] -> acc`, `[head, ..rest] -> recurse(...)`.
+    // We extract the recursive arm in both cases (for the prepend tail
+    // call) and rebuild the match with terminating arm `... -> __buf`.
     let stmts = fd.body.stmts();
     if stmts.len() != 1 {
         return None;
@@ -745,15 +883,17 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
         Expr::Match { subject, arms } => (subject, arms),
         _ => return None,
     };
-    // Find the false arm to extract the prepend element + tail-call args.
-    let mut false_body: Option<&Spanned<Expr>> = None;
-    for arm in arms_orig {
-        if matches!(arm.pattern, Pattern::Literal(Literal::Bool(false))) {
-            false_body = Some(&arm.body);
-        }
-    }
-    let false_expr = false_body?;
-    let tail_data = match &false_expr.node {
+    let recursive_body: &Spanned<Expr> = match shape.kind {
+        BufferBuildKind::InternalReverse => arms_orig
+            .iter()
+            .find(|a| matches!(a.pattern, Pattern::Literal(Literal::Bool(false))))
+            .map(|a| a.body.as_ref())?,
+        BufferBuildKind::ExternalReverse => arms_orig
+            .iter()
+            .find(|a| matches!(a.pattern, Pattern::Cons(_, _)))
+            .map(|a| a.body.as_ref())?,
+    };
+    let tail_data = match &recursive_body.node {
         Expr::TailCall(data) => data,
         _ => return None,
     };
@@ -817,7 +957,7 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
         .collect();
     new_args.push(sep_ident());
 
-    let new_false_body = sp_at(
+    let new_recursive_body = sp_at(
         line,
         Expr::TailCall(Box::new(TailCallData {
             target: buffered_target.clone(),
@@ -825,19 +965,44 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
         })),
     );
 
-    // True arm body: just return `__buf` — the buffer IS the result.
-    let new_true_body = buf_ident();
-
-    let new_arms = vec![
-        MatchArm {
-            pattern: Pattern::Literal(Literal::Bool(true)),
-            body: Box::new(new_true_body),
-        },
-        MatchArm {
-            pattern: Pattern::Literal(Literal::Bool(false)),
-            body: Box::new(new_false_body),
-        },
-    ];
+    // Terminating arm body: just return `__buf` — the buffer IS the result.
+    // Pattern depends on which sink shape we matched: `true` for the
+    // InternalReverse idiom (where the original returned `List.reverse(acc)`),
+    // `[]` for ExternalReverse (where the original returned `acc`).
+    let new_arms = match shape.kind {
+        BufferBuildKind::InternalReverse => vec![
+            MatchArm {
+                pattern: Pattern::Literal(Literal::Bool(true)),
+                body: Box::new(buf_ident()),
+            },
+            MatchArm {
+                pattern: Pattern::Literal(Literal::Bool(false)),
+                body: Box::new(new_recursive_body),
+            },
+        ],
+        BufferBuildKind::ExternalReverse => {
+            // Re-use the cons binding names from the original arm so
+            // any `head` / `rest` references inside the recursive body
+            // continue to resolve.
+            let cons_pat = arms_orig
+                .iter()
+                .find_map(|a| match &a.pattern {
+                    Pattern::Cons(h, t) => Some(Pattern::Cons(h.clone(), t.clone())),
+                    _ => None,
+                })
+                .unwrap_or(Pattern::Cons("__head".to_string(), "__tail".to_string()));
+            vec![
+                MatchArm {
+                    pattern: Pattern::EmptyList,
+                    body: Box::new(buf_ident()),
+                },
+                MatchArm {
+                    pattern: cons_pat,
+                    body: Box::new(new_recursive_body),
+                },
+            ]
+        }
+    };
 
     let new_match = sp_at(
         line,
