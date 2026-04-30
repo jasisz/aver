@@ -413,77 +413,36 @@ fn render(charsW: Int, charsH: Int, maxIter: Int, view: View) -> String
 verify render
     render(0, 0, 50, fullView()) => ""
 
+fn pageHead() -> String
+    ? "Static HTML head + CSS + body opening up to the fractal `<pre>` opening tag. One big string literal so the WASM bundle interns it once and every request returns the same data-section pointer — zero per-request allocation for ~3 KB of HTML/CSS that never changes between views. Replaces 60+ small list elements that the previous `String.join` walked and concatenated on every render."
+    "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n  <title>edge.averlang.dev — Mandelbrot from pure Aver</title>\n  <style>\n    html, body {{ height: 100%; margin: 0; }}\n    body {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.3; color: #1a1a1a; background: #fafafa; padding: 0.6rem 1rem 0.6rem; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; }}\n    h1 {{ font-size: 1.05rem; margin: 0 0 0.15rem; font-weight: 650; }}\n    .sub {{ color: #666; margin: 0 0 0.4rem; font-size: 0.78rem; }}\n    p.foot {{ margin: 0.4rem 0 0; font-size: 0.8rem; color: #666; }}\n    p.foot a {{ color: #1a4cdb; }}\n    pre.fractal {{ background: #060614; padding: 0.4rem; border-radius: 6px; font-size: calc(min(min(100vw, 100vh) - 1.5rem, 100dvh - 9rem) / 130); line-height: 1.0; letter-spacing: 0; box-shadow: 0 1px 4px rgba(0,0,0,0.18); white-space: pre; margin: 0; }}\n    nav {{ display: flex; gap: 0.25rem; margin: 0.4rem 0 0.2rem; flex-wrap: wrap; justify-content: center; }}\n    nav a {{ display: inline-block; min-width: 2rem; padding: 0.25rem 0.45rem; background: #ececf2; border-radius: 4px; color: #1a1a1a; text-decoration: none; font-size: 0.85rem; text-align: center; }}\n    nav a:hover {{ background: #d8d8e0; }}\n    .marks {{ display: flex; gap: 0.3rem; flex-wrap: wrap; justify-content: center; margin: 0.1rem 0 0.2rem; font-size: 0.75rem; }}\n    .marks a {{ color: #1a4cdb; padding: 0.1rem 0.3rem; border-radius: 3px; background: #f0f0f5; text-decoration: none; }}\n    .marks a:hover {{ text-decoration: underline; }}\n    pre.fractal i {{ font-style: normal; }}\n    pre.fractal i[c^='0']{{color:#060614}} pre.fractal i[c$='0']{{background:#060614}}\n    pre.fractal i[c^='1']{{color:#1a0c4a}} pre.fractal i[c$='1']{{background:#1a0c4a}}\n    pre.fractal i[c^='2']{{color:#2a1364}} pre.fractal i[c$='2']{{background:#2a1364}}\n    pre.fractal i[c^='3']{{color:#3a1a7e}} pre.fractal i[c$='3']{{background:#3a1a7e}}\n    pre.fractal i[c^='4']{{color:#4c2499}} pre.fractal i[c$='4']{{background:#4c2499}}\n    pre.fractal i[c^='5']{{color:#5e2db3}} pre.fractal i[c$='5']{{background:#5e2db3}}\n    pre.fractal i[c^='6']{{color:#7138ba}} pre.fractal i[c$='6']{{background:#7138ba}}\n    pre.fractal i[c^='7']{{color:#8344c0}} pre.fractal i[c$='7']{{background:#8344c0}}\n    pre.fractal i[c^='8']{{color:#9c53c0}} pre.fractal i[c$='8']{{background:#9c53c0}}\n    pre.fractal i[c^='9']{{color:#b561c0}} pre.fractal i[c$='9']{{background:#b561c0}}\n    pre.fractal i[c^='a']{{color:#cb6eb8}} pre.fractal i[c$='a']{{background:#cb6eb8}}\n    pre.fractal i[c^='b']{{color:#e07ab0}} pre.fractal i[c$='b']{{background:#e07ab0}}\n    pre.fractal i[c^='c']{{color:#eb8998}} pre.fractal i[c$='c']{{background:#eb8998}}\n    pre.fractal i[c^='d']{{color:#f59880}} pre.fractal i[c$='d']{{background:#f59880}}\n    pre.fractal i[c^='e']{{color:#faa86c}} pre.fractal i[c$='e']{{background:#faa86c}}\n    pre.fractal i[c^='f']{{color:#ffb858}} pre.fractal i[c$='f']{{background:#ffb858}}\n    pre.fractal i[c^='g']{{color:#ffc664}} pre.fractal i[c$='g']{{background:#ffc664}}\n    pre.fractal i[c^='h']{{color:#ffd470}} pre.fractal i[c$='h']{{background:#ffd470}}\n    pre.fractal i[c^='i']{{color:#ffe086}} pre.fractal i[c$='i']{{background:#ffe086}}\n    pre.fractal i[c^='j']{{color:#ffec9c}} pre.fractal i[c$='j']{{background:#ffec9c}}\n    pre.fractal i[c^='k']{{color:#ebeec2}} pre.fractal i[c$='k']{{background:#ebeec2}}\n    pre.fractal i[c^='l']{{color:#d6f0e8}} pre.fractal i[c$='l']{{background:#d6f0e8}}\n    pre.fractal i[c^='m']{{color:#ade0e8}} pre.fractal i[c$='m']{{background:#ade0e8}}\n    pre.fractal i[c^='n']{{color:#84d0e8}} pre.fractal i[c$='n']{{background:#84d0e8}}\n    pre.fractal i[c^='o']{{color:#69b8e0}} pre.fractal i[c$='o']{{background:#69b8e0}}\n    pre.fractal i[c^='p']{{color:#4ea0d8}} pre.fractal i[c$='p']{{background:#4ea0d8}}\n    pre.fractal i[c^='q']{{color:#3e88c8}} pre.fractal i[c$='q']{{background:#3e88c8}}\n    pre.fractal i[c^='r']{{color:#2e70b8}} pre.fractal i[c$='r']{{background:#2e70b8}}\n    pre.fractal i[c^='s']{{color:#2455a1}} pre.fractal i[c$='s']{{background:#2455a1}}\n    pre.fractal i[c^='t']{{color:#1a3a8a}} pre.fractal i[c$='t']{{background:#1a3a8a}}\n    pre.fractal i[c^='u']{{color:#1a236a}} pre.fractal i[c$='u']{{background:#1a236a}}\n    a {{ color: #1a4cdb; }}\n  </style>\n</head>\n<body>\n  <h1>Mandelbrot, in pure Aver.</h1>\n  <p class=\"sub\">Every pan and zoom rebuilds this view server-side from one Aver handler.</p>\n  <pre class=\"fractal\">"
+
+verify pageHead
+    String.contains(pageHead(), "<!doctype html>") => true
+    String.contains(pageHead(), "<pre class=\"fractal\">") => true
+
+fn pageFoot() -> String
+    ? "Static HTML footer (link row + body/html close). Same interning trick as `pageHead` — one literal in the data section, no per-request build."
+    "  <p class=\"foot\"><a href=\"https://github.com/jasisz/aver/blob/main/tools/edge/fractal.av\">source</a> · <a href=\"https://github.com/jasisz/aver\">github</a> · <a href=\"/\">← landing</a></p>\n</body>\n</html>\n"
+
+verify pageFoot
+    String.contains(pageFoot(), "</body>") => true
+
 fn page(rendered: String, view: View) -> String
-    ? "HTML page wrapping one coloured Mandelbrot fractal plus the pan/zoom nav UI and landmark presets. View centre+width are extracted from `view` and embedded in nav anchor URLs."
+    ? "HTML page wrapping one coloured Mandelbrot fractal plus the pan/zoom nav UI and landmark presets. View centre+width are extracted from `view` and embedded in nav anchor URLs. Static head/foot live in dedicated functions returning interned literals; only the dynamic parts (rendered fractal, navBar, landmarks) hit `String.join` here, so per-request allocation drops from a 65-element list build to a 6-element one."
     cx = view.cxMin + view.cxRange / 2.0
     cy = view.cyMin + view.cyRange / 2.0
     w = view.cxRange
     String.join([
-        "<!doctype html>",
-        "<html lang=\"en\">",
-        "<head>",
-        "  <meta charset=\"utf-8\">",
-        "  <title>edge.averlang.dev — Mandelbrot from pure Aver</title>",
-        "  <style>",
-        "    html, body {{ height: 100%; margin: 0; }}",
-        "    body {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.3; color: #1a1a1a; background: #fafafa; padding: 0.6rem 1rem 0.6rem; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; }}",
-        "    h1 {{ font-size: 1.05rem; margin: 0 0 0.15rem; font-weight: 650; }}",
-        "    .sub {{ color: #666; margin: 0 0 0.4rem; font-size: 0.78rem; }}",
-        "    p.foot {{ margin: 0.4rem 0 0; font-size: 0.8rem; color: #666; }}",
-        "    p.foot a {{ color: #1a4cdb; }}",
-        "    pre.fractal {{ background: #060614; padding: 0.4rem; border-radius: 6px; font-size: calc(min(min(100vw, 100vh) - 1.5rem, 100dvh - 9rem) / 130); line-height: 1.0; letter-spacing: 0; box-shadow: 0 1px 4px rgba(0,0,0,0.18); white-space: pre; margin: 0; }}",
-        "    nav {{ display: flex; gap: 0.25rem; margin: 0.4rem 0 0.2rem; flex-wrap: wrap; justify-content: center; }}",
-        "    nav a {{ display: inline-block; min-width: 2rem; padding: 0.25rem 0.45rem; background: #ececf2; border-radius: 4px; color: #1a1a1a; text-decoration: none; font-size: 0.85rem; text-align: center; }}",
-        "    nav a:hover {{ background: #d8d8e0; }}",
-        "    .marks {{ display: flex; gap: 0.3rem; flex-wrap: wrap; justify-content: center; margin: 0.1rem 0 0.2rem; font-size: 0.75rem; }}",
-        "    .marks a {{ color: #1a4cdb; padding: 0.1rem 0.3rem; border-radius: 3px; background: #f0f0f5; text-decoration: none; }}",
-        "    .marks a:hover {{ text-decoration: underline; }}",
-        "    pre.fractal i {{ font-style: normal; }}",
-        "    pre.fractal i[c^='0']{{color:#060614}} pre.fractal i[c$='0']{{background:#060614}}",
-        "    pre.fractal i[c^='1']{{color:#1a0c4a}} pre.fractal i[c$='1']{{background:#1a0c4a}}",
-        "    pre.fractal i[c^='2']{{color:#2a1364}} pre.fractal i[c$='2']{{background:#2a1364}}",
-        "    pre.fractal i[c^='3']{{color:#3a1a7e}} pre.fractal i[c$='3']{{background:#3a1a7e}}",
-        "    pre.fractal i[c^='4']{{color:#4c2499}} pre.fractal i[c$='4']{{background:#4c2499}}",
-        "    pre.fractal i[c^='5']{{color:#5e2db3}} pre.fractal i[c$='5']{{background:#5e2db3}}",
-        "    pre.fractal i[c^='6']{{color:#7138ba}} pre.fractal i[c$='6']{{background:#7138ba}}",
-        "    pre.fractal i[c^='7']{{color:#8344c0}} pre.fractal i[c$='7']{{background:#8344c0}}",
-        "    pre.fractal i[c^='8']{{color:#9c53c0}} pre.fractal i[c$='8']{{background:#9c53c0}}",
-        "    pre.fractal i[c^='9']{{color:#b561c0}} pre.fractal i[c$='9']{{background:#b561c0}}",
-        "    pre.fractal i[c^='a']{{color:#cb6eb8}} pre.fractal i[c$='a']{{background:#cb6eb8}}",
-        "    pre.fractal i[c^='b']{{color:#e07ab0}} pre.fractal i[c$='b']{{background:#e07ab0}}",
-        "    pre.fractal i[c^='c']{{color:#eb8998}} pre.fractal i[c$='c']{{background:#eb8998}}",
-        "    pre.fractal i[c^='d']{{color:#f59880}} pre.fractal i[c$='d']{{background:#f59880}}",
-        "    pre.fractal i[c^='e']{{color:#faa86c}} pre.fractal i[c$='e']{{background:#faa86c}}",
-        "    pre.fractal i[c^='f']{{color:#ffb858}} pre.fractal i[c$='f']{{background:#ffb858}}",
-        "    pre.fractal i[c^='g']{{color:#ffc664}} pre.fractal i[c$='g']{{background:#ffc664}}",
-        "    pre.fractal i[c^='h']{{color:#ffd470}} pre.fractal i[c$='h']{{background:#ffd470}}",
-        "    pre.fractal i[c^='i']{{color:#ffe086}} pre.fractal i[c$='i']{{background:#ffe086}}",
-        "    pre.fractal i[c^='j']{{color:#ffec9c}} pre.fractal i[c$='j']{{background:#ffec9c}}",
-        "    pre.fractal i[c^='k']{{color:#ebeec2}} pre.fractal i[c$='k']{{background:#ebeec2}}",
-        "    pre.fractal i[c^='l']{{color:#d6f0e8}} pre.fractal i[c$='l']{{background:#d6f0e8}}",
-        "    pre.fractal i[c^='m']{{color:#ade0e8}} pre.fractal i[c$='m']{{background:#ade0e8}}",
-        "    pre.fractal i[c^='n']{{color:#84d0e8}} pre.fractal i[c$='n']{{background:#84d0e8}}",
-        "    pre.fractal i[c^='o']{{color:#69b8e0}} pre.fractal i[c$='o']{{background:#69b8e0}}",
-        "    pre.fractal i[c^='p']{{color:#4ea0d8}} pre.fractal i[c$='p']{{background:#4ea0d8}}",
-        "    pre.fractal i[c^='q']{{color:#3e88c8}} pre.fractal i[c$='q']{{background:#3e88c8}}",
-        "    pre.fractal i[c^='r']{{color:#2e70b8}} pre.fractal i[c$='r']{{background:#2e70b8}}",
-        "    pre.fractal i[c^='s']{{color:#2455a1}} pre.fractal i[c$='s']{{background:#2455a1}}",
-        "    pre.fractal i[c^='t']{{color:#1a3a8a}} pre.fractal i[c$='t']{{background:#1a3a8a}}",
-        "    pre.fractal i[c^='u']{{color:#1a236a}} pre.fractal i[c$='u']{{background:#1a236a}}",
-        "    a {{ color: #1a4cdb; }}",
-        "  </style>",
-        "</head>",
-        "<body>",
-        "  <h1>Mandelbrot, in pure Aver.</h1>",
-        "  <p class=\"sub\">Every pan and zoom rebuilds this view server-side from one Aver handler.</p>",
-        "  <pre class=\"fractal\">{rendered}</pre>",
-        "  {navBar(cx, cy, w)}",
-        "  {landmarks()}",
-        "  <p class=\"foot\"><a href=\"https://github.com/jasisz/aver/blob/main/tools/edge/fractal.av\">source</a> · <a href=\"https://github.com/jasisz/aver\">github</a> · <a href=\"/\">← landing</a></p>",
-        "</body>",
-        "</html>",
-        ""
-    ], "\n")
+        pageHead(),
+        rendered,
+        "</pre>\n  ",
+        navBar(cx, cy, w),
+        "\n  ",
+        landmarks(),
+        "\n",
+        pageFoot(),
+    ], "")
 
 verify page
     String.contains(page("dot", fullView()), "<nav>") => true
