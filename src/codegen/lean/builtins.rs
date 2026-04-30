@@ -192,6 +192,7 @@ mod tests {
             mutual_tco_members: HashSet::new(),
             buffer_build_sinks: HashMap::new(),
             buffer_fusion_sites: Vec::new(),
+            synthesized_buffered_fns: Vec::new(),
         }
     }
 

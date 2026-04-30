@@ -82,6 +82,13 @@ pub struct CodegenContext {
     /// emitter rewrites these call expressions to use buffered variants
     /// in place of the producer + consumer chain.
     pub buffer_fusion_sites: Vec<crate::ir::FusionSite>,
+    /// Synthesized `<fn>__buffered` variants for every buffer-build
+    /// sink, produced by `ir::synthesize_buffered_variants`. These are
+    /// real `FnDef`s with proper body AST; backends iterate over them
+    /// alongside `fn_defs` so they reach codegen through the same
+    /// pipeline (TCO / no-alloc / mutual-recursion all apply
+    /// identically). Empty when no sinks are detected.
+    pub synthesized_buffered_fns: Vec<FnDef>,
 }
 
 /// Output files from a codegen backend.
@@ -194,6 +201,7 @@ pub fn build_context(
     let detect_fns: Vec<&FnDef> = fn_defs.iter().chain(modules.iter().flat_map(|m| m.fn_defs.iter())).collect();
     let buffer_build_sinks = crate::ir::compute_buffer_build_sinks(&detect_fns);
     let buffer_fusion_sites = crate::ir::find_fusion_sites(&detect_fns, &buffer_build_sinks);
+    let synthesized_buffered_fns = crate::ir::synthesize_buffered_variants(&detect_fns, &buffer_build_sinks);
 
     CodegenContext {
         items,
@@ -215,5 +223,6 @@ pub fn build_context(
         mutual_tco_members,
         buffer_build_sinks,
         buffer_fusion_sites,
+        synthesized_buffered_fns,
     }
 }
