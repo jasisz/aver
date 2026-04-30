@@ -10,9 +10,6 @@ use aver::replay::{
     JsonValue, RecordedOutcome, SessionRecording, first_diff_path, format_json, json_to_value,
     parse_session_recording, value_to_json,
 };
-use aver::resolver;
-use aver::tco;
-use aver::types::checker::run_type_check_full;
 use aver::value::{Value, aver_repr, list_to_vec};
 use aver::vm;
 
@@ -186,14 +183,24 @@ fn replay_recording_file_vm(
     let replay_program_file = resolve_replay_program_file(&recording, &replay_module_root);
     let source = read_file(&replay_program_file)?;
     let mut items = parse_file(&source)?;
-    tco::transform_program(&mut items);
 
-    let tc_result = run_type_check_full(&items, Some(&replay_module_root));
+    // Replay path skips traversal lowering (preserved from pre-pipeline
+    // behavior — recordings made before 0.15 reference the unlowered IR;
+    // re-enabling it on replay would be a separate compatibility audit).
+    let pipeline_result = aver::ir::pipeline::run(
+        &mut items,
+        aver::ir::PipelineConfig {
+            typecheck: Some(aver::ir::TypecheckMode::Full {
+                base_dir: Some(&replay_module_root),
+            }),
+            apply_traversal_lowering: false,
+            ..Default::default()
+        },
+    );
+    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
     if !tc_result.errors.is_empty() {
         return Err(crate::shared::format_type_errors(&tc_result.errors));
     }
-
-    resolver::resolve_program(&mut items);
 
     let mut arena = aver::nan_value::Arena::new();
     vm::register_service_types(&mut arena);

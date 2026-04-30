@@ -13,10 +13,7 @@ use aver::codegen::ModuleInfo;
 use aver::codegen::lean as lean_codegen;
 use aver::codegen::rust as rust_codegen;
 use aver::nan_value::{Arena, NanValueConvert};
-use aver::resolver;
 use aver::source::{find_module_file, require_module_declaration};
-use aver::tco;
-use aver::types::checker::run_type_check_full;
 use aver::types::{Type, parse_type_str};
 use aver::verify_law::{
     collect_contextual_helper_law_hints, collect_missing_helper_law_hints,
@@ -1028,11 +1025,19 @@ pub(super) fn cmd_run_vm(
         }
     };
 
-    // TCO transform
-    tco::transform_program(&mut items);
-
-    // Type check
-    let tc_result = run_type_check_full(&items, Some(&module_root));
+    // Compiler pipeline: tco → typecheck → interp_lower → buffer_build → resolve.
+    // Single source of truth lives in `aver::ir::pipeline`; see that module
+    // for ordering invariants between stages.
+    let pipeline_result = aver::ir::pipeline::run(
+        &mut items,
+        aver::ir::PipelineConfig {
+            typecheck: Some(aver::ir::TypecheckMode::Full {
+                base_dir: Some(&module_root),
+            }),
+            ..Default::default()
+        },
+    );
+    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
     if !tc_result.errors.is_empty() {
         eprintln!(
             "{}",
@@ -1040,17 +1045,6 @@ pub(super) fn cmd_run_vm(
         );
         process::exit(1);
     }
-
-    // 0.15 Traversal — buffer-build deforestation pass. Same hook
-    // point as the codegen pipeline (between TCO and resolver). VM
-    // dispatches `__buf_*` intrinsics directly to dedicated opcodes
-    // (BUFFER_NEW / APPEND / APPEND_SEP_UNLESS_FIRST / FINALIZE)
-    // backed by `vm.buffer_pool`.
-    aver::ir::lower_interpolation_pass(&mut items);
-    let _traversal_stats = aver::ir::run_buffer_build_pass(&mut items);
-
-    // Resolver
-    resolver::resolve_program(&mut items);
 
     // Compile to bytecode
     let mut arena = Arena::new();
@@ -2093,8 +2087,21 @@ pub(super) fn cmd_run_self_hosted(
                 process::exit(1);
             }
         };
-        tco::transform_program(&mut items);
-        let tc = run_type_check_full(&items, Some(&mr));
+        // Self-host preflight only needs TCO + typecheck — codegen runs
+        // in the spawned binary, not here.
+        let pipeline_result = aver::ir::pipeline::run(
+            &mut items,
+            aver::ir::PipelineConfig {
+                typecheck: Some(aver::ir::TypecheckMode::Full {
+                    base_dir: Some(&mr),
+                }),
+                stop_after: Some(aver::ir::PipelineStage::Typecheck),
+                apply_traversal_lowering: false,
+                run_resolve: false,
+                ..Default::default()
+            },
+        );
+        let tc = pipeline_result.typecheck.expect("typecheck was requested");
         if !tc.errors.is_empty() {
             eprintln!("{}", format_type_errors(&tc.errors).red());
             process::exit(1);
@@ -3242,36 +3249,25 @@ fn build_codegen_context(
         process::exit(1);
     }
 
-    // TCO transform
-    tco::transform_program(&mut items);
-
-    // Static type check (runs before resolution — works on Ident nodes)
-    let tc_result = run_type_check_full(&items, Some(&module_root));
+    // Compiler pipeline. `apply_traversal_lowering` is the proof-export
+    // toggle — Lean/Dafny exporters want source-level IR, runtime backends
+    // (VM/WASM/Rust) want the deforested form. See `aver::ir::pipeline`
+    // for the canonical stage order and invariants.
+    let pipeline_result = aver::ir::pipeline::run(
+        &mut items,
+        aver::ir::PipelineConfig {
+            typecheck: Some(aver::ir::TypecheckMode::Full {
+                base_dir: Some(&module_root),
+            }),
+            apply_traversal_lowering,
+            ..Default::default()
+        },
+    );
+    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
     if !tc_result.errors.is_empty() {
         print_type_errors(&tc_result.errors);
         process::exit(1);
     }
-
-    // 0.15 Traversal — buffer-build deforestation pass. Detects
-    // canonical `String.join(<builder>(args, []), sep)` shapes,
-    // rewrites them to `__buf_finalize(<builder>__buffered(args.., __buf_new(8192), sep))`,
-    // and appends synthesized buffered variants. Must run between
-    // TCO and resolver because both detection and rewrite match on
-    // `Expr::Ident` / `Expr::TailCall` shapes that the resolver
-    // pass would later replace with `Expr::Resolved` nodes.
-    //
-    // Skipped for proof export: Lean/Dafny codegen wants source-level
-    // IR (functional, no `__buf_*` runtime intrinsics it can't lower
-    // back to a proof obligation). The peer-review's three-IR-levels
-    // model in action — runtime backends get the optimized form, proof
-    // exporters get the source-level shape.
-    if apply_traversal_lowering {
-        aver::ir::lower_interpolation_pass(&mut items);
-        let _traversal_stats = aver::ir::run_buffer_build_pass(&mut items);
-    }
-
-    // Resolve locals + annotate last-use (unified across all backends)
-    resolver::resolve_program(&mut items);
 
     // Compute memo-eligible functions
     let memo_fns = compute_memo_fns(&items, &tc_result);
@@ -4414,16 +4410,12 @@ fn load_module_recursive(
         process::exit(1);
     }
 
-    tco::transform_program(&mut items);
-    // 0.15 Traversal — run the deforestation pass on dep modules too,
-    // BETWEEN TCO and resolver. The fusion-site rewrite + buffered-fn
-    // synthesis must see `Expr::Ident` shapes that resolver later
-    // rewrites to `Expr::Resolved`. Without this, sinks living in
-    // dep modules (like Fractal's `allRows`) compile unchanged and
-    // the bench shows zero perf delta.
-    aver::ir::lower_interpolation_pass(&mut items);
-    let _traversal_stats = aver::ir::run_buffer_build_pass(&mut items);
-    resolver::resolve_program(&mut items);
+    // Dep modules go through the same pipeline as the entry — without
+    // traversal lowering on dep modules, sinks living there (e.g.
+    // Fractal's `allRows`) compile unchanged and the bench shows zero
+    // perf delta. Typecheck runs at the entry-module level via
+    // `build_codegen_context`, so we skip it here.
+    aver::ir::pipeline::run(&mut items, aver::ir::PipelineConfig::default());
 
     let depends = items
         .iter()

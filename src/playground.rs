@@ -5,10 +5,8 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::TopLevel;
 use crate::codegen;
 use crate::diagnostics::{AnalyzeOptions, analyze_source};
-use crate::resolver;
+use crate::ir::{PipelineConfig, TypecheckMode};
 use crate::source::{LoadedModule, load_module_tree_from_map, parse_source};
-use crate::tco;
-use crate::types::checker::{run_type_check_full, run_type_check_with_loaded};
 #[cfg(feature = "runtime")]
 use crate::{nan_value::Arena, vm};
 
@@ -22,9 +20,21 @@ pub fn build_aver_runtime_wasm() -> Result<Vec<u8>, String> {
 /// Compile Aver source text to WASM bytes.
 pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
     let mut items = parse_source(source)?;
-    tco::transform_program(&mut items);
 
-    let tc_result = run_type_check_full(&items, None);
+    // Single-file WASM compile path. Traversal lowering is intentionally
+    // off here — playground's single-file `compile_to_wasm` predates 0.15
+    // and re-enabling it without a regression sweep across the cached
+    // playground artifacts would silently shift their bytes. See the
+    // 0.15.x rollout plan for when this catches up to the CLI.
+    let pipeline_result = crate::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            apply_traversal_lowering: false,
+            ..Default::default()
+        },
+    );
+    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
     if !tc_result.errors.is_empty() {
         return Err(format_tc_errors(&tc_result.errors));
     }
@@ -56,17 +66,28 @@ pub fn compile_project_to_wasm(
         .ok_or_else(|| format!("Entry '{}' not present in file map", entry))?;
 
     let mut entry_items = parse_source(entry_source)?;
-    tco::transform_program(&mut entry_items);
 
+    // `module_depends` only reads `TopLevel::Module` declarations, which
+    // TCO never touches — so extracting depends pre-pipeline is safe and
+    // lets us load deps before typecheck and run the pipeline in one shot.
     let root_depends = module_depends(&entry_items);
     let loaded = load_module_tree_from_map(&root_depends, files)?;
 
-    let tc_result = run_type_check_with_loaded(&entry_items, &loaded);
+    // Multi-file WASM compile path. Traversal disabled like
+    // `compile_to_wasm` — preserve current playground bytes until the
+    // explicit rollout in 0.15.x.
+    let pipeline_result = crate::ir::pipeline::run(
+        &mut entry_items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
+            apply_traversal_lowering: false,
+            ..Default::default()
+        },
+    );
+    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
     if !tc_result.errors.is_empty() {
         return Err(format_tc_errors(&tc_result.errors));
     }
-
-    resolver::resolve_program(&mut entry_items);
 
     let modules: Vec<codegen::ModuleInfo> = loaded.into_iter().map(loaded_to_module_info).collect();
 
@@ -90,8 +111,19 @@ pub fn compile_project_to_wasm(
 #[cfg(feature = "runtime")]
 fn build_ctx(source: &str) -> Result<codegen::CodegenContext, String> {
     let mut items = parse_source(source)?;
-    tco::transform_program(&mut items);
-    let tc_result = run_type_check_full(&items, None);
+    // Proof / Rust single-file path. No resolver here — the proof
+    // exporters (Lean/Dafny) and `compile_rust_files` consume source-level
+    // names. No traversal either — proof export wants the source-level IR.
+    let pipeline_result = crate::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            apply_traversal_lowering: false,
+            run_resolve: false,
+            ..Default::default()
+        },
+    );
+    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
     if !tc_result.errors.is_empty() {
         return Err(format_tc_errors(&tc_result.errors));
     }
@@ -140,17 +172,26 @@ fn build_project_ctx(
         .get(entry)
         .ok_or_else(|| format!("Entry '{}' not present in file map", entry))?;
     let mut entry_items = parse_source(entry_source)?;
-    tco::transform_program(&mut entry_items);
 
     let root_depends = module_depends(&entry_items);
     let loaded = load_module_tree_from_map(&root_depends, files)?;
 
-    let tc_result = run_type_check_with_loaded(&entry_items, &loaded);
+    // Proof / Rust multi-file path. Traversal off (proof / Rust exporters
+    // both want source-level IR); resolver runs because the multi-file
+    // proof codegen depends on resolved local indices.
+    let pipeline_result = crate::ir::pipeline::run(
+        &mut entry_items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
+            apply_traversal_lowering: false,
+            ..Default::default()
+        },
+    );
+    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
     if !tc_result.errors.is_empty() {
         return Err(format_tc_errors(&tc_result.errors));
     }
 
-    resolver::resolve_program(&mut entry_items);
     let modules: Vec<codegen::ModuleInfo> = loaded.into_iter().map(loaded_to_module_info).collect();
 
     Ok(codegen::build_context(
@@ -207,8 +248,17 @@ fn module_depends(items: &[TopLevel]) -> Vec<String> {
 
 fn loaded_to_module_info(m: LoadedModule) -> codegen::ModuleInfo {
     let mut items = m.items;
-    tco::transform_program(&mut items);
-    resolver::resolve_program(&mut items);
+    // Dep modules in the playground virtual fs: TCO + resolver only,
+    // no typecheck (entry-level typecheck has already validated cross-module
+    // refs against `loaded`), no traversal (preserve current playground
+    // bytes — see `compile_to_wasm` comment).
+    crate::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            apply_traversal_lowering: false,
+            ..Default::default()
+        },
+    );
 
     let depends = module_depends(&items);
     let type_defs = items
@@ -547,16 +597,22 @@ fn run_record_inner(
     };
 
     let (mut items, loaded) = parse_and_load(entry_source, files, entry)?;
-    tco::transform_program(&mut items);
 
-    // Type-check first so we surface nice errors instead of a VM
-    // panic on missing symbols.
-    let tc_result = run_type_check_with_loaded(&items, &loaded);
+    // Record path skips traversal (matches replay_cmd.rs — recordings
+    // captured pre-traversal would mismatch on replay if the live path
+    // started using deforested IR).
+    let pipeline_result = crate::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
+            apply_traversal_lowering: false,
+            ..Default::default()
+        },
+    );
+    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
     if !tc_result.errors.is_empty() {
         return Err(format_tc_errors(&tc_result.errors));
     }
-
-    resolver::resolve_program(&mut items);
 
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
@@ -686,14 +742,20 @@ fn replay_run_inner(
     let total = recording.effects.len() as u32;
 
     let (mut items, loaded) = parse_and_load(&entry_source, files, entry)?;
-    tco::transform_program(&mut items);
 
-    let tc_result = run_type_check_with_loaded(&items, &loaded);
+    // Replay path skips traversal (mirrors replay_cmd.rs).
+    let pipeline_result = crate::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
+            apply_traversal_lowering: false,
+            ..Default::default()
+        },
+    );
+    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
     if !tc_result.errors.is_empty() {
         return Err(format_tc_errors(&tc_result.errors));
     }
-
-    resolver::resolve_program(&mut items);
 
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
