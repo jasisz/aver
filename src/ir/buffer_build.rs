@@ -39,6 +39,38 @@ pub struct BufferBuildShape {
     pub acc_param_name: String,
 }
 
+/// What the matched builder feeds into. Different consumers compile
+/// to different buffer types and finalizers, but all share the same
+/// underlying deforestation: skip the intermediate List, write
+/// elements straight to the consumer's storage.
+///
+/// Phase 2 implements `StringJoin` only — the canonical case from the
+/// fractal demo. Future variants land as separate phases:
+/// `VectorFromList` (already half-fused via `Vector.set` owned-mutate
+/// in 0.14.0; deforestation closes the cons-cell side), and `ListFold`
+/// for stream-fusion-style consumer rewrites.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConsumerKind {
+    /// `String.join(builder(...), sep)` — write each element + sep
+    /// directly into a `Vec<u8>`-shaped buffer in linear memory.
+    StringJoin,
+}
+
+/// One detected fusion site: a builder call whose result is consumed
+/// by a known sink (currently just `String.join`). Lowering rewrites
+/// the producer + consumer pair into a single buffer-write loop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FusionSite {
+    /// Name of the enclosing user fn that contains the call.
+    pub enclosing_fn: String,
+    /// Line of the consumer call.
+    pub line: usize,
+    /// The matched buffer-build fn being wrapped.
+    pub sink_fn: String,
+    /// What's consuming the builder's result.
+    pub consumer: ConsumerKind,
+}
+
 /// Walk all fns in `fns`, return a map from fn name to detected shape
 /// for fns that match the buffer-build sink pattern. Fns that don't
 /// match are absent from the result.
@@ -50,6 +82,158 @@ pub fn compute_buffer_build_sinks(fns: &[&FnDef]) -> HashMap<String, BufferBuild
         }
     }
     out
+}
+
+/// Walk every expression in every fn body looking for fusion sites:
+/// `String.join(matched_fn(...), sep)` calls where `matched_fn` is a
+/// key in `sinks`. Returns one `FusionSite` per call. The lowering
+/// pass rewrites each site to call a buffered variant of `matched_fn`
+/// directly into a pre-allocated buffer.
+pub fn find_fusion_sites(
+    fns: &[&FnDef],
+    sinks: &HashMap<String, BufferBuildShape>,
+) -> Vec<FusionSite> {
+    let mut out = Vec::new();
+    for fd in fns {
+        for stmt in fd.body.stmts() {
+            match stmt {
+                Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
+                    walk_expr_for_fusion_sites(&expr.node, expr.line, &fd.name, sinks, &mut out);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Recursively walk an expression tree, recording any fusion site we
+/// find. The fallback `expr_line` is used when a sub-expression has no
+/// own line info.
+fn walk_expr_for_fusion_sites(
+    expr: &Expr,
+    expr_line: usize,
+    enclosing_fn: &str,
+    sinks: &HashMap<String, BufferBuildShape>,
+    out: &mut Vec<FusionSite>,
+) {
+    if let Expr::FnCall(callee, args) = expr {
+        // Is this `String.join(<inner>, _)`?
+        if is_dotted_ident(&callee.node, "String", "join") && args.len() == 2 {
+            // Is the first argument a call to one of the matched sinks?
+            if let Expr::FnCall(inner_callee, _) = &args[0].node {
+                if let Expr::Ident(inner_name) = &inner_callee.node {
+                    if sinks.contains_key(inner_name) {
+                        out.push(FusionSite {
+                            enclosing_fn: enclosing_fn.to_string(),
+                            line: expr_line,
+                            sink_fn: inner_name.clone(),
+                            consumer: ConsumerKind::StringJoin,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    // Recurse into all sub-expressions regardless of whether this node
+    // matched (a fusion site can sit inside another fusion site's args
+    // — rare but valid; we'd record both and let the lowering decide).
+    visit_subexprs(expr, expr_line, enclosing_fn, sinks, out);
+}
+
+/// Helper: recurse into the sub-expressions of `expr`. Mirrors the
+/// shape coverage of `expr_allocates` in `alloc_info.rs` so we don't
+/// miss any node kind.
+fn visit_subexprs(
+    expr: &Expr,
+    fallback_line: usize,
+    enclosing_fn: &str,
+    sinks: &HashMap<String, BufferBuildShape>,
+    out: &mut Vec<FusionSite>,
+) {
+    let line_of = |s: &crate::ast::Spanned<Expr>| {
+        if s.line > 0 {
+            s.line
+        } else {
+            fallback_line
+        }
+    };
+    match expr {
+        Expr::Literal(_)
+        | Expr::Ident(_)
+        | Expr::Resolved { .. }
+        | Expr::Constructor(_, None) => {}
+        Expr::Constructor(_, Some(inner)) | Expr::Attr(inner, _) | Expr::ErrorProp(inner) => {
+            walk_expr_for_fusion_sites(&inner.node, line_of(inner), enclosing_fn, sinks, out);
+        }
+        Expr::FnCall(callee, args) => {
+            walk_expr_for_fusion_sites(&callee.node, line_of(callee), enclosing_fn, sinks, out);
+            for a in args {
+                walk_expr_for_fusion_sites(&a.node, line_of(a), enclosing_fn, sinks, out);
+            }
+        }
+        Expr::TailCall(data) => {
+            for a in &data.args {
+                walk_expr_for_fusion_sites(&a.node, line_of(a), enclosing_fn, sinks, out);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            walk_expr_for_fusion_sites(&l.node, line_of(l), enclosing_fn, sinks, out);
+            walk_expr_for_fusion_sites(&r.node, line_of(r), enclosing_fn, sinks, out);
+        }
+        Expr::Match { subject, arms } => {
+            walk_expr_for_fusion_sites(
+                &subject.node,
+                line_of(subject),
+                enclosing_fn,
+                sinks,
+                out,
+            );
+            for arm in arms {
+                walk_expr_for_fusion_sites(
+                    &arm.body.node,
+                    line_of(&arm.body),
+                    enclosing_fn,
+                    sinks,
+                    out,
+                );
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for it in items {
+                walk_expr_for_fusion_sites(&it.node, line_of(it), enclosing_fn, sinks, out);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                walk_expr_for_fusion_sites(&k.node, line_of(k), enclosing_fn, sinks, out);
+                walk_expr_for_fusion_sites(&v.node, line_of(v), enclosing_fn, sinks, out);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, v) in fields {
+                walk_expr_for_fusion_sites(&v.node, line_of(v), enclosing_fn, sinks, out);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            walk_expr_for_fusion_sites(&base.node, line_of(base), enclosing_fn, sinks, out);
+            for (_, v) in updates {
+                walk_expr_for_fusion_sites(&v.node, line_of(v), enclosing_fn, sinks, out);
+            }
+        }
+        Expr::InterpolatedStr(parts) => {
+            for part in parts {
+                if let crate::ast::StrPart::Parsed(inner) = part {
+                    walk_expr_for_fusion_sites(
+                        &inner.node,
+                        line_of(inner),
+                        enclosing_fn,
+                        sinks,
+                        out,
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// Pattern-match a single fn against the buffer-build shape.
@@ -416,6 +600,74 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
             .expect("expected end-to-end shape match for canonical builder");
         assert_eq!(shape.acc_param_idx, 1);
         assert_eq!(shape.acc_param_name, "acc");
+    }
+
+    /// End-to-end fusion-site detection: builder + caller `String.join`
+    /// site recognised, line recorded, sink name attached.
+    #[test]
+    fn finds_fusion_site_via_parser() {
+        let src = r#"
+fn build(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true  -> List.reverse(acc)
+        false -> build(n - 1, List.prepend(n, acc))
+
+fn main() -> String
+    String.join(build(5, []), ",")
+"#;
+        let mut lexer = crate::lexer::Lexer::new(src);
+        let tokens = lexer.tokenize().expect("lex");
+        let mut parser = crate::parser::Parser::new(tokens);
+        let mut items = parser.parse().expect("parse");
+        crate::tco::transform_program(&mut items);
+        let fns: Vec<&FnDef> = items
+            .iter()
+            .filter_map(|it| match it {
+                crate::ast::TopLevel::FnDef(fd) => Some(fd),
+                _ => None,
+            })
+            .collect();
+        let sinks = compute_buffer_build_sinks(&fns);
+        let sites = find_fusion_sites(&fns, &sinks);
+        assert_eq!(sites.len(), 1, "expected one fusion site, got {sites:?}");
+        let site = &sites[0];
+        assert_eq!(site.enclosing_fn, "main");
+        assert_eq!(site.sink_fn, "build");
+        assert!(site.line > 0, "expected real line info, got 0");
+    }
+
+    /// Caller passes the matched fn's result to a non-`String.join`
+    /// destination — should NOT register as a fusion site (no buffer
+    /// to write into).
+    #[test]
+    fn ignores_call_when_not_wrapped_in_string_join() {
+        let src = r#"
+fn build(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true  -> List.reverse(acc)
+        false -> build(n - 1, List.prepend(n, acc))
+
+fn main() -> List<Int>
+    build(5, [])
+"#;
+        let mut lexer = crate::lexer::Lexer::new(src);
+        let tokens = lexer.tokenize().expect("lex");
+        let mut parser = crate::parser::Parser::new(tokens);
+        let mut items = parser.parse().expect("parse");
+        crate::tco::transform_program(&mut items);
+        let fns: Vec<&FnDef> = items
+            .iter()
+            .filter_map(|it| match it {
+                crate::ast::TopLevel::FnDef(fd) => Some(fd),
+                _ => None,
+            })
+            .collect();
+        let sinks = compute_buffer_build_sinks(&fns);
+        let sites = find_fusion_sites(&fns, &sinks);
+        assert!(
+            sites.is_empty(),
+            "build called outside String.join must not be a fusion site, got {sites:?}"
+        );
     }
 
     /// Counter-test: a recursive fn that returns `acc` directly (no

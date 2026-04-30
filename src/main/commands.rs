@@ -2274,11 +2274,13 @@ fn run_check_for_file(
                     suppressed_count
                 ));
             }
-            // Perf-shape note: detect canonical buffer-build sink fns —
-            // tail-recursive `List.prepend → reverse` builders that the
-            // 0.15+ deforestation lowering will fuse to a buffer-write
-            // loop when called from `String.join`. Pure info; no
-            // behavior change today.
+            // Perf-shape note: detect canonical buffer-build sink fns
+            // and the call sites that actually wrap them in a known
+            // consumer (currently `String.join`). Both numbers matter:
+            // a sink with zero fusion sites is a candidate that nobody
+            // is consuming; a fusion site without a matching sink is
+            // unreachable. Pure info today; the 0.15+ deforestation
+            // lowering rewrites these pairs into buffer-write loops.
             let mut tco_items = items.clone();
             aver::tco::transform_program(&mut tco_items);
             let fn_defs: Vec<&aver::ast::FnDef> = tco_items
@@ -2290,13 +2292,15 @@ fn run_check_for_file(
                 .collect();
             let sinks = aver::ir::compute_buffer_build_sinks(&fn_defs);
             if !sinks.is_empty() {
+                let sites = aver::ir::find_fusion_sites(&fn_defs, &sinks);
                 let mut names: Vec<&str> = sinks.keys().map(|s| s.as_str()).collect();
                 names.sort();
                 summary_parts.push(format!(
-                    "{} {} buffer-build sink(s): {}",
+                    "{} {} buffer-build sink(s) [{}], {} fusion site(s)",
                     "↻".cyan(),
                     sinks.len(),
-                    names.join(", ")
+                    names.join(", "),
+                    sites.len()
                 ));
             }
             println!("  {}", summary_parts.join(" | "));
