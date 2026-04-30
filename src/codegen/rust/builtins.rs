@@ -347,6 +347,17 @@ fn emit_builtin_call_inner(
             Some(format!("aver_rt::AverStr::from({})", buf))
         }
 
+        // `__to_str(x)` — interpolation coercion. Produces an AverStr
+        // from any value's `AverDisplay` impl. Used by the IR-level
+        // interpolation lowering pass before `__buf_append`.
+        "__to_str" => {
+            let arg = emit_arg(0);
+            Some(format!(
+                "aver_rt::AverStr::from(aver_rt::aver_display(&({})))",
+                arg
+            ))
+        }
+
         // ---- Console ----
         "Console.print" => {
             let arg = emit_arg(0);

@@ -364,6 +364,18 @@ impl<'a> ExprEmitter<'a> {
                 {
                     return;
                 }
+                // 0.15 Traversal — interpolation lowering uses
+                // `__to_str(x)` to coerce arbitrary values to a string
+                // before `__buf_append`. WASM's existing
+                // `emit_value_to_str` already does the type-driven
+                // conversion (i64 → str via rt_i64_to_str_obj, f64 →
+                // rt_f64_to_str_obj, ptr → format_value, etc.) — bypass
+                // the generic builtin dispatch and call it directly so
+                // we keep the static type information off the AST node.
+                if name == "__to_str" && args.len() == 1 {
+                    self.emit_value_to_str(&args[0].node);
+                    return;
+                }
                 for arg in args {
                     self.emit_expr(&arg.node);
                 }

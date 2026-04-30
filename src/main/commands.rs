@@ -1046,6 +1046,7 @@ pub(super) fn cmd_run_vm(
     // dispatches `__buf_*` intrinsics directly to dedicated opcodes
     // (BUFFER_NEW / APPEND / APPEND_SEP_UNLESS_FIRST / FINALIZE)
     // backed by `vm.buffer_pool`.
+    aver::ir::lower_interpolation_pass(&mut items);
     let _traversal_stats = aver::ir::run_buffer_build_pass(&mut items);
 
     // Resolver
@@ -3256,6 +3257,7 @@ fn build_codegen_context(
     // TCO and resolver because both detection and rewrite match on
     // `Expr::Ident` / `Expr::TailCall` shapes that the resolver
     // pass would later replace with `Expr::Resolved` nodes.
+    aver::ir::lower_interpolation_pass(&mut items);
     let _traversal_stats = aver::ir::run_buffer_build_pass(&mut items);
 
     // Resolve locals + annotate last-use (unified across all backends)
@@ -4406,6 +4408,7 @@ fn load_module_recursive(
     // rewrites to `Expr::Resolved`. Without this, sinks living in
     // dep modules (like Fractal's `allRows`) compile unchanged and
     // the bench shows zero perf delta.
+    aver::ir::lower_interpolation_pass(&mut items);
     let _traversal_stats = aver::ir::run_buffer_build_pass(&mut items);
     resolver::resolve_program(&mut items);
 

@@ -281,7 +281,11 @@ fn classify_named_callee(
         // lowers each to a `Call(rt_buffer_*)` instruction.
         if matches!(
             bare,
-            "__buf_new" | "__buf_append" | "__buf_append_sep_unless_first" | "__buf_finalize"
+            "__buf_new"
+                | "__buf_append"
+                | "__buf_append_sep_unless_first"
+                | "__buf_finalize"
+                | "__to_str"
         ) {
             return CallPlan::Builtin(bare.to_string());
         }

@@ -2,6 +2,7 @@ mod alloc_info;
 mod body;
 mod buffer_build;
 mod calls;
+mod interp_lower;
 pub mod last_use;
 mod leaf;
 mod matches;
@@ -12,6 +13,7 @@ pub use buffer_build::{
     BufferBuildShape, ConsumerKind, FusionSite, compute_buffer_build_sinks, find_fusion_sites,
     rewrite_fusion_sites, run_buffer_build_pass, synthesize_buffered_variants,
 };
+pub use interp_lower::lower_interpolation_pass;
 pub use body::{
     BodyBindingPlan, BodyExprPlan, BodyPlan, ThinBodyCtx, ThinBodyPlan, ThinKind,
     classify_body_expr_plan, classify_body_plan, classify_thin_body_plan, classify_thin_fn_def,

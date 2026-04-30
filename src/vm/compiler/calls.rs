@@ -200,6 +200,21 @@ impl<'a> FnCompiler<'a> {
                 self.emit_op(opcode);
                 return Ok(());
             }
+
+            // `__to_str(x)`: coerce any value to its string repr. Used by
+            // the interpolation lowering pass to produce a string before
+            // a `__buf_append`. Reuses the existing CONCAT-against-empty
+            // trick — CONCAT calls `NanValue::repr` on both sides, so any
+            // value lowers to its display string.
+            if name == "__to_str" && args.len() == 1 {
+                self.compile_expr(&args[0])?;
+                let empty_nv = NanValue::new_string_value("", self.arena);
+                let empty_const = self.add_constant(empty_nv);
+                self.emit_op(LOAD_CONST);
+                self.emit_u16(empty_const);
+                self.emit_op(CONCAT);
+                return Ok(());
+            }
         }
 
         let call_ctx = VmCallCtx { compiler: self };
