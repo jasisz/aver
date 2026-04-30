@@ -7,6 +7,7 @@ mod law;
 mod module_effects;
 mod naming;
 mod perf;
+mod traversal;
 mod verify;
 mod verify_effects;
 
@@ -265,6 +266,7 @@ pub use law::{collect_verify_law_dependency_warnings, collect_verify_law_depende
 pub use module_effects::{collect_module_effects_warnings, collect_module_effects_warnings_in};
 pub use naming::{collect_naming_warnings, collect_naming_warnings_in};
 pub use perf::{collect_perf_warnings, collect_perf_warnings_in};
+pub use traversal::collect_traversal_warnings_in;
 pub use verify::{expr_to_str, merge_verify_blocks};
 pub use verify_effects::{
     collect_plain_cases_effectful_warnings, collect_plain_cases_effectful_warnings_in,

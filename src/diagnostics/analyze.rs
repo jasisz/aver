@@ -11,7 +11,8 @@ use crate::checker::{
     CheckFinding, check_module_intent_with_sigs_in, collect_cse_warnings_in,
     collect_independence_warnings_in, collect_module_effects_warnings_in,
     collect_naming_warnings_in, collect_perf_warnings_in,
-    collect_plain_cases_effectful_warnings_in, collect_verify_coverage_warnings_in,
+    collect_plain_cases_effectful_warnings_in, collect_traversal_warnings_in,
+    collect_verify_coverage_warnings_in,
 };
 #[cfg(feature = "runtime")]
 use crate::checker::{FindingSpan, collect_verify_law_dependency_warnings_in};
@@ -36,6 +37,12 @@ pub struct AnalyzeOptions {
     pub include_law_dependency_warnings: bool,
     pub include_cse_warnings: bool,
     pub include_perf_warnings: bool,
+    /// 0.15 Traversal antipattern lints — surfaces uses of recursive
+    /// list builders feeding `Vector.fromList`, `Map.fromList`, or a
+    /// standalone `List.reverse`, where Aver has a more direct primitive.
+    /// Companion to the buffer-build deforestation pass: what we don't
+    /// fuse, we warn about.
+    pub include_traversal_warnings: bool,
     pub include_independence_warnings: bool,
     pub include_naming_warnings: bool,
     pub include_non_tail_warnings: bool,
@@ -75,6 +82,7 @@ impl Default for AnalyzeOptions {
             include_law_dependency_warnings: true,
             include_cse_warnings: true,
             include_perf_warnings: true,
+            include_traversal_warnings: true,
             include_independence_warnings: true,
             include_naming_warnings: true,
             include_non_tail_warnings: true,
@@ -231,6 +239,17 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
 
     if options.include_perf_warnings {
         for w in collect_perf_warnings_in(&transformed, None) {
+            diagnostics.push(from_check_finding(
+                Severity::Warning,
+                &w,
+                source,
+                &options.file_label,
+            ));
+        }
+    }
+
+    if options.include_traversal_warnings {
+        for w in collect_traversal_warnings_in(&transformed, None) {
             diagnostics.push(from_check_finding(
                 Severity::Warning,
                 &w,
