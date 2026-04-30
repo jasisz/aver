@@ -474,6 +474,259 @@ fn intrinsic_call(line: usize, name: &str, args: Vec<Spanned<Expr>>) -> Spanned<
     sp_at(line, Expr::FnCall(Box::new(callee), args))
 }
 
+/// Run the full buffer-build deforestation pass on a program: detect
+/// sinks, synthesize buffered variants, rewrite fusion sites in place,
+/// and APPEND the synthesized FnDefs to the items list as new
+/// top-level fns. Caller is responsible for invoking this AFTER
+/// `tco::transform_program` (the detector requires `Expr::TailCall`
+/// nodes) and BEFORE `resolver::resolve_program` (the detector +
+/// rewrite both match on `Expr::Ident` shapes that the resolver
+/// rewrites to `Expr::Resolved`).
+///
+/// Returns the count of fusion sites rewritten + buffered variants
+/// synthesized for diagnostic / bench reporting.
+pub fn run_buffer_build_pass(items: &mut Vec<crate::ast::TopLevel>) -> (usize, usize) {
+    let fn_refs: Vec<&FnDef> = items
+        .iter()
+        .filter_map(|it| match it {
+            crate::ast::TopLevel::FnDef(fd) => Some(fd),
+            _ => None,
+        })
+        .collect();
+    let sinks = compute_buffer_build_sinks(&fn_refs);
+    if sinks.is_empty() {
+        return (0, 0);
+    }
+    let sites = find_fusion_sites(&fn_refs, &sinks);
+    let synthesized = synthesize_buffered_variants(&fn_refs, &sinks);
+    drop(fn_refs);
+
+    let mut fn_defs_owned: Vec<&mut FnDef> = items
+        .iter_mut()
+        .filter_map(|it| match it {
+            crate::ast::TopLevel::FnDef(fd) => Some(fd),
+            _ => None,
+        })
+        .collect();
+    // rewrite_fusion_sites takes &mut [FnDef], so pull a fresh
+    // mutable view across owned slots. We can't pass &mut [&mut FnDef]
+    // directly — instead, walk and rewrite each fn body individually.
+    for fd in fn_defs_owned.iter_mut() {
+        rewrite_one_fn(fd, &sinks);
+    }
+
+    items.reserve(synthesized.len());
+    for fd in synthesized.iter() {
+        items.push(crate::ast::TopLevel::FnDef(fd.clone()));
+    }
+
+    (sites.len(), synthesized.len())
+}
+
+/// Apply fusion-site rewrite to a single fn body. Internal helper
+/// for `run_buffer_build_pass` since `rewrite_fusion_sites` takes a
+/// slice and we have an iterator-of-mut-refs here.
+fn rewrite_one_fn(fd: &mut FnDef, sinks: &HashMap<String, BufferBuildShape>) {
+    let body_arc = std::sync::Arc::make_mut(&mut fd.body);
+    let FnBody::Block(stmts) = body_arc;
+    for stmt in stmts.iter_mut() {
+        match stmt {
+            Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
+                rewrite_expr_in_place(expr, sinks);
+            }
+        }
+    }
+}
+
+/// Walk every expression in `fn_defs` and rewrite `String.join`
+/// fusion sites in place: `String.join(matched_fn(args, []), sep)` →
+/// `__buf_finalize(matched_fn__buffered(args_without_acc, __buf_new(8192), sep))`.
+///
+/// Conservative trigger per the C' review: only fires when the
+/// acc-position arg is a literal `Expr::List([])`. A non-empty
+/// initial accumulator would silently lose elements after rewrite,
+/// so we skip in that case.
+///
+/// The rewrite is recursive: nested fusion sites (a fusion site
+/// inside another fusion site's args) all get rewritten in one pass.
+pub fn rewrite_fusion_sites(
+    fn_defs: &mut [FnDef],
+    sinks: &HashMap<String, BufferBuildShape>,
+) {
+    if sinks.is_empty() {
+        return;
+    }
+    for fd in fn_defs.iter_mut() {
+        let body_arc = std::sync::Arc::make_mut(&mut fd.body);
+        let FnBody::Block(stmts) = body_arc;
+        for stmt in stmts.iter_mut() {
+            match stmt {
+                Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
+                    rewrite_expr_in_place(expr, sinks);
+                }
+            }
+        }
+    }
+}
+
+/// Recursive expression-tree walker that rewrites fusion sites in
+/// place. Rewrite is "outermost first" — if the whole expression is
+/// a fusion site, transform it before descending into the new shape's
+/// children, so we don't double-rewrite.
+fn rewrite_expr_in_place(
+    expr: &mut Spanned<Expr>,
+    sinks: &HashMap<String, BufferBuildShape>,
+) {
+    if let Some(replacement) = try_rewrite_fusion_site(expr, sinks) {
+        *expr = replacement;
+        // The replacement contains the original elem expressions
+        // (possibly themselves containing fusion sites in deep
+        // gradient builders). Recurse into the new tree.
+        descend_into_subexprs(expr, sinks);
+        return;
+    }
+    descend_into_subexprs(expr, sinks);
+}
+
+/// Recurse into the children of an Expr, applying `rewrite_expr_in_place`
+/// to each. Mirrors the shape coverage of `walk_expr_for_fusion_sites`
+/// in this module so we don't miss any node kind.
+fn descend_into_subexprs(
+    expr: &mut Spanned<Expr>,
+    sinks: &HashMap<String, BufferBuildShape>,
+) {
+    match &mut expr.node {
+        Expr::Literal(_)
+        | Expr::Ident(_)
+        | Expr::Resolved { .. }
+        | Expr::Constructor(_, None) => {}
+        Expr::Constructor(_, Some(inner)) | Expr::Attr(inner, _) | Expr::ErrorProp(inner) => {
+            rewrite_expr_in_place(inner, sinks);
+        }
+        Expr::FnCall(callee, args) => {
+            rewrite_expr_in_place(callee, sinks);
+            for a in args.iter_mut() {
+                rewrite_expr_in_place(a, sinks);
+            }
+        }
+        Expr::TailCall(data) => {
+            for a in data.args.iter_mut() {
+                rewrite_expr_in_place(a, sinks);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            rewrite_expr_in_place(l, sinks);
+            rewrite_expr_in_place(r, sinks);
+        }
+        Expr::Match { subject, arms } => {
+            rewrite_expr_in_place(subject, sinks);
+            for arm in arms.iter_mut() {
+                rewrite_expr_in_place(&mut arm.body, sinks);
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for it in items.iter_mut() {
+                rewrite_expr_in_place(it, sinks);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries.iter_mut() {
+                rewrite_expr_in_place(k, sinks);
+                rewrite_expr_in_place(v, sinks);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, v) in fields.iter_mut() {
+                rewrite_expr_in_place(v, sinks);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            rewrite_expr_in_place(base, sinks);
+            for (_, v) in updates.iter_mut() {
+                rewrite_expr_in_place(v, sinks);
+            }
+        }
+        Expr::InterpolatedStr(parts) => {
+            for part in parts.iter_mut() {
+                if let crate::ast::StrPart::Parsed(inner) = part {
+                    rewrite_expr_in_place(inner, sinks);
+                }
+            }
+        }
+    }
+}
+
+/// If `expr` is a `String.join(matched_fn(args, []), sep)` with
+/// matched_fn in `sinks` and acc-position arg a literal empty list,
+/// return the rewritten Spanned<Expr>. Else return None.
+fn try_rewrite_fusion_site(
+    expr: &Spanned<Expr>,
+    sinks: &HashMap<String, BufferBuildShape>,
+) -> Option<Spanned<Expr>> {
+    let line = expr.line;
+    // Outer must be `String.join(_, _)`.
+    let (outer_callee, outer_args) = match &expr.node {
+        Expr::FnCall(c, a) => (c, a),
+        _ => return None,
+    };
+    if !is_dotted_ident(&outer_callee.node, "String", "join") {
+        return None;
+    }
+    if outer_args.len() != 2 {
+        return None;
+    }
+    // First arg of String.join must be a call to a matched fn.
+    let (inner_callee, inner_args) = match &outer_args[0].node {
+        Expr::FnCall(c, a) => (c, a),
+        _ => return None,
+    };
+    let sink_name = match &inner_callee.node {
+        Expr::Ident(name) => name.clone(),
+        _ => return None,
+    };
+    let shape = sinks.get(&sink_name)?;
+    // Acc-position arg must be a literal empty List. Otherwise the
+    // initial accumulator carries elements that the buffered variant
+    // would drop on the floor.
+    let acc_arg = inner_args.get(shape.acc_param_idx)?;
+    let is_empty_list = matches!(&acc_arg.node, Expr::List(items) if items.is_empty());
+    if !is_empty_list {
+        return None;
+    }
+    // Build the rewrite:
+    //   __buf_finalize(
+    //     <fn>__buffered(
+    //       <args without acc-pos>,
+    //       __buf_new(8192),
+    //       <sep>
+    //     )
+    //   )
+    let sep_expr = outer_args[1].clone();
+    let buf_new = intrinsic_call(
+        line,
+        "__buf_new",
+        vec![sp_at(line, Expr::Literal(Literal::Int(8192)))],
+    );
+    let mut buffered_args: Vec<Spanned<Expr>> = inner_args
+        .iter()
+        .enumerate()
+        .filter_map(|(i, a)| (i != shape.acc_param_idx).then(|| a.clone()))
+        .collect();
+    buffered_args.push(buf_new);
+    buffered_args.push(sep_expr);
+    let buffered_call = sp_at(
+        line,
+        Expr::FnCall(
+            Box::new(sp_at(
+                line,
+                Expr::Ident(format!("{}__buffered", sink_name)),
+            )),
+            buffered_args,
+        ),
+    );
+    Some(intrinsic_call(line, "__buf_finalize", vec![buffered_call]))
+}
+
 /// Construct the buffered FnDef for a single matched fn. Returns
 /// `None` if the original body shape doesn't match what we expect
 /// (defensive: detection should have caught this, but if the body

@@ -415,20 +415,55 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions
                     .push(Instruction::Call(self.rt.buffer_append_str));
             }
-            // For sep-unless-first we can't emit the conditional inline
-            // here without scratch locals; defer the conditional shape
-            // to Phase 2c.2 (synthesized variant body), which can use
-            // the same rt_buffer_append_str directly with its own
-            // emit_if for the len-check. Keep this branch as a stub
-            // that errors loudly so we can't accidentally dispatch on
-            // it before the synthesizer is wired.
+            // Sep-unless-first: append `sep` to `buf` only if `buf.len > 0`
+            // (i.e. it already has at least one element; we want a
+            // separator BEFORE the next element, not before the first).
+            // Returns the possibly-grown buffer either way — the false
+            // branch returns the input buf unchanged so the caller can
+            // thread the result without conditional handling.
             "__buf_append_sep_unless_first" if args.len() == 2 => {
-                unreachable!(
-                    "__buf_append_sep_unless_first lowering belongs in the \
-                     synthesized variant body (Phase 2c.2), not in raw \
-                     builtin dispatch — caller emitted it without going \
-                     through the synthesis pass"
-                );
+                // Stack at entry: [buf, sep] (sep on top, buf under).
+                let sep = self.alloc_local(WasmType::I32);
+                let buf = self.alloc_local(WasmType::I32);
+                self.instructions.push(Instruction::LocalSet(sep));
+                self.instructions.push(Instruction::LocalSet(buf));
+                // Compute len = (buf.header & 0xFFFFFFFF) — header is i64
+                // at offset 0; OBJ_BUFFER stores byte_len in the low 32.
+                self.instructions.push(Instruction::LocalGet(buf));
+                self.instructions
+                    .push(Instruction::I64Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 3,
+                        memory_index: 0,
+                    }));
+                self.instructions.push(Instruction::I64Const(0xFFFFFFFF));
+                self.instructions.push(Instruction::I64And);
+                self.instructions.push(Instruction::I32WrapI64);
+                // If len > 0 (treated as non-zero), append sep; else
+                // pass buf through.
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
+                // True branch: buf was non-empty, prepend sep before
+                // the next element.
+                self.instructions.push(Instruction::LocalGet(buf));
+                self.instructions.push(Instruction::LocalGet(sep));
+                self.instructions
+                    .push(Instruction::Call(self.rt.buffer_append_str));
+                self.emit_else();
+                // False branch: empty buf, no separator yet.
+                self.instructions.push(Instruction::LocalGet(buf));
+                self.emit_end();
+            }
+            // Fusion-site wrappers: rt_buffer_new + rt_buffer_finalize
+            // get the same builtin-dispatch path so the AST rewrite in
+            // Phase 2c.3d can emit them as plain `Expr::FnCall(Ident,
+            // args)` and stay inside normal expr lowering.
+            "__buf_new" if args.len() == 1 => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.buffer_new));
+            }
+            "__buf_finalize" if args.len() == 1 => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.buffer_finalize));
             }
             "String.replace" if args.len() == 3 => {
                 self.instructions

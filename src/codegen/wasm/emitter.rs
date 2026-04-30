@@ -102,6 +102,20 @@ pub fn build_wasm_module(
         }
     }
 
+    // 0.15 Traversal — synthesized `<fn>__buffered` variants for
+    // matched buffer-build sinks. These fns share the regular Aver
+    // FnDef shape (post-TCO Match + TailCall), so they flow through
+    // the rest of the emitter unchanged. Each `__buf_append*` call in
+    // the body lowers via the `__buf_*` builtin dispatch. Empty when
+    // no sinks were detected.
+    for fd in &ctx.synthesized_buffered_fns {
+        user_fns.push(UserFnEntry {
+            fd,
+            canonical_name: fd.name.clone(),
+            module_prefix: None,
+        });
+    }
+
     // Reject HTTP types under non-fetch adapters with a friendly message,
     // before the per-fn emit hits the broken record-shape codegen and
     // produces invalid bytecode. `HttpRequest` / `HttpResponse` carry

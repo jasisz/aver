@@ -193,11 +193,16 @@ pub fn build_context(
         }
     }
 
-    // Detect buffer-build sinks + their fusion sites once. Both the
-    // Rust and WASM backends consume the same analysis; downstream
-    // emit logic looks them up by name. Detection requires
-    // post-TCO `Expr::TailCall` nodes — `items` here is post-tco per
-    // the build_context contract — so no extra transform needed.
+    // Detection layer for buffer-build sinks + fusion sites. The
+    // ACTUAL rewrite + synthesis must happen BEFORE the resolver
+    // pass (callers run it via `ir::run_buffer_build_pass` between
+    // TCO and resolver) — the detector matches on `Expr::Ident`
+    // shapes that resolver later rewrites to `Expr::Resolved`. We
+    // rerun detection here against the final items so the resulting
+    // ctx fields reflect what's actually in the AST. With pre-
+    // resolver pass having already run, sinks/sites should be the
+    // same set (sinks are fns, not call sites; fusion sites were
+    // rewritten away so the post-rewrite count is zero in normal flow).
     let detect_fns: Vec<&FnDef> = fn_defs.iter().chain(modules.iter().flat_map(|m| m.fn_defs.iter())).collect();
     let buffer_build_sinks = crate::ir::compute_buffer_build_sinks(&detect_fns);
     let buffer_fusion_sites = crate::ir::find_fusion_sites(&detect_fns, &buffer_build_sinks);

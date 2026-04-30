@@ -271,6 +271,20 @@ fn classify_named_callee(
         {
             return CallPlan::Builtin(bare.to_string());
         }
+
+        // 0.15 Traversal — internal intrinsics for buffer-build
+        // deforestation. These names are codegen-synthesis-only;
+        // user source can't legally reference them, but if it did
+        // the type checker would reject them as unknown functions
+        // (no entry in builtins table). Once they reach call-plan
+        // classification, route to the WASM builtin dispatch which
+        // lowers each to a `Call(rt_buffer_*)` instruction.
+        if matches!(
+            bare,
+            "__buf_new" | "__buf_append" | "__buf_append_sep_unless_first" | "__buf_finalize"
+        ) {
+            return CallPlan::Builtin(bare.to_string());
+        }
     }
 
     if let Some((type_name, variant_name)) = bare.rsplit_once('.')

@@ -3242,6 +3242,15 @@ fn build_codegen_context(
         process::exit(1);
     }
 
+    // 0.15 Traversal — buffer-build deforestation pass. Detects
+    // canonical `String.join(<builder>(args, []), sep)` shapes,
+    // rewrites them to `__buf_finalize(<builder>__buffered(args.., __buf_new(8192), sep))`,
+    // and appends synthesized buffered variants. Must run between
+    // TCO and resolver because both detection and rewrite match on
+    // `Expr::Ident` / `Expr::TailCall` shapes that the resolver
+    // pass would later replace with `Expr::Resolved` nodes.
+    let _traversal_stats = aver::ir::run_buffer_build_pass(&mut items);
+
     // Resolve locals + annotate last-use (unified across all backends)
     resolver::resolve_program(&mut items);
 

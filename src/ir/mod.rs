@@ -10,7 +10,7 @@ pub mod vars;
 pub use alloc_info::{AllocPolicy, compute_alloc_info};
 pub use buffer_build::{
     BufferBuildShape, ConsumerKind, FusionSite, compute_buffer_build_sinks, find_fusion_sites,
-    synthesize_buffered_variants,
+    rewrite_fusion_sites, run_buffer_build_pass, synthesize_buffered_variants,
 };
 pub use body::{
     BodyBindingPlan, BodyExprPlan, BodyPlan, ThinBodyCtx, ThinBodyPlan, ThinKind,
