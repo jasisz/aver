@@ -358,7 +358,7 @@ verify paletteChar
     paletteChar(31) => "v"
 
 fn halfBlockChar(top: Int, bot: Int) -> String
-    ? "Compact per-cell HTML: `<i c=XY>▀</i>` where XY are two base-32 chars — first is the top sub-pixel palette index (0..u, then v reserved), second is the bottom. CSS attribute selectors `i[c^=C]` and `i[c$=C]` pick fg / bg colours from a shared 31-entry palette."
+    ? "Single-cell half-block HTML: `<i c=XY>▀</i>` where XY are two base-32 chars — first is the top sub-pixel palette index (0..u, then v reserved), second is the bottom. CSS attribute selectors `i[c^=C]` and `i[c$=C]` pick fg / bg colours from a shared 31-entry palette. Only used by verify cases now; live rendering goes through `runHtml` to consolidate adjacent identical cells."
     String.join(["<i c=", paletteChar(top), paletteChar(bot), ">▀</i>"], "")
 
 verify halfBlockChar
@@ -366,33 +366,74 @@ verify halfBlockChar
     halfBlockChar(15, 7)  => "<i c=f7>▀</i>"
     halfBlockChar(30, 20) => "<i c=uk>▀</i>"
 
-fn cellRow(col: Int, row: Int, charsW: Int, pixelsW: Int, pixelsH: Int, maxIter: Int, view: View, acc: List<String>) -> List<String>
-    ? "Folds across one row of half-block cells. Each cell samples two stacked pixels (top = row·2, bottom = row·2+1)."
+fn buildRunChars(n: Int, acc: List<String>) -> List<String>
+    ? "Tail-recursive build of a list with `n` copies of the half-block character. Joined once into a contiguous string by `runHtml` to avoid the O(n²) shape of repeated string concat."
+    match n <= 0
+        true  -> acc
+        false -> buildRunChars(n - 1, List.prepend("▀", acc))
+
+verify buildRunChars
+    buildRunChars(0, []) => []
+    buildRunChars(3, []) => ["▀", "▀", "▀"]
+
+fn runHtml(top: Int, bot: Int, count: Int) -> String
+    ? "Emit a run of `count` adjacent half-block cells sharing palette indices (top, bot) as a single `<i c=XY>▀▀▀…</i>` tag. Run-length encoding the per-row palette stream cuts HTML output by ~2-3× on solid in-set regions and modestly elsewhere; one wrapping tag instead of `count` separate ones, matching CSS attribute selectors still hit."
+    match count <= 0
+        true  -> ""
+        false -> String.join([
+            "<i c=",
+            paletteChar(top),
+            paletteChar(bot),
+            ">",
+            String.join(buildRunChars(count, []), ""),
+            "</i>",
+        ], "")
+
+verify runHtml
+    runHtml(0, 0, 0)   => ""
+    runHtml(0, 0, 1)   => "<i c=00>▀</i>"
+    runHtml(15, 7, 3)  => "<i c=f7>▀▀▀</i>"
+
+fn shouldExtendRun(newTop: Int, newBot: Int, curTop: Int, curBot: Int, runCount: Int) -> Bool
+    ? "True iff the next cell's (top, bot) palette pair matches the current run AND a run is already open. Single-source-of-truth predicate so cellRow doesn't have to inline the conjunction."
+    Bool.and(Bool.and(runCount > 0, newTop == curTop), newBot == curBot)
+
+verify shouldExtendRun
+    shouldExtendRun(0, 0, 0, 0, 0)  => false
+    shouldExtendRun(5, 7, 5, 7, 3)  => true
+    shouldExtendRun(5, 7, 5, 8, 3)  => false
+    shouldExtendRun(5, 7, 4, 7, 3)  => false
+
+fn flushRun(top: Int, bot: Int, count: Int, acc: List<String>) -> List<String>
+    ? "Prepend the current run's HTML to `acc` if it has content; otherwise pass acc through. Used both on colour transitions and at row end."
+    match count <= 0
+        true  -> acc
+        false -> List.prepend(runHtml(top, bot, count), acc)
+
+verify flushRun
+    flushRun(0, 0, 0, [])      => []
+    flushRun(5, 7, 2, ["x"])   => ["<i c=57>▀▀</i>", "x"]
+
+fn cellStep(col: Int, row: Int, charsW: Int, pixelsW: Int, pixelsH: Int, maxIter: Int, view: View, curTop: Int, curBot: Int, runCount: Int, acc: List<String>) -> List<String>
+    ? "Compute the next cell's palette pair, then either extend the current run (matching colours) or flush the open run and start a new one. Tail-calls `cellRow` for the next iteration."
+    newTop = pixelColor(col, row * 2,     pixelsW, pixelsH, maxIter, view)
+    newBot = pixelColor(col, row * 2 + 1, pixelsW, pixelsH, maxIter, view)
+    match shouldExtendRun(newTop, newBot, curTop, curBot, runCount)
+        true  -> cellRow(col + 1, row, charsW, pixelsW, pixelsH, maxIter, view, curTop, curBot, runCount + 1, acc)
+        false -> cellRow(col + 1, row, charsW, pixelsW, pixelsH, maxIter, view, newTop, newBot, 1, flushRun(curTop, curBot, runCount, acc))
+
+fn cellRow(col: Int, row: Int, charsW: Int, pixelsW: Int, pixelsH: Int, maxIter: Int, view: View, curTop: Int, curBot: Int, runCount: Int, acc: List<String>) -> List<String>
+    ? "Folds across one row of half-block cells, run-length-encoding adjacent identical (top, bot) palette pairs into a single `<i c=XY>▀▀▀…</i>` tag. Run state is threaded through (curTop, curBot, runCount) and flushed on colour change or at row end. Solid in-set regions of the Mandelbrot collapse to one tag per stripe; smooth gradient and dithered regions still benefit modestly because adjacent dither cells often share at least one of (top, bot)."
     match col >= charsW
-        true  -> List.reverse(acc)
-        false -> cellRow(
-            col + 1,
-            row,
-            charsW,
-            pixelsW,
-            pixelsH,
-            maxIter,
-            view,
-            List.prepend(
-                halfBlockChar(
-                    pixelColor(col, row * 2,     pixelsW, pixelsH, maxIter, view),
-                    pixelColor(col, row * 2 + 1, pixelsW, pixelsH, maxIter, view),
-                ),
-                acc,
-            ),
-        )
+        true  -> List.reverse(flushRun(curTop, curBot, runCount, acc))
+        false -> cellStep(col, row, charsW, pixelsW, pixelsH, maxIter, view, curTop, curBot, runCount, acc)
 
 verify cellRow
-    cellRow(0, 0, 0, 1, 2, 50, fullView(), []) => []
+    cellRow(0, 0, 0, 1, 2, 50, fullView(), 0, 0, 0, []) => []
 
 fn renderRow(row: Int, charsW: Int, pixelsW: Int, pixelsH: Int, maxIter: Int, view: View) -> String
-    ? "Joins one char-row of half-block cells into a single line."
-    String.join(cellRow(0, row, charsW, pixelsW, pixelsH, maxIter, view, []), "")
+    ? "Joins one char-row of run-length-encoded half-block cells into a single line. Initial cellRow call seeds an empty run (runCount = 0)."
+    String.join(cellRow(0, row, charsW, pixelsW, pixelsH, maxIter, view, 0, 0, 0, []), "")
 
 verify renderRow
     renderRow(0, 0, 1, 2, 50, fullView()) => ""
