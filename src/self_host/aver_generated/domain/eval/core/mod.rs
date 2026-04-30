@@ -520,10 +520,15 @@ fn __mutual_tco_trampoline_3(mut __state: __MutualTco3) -> Result<Val, AverStr> 
                         return evalIndependentProduct(&exprs, unwrap, &env, &fns);
                     }
                     _ => {
-                        return Err(AverStr::from(format!(
-                            "unsupported named-env expression: {}",
-                            aver_rt::aver_display(&expr)
-                        )));
+                        return Err(aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity((50i64) as usize);
+                                __b.push_str(&AverStr::from("unsupported named-env expression: "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(expr))));
+                            __b
+                        }));
                     }
                 }
             }
@@ -1410,10 +1415,15 @@ fn __mutual_tco_trampoline_4(mut __state: __MutualTco4) -> Result<Val, AverStr> 
                         return evalIndependentProductSlot(&exprs, unwrap, &env, &slotMap, &fns);
                     }
                     _ => {
-                        return Err(AverStr::from(format!(
-                            "unsupported slot expression: {}",
-                            aver_rt::aver_display(&expr)
-                        )));
+                        return Err(aver_rt::AverStr::from({
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity((45i64) as usize);
+                                __b.push_str(&AverStr::from("unsupported slot expression: "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(expr))));
+                            __b
+                        }));
                     }
                 }
             }

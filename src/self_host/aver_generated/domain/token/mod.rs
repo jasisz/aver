@@ -517,10 +517,46 @@ impl aver_replay::ReplayValue for Token {
 pub fn tokenRepr(t: &Token) -> AverStr {
     crate::cancel_checkpoint();
     match t.clone() {
-        Token::TkInt(n) => AverStr::from(format!("Int({})", aver_rt::aver_display(&n))),
+        Token::TkInt(n) => aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = {
+                    let mut __b = aver_rt::Buffer::with_capacity((21i64) as usize);
+                    __b.push_str(&AverStr::from("Int("));
+                    __b
+                };
+                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(n))));
+                __b
+            };
+            __b.push_str(&AverStr::from(")"));
+            __b
+        }),
         Token::TkFloat(f) => AverStr::from("Float"),
-        Token::TkStr(s) => AverStr::from(format!("Str({})", aver_rt::aver_display(&s))),
-        Token::TkIdent(s) => AverStr::from(format!("Ident({})", aver_rt::aver_display(&s))),
+        Token::TkStr(s) => aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = {
+                    let mut __b = aver_rt::Buffer::with_capacity((21i64) as usize);
+                    __b.push_str(&AverStr::from("Str("));
+                    __b
+                };
+                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(s))));
+                __b
+            };
+            __b.push_str(&AverStr::from(")"));
+            __b
+        }),
+        Token::TkIdent(s) => aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = {
+                    let mut __b = aver_rt::Buffer::with_capacity((23i64) as usize);
+                    __b.push_str(&AverStr::from("Ident("));
+                    __b
+                };
+                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(s))));
+                __b
+            };
+            __b.push_str(&AverStr::from(")"));
+            __b
+        }),
         Token::TkTrue => AverStr::from("True"),
         Token::TkFalse => AverStr::from("False"),
         Token::TkPlus => AverStr::from("Plus"),

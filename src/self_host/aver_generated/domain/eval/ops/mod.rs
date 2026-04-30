@@ -130,12 +130,37 @@ pub fn evalCmpRepr(va: &Val, vb: &Val, op: &CmpOp) -> Result<Val, AverStr> {
             (crate::aver_generated::domain::value::valRepr(va)
                 != crate::aver_generated::domain::value::valRepr(vb)),
         )),
-        _ => Err(AverStr::from(format!(
-            "comparison {} not supported for {} and {}",
-            aver_rt::aver_display(&cmpOpName(op)),
-            aver_rt::aver_display(&crate::aver_generated::domain::value::valRepr(va)),
-            aver_rt::aver_display(&crate::aver_generated::domain::value::valRepr(vb))
-        ))),
+        _ => Err(aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = {
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = {
+                                let mut __b = aver_rt::Buffer::with_capacity((83i64) as usize);
+                                __b.push_str(&AverStr::from("comparison "));
+                                __b
+                            };
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                &(cmpOpName(op)),
+                            )));
+                            __b
+                        };
+                        __b.push_str(&AverStr::from(" not supported for "));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        &(crate::aver_generated::domain::value::valRepr(va)),
+                    )));
+                    __b
+                };
+                __b.push_str(&AverStr::from(" and "));
+                __b
+            };
+            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                &(crate::aver_generated::domain::value::valRepr(vb)),
+            )));
+            __b
+        })),
     }
 }
 

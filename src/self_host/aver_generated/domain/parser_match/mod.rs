@@ -419,11 +419,27 @@ pub fn expect(
     if isToken(&t, expected) {
         Ok((pos + 1i64))
     } else {
-        Err(AverStr::from(format!(
-            "Expected {}, got {}",
-            aver_rt::aver_display(&crate::aver_generated::domain::token::tokenRepr(expected)),
-            aver_rt::aver_display(&crate::aver_generated::domain::token::tokenRepr(&t))
-        )))
+        Err(aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = {
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity((47i64) as usize);
+                        __b.push_str(&AverStr::from("Expected "));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        &(crate::aver_generated::domain::token::tokenRepr(expected)),
+                    )));
+                    __b
+                };
+                __b.push_str(&AverStr::from(", got "));
+                __b
+            };
+            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                &(crate::aver_generated::domain::token::tokenRepr(&t)),
+            )));
+            __b
+        }))
     }
 }
 
@@ -478,10 +494,17 @@ pub fn parsePattern(
         Token::TkLBracket => parseListPattern(tokens, nextPos),
         Token::TkLParen => parseTuplePattern(tokens, nextPos),
         Token::TkIdent(s) => parseIdentPattern(tokens, nextPos, s),
-        _ => Err(AverStr::from(format!(
-            "Expected pattern, got {}",
-            aver_rt::aver_display(&crate::aver_generated::domain::token::tokenRepr(&t))
-        ))),
+        _ => Err(aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = aver_rt::Buffer::with_capacity((38i64) as usize);
+                __b.push_str(&AverStr::from("Expected pattern, got "));
+                __b
+            };
+            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                &(crate::aver_generated::domain::token::tokenRepr(&t)),
+            )));
+            __b
+        })),
     }
 }
 

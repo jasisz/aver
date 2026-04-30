@@ -245,7 +245,7 @@ pub fn callBuiltinByIdValues(id: i64, args: &aver_rt::AverList<Val>) -> Result<V
                                                                             {
                                                                                 crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Result.Err"), args)
                                                                             } else {
-                                                                                if __dispatch_subject == 18i64 { crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Result.withDefault"), args) } else { if __dispatch_subject == 19i64 { crate::aver_generated::domain::builtins::primitives::callInt(AverStr::from("Int.toString"), args) } else { if __dispatch_subject == 20i64 { crate::aver_generated::domain::builtins::list::call(AverStr::from("List.take"), args) } else { if __dispatch_subject == 21i64 { crate::aver_generated::domain::builtins::list::call(AverStr::from("List.drop"), args) } else { Err(AverStr::from(format!("Unknown builtin ID: {}", aver_rt::aver_display(&(id.to_string()).into_aver())))) } } } }
+                                                                                if __dispatch_subject == 18i64 { crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Result.withDefault"), args) } else { if __dispatch_subject == 19i64 { crate::aver_generated::domain::builtins::primitives::callInt(AverStr::from("Int.toString"), args) } else { if __dispatch_subject == 20i64 { crate::aver_generated::domain::builtins::list::call(AverStr::from("List.take"), args) } else { if __dispatch_subject == 21i64 { crate::aver_generated::domain::builtins::list::call(AverStr::from("List.drop"), args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((36i64) as usize); __b.push_str(&AverStr::from("Unknown builtin ID: ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&((id.to_string()).into_aver())))); __b })) } } } }
                                                                             }
                                                                         }
                                                                     }
@@ -742,10 +742,17 @@ pub fn callBuiltinServices(name: AverStr, args: &aver_rt::AverList<Val>) -> Resu
 #[inline(always)]
 pub fn builtinUnsupportedHostService(name: AverStr) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
-    Err(AverStr::from(format!(
-        "{} is not supported in the self-hosted interpreter yet",
-        aver_rt::aver_display(&name)
-    )))
+    Err(aver_rt::AverStr::from({
+        let mut __b = {
+            let mut __b = aver_rt::Buffer::with_capacity((68i64) as usize);
+            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
+            __b
+        };
+        __b.push_str(&AverStr::from(
+            " is not supported in the self-hosted interpreter yet",
+        ));
+        __b
+    }))
 }
 
 /// HttpServer.listen(port, handler) through the generated self-host runtime bridge.
@@ -925,10 +932,20 @@ pub fn builtinTerminalNoArg(name: AverStr, args: &aver_rt::AverList<Val>) -> Res
                                 if &*__dispatch_subject == "Terminal.resetColor" {
                                     termResetColor()
                                 } else {
-                                    Err(AverStr::from(format!(
-                                        "unknown terminal command: {}",
-                                        aver_rt::aver_display(&name)
-                                    )))
+                                    Err(aver_rt::AverStr::from({
+                                        let mut __b = {
+                                            let mut __b =
+                                                aver_rt::Buffer::with_capacity((42i64) as usize);
+                                            __b.push_str(&AverStr::from(
+                                                "unknown terminal command: ",
+                                            ));
+                                            __b
+                                        };
+                                        __b.push_str(&aver_rt::AverStr::from(
+                                            aver_rt::aver_display(&(name)),
+                                        ));
+                                        __b
+                                    }))
                                 }
                             }
                         }
@@ -1305,10 +1322,15 @@ pub fn tryVariantConstructor(name: AverStr, args: &aver_rt::AverList<Val>) -> Re
             name,
             args.clone(),
         )),
-        None => Err(AverStr::from(format!(
-            "undefined function: {}",
-            aver_rt::aver_display(&name)
-        ))),
+        None => Err(aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = aver_rt::Buffer::with_capacity((36i64) as usize);
+                __b.push_str(&AverStr::from("undefined function: "));
+                __b
+            };
+            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
+            __b
+        })),
     }
 }
 

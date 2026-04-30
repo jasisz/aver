@@ -113,10 +113,17 @@ pub fn lookupFnById(fns: &FnStore, id: i64) -> Result<FnDef, AverStr> {
     crate::cancel_checkpoint();
     match fns.byId.get(id as usize).cloned() {
         Some(fd) => Ok(fd),
-        None => Err(AverStr::from(format!(
-            "undefined function id: {}",
-            aver_rt::aver_display(&(id.to_string()).into_aver())
-        ))),
+        None => Err(aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = aver_rt::Buffer::with_capacity((39i64) as usize);
+                __b.push_str(&AverStr::from("undefined function id: "));
+                __b
+            };
+            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                &((id.to_string()).into_aver()),
+            )));
+            __b
+        })),
     }
 }
 

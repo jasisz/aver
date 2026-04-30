@@ -40,10 +40,17 @@ pub fn lookupSlot(env: &aver_rt::AverVector<Val>, slot: i64) -> Result<Val, Aver
     crate::cancel_checkpoint();
     match env.get(slot as usize).cloned() {
         Some(v) => Ok(v),
-        None => Err(AverStr::from(format!(
-            "slot out of bounds: {}",
-            aver_rt::aver_display(&(slot.to_string()).into_aver())
-        ))),
+        None => Err(aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = aver_rt::Buffer::with_capacity((36i64) as usize);
+                __b.push_str(&AverStr::from("slot out of bounds: "));
+                __b
+            };
+            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                &((slot.to_string()).into_aver()),
+            )));
+            __b
+        })),
     }
 }
 

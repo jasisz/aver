@@ -32,10 +32,18 @@ pub fn callInt(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, Aver
                                 if &*__dispatch_subject == "Int.min" {
                                     builtinIntMin(args)
                                 } else {
-                                    Err(AverStr::from(format!(
-                                        "unknown int builtin: {}",
-                                        aver_rt::aver_display(&name)
-                                    )))
+                                    Err(aver_rt::AverStr::from({
+                                        let mut __b = {
+                                            let mut __b =
+                                                aver_rt::Buffer::with_capacity((37i64) as usize);
+                                            __b.push_str(&AverStr::from("unknown int builtin: "));
+                                            __b
+                                        };
+                                        __b.push_str(&aver_rt::AverStr::from(
+                                            aver_rt::aver_display(&(name)),
+                                        ));
+                                        __b
+                                    }))
                                 }
                             }
                         }
@@ -157,7 +165,7 @@ pub fn callString(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, A
                                                                                 args,
                                                                             )
                                                                         } else {
-                                                                            Err(AverStr::from(format!("unknown string builtin: {}", aver_rt::aver_display(&name))))
+                                                                            Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((40i64) as usize); __b.push_str(&AverStr::from("unknown string builtin: ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name)))); __b }))
                                                                         }
                                                                     }
                                                                 }
@@ -190,10 +198,15 @@ pub fn callChar(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, Ave
             if &*__dispatch_subject == "Char.toCode" {
                 builtinCharToCode(args)
             } else {
-                Err(AverStr::from(format!(
-                    "unknown char builtin: {}",
-                    aver_rt::aver_display(&name)
-                )))
+                Err(aver_rt::AverStr::from({
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity((38i64) as usize);
+                        __b.push_str(&AverStr::from("unknown char builtin: "));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
+                    __b
+                }))
             }
         }
     }
@@ -566,12 +579,15 @@ pub fn callFloat(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, Av
                                                                 {
                                                                     builtinFloatPi(args)
                                                                 } else {
-                                                                    Err(AverStr::from(format!(
-                                                                        "unknown float builtin: {}",
-                                                                        aver_rt::aver_display(
-                                                                            &name
-                                                                        )
-                                                                    )))
+                                                                    Err(aver_rt::AverStr::from({
+                                                                        let mut __b = {
+                                                                            let mut __b = aver_rt::Buffer::with_capacity((39i64) as usize);
+                                                                            __b.push_str(&AverStr::from("unknown float builtin: "));
+                                                                            __b
+                                                                        };
+                                                                        __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
+                                                                        __b
+                                                                    }))
                                                                 }
                                                             }
                                                         }

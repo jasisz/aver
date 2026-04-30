@@ -21,10 +21,15 @@ pub fn evalVarFallback(name: AverStr, fns: &FnStore) -> Result<Val, AverStr> {
                 name,
                 aver_rt::AverList::empty(),
             )),
-            None => Err(AverStr::from(format!(
-                "undefined variable: {}",
-                aver_rt::aver_display(&name)
-            ))),
+            None => Err(aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = aver_rt::Buffer::with_capacity((36i64) as usize);
+                    __b.push_str(&AverStr::from("undefined variable: "));
+                    __b
+                };
+                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
+                __b
+            })),
         },
     }
 }

@@ -396,7 +396,7 @@ pub fn valListRepr(
 ) -> AverStr {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(items, [] => AverStr::from(format!("[{}]", aver_rt::aver_display(&acc))), [v, rest] => { if first { {
+        return aver_list_match!(items, [] => { aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((18i64) as usize); __b.push_str(&AverStr::from("[")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(acc)))); __b }; __b.push_str(&AverStr::from("]")); __b }) }, [v, rest] => { if first { {
             items = rest;
             acc = valReprInner(&v);
             first = false;
@@ -419,38 +419,102 @@ pub fn valRepr(v: &Val) -> AverStr {
         Val::ValFloat(f) => (f.to_string()).into_aver(),
         Val::ValStr(s) => s,
         Val::ValBool(b) => (b.to_string()).into_aver(),
-        Val::ValFnRef(name) => AverStr::from(format!("<fn {}>", aver_rt::aver_display(&name))),
+        Val::ValFnRef(name) => aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = {
+                    let mut __b = aver_rt::Buffer::with_capacity((21i64) as usize);
+                    __b.push_str(&AverStr::from("<fn "));
+                    __b
+                };
+                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
+                __b
+            };
+            __b.push_str(&AverStr::from(">"));
+            __b
+        }),
         Val::ValList(items) => valListRepr(items, AverStr::from(""), true),
         Val::ValVector(vec) => {
             (AverStr::from("Vector") + &valListRepr(vec.to_list(), AverStr::from(""), true))
         }
         Val::ValOk(inner) => {
             let inner = (*inner).clone();
-            AverStr::from(format!(
-                "Result.Ok({})",
-                aver_rt::aver_display(&valReprInner(&inner))
-            ))
+            aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity((27i64) as usize);
+                        __b.push_str(&AverStr::from("Result.Ok("));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        &(valReprInner(&inner)),
+                    )));
+                    __b
+                };
+                __b.push_str(&AverStr::from(")"));
+                __b
+            })
         }
         Val::ValErr(inner) => {
             let inner = (*inner).clone();
-            AverStr::from(format!(
-                "Result.Err({})",
-                aver_rt::aver_display(&valReprInner(&inner))
-            ))
+            aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity((28i64) as usize);
+                        __b.push_str(&AverStr::from("Result.Err("));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        &(valReprInner(&inner)),
+                    )));
+                    __b
+                };
+                __b.push_str(&AverStr::from(")"));
+                __b
+            })
         }
-        Val::ValTuple(items) => AverStr::from(format!(
-            "({})",
-            aver_rt::aver_display(&valFieldsRepr(items, AverStr::from(""), true))
-        )),
+        Val::ValTuple(items) => aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = {
+                    let mut __b = aver_rt::Buffer::with_capacity((18i64) as usize);
+                    __b.push_str(&AverStr::from("("));
+                    __b
+                };
+                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                    &(valFieldsRepr(items, AverStr::from(""), true)),
+                )));
+                __b
+            };
+            __b.push_str(&AverStr::from(")"));
+            __b
+        }),
         Val::ValSome(inner) => {
             let inner = (*inner).clone();
-            AverStr::from(format!(
-                "Option.Some({})",
-                aver_rt::aver_display(&valReprInner(&inner))
-            ))
+            aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = {
+                        let mut __b = aver_rt::Buffer::with_capacity((29i64) as usize);
+                        __b.push_str(&AverStr::from("Option.Some("));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        &(valReprInner(&inner)),
+                    )));
+                    __b
+                };
+                __b.push_str(&AverStr::from(")"));
+                __b
+            })
         }
         Val::ValNone => AverStr::from("Option.None"),
-        Val::ValRecord(name, _) => AverStr::from(format!("{}(...)", aver_rt::aver_display(&name))),
+        Val::ValRecord(name, _) => aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = aver_rt::Buffer::with_capacity((21i64) as usize);
+                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
+                __b
+            };
+            __b.push_str(&AverStr::from("(...)"));
+            __b
+        }),
         Val::ValMap(m) => valMapRepr(
             {
                 let mut es: Vec<_> = m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
@@ -470,11 +534,34 @@ pub fn valReprInner(v: &Val) -> AverStr {
     crate::cancel_checkpoint();
     match v.clone() {
         Val::ValStr(s) => ((AverStr::from("\"") + &s) + &AverStr::from("\"")),
-        Val::ValFnRef(name) => AverStr::from(format!("<fn {}>", aver_rt::aver_display(&name))),
-        Val::ValTuple(items) => AverStr::from(format!(
-            "({})",
-            aver_rt::aver_display(&valFieldsRepr(items, AverStr::from(""), true))
-        )),
+        Val::ValFnRef(name) => aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = {
+                    let mut __b = aver_rt::Buffer::with_capacity((21i64) as usize);
+                    __b.push_str(&AverStr::from("<fn "));
+                    __b
+                };
+                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(name))));
+                __b
+            };
+            __b.push_str(&AverStr::from(">"));
+            __b
+        }),
+        Val::ValTuple(items) => aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = {
+                    let mut __b = aver_rt::Buffer::with_capacity((18i64) as usize);
+                    __b.push_str(&AverStr::from("("));
+                    __b
+                };
+                __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                    &(valFieldsRepr(items, AverStr::from(""), true)),
+                )));
+                __b
+            };
+            __b.push_str(&AverStr::from(")"));
+            __b
+        }),
         Val::ValVector(vec) => {
             (AverStr::from("Vector") + &valListRepr(vec.to_list(), AverStr::from(""), true))
         }
@@ -492,7 +579,7 @@ pub fn valMapRepr(
 ) -> AverStr {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(entries, [] => AverStr::from(format!("{{{}}}", aver_rt::aver_display(&acc))), [pair, rest] => { match pair {
+        return aver_list_match!(entries, [] => { aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((18i64) as usize); __b.push_str(&AverStr::from("{")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(acc)))); __b }; __b.push_str(&AverStr::from("}")); __b }) }, [pair, rest] => { match pair {
             (k, v) => if first { {
             entries = rest;
             acc = ((quoteString(k) + &AverStr::from(": ")) + &valReprInner(&v));
@@ -529,11 +616,27 @@ pub fn valVariantReprTagged(fullName: AverStr, fields: &aver_rt::AverList<Val>) 
         if __list_subject.is_empty() {
             fullName
         } else {
-            AverStr::from(format!(
-                "{}({})",
-                aver_rt::aver_display(&fullName),
-                aver_rt::aver_display(&valFieldsRepr(fields.clone(), AverStr::from(""), true))
-            ))
+            aver_rt::AverStr::from({
+                let mut __b = {
+                    let mut __b = {
+                        let mut __b = {
+                            let mut __b = aver_rt::Buffer::with_capacity((34i64) as usize);
+                            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                                &(fullName),
+                            )));
+                            __b
+                        };
+                        __b.push_str(&AverStr::from("("));
+                        __b
+                    };
+                    __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                        &(valFieldsRepr(fields.clone(), AverStr::from(""), true)),
+                    )));
+                    __b
+                };
+                __b.push_str(&AverStr::from(")"));
+                __b
+            })
         }
     }
 }

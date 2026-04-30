@@ -1,6 +1,12 @@
 {
-  "latest": "0.14.2",
+  "latest": "0.15.0",
   "versions": [
+    {
+      "version": "0.15.0",
+      "runtime_bytes": 10393,
+      "bridge_bytes": 1914,
+      "path": "v0.15.0"
+    },
     {
       "version": "0.14.2",
       "runtime_bytes": 10123,

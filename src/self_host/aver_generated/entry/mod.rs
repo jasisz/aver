@@ -668,7 +668,15 @@ pub fn runRepr(source: AverStr) -> AverStr {
     crate::cancel_checkpoint();
     match run(source) {
         Ok(val) => crate::aver_generated::domain::value::valRepr(&val),
-        Err(e) => AverStr::from(format!("ERROR: {}", aver_rt::aver_display(&e))),
+        Err(e) => aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = aver_rt::Buffer::with_capacity((23i64) as usize);
+                __b.push_str(&AverStr::from("ERROR: "));
+                __b
+            };
+            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(e))));
+            __b
+        }),
     }
 }
 
@@ -855,10 +863,17 @@ pub fn runDemo() -> Result<(), AverStr> {
         )
     };
     {
-        let __effect_arg0 = AverStr::from(format!(
-            "  x=3+4; x*2 = {}",
-            aver_rt::aver_display(&demoArithmetic)
-        ));
+        let __effect_arg0 = aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = aver_rt::Buffer::with_capacity((31i64) as usize);
+                __b.push_str(&AverStr::from("  x=3+4; x*2 = "));
+                __b
+            };
+            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                &(demoArithmetic),
+            )));
+            __b
+        });
         crate::cancel_checkpoint();
         aver_replay::invoke_effect(
             "Console.print",
@@ -867,10 +882,17 @@ pub fn runDemo() -> Result<(), AverStr> {
         )
     };
     {
-        let __effect_arg0 = AverStr::from(format!(
-            "  double(21) = {}",
-            aver_rt::aver_display(&demoDouble)
-        ));
+        let __effect_arg0 = aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = aver_rt::Buffer::with_capacity((31i64) as usize);
+                __b.push_str(&AverStr::from("  double(21) = "));
+                __b
+            };
+            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                &(demoDouble),
+            )));
+            __b
+        });
         crate::cancel_checkpoint();
         aver_replay::invoke_effect(
             "Console.print",
@@ -879,8 +901,15 @@ pub fn runDemo() -> Result<(), AverStr> {
         )
     };
     {
-        let __effect_arg0 =
-            AverStr::from(format!("  fib(10) = {}", aver_rt::aver_display(&demoFib)));
+        let __effect_arg0 = aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = aver_rt::Buffer::with_capacity((28i64) as usize);
+                __b.push_str(&AverStr::from("  fib(10) = "));
+                __b
+            };
+            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(demoFib))));
+            __b
+        });
         crate::cancel_checkpoint();
         aver_replay::invoke_effect(
             "Console.print",

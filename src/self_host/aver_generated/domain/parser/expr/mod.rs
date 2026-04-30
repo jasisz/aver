@@ -1542,10 +1542,17 @@ pub fn parseAtom(tokens: &aver_rt::AverList<Token>, pos: i64) -> Result<(Expr, i
         Token::TkLParen => parseParenExpr(tokens, nextPos),
         Token::TkMatch => parseMatchExpr(tokens, nextPos),
         Token::TkIdent(name) => parseIdentOrCall(tokens, nextPos, name),
-        _ => Err(AverStr::from(format!(
-            "Expected expression, got {}",
-            aver_rt::aver_display(&crate::aver_generated::domain::token::tokenRepr(&t))
-        ))),
+        _ => Err(aver_rt::AverStr::from({
+            let mut __b = {
+                let mut __b = aver_rt::Buffer::with_capacity((41i64) as usize);
+                __b.push_str(&AverStr::from("Expected expression, got "));
+                __b
+            };
+            __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(
+                &(crate::aver_generated::domain::token::tokenRepr(&t)),
+            )));
+            __b
+        })),
     }
 }
 
