@@ -23,8 +23,9 @@
 //! sites separately and only fuses when both ends of the pipeline agree.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use crate::ast::{Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Stmt};
+use crate::ast::{Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, TailCallData};
 
 /// Information about a fn that matches the buffer-build sink shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -392,6 +393,241 @@ fn is_dotted_ident(expr: &Expr, module: &str, member: &str) -> bool {
     matches!(&base.node, Expr::Ident(name) if name == module)
 }
 
+/// Synthesize a `<fn>__buffered` variant for each matched buffer-build
+/// sink. The synthesized FnDef walks the same shape as the original but
+/// threads a runtime `Buffer` through tail-call args instead of building
+/// a `List<T>` of strings:
+///
+/// Original:
+/// ```aver
+/// fn build(.., acc: List<T>) -> List<T>
+///     match <cond>
+///         true  -> List.reverse(acc)
+///         false -> build(.., List.prepend(<elem>, acc))
+/// ```
+///
+/// Synthesized:
+/// ```aver
+/// fn build__buffered(.., __buf: Buffer, __sep: String) -> Buffer
+///     match <cond>
+///         true  -> __buf
+///         false -> build__buffered(..,
+///             __buf_append(
+///                 __buf_append_sep_unless_first(__buf, __sep),
+///                 <elem>
+///             ),
+///             __sep
+///         )
+/// ```
+///
+/// Threading is via expression composition: the inner
+/// `__buf_append_sep_unless_first` returns the (possibly grown) buffer,
+/// the outer `__buf_append` writes the element and again returns
+/// the (possibly grown) buffer, and that final pointer is what the tail
+/// call sees as `__buf`. No `_ =` discards anywhere — the C' review
+/// explicitly required this to avoid use-after-grow corruption.
+///
+/// Returns one `FnDef` per matched fn. Caller appends to the user-fn
+/// list before WASM emission so both original and buffered variants
+/// reach codegen through the same pipeline.
+pub fn synthesize_buffered_variants(
+    fns: &[&FnDef],
+    sinks: &HashMap<String, BufferBuildShape>,
+) -> Vec<FnDef> {
+    let mut out = Vec::new();
+    for fd in fns {
+        if let Some(shape) = sinks.get(&fd.name) {
+            if let Some(buffered) = build_buffered_variant(fd, shape) {
+                out.push(buffered);
+            }
+        }
+    }
+    out
+}
+
+/// Wrap an `Expr` as `Spanned<Expr>` carrying the same line as the
+/// matched fn (best effort — the synthesized code is internal and
+/// won't be source-located by the user, but having a non-zero line
+/// keeps downstream visitors happy).
+fn sp_at(line: usize, expr: Expr) -> Spanned<Expr> {
+    Spanned { node: expr, line }
+}
+
+/// Build `<Module>.<member>(args...)` as a Spanned<Expr>.
+fn dotted_call(line: usize, module: &str, member: &str, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
+    let callee = sp_at(
+        line,
+        Expr::Attr(
+            Box::new(sp_at(line, Expr::Ident(module.to_string()))),
+            member.to_string(),
+        ),
+    );
+    sp_at(line, Expr::FnCall(Box::new(callee), args))
+}
+
+/// Build `<intrinsic>(args...)` as a Spanned<Expr>. Intrinsic names
+/// are bare identifiers (no module dot) — `__buf_append`,
+/// `__buf_append_sep_unless_first`. The WASM emitter recognises them
+/// in the builtin dispatch.
+fn intrinsic_call(line: usize, name: &str, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
+    let callee = sp_at(line, Expr::Ident(name.to_string()));
+    sp_at(line, Expr::FnCall(Box::new(callee), args))
+}
+
+/// Construct the buffered FnDef for a single matched fn. Returns
+/// `None` if the original body shape doesn't match what we expect
+/// (defensive: detection should have caught this, but if the body
+/// changed shape between detection and synthesis, skip).
+fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef> {
+    // Original body: `match cond { true → List.reverse(acc); false → tail-call }`.
+    let stmts = fd.body.stmts();
+    if stmts.len() != 1 {
+        return None;
+    }
+    let outer_expr = match &stmts[0] {
+        Stmt::Expr(spanned) => spanned,
+        _ => return None,
+    };
+    let (subject_orig, arms_orig) = match &outer_expr.node {
+        Expr::Match { subject, arms } => (subject, arms),
+        _ => return None,
+    };
+    // Find the false arm to extract the prepend element + tail-call args.
+    let mut false_body: Option<&Spanned<Expr>> = None;
+    for arm in arms_orig {
+        if matches!(arm.pattern, Pattern::Literal(Literal::Bool(false))) {
+            false_body = Some(&arm.body);
+        }
+    }
+    let false_expr = false_body?;
+    let tail_data = match &false_expr.node {
+        Expr::TailCall(data) => data,
+        _ => return None,
+    };
+
+    // The acc-position arg in the original tail call is
+    // `List.prepend(<elem>, acc)`. Extract the element expression.
+    let acc_arg_orig = tail_data.args.get(shape.acc_param_idx)?;
+    let elem_expr = match &acc_arg_orig.node {
+        Expr::FnCall(callee, args) => {
+            if !is_dotted_ident(&callee.node, "List", "prepend") {
+                return None;
+            }
+            if args.len() != 2 {
+                return None;
+            }
+            // args[0] is elem, args[1] is acc ident — verify acc.
+            match &args[1].node {
+                Expr::Ident(name) if name == &shape.acc_param_name => {}
+                _ => return None,
+            }
+            args[0].clone()
+        }
+        _ => return None,
+    };
+
+    let line = fd.line;
+    let buf_name = "__buf";
+    let sep_name = "__sep";
+    let buffered_target = format!("{}__buffered", fd.name);
+
+    // Synthesized false arm body:
+    //   <self>__buffered(<orig args minus acc>, __buf_append(<sep_unless_first>, <elem>), __sep)
+    //
+    // Build the buffer-threading expression first: the inner intrinsic
+    // appends `__sep` if the buffer is non-empty (otherwise no-op),
+    // returning the possibly-grown buffer. The outer intrinsic appends
+    // the user's element. The result is what gets passed as the
+    // buffered variant's `__buf` arg in the recursive call.
+    let buf_ident = || sp_at(line, Expr::Ident(buf_name.to_string()));
+    let sep_ident = || sp_at(line, Expr::Ident(sep_name.to_string()));
+    let sep_then_buf = intrinsic_call(
+        line,
+        "__buf_append_sep_unless_first",
+        vec![buf_ident(), sep_ident()],
+    );
+    let final_buf = intrinsic_call(line, "__buf_append", vec![sep_then_buf, elem_expr]);
+
+    // Build new tail-call args: original args with acc-pos replaced by
+    // the threaded buffer expression, then `__sep` appended at end.
+    let mut new_args: Vec<Spanned<Expr>> = tail_data
+        .args
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            if i == shape.acc_param_idx {
+                final_buf.clone()
+            } else {
+                a.clone()
+            }
+        })
+        .collect();
+    new_args.push(sep_ident());
+
+    let new_false_body = sp_at(
+        line,
+        Expr::TailCall(Box::new(TailCallData {
+            target: buffered_target.clone(),
+            args: new_args,
+        })),
+    );
+
+    // True arm body: just return `__buf` — the buffer IS the result.
+    let new_true_body = buf_ident();
+
+    let new_arms = vec![
+        MatchArm {
+            pattern: Pattern::Literal(Literal::Bool(true)),
+            body: Box::new(new_true_body),
+        },
+        MatchArm {
+            pattern: Pattern::Literal(Literal::Bool(false)),
+            body: Box::new(new_false_body),
+        },
+    ];
+
+    let new_match = sp_at(
+        line,
+        Expr::Match {
+            subject: subject_orig.clone(),
+            arms: new_arms,
+        },
+    );
+
+    let new_body = FnBody::Block(vec![Stmt::Expr(new_match)]);
+
+    // Params: original minus acc + (__buf, "Buffer") + (__sep, "String").
+    let mut new_params: Vec<(String, String)> = fd
+        .params
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| (i != shape.acc_param_idx).then(|| p.clone()))
+        .collect();
+    new_params.push((buf_name.to_string(), "Buffer".to_string()));
+    new_params.push((sep_name.to_string(), "String".to_string()));
+
+    Some(FnDef {
+        name: buffered_target,
+        line,
+        params: new_params,
+        return_type: "Buffer".to_string(),
+        // Synthesized variants inherit effects from the original — if
+        // the matched fn calls effectful helpers (like `renderRow`
+        // calling `Console.print`), the buffered variant calls them
+        // too at the same positions. Conservative.
+        effects: fd.effects.clone(),
+        desc: Some(format!(
+            "Synthesized buffered variant of `{}` for deforestation \
+             lowering. Call sites that match `String.join({}(...), sep)` \
+             are rewritten to alloc a buffer + call this variant + \
+             finalize, skipping the intermediate List.",
+            fd.name, fd.name
+        )),
+        body: Arc::new(new_body),
+        resolution: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -700,6 +936,114 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
             info.is_empty(),
             "fn returning bare acc must not be detected as a deforestation candidate"
         );
+    }
+
+    /// End-to-end synthesis: parse a small builder, run TCO, detect
+    /// it as a sink, then synthesize the buffered variant. Verify the
+    /// shape: name suffix, dropped acc param, added __buf/__sep
+    /// params, true arm returns __buf ident, false arm tail-calls
+    /// __buffered self with threaded buffer expression.
+    #[test]
+    fn synthesizes_buffered_variant_from_real_builder() {
+        let src = r#"
+fn build(n: Int, acc: List<Int>) -> List<Int>
+    match n <= 0
+        true  -> List.reverse(acc)
+        false -> build(n - 1, List.prepend(n, acc))
+"#;
+        let mut lexer = crate::lexer::Lexer::new(src);
+        let tokens = lexer.tokenize().expect("lex");
+        let mut parser = crate::parser::Parser::new(tokens);
+        let mut items = parser.parse().expect("parse");
+        crate::tco::transform_program(&mut items);
+        let fns: Vec<&FnDef> = items
+            .iter()
+            .filter_map(|it| match it {
+                crate::ast::TopLevel::FnDef(fd) => Some(fd),
+                _ => None,
+            })
+            .collect();
+        let sinks = compute_buffer_build_sinks(&fns);
+        assert!(sinks.contains_key("build"));
+        let synthesized = synthesize_buffered_variants(&fns, &sinks);
+        assert_eq!(synthesized.len(), 1, "expected exactly one synthesized variant");
+        let bf = &synthesized[0];
+
+        // Name + signature shape.
+        assert_eq!(bf.name, "build__buffered");
+        assert_eq!(bf.return_type, "Buffer");
+        let param_names: Vec<&str> = bf.params.iter().map(|(n, _)| n.as_str()).collect();
+        let param_types: Vec<&str> = bf.params.iter().map(|(_, t)| t.as_str()).collect();
+        assert_eq!(param_names, vec!["n", "__buf", "__sep"]);
+        assert_eq!(param_types, vec!["Int", "Buffer", "String"]);
+
+        // Body: single Stmt::Expr holding a 2-arm match.
+        let stmts = bf.body.stmts();
+        assert_eq!(stmts.len(), 1);
+        let match_expr = match &stmts[0] {
+            Stmt::Expr(s) => match &s.node {
+                Expr::Match { subject: _, arms } => arms,
+                _ => panic!("body root must be a match"),
+            },
+            _ => panic!("body root must be Stmt::Expr"),
+        };
+        assert_eq!(match_expr.len(), 2);
+
+        // True arm: body is `__buf` ident.
+        let true_arm = match_expr
+            .iter()
+            .find(|a| matches!(a.pattern, Pattern::Literal(Literal::Bool(true))))
+            .expect("true arm");
+        match &true_arm.body.node {
+            Expr::Ident(name) => assert_eq!(name, "__buf"),
+            other => panic!("true arm should be Ident(__buf), got {other:?}"),
+        }
+
+        // False arm: tail-call to build__buffered with threaded buf.
+        let false_arm = match_expr
+            .iter()
+            .find(|a| matches!(a.pattern, Pattern::Literal(Literal::Bool(false))))
+            .expect("false arm");
+        let tail_data = match &false_arm.body.node {
+            Expr::TailCall(d) => d,
+            other => panic!("false arm should be TailCall, got {other:?}"),
+        };
+        assert_eq!(tail_data.target, "build__buffered");
+        // Args: [n - 1, threaded-buffer-expr, __sep_ident]. acc-pos
+        // (was index 1 in original) is now the threaded buffer; sep
+        // appended at end.
+        assert_eq!(tail_data.args.len(), 3);
+        // Arg 1 is the buffer-threading composition; verify it's
+        // `__buf_append(__buf_append_sep_unless_first(__buf, __sep), n)`.
+        let outer = match &tail_data.args[1].node {
+            Expr::FnCall(callee, args) => {
+                match &callee.node {
+                    Expr::Ident(name) => assert_eq!(name, "__buf_append"),
+                    _ => panic!("expected Ident callee"),
+                }
+                args
+            }
+            _ => panic!("expected outer __buf_append FnCall"),
+        };
+        assert_eq!(outer.len(), 2);
+        // First arg of outer = inner sep-then-buf.
+        match &outer[0].node {
+            Expr::FnCall(callee, _) => match &callee.node {
+                Expr::Ident(name) => assert_eq!(name, "__buf_append_sep_unless_first"),
+                _ => panic!("expected Ident callee for inner intrinsic"),
+            },
+            _ => panic!("expected inner __buf_append_sep_unless_first FnCall"),
+        }
+        // Second arg of outer = original `n` (the prepend's element).
+        match &outer[1].node {
+            Expr::Ident(name) => assert_eq!(name, "n"),
+            _ => panic!("expected `n` ident as elem"),
+        }
+        // Last tail-call arg = __sep ident.
+        match &tail_data.args[2].node {
+            Expr::Ident(name) => assert_eq!(name, "__sep"),
+            _ => panic!("expected __sep ident as last arg"),
+        }
     }
 
     #[test]
