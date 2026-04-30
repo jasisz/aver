@@ -148,18 +148,13 @@ fn walk_expr_for_fusion_sites(
     sinks: &HashMap<String, BufferBuildShape>,
     out: &mut Vec<FusionSite>,
 ) {
-    if let Expr::FnCall(callee, args) = expr {
-        // Is this `String.join(<inner>, _)`?
-        if is_dotted_ident(&callee.node, "String", "join") && args.len() == 2 {
-            if let Some(inner_name) = sink_name_from_consumer_arg(&args[0].node, sinks) {
-                out.push(FusionSite {
-                    enclosing_fn: enclosing_fn.to_string(),
-                    line: expr_line,
-                    sink_fn: inner_name,
-                    consumer: ConsumerKind::StringJoin,
-                });
-            }
-        }
+    if let Some(inner_name) = match_string_join_fusion_site(expr, sinks) {
+        out.push(FusionSite {
+            enclosing_fn: enclosing_fn.to_string(),
+            line: expr_line,
+            sink_fn: inner_name,
+            consumer: ConsumerKind::StringJoin,
+        });
     }
     // Recurse into all sub-expressions regardless of whether this node
     // matched (a fusion site can sit inside another fusion site's args
@@ -295,7 +290,7 @@ fn match_buffer_build_shape(fd: &FnDef) -> Option<BufferBuildShape> {
     if let Some((true_body, false_body)) = pair_bool_arms(arms) {
         let _ = subject_expr;
         if is_list_reverse_of(true_body, &acc_name)
-            && is_self_tail_with_prepend_acc(false_body, &fd.name, &acc_name)
+            && is_self_tail_with_prepend_acc(false_body, &fd.name, acc_idx, &acc_name)
         {
             return Some(BufferBuildShape {
                 acc_param_idx: acc_idx,
@@ -311,7 +306,7 @@ fn match_buffer_build_shape(fd: &FnDef) -> Option<BufferBuildShape> {
     // `BufferBuildKind` doc above for context).
     if let Some((nil_body, cons_body)) = pair_nil_cons_arms(arms) {
         if is_ident_named(nil_body, &acc_name)
-            && is_self_tail_with_prepend_acc(cons_body, &fd.name, &acc_name)
+            && is_self_tail_with_prepend_acc(cons_body, &fd.name, acc_idx, &acc_name)
         {
             return Some(BufferBuildShape {
                 acc_param_idx: acc_idx,
@@ -360,32 +355,67 @@ fn is_ident_named(expr: &Expr, name: &str) -> bool {
 /// Returning the name only when the kinds line up keeps us from
 /// accidentally fusing a sink against a call site that's missing
 /// its required reverse (or has an extraneous one).
-fn sink_name_from_consumer_arg(
+/// Single source of truth for "is this expression a rewriteable
+/// `String.join(<sink>(args, []), sep)` fusion site?". Returns the
+/// matched sink name when **all** preconditions hold:
+/// 1. The expression is a `String.join(<inner>, _)` call.
+/// 2. `<inner>` is either a direct sink call (for InternalReverse
+///    sinks) or `List.reverse(<sink>(...))` (for ExternalReverse).
+/// 3. The reverse-placement on the call site matches the sink's kind
+///    — mismatch would silently drop or double-reverse.
+/// 4. The acc-position arg in the inner call is a literal empty list.
+///    Anything else means the user is starting the fold with a
+///    non-empty accumulator, and the buffered rewrite would silently
+///    drop those initial elements.
+///
+/// Both `find_fusion_sites` (diagnostics) and `try_rewrite_fusion_site`
+/// (the actual AST rewrite) call this so the two stay in lockstep —
+/// `aver check` can never report a site that the rewrite then refuses
+/// to take.
+fn match_string_join_fusion_site(
     expr: &Expr,
     sinks: &HashMap<String, BufferBuildShape>,
 ) -> Option<String> {
-    // Direct: `<sink>(args, ...)`.
-    if let Expr::FnCall(callee, _) = expr
-        && let Expr::Ident(name) = &callee.node
-        && let Some(shape) = sinks.get(name)
-        && matches!(shape.kind, BufferBuildKind::InternalReverse)
-    {
-        return Some(name.clone());
+    let Expr::FnCall(callee, args) = expr else {
+        return None;
+    };
+    if !is_dotted_ident(&callee.node, "String", "join") || args.len() != 2 {
+        return None;
+    }
+    let consumer_arg = &args[0].node;
+
+    // Peel an optional `List.reverse(...)` wrapper.
+    let (inner_call_expr, saw_external_reverse) = match consumer_arg {
+        Expr::FnCall(rev_callee, rev_args)
+            if is_dotted_ident(&rev_callee.node, "List", "reverse") && rev_args.len() == 1 =>
+        {
+            (&rev_args[0].node, true)
+        }
+        other => (other, false),
+    };
+
+    let Expr::FnCall(inner_callee, inner_args) = inner_call_expr else {
+        return None;
+    };
+    let Expr::Ident(name) = &inner_callee.node else {
+        return None;
+    };
+    let shape = sinks.get(name)?;
+
+    let kinds_align = matches!(
+        (saw_external_reverse, &shape.kind),
+        (false, BufferBuildKind::InternalReverse) | (true, BufferBuildKind::ExternalReverse)
+    );
+    if !kinds_align {
+        return None;
     }
 
-    // `List.reverse(<sink>(args, ...))`.
-    if let Expr::FnCall(rev_callee, rev_args) = expr
-        && is_dotted_ident(&rev_callee.node, "List", "reverse")
-        && rev_args.len() == 1
-        && let Expr::FnCall(inner_callee, _) = &rev_args[0].node
-        && let Expr::Ident(name) = &inner_callee.node
-        && let Some(shape) = sinks.get(name)
-        && matches!(shape.kind, BufferBuildKind::ExternalReverse)
-    {
-        return Some(name.clone());
+    let acc_arg = inner_args.get(shape.acc_param_idx)?;
+    if !matches!(&acc_arg.node, Expr::List(items) if items.is_empty()) {
+        return None;
     }
 
-    None
+    Some(name.clone())
 }
 
 /// True if a parameter type-string parses as `List<...>`.
@@ -460,7 +490,12 @@ fn is_list_reverse_of(expr: &Expr, acc_name: &str) -> bool {
 /// position. The position should match the `acc_param_idx` but the
 /// caller may have other params before it; we only require the
 /// `prepend` to terminate in the expected accumulator binding.
-fn is_self_tail_with_prepend_acc(expr: &Expr, self_name: &str, acc_name: &str) -> bool {
+fn is_self_tail_with_prepend_acc(
+    expr: &Expr,
+    self_name: &str,
+    acc_idx: usize,
+    acc_name: &str,
+) -> bool {
     let data = match expr {
         Expr::TailCall(data) => data,
         _ => return false,
@@ -468,9 +503,19 @@ fn is_self_tail_with_prepend_acc(expr: &Expr, self_name: &str, acc_name: &str) -
     if data.target != self_name {
         return false;
     }
-    data.args
-        .iter()
-        .any(|arg| is_list_prepend_to_acc(&arg.node, acc_name))
+    // The prepend has to land in the *acc* position specifically — the
+    // synthesizer extracts the element expression from `args[acc_idx]`.
+    // A loose `any` here would let through fns where some other arg
+    // happens to be a prepend, the synth would later return None, but
+    // detection had already promised the sink to call-site rewriting:
+    // `String.join(<sink>(...))` would be rewritten to call a
+    // `<sink>__buffered` that never gets generated. Require the exact
+    // shape here so detection and synthesis agree.
+    let acc_arg = match data.args.get(acc_idx) {
+        Some(a) => a,
+        None => return false,
+    };
+    is_list_prepend_to_acc(&acc_arg.node, acc_name)
 }
 
 /// True if `expr` is `List.prepend(<anything>, <Ident(acc_name)>)`.
@@ -601,12 +646,27 @@ pub fn run_buffer_build_pass(items: &mut Vec<crate::ast::TopLevel>) -> (usize, u
             _ => None,
         })
         .collect();
-    let sinks = compute_buffer_build_sinks(&fn_refs);
-    if sinks.is_empty() {
+    let all_sinks = compute_buffer_build_sinks(&fn_refs);
+    if all_sinks.is_empty() {
         return (0, 0);
     }
-    let sites = find_fusion_sites(&fn_refs, &sinks);
-    let synthesized = synthesize_buffered_variants(&fn_refs, &sinks);
+    let sites = find_fusion_sites(&fn_refs, &all_sinks);
+
+    // Synthesize a buffered variant only for sinks that actually have
+    // at least one rewriteable call site. The earlier shape produced
+    // a `<sink>__buffered` for every detected sink — bloat in the
+    // common case (most detected sinks aren't called via the canonical
+    // String.join shape) and a real risk of name-shadowing a user fn
+    // named `<sink>__buffered`. Restricting to used sinks keeps the
+    // synthetic surface tight.
+    let mut used_sinks: HashMap<String, BufferBuildShape> = HashMap::new();
+    for site in &sites {
+        if let Some(shape) = all_sinks.get(&site.sink_fn) {
+            used_sinks.insert(site.sink_fn.clone(), shape.clone());
+        }
+    }
+    let synthesized = synthesize_buffered_variants(&fn_refs, &used_sinks);
+    let sinks = used_sinks;
     drop(fn_refs);
 
     let mut fn_defs_owned: Vec<&mut FnDef> = items
@@ -772,21 +832,19 @@ fn try_rewrite_fusion_site(
     sinks: &HashMap<String, BufferBuildShape>,
 ) -> Option<Spanned<Expr>> {
     let line = expr.line;
-    // Outer must be `String.join(_, _)`.
-    let (outer_callee, outer_args) = match &expr.node {
-        Expr::FnCall(c, a) => (c, a),
+
+    // Match the same predicate used by `find_fusion_sites` so the
+    // diagnostic count and the rewrite count are guaranteed equal.
+    let sink_name = match_string_join_fusion_site(&expr.node, sinks)?;
+    let shape = sinks.get(&sink_name)?;
+
+    // Re-extract the inner sink call and its args. The match predicate
+    // above already verified the shape; this is just to recover the
+    // pieces we need to assemble the rewrite.
+    let outer_args = match &expr.node {
+        Expr::FnCall(_, a) => a,
         _ => return None,
     };
-    if !is_dotted_ident(&outer_callee.node, "String", "join") {
-        return None;
-    }
-    if outer_args.len() != 2 {
-        return None;
-    }
-    // First arg of String.join is either a direct sink call (for
-    // InternalReverse sinks) or `List.reverse(<sink>(...))` (for
-    // ExternalReverse sinks). Peel off the optional `List.reverse`
-    // wrapper, then recover the sink call below.
     let consumer_arg = &outer_args[0].node;
     let inner_call_expr = if let Expr::FnCall(rev_callee, rev_args) = consumer_arg
         && is_dotted_ident(&rev_callee.node, "List", "reverse")
@@ -796,36 +854,11 @@ fn try_rewrite_fusion_site(
     } else {
         consumer_arg
     };
-    let (inner_callee, inner_args) = match inner_call_expr {
-        Expr::FnCall(c, a) => (c, a),
+    let inner_args = match inner_call_expr {
+        Expr::FnCall(_, a) => a,
         _ => return None,
     };
-    let sink_name = match &inner_callee.node {
-        Expr::Ident(name) => name.clone(),
-        _ => return None,
-    };
-    let shape = sinks.get(&sink_name)?;
-    // The consumer-arg shape must match the sink's reverse-placement
-    // idiom. A bare `<sink>(...)` only fuses against InternalReverse;
-    // `List.reverse(<sink>(...))` only fuses against ExternalReverse.
-    // Mismatched pairings would silently drop or double-reverse.
-    let saw_external_reverse = !std::ptr::eq(inner_call_expr, consumer_arg);
-    let kinds_align = match (saw_external_reverse, &shape.kind) {
-        (false, BufferBuildKind::InternalReverse) => true,
-        (true, BufferBuildKind::ExternalReverse) => true,
-        _ => false,
-    };
-    if !kinds_align {
-        return None;
-    }
-    // Acc-position arg must be a literal empty List. Otherwise the
-    // initial accumulator carries elements that the buffered variant
-    // would drop on the floor.
-    let acc_arg = inner_args.get(shape.acc_param_idx)?;
-    let is_empty_list = matches!(&acc_arg.node, Expr::List(items) if items.is_empty());
-    if !is_empty_list {
-        return None;
-    }
+
     // Build the rewrite:
     //   __buf_finalize(
     //     <fn>__buffered(
@@ -1466,15 +1499,221 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
 
     #[test]
     fn detects_acc_param_at_arbitrary_index() {
-        // Builder where the List<T> param is first, not last.
-        let mut fd = canonical_builder("build");
-        fd.params = vec![
-            ("acc".to_string(), "List<Int>".to_string()),
-            ("col".to_string(), "Int".to_string()),
-        ];
+        // Builder where the List<T> param is first and the tail-call
+        // body wires the prepend at the same index. Detection has to
+        // pin the acc position to where the prepend actually lands —
+        // an earlier loose `any` check would silently pass even on
+        // mismatched param/arg orderings, then synthesis would fail
+        // to extract the element expression. Keep the body and the
+        // params consistent so we exercise the real path.
+        let true_body = call(dotted("List", "reverse"), vec![ident("acc")]);
+        let prepend = call(
+            dotted("List", "prepend"),
+            vec![ident("col"), ident("acc")],
+        );
+        // Tail call: build(prepend(col, acc), col + 1)
+        // — acc-position arg is at index 0, col+1 at index 1.
+        let false_body = sp(Expr::TailCall(Box::new(TailCallData {
+            target: "build".to_string(),
+            args: vec![
+                prepend,
+                sp(Expr::BinOp(
+                    BinOp::Add,
+                    Box::new(ident("col")),
+                    Box::new(sp(Expr::Literal(Literal::Int(1)))),
+                )),
+            ],
+        })));
+        let match_expr = sp(Expr::Match {
+            subject: Box::new(sp(Expr::BinOp(
+                BinOp::Gte,
+                Box::new(ident("col")),
+                Box::new(sp(Expr::Literal(Literal::Int(10)))),
+            ))),
+            arms: vec![
+                MatchArm {
+                    pattern: Pattern::Literal(Literal::Bool(true)),
+                    body: Box::new(true_body),
+                },
+                MatchArm {
+                    pattern: Pattern::Literal(Literal::Bool(false)),
+                    body: Box::new(false_body),
+                },
+            ],
+        });
+        let fd = FnDef {
+            name: "build".to_string(),
+            line: 1,
+            params: vec![
+                ("acc".to_string(), "List<Int>".to_string()),
+                ("col".to_string(), "Int".to_string()),
+            ],
+            return_type: "List<Int>".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Arc::new(FnBody::Block(vec![Stmt::Expr(match_expr)])),
+            resolution: None,
+        };
         let info = compute_buffer_build_sinks(&[&fd]);
         let shape = info.get("build").expect("expected match");
         assert_eq!(shape.acc_param_idx, 0);
         assert_eq!(shape.acc_param_name, "acc");
+    }
+
+    #[test]
+    fn rejects_loose_prepend_in_non_acc_position() {
+        // Earlier the detector accepted a fn whose tail call had a
+        // prepend in *some* arg, regardless of position. That let
+        // detection promise a sink the synthesizer couldn't actually
+        // build. Make sure the tightened predicate refuses this.
+        let mut fd = canonical_builder("build");
+        // Reorder tail-call args so prepend ends up at index 0 instead
+        // of index 1 — but keep params [(col, Int), (acc, List<Int>)],
+        // so acc-position is index 1, where there's now a `col + 1`
+        // expression (no prepend). Detection should refuse.
+        {
+            let body = std::sync::Arc::make_mut(&mut fd.body);
+            let FnBody::Block(stmts) = body;
+            if let Stmt::Expr(spanned) = &mut stmts[0]
+                && let Expr::Match { arms, .. } = &mut spanned.node
+            {
+                for arm in arms.iter_mut() {
+                    if matches!(arm.pattern, Pattern::Literal(Literal::Bool(false)))
+                        && let Expr::TailCall(data) = &mut arm.body.node
+                    {
+                        data.args.reverse();
+                    }
+                }
+            }
+        }
+        let info = compute_buffer_build_sinks(&[&fd]);
+        assert!(
+            info.get("build").is_none(),
+            "loose-prepend (prepend not at acc-position) must not be detected"
+        );
+    }
+
+    #[test]
+    fn skips_synth_when_no_rewriteable_call_site() {
+        // A fn that matches the sink shape but whose only call site
+        // doesn't fit the canonical fusion pattern (e.g. starts with a
+        // non-empty initial accumulator, or the wrapper is an unrelated
+        // function call rather than `String.join`) should NOT get a
+        // synthesized `__buffered` variant. Generating one is bloat
+        // and risks shadowing user fns.
+        let sink = canonical_builder("build");
+        // Dummy caller that uses `build` but not via `String.join(...)`.
+        let caller = FnDef {
+            name: "use_build".to_string(),
+            line: 2,
+            params: vec![],
+            return_type: "List<Int>".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Arc::new(FnBody::Block(vec![Stmt::Expr(call(
+                ident_expr("build"),
+                vec![sp(Expr::Literal(Literal::Int(0))), sp(Expr::List(vec![]))],
+            ))])),
+            resolution: None,
+        };
+        let mut items = vec![
+            crate::ast::TopLevel::FnDef(sink),
+            crate::ast::TopLevel::FnDef(caller),
+        ];
+        let initial_count = items.len();
+        let (sites, synth) = run_buffer_build_pass(&mut items);
+        assert_eq!(sites, 0, "no fusion sites — no rewriteable call");
+        assert_eq!(synth, 0, "no synth — nothing to fuse against");
+        assert_eq!(items.len(), initial_count, "no buffered variant appended");
+    }
+
+    #[test]
+    fn external_reverse_pattern_round_trips() {
+        // `match list { [] -> acc; [h, ..t] -> recurse(t, prepend(_, acc)) }`
+        // sink + `String.join(List.reverse(<sink>(args, [])), sep)` call
+        // site should detect, synth, and rewrite as a single fusion.
+        let nil_body = ident("acc");
+        let prepend = call(
+            dotted("List", "prepend"),
+            vec![ident("h"), ident("acc")],
+        );
+        let cons_body = sp(Expr::TailCall(Box::new(TailCallData {
+            target: "build".to_string(),
+            args: vec![ident("t"), prepend],
+        })));
+        let match_expr = sp(Expr::Match {
+            subject: Box::new(ident("xs")),
+            arms: vec![
+                MatchArm {
+                    pattern: Pattern::EmptyList,
+                    body: Box::new(nil_body),
+                },
+                MatchArm {
+                    pattern: Pattern::Cons("h".to_string(), "t".to_string()),
+                    body: Box::new(cons_body),
+                },
+            ],
+        });
+        let sink = FnDef {
+            name: "build".to_string(),
+            line: 1,
+            params: vec![
+                ("xs".to_string(), "List<Int>".to_string()),
+                ("acc".to_string(), "List<String>".to_string()),
+            ],
+            return_type: "List<String>".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Arc::new(FnBody::Block(vec![Stmt::Expr(match_expr)])),
+            resolution: None,
+        };
+        let info = compute_buffer_build_sinks(&[&sink]);
+        let shape = info.get("build").expect("external-reverse sink should be detected");
+        assert_eq!(shape.kind, BufferBuildKind::ExternalReverse);
+        assert_eq!(shape.acc_param_idx, 1);
+
+        // Caller: `String.join(List.reverse(build(xs, [])), "\n")`
+        let join_call = call(
+            dotted("String", "join"),
+            vec![
+                call(
+                    dotted("List", "reverse"),
+                    vec![call(
+                        ident_expr("build"),
+                        vec![ident("xs"), sp(Expr::List(vec![]))],
+                    )],
+                ),
+                sp(Expr::Literal(Literal::Str("\n".to_string()))),
+            ],
+        );
+        let caller = FnDef {
+            name: "render".to_string(),
+            line: 2,
+            params: vec![("xs".to_string(), "List<Int>".to_string())],
+            return_type: "String".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Arc::new(FnBody::Block(vec![Stmt::Expr(join_call)])),
+            resolution: None,
+        };
+
+        let mut items = vec![
+            crate::ast::TopLevel::FnDef(sink),
+            crate::ast::TopLevel::FnDef(caller),
+        ];
+        let (sites, synth) = run_buffer_build_pass(&mut items);
+        assert_eq!(sites, 1, "external-reverse pattern should be one fusion site");
+        assert_eq!(synth, 1, "exactly one buffered variant for the used sink");
+
+        // The synthesized variant should be appended.
+        let synth_present = items.iter().any(|it| match it {
+            crate::ast::TopLevel::FnDef(fd) => fd.name == "build__buffered",
+            _ => false,
+        });
+        assert!(synth_present, "build__buffered must be appended");
+    }
+
+    fn ident_expr(name: &str) -> Spanned<Expr> {
+        sp(Expr::Ident(name.to_string()))
     }
 }
