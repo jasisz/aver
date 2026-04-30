@@ -457,7 +457,13 @@ impl<'a> ExprEmitter<'a> {
             // get the same builtin-dispatch path so the AST rewrite in
             // Phase 2c.3d can emit them as plain `Expr::FnCall(Ident,
             // args)` and stay inside normal expr lowering.
+            //
+            // The cap_hint arg comes from the rewriter as
+            // `Expr::Literal(Literal::Int(8192))` which Aver's Int
+            // type lowers to i64; rt_buffer_new wants i32, so wrap
+            // before the call.
             "__buf_new" if args.len() == 1 => {
+                self.instructions.push(Instruction::I32WrapI64);
                 self.instructions
                     .push(Instruction::Call(self.rt.buffer_new));
             }

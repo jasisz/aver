@@ -206,7 +206,41 @@ pub fn build_context(
     let detect_fns: Vec<&FnDef> = fn_defs.iter().chain(modules.iter().flat_map(|m| m.fn_defs.iter())).collect();
     let buffer_build_sinks = crate::ir::compute_buffer_build_sinks(&detect_fns);
     let buffer_fusion_sites = crate::ir::find_fusion_sites(&detect_fns, &buffer_build_sinks);
-    let synthesized_buffered_fns = crate::ir::synthesize_buffered_variants(&detect_fns, &buffer_build_sinks);
+    // The synthesizer already ran in the pre-resolver compile pass
+    // (`ir::run_buffer_build_pass`); the resulting `<fn>__buffered`
+    // variants live in `items` (or in dep `module.fn_defs`) directly,
+    // so we just collect references for the ctx field instead of
+    // re-synthesizing — re-running here would duplicate every fn
+    // and confuse the WASM emitter's fn_indices table.
+    let synthesized_buffered_fns: Vec<FnDef> = fn_defs
+        .iter()
+        .chain(modules.iter().flat_map(|m| m.fn_defs.iter()))
+        .filter(|fd| fd.name.ends_with("__buffered"))
+        .cloned()
+        .collect();
+    // Inject signatures for synthesized variants into fn_sigs so the
+    // WASM emitter's type-section pass produces correct param/return
+    // wasm types (the fallback path emits `all-i64` which breaks
+    // validation when a body calls intrinsics with i32 buffer ptrs).
+    for fd in synthesized_buffered_fns.iter() {
+        if fn_sigs.contains_key(&fd.name) {
+            continue;
+        }
+        let param_types: Vec<crate::types::Type> = fd
+            .params
+            .iter()
+            .map(|(_, ty_str)| crate::types::parse_type_str(ty_str))
+            .collect();
+        let ret = crate::types::parse_type_str(&fd.return_type);
+        fn_sigs.insert(
+            fd.name.clone(),
+            (
+                param_types,
+                ret,
+                fd.effects.iter().map(|e| e.node.clone()).collect(),
+            ),
+        );
+    }
 
     CodegenContext {
         items,

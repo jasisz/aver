@@ -3469,9 +3469,19 @@ fn cmd_compile_wasm(
         match codegen::wasm::emit_wasm_with_adapter(&ctx, wasm_adapter, handler) {
             Ok(wasm_bytes) => {
                 if let Err(err) = validate_wasm_bytes(&wasm_bytes) {
+                    // Dump the (invalid) bytes to /tmp for inspection so
+                    // wasm-tools print can show what the emitter
+                    // produced — validator says where the problem is,
+                    // but we need the body shape to fix it.
+                    let dump_path = "/tmp/aver_invalid_user.wasm";
+                    let _ = std::fs::write(dump_path, &wasm_bytes);
                     eprintln!(
                         "{}",
-                        format!("WASM emit produced invalid bytecode: {}", err).red()
+                        format!(
+                            "WASM emit produced invalid bytecode: {} (dumped to {})",
+                            err, dump_path
+                        )
+                        .red()
                     );
                     process::exit(1);
                 }
@@ -4383,6 +4393,13 @@ fn load_module_recursive(
     }
 
     tco::transform_program(&mut items);
+    // 0.15 Traversal — run the deforestation pass on dep modules too,
+    // BETWEEN TCO and resolver. The fusion-site rewrite + buffered-fn
+    // synthesis must see `Expr::Ident` shapes that resolver later
+    // rewrites to `Expr::Resolved`. Without this, sinks living in
+    // dep modules (like Fractal's `allRows`) compile unchanged and
+    // the bench shows zero perf delta.
+    let _traversal_stats = aver::ir::run_buffer_build_pass(&mut items);
     resolver::resolve_program(&mut items);
 
     let depends = items
