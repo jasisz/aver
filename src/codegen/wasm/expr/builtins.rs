@@ -405,6 +405,31 @@ impl<'a> ExprEmitter<'a> {
             "String.join" if args.len() == 2 => {
                 self.instructions.push(Instruction::Call(self.rt.str_join));
             }
+            // 0.15 Traversal — internal intrinsics for buffer-build
+            // deforestation. NEVER emitted from user source; only the
+            // codegen-synthesized buffered fn variants reach this
+            // dispatch (Phase 2c.2 introduces the synthesis). Args are
+            // already on the wasm stack: (buf_ptr i32, str_ptr i32) ->
+            // i32 (possibly-relocated buf_ptr).
+            "__buf_append" if args.len() == 2 => {
+                self.instructions
+                    .push(Instruction::Call(self.rt.buffer_append_str));
+            }
+            // For sep-unless-first we can't emit the conditional inline
+            // here without scratch locals; defer the conditional shape
+            // to Phase 2c.2 (synthesized variant body), which can use
+            // the same rt_buffer_append_str directly with its own
+            // emit_if for the len-check. Keep this branch as a stub
+            // that errors loudly so we can't accidentally dispatch on
+            // it before the synthesizer is wired.
+            "__buf_append_sep_unless_first" if args.len() == 2 => {
+                unreachable!(
+                    "__buf_append_sep_unless_first lowering belongs in the \
+                     synthesized variant body (Phase 2c.2), not in raw \
+                     builtin dispatch — caller emitted it without going \
+                     through the synthesis pass"
+                );
+            }
             "String.replace" if args.len() == 3 => {
                 self.instructions
                     .push(Instruction::Call(self.rt.str_replace));

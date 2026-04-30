@@ -342,6 +342,9 @@ pub fn build_wasm_module(
         rt_map_len: 64,
         rt_map_from_list: 65,
         rt_map_set_owned: 66,
+        rt_buffer_new: 67,
+        rt_buffer_append_str: 68,
+        rt_buffer_finalize: 69,
     };
     import_section.import("aver_runtime", "rt_alloc", EntityType::Function(rti.alloc));
     import_section.import(
@@ -674,6 +677,27 @@ pub fn build_wasm_module(
         "rt_map_set_owned",
         EntityType::Function(rti.i32_i64_i32_i64_i32_to_i32),
     );
+    // 0.15 Traversal — buffer-build deforestation runtime helpers.
+    // No user code calls these directly today; the WASM emitter
+    // lowers `__buf_append*` internal-intrinsic calls and fusion-
+    // site rewrites to these slots. Imports stay live regardless
+    // of whether any matched fn is in the program — `wasm-opt`
+    // strips unused imports under `--optimize size`.
+    import_section.import(
+        "aver_runtime",
+        "rt_buffer_new",
+        EntityType::Function(rti.alloc), // (i32) -> i32 — same shape as rt_alloc
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_buffer_append_str",
+        EntityType::Function(rti.i32_i32_to_i32),
+    );
+    import_section.import(
+        "aver_runtime",
+        "rt_buffer_finalize",
+        EntityType::Function(rti.alloc), // (i32) -> i32
+    );
     import_section.import(
         "aver_runtime",
         "memory",
@@ -709,7 +733,7 @@ pub fn build_wasm_module(
             }),
         );
     }
-    let mut import_func_count = 67u32; // 66 prior + rt_map_set_owned
+    let mut import_func_count = 70u32; // 67 prior + rt_buffer_new/append_str/finalize
 
     // Aver-style host imports unconditionally, regardless of --adapter.
     // Under --bridge wasip1 the `aver_to_wasi.wasm` shim re-exports the

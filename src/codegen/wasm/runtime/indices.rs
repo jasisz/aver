@@ -80,6 +80,13 @@ pub struct AverRuntimeImports {
     pub rt_rebase_i32: u32,
     pub rt_collect_end: u32,
     pub rt_retain_i32: u32,
+    /// 0.15 Traversal — buffer-build deforestation runtime helpers.
+    /// User-facing fns never call these directly; the WASM emitter
+    /// lowers `__buf_append*` internal-intrinsic calls and fusion-
+    /// site rewrites to these slots.
+    pub rt_buffer_new: u32,
+    pub rt_buffer_append_str: u32,
+    pub rt_buffer_finalize: u32,
 }
 
 /// Index assignments for runtime functions within the module.
@@ -157,6 +164,10 @@ pub struct RuntimeFuncIndices {
     pub str_to_upper: u32,    // (i32) -> i32
     pub int_from_str: u32,    // (i32) -> i32
     pub float_from_str: u32,  // (i32) -> i32
+    /// 0.15 Traversal — buffer-build deforestation runtime helpers.
+    pub buffer_new: u32,         // (i32) -> i32
+    pub buffer_append_str: u32,  // (i32, i32) -> i32
+    pub buffer_finalize: u32,    // (i32) -> i32
     /// Total number of runtime functions still emitted locally
     /// (zero today — every body lives in `aver_runtime`).
     pub count: u32,
@@ -238,6 +249,9 @@ impl RuntimeFuncIndices {
             str_to_upper: imports.rt_str_to_upper,
             int_from_str: imports.rt_int_from_str,
             float_from_str: imports.rt_float_from_str,
+            buffer_new: imports.rt_buffer_new,
+            buffer_append_str: imports.rt_buffer_append_str,
+            buffer_finalize: imports.rt_buffer_finalize,
             // No local runtime fns left — everything imports from aver_runtime.
             count: 0,
             adapter: super::super::WasmAdapter::Aver,
@@ -316,6 +330,9 @@ impl RuntimeFuncIndices {
             (self.str_to_upper, "str_to_upper"),
             (self.int_from_str, "int_from_str"),
             (self.float_from_str, "float_from_str"),
+            (self.buffer_new, "buffer_new"),
+            (self.buffer_append_str, "buffer_append_str"),
+            (self.buffer_finalize, "buffer_finalize"),
         ]
     }
 }
