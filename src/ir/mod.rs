@@ -1,5 +1,6 @@
 mod alloc_info;
 mod body;
+mod buffer_build;
 mod calls;
 pub mod last_use;
 mod leaf;
@@ -7,6 +8,7 @@ mod matches;
 pub mod vars;
 
 pub use alloc_info::{AllocPolicy, compute_alloc_info};
+pub use buffer_build::{BufferBuildShape, compute_buffer_build_sinks};
 pub use body::{
     BodyBindingPlan, BodyExprPlan, BodyPlan, ThinBodyCtx, ThinBodyPlan, ThinKind,
     classify_body_expr_plan, classify_body_plan, classify_thin_body_plan, classify_thin_fn_def,
