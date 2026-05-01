@@ -1,0 +1,32 @@
+module Edge
+    intent =
+        "Single-export fetch handler — wasm-gc proof of concept."
+        "JS host calls `handle(query)` with the request's query string;"
+        "we render a Mandelbrot at the seahorse zoom (or whatever the"
+        "query specifies) and return the full HTML page. No effects:"
+        "everything is pure string assembly. The host bridge"
+        "(`__rt_string_from_lm` / `__rt_string_to_lm`) plus a 1-page"
+        "linear memory carry strings across the JS↔(array i8) boundary;"
+        "see src/codegen/wasm_gc/module.rs (BridgeIndices) for the wiring."
+    depends [Fractal]
+    exposes [handle, main]
+    effects []
+
+fn main() -> Unit
+    ? "Dummy entrypoint — wasm-gc backend currently requires `main` even when the host calls a different export. The real handler is `handle`."
+    Unit
+
+fn handle(query: String) -> String
+    ? "Render the Mandelbrot for the requested view + return the HTML page."
+    view = Fractal.viewFromQuery(query)
+    rendered = Fractal.render(
+        Fractal.gridWFor(view.cxRange),
+        Fractal.gridHFor(view.cxRange),
+        Fractal.iterFor(view.cxRange),
+        view,
+    )
+    Fractal.page(rendered, view)
+
+verify handle
+    String.contains(handle(""), "<!doctype html>") => true
+    String.contains(handle("cx=-0.7463&cy=0.1102&w=0.012"), "seahorse") => true

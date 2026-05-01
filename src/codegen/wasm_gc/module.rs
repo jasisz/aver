@@ -134,6 +134,30 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
     )?;
     list_helpers.emit_helper_types(&mut types, &registry)?;
 
+    // 8) Host-bridge helpers + LM transport buffer — see
+    //    `BridgeIndices` for the why. Emit only when the registry
+    //    actually allocated a String slot.
+    let bridge: Option<BridgeIndices> = if registry.string_array_type_idx.is_some() {
+        let idx = emit_bridge_types(&mut types, &registry, &mut next_type_idx)?;
+        let mut next_fn = || {
+            let v = next_builtin_fn_idx;
+            next_builtin_fn_idx += 1;
+            v
+        };
+        Some(BridgeIndices {
+            from_lm_type: idx.from_lm_type,
+            to_lm_type: idx.to_lm_type,
+            pages_type: idx.pages_type,
+            grow_type: idx.grow_type,
+            from_lm_fn: next_fn(),
+            to_lm_fn: next_fn(),
+            pages_fn: next_fn(),
+            grow_fn: next_fn(),
+        })
+    } else {
+        None
+    };
+
     module.section(&types);
 
     // ── Import section ─────────────────────────────────────────────
@@ -163,7 +187,34 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
     }
     map_helpers.emit_function_section(&mut funcs);
     list_helpers.emit_function_section(&mut funcs);
+    if let Some(b) = &bridge {
+        funcs.function(b.from_lm_type);
+        funcs.function(b.to_lm_type);
+        funcs.function(b.pages_type);
+        funcs.function(b.grow_type);
+    }
     module.section(&funcs);
+
+    // ── Memory section (bridge LM only) ────────────────────────────
+    // 1 page initial, 2048 max (128 MiB ceiling — matches Cloudflare
+    // Workers' per-request memory limit). The bridge helpers grow
+    // on demand: `__rt_string_to_lm` checks if it can fit the
+    // outgoing array and calls `memory.grow` if not. JS host can
+    // also grow upfront via `__rt_memory_grow` before writing into
+    // LM with `TextEncoder.encodeInto`. Memory is not a guest heap
+    // (engine GC owns that); it exists solely as a transport buffer
+    // between JS host and the `(array i8)` carrier.
+    if bridge.is_some() {
+        let mut memories = wasm_encoder::MemorySection::new();
+        memories.memory(wasm_encoder::MemoryType {
+            minimum: 1,
+            maximum: Some(2048),
+            memory64: false,
+            shared: false,
+            page_size_log2: None,
+        });
+        module.section(&memories);
+    }
 
     // Build the fn-name → wasm-fn-idx map. With K imports:
     //   imports at idx 0..K
@@ -231,6 +282,13 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
         let wasm_idx = import_count + 1 + (i as u32);
         exports.export(&fd.name, ExportKind::Func, wasm_idx);
     }
+    if let Some(b) = &bridge {
+        exports.export("__rt_string_from_lm", ExportKind::Func, b.from_lm_fn);
+        exports.export("__rt_string_to_lm", ExportKind::Func, b.to_lm_fn);
+        exports.export("__rt_memory_pages", ExportKind::Func, b.pages_fn);
+        exports.export("__rt_memory_grow", ExportKind::Func, b.grow_fn);
+        exports.export("memory", ExportKind::Memory, 0);
+    }
     module.section(&exports);
 
     // ── Data count section (must precede code when using passive
@@ -281,6 +339,10 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
 
     // List / Vector.fromList / String.split-join helper bodies.
     list_helpers.emit_helper_bodies(&mut codes, &registry)?;
+
+    if bridge.is_some() {
+        emit_bridge_bodies(&mut codes, &registry)?;
+    }
 
     module.section(&codes);
 
@@ -710,6 +772,213 @@ fn expr_to_dotted_head(expr: &Expr) -> Option<&str> {
 
 /// Validate emitted bytes with `wasmparser` configured for the wasm-gc
 /// + tail-call feature set we target.
+/// Wasm fn-type and fn-idx slots for the two `__rt_string_*` host
+/// bridge exports plus the linear-memory transport buffer.
+///
+/// Why this exists: a JS host (e.g. Cloudflare Workers via
+/// `tools/edge-gc/`) can't directly allocate or read engine-managed
+/// `(array i8)` refs without JS String Builtins (stage-4 standard,
+/// not yet enabled on every host). Per-byte exports (one JS↔wasm
+/// boundary crossing per byte) would dominate the workload — ~100 ns
+/// per crossing × 50 KB body = 10 ms just for I/O, eclipsing the
+/// actual fractal render. So we expose a tiny linear memory as a
+/// bulk transport buffer and two bulk-copy helpers. JS writes a
+/// UTF-8 buffer into the LM with `TextEncoder.encodeInto`, calls
+/// `__rt_string_from_lm(len)` once to materialise it as a guest
+/// `(array i8)`. For the return path, `__rt_string_to_lm(s)` copies
+/// `s.len` bytes back to LM and returns the count; JS reads them
+/// with `TextDecoder.decode(memory.subarray(0, len))`. One boundary
+/// crossing per direction; the inner copy loop runs at native speed
+/// inside wasm.
+struct BridgeIndices {
+    from_lm_type: u32,
+    to_lm_type: u32,
+    pages_type: u32,
+    grow_type: u32,
+    from_lm_fn: u32,
+    to_lm_fn: u32,
+    pages_fn: u32,
+    grow_fn: u32,
+}
+
+struct BridgeTypeSlots {
+    from_lm_type: u32,
+    to_lm_type: u32,
+    pages_type: u32,
+    grow_type: u32,
+}
+
+fn emit_bridge_types(
+    types: &mut TypeSection,
+    registry: &TypeRegistry,
+    next_type_idx: &mut u32,
+) -> Result<BridgeTypeSlots, WasmGcError> {
+    let s_idx = registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "bridge helpers require String slot to be allocated".into(),
+        ))?;
+    let s_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(s_idx),
+    });
+    // from_lm : (len: i32) -> string  (reads bytes from LM[0..len])
+    types.ty().function([ValType::I32], [s_ref]);
+    let from_lm = *next_type_idx;
+    *next_type_idx += 1;
+    // to_lm : (s: string) -> i32      (writes s into LM[0..s.len], returns s.len)
+    types.ty().function([s_ref], [ValType::I32]);
+    let to_lm = *next_type_idx;
+    *next_type_idx += 1;
+    // pages : () -> i32  (= memory.size, in 64 KiB pages)
+    types.ty().function([], [ValType::I32]);
+    let pages = *next_type_idx;
+    *next_type_idx += 1;
+    // grow : (pages: i32) -> i32  (= memory.grow result; -1 on fail)
+    types.ty().function([ValType::I32], [ValType::I32]);
+    let grow = *next_type_idx;
+    *next_type_idx += 1;
+    Ok(BridgeTypeSlots {
+        from_lm_type: from_lm,
+        to_lm_type: to_lm,
+        pages_type: pages,
+        grow_type: grow,
+    })
+}
+
+fn emit_bridge_bodies(
+    codes: &mut CodeSection,
+    registry: &TypeRegistry,
+) -> Result<(), WasmGcError> {
+    let s_idx = registry
+        .string_array_type_idx
+        .expect("bridge bodies emitted only when string slot exists");
+    // from_lm(len) -> string. Allocate `(array i8)` of `len`, copy
+    // bytes from LM[0..len] via a loop of `i32.load8_u` + `array.set`.
+    //
+    // Locals: 1 = arr, 2 = i.
+    let mut from_lm = wasm_encoder::Function::new([
+        (
+            1,
+            ValType::Ref(wasm_encoder::RefType {
+                nullable: true,
+                heap_type: wasm_encoder::HeapType::Concrete(s_idx),
+            }),
+        ),
+        (1, ValType::I32),
+    ]);
+    from_lm.instruction(&Instruction::LocalGet(0));
+    from_lm.instruction(&Instruction::ArrayNewDefault(s_idx));
+    from_lm.instruction(&Instruction::LocalSet(1));
+    from_lm.instruction(&Instruction::I32Const(0));
+    from_lm.instruction(&Instruction::LocalSet(2));
+    from_lm.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    from_lm.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+    // if i >= len break
+    from_lm.instruction(&Instruction::LocalGet(2));
+    from_lm.instruction(&Instruction::LocalGet(0));
+    from_lm.instruction(&Instruction::I32GeU);
+    from_lm.instruction(&Instruction::BrIf(1));
+    // arr[i] = i32.load8_u(memory[i])
+    from_lm.instruction(&Instruction::LocalGet(1));
+    from_lm.instruction(&Instruction::LocalGet(2));
+    from_lm.instruction(&Instruction::LocalGet(2));
+    from_lm.instruction(&Instruction::I32Load8U(wasm_encoder::MemArg {
+        offset: 0,
+        align: 0,
+        memory_index: 0,
+    }));
+    from_lm.instruction(&Instruction::ArraySet(s_idx));
+    // i++
+    from_lm.instruction(&Instruction::LocalGet(2));
+    from_lm.instruction(&Instruction::I32Const(1));
+    from_lm.instruction(&Instruction::I32Add);
+    from_lm.instruction(&Instruction::LocalSet(2));
+    from_lm.instruction(&Instruction::Br(0));
+    from_lm.instruction(&Instruction::End); // loop
+    from_lm.instruction(&Instruction::End); // block
+    from_lm.instruction(&Instruction::LocalGet(1));
+    from_lm.instruction(&Instruction::End);
+    codes.function(&from_lm);
+
+    // to_lm(s) -> i32 (= s.len). Auto-grow memory if `s.len`
+    // exceeds the current LM capacity, then loop-write bytes to
+    // LM[0..s.len].
+    //
+    // Locals: 1 = len, 2 = i, 3 = needed_pages, 4 = current_pages.
+    let mut to_lm = wasm_encoder::Function::new([(4, ValType::I32)]);
+    // len = arr.len
+    to_lm.instruction(&Instruction::LocalGet(0));
+    to_lm.instruction(&Instruction::ArrayLen);
+    to_lm.instruction(&Instruction::LocalSet(1));
+    // needed_pages = (len + 65535) >> 16
+    to_lm.instruction(&Instruction::LocalGet(1));
+    to_lm.instruction(&Instruction::I32Const(65535));
+    to_lm.instruction(&Instruction::I32Add);
+    to_lm.instruction(&Instruction::I32Const(16));
+    to_lm.instruction(&Instruction::I32ShrU);
+    to_lm.instruction(&Instruction::LocalSet(3));
+    // current_pages = memory.size
+    to_lm.instruction(&Instruction::MemorySize(0));
+    to_lm.instruction(&Instruction::LocalSet(4));
+    // if needed_pages > current_pages: memory.grow(needed - current)
+    to_lm.instruction(&Instruction::LocalGet(3));
+    to_lm.instruction(&Instruction::LocalGet(4));
+    to_lm.instruction(&Instruction::I32GtU);
+    to_lm.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    to_lm.instruction(&Instruction::LocalGet(3));
+    to_lm.instruction(&Instruction::LocalGet(4));
+    to_lm.instruction(&Instruction::I32Sub);
+    to_lm.instruction(&Instruction::MemoryGrow(0));
+    to_lm.instruction(&Instruction::Drop);
+    to_lm.instruction(&Instruction::End);
+    // i = 0
+    to_lm.instruction(&Instruction::I32Const(0));
+    to_lm.instruction(&Instruction::LocalSet(2));
+    to_lm.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    to_lm.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+    // if i >= len break
+    to_lm.instruction(&Instruction::LocalGet(2));
+    to_lm.instruction(&Instruction::LocalGet(1));
+    to_lm.instruction(&Instruction::I32GeU);
+    to_lm.instruction(&Instruction::BrIf(1));
+    // memory[i] = arr[i]
+    to_lm.instruction(&Instruction::LocalGet(2));
+    to_lm.instruction(&Instruction::LocalGet(0));
+    to_lm.instruction(&Instruction::LocalGet(2));
+    to_lm.instruction(&Instruction::ArrayGetU(s_idx));
+    to_lm.instruction(&Instruction::I32Store8(wasm_encoder::MemArg {
+        offset: 0,
+        align: 0,
+        memory_index: 0,
+    }));
+    // i++
+    to_lm.instruction(&Instruction::LocalGet(2));
+    to_lm.instruction(&Instruction::I32Const(1));
+    to_lm.instruction(&Instruction::I32Add);
+    to_lm.instruction(&Instruction::LocalSet(2));
+    to_lm.instruction(&Instruction::Br(0));
+    to_lm.instruction(&Instruction::End); // loop
+    to_lm.instruction(&Instruction::End); // block
+    to_lm.instruction(&Instruction::LocalGet(1));
+    to_lm.instruction(&Instruction::End);
+    codes.function(&to_lm);
+
+    // pages() -> i32 (= memory.size)
+    let mut pages = wasm_encoder::Function::new([]);
+    pages.instruction(&Instruction::MemorySize(0));
+    pages.instruction(&Instruction::End);
+    codes.function(&pages);
+
+    // grow(pages) -> i32 (= memory.grow result; -1 on fail)
+    let mut grow = wasm_encoder::Function::new([]);
+    grow.instruction(&Instruction::LocalGet(0));
+    grow.instruction(&Instruction::MemoryGrow(0));
+    grow.instruction(&Instruction::End);
+    codes.function(&grow);
+    Ok(())
+}
+
 fn validate(bytes: &[u8]) -> Result<(), WasmGcError> {
     use wasmparser::{Validator, WasmFeatures};
 
