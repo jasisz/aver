@@ -84,11 +84,35 @@ pub fn diff(current: &BenchReport, baseline: &BenchReport, tolerance: Tolerance)
         _ => {}
     }
 
+    // `compiler_visible_allocs` is exact-match — any change is reported.
+    // Growing past baseline is a regression (a hot fn just learned to
+    // allocate); shrinking is good but worth noting (a fusion fired
+    // that didn't before, codegen got tighter, or the manifest changed).
+    let mut allocs_regressed = false;
+    if let (Some(c), Some(b)) = (
+        current.compiler_visible_allocs,
+        baseline.compiler_visible_allocs,
+    ) && c != b
+    {
+        if c > b {
+            notes.push(format!(
+                "compiler_visible_allocs grew: baseline={} current={} — regression",
+                b, c
+            ));
+            allocs_regressed = true;
+        } else {
+            notes.push(format!(
+                "compiler_visible_allocs shrank: baseline={} current={} — improvement",
+                b, c
+            ));
+        }
+    }
+
     DiffReport {
         scenario: current.scenario.name.clone(),
         p50,
         p95,
-        regressed: p50.regressed || p95.regressed,
+        regressed: p50.regressed || p95.regressed || allocs_regressed,
         notes,
     }
 }

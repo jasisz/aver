@@ -118,11 +118,14 @@ fn run_vm(manifest: &Manifest) -> Result<BenchReport, RunError> {
         samples.push(t.elapsed().as_secs_f64() * 1000.0);
     }
 
+    let policy = crate::ir::NeutralAllocPolicy;
+    let visible_allocs = crate::ir::count_alloc_sites_in_program(&items, &policy);
     Ok(build_report(
         manifest,
         BenchTarget::Vm,
         &samples,
         passes_applied.into_inner(),
+        Some(visible_allocs),
     ))
 }
 
@@ -379,6 +382,7 @@ fn run_wasm_local(manifest: &Manifest) -> Result<BenchReport, RunError> {
         BenchTarget::WasmLocal,
         &samples,
         passes,
+        compute_visible_allocs(manifest),
     ))
 }
 
@@ -474,7 +478,13 @@ fn run_rust(manifest: &Manifest) -> Result<BenchReport, RunError> {
     }
 
     let passes = canonical_passes();
-    Ok(build_report(manifest, BenchTarget::Rust, &samples, passes))
+    Ok(build_report(
+        manifest,
+        BenchTarget::Rust,
+        &samples,
+        passes,
+        compute_visible_allocs(manifest),
+    ))
 }
 
 // ── Shared helpers ─────────────────────────────────────────────────────
@@ -499,6 +509,7 @@ fn build_report(
     target: BenchTarget,
     samples: &[f64],
     passes_applied: Vec<String>,
+    compiler_visible_allocs: Option<usize>,
 ) -> BenchReport {
     let stats = IterationStats::from_samples(samples);
     BenchReport {
@@ -515,6 +526,37 @@ fn build_report(
         response_bytes: None,
         expected_match: None,
         passes_applied,
-        compiler_visible_allocs: None,
+        compiler_visible_allocs,
     }
+}
+
+/// Parse + run pipeline + count IR-level alloc sites. Same numbers
+/// across `vm` / `wasm-local` / `rust` since the policy is target-stable
+/// (`NeutralAllocPolicy`). `None` only when parse/typecheck fails — in
+/// that case the runner already returned an error before calling this,
+/// so in practice the field is always populated for successful runs.
+fn compute_visible_allocs(manifest: &Manifest) -> Option<usize> {
+    let source = std::fs::read_to_string(&manifest.entry).ok()?;
+    let mut items: Vec<TopLevel> = parse_source(&source).ok()?;
+    let module_root = manifest
+        .entry
+        .parent()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let res = crate::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full {
+                base_dir: Some(&module_root),
+            }),
+            ..Default::default()
+        },
+    );
+    if let Some(tc) = &res.typecheck
+        && !tc.errors.is_empty()
+    {
+        return None;
+    }
+    let policy = crate::ir::NeutralAllocPolicy;
+    Some(crate::ir::count_alloc_sites_in_program(&items, &policy))
 }

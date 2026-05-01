@@ -15,7 +15,9 @@ pub mod vars;
 pub use analyze::{AnalysisResult, BodyShape, FnAnalysis, NeutralAllocPolicy, analyze};
 pub use pipeline::{PipelineConfig, PipelineResult, PipelineStage, TypecheckMode};
 
-pub use alloc_info::{AllocPolicy, compute_alloc_info};
+pub use alloc_info::{
+    AllocPolicy, compute_alloc_info, count_alloc_sites_in_fn, count_alloc_sites_in_program,
+};
 pub use body::{
     BodyBindingPlan, BodyExprPlan, BodyPlan, ThinBodyCtx, ThinBodyPlan, ThinKind,
     classify_body_expr_plan, classify_body_plan, classify_thin_body_plan, classify_thin_fn_def,

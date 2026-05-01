@@ -144,6 +144,127 @@ fn body_allocates<P: AllocPolicy>(
     })
 }
 
+/// Count the number of *directly* allocating expression nodes in a fn
+/// body under `policy`. Distinct from `compute_alloc_info` (which is a
+/// transitive yes/no via the call graph): this is a per-fn IR-level
+/// metric. Children of an allocating node are recursed into, so a
+/// `List([List([])])` counts as 2 sites (outer + inner). Calls to user
+/// fns don't count — that user fn carries its own count.
+///
+/// Drives `aver bench`'s `compiler_visible_allocs` field — a backend-
+/// stable regression metric ("did this hot fn get more alloc sites than
+/// last release?").
+pub fn count_alloc_sites_in_fn<P: AllocPolicy>(fd: &FnDef, policy: &P) -> usize {
+    let FnBody::Block(stmts) = fd.body.as_ref();
+    let mut acc = 0;
+    for stmt in stmts {
+        match stmt {
+            Stmt::Binding(_, _, e) | Stmt::Expr(e) => {
+                count_expr_alloc_sites(&e.node, policy, &mut acc)
+            }
+        }
+    }
+    acc
+}
+
+fn count_expr_alloc_sites<P: AllocPolicy>(expr: &Expr, policy: &P, acc: &mut usize) {
+    match expr {
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
+        Expr::Constructor(_, None) => {}
+
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            *acc += 1;
+            for item in items {
+                count_expr_alloc_sites(&item.node, policy, acc);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            *acc += 1;
+            for (k, v) in entries {
+                count_expr_alloc_sites(&k.node, policy, acc);
+                count_expr_alloc_sites(&v.node, policy, acc);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            *acc += 1;
+            for (_, v) in fields {
+                count_expr_alloc_sites(&v.node, policy, acc);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            *acc += 1;
+            count_expr_alloc_sites(&base.node, policy, acc);
+            for (_, v) in updates {
+                count_expr_alloc_sites(&v.node, policy, acc);
+            }
+        }
+        Expr::InterpolatedStr(parts) => {
+            // Treated as a single allocation site when it has any parsed
+            // parts (the lowering pass should have rewritten it before
+            // this is called, but the count stays well-defined either way).
+            if parts.iter().any(|p| matches!(p, StrPart::Parsed(_))) {
+                *acc += 1;
+            }
+            for part in parts {
+                if let StrPart::Parsed(e) = part {
+                    count_expr_alloc_sites(&e.node, policy, acc);
+                }
+            }
+        }
+        Expr::Constructor(name, Some(payload)) => {
+            if policy.constructor_allocates(name, true) {
+                *acc += 1;
+            }
+            count_expr_alloc_sites(&payload.node, policy, acc);
+        }
+        Expr::FnCall(callee, args) => {
+            if let Some(name) = expr_to_dotted_name(&callee.node) {
+                let ns = name.split('.').next().unwrap_or("");
+                if is_builtin_namespace(ns) && policy.builtin_allocates(&name) {
+                    *acc += 1;
+                }
+            }
+            count_expr_alloc_sites(&callee.node, policy, acc);
+            for a in args {
+                count_expr_alloc_sites(&a.node, policy, acc);
+            }
+        }
+        Expr::TailCall(data) => {
+            for a in &data.args {
+                count_expr_alloc_sites(&a.node, policy, acc);
+            }
+        }
+        Expr::Attr(base, _) | Expr::ErrorProp(base) => {
+            count_expr_alloc_sites(&base.node, policy, acc);
+        }
+        Expr::BinOp(_, l, r) => {
+            count_expr_alloc_sites(&l.node, policy, acc);
+            count_expr_alloc_sites(&r.node, policy, acc);
+        }
+        Expr::Match { subject, arms } => {
+            count_expr_alloc_sites(&subject.node, policy, acc);
+            for arm in arms {
+                count_expr_alloc_sites(&arm.body.node, policy, acc);
+            }
+        }
+    }
+}
+
+/// Sum of [`count_alloc_sites_in_fn`] across every FnDef in `items` under
+/// `policy`. A scenario-level rollup for bench reporting.
+pub fn count_alloc_sites_in_program<P: AllocPolicy>(
+    items: &[crate::ast::TopLevel],
+    policy: &P,
+) -> usize {
+    items
+        .iter()
+        .filter_map(|it| match it {
+            crate::ast::TopLevel::FnDef(fd) => Some(count_alloc_sites_in_fn(fd, policy)),
+            _ => None,
+        })
+        .sum()
+}
+
 /// Compute per-fn allocation status for every fn in `fns` under `policy`.
 ///
 /// Iterates to fixpoint: a fn is marked allocating if it has effects, if
