@@ -49,6 +49,41 @@ pub struct Manifest {
     pub tolerance: Tolerance,
 }
 
+/// Bench targets — picks which backend runs the scenario.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BenchTarget {
+    /// In-process VM via `vm::compile_program_with_modules`.
+    Vm,
+    /// In-process WASM via wasmtime (compiled once, instantiated +
+    /// invoked per iteration). Requires the `wasm` feature.
+    WasmLocal,
+    /// Native Rust binary produced by `aver compile --target rust` +
+    /// `cargo build --release`. Subprocess spawn per iteration.
+    Rust,
+}
+
+impl BenchTarget {
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s {
+            "vm" => Ok(Self::Vm),
+            "wasm-local" => Ok(Self::WasmLocal),
+            "rust" => Ok(Self::Rust),
+            other => Err(format!(
+                "unknown bench target '{}'; expected one of: vm, wasm-local, rust",
+                other
+            )),
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Vm => "vm",
+            Self::WasmLocal => "wasm-local",
+            Self::Rust => "rust",
+        }
+    }
+}
+
 /// Per-metric regression tolerances used by `--compare baseline.json`.
 /// Defaults are deliberately loose for 0.15.1 — the bench harness is new
 /// and machines vary. Tighten per-scenario in TOML once a baseline is

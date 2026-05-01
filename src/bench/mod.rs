@@ -29,6 +29,6 @@ mod report;
 mod runner;
 
 pub use compare::{DiffReport, MetricDiff, diff, format_diff};
-pub use manifest::{Manifest, ManifestError, Tolerance};
+pub use manifest::{BenchTarget, Manifest, ManifestError, Tolerance};
 pub use report::{BenchReport, IterationStats, ScenarioMetadata, format_human};
-pub use runner::run_vm_scenario;
+pub use runner::run_scenario;

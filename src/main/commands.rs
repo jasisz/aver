@@ -3387,21 +3387,17 @@ pub(super) struct BenchOptions<'a> {
 /// separated by blank lines. `--compare` is single-scenario only —
 /// directory-mode comparison is the 0.15.2 baseline-snapshot workflow.
 pub(super) fn cmd_bench(opts: BenchOptions<'_>) {
-    if opts.target != "vm" {
-        eprintln!(
-            "{}",
-            format!(
-                "bench target '{}' not yet implemented; only `vm` is available in 0.15.1",
-                opts.target
-            )
-            .red()
-        );
-        process::exit(1);
-    }
+    let target = match aver::bench::BenchTarget::parse(opts.target) {
+        Ok(t) => t,
+        Err(msg) => {
+            eprintln!("{}", msg.red());
+            process::exit(1);
+        }
+    };
 
     let scenario_path = Path::new(opts.scenario_path);
     if scenario_path.is_dir() {
-        run_bench_dir(scenario_path, &opts);
+        run_bench_dir(scenario_path, target, &opts);
         return;
     }
 
@@ -3413,7 +3409,7 @@ pub(super) fn cmd_bench(opts: BenchOptions<'_>) {
         }
     };
 
-    let report = match aver::bench::run_vm_scenario(&manifest) {
+    let report = match aver::bench::run_scenario(&manifest, target) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{}", format!("bench run: {}", e).red());
@@ -3486,7 +3482,7 @@ pub(super) fn cmd_bench(opts: BenchOptions<'_>) {
 /// blocks separated by blank lines otherwise. `--compare` /
 /// `--save-baseline` are single-scenario only and rejected here with a
 /// clear error.
-fn run_bench_dir(dir: &Path, opts: &BenchOptions<'_>) {
+fn run_bench_dir(dir: &Path, target: aver::bench::BenchTarget, opts: &BenchOptions<'_>) {
     if opts.compare.is_some() || opts.save_baseline.is_some() {
         eprintln!(
             "{}",
@@ -3532,7 +3528,7 @@ fn run_bench_dir(dir: &Path, opts: &BenchOptions<'_>) {
                 process::exit(1);
             }
         };
-        let report = match aver::bench::run_vm_scenario(&manifest) {
+        let report = match aver::bench::run_scenario(&manifest, target) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("{}", format!("bench run ({}): {}", manifest.name, e).red());

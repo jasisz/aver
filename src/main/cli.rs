@@ -485,7 +485,9 @@ pub(super) enum Commands {
         /// Scenario manifest path or scenarios directory. A directory
         /// runs every `*.toml` inside in alphabetical order.
         scenario: String,
-        /// Bench target. Only `vm` is implemented in 0.15.1.
+        /// Bench target: `vm` (in-process), `wasm-local` (wasmtime
+        /// in-process, requires the `wasm` feature), `rust` (native
+        /// binary via `aver compile --target rust` + `cargo build`).
         #[arg(long, default_value = "vm")]
         target: String,
         /// Emit the structured JSON report instead of the human-readable

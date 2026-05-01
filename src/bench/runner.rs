@@ -1,16 +1,22 @@
-//! VM scenario runner — compile entry once, run N+warmup times timing
-//! each iteration.
+//! Scenario runners — compile entry once per target, run N+warmup
+//! iterations timing each. Three targets:
 //!
-//! 0.15.1 scope is wall time only. Stdout is silenced (via the runtime's
-//! silent-console switch) so program output doesn't pollute the bench's
-//! own JSON output, but bytes are not captured. `response_bytes` lands
-//! in 0.15.2 alongside the alloc counters; the JSON shape carries the
-//! field as `Option<usize>` from day one so the contract is stable.
+//! - `vm` — in-process `vm::compile_program_with_modules` + `VM::run`.
+//! - `wasm-local` — `aver compile --target wasm` produces a wasi-bundled
+//!   `.wasm`; wasmtime Engine + Module are built once, each iteration
+//!   creates a fresh Store + Instance and invokes `_start`. Mirrors
+//!   the `cargo bench` shape so VM/WASM numbers are directly comparable.
+//! - `rust` — `aver compile --target rust` + `cargo build --release`
+//!   produces a native binary; each iteration spawns it once. Includes
+//!   process spawn overhead (~1-2 ms on macOS) — for programs that
+//!   take <1 ms in pure compute the spawn dominates, just like in
+//!   the cargo bench measurements.
 
+use std::process::Command;
 use std::time::Instant;
 
 use crate::ast::TopLevel;
-use crate::bench::manifest::Manifest;
+use crate::bench::manifest::{BenchTarget, Manifest};
 use crate::bench::report::{BenchReport, IterationStats, ScenarioMetadata};
 use crate::ir::{PipelineConfig, PipelineStage, TypecheckMode};
 use crate::nan_value::Arena;
@@ -24,6 +30,7 @@ pub enum RunError {
     Typecheck(String),
     Compile(String),
     Runtime(String),
+    Setup(String),
 }
 
 impl std::fmt::Display for RunError {
@@ -33,13 +40,27 @@ impl std::fmt::Display for RunError {
             | Self::Parse(m)
             | Self::Typecheck(m)
             | Self::Compile(m)
-            | Self::Runtime(m) => f.write_str(m),
+            | Self::Runtime(m)
+            | Self::Setup(m) => f.write_str(m),
         }
     }
 }
 
-/// Run `manifest` against the VM target and produce a `BenchReport`.
-pub fn run_vm_scenario(manifest: &Manifest) -> Result<BenchReport, RunError> {
+/// Run `manifest` against the requested target. Dispatches to the
+/// per-target runner; the report shape is identical across targets so
+/// downstream tools (`--compare`, NDJSON consumers) don't care which
+/// backend produced the numbers.
+pub fn run_scenario(manifest: &Manifest, target: BenchTarget) -> Result<BenchReport, RunError> {
+    match target {
+        BenchTarget::Vm => run_vm(manifest),
+        BenchTarget::WasmLocal => run_wasm_local(manifest),
+        BenchTarget::Rust => run_rust(manifest),
+    }
+}
+
+// ── VM target ──────────────────────────────────────────────────────────
+
+fn run_vm(manifest: &Manifest) -> Result<BenchReport, RunError> {
     let entry_str = manifest.entry.to_string_lossy().into_owned();
     let module_root = manifest
         .entry
@@ -88,41 +109,24 @@ pub fn run_vm_scenario(manifest: &Manifest) -> Result<BenchReport, RunError> {
 
     let mut samples: Vec<f64> = Vec::with_capacity(manifest.iterations);
 
-    // Warmup runs are not timed; they exist to settle JIT-like effects
-    // (alloc-pool growth, branch predictor, OS page cache) before the
-    // recorded iterations.
     for _ in 0..manifest.warmup {
-        run_one(&code, &globals, &arena, &manifest.args)?;
+        run_one_vm(&code, &globals, &arena, &manifest.args)?;
     }
     for _ in 0..manifest.iterations {
         let t = Instant::now();
-        run_one(&code, &globals, &arena, &manifest.args)?;
-        let elapsed_ms = t.elapsed().as_secs_f64() * 1000.0;
-        samples.push(elapsed_ms);
+        run_one_vm(&code, &globals, &arena, &manifest.args)?;
+        samples.push(t.elapsed().as_secs_f64() * 1000.0);
     }
 
-    let stats = IterationStats::from_samples(&samples);
-
-    Ok(BenchReport {
-        scenario: ScenarioMetadata {
-            name: manifest.name.clone(),
-            entry: entry_str,
-            target: "vm".to_string(),
-            iterations_count: manifest.iterations,
-            warmup_count: manifest.warmup,
-        },
-        iterations: stats,
-        // 0.15.2 will populate these once stdout capture + IR-level alloc
-        // counter are wired up. Field is in the JSON shape from day one
-        // so consumers can rely on its presence.
-        response_bytes: None,
-        expected_match: None,
-        passes_applied: passes_applied.into_inner(),
-        compiler_visible_allocs: None,
-    })
+    Ok(build_report(
+        manifest,
+        BenchTarget::Vm,
+        &samples,
+        passes_applied.into_inner(),
+    ))
 }
 
-fn run_one(
+fn run_one_vm(
     code: &vm::CodeStore,
     globals: &[crate::nan_value::NanValue],
     arena: &Arena,
@@ -135,4 +139,380 @@ fn run_one(
         .run()
         .map_err(|e| RunError::Runtime(format!("{}", e)))?;
     Ok(())
+}
+
+// ── WASM target ────────────────────────────────────────────────────────
+
+#[cfg(feature = "wasm")]
+fn run_wasm_local(manifest: &Manifest) -> Result<BenchReport, RunError> {
+    use wasmtime::{Caller, Engine, Linker, Module, Store};
+
+    // Compile the entry to a standalone WASI-bundled `.wasm` once. We
+    // shell out to the same `aver compile --target wasm --bridge wasip1`
+    // path the CLI uses so the produced bytes are identical to what
+    // `aver compile` writes for users — bench measures the production
+    // artifact, not a special bench-only build.
+    let temp = tempfile::tempdir()
+        .map_err(|e| RunError::Setup(format!("create wasm bench tempdir: {}", e)))?;
+    let out_dir = temp.path().join("out");
+    let aver_bin = std::env::current_exe()
+        .map_err(|e| RunError::Setup(format!("locate current aver binary: {}", e)))?;
+
+    let status = Command::new(&aver_bin)
+        .arg("compile")
+        .arg(&manifest.entry)
+        .arg("--target")
+        .arg("wasm")
+        .arg("--bridge")
+        .arg("wasip1")
+        .arg("--name")
+        .arg(&manifest.name)
+        .arg("-o")
+        .arg(&out_dir)
+        .status()
+        .map_err(|e| RunError::Setup(format!("spawn aver compile --target wasm: {}", e)))?;
+    if !status.success() {
+        return Err(RunError::Compile(format!(
+            "aver compile --target wasm exited with {}",
+            status
+        )));
+    }
+
+    let wasm_path = out_dir.join(format!("{}.wasm", manifest.name));
+    let bytes = std::fs::read(&wasm_path)
+        .map_err(|e| RunError::Setup(format!("read {}: {}", wasm_path.display(), e)))?;
+    let engine = Engine::default();
+    let module = Module::new(&engine, &bytes)
+        .map_err(|e| RunError::Setup(format!("wasmtime compile module: {}", e)))?;
+
+    let run_one = |module: &Module, engine: &Engine| -> Result<(), RunError> {
+        let mut store = Store::new(engine, ());
+        let mut linker = Linker::new(engine);
+        // Aver's wasip1 bridge declares the full wasi_snapshot_preview1
+        // import set unconditionally. Bench programs return Int from main
+        // and never touch the host (no print, no fs, no rand) — so each
+        // import gets a no-op stub returning errno 0. If a future bench
+        // scenario actually uses an effect, replace these with real
+        // wasmtime-wasi handlers.
+        let ws = "wasi_snapshot_preview1";
+        linker
+            .func_wrap(
+                ws,
+                "fd_write",
+                |_: Caller<'_, ()>, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+            )
+            .and_then(|l| {
+                l.func_wrap(
+                    ws,
+                    "fd_read",
+                    |_: Caller<'_, ()>, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+                )
+            })
+            .and_then(|l| l.func_wrap(ws, "fd_close", |_: Caller<'_, ()>, _: i32| -> i32 { 0 }))
+            .and_then(|l| {
+                l.func_wrap(
+                    ws,
+                    "fd_seek",
+                    |_: Caller<'_, ()>, _: i32, _: i64, _: i32, _: i32| -> i32 { 0 },
+                )
+            })
+            .and_then(|l| {
+                l.func_wrap(
+                    ws,
+                    "fd_fdstat_get",
+                    |_: Caller<'_, ()>, _: i32, _: i32| -> i32 { 0 },
+                )
+            })
+            .and_then(|l| {
+                l.func_wrap(
+                    ws,
+                    "fd_prestat_get",
+                    |_: Caller<'_, ()>, _: i32, _: i32| -> i32 { 8 },
+                )
+            }) // BADF — no preopens
+            .and_then(|l| {
+                l.func_wrap(
+                    ws,
+                    "fd_prestat_dir_name",
+                    |_: Caller<'_, ()>, _: i32, _: i32, _: i32| -> i32 { 0 },
+                )
+            })
+            .and_then(|l| {
+                l.func_wrap(
+                    ws,
+                    "path_open",
+                    |_: Caller<'_, ()>,
+                     _: i32,
+                     _: i32,
+                     _: i32,
+                     _: i32,
+                     _: i32,
+                     _: i64,
+                     _: i64,
+                     _: i32,
+                     _: i32|
+                     -> i32 { 0 },
+                )
+            })
+            .and_then(|l| {
+                l.func_wrap(
+                    ws,
+                    "path_filestat_get",
+                    |_: Caller<'_, ()>, _: i32, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+                )
+            })
+            .and_then(|l| {
+                l.func_wrap(
+                    ws,
+                    "path_remove_directory",
+                    |_: Caller<'_, ()>, _: i32, _: i32, _: i32| -> i32 { 0 },
+                )
+            })
+            .and_then(|l| {
+                l.func_wrap(
+                    ws,
+                    "path_unlink_file",
+                    |_: Caller<'_, ()>, _: i32, _: i32, _: i32| -> i32 { 0 },
+                )
+            })
+            .and_then(|l| {
+                l.func_wrap(
+                    ws,
+                    "path_create_directory",
+                    |_: Caller<'_, ()>, _: i32, _: i32, _: i32| -> i32 { 0 },
+                )
+            })
+            .and_then(|l| {
+                l.func_wrap(
+                    ws,
+                    "path_rename",
+                    |_: Caller<'_, ()>, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32| -> i32 {
+                        0
+                    },
+                )
+            })
+            .and_then(|l| {
+                l.func_wrap(
+                    ws,
+                    "fd_filestat_get",
+                    |_: Caller<'_, ()>, _: i32, _: i32| -> i32 { 0 },
+                )
+            })
+            .and_then(|l| {
+                l.func_wrap(
+                    ws,
+                    "fd_readdir",
+                    |_: Caller<'_, ()>, _: i32, _: i32, _: i32, _: i64, _: i32| -> i32 { 0 },
+                )
+            })
+            .and_then(|l| {
+                l.func_wrap(
+                    ws,
+                    "args_sizes_get",
+                    |_: Caller<'_, ()>, _: i32, _: i32| -> i32 { 0 },
+                )
+            })
+            .and_then(|l| {
+                l.func_wrap(ws, "args_get", |_: Caller<'_, ()>, _: i32, _: i32| -> i32 {
+                    0
+                })
+            })
+            .and_then(|l| {
+                l.func_wrap(
+                    ws,
+                    "environ_sizes_get",
+                    |_: Caller<'_, ()>, _: i32, _: i32| -> i32 { 0 },
+                )
+            })
+            .and_then(|l| {
+                l.func_wrap(
+                    ws,
+                    "environ_get",
+                    |_: Caller<'_, ()>, _: i32, _: i32| -> i32 { 0 },
+                )
+            })
+            .and_then(|l| {
+                l.func_wrap(
+                    ws,
+                    "clock_time_get",
+                    |_: Caller<'_, ()>, _: i32, _: i64, _: i32| -> i32 { 0 },
+                )
+            })
+            .and_then(|l| {
+                l.func_wrap(
+                    ws,
+                    "random_get",
+                    |_: Caller<'_, ()>, _: i32, _: i32| -> i32 { 0 },
+                )
+            })
+            .and_then(|l| l.func_wrap(ws, "proc_exit", |_: Caller<'_, ()>, _: i32| {}))
+            .and_then(|l| l.func_wrap(ws, "sched_yield", |_: Caller<'_, ()>| -> i32 { 0 }))
+            .map_err(|e| RunError::Setup(format!("stub wasi imports: {}", e)))?;
+        let instance = linker
+            .instantiate(&mut store, module)
+            .map_err(|e| RunError::Runtime(format!("instantiate: {}", e)))?;
+        let start = instance
+            .get_typed_func::<(), ()>(&mut store, "_start")
+            .map_err(|e| RunError::Runtime(format!("_start export: {}", e)))?;
+        start
+            .call(&mut store, ())
+            .map_err(|e| RunError::Runtime(format!("invoke _start: {}", e)))?;
+        Ok(())
+    };
+
+    let mut samples: Vec<f64> = Vec::with_capacity(manifest.iterations);
+    for _ in 0..manifest.warmup {
+        run_one(&module, &engine)?;
+    }
+    for _ in 0..manifest.iterations {
+        let t = Instant::now();
+        run_one(&module, &engine)?;
+        samples.push(t.elapsed().as_secs_f64() * 1000.0);
+    }
+
+    // Pipeline stages aren't observable through the spawned compile;
+    // record the canonical full-pipeline label so the JSON shape stays
+    // consistent across targets.
+    let passes = canonical_passes();
+    Ok(build_report(
+        manifest,
+        BenchTarget::WasmLocal,
+        &samples,
+        passes,
+    ))
+}
+
+#[cfg(not(feature = "wasm"))]
+fn run_wasm_local(_manifest: &Manifest) -> Result<BenchReport, RunError> {
+    Err(RunError::Setup(
+        "wasm-local target requires the `wasm` feature; rebuild with `cargo build --features wasm`"
+            .to_string(),
+    ))
+}
+
+// ── Rust target ────────────────────────────────────────────────────────
+
+fn run_rust(manifest: &Manifest) -> Result<BenchReport, RunError> {
+    // Compile to a native Rust binary once, then spawn it per iteration.
+    // Spawn cost (1-2 ms on macOS) is part of what's measured — the same
+    // shape the cargo bench reports, so the numbers stay comparable.
+    let temp = tempfile::tempdir()
+        .map_err(|e| RunError::Setup(format!("create rust bench tempdir: {}", e)))?;
+    let out_dir = temp.path().join("out");
+    let aver_bin = std::env::current_exe()
+        .map_err(|e| RunError::Setup(format!("locate current aver binary: {}", e)))?;
+
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+        .map(std::path::PathBuf::from)
+        .ok();
+    let mut compile_cmd = Command::new(&aver_bin);
+    compile_cmd
+        .arg("compile")
+        .arg(&manifest.entry)
+        .arg("--name")
+        .arg(&manifest.name)
+        .arg("-o")
+        .arg(&out_dir);
+    if let Some(root) = manifest_dir.as_ref() {
+        compile_cmd.env("AVER_RUNTIME_PATH", root.join("aver-rt"));
+    }
+    let status = compile_cmd
+        .status()
+        .map_err(|e| RunError::Setup(format!("spawn aver compile --target rust: {}", e)))?;
+    if !status.success() {
+        return Err(RunError::Compile(format!(
+            "aver compile (rust) exited with {}",
+            status
+        )));
+    }
+
+    let status = Command::new("cargo")
+        .arg("build")
+        .arg("--release")
+        .current_dir(&out_dir)
+        .status()
+        .map_err(|e| RunError::Setup(format!("spawn cargo build: {}", e)))?;
+    if !status.success() {
+        return Err(RunError::Compile(format!(
+            "cargo build (rust) exited with {}",
+            status
+        )));
+    }
+
+    let binary = out_dir.join("target/release").join(&manifest.name);
+    if !binary.exists() {
+        return Err(RunError::Setup(format!(
+            "rust target binary not found at {}",
+            binary.display()
+        )));
+    }
+
+    let run_one = |bin: &std::path::Path, args: &[String]| -> Result<(), RunError> {
+        let output = Command::new(bin)
+            .args(args)
+            .output()
+            .map_err(|e| RunError::Runtime(format!("spawn {}: {}", bin.display(), e)))?;
+        if !output.status.success() {
+            return Err(RunError::Runtime(format!(
+                "{} exited with {}: {}",
+                bin.display(),
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        Ok(())
+    };
+
+    let mut samples: Vec<f64> = Vec::with_capacity(manifest.iterations);
+    for _ in 0..manifest.warmup {
+        run_one(&binary, &manifest.args)?;
+    }
+    for _ in 0..manifest.iterations {
+        let t = Instant::now();
+        run_one(&binary, &manifest.args)?;
+        samples.push(t.elapsed().as_secs_f64() * 1000.0);
+    }
+
+    let passes = canonical_passes();
+    Ok(build_report(manifest, BenchTarget::Rust, &samples, passes))
+}
+
+// ── Shared helpers ─────────────────────────────────────────────────────
+
+fn canonical_passes() -> Vec<String> {
+    [
+        "tco",
+        "typecheck",
+        "interp_lower",
+        "buffer_build",
+        "resolve",
+        "last_use",
+        "analyze",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+fn build_report(
+    manifest: &Manifest,
+    target: BenchTarget,
+    samples: &[f64],
+    passes_applied: Vec<String>,
+) -> BenchReport {
+    let stats = IterationStats::from_samples(samples);
+    BenchReport {
+        scenario: ScenarioMetadata {
+            name: manifest.name.clone(),
+            entry: manifest.entry.to_string_lossy().into_owned(),
+            target: target.name().to_string(),
+            iterations_count: manifest.iterations,
+            warmup_count: manifest.warmup,
+        },
+        iterations: stats,
+        response_bytes: None,
+        expected_match: None,
+        passes_applied,
+        compiler_visible_allocs: None,
+    }
 }
