@@ -12,6 +12,7 @@ use crate::ir::AnalysisResult;
 
 mod body;
 mod builtins;
+mod effects;
 mod module;
 #[cfg(test)]
 mod tests;

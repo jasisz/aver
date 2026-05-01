@@ -35,6 +35,10 @@ pub(super) struct FnMap {
     /// `module::emit_module` from the `BuiltinRegistry` so call
     /// sites can `call $builtin_idx` for `Int.toString` etc.
     pub(super) builtins: HashMap<String, u32>,
+    /// Dotted effect name → wasm fn index (host import). Populated
+    /// from `EffectRegistry`. Imports occupy fn idx 0..K so these
+    /// indices are always small.
+    pub(super) effects: HashMap<String, u32>,
 }
 
 pub(super) struct FnEntry {
@@ -491,6 +495,9 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<&'static str, WasmG
                     let dotted = format!("{parent_name}.{member}");
                     if ctx.fn_map.builtins.contains_key(&dotted) {
                         return Ok(builtin_aver_result_type(&dotted));
+                    }
+                    if ctx.fn_map.effects.contains_key(&dotted) {
+                        return Ok("Unit");
                     }
                     if dotted == "Float.fromInt" {
                         return Ok("Float");
@@ -1163,6 +1170,17 @@ fn emit_dotted_builtin(
 
     // Registered helper builtin? Push args, emit `call $idx`.
     if let Some(&wasm_idx) = ctx.fn_map.builtins.get(&dotted) {
+        for arg in args {
+            emit_expr(func, &arg.node, slots, ctx)?;
+        }
+        func.instruction(&Instruction::Call(wasm_idx));
+        return Ok(());
+    }
+
+    // Registered effect import? Same shape — push args, call by idx.
+    // Effects return Unit; the trailing instruction sequence works
+    // identically to a Unit-returning user fn call.
+    if let Some(&wasm_idx) = ctx.fn_map.effects.get(&dotted) {
         for arg in args {
             emit_expr(func, &arg.node, slots, ctx)?;
         }

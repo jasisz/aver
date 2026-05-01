@@ -518,8 +518,33 @@ fn run_wasm_gc(manifest: &Manifest) -> Result<BenchReport, RunError> {
 
     let run_one = |module: &Module, engine: &Engine| -> Result<String, RunError> {
         let mut store = Store::new(engine, ());
-        // wasm-gc backend emits no imports, so the linker is empty.
-        let instance = wasmtime::Instance::new(&mut store, module, &[])
+        // wasm-gc effects: stub `aver/*` imports so bench mode runs
+        // silently. `Console.print(s)` becomes a no-op that drops
+        // the String ref. Real hosts (browser, workerd, wasmtime+wasi)
+        // wire these to actual stdout / stderr.
+        let mut linker = wasmtime::Linker::new(engine);
+        // Match the wasm import shape from our codegen: console_print
+        // takes a `(ref null $string)` (= `(ref null (array i8))`).
+        // The most permissive wasmtime type is `(ref null any)` —
+        // accepts any GC ref including our array. Bench-mode no-op.
+        let console_print_ty = wasmtime::FuncType::new(
+            engine,
+            std::iter::once(wasmtime::ValType::Ref(wasmtime::RefType::new(
+                true,
+                wasmtime::HeapType::Any,
+            ))),
+            std::iter::empty(),
+        );
+        linker
+            .func_new(
+                "aver",
+                "console_print",
+                console_print_ty,
+                |_caller, _params, _results| Ok(()),
+            )
+            .map_err(|e| RunError::Setup(format!("stub aver/console_print: {}", e)))?;
+        let instance = linker
+            .instantiate(&mut store, module)
             .map_err(|e| RunError::Runtime(format!("instantiate: {}", e)))?;
         // Try `main: () -> i64` first (Int return), then `() -> f64`
         // (Float), then `() -> ()` (Unit). The order matches the

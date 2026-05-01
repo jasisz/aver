@@ -20,13 +20,14 @@
 use std::collections::HashMap;
 
 use wasm_encoder::{
-    CodeSection, ExportKind, ExportSection, Function, FunctionSection, Instruction, Module,
-    TypeSection, ValType,
+    CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection, ImportSection,
+    Instruction, Module, TypeSection, ValType,
 };
 
 use super::WasmGcError;
 use super::body::{FnEntry, FnMap, emit_fn_body};
 use super::builtins::{BuiltinName, BuiltinRegistry};
+use super::effects::{EffectName, EffectRegistry};
 use super::types::{TypeRegistry, param_types, record_struct_type, return_results};
 
 use crate::ast::{Expr, FnDef, Stmt, TopLevel, TypeDef};
@@ -48,8 +49,9 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
     // allocation so the registry can reserve indices in declaration
     // order.
     let mut builtin_registry = BuiltinRegistry::new();
+    let mut effect_registry = EffectRegistry::new();
     for fd in &fn_defs {
-        discover_builtins_in_fn(fd, &mut builtin_registry);
+        discover_builtins_in_fn(fd, &mut builtin_registry, &mut effect_registry);
     }
 
     if fn_defs.is_empty() {
@@ -71,28 +73,36 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
     //    registry recorded so emit sites can reference them directly.
     emit_user_types(&mut types, items, &registry)?;
 
-    // 2) `_start` type — () -> ().
-    types.ty().function([], []);
-    let start_type_idx = registry.user_type_count;
+    // 2) Effect import types. Imports take fn idx 0..K so their
+    //    type slots come right after user types.
+    let mut next_type_idx = registry.user_type_count;
+    effect_registry.assign_slots(&mut next_type_idx);
+    for name in effect_registry.iter() {
+        let p = name.params(&registry)?;
+        let r = name.results(&registry)?;
+        types.ty().function(p, r);
+    }
 
-    // 3) One fn type per user fn. `fn_type_indices[i]` is the wasm
+    // 3) `_start` type — () -> ().
+    types.ty().function([], []);
+    let start_type_idx = next_type_idx;
+    next_type_idx += 1;
+
+    // 4) One fn type per user fn. `fn_type_indices[i]` is the wasm
     //    type idx for the i-th user fn (in declaration order).
     let mut fn_type_indices: Vec<u32> = Vec::with_capacity(fn_defs.len());
     for fd in &fn_defs {
         let params = param_types(&fd.params, Some(&registry))?;
         let results = return_results(&fd.return_type, Some(&registry))?;
-        let idx = start_type_idx + 1 + (fn_type_indices.len() as u32);
         types.ty().function(params, results);
-        fn_type_indices.push(idx);
+        fn_type_indices.push(next_type_idx);
+        next_type_idx += 1;
     }
 
-    // 4) One fn type per registered builtin. Slot allocation is
-    //    deferred to here because the user-fn type slots have to
-    //    finish first; builtin slots come AFTER them in the type
-    //    section.
-    let mut next_builtin_type_idx = start_type_idx + 1 + (fn_defs.len() as u32);
-    let mut next_builtin_fn_idx = 1 + (fn_defs.len() as u32); // _start at 0, user fns 1..N
-    builtin_registry.assign_slots(&mut next_builtin_fn_idx, &mut next_builtin_type_idx);
+    // 5) One fn type per registered builtin.
+    let import_count = effect_registry.import_count();
+    let mut next_builtin_fn_idx = import_count + 1 + (fn_defs.len() as u32);
+    builtin_registry.assign_slots(&mut next_builtin_fn_idx, &mut next_type_idx);
     for name in builtin_registry.iter() {
         let p = name.params(&registry)?;
         let r = name.results(&registry)?;
@@ -100,14 +110,25 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
     }
     module.section(&types);
 
+    // ── Import section ─────────────────────────────────────────────
+    if effect_registry.import_count() > 0 {
+        let mut imports = ImportSection::new();
+        for name in effect_registry.iter() {
+            let (module_, field) = name.import_pair();
+            let type_idx = effect_registry
+                .lookup_wasm_type_idx(name)
+                .expect("just-assigned effect type idx");
+            imports.import(module_, field, EntityType::Function(type_idx));
+        }
+        module.section(&imports);
+    }
+
     // ── Function section ───────────────────────────────────────────
     let mut funcs = FunctionSection::new();
-    funcs.function(start_type_idx); // _start at wasm fn idx 0
+    funcs.function(start_type_idx); // _start at wasm fn idx K
     for type_idx in &fn_type_indices {
         funcs.function(*type_idx);
     }
-    // Builtin helpers — in registration order, type indices already
-    // assigned by `assign_slots`.
     for name in builtin_registry.iter() {
         let type_idx = builtin_registry
             .lookup_wasm_type_idx(name)
@@ -116,14 +137,18 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
     }
     module.section(&funcs);
 
-    // Build the fn-name → wasm-fn-idx map. _start at idx 0; user fns
-    // start at 1.
+    // Build the fn-name → wasm-fn-idx map. With K imports:
+    //   imports at idx 0..K
+    //   _start at K
+    //   user fn i at K+1+i
+    //   builtin at K+1+N+m (assigned by builtin_registry already)
+    let start_wasm_idx = import_count;
     let mut by_name: HashMap<String, FnEntry> = HashMap::new();
     for (i, fd) in fn_defs.iter().enumerate() {
         by_name.insert(
             fd.name.clone(),
             FnEntry {
-                wasm_idx: (i as u32) + 1,
+                wasm_idx: import_count + 1 + (i as u32),
                 return_type: fd.return_type.clone(),
             },
         );
@@ -135,16 +160,24 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
             .expect("registered builtin has wasm fn idx");
         builtin_idx_lookup.insert(name.canonical().to_string(), idx);
     }
+    let mut effect_idx_lookup: HashMap<String, u32> = HashMap::new();
+    for name in effect_registry.iter() {
+        let idx = effect_registry
+            .lookup_wasm_fn_idx(name)
+            .expect("registered effect has wasm fn idx");
+        effect_idx_lookup.insert(name.canonical().to_string(), idx);
+    }
     let fn_map = FnMap {
         by_name,
         builtins: builtin_idx_lookup,
+        effects: effect_idx_lookup,
     };
 
     // ── Export section ─────────────────────────────────────────────
     let mut exports = ExportSection::new();
-    exports.export("_start", ExportKind::Func, 0);
+    exports.export("_start", ExportKind::Func, start_wasm_idx);
     for (i, fd) in fn_defs.iter().enumerate() {
-        let wasm_idx = (i as u32) + 1;
+        let wasm_idx = import_count + 1 + (i as u32);
         exports.export(&fd.name, ExportKind::Func, wasm_idx);
     }
     module.section(&exports);
@@ -153,7 +186,7 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
     let mut codes = CodeSection::new();
 
     // _start: call main, drop result if main returns a value.
-    let main_idx_wasm = (main_idx as u32) + 1;
+    let main_idx_wasm = import_count + 1 + (main_idx as u32);
     let main_returns_value = !fn_defs[main_idx].return_type.trim().eq("Unit");
     let mut start = Function::new([]);
     start.instruction(&Instruction::Call(main_idx_wasm));
@@ -164,7 +197,7 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
     codes.function(&start);
 
     for (i, fd) in fn_defs.iter().enumerate() {
-        let self_wasm_idx = (i as u32) + 1;
+        let self_wasm_idx = import_count + 1 + (i as u32);
         // Dry run: discover extra locals by emitting into a throwaway
         // fn. Cheaper than threading a separate pre-pass.
         let mut probe = Function::new([]);
@@ -264,63 +297,76 @@ fn emit_user_types(
 /// unique one in `registry`. Discovery happens once per module before
 /// any wasm bytes get emitted, so slot allocation can run with the
 /// full set known.
-fn discover_builtins_in_fn(fd: &FnDef, registry: &mut BuiltinRegistry) {
+fn discover_builtins_in_fn(
+    fd: &FnDef,
+    builtins: &mut BuiltinRegistry,
+    effects: &mut EffectRegistry,
+) {
     let crate::ast::FnBody::Block(stmts) = fd.body.as_ref();
     for stmt in stmts {
-        discover_builtins_in_stmt(stmt, registry);
+        discover_builtins_in_stmt(stmt, builtins, effects);
     }
 }
 
-fn discover_builtins_in_stmt(stmt: &Stmt, registry: &mut BuiltinRegistry) {
+fn discover_builtins_in_stmt(
+    stmt: &Stmt,
+    builtins: &mut BuiltinRegistry,
+    effects: &mut EffectRegistry,
+) {
     match stmt {
-        Stmt::Binding(_, _, e) | Stmt::Expr(e) => discover_builtins_in_expr(&e.node, registry),
+        Stmt::Binding(_, _, e) | Stmt::Expr(e) => {
+            discover_builtins_in_expr(&e.node, builtins, effects)
+        }
     }
 }
 
-fn discover_builtins_in_expr(expr: &Expr, registry: &mut BuiltinRegistry) {
+fn discover_builtins_in_expr(
+    expr: &Expr,
+    builtins: &mut BuiltinRegistry,
+    effects: &mut EffectRegistry,
+) {
     match expr {
         Expr::FnCall(callee, args) => {
-            // `Type.method(args)` parsed as FnCall(Attr(parent, name), args).
-            if let Expr::Attr(_parent, member) = &callee.node {
-                // Reconstruct the dotted name. `Attr.parent` is itself
-                // an expression (Ident or Resolved), but for builtin
-                // dispatch we just need `Parent.method`.
-                if let Some(parent_name) = expr_to_dotted_head(&callee.node) {
-                    let dotted = format!("{parent_name}.{member}");
-                    if let Some(name) = BuiltinName::from_dotted(&dotted) {
-                        registry.register(name);
-                    }
+            if let Expr::Attr(_parent, member) = &callee.node
+                && let Some(parent_name) = expr_to_dotted_head(&callee.node)
+            {
+                let dotted = format!("{parent_name}.{member}");
+                if let Some(name) = BuiltinName::from_dotted(&dotted) {
+                    builtins.register(name);
+                }
+                if let Some(name) = EffectName::from_dotted(&dotted) {
+                    effects.register(name);
                 }
             }
-            discover_builtins_in_expr(&callee.node, registry);
+            discover_builtins_in_expr(&callee.node, builtins, effects);
             for arg in args {
-                discover_builtins_in_expr(&arg.node, registry);
+                discover_builtins_in_expr(&arg.node, builtins, effects);
             }
         }
         Expr::BinOp(_, l, r) => {
-            discover_builtins_in_expr(&l.node, registry);
-            discover_builtins_in_expr(&r.node, registry);
+            discover_builtins_in_expr(&l.node, builtins, effects);
+            discover_builtins_in_expr(&r.node, builtins, effects);
         }
         Expr::Match { subject, arms } => {
-            discover_builtins_in_expr(&subject.node, registry);
+            discover_builtins_in_expr(&subject.node, builtins, effects);
             for arm in arms {
-                discover_builtins_in_expr(&arm.body.node, registry);
+                discover_builtins_in_expr(&arm.body.node, builtins, effects);
             }
         }
         Expr::TailCall(boxed) => {
             for arg in &boxed.args {
-                discover_builtins_in_expr(&arg.node, registry);
+                discover_builtins_in_expr(&arg.node, builtins, effects);
             }
         }
-        Expr::Attr(obj, _) => discover_builtins_in_expr(&obj.node, registry),
+        Expr::Attr(obj, _) => discover_builtins_in_expr(&obj.node, builtins, effects),
         Expr::Constructor(_, payload) => {
             if let Some(p) = payload.as_deref() {
-                discover_builtins_in_expr(&p.node, registry);
+                discover_builtins_in_expr(&p.node, builtins, effects);
             }
         }
         Expr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
-                discover_builtins_in_expr(&e.node, registry);
+                discover_builtins_in_expr(&e.node, builtins, effects);
             }
         }
         _ => {}
