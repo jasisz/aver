@@ -18,9 +18,15 @@ pub struct BenchReport {
     /// to compare like-for-like across runs.
     pub host: HostInfo,
     pub iterations: IterationStats,
-    /// Total stdout byte count of the last iteration. `null` in 0.15.1
-    /// (capture infrastructure lands with the runtime allocators in
-    /// 0.15.2). Used by `expected.response_bytes*` checks once populated.
+    /// UTF-8 byte count of the last iteration's "result". For VM target
+    /// this is the byte length of `main`'s return value rendered through
+    /// `aver_display` (the same code path `Console.print` uses). Returns
+    /// `None` when `main` returns `Unit` — those scenarios print to
+    /// stdout for their effect, and the bench runner silences console
+    /// output during measurement. Future iterations may add real stdout
+    /// capture for print-only scenarios; for now `None` is the clean
+    /// "not measured" signal. Wasm-local / Rust runners stay `null`
+    /// pending equivalent capture for those targets.
     pub response_bytes: Option<usize>,
     /// `true` when the run satisfied every `[expected]` constraint in
     /// the manifest. `null` when the manifest has no expectations.

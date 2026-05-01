@@ -112,36 +112,54 @@ fn run_vm(manifest: &Manifest) -> Result<BenchReport, RunError> {
     for _ in 0..manifest.warmup {
         run_one_vm(&code, &globals, &arena, &manifest.args)?;
     }
+    let mut last_response_bytes: Option<usize> = None;
     for _ in 0..manifest.iterations {
         let t = Instant::now();
-        run_one_vm(&code, &globals, &arena, &manifest.args)?;
+        let bytes = run_one_vm(&code, &globals, &arena, &manifest.args)?;
         samples.push(t.elapsed().as_secs_f64() * 1000.0);
+        last_response_bytes = bytes;
     }
 
     let policy = crate::ir::NeutralAllocPolicy;
     let visible_allocs = crate::ir::count_alloc_sites_in_program(&items, &policy);
-    Ok(build_report(
+    let mut report = build_report(
         manifest,
         BenchTarget::Vm,
         &samples,
         passes_applied.into_inner(),
         Some(visible_allocs),
-    ))
+    );
+    report.response_bytes = last_response_bytes;
+    Ok(report)
 }
 
+/// Run one bench iteration and return the byte count of `main`'s
+/// rendered return value. Aver `main` is conventionally `() -> T` for
+/// some `T`; we serialise the resulting `NanValue` through `aver_display`
+/// (the same code path `Console.print` uses) and count UTF-8 bytes.
+/// `Unit` returns `Some(0)`. `None` is reserved for cases where the
+/// value isn't displayable — none of the bench scenarios hit that path
+/// today.
 fn run_one_vm(
     code: &vm::CodeStore,
     globals: &[crate::nan_value::NanValue],
     arena: &Arena,
     args: &[String],
-) -> Result<(), RunError> {
+) -> Result<Option<usize>, RunError> {
     let mut machine = vm::VM::new(code.clone(), globals.to_vec(), arena.clone());
     machine.set_silent_console(true);
     machine.set_cli_args(args.to_vec());
-    machine
+    use crate::nan_value::NanValueConvert;
+    let result = machine
         .run()
         .map_err(|e| RunError::Runtime(format!("{}", e)))?;
-    Ok(())
+    // Render `main`'s return value through the same `aver_display` path
+    // `Console.print` uses, so `response_bytes` matches what the user
+    // would see if their program piped `main` through `print`. The
+    // VM's arena is borrowed read-only for the conversion.
+    let value = result.to_value(&machine.arena);
+    let bytes = crate::value::aver_display(&value).map(|s| s.len());
+    Ok(bytes)
 }
 
 // ── WASM target ────────────────────────────────────────────────────────
