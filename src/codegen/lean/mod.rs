@@ -1471,7 +1471,6 @@ mod tests {
     use crate::codegen::{CodegenContext, build_context};
     use crate::source::parse_source;
     use crate::tco;
-    use crate::types::checker::run_type_check_full;
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc as Rc;
 
@@ -1501,8 +1500,11 @@ mod tests {
 
     fn ctx_from_source(source: &str, project_name: &str) -> CodegenContext {
         let mut items = parse_source(source).expect("source should parse");
-        tco::transform_program(&mut items);
-        let tc = run_type_check_full(&items, None);
+        crate::ir::pipeline::tco(&mut items);
+        let tc = crate::ir::pipeline::typecheck(
+            &items,
+            &crate::ir::TypecheckMode::Full { base_dir: None },
+        );
         assert!(
             tc.errors.is_empty(),
             "source should typecheck without errors: {:?}",

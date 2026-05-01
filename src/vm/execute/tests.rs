@@ -9,8 +9,8 @@ fn compile_vm(src: &str) -> VM {
     let tokens = lexer.tokenize().expect("lex failed");
     let mut parser = Parser::new(tokens);
     let mut items = parser.parse().expect("parse failed");
-    tco::transform_program(&mut items);
-    resolver::resolve_program(&mut items);
+    crate::ir::pipeline::tco(&mut items);
+    crate::ir::pipeline::resolve(&mut items);
 
     let mut arena = Arena::new();
     let (code, globals) = vm::compile_program(&items, &mut arena).expect("compile failed");

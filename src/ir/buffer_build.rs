@@ -1226,7 +1226,7 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
         let tokens = lexer.tokenize().expect("lex");
         let mut parser = crate::parser::Parser::new(tokens);
         let mut items = parser.parse().expect("parse");
-        crate::tco::transform_program(&mut items);
+        crate::ir::pipeline::tco(&mut items);
         let fns: Vec<&FnDef> = items
             .iter()
             .filter_map(|it| match it {
@@ -1259,7 +1259,7 @@ fn main() -> String
         let tokens = lexer.tokenize().expect("lex");
         let mut parser = crate::parser::Parser::new(tokens);
         let mut items = parser.parse().expect("parse");
-        crate::tco::transform_program(&mut items);
+        crate::ir::pipeline::tco(&mut items);
         let fns: Vec<&FnDef> = items
             .iter()
             .filter_map(|it| match it {
@@ -1294,7 +1294,7 @@ fn main() -> List<Int>
         let tokens = lexer.tokenize().expect("lex");
         let mut parser = crate::parser::Parser::new(tokens);
         let mut items = parser.parse().expect("parse");
-        crate::tco::transform_program(&mut items);
+        crate::ir::pipeline::tco(&mut items);
         let fns: Vec<&FnDef> = items
             .iter()
             .filter_map(|it| match it {
@@ -1327,7 +1327,7 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
         let tokens = lexer.tokenize().expect("lex");
         let mut parser = crate::parser::Parser::new(tokens);
         let mut items = parser.parse().expect("parse");
-        crate::tco::transform_program(&mut items);
+        crate::ir::pipeline::tco(&mut items);
         let fns: Vec<&FnDef> = items
             .iter()
             .filter_map(|it| match it {
@@ -1359,7 +1359,7 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
         let tokens = lexer.tokenize().expect("lex");
         let mut parser = crate::parser::Parser::new(tokens);
         let mut items = parser.parse().expect("parse");
-        crate::tco::transform_program(&mut items);
+        crate::ir::pipeline::tco(&mut items);
         let fns: Vec<&FnDef> = items
             .iter()
             .filter_map(|it| match it {

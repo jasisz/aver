@@ -338,7 +338,7 @@ mod tests {
     fn parse_and_lower(src: &str) -> Vec<TopLevel> {
         let mut items = parse_source(src)
             .unwrap_or_else(|e| panic!("parse error: {}\n--- source ---\n{}\n--- end ---", e, src));
-        tco::transform_program(&mut items);
+        crate::ir::pipeline::tco(&mut items);
         items
     }
 

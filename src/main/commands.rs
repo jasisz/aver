@@ -3283,12 +3283,18 @@ fn build_codegen_context(
             .to_string()
     });
 
-    // Load dependent modules for codegen. Dep modules go through the same
-    // pipeline as the entry — the `apply_traversal_lowering` flag is
-    // forwarded so proof exporters get source-level IR end-to-end (without
-    // this thread, dep modules would always run interp_lower + buffer_build
-    // even when the entry skipped them).
-    let modules = load_compile_deps(&items, &module_root, apply_traversal_lowering);
+    // Load dependent modules for codegen. Dep modules run the same pipeline
+    // shape as the entry — per-stage flags are forwarded so proof exporters
+    // get source-level IR end-to-end (without this, dep modules would
+    // always run interp_lower + buffer_build even when the entry skipped
+    // them, leaking synthesized `__buffered` variants into Lean/Dafny
+    // codegen).
+    let modules = load_compile_deps(
+        &items,
+        &module_root,
+        apply_traversal_lowering, // run_interp_lower
+        apply_traversal_lowering, // run_buffer_build
+    );
 
     let use_runtime_policy = matches!(policy_mode, super::cli::CompilePolicyMode::Runtime);
     let use_scoped_runtime = with_replay || use_runtime_policy;
@@ -4350,14 +4356,17 @@ fn cmd_proof_dafny(file: &str, output_dir: &str, ctx: &codegen::CodegenContext) 
 
 /// Load dependent modules for codegen (recursive, with circular import detection).
 ///
-/// `apply_traversal_lowering` mirrors the entry-module flag — proof exporters
-/// (Lean/Dafny) want source-level IR end-to-end, so they pass `false` and the
-/// dep modules also stay un-deforested. Runtime backends (VM/WASM/Rust) pass
-/// `true` so the buffer-build pass fires on sinks living in dep modules too.
+/// `run_interp_lower` and `run_buffer_build` mirror the entry-module decision —
+/// proof exporters (Lean/Dafny) pass `false` for both so dep modules also
+/// stay source-level; runtime backends (VM/WASM/Rust) pass `true` for both
+/// so the buffer-build pass fires on sinks living in dep modules too. Split
+/// per-stage rather than a bundled flag so this matches the pipeline gates
+/// 1-to-1 with no magic translation in between.
 fn load_compile_deps(
     items: &[TopLevel],
     module_root: &str,
-    apply_traversal_lowering: bool,
+    run_interp_lower: bool,
+    run_buffer_build: bool,
 ) -> Vec<ModuleInfo> {
     let module = items.iter().find_map(|i| {
         if let TopLevel::Module(m) = i {
@@ -4377,7 +4386,8 @@ fn load_compile_deps(
         load_module_recursive(
             dep_name,
             module_root,
-            apply_traversal_lowering,
+            run_interp_lower,
+            run_buffer_build,
             &mut result,
             &mut loaded,
         );
@@ -4389,7 +4399,8 @@ fn load_compile_deps(
 fn load_module_recursive(
     name: &str,
     module_root: &str,
-    apply_traversal_lowering: bool,
+    run_interp_lower: bool,
+    run_buffer_build: bool,
     result: &mut Vec<ModuleInfo>,
     loaded: &mut std::collections::HashSet<String>,
 ) {
@@ -4432,16 +4443,14 @@ fn load_module_recursive(
         process::exit(1);
     }
 
-    // Dep modules go through the same pipeline as the entry, with the
-    // same traversal-lowering decision threaded from the top level so
-    // proof exporters get source-level IR end-to-end. Typecheck runs at
-    // the entry-module level via `build_codegen_context`, so we skip it
-    // here.
+    // Dep modules go through the same pipeline shape as the entry. Typecheck
+    // runs at the entry-module level via `build_codegen_context`, so we skip
+    // it here.
     aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
-            run_interp_lower: apply_traversal_lowering,
-            run_buffer_build: apply_traversal_lowering,
+            run_interp_lower,
+            run_buffer_build,
             ..Default::default()
         },
     );
@@ -4466,7 +4475,14 @@ fn load_module_recursive(
         }
     }) {
         for dep in &mod_block.depends {
-            load_module_recursive(dep, module_root, apply_traversal_lowering, result, loaded);
+            load_module_recursive(
+                dep,
+                module_root,
+                run_interp_lower,
+                run_buffer_build,
+                result,
+                loaded,
+            );
         }
     }
 

@@ -730,7 +730,10 @@ fn log(x: Int) -> Unit
     Console.print(x)
 "#,
         );
-        let tc = crate::types::checker::run_type_check_full(&items, None);
+        let tc = crate::ir::pipeline::typecheck(
+            &items,
+            &crate::ir::TypecheckMode::Full { base_dir: None },
+        );
         assert!(
             tc.errors.is_empty(),
             "unexpected type errors: {:?}",
@@ -758,7 +761,10 @@ fn log(x: Int) -> Unit
     Console.print(x)
 "#,
         );
-        let tc = crate::types::checker::run_type_check_full(&items, None);
+        let tc = crate::ir::pipeline::typecheck(
+            &items,
+            &crate::ir::TypecheckMode::Full { base_dir: None },
+        );
         assert!(
             tc.errors.is_empty(),
             "unexpected type errors: {:?}",
@@ -799,7 +805,10 @@ fn outer() -> Unit
     inner()
 "#,
         );
-        let tc = crate::types::checker::run_type_check_full(&items, None);
+        let tc = crate::ir::pipeline::typecheck(
+            &items,
+            &crate::ir::TypecheckMode::Full { base_dir: None },
+        );
         assert!(
             tc.errors.is_empty(),
             "unexpected type errors: {:?}",
@@ -998,7 +1007,10 @@ verify add1 law ordered
     x => x
 "#,
         );
-        let tc = crate::types::checker::run_type_check_full(&items, None);
+        let tc = crate::ir::pipeline::typecheck(
+            &items,
+            &crate::ir::TypecheckMode::Full { base_dir: None },
+        );
         assert!(
             tc.errors
                 .iter()
@@ -1026,7 +1038,10 @@ verify add1 law ordered
     x => x
 "#,
         );
-        let tc = crate::types::checker::run_type_check_full(&items, None);
+        let tc = crate::ir::pipeline::typecheck(
+            &items,
+            &crate::ir::TypecheckMode::Full { base_dir: None },
+        );
         assert!(
             tc.errors.iter().any(|e| e.message.contains(
                 "Function '<verify:add1>' calls 'noisyPositive' which has effect 'Console.print'"
@@ -1053,7 +1068,10 @@ verify add1 law specFn
     add1(x) => add1(x)
 "#,
         );
-        let tc = crate::types::checker::run_type_check_full(&items, None);
+        let tc = crate::ir::pipeline::typecheck(
+            &items,
+            &crate::ir::TypecheckMode::Full { base_dir: None },
+        );
         let findings = check_module_intent_with_sigs(&items, Some(&tc.fn_sigs));
         assert!(
             findings.errors.iter().any(|e| e.message.contains(
@@ -1080,7 +1098,10 @@ verify add1 law add1Spec
     add1(x) => x + 1
 "#,
         );
-        let tc = crate::types::checker::run_type_check_full(&items, None);
+        let tc = crate::ir::pipeline::typecheck(
+            &items,
+            &crate::ir::TypecheckMode::Full { base_dir: None },
+        );
         let findings = check_module_intent_with_sigs(&items, Some(&tc.fn_sigs));
         assert!(
             findings.warnings.iter().any(|w| w.message.contains(
@@ -1107,7 +1128,10 @@ verify add1 law add1Spec
     add1(x) => add1Spec(x)
 "#,
         );
-        let tc = crate::types::checker::run_type_check_full(&items, None);
+        let tc = crate::ir::pipeline::typecheck(
+            &items,
+            &crate::ir::TypecheckMode::Full { base_dir: None },
+        );
         let findings = check_module_intent_with_sigs(&items, Some(&tc.fn_sigs));
         assert!(
             !findings
@@ -1318,7 +1342,10 @@ decision D
     impacts = [existing, Tcp]
 "#,
         );
-        let tc = crate::types::checker::run_type_check_full(&items, None);
+        let tc = crate::ir::pipeline::typecheck(
+            &items,
+            &crate::ir::TypecheckMode::Full { base_dir: None },
+        );
         let findings = check_module_intent_with_sigs(&items, Some(&tc.fn_sigs));
         assert!(
             !findings

@@ -94,6 +94,18 @@ pub struct PipelineResult {
 }
 
 // ── Per-stage entry points ──────────────────────────────────────────
+//
+// Three argument shapes, each reflecting what the stage actually does:
+//
+//   `&[TopLevel]`      — read-only (typecheck)
+//   `&mut [TopLevel]`  — mutate in place (tco, interp_lower, resolve)
+//   `&mut Vec<TopLevel>` — mutate and append (buffer_build synthesizes
+//                          new top-level fn defs)
+//
+// Looks inconsistent on the surface but the categories are real. Faking
+// uniformity by forcing `&mut Vec` everywhere triggers `clippy::ptr_arg`
+// for good reason: it lies about what the function does. Callers always
+// have a `Vec<TopLevel>` so passing `&mut items` works for every shape.
 
 /// Tail-call rewrite pass.
 pub fn tco(items: &mut [TopLevel]) {
@@ -101,7 +113,6 @@ pub fn tco(items: &mut [TopLevel]) {
 }
 
 /// Run the type checker against `items` using the provided driver.
-/// Pure read-only — never mutates the AST.
 pub fn typecheck(items: &[TopLevel], mode: &TypecheckMode<'_>) -> TypeCheckResult {
     match mode {
         TypecheckMode::Full { base_dir } => run_type_check_full(items, *base_dir),

@@ -939,8 +939,8 @@ fn cellAt(grid: Vector<Int>, idx: Int) -> Int
 "#;
 
         let mut items = parse_source(source).expect("source should parse");
-        crate::tco::transform_program(&mut items);
-        crate::resolver::resolve_program(&mut items);
+        crate::ir::pipeline::tco(&mut items);
+        crate::ir::pipeline::resolve(&mut items);
 
         let mut arena = Arena::new();
         let (code, _globals) = compile_program(&items, &mut arena).expect("vm compile should pass");
@@ -964,8 +964,8 @@ fn updateOrKeep(vec: Vector<Int>, idx: Int, value: Int) -> Vector<Int>
 "#;
 
         let mut items = parse_source(source).expect("source should parse");
-        crate::tco::transform_program(&mut items);
-        crate::resolver::resolve_program(&mut items);
+        crate::ir::pipeline::tco(&mut items);
+        crate::ir::pipeline::resolve(&mut items);
 
         let mut arena = Arena::new();
         let (code, _globals) = compile_program(&items, &mut arena).expect("vm compile should pass");
@@ -993,8 +993,8 @@ fn bucket(n: Int) -> Int
 "#;
 
         let mut items = parse_source(source).expect("source should parse");
-        crate::tco::transform_program(&mut items);
-        crate::resolver::resolve_program(&mut items);
+        crate::ir::pipeline::tco(&mut items);
+        crate::ir::pipeline::resolve(&mut items);
 
         let mut arena = Arena::new();
         let (code, _globals) = compile_program(&items, &mut arena).expect("vm compile should pass");
@@ -1026,8 +1026,8 @@ fn listenWith(context: Int, handler: Int) -> Unit
 "#;
 
         let mut items = parse_source(source).expect("source should parse");
-        crate::tco::transform_program(&mut items);
-        crate::resolver::resolve_program(&mut items);
+        crate::ir::pipeline::tco(&mut items);
+        crate::ir::pipeline::resolve(&mut items);
 
         let mut arena = Arena::new();
         let (code, _globals) = compile_program(&items, &mut arena).expect("vm compile should pass");
