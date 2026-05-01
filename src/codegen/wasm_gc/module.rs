@@ -248,9 +248,13 @@ fn emit_user_types(
     // are immutable; helpers that build new strings (Int.toString,
     // String.concat) allocate a fresh array each time and copy.
     if registry.string_array_type_idx.is_some() {
+        // mutable=true at the wasm type level so helpers (Int.toString
+        // etc.) can `array.set` to fill a freshly-allocated array.
+        // Aver-side immutability is a surface-language guarantee — no
+        // user-level op exposes mutation.
         types
             .ty()
-            .array(&wasm_encoder::StorageType::I8, false /* mutable */);
+            .array(&wasm_encoder::StorageType::I8, true /* mutable */);
     }
 
     Ok(())
