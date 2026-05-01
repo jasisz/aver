@@ -17,11 +17,30 @@ Options:
   -o, --output <OUTPUT>            Output directory for the generated project
       --name <NAME>                Project name (default: derived from file name)
       --module-root <MODULE_ROOT>  Resolve `depends [...]` from this root (default: current working directory)
+      --target <TARGET>            rust (default) | wasm | edge-wasm
       --with-replay                Emit optional record/replay runtime support
       --guest-entry <GUEST_ENTRY>  Scope replay/policy to this generated guest entry (requires --with-replay)
       --policy <POLICY>            Runtime policy mode: embed | runtime
       --with-self-host-support     Emit extra self-host-only runtime support (requires --guest-entry and runtime policy)
+      --emit-ir-after <PASS>       Print IR after the named pipeline stage and exit before codegen.
+                                   PASS ∈ { parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze }.
+                                   Use diff -u between two stages to see exactly which expressions a pass rewrote.
 ```
+
+### `--emit-ir-after` quick map
+
+The compiler runs IR transforms in a fixed seven-stage pipeline (see `src/ir/pipeline.rs`). `--emit-ir-after=PASS` short-circuits before codegen and prints the IR snapshot right after the named stage:
+
+| Stage          | What changes between stages                                                |
+|----------------|---------------------------------------------------------------------------|
+| `parse`        | AST as the parser emitted it; baseline                                     |
+| `tco`          | Tail-position recursive calls become `<tail-call:fn>(args)`                |
+| `typecheck`    | Read-only — IR identical to `tco`, errors land in stdout                    |
+| `interp_lower` | `"a${x}b"` desugars to `__buf_finalize(__buf_append(... __to_str(x) ...))` |
+| `buffer_build` | `String.join(<builder>(args, []), sep)` rewrites to `__buf_finalize(<builder>__buffered(...))` and synthesizes the buffered variant |
+| `resolve`      | `Expr::Ident` → `<name>` (resolved slot), `<resolved>` collapse for unknown |
+| `last_use`     | Final references annotated as `<name:last>` so backends MOVE instead of COPY |
+| `analyze`      | FnDef headers gain fact tags `[no_alloc, locals=N, recursive×N, body=…]`    |
 
 ## `aver proof`
 
@@ -74,8 +93,20 @@ Both backends complement each other. Lean is the formal proof target; Dafny is t
 To add a new generated backend such as `js`, `go`, or `python`:
 
 1. Add a new CLI command or extend an existing backend command in `src/main/cli.rs`
-2. Create `src/codegen/<target>/mod.rs` with `pub fn transpile(ctx: &CodegenContext) -> ProjectOutput`
+2. Create `src/codegen/<target>/mod.rs` with `pub fn transpile(ctx: &CodegenContext) -> ProjectOutput`. Take `&mut CodegenContext` if your backend depends on derived facts (`mutual_tco_members`, `recursive_fns`, `fn_analyses`) — the entry point can call `ctx.refresh_facts()` upfront to keep test stubs working.
 3. Add the command handler in `src/main/commands.rs`
 4. Add `pub mod <target>;` in `src/codegen/mod.rs`
 
-`CodegenContext` is backend-agnostic. It carries the type-checked AST, function signatures, memo metadata, and module dependencies.
+`CodegenContext` is backend-agnostic. It carries the type-checked AST, function signatures, memo metadata, module dependencies, and the IR-level analysis facts (`mutual_tco_members`, `recursive_fns`, `fn_analyses`) populated by the pipeline's `analyze` stage.
+
+### Pipeline contract — what your backend sees
+
+The seven-stage pipeline (`src/ir/pipeline.rs`) commits to a specific IR shape per stage. Where you wire your backend in determines which AST nodes you handle and which intrinsics you emit:
+
+- **Runtime backends** (VM, WASM, Rust today) run with the full pipeline. They never see `Expr::InterpolatedStr` (`interp_lower` desugars it to `__buf_*` + `__to_str` intrinsics) or the canonical `String.join(<builder>(args, []), sep)` shape (`buffer_build` rewrites it to `__buf_finalize(<builder>__buffered(...))` and synthesizes the buffered variant). Implement the four `__buf_*` intrinsics + `__to_str`; you get O(N) string ops and deforestation for free.
+- **Proof backends** (Lean, Dafny) skip `interp_lower` and `buffer_build` because they consume source-level IR. They handle `Expr::InterpolatedStr` and `String.join` natively. Pass `apply_traversal_lowering: false` to `build_codegen_context`.
+- **REPL** is the only legitimate consumer of pre-resolve IR (single-statement evaluation, throwaway). VM keeps its `compile_interpolated_str` for this path.
+
+A new backend chooses where on this spectrum it sits. Default: full pipeline (cheapest backend code, free deforestation).
+
+For per-pass introspection while debugging your backend, use `aver compile <FILE> --emit-ir-after=PASS` to print the IR snapshot the codegen will receive.
