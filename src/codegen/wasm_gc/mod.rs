@@ -10,9 +10,11 @@
 use crate::ast::TopLevel;
 use crate::ir::AnalysisResult;
 
+mod body;
 mod module;
 #[cfg(test)]
 mod tests;
+mod types;
 
 #[derive(Debug)]
 pub enum WasmGcError {

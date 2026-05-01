@@ -28,42 +28,66 @@ fn main() -> Int
 }
 
 #[test]
-fn phase1_rejects_main_with_params() {
-    let items = parse(
+fn phase2_int_arithmetic_compiles() {
+    // Phase 2 covers Int arithmetic, fn calls, parameters. The pipeline
+    // (typecheck + resolve) runs before codegen so the items are
+    // post-Resolve when they reach `compile_to_wasm_gc`. Bench scenarios
+    // hit this path; we don't run the full pipeline here, just verify
+    // the codegen entry accepts a reasonably-shaped program.
+    let mut items = parse(
         r#"
-module Hello
-    intent = "smoke"
+module Arith
+    intent = "phase 2 — Int arithmetic + comparison"
     depends []
 
-fn main(n: Int) -> Int
-    n
+fn add(a: Int, b: Int) -> Int
+    a + b
+
+fn main() -> Int
+    add(7, 35)
 "#,
     );
-    let err = compile_to_wasm_gc(&items, None).unwrap_err();
-    assert!(
-        format!("{err}").contains("phase 1"),
-        "expected phase-1 limit error, got: {err}"
+    // Run minimal pipeline: typecheck + resolve so Idents become
+    // `Resolved { slot }` (which body.rs assumes).
+    use crate::ir::{PipelineConfig, TypecheckMode};
+    let _result = crate::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            ..Default::default()
+        },
     );
+    let bytes = compile_to_wasm_gc(&items, None).expect("compile");
+    assert!(!bytes.is_empty());
 }
 
 #[test]
-fn phase1_rejects_non_int_literal_main() {
-    // Phase 1 doesn't lower expressions — even simple arithmetic gets
-    // bounced. This locks the scope so adding an emitter for `+` is
-    // a deliberate phase-2 bump, not an accidental drift.
-    let items = parse(
+fn phase4_match_and_tail_call_compile() {
+    // Phase 4: match dispatch + native return_call. Same pipeline
+    // dance as phase 2 — typecheck + resolve required.
+    let mut items = parse(
         r#"
-module Hello
-    intent = "smoke"
+module Fact
+    intent = "phase 4 — match + tail recursion"
     depends []
 
+fn factorial(n: Int, acc: Int) -> Int
+    match n
+        0 -> acc
+        _ -> factorial(n - 1, acc * n)
+
 fn main() -> Int
-    1 + 1
+    factorial(10, 1)
 "#,
     );
-    let err = compile_to_wasm_gc(&items, None).unwrap_err();
-    assert!(
-        format!("{err}").contains("phase 1"),
-        "expected phase-1 limit error, got: {err}"
+    use crate::ir::{PipelineConfig, TypecheckMode};
+    let _result = crate::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            ..Default::default()
+        },
     );
+    let bytes = compile_to_wasm_gc(&items, None).expect("compile");
+    assert!(!bytes.is_empty());
 }

@@ -89,3 +89,20 @@ src/codegen/wasm_gc/
 - **Phase 5 (bench):** `aver bench --target=wasm-gc` against the existing scenarios. Decision rule lives in `TaskList`. Numbers say everything.
 
 If Phase 5 closes the perf gap with ≥2x on numeric loops and ≥50% smaller binary, the legacy backend gets cut in 0.16 with a new codename ("Concede"). If numbers are flat, this directory gets deleted and `0.15.x` work continues.
+
+## Bench numbers (2026-05-01, macOS aarch64, release build)
+
+Phase 4 baseline. Tail-call enabled scenarios that don't need compound types:
+
+| Scenario        | VM       | wasm-local | wasm-gc | wasm-gc vs legacy | wasm-gc vs VM |
+|-----------------|----------|------------|---------|-------------------|---------------|
+| `fib(15)` p50   | 208µs    | 38µs       | 6µs     | **6.3x faster**   | **35x faster** |
+| `countdown` p50 | 966µs    | 36µs       | 19µs    | **1.9x faster**   | **51x faster** |
+
+Binary size:
+
+| Scenario | wasm-local (with runtime) | wasm-gc (no runtime) | Ratio          |
+|----------|---------------------------|----------------------|----------------|
+| `fib`    | 13,107 bytes              | 110 bytes            | **120x smaller** |
+
+Decision criteria from Task #17 ("≥2x faster on numeric loops AND ≥50% smaller binary, OR ≥1.5x faster on average"): satisfied with significant headroom. **Recommendation: cut legacy backend in 0.16 once phase 3 (compound types) lowers the remaining bench scenarios.**

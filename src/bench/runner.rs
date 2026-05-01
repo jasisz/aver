@@ -54,6 +54,7 @@ pub fn run_scenario(manifest: &Manifest, target: BenchTarget) -> Result<BenchRep
     match target {
         BenchTarget::Vm => run_vm(manifest),
         BenchTarget::WasmLocal => run_wasm_local(manifest),
+        BenchTarget::WasmGc => run_wasm_gc(manifest),
         BenchTarget::Rust => run_rust(manifest),
     }
 }
@@ -445,6 +446,108 @@ fn run_wasm_local(manifest: &Manifest) -> Result<BenchReport, RunError> {
 fn run_wasm_local(_manifest: &Manifest) -> Result<BenchReport, RunError> {
     Err(RunError::Setup(
         "wasm-local target requires the `wasm` feature; rebuild with `cargo build --features wasm`"
+            .to_string(),
+    ))
+}
+
+// ── wasm-gc target (0.15.3 probe) ──────────────────────────────────────
+
+#[cfg(feature = "wasm")]
+fn run_wasm_gc(manifest: &Manifest) -> Result<BenchReport, RunError> {
+    use wasmtime::{Config, Engine, Module, Store};
+
+    // Compile once. We shell out to `aver compile --target=wasm-gc`
+    // so the produced bytes are identical to what users get — bench
+    // measures the production codegen output, not a special path.
+    let temp = tempfile::tempdir()
+        .map_err(|e| RunError::Setup(format!("create wasm-gc bench tempdir: {}", e)))?;
+    let out_dir = temp.path().join("out");
+    let aver_bin = std::env::current_exe()
+        .map_err(|e| RunError::Setup(format!("locate current aver binary: {}", e)))?;
+
+    let status = Command::new(&aver_bin)
+        .arg("compile")
+        .arg(&manifest.entry)
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--name")
+        .arg(&manifest.name)
+        .arg("-o")
+        .arg(&out_dir)
+        .status()
+        .map_err(|e| RunError::Setup(format!("spawn aver compile --target=wasm-gc: {}", e)))?;
+    if !status.success() {
+        return Err(RunError::Compile(format!(
+            "aver compile --target=wasm-gc exited with {} (likely a phase-3+ feature in this scenario; see src/codegen/wasm_gc/README.md)",
+            status
+        )));
+    }
+
+    let wasm_path = out_dir.join(format!("{}.wasm", manifest.name));
+    let bytes = std::fs::read(&wasm_path)
+        .map_err(|e| RunError::Setup(format!("read {}: {}", wasm_path.display(), e)))?;
+
+    // Engine config: enable GC + tail calls. wasmtime defaults vary
+    // by version; pin them on so the bench doesn't depend on cwd or
+    // env vars.
+    let mut config = Config::new();
+    config.wasm_gc(true);
+    config.wasm_tail_call(true);
+    config.wasm_function_references(true);
+    config.wasm_reference_types(true);
+    let engine = Engine::new(&config)
+        .map_err(|e| RunError::Setup(format!("wasmtime engine config: {}", e)))?;
+    let module = Module::new(&engine, &bytes)
+        .map_err(|e| RunError::Setup(format!("wasmtime compile module: {}", e)))?;
+
+    let run_one = |module: &Module, engine: &Engine| -> Result<u64, RunError> {
+        let mut store = Store::new(engine, ());
+        // wasm-gc backend (phase 4) emits no imports, so the linker
+        // is empty — instantiation is a single call.
+        let instance = wasmtime::Instance::new(&mut store, module, &[])
+            .map_err(|e| RunError::Runtime(format!("instantiate: {}", e)))?;
+        // Invoke `main` directly — phase-4 main returns `Int` (i64).
+        // `_start` is exported too but it just calls main and drops
+        // the result; we want the value back to populate response_bytes.
+        let main_fn = instance
+            .get_typed_func::<(), i64>(&mut store, "main")
+            .map_err(|e| RunError::Runtime(format!("main export: {}", e)))?;
+        let result = main_fn
+            .call(&mut store, ())
+            .map_err(|e| RunError::Runtime(format!("invoke main: {}", e)))?;
+        Ok(result as u64)
+    };
+
+    let mut samples: Vec<f64> = Vec::with_capacity(manifest.iterations);
+    for _ in 0..manifest.warmup {
+        run_one(&module, &engine)?;
+    }
+    let mut last_result: u64 = 0;
+    for _ in 0..manifest.iterations {
+        let t = Instant::now();
+        last_result = run_one(&module, &engine)?;
+        samples.push(t.elapsed().as_secs_f64() * 1000.0);
+    }
+
+    let passes = canonical_passes();
+    let mut report = build_report(
+        manifest,
+        BenchTarget::WasmGc,
+        &samples,
+        passes,
+        compute_visible_allocs(manifest),
+    );
+    // wasm-gc invokes `main` directly and gets back i64 — no stdout
+    // is involved. Use the same "rendered return value" semantic as
+    // the VM target: count bytes of the decimal representation.
+    report.response_bytes = Some(last_result.to_string().len());
+    Ok(report)
+}
+
+#[cfg(not(feature = "wasm"))]
+fn run_wasm_gc(_manifest: &Manifest) -> Result<BenchReport, RunError> {
+    Err(RunError::Setup(
+        "wasm-gc target requires the `wasm` feature; rebuild with `cargo build --features wasm`"
             .to_string(),
     ))
 }

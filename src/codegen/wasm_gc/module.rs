@@ -1,128 +1,138 @@
 //! Top-level wasm module assembly.
 //!
-//! Phase 1: hello-world. Emit a wasm-gc module for a program whose only
-//! shape is `fn main() -> Int <literal>`. The module exports `_start`
-//! and stores the literal value in a wasi-style exit code path so a
-//! shell-out wasmtime invocation observes the value.
-//!
-//! Real lowering (compound types, match, tail calls) lands phase by
-//! phase. Each phase keeps the module valid against `wasmparser` with
-//! GC + tail-call features enabled.
+//! Walks the post-pipeline IR, emits a `(type ...)` per fn signature,
+//! a `(func ...)` per Aver fn, and exports `_start` (calling `main`)
+//! plus `main` itself. Validation runs `wasmparser` with GC + tail-call
+//! features enabled before returning bytes — encoder bugs surface
+//! immediately.
 
-use crate::ast::{Expr, FnBody, Literal, Stmt, TopLevel};
+use std::collections::HashMap;
+
+use wasm_encoder::{
+    CodeSection, ExportKind, ExportSection, Function, FunctionSection, Instruction, Module,
+    TypeSection, ValType,
+};
 
 use super::WasmGcError;
+use super::body::{FnEntry, FnMap, emit_fn_body};
+use super::types::{param_types, return_results};
 
-/// Phase-1 ceiling — what `emit_module` accepts. Anything beyond this
-/// shape returns `Unimplemented`. Each later phase relaxes the predicate
-/// and adds its own emitter path.
-struct Phase1Program<'a> {
-    main_int_literal: i64,
-    _items: &'a [TopLevel],
-}
+use crate::ast::{FnDef, TopLevel};
 
-fn match_phase1(items: &[TopLevel]) -> Option<Phase1Program<'_>> {
-    let main = items.iter().find_map(|it| match it {
-        TopLevel::FnDef(fd) if fd.name == "main" => Some(fd),
-        _ => None,
-    })?;
-
-    if !main.params.is_empty() {
-        return None;
-    }
-    if main.return_type != "Int" {
-        return None;
-    }
-
-    let FnBody::Block(stmts) = main.body.as_ref();
-    if stmts.len() != 1 {
-        return None;
-    }
-    let expr = match &stmts[0] {
-        Stmt::Expr(e) => &e.node,
-        _ => return None,
-    };
-    let n = match expr {
-        Expr::Literal(Literal::Int(i)) => *i,
-        _ => return None,
-    };
-    Some(Phase1Program {
-        main_int_literal: n,
-        _items: items,
-    })
-}
-
-/// Build the wasm bytes. Validates the result with `wasmparser` configured
-/// for GC + tail-call before returning so callers can't see an invalid
-/// module from this entry point.
 pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
-    let Some(program) = match_phase1(items) else {
-        return Err(WasmGcError::Unimplemented(
-            "phase 1 only handles `fn main() -> Int <int_literal>`",
+    let fn_defs: Vec<&FnDef> = items
+        .iter()
+        .filter_map(|it| match it {
+            TopLevel::FnDef(fd) => Some(fd),
+            _ => None,
+        })
+        .collect();
+
+    if fn_defs.is_empty() {
+        return Err(WasmGcError::Validation(
+            "module has no fn definitions".into(),
         ));
-    };
-
-    let bytes = emit_phase1(program.main_int_literal);
-    validate(&bytes)?;
-    Ok(bytes)
-}
-
-/// Emit a minimal wasm module:
-///
-/// - `(func $main (result i64) i64.const N)`
-/// - `(func $_start (call $main) (drop))` — wasi-style entry, the int
-///   itself isn't exported anywhere yet (phase 1 is "does it run").
-/// - `(export "_start" (func $_start))`
-/// - `(export "main" (func $main))`
-///
-/// Phase 1 doesn't actually need GC or tail-call features yet — the
-/// integer literal is plain `i64.const`. We still validate against the
-/// GC + tail-call feature set so the validation harness is exercised
-/// from day one.
-fn emit_phase1(value: i64) -> Vec<u8> {
-    use wasm_encoder::{
-        CodeSection, ExportKind, ExportSection, Function, FunctionSection, Instruction, Module,
-        TypeSection, ValType,
-    };
+    }
+    let main_idx = fn_defs
+        .iter()
+        .position(|fd| fd.name == "main")
+        .ok_or_else(|| WasmGcError::Validation("module has no `main` fn".into()))?;
 
     let mut module = Module::new();
 
-    // type section: () -> () for _start, () -> i64 for main
+    // ── Type section ───────────────────────────────────────────────
+    // One function type per fn — phase 2 has no type-sharing pass,
+    // monomorphic-by-name is fine. `_start` gets type 0 (() -> ()).
     let mut types = TypeSection::new();
-    types.ty().function([], []); // _start
-    types.ty().function([], [ValType::I64]); // main
+    types.ty().function([], []); // type 0: _start
+    let mut fn_type_indices: Vec<u32> = Vec::with_capacity(fn_defs.len());
+    for fd in &fn_defs {
+        let params = param_types(&fd.params)?;
+        let results = return_results(&fd.return_type)?;
+        let idx = (fn_type_indices.len() as u32) + 1; // +1 for the _start type at 0
+        types.ty().function(params, results);
+        fn_type_indices.push(idx);
+    }
     module.section(&types);
 
-    // function section: two fns, types 0 and 1
+    // ── Function section ───────────────────────────────────────────
+    // _start at index 0, then user fns in declaration order.
     let mut funcs = FunctionSection::new();
-    funcs.function(0); // _start
-    funcs.function(1); // main
+    funcs.function(0); // _start uses type 0
+    for type_idx in &fn_type_indices {
+        funcs.function(*type_idx);
+    }
     module.section(&funcs);
 
-    // export section
+    // Build the fn-name → wasm-fn-idx map for `body.rs::emit_fn_body`.
+    // _start sits at wasm fn idx 0; user fns start at 1.
+    let mut by_name: HashMap<String, FnEntry> = HashMap::new();
+    for (i, fd) in fn_defs.iter().enumerate() {
+        by_name.insert(
+            fd.name.clone(),
+            FnEntry {
+                wasm_idx: (i as u32) + 1,
+                return_type: fd.return_type.clone(),
+            },
+        );
+    }
+    let fn_map = FnMap { by_name };
+
+    // ── Export section ─────────────────────────────────────────────
     let mut exports = ExportSection::new();
     exports.export("_start", ExportKind::Func, 0);
-    exports.export("main", ExportKind::Func, 1);
+    for (i, fd) in fn_defs.iter().enumerate() {
+        let wasm_idx = (i as u32) + 1;
+        exports.export(&fd.name, ExportKind::Func, wasm_idx);
+    }
     module.section(&exports);
 
-    // code section
+    // ── Code section ───────────────────────────────────────────────
     let mut codes = CodeSection::new();
 
-    // _start: call main, drop the i64 result
+    // _start: call main, drop result if main returns a value.
+    let main_idx_wasm = (main_idx as u32) + 1;
+    let main_returns_value = !fn_defs[main_idx].return_type.trim().eq("Unit");
     let mut start = Function::new([]);
-    start.instruction(&Instruction::Call(1)); // call $main
-    start.instruction(&Instruction::Drop);
+    start.instruction(&Instruction::Call(main_idx_wasm));
+    if main_returns_value {
+        start.instruction(&Instruction::Drop);
+    }
     start.instruction(&Instruction::End);
     codes.function(&start);
 
-    // main: i64.const value, end
-    let mut main = Function::new([]);
-    main.instruction(&Instruction::I64Const(value));
-    main.instruction(&Instruction::End);
-    codes.function(&main);
+    // User fns. `emit_fn_body` walks the Aver body and pushes wasm
+    // instructions; it returns the list of extra locals (beyond
+    // params) so we can build the wasm `Function` with the right
+    // local count. We do a two-step: pre-collect locals first via
+    // a dry run, then re-emit. Cleaner than threading partial state
+    // back from `emit_fn_body`.
+    for (i, fd) in fn_defs.iter().enumerate() {
+        let self_wasm_idx = (i as u32) + 1;
+
+        // Dry run: emit into a throwaway fn just to discover what
+        // extra locals the body needs. Cheaper than threading a
+        // pre-pass through every emit fn.
+        let mut probe = Function::new([]);
+        let extra_locals_dry = emit_fn_body(&mut probe, fd, &fn_map, self_wasm_idx)?;
+
+        let local_groups: Vec<(u32, ValType)> = extra_locals_dry.iter().map(|v| (1, *v)).collect();
+        let mut func = Function::new(local_groups);
+        let _ = emit_fn_body(&mut func, fd, &fn_map, self_wasm_idx)?;
+        codes.function(&func);
+    }
 
     module.section(&codes);
-    module.finish()
+
+    let bytes = module.finish();
+    if let Err(e) = validate(&bytes) {
+        // Dump invalid bytes to /tmp for inspection — `wasm-tools print`
+        // can show what the encoder produced even when validation
+        // refused it.
+        let _ = std::fs::write("/tmp/aver_wasm_gc_invalid.wasm", &bytes);
+        return Err(e);
+    }
+    Ok(bytes)
 }
 
 /// Validate emitted bytes with `wasmparser` configured for the wasm-gc
