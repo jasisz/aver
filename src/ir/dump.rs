@@ -163,7 +163,7 @@ fn body_shape_tag(shape: BodyShape, thin_kind: Option<ThinKind>) -> String {
         BodyShape::LeafExpr => format!("body=leaf-expr{}", kind_part),
         BodyShape::SingleExpr => format!("body=single-expr{}", kind_part),
         BodyShape::Block(n) => format!("body=block:{}{}", n, kind_part),
-        BodyShape::Unclassified(n) if n == 1 => "body=single-expr".to_string(),
+        BodyShape::Unclassified(1) => "body=single-expr".to_string(),
         BodyShape::Unclassified(n) => format!("body=block:{}", n),
     }
 }
