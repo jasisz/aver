@@ -257,9 +257,7 @@ pub fn expr_to_str(expr: &Spanned<Expr>) -> String {
             let a = args.iter().map(expr_to_str).collect::<Vec<_>>().join(", ");
             format!("<tail-call:{}>({})", target, a)
         }
-        Expr::Resolved {
-            name, last_use, ..
-        } => {
+        Expr::Resolved { name, last_use, .. } => {
             if last_use.0 {
                 format!("<{}:last>", name)
             } else {

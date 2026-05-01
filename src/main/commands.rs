@@ -3271,8 +3271,11 @@ fn build_codegen_context(
         process::exit(1);
     }
 
-    // Compute memo-eligible functions
-    let memo_fns = compute_memo_fns(&items, &tc_result);
+    // Memo eligibility reads from `PipelineResult.analysis` — the analyze
+    // stage already collected `recursive_fns` and `recursive_call_count`
+    // facts; `compute_memo_fns` just filters by typecheck signature
+    // (effects, memo-safe param types).
+    let memo_fns = compute_memo_fns(&items, &tc_result, pipeline_result.analysis.as_ref());
 
     // Derive project name from file if not specified
     let name = project_name.map(|s| s.to_string()).unwrap_or_else(|| {
