@@ -3471,12 +3471,13 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
         "interp_lower" => Some(PipelineStage::InterpLower),
         "buffer_build" => Some(PipelineStage::BufferBuild),
         "resolve" => Some(PipelineStage::Resolve),
+        "analyze" => Some(PipelineStage::Analyze),
         other => {
             eprintln!(
                 "{}",
                 format!(
                     "unknown --emit-ir-after stage '{}'; expected one of: \
-                     parse, tco, typecheck, interp_lower, buffer_build, resolve",
+                     parse, tco, typecheck, interp_lower, buffer_build, resolve, analyze",
                     other
                 )
                 .red()
@@ -3502,22 +3503,32 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
     };
 
     if target_stage.is_none() {
-        // `--emit-ir-after=parse` — no pipeline runs.
-        print!("{}", dump::dump_items(&items));
+        // `--emit-ir-after=parse` — no pipeline runs, no analysis available.
+        print!("{}", dump::dump_items(&items, None));
         return;
     }
 
-    let captured = std::cell::RefCell::new(None::<String>);
+    // Snapshot the IR at the requested stage. Per-fn analysis facts are
+    // only attached when the snapshot was taken at or after the analyze
+    // stage — earlier snapshots get rendered without facts (the FnDef
+    // header collapses to its plain `fn name(...) -> T` form).
+    let captured = std::cell::RefCell::new(None::<Vec<aver::ast::TopLevel>>);
     let target = target_stage.unwrap();
+    let neutral_policy = aver::ir::NeutralAllocPolicy;
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::Full {
                 base_dir: Some(&module_root),
             }),
+            // `--emit-ir` is a diagnostic, so attach the neutral policy
+            // — the dump's `[no_alloc]` annotation matches the shared
+            // VM/WASM baseline. Codegen pipelines should pass their
+            // backend-specific policy when consuming the analysis.
+            alloc_policy: Some(&neutral_policy),
             on_after_pass: Some(Box::new(|stage, items_after| {
                 if stage == target {
-                    *captured.borrow_mut() = Some(dump::dump_items(items_after));
+                    *captured.borrow_mut() = Some(items_after.to_vec());
                 }
             })),
             ..Default::default()
@@ -3531,7 +3542,14 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
     }
 
     match captured.into_inner() {
-        Some(text) => print!("{}", text),
+        Some(snapshot) => {
+            let analysis_for_dump = if target == PipelineStage::Analyze {
+                pipeline_result.analysis.as_ref()
+            } else {
+                None
+            };
+            print!("{}", dump::dump_items(&snapshot, analysis_for_dump));
+        }
         None => {
             eprintln!(
                 "{}",

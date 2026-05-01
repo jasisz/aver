@@ -22,6 +22,7 @@
 //! are independent flags so callers can mix them however they need.
 
 use crate::ast::TopLevel;
+use crate::ir::{AllocPolicy, AnalysisResult, CallLowerCtx};
 use crate::source::LoadedModule;
 use crate::types::checker::{TypeCheckResult, run_type_check_full, run_type_check_with_loaded};
 
@@ -32,6 +33,7 @@ pub enum PipelineStage {
     InterpLower,
     BufferBuild,
     Resolve,
+    Analyze,
 }
 
 impl PipelineStage {
@@ -42,6 +44,7 @@ impl PipelineStage {
             Self::InterpLower => "interp_lower",
             Self::BufferBuild => "buffer_build",
             Self::Resolve => "resolve",
+            Self::Analyze => "analyze",
         }
     }
 }
@@ -66,6 +69,23 @@ pub struct PipelineConfig<'a> {
     pub run_interp_lower: bool,
     pub run_buffer_build: bool,
     pub run_resolve: bool,
+    /// Whether to run the IR-level analysis pass after `resolve`. The
+    /// pass is read-only — it populates `PipelineResult.analysis` with
+    /// per-fn body shape, thin-kind, locals count, and (when an
+    /// `alloc_policy` is configured) policy-parametrized alloc info.
+    pub run_analyze: bool,
+    /// Allocation policy used by `analyze`. `None` skips the alloc-info
+    /// computation; every other analysis fact is still produced.
+    /// Backends should pass their own policy (`VmAllocPolicy`,
+    /// `WasmAllocPolicy`); diagnostic tools that don't have a backend
+    /// in mind can pass `None` or use the dump module's conservative
+    /// default.
+    pub alloc_policy: Option<&'a dyn AllocPolicy>,
+    /// `CallLowerCtx` for the body classifier. `None` uses a conservative
+    /// stub that knows nothing about local symbols / module paths — fine
+    /// for diagnostic dumps; codegen pipelines should pass a real ctx so
+    /// the classifier returns its full set of body shapes.
+    pub call_ctx: Option<&'a dyn CallLowerCtx>,
     /// Hook fired after every stage that ran.
     pub on_after_pass: Option<AfterPassHook<'a>>,
 }
@@ -78,6 +98,9 @@ impl<'a> Default for PipelineConfig<'a> {
             run_interp_lower: true,
             run_buffer_build: true,
             run_resolve: true,
+            run_analyze: true,
+            alloc_policy: None,
+            call_ctx: None,
             on_after_pass: None,
         }
     }
@@ -91,6 +114,9 @@ pub struct PipelineResult {
     pub typecheck: Option<TypeCheckResult>,
     /// `(rewrites, synthesized)` from the buffer-build pass when it ran.
     pub buffer_build_stats: Option<(usize, usize)>,
+    /// IR-level analysis facts (per-fn body shape, thin kind, alloc info)
+    /// when `run_analyze` was on. `None` when the stage was disabled.
+    pub analysis: Option<AnalysisResult>,
 }
 
 // ── Per-stage entry points ──────────────────────────────────────────
@@ -180,7 +206,37 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         fire(&mut cfg, PipelineStage::Resolve, items);
     }
 
+    if cfg.run_analyze {
+        // The body classifier needs a `CallLowerCtx`. When no real ctx is
+        // configured we use `StubCallCtx`, which under-classifies `direct`
+        // shapes (a body that calls a fn whose name looks like a local
+        // gets seen as a generic call). Acceptable for `--emit-ir` dumps;
+        // codegen pipelines should plumb a real ctx through `cfg.call_ctx`
+        // once the inliner needs accurate body shape data.
+        let adapter = CallCtxAdapter(cfg.call_ctx);
+        result.analysis = Some(crate::ir::analyze(items, cfg.alloc_policy, &adapter));
+        fire(&mut cfg, PipelineStage::Analyze, items);
+    }
+
     result
+}
+
+/// Bridges the trait-object `cfg.call_ctx: Option<&dyn CallLowerCtx>`
+/// into the generic-impl world that the IR classifiers (`classify_call_plan`,
+/// `classify_thin_fn_def`, …) expect (`&impl CallLowerCtx`). When the
+/// option is `None` every method returns the conservative answer.
+struct CallCtxAdapter<'a>(Option<&'a dyn CallLowerCtx>);
+
+impl<'a> CallLowerCtx for CallCtxAdapter<'a> {
+    fn is_local_value(&self, name: &str) -> bool {
+        self.0.is_some_and(|c| c.is_local_value(name))
+    }
+    fn is_user_type(&self, name: &str) -> bool {
+        self.0.is_some_and(|c| c.is_user_type(name))
+    }
+    fn resolve_module_call<'b>(&self, dotted: &'b str) -> Option<(&'b str, &'b str)> {
+        self.0.and_then(|c| c.resolve_module_call(dotted))
+    }
 }
 
 fn fire(cfg: &mut PipelineConfig<'_>, stage: PipelineStage, items: &[TopLevel]) {
@@ -227,6 +283,7 @@ fn id(n: Int) -> Int
                 PipelineStage::InterpLower,
                 PipelineStage::BufferBuild,
                 PipelineStage::Resolve,
+                PipelineStage::Analyze,
             ]
         );
     }
@@ -250,6 +307,7 @@ fn id(n: Int) -> Int
                 typecheck: None,
                 run_interp_lower: false,
                 run_buffer_build: false,
+                run_analyze: false,
                 on_after_pass: Some(Box::new(|stage, _| fired.push(stage))),
                 ..Default::default()
             },
