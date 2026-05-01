@@ -17,12 +17,19 @@ The eleven historic cargo-bench programs (`fib`, `countdown`, `record`, `map_bui
 
 ## `aver bench` — scenario harness
 
+Three input shapes:
+
 ```bash
-aver bench bench/scenarios/fib.toml                  # human summary
-aver bench bench/scenarios/fib.toml --json           # structured single report
+aver bench foo.av                                    # ad-hoc — defaults (30 iter, 3 warmup)
+aver bench foo.av --iterations=50 --warmup=5         # ad-hoc with overrides
+aver bench bench/scenarios/foo.toml                  # named manifest (per-scenario tolerance + expected)
 aver bench bench/scenarios/                          # directory mode, all *.toml
 aver bench bench/scenarios/ --json                   # NDJSON, one line per scenario
 ```
+
+`.av` is the quick path for "did I regress this fn?" — synthesized manifest with default tolerance, no `[expected]`. `.toml` is the named-and-pinned path for repeatable measurement (committed to repo, named scenario, per-scenario tolerance, future expected-byte checks). Directory mode globs every `*.toml` (skips `.av` — those need explicit invocation since they have no per-scenario knobs).
+
+Use `.av` for one-off measurement, `.toml` for inventoried scenarios that gate `--compare baseline.json`.
 
 ### Targets
 

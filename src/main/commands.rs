@@ -3371,6 +3371,8 @@ fn write_codegen_output(
 pub(super) struct BenchOptions<'a> {
     pub scenario_path: &'a str,
     pub target: &'a str,
+    pub iterations: Option<usize>,
+    pub warmup: Option<usize>,
     pub json: bool,
     pub save_baseline: Option<&'a str>,
     pub compare: Option<&'a str>,
@@ -3401,11 +3403,31 @@ pub(super) fn cmd_bench(opts: BenchOptions<'_>) {
         return;
     }
 
-    let manifest = match aver::bench::Manifest::load(scenario_path) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("{}", format!("scenario load: {}", e).red());
+    // Two single-file shapes: `.toml` manifest (full per-scenario
+    // tolerances + expected shape) or `.av` source directly (ad-hoc
+    // synthesized manifest with `--iterations` / `--warmup` overrides
+    // on top of defaults). Anything else falls through to manifest
+    // load and surfaces whatever parse error TOML throws.
+    let is_av = scenario_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("av"));
+    let manifest = if is_av {
+        if opts.compare.is_some() || opts.save_baseline.is_some() {
+            eprintln!(
+                "{}",
+                "ad-hoc `.av` mode: --compare / --save-baseline need a `.toml` manifest with per-scenario tolerances".red()
+            );
             process::exit(1);
+        }
+        synth_manifest_for_av(scenario_path, opts.iterations, opts.warmup)
+    } else {
+        match aver::bench::Manifest::load(scenario_path) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("{}", format!("scenario load: {}", e).red());
+                process::exit(1);
+            }
         }
     };
 
@@ -3474,6 +3496,30 @@ pub(super) fn cmd_bench(opts: BenchOptions<'_>) {
         if diff.regressed && opts.fail_on_regression {
             process::exit(1);
         }
+    }
+}
+
+/// Build an in-memory `Manifest` for the ad-hoc `.av` form. CLI flags
+/// override the defaults; `[expected]` and `[tolerance]` stay at their
+/// defaults — those need a real TOML manifest to opt into.
+fn synth_manifest_for_av(
+    av_path: &Path,
+    iterations: Option<usize>,
+    warmup: Option<usize>,
+) -> aver::bench::Manifest {
+    let name = av_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("scenario")
+        .to_string();
+    aver::bench::Manifest {
+        name,
+        entry: av_path.to_path_buf(),
+        iterations: iterations.unwrap_or(30),
+        warmup: warmup.unwrap_or(3),
+        args: Vec::new(),
+        expected: aver::bench::manifest::ExpectedShape::default(),
+        tolerance: aver::bench::Tolerance::default(),
     }
 }
 

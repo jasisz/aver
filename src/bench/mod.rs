@@ -24,7 +24,7 @@
 //! See `bench/scenarios/*.toml` for example manifests.
 
 mod compare;
-mod manifest;
+pub mod manifest;
 mod report;
 mod runner;
 

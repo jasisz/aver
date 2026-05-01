@@ -482,14 +482,24 @@ pub(super) enum Commands {
     /// 0.15.1 ships VM target only; `wasm-local` and `wasm-cloudflare`
     /// follow in 0.15.2.
     Bench {
-        /// Scenario manifest path or scenarios directory. A directory
-        /// runs every `*.toml` inside in alphabetical order.
+        /// What to run:
+        /// - `bench/scenarios/foo.toml` — named manifest (per-scenario tolerances, expected shape)
+        /// - `bench/scenarios/foo.av`  — ad-hoc, defaults + `--iterations` / `--warmup` overrides
+        /// - `bench/scenarios/`         — directory globs every `*.toml`, alphabetical
         scenario: String,
         /// Bench target: `vm` (in-process), `wasm-local` (wasmtime
         /// in-process, requires the `wasm` feature), `rust` (native
         /// binary via `aver compile --target rust` + `cargo build`).
         #[arg(long, default_value = "vm")]
         target: String,
+        /// Number of timed iterations (ad-hoc `.av` mode only; ignored
+        /// for `.toml` and directory mode). Default 30.
+        #[arg(long, value_name = "N")]
+        iterations: Option<usize>,
+        /// Warmup iterations not included in stats (ad-hoc `.av` mode
+        /// only). Default 3.
+        #[arg(long, value_name = "N")]
+        warmup: Option<usize>,
         /// Emit the structured JSON report instead of the human-readable
         /// summary. Use this in CI / scripts; the JSON shape is the
         /// stable contract for `--compare baseline.json`.

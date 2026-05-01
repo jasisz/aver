@@ -255,6 +255,8 @@ fn main() {
         Commands::Bench {
             scenario,
             target,
+            iterations,
+            warmup,
             json,
             save_baseline,
             compare,
@@ -263,6 +265,8 @@ fn main() {
             commands::cmd_bench(commands::BenchOptions {
                 scenario_path: scenario,
                 target,
+                iterations: *iterations,
+                warmup: *warmup,
                 json: *json,
                 save_baseline: save_baseline.as_deref(),
                 compare: compare.as_deref(),
