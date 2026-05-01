@@ -11,6 +11,7 @@ use crate::ast::TopLevel;
 use crate::ir::AnalysisResult;
 
 mod body;
+mod builtins;
 mod module;
 #[cfg(test)]
 mod tests;

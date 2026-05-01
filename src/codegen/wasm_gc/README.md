@@ -129,7 +129,25 @@ Without this optimization wasm-gc was 3-3.5x slower on newtype_record / newtype_
 
 ## Phase 3 status
 
-- **3a (shipped)**: Float, Records (struct types, `RecordCreate`, `Attr`), Single-arm Variants (`type Foo = Bar(T)`, pattern unwrap), **newtype optimization**.
-- **3b (next)**: multi-arm variant dispatch via `ref.test` cascade, multi-field variant patterns, List<T>, Tuple via multi-value, Map<K,V>, Vector<T>, String, dotted/method calls (`Int.toString`, `List.prepend`).
+- **3a (shipped)**: Float, Records (struct types, `RecordCreate`, `Attr`), Single-arm Variants, **newtype optimization**.
+- **3b/1 (shipped)**: multi-arm variant dispatch via `ref.test` cascade, multi-field variant patterns, `Float.fromInt` / `Int.fromFloat`. Wasmtime dependency bumped 29 → 44 (29 had ref.cast bugs).
+- **3c (next)**: String representation + Int.toString + List + Map + Vector. Builtin scaffold lives in `builtins/` — `BuiltinRegistry` allocates per-module wasm fn slots for pure helpers (`Int.toString`, `List.prepend`, …), `effects.rs` (TBA) declares host imports for effectful operations (`Console.print`, …). Architecture decided; wiring + first real implementation lands once String repr is picked (`(ref null (array i8))` is the leading candidate — engine-managed, no linear memory needed).
+
+## Where builtins live (architectural decision, 2026-05-01)
+
+Two-file split:
+
+- **Pure builtins** → per-module helper fns (`builtins/`). Each used builtin gets a wasm fn slot in the consuming module on first reference. Same pattern rustc uses for stdlib helpers in its wasm output. `wasm-opt -Oz` DCE's unused. No external runtime, fully standalone.
+- **Effectful builtins** → `(import "aver" "...")` (`effects.rs`, TBA). Host (browser / workerd / wasmtime+wasi) supplies the implementation. Same shape the legacy backend uses for effects, just without the `aver_runtime.wasm` middleman.
+
+Rejected alternatives:
+- Custom runtime module → reverts the "no aver_runtime" call we made on day one
+- Inline-emit per call site → bloats every callsite with the same 30-instruction body
+- JS String Builtins → browser-only, niche
+
+## Bench coverage status (phase 3a + 3b/1)
+
+Working: fib, countdown, newtype_bare, newtype_record, newtype_variant, match_dispatch, record (7/13 bench scenarios).
+Pending phase 3c: factorial, string_interp, fractal_seahorse, map_build, map_lookup, vector_ops.
 
 ## Phase plan
