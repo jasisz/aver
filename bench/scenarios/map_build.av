@@ -1,0 +1,10 @@
+module Bench
+
+fn buildMap(n: Int, m: Map<String, Int>) -> Map<String, Int>
+    match n
+        0 -> m
+        _ -> buildMap(n - 1, Map.set(m, Int.toString(n), n))
+
+fn main() -> Int
+    m = buildMap(5000, Map.empty())
+    Map.len(m)

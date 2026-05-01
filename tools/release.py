@@ -860,7 +860,7 @@ def regenerate_playground(dry_run: bool) -> None:
 def verify(dry_run: bool) -> None:
     print("Running verification...")
     if dry_run:
-        print("  [dry-run] would run: cargo fmt --check, clippy, test")
+        print("  [dry-run] would run: cargo fmt --check, clippy, test, bench scenarios")
         return
 
     run(["cargo", "fmt"])
@@ -868,6 +868,16 @@ def verify(dry_run: bool) -> None:
     run(["cargo", "clippy", "--workspace", "--all-targets", "--exclude", "aver-lang", "--", "-D", "warnings"])
     run(["cargo", "clippy", "-p", "aver-lang", "--lib", "--bin", "aver", "--features", "wasm", "--", "-D", "warnings"])
     run(["cargo", "test", "--features", "wasm"])
+
+    # Bench smoke. Runs every scenario in `bench/scenarios/` end-to-end on
+    # the VM target — catches pipeline / VM regressions that the unit tests
+    # miss (e.g. a real program that compiles fine but crashes in the
+    # bytecode dispatch). The release script doesn't gate on numbers (the
+    # CI gate is 0.15.2 work) but the run must succeed; any scenario that
+    # errors out blocks the release.
+    run(["cargo", "build", "--release", "--bin", "aver"])
+    run([str(REPO_ROOT / "target" / "release" / "aver"), "bench",
+         str(REPO_ROOT / "bench" / "scenarios"), "--json"])
 
 
 def publish(new_versions: dict[str, str], old_versions: dict[str, str], dry_run: bool) -> None:

@@ -1,0 +1,15 @@
+module Bench
+
+record UserId
+    raw: Int
+
+fn unwrap(id: UserId) -> Int
+    id.raw
+
+fn sumLoop(n: Int, acc: Int) -> Int
+    match n
+        0 -> acc
+        _ -> sumLoop(n - 1, acc + unwrap(UserId(raw = n)))
+
+fn main() -> Int
+    sumLoop(20000, 0)

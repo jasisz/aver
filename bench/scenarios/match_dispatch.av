@@ -1,0 +1,23 @@
+module Bench
+
+type Shape
+    Circle(Float)
+    Square(Float)
+    Triangle(Float, Float)
+
+fn area(s: Shape) -> Float
+    match s
+        Shape.Circle(r) -> 3.14159 * r * r
+        Shape.Square(side) -> side * side
+        Shape.Triangle(base, height) -> 0.5 * base * height
+
+fn sumAreas(n: Int, acc: Float, variant: Int) -> Float
+    match n
+        0 -> acc
+        _ -> match variant
+            1 -> sumAreas(n - 1, acc + area(Shape.Circle(Float.fromInt(n))), variant)
+            2 -> sumAreas(n - 1, acc + area(Shape.Square(Float.fromInt(n))), variant)
+            _ -> sumAreas(n - 1, acc + area(Shape.Triangle(Float.fromInt(n), Float.fromInt(n))), variant)
+
+fn main() -> Float
+    sumAreas(10000, 0.0, 1) + sumAreas(10000, 0.0, 2) + sumAreas(10000, 0.0, 3)

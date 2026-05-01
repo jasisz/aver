@@ -180,188 +180,25 @@ fn write_temp_source(root: &std::path::Path, name: &str, source: &str) -> std::p
 }
 
 // ── Test programs ────────────────────────────────────────────────────────────
+//
+// Sources live as individual `.av` files in `bench/scenarios/`, shared
+// with `aver bench` so cargo bench (criterion timing across VM/WASM/Rust/
+// self-host) and the in-process scenario harness measure the exact same
+// programs. Newtype trio compares the same compute three ways; comparing
+// per-backend numbers tells us how much current lowering pays for
+// nominal newtype safety on each backend.
 
-const FIB_SRC: &str = r#"module Bench
-
-fn fib(n: Int) -> Int
-    match n
-        0 -> 0
-        1 -> 1
-        _ -> fib(n - 1) + fib(n - 2)
-
-fn main() -> Int
-    fib(15)
-"#;
-
-const COUNTDOWN_SRC: &str = r#"module Bench
-
-fn countdown(n: Int) -> Int
-    match n
-        0 -> 0
-        _ -> countdown(n - 1)
-
-fn main() -> Int
-    countdown(20000)
-"#;
-
-const RECORD_SRC: &str = r#"module Bench
-
-record Point
-    x: Int
-    y: Int
-
-fn distance(p: Point) -> Int
-    p.x * p.x + p.y * p.y
-
-fn sumDistances(n: Int, acc: Int) -> Int
-    match n
-        0 -> acc
-        _ -> sumDistances(n - 1, acc + distance(Point(x = n, y = n * 2)))
-
-fn main() -> Int
-    sumDistances(20000, 0)
-"#;
-
-const MAP_BUILD_SRC: &str = r#"module Bench
-
-fn buildMap(n: Int, m: Map<String, Int>) -> Map<String, Int>
-    match n
-        0 -> m
-        _ -> buildMap(n - 1, Map.set(m, Int.toString(n), n))
-
-fn main() -> Int
-    m = buildMap(5000, Map.empty())
-    Map.len(m)
-"#;
-
-// Lookup-heavy companion to MAP_BUILD: builds the map once and then
-// hammers it with lookups. Linked-list maps were O(N) per get (and so
-// O(N²) over the workload); HAMT brings it down to O(log N). The
-// build phase remains in-bench so that build regressions still show
-// up — but the lookup phase dominates wall-clock for N≥1000.
-const MAP_LOOKUP_SRC: &str = r#"module Bench
-
-fn buildMap(n: Int, m: Map<String, Int>) -> Map<String, Int>
-    match n
-        0 -> m
-        _ -> buildMap(n - 1, Map.set(m, Int.toString(n), n))
-
-fn sumLookups(i: Int, m: Map<String, Int>, acc: Int) -> Int
-    match i
-        0 -> acc
-        _ -> match Map.get(m, Int.toString(i))
-            Option.Some(v) -> sumLookups(i - 1, m, acc + v)
-            Option.None -> sumLookups(i - 1, m, acc)
-
-fn main() -> Int
-    m = buildMap(2000, Map.empty())
-    sumLookups(20000, m, 0)
-"#;
-
-const MATCH_SRC: &str = r#"module Bench
-
-type Shape
-    Circle(Float)
-    Square(Float)
-    Triangle(Float, Float)
-
-fn area(s: Shape) -> Float
-    match s
-        Shape.Circle(r) -> 3.14159 * r * r
-        Shape.Square(side) -> side * side
-        Shape.Triangle(base, height) -> 0.5 * base * height
-
-fn sumAreas(n: Int, acc: Float, variant: Int) -> Float
-    match n
-        0 -> acc
-        _ -> match variant
-            1 -> sumAreas(n - 1, acc + area(Shape.Circle(Float.fromInt(n))), variant)
-            2 -> sumAreas(n - 1, acc + area(Shape.Square(Float.fromInt(n))), variant)
-            _ -> sumAreas(n - 1, acc + area(Shape.Triangle(Float.fromInt(n), Float.fromInt(n))), variant)
-
-fn main() -> Float
-    sumAreas(10000, 0.0, 1) + sumAreas(10000, 0.0, 2) + sumAreas(10000, 0.0, 3)
-"#;
-
-const STRING_SRC: &str = r#"module Bench
-
-fn buildString(n: Int, acc: String) -> String
-    match n
-        0 -> acc
-        _ -> buildString(n - 1, "{acc}-{Int.toString(n)}")
-
-fn main() -> String
-    buildString(5000, "start")
-"#;
-
-const VECTOR_SRC: &str = r#"module Bench
-
-fn fillVector(v: Vector<Int>, n: Int, i: Int) -> Vector<Int>
-    match i == n
-        true -> v
-        false -> fillVector(Option.withDefault(Vector.set(v, i, i * i), v), n, i + 1)
-
-fn sumVector(v: Vector<Int>, n: Int, i: Int, acc: Int) -> Int
-    match i == n
-        true -> acc
-        false -> sumVector(v, n, i + 1, acc + Option.withDefault(Vector.get(v, i), 0))
-
-fn main() -> Int
-    v = fillVector(Vector.new(5000, 0), 5000, 0)
-    sumVector(v, 5000, 0, 0)
-"#;
-
-// Newtype overhead: same compute three ways. The three programs do
-// the exact same wrap/unwrap-and-sum loop; the only difference is
-// the layer between the i64 and the function. Comparing the three
-// numbers per backend tells us how much current Aver lowering pays
-// for nominal newtype safety on each backend (and how much a
-// transparent-newtype lowering in 0.14 could save).
-const NEWTYPE_BARE_SRC: &str = r#"module Bench
-
-fn sumLoop(n: Int, acc: Int) -> Int
-    match n
-        0 -> acc
-        _ -> sumLoop(n - 1, acc + n)
-
-fn main() -> Int
-    sumLoop(20000, 0)
-"#;
-
-const NEWTYPE_RECORD_SRC: &str = r#"module Bench
-
-record UserId
-    raw: Int
-
-fn unwrap(id: UserId) -> Int
-    id.raw
-
-fn sumLoop(n: Int, acc: Int) -> Int
-    match n
-        0 -> acc
-        _ -> sumLoop(n - 1, acc + unwrap(UserId(raw = n)))
-
-fn main() -> Int
-    sumLoop(20000, 0)
-"#;
-
-const NEWTYPE_VARIANT_SRC: &str = r#"module Bench
-
-type UserId
-    UserId(Int)
-
-fn unwrap(id: UserId) -> Int
-    match id
-        UserId.UserId(n) -> n
-
-fn sumLoop(n: Int, acc: Int) -> Int
-    match n
-        0 -> acc
-        _ -> sumLoop(n - 1, acc + unwrap(UserId.UserId(n)))
-
-fn main() -> Int
-    sumLoop(20000, 0)
-"#;
+const FIB_SRC: &str = include_str!("../bench/scenarios/fib.av");
+const COUNTDOWN_SRC: &str = include_str!("../bench/scenarios/countdown.av");
+const RECORD_SRC: &str = include_str!("../bench/scenarios/record.av");
+const MAP_BUILD_SRC: &str = include_str!("../bench/scenarios/map_build.av");
+const MAP_LOOKUP_SRC: &str = include_str!("../bench/scenarios/map_lookup.av");
+const MATCH_SRC: &str = include_str!("../bench/scenarios/match_dispatch.av");
+const STRING_SRC: &str = include_str!("../bench/scenarios/string_interp.av");
+const VECTOR_SRC: &str = include_str!("../bench/scenarios/vector_ops.av");
+const NEWTYPE_BARE_SRC: &str = include_str!("../bench/scenarios/newtype_bare.av");
+const NEWTYPE_RECORD_SRC: &str = include_str!("../bench/scenarios/newtype_record.av");
+const NEWTYPE_VARIANT_SRC: &str = include_str!("../bench/scenarios/newtype_variant.av");
 
 // ── Benchmark groups ─────────────────────────────────────────────────────────
 

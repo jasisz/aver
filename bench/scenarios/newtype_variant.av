@@ -1,0 +1,16 @@
+module Bench
+
+type UserId
+    UserId(Int)
+
+fn unwrap(id: UserId) -> Int
+    match id
+        UserId.UserId(n) -> n
+
+fn sumLoop(n: Int, acc: Int) -> Int
+    match n
+        0 -> acc
+        _ -> sumLoop(n - 1, acc + unwrap(UserId.UserId(n)))
+
+fn main() -> Int
+    sumLoop(20000, 0)

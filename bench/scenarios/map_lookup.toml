@@ -1,0 +1,5 @@
+name       = "map_lookup"
+entry      = "map_lookup.av"
+iterations = 30
+warmup     = 3
+args       = []

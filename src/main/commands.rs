@@ -3377,13 +3377,15 @@ pub(super) struct BenchOptions<'a> {
     pub fail_on_regression: bool,
 }
 
-/// `aver bench SCENARIO.toml [--target=vm] [--json] [--save-baseline PATH]
-///                            [--compare PATH] [--fail-on-regression]`
+/// `aver bench (SCENARIO.toml | SCENARIO_DIR) [flags]`
 ///
-/// Loads the manifest, runs the canonical pipeline + VM, optionally compares
-/// against a stored baseline, and prints a human-readable summary or the
-/// structured JSON shape. Used both for local "did I regress?" checks and
-/// for the CI gate (`--compare ... --fail-on-regression`).
+/// Single-manifest mode runs one scenario; directory mode globs every
+/// `*.toml` inside, sorts alphabetically, runs each in turn. Single-mode
+/// supports `--save-baseline` / `--compare` / `--fail-on-regression`.
+/// Directory mode emits NDJSON (one report per line) when `--json` is
+/// passed; without `--json` it prints the human form for each scenario
+/// separated by blank lines. `--compare` is single-scenario only —
+/// directory-mode comparison is the 0.15.2 baseline-snapshot workflow.
 pub(super) fn cmd_bench(opts: BenchOptions<'_>) {
     if opts.target != "vm" {
         eprintln!(
@@ -3397,7 +3399,13 @@ pub(super) fn cmd_bench(opts: BenchOptions<'_>) {
         process::exit(1);
     }
 
-    let manifest = match aver::bench::Manifest::load(Path::new(opts.scenario_path)) {
+    let scenario_path = Path::new(opts.scenario_path);
+    if scenario_path.is_dir() {
+        run_bench_dir(scenario_path, &opts);
+        return;
+    }
+
+    let manifest = match aver::bench::Manifest::load(scenario_path) {
         Ok(m) => m,
         Err(e) => {
             eprintln!("{}", format!("scenario load: {}", e).red());
@@ -3470,6 +3478,85 @@ pub(super) fn cmd_bench(opts: BenchOptions<'_>) {
         if diff.regressed && opts.fail_on_regression {
             process::exit(1);
         }
+    }
+}
+
+/// Directory mode: run every `*.toml` in `dir` (alphabetical), emit one
+/// report per scenario. NDJSON when `--json` is set, human-readable
+/// blocks separated by blank lines otherwise. `--compare` /
+/// `--save-baseline` are single-scenario only and rejected here with a
+/// clear error.
+fn run_bench_dir(dir: &Path, opts: &BenchOptions<'_>) {
+    if opts.compare.is_some() || opts.save_baseline.is_some() {
+        eprintln!(
+            "{}",
+            "directory mode: --compare / --save-baseline only work on a single scenario".red()
+        );
+        process::exit(1);
+    }
+
+    let mut manifest_paths: Vec<std::path::PathBuf> = Vec::new();
+    match std::fs::read_dir(dir) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("toml") {
+                    manifest_paths.push(path);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "{}",
+                format!("scenarios dir '{}': {}", dir.display(), e).red()
+            );
+            process::exit(1);
+        }
+    }
+    manifest_paths.sort();
+
+    if manifest_paths.is_empty() {
+        eprintln!(
+            "{}",
+            format!("scenarios dir '{}' has no *.toml manifests", dir.display()).red()
+        );
+        process::exit(1);
+    }
+
+    let mut first = true;
+    for manifest_path in &manifest_paths {
+        let manifest = match aver::bench::Manifest::load(manifest_path) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("{}", format!("scenario load: {}", e).red());
+                process::exit(1);
+            }
+        };
+        let report = match aver::bench::run_vm_scenario(&manifest) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("{}", format!("bench run ({}): {}", manifest.name, e).red());
+                process::exit(1);
+            }
+        };
+
+        if opts.json {
+            // NDJSON: one compact report per line, no surrounding array.
+            // Streams trivially through `jq -c .iterations.p50_ms` etc.
+            match serde_json::to_string(&report) {
+                Ok(text) => println!("{}", text),
+                Err(e) => {
+                    eprintln!("{}", format!("bench JSON encode: {}", e).red());
+                    process::exit(1);
+                }
+            }
+        } else {
+            if !first {
+                println!();
+            }
+            print!("{}", aver::bench::format_human(&report));
+        }
+        first = false;
     }
 }
 

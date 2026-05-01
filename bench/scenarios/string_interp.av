@@ -1,0 +1,9 @@
+module Bench
+
+fn buildString(n: Int, acc: String) -> String
+    match n
+        0 -> acc
+        _ -> buildString(n - 1, "{acc}-{Int.toString(n)}")
+
+fn main() -> String
+    buildString(5000, "start")

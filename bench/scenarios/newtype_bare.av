@@ -1,0 +1,9 @@
+module Bench
+
+fn sumLoop(n: Int, acc: Int) -> Int
+    match n
+        0 -> acc
+        _ -> sumLoop(n - 1, acc + n)
+
+fn main() -> Int
+    sumLoop(20000, 0)

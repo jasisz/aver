@@ -1,0 +1,15 @@
+module Bench
+
+fn fillVector(v: Vector<Int>, n: Int, i: Int) -> Vector<Int>
+    match i == n
+        true -> v
+        false -> fillVector(Option.withDefault(Vector.set(v, i, i * i), v), n, i + 1)
+
+fn sumVector(v: Vector<Int>, n: Int, i: Int, acc: Int) -> Int
+    match i == n
+        true -> acc
+        false -> sumVector(v, n, i + 1, acc + Option.withDefault(Vector.get(v, i), 0))
+
+fn main() -> Int
+    v = fillVector(Vector.new(5000, 0), 5000, 0)
+    sumVector(v, 5000, 0, 0)

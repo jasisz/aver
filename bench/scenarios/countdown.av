@@ -1,0 +1,9 @@
+module Bench
+
+fn countdown(n: Int) -> Int
+    match n
+        0 -> 0
+        _ -> countdown(n - 1)
+
+fn main() -> Int
+    countdown(20000)

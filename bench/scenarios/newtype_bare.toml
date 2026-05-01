@@ -1,0 +1,5 @@
+name       = "newtype_bare"
+entry      = "newtype_bare.av"
+iterations = 30
+warmup     = 3
+args       = []

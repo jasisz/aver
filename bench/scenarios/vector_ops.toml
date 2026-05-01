@@ -1,0 +1,5 @@
+name       = "vector_ops"
+entry      = "vector_ops.av"
+iterations = 30
+warmup     = 3
+args       = []

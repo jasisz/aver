@@ -1,0 +1,17 @@
+module Bench
+
+fn buildMap(n: Int, m: Map<String, Int>) -> Map<String, Int>
+    match n
+        0 -> m
+        _ -> buildMap(n - 1, Map.set(m, Int.toString(n), n))
+
+fn sumLookups(i: Int, m: Map<String, Int>, acc: Int) -> Int
+    match i
+        0 -> acc
+        _ -> match Map.get(m, Int.toString(i))
+            Option.Some(v) -> sumLookups(i - 1, m, acc + v)
+            Option.None -> sumLookups(i - 1, m, acc)
+
+fn main() -> Int
+    m = buildMap(2000, Map.empty())
+    sumLookups(20000, m, 0)

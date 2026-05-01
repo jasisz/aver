@@ -1,0 +1,5 @@
+name       = "newtype_record"
+entry      = "newtype_record.av"
+iterations = 30
+warmup     = 3
+args       = []

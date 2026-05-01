@@ -1,0 +1,16 @@
+module Bench
+
+record Point
+    x: Int
+    y: Int
+
+fn distance(p: Point) -> Int
+    p.x * p.x + p.y * p.y
+
+fn sumDistances(n: Int, acc: Int) -> Int
+    match n
+        0 -> acc
+        _ -> sumDistances(n - 1, acc + distance(Point(x = n, y = n * 2)))
+
+fn main() -> Int
+    sumDistances(20000, 0)

@@ -469,14 +469,21 @@ pub(super) enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Run a benchmark scenario (TOML manifest) and report wall-time stats.
+    /// Run benchmark scenario(s) and report wall-time stats.
     ///
-    /// Human-readable text by default; pass `--json` for the structured
-    /// shape that `aver bench --compare baseline.json` (0.15.2) consumes.
+    /// `scenario` can be a single TOML manifest (`bench/scenarios/fib.toml`)
+    /// or a directory containing them — the directory form globs every
+    /// `*.toml` file inside, runs each in alphabetical order, and emits
+    /// one report per scenario. With `--json`, batch runs emit NDJSON
+    /// (one report per line) so consumers can stream them.
+    ///
+    /// Human-readable text by default; `--json` produces the structured
+    /// shape used by `--compare baseline.json` (0.15.2 CI gate).
     /// 0.15.1 ships VM target only; `wasm-local` and `wasm-cloudflare`
     /// follow in 0.15.2.
     Bench {
-        /// Scenario manifest path (e.g. `bench/scenarios/factorial.toml`).
+        /// Scenario manifest path or scenarios directory. A directory
+        /// runs every `*.toml` inside in alphabetical order.
         scenario: String,
         /// Bench target. Only `vm` is implemented in 0.15.1.
         #[arg(long, default_value = "vm")]
