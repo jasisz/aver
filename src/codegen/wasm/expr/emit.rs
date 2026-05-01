@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use wasm_encoder::Instruction;
 
-use crate::ast::{BinOp, Expr, Literal, Spanned, Stmt, StrPart, TailCallData};
+use crate::ast::{BinOp, Expr, Literal, Spanned, Stmt, TailCallData};
 use crate::ir::{
     CallPlan, LeafOp, SemanticConstructor, WrapperKind, classify_call_plan,
     classify_constructor_name, classify_leaf_op,

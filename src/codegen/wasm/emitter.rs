@@ -15,7 +15,7 @@ use wasm_encoder::{
     NameMap, NameSection, StartSection, TypeSection, ValType,
 };
 
-use crate::ast::{Expr, FnBody, FnDef, Literal, Pattern, Stmt, StrPart, TopLevel};
+use crate::ast::{Expr, FnBody, FnDef, Literal, Pattern, Stmt, TopLevel};
 use crate::codegen::CodegenContext;
 use crate::ir::{ThinKind, classify_thin_fn_def, thin_body_plan_is_parent_thin_candidate};
 
