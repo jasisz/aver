@@ -31,6 +31,10 @@ use IntoStatic as _;
 /// Maps fn name → wasm fn index + return type. Built once per module.
 pub(super) struct FnMap {
     pub(super) by_name: HashMap<String, FnEntry>,
+    /// Dotted builtin name → wasm fn index. Populated by
+    /// `module::emit_module` from the `BuiltinRegistry` so call
+    /// sites can `call $builtin_idx` for `Int.toString` etc.
+    pub(super) builtins: HashMap<String, u32>,
 }
 
 pub(super) struct FnEntry {
@@ -476,12 +480,32 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<&'static str, WasmG
             }
         }
         Expr::FnCall(callee, _) => {
+            // Dotted callee: try variant constructor, then registered
+            // builtin, then dotted name. Variants and builtins
+            // determined by the parent (Type) name.
+            if let Expr::Attr(parent, member) = &callee.node {
+                if let Some(info) = ctx.registry.variant(member) {
+                    return Ok(static_type_str(&info.parent));
+                }
+                if let Some(parent_name) = parent_dotted_head(&parent.node) {
+                    let dotted = format!("{parent_name}.{member}");
+                    if ctx.fn_map.builtins.contains_key(&dotted) {
+                        return Ok(builtin_aver_result_type(&dotted));
+                    }
+                    if dotted == "Float.fromInt" {
+                        return Ok("Float");
+                    }
+                    if dotted == "Int.fromFloat" {
+                        return Ok("Int");
+                    }
+                }
+            }
             let name = match &callee.node {
                 Expr::Ident(n) => n.as_str(),
                 Expr::Resolved { name, .. } => name.as_str(),
                 _ => {
                     return Err(WasmGcError::Unimplemented(
-                        "phase 3 — dotted / method calls",
+                        "phase 3b — exotic callee shape (chained Attr, lambda)",
                     ));
                 }
             };
@@ -592,7 +616,26 @@ fn static_type_str(ty: &str) -> &'static str {
         "Float" => "Float",
         "Bool" => "Bool",
         "Unit" => "Unit",
+        "String" => "String",
         _ => "Int", // phase-2 fallback — phase 3 introduces real type plumbing
+    }
+}
+
+/// Aver result type for a registered builtin. Mirrors
+/// `BuiltinName::results` but returns a `&'static str` for type
+/// inference. Adding a new builtin: extend both.
+fn builtin_aver_result_type(dotted: &str) -> &'static str {
+    match dotted {
+        "Int.toString" => "String",
+        _ => "Int",
+    }
+}
+
+fn parent_dotted_head(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Ident(n) => Some(n.as_str()),
+        Expr::Resolved { name, .. } => Some(name.as_str()),
+        _ => None,
     }
 }
 
@@ -1116,6 +1159,16 @@ fn emit_dotted_builtin(
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     let dotted = format!("{parent}.{method}");
+
+    // Registered helper builtin? Push args, emit `call $idx`.
+    if let Some(&wasm_idx) = ctx.fn_map.builtins.get(&dotted) {
+        for arg in args {
+            emit_expr(func, &arg.node, slots, ctx)?;
+        }
+        func.instruction(&Instruction::Call(wasm_idx));
+        return Ok(());
+    }
+
     match dotted.as_str() {
         // Float.fromInt(Int) -> Float
         "Float.fromInt" => {

@@ -26,9 +26,10 @@ use wasm_encoder::{
 
 use super::WasmGcError;
 use super::body::{FnEntry, FnMap, emit_fn_body};
+use super::builtins::{BuiltinName, BuiltinRegistry};
 use super::types::{TypeRegistry, param_types, record_struct_type, return_results};
 
-use crate::ast::{FnDef, TopLevel, TypeDef};
+use crate::ast::{Expr, FnDef, Stmt, TopLevel, TypeDef};
 
 pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
     let registry = TypeRegistry::build(items);
@@ -40,6 +41,16 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
             _ => None,
         })
         .collect();
+
+    // Discover used pure-builtins. Walk every fn body looking for
+    // `FnCall` whose callee is `Attr(_, "method")` and the dotted
+    // form is a known builtin. Discovery happens before slot
+    // allocation so the registry can reserve indices in declaration
+    // order.
+    let mut builtin_registry = BuiltinRegistry::new();
+    for fd in &fn_defs {
+        discover_builtins_in_fn(fd, &mut builtin_registry);
+    }
 
     if fn_defs.is_empty() {
         return Err(WasmGcError::Validation(
@@ -74,6 +85,19 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
         types.ty().function(params, results);
         fn_type_indices.push(idx);
     }
+
+    // 4) One fn type per registered builtin. Slot allocation is
+    //    deferred to here because the user-fn type slots have to
+    //    finish first; builtin slots come AFTER them in the type
+    //    section.
+    let mut next_builtin_type_idx = start_type_idx + 1 + (fn_defs.len() as u32);
+    let mut next_builtin_fn_idx = 1 + (fn_defs.len() as u32); // _start at 0, user fns 1..N
+    builtin_registry.assign_slots(&mut next_builtin_fn_idx, &mut next_builtin_type_idx);
+    for name in builtin_registry.iter() {
+        let p = name.params(&registry)?;
+        let r = name.results(&registry)?;
+        types.ty().function(p, r);
+    }
     module.section(&types);
 
     // ── Function section ───────────────────────────────────────────
@@ -81,6 +105,14 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
     funcs.function(start_type_idx); // _start at wasm fn idx 0
     for type_idx in &fn_type_indices {
         funcs.function(*type_idx);
+    }
+    // Builtin helpers — in registration order, type indices already
+    // assigned by `assign_slots`.
+    for name in builtin_registry.iter() {
+        let type_idx = builtin_registry
+            .lookup_wasm_type_idx(name)
+            .expect("just-assigned builtin type idx");
+        funcs.function(type_idx);
     }
     module.section(&funcs);
 
@@ -96,7 +128,17 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
             },
         );
     }
-    let fn_map = FnMap { by_name };
+    let mut builtin_idx_lookup: HashMap<String, u32> = HashMap::new();
+    for name in builtin_registry.iter() {
+        let idx = builtin_registry
+            .lookup_wasm_fn_idx(name)
+            .expect("registered builtin has wasm fn idx");
+        builtin_idx_lookup.insert(name.canonical().to_string(), idx);
+    }
+    let fn_map = FnMap {
+        by_name,
+        builtins: builtin_idx_lookup,
+    };
 
     // ── Export section ─────────────────────────────────────────────
     let mut exports = ExportSection::new();
@@ -134,6 +176,11 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
         codes.function(&func);
     }
 
+    // Builtin helper bodies — emitted after user fns so their own
+    // wasm fn indices come last. Bodies are stubs today (Unreachable);
+    // real impls land in `builtins/` per phase 3c roadmap.
+    builtin_registry.emit_helper_bodies(&mut codes, &registry)?;
+
     module.section(&codes);
 
     let bytes = module.finish();
@@ -150,6 +197,12 @@ fn emit_user_types(
     items: &[TopLevel],
     registry: &TypeRegistry,
 ) -> Result<(), WasmGcError> {
+    // String comes first in the type section ONLY if the registry
+    // allocated a slot AND the slot index says it should be at the
+    // start. Actually `TypeRegistry::build` allocates the string slot
+    // AFTER all records/variants — so emit user types in registry
+    // declaration order; string sits at `user_type_count - 1`.
+    // Walk records/variants first, then append the string array.
     // NOTE: even when a record / variant is a newtype (erased at the
     // wasm level), we still emit its struct type slot to keep the
     // type-index assignments stable with `TypeRegistry::build`. The
@@ -190,7 +243,100 @@ fn emit_user_types(
             _ => {}
         }
     }
+
+    // String type: `(array i8)`. Mutable=false because Aver strings
+    // are immutable; helpers that build new strings (Int.toString,
+    // String.concat) allocate a fresh array each time and copy.
+    if registry.string_array_type_idx.is_some() {
+        types
+            .ty()
+            .array(&wasm_encoder::StorageType::I8, false /* mutable */);
+    }
+
     Ok(())
+}
+
+/// Walk a fn body looking for dotted builtin calls and register each
+/// unique one in `registry`. Discovery happens once per module before
+/// any wasm bytes get emitted, so slot allocation can run with the
+/// full set known.
+fn discover_builtins_in_fn(fd: &FnDef, registry: &mut BuiltinRegistry) {
+    let crate::ast::FnBody::Block(stmts) = fd.body.as_ref();
+    for stmt in stmts {
+        discover_builtins_in_stmt(stmt, registry);
+    }
+}
+
+fn discover_builtins_in_stmt(stmt: &Stmt, registry: &mut BuiltinRegistry) {
+    match stmt {
+        Stmt::Binding(_, _, e) | Stmt::Expr(e) => discover_builtins_in_expr(&e.node, registry),
+    }
+}
+
+fn discover_builtins_in_expr(expr: &Expr, registry: &mut BuiltinRegistry) {
+    match expr {
+        Expr::FnCall(callee, args) => {
+            // `Type.method(args)` parsed as FnCall(Attr(parent, name), args).
+            if let Expr::Attr(_parent, member) = &callee.node {
+                // Reconstruct the dotted name. `Attr.parent` is itself
+                // an expression (Ident or Resolved), but for builtin
+                // dispatch we just need `Parent.method`.
+                if let Some(parent_name) = expr_to_dotted_head(&callee.node) {
+                    let dotted = format!("{parent_name}.{member}");
+                    if let Some(name) = BuiltinName::from_dotted(&dotted) {
+                        registry.register(name);
+                    }
+                }
+            }
+            discover_builtins_in_expr(&callee.node, registry);
+            for arg in args {
+                discover_builtins_in_expr(&arg.node, registry);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            discover_builtins_in_expr(&l.node, registry);
+            discover_builtins_in_expr(&r.node, registry);
+        }
+        Expr::Match { subject, arms } => {
+            discover_builtins_in_expr(&subject.node, registry);
+            for arm in arms {
+                discover_builtins_in_expr(&arm.body.node, registry);
+            }
+        }
+        Expr::TailCall(boxed) => {
+            for arg in &boxed.args {
+                discover_builtins_in_expr(&arg.node, registry);
+            }
+        }
+        Expr::Attr(obj, _) => discover_builtins_in_expr(&obj.node, registry),
+        Expr::Constructor(_, payload) => {
+            if let Some(p) = payload.as_deref() {
+                discover_builtins_in_expr(&p.node, registry);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, e) in fields {
+                discover_builtins_in_expr(&e.node, registry);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Extract `Parent` from an `Attr(Parent, _)` callee — the parent is
+/// either an Ident or a Resolved local. Anything else (chained Attr,
+/// fn call result) returns None and the dispatch falls through to a
+/// regular fn call.
+fn expr_to_dotted_head(expr: &Expr) -> Option<&str> {
+    if let Expr::Attr(parent, _) = expr {
+        match &parent.node {
+            Expr::Ident(n) => Some(n.as_str()),
+            Expr::Resolved { name, .. } => Some(name.as_str()),
+            _ => None,
+        }
+    } else {
+        None
+    }
 }
 
 /// Validate emitted bytes with `wasmparser` configured for the wasm-gc

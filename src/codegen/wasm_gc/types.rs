@@ -43,6 +43,11 @@ pub(super) struct TypeRegistry {
     /// Total number of user-type slots reserved in the type section.
     /// Function types start AFTER these.
     pub(super) user_type_count: u32,
+    /// Wasm type idx for the `(array i8)` String representation.
+    /// Allocated lazily on first reference; `None` when no String is
+    /// reachable from the program (most numeric bench scenarios).
+    /// See `builtins/` README for the full repr decision.
+    pub(super) string_array_type_idx: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -87,11 +92,31 @@ impl TypeRegistry {
                 _ => {}
             }
         }
+
+        // Allocate String type slot if any signature references String.
+        // Primary representation: `(array i8)` — engine-managed byte
+        // sequence, self-contained (no host imports).
+        let needs_string = items.iter().any(|item| match item {
+            TopLevel::FnDef(fd) => {
+                fd.return_type.contains("String")
+                    || fd.params.iter().any(|(_, t)| t.contains("String"))
+            }
+            _ => false,
+        });
+        let string_array_type_idx = if needs_string {
+            let idx = next_idx;
+            next_idx += 1;
+            Some(idx)
+        } else {
+            None
+        };
+
         Self {
             records,
             variants,
             record_fields,
             user_type_count: next_idx,
+            string_array_type_idx,
         }
     }
 
@@ -202,16 +227,32 @@ pub(super) fn aver_to_wasm(
             })));
         }
     }
-    // Compound types not yet lowered — surface a clear "phase 4+" error.
+    // String maps to `(ref null (array i8))` when the registry has
+    // pre-allocated the array type during `build`. Unique-pointer
+    // semantics aren't needed; nullable is fine because Aver's type
+    // system already proves String values are non-null.
+    if trimmed == "String" {
+        if let Some(reg) = registry
+            && let Some(idx) = reg.string_array_type_idx
+        {
+            return Ok(Some(ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(idx),
+            })));
+        }
+        return Err(WasmGcError::Validation(
+            "String reachable from a fn signature but no string type slot was allocated".into(),
+        ));
+    }
+    // Compound types not yet lowered.
     Err(WasmGcError::Unimplemented(match trimmed {
-        "String" => "phase 3b — String lowering",
-        _ if trimmed.starts_with("List<") => "phase 3b — List<T>",
-        _ if trimmed.starts_with("Tuple<") => "phase 3b — Tuple",
-        _ if trimmed.starts_with("Map<") => "phase 3b — Map<K,V>",
-        _ if trimmed.starts_with("Vector<") => "phase 3b — Vector<T>",
-        _ if trimmed.starts_with("Result<") => "phase 3b — Result",
-        _ if trimmed.starts_with("Option<") => "phase 3b — Option",
-        _ => "unknown type — likely a generic / inferred parameter that needs phase 3b",
+        _ if trimmed.starts_with("List<") => "phase 3c — List<T>",
+        _ if trimmed.starts_with("Tuple<") => "phase 3c — Tuple",
+        _ if trimmed.starts_with("Map<") => "phase 3c — Map<K,V>",
+        _ if trimmed.starts_with("Vector<") => "phase 3c — Vector<T>",
+        _ if trimmed.starts_with("Result<") => "phase 3c — Result",
+        _ if trimmed.starts_with("Option<") => "phase 3c — Option",
+        _ => "unknown type — likely a generic / inferred parameter that needs phase 3c",
     }))
 }
 

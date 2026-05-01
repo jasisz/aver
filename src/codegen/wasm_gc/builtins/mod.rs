@@ -2,83 +2,125 @@
 //!
 //! ## Strategy
 //!
-//! Aver's builtin namespace (`Int.toString`, `List.prepend`, `Map.get`,
-//! `String.concat`, …) splits two ways:
+//! Aver's builtin namespace splits two ways:
 //!
-//! - **Pure builtins** — `Int.toString`, `List.prepend`, `Map.empty`,
-//!   `Vector.get`, etc. — produce wasm-side data. We emit each one as
-//!   a *local helper function* inside the user's wasm module on first
-//!   use. Same pattern rustc uses for stdlib helpers in its wasm
-//!   output. No separate runtime module, no host dependency. Helpers
-//!   that aren't used get DCE'd by `wasm-opt -Oz`.
+//! - **Pure builtins** (`Int.toString`, `List.prepend`, `Map.empty`,
+//!   `Vector.get`, …) — emitted as local helper fns inside the user's
+//!   wasm module on first use. Same pattern rustc uses for stdlib in
+//!   its wasm output. No external runtime, no host dependency.
+//!   Helpers that aren't reached get DCE'd by `wasm-opt -Oz`.
 //!
-//! - **Effectful builtins** — `Console.print`, `Http.get`, `File.read`
-//!   — go through `(import "aver" "...")` so the host (browser /
-//!   workerd / wasmtime+wasi) supplies the implementation. This is
-//!   the same shape the legacy backend uses for effects, just
-//!   without the `aver_runtime.wasm` middleman. Host-native fast
-//!   paths, zero wasm overhead. Lives in `effects.rs` (separate file
-//!   because the registration shape differs — imports declared in
-//!   the import section, not emitted as helper fns).
+//! - **Effectful builtins** (`Console.print`, `Http.get`, …) — go
+//!   through `(import "aver" "...")` so the host supplies the impl.
+//!   Same shape the legacy backend uses for effects, just without
+//!   the `aver_runtime.wasm` middleman. Lives in `effects.rs` (TBA).
+//!
+//! ## String representation
+//!
+//! `String = (ref null (array i8))` — engine-managed UTF-8 byte
+//! sequence. Decision rationale in `../README.md` ("Where builtins
+//! live"). Alternatives considered:
+//!
+//! - **stringref** `(ref string)` — proposal was deprecated in
+//!   2024-2025 in favour of JS String Builtins.
+//! - **JS String Builtins** (`(import "wasm:js-string" ...)`) —
+//!   stage-4 standardized, but requires host cooperation. Wasmtime
+//!   doesn't ship it natively (would need our `Linker::func_wrap`
+//!   for every string op); browsers and workerd do. Future opt-in
+//!   as `aver compile --strings=js-builtins` for browser-only
+//!   deployments where the zero-copy JS interop matters.
+//! - **Linear memory + `(struct (i32 ptr) (i32 len))`** — works on
+//!   any wasm runtime but reintroduces the linear-memory + bump-
+//!   allocator complexity we left behind by going to wasm-gc.
+//!
+//! `(array i8)` is engine-managed (GC handles allocation), runs on
+//! any wasm-gc runtime, and matches our "no custom runtime" thesis.
 //!
 //! ## Lifecycle
 //!
 //! 1. **Discovery** — `module::emit_module` walks the IR before fn
-//!    bodies emit and calls `BuiltinRegistry::register_used_builtins`
-//!    which scans for dotted callees against the known builtin set.
-//!    Each unique builtin gets a slot reserved in the type and
-//!    function sections.
-//! 2. **Call site emit** — `body::emit_dotted_builtin` looks up the
-//!    builtin in the registry, gets its wasm fn idx, and emits
-//!    `call $builtin_idx`. Same shape as user fn calls — the wasm
-//!    validator can't tell the difference.
-//! 3. **Helper bodies** — emitted after user fns, same code section,
-//!    each one using the standard `Function::new` shape.
+//!    bodies emit and registers each used dotted-builtin via
+//!    `BuiltinRegistry::register`.
+//! 2. **Slot allocation** — after user fn types are reserved,
+//!    `assign_slots` allocates a wasm fn idx and type idx per
+//!    registered builtin.
+//! 3. **Call site emit** — `body.rs` looks up the builtin in the
+//!    registry and emits `call $idx`.
+//! 4. **Helper bodies** — emitted after user fns by
+//!    `emit_helper_bodies`, with full access to the `TypeRegistry`
+//!    for concrete struct/array type indices.
 //!
-//! ## Module layout
+//! ## Status (phase 3c, in progress)
 //!
-//! - `mod.rs` (this file) — `BuiltinRegistry`, dispatch by name,
-//!   public emit API.
-//! - `int.rs` — `Int.*` builtins.
-//! - `float.rs` — `Float.*` builtins.
-//! - (more later: `list.rs`, `string.rs`, `map.rs`, `vector.rs`)
-
-#![allow(dead_code)]
-//! Phase 3c entry point — scaffold today, wiring lands when the
-//! string representation decision is made (array i8 vs stringref vs
-//! linear-memory-backed struct). Until then this module compiles
-//! clean, documents the design, and provides `BuiltinRegistry`
-//! ready for `module.rs` to consume.
+//! Architecture and registry are wired. The first concrete helper
+//! body (`Int.toString`) is the next chunk of work — it's a digit-
+//! conversion loop that allocates an `(array i8)` and fills it via
+//! `array.new_default` + `array.set` × N. Roughly 50 lines of raw
+//! wasm encoding. Until it lands, calls to `Int.toString` (and the
+//! other builtins listed in `BuiltinName`) surface a clear "phase
+//! 3c body not implemented" error pointing here.
 
 use std::collections::HashMap;
 
-use wasm_encoder::{Function, ValType};
+use wasm_encoder::{CodeSection, Function, Instruction, ValType};
 
 use super::WasmGcError;
+use super::types::TypeRegistry;
 
-mod float;
-mod int;
-
-/// Per-module registry of builtins that need a helper fn slot.
-/// Populated during the pre-emit walk; consumed when fn types and
-/// helper bodies get emitted.
-#[derive(Default)]
-pub(super) struct BuiltinRegistry {
-    /// Dotted name (`"Int.toString"`) → slot info (wasm fn idx,
-    /// signature, the emit thunk that fills in the helper body).
-    used: HashMap<String, BuiltinSlot>,
-    /// Insertion order — preserves emit order so wasm fn indices are
-    /// stable across (deterministic) runs.
-    order: Vec<String>,
+/// Curated set of pure-side builtins phase 3c+ implements. Adding a
+/// new builtin: extend this enum + `from_dotted` + `signature` +
+/// `emit_helper_body`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum BuiltinName {
+    IntToString,
 }
 
-#[derive(Clone)]
-pub(super) struct BuiltinSlot {
-    pub(super) wasm_fn_idx: u32,
-    pub(super) wasm_type_idx: u32,
-    pub(super) params: Vec<ValType>,
-    pub(super) results: Vec<ValType>,
-    pub(super) name: &'static str,
+impl BuiltinName {
+    pub(super) fn from_dotted(s: &str) -> Option<Self> {
+        match s {
+            "Int.toString" => Some(Self::IntToString),
+            _ => None,
+        }
+    }
+
+    pub(super) fn canonical(self) -> &'static str {
+        match self {
+            Self::IntToString => "Int.toString",
+        }
+    }
+
+    pub(super) fn params(self, _registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
+        match self {
+            Self::IntToString => Ok(vec![ValType::I64]),
+        }
+    }
+
+    pub(super) fn results(self, registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
+        match self {
+            Self::IntToString => Ok(vec![string_ref_ty(registry)?]),
+        }
+    }
+
+    /// Emit the full helper body (including trailing `End`) into a
+    /// fresh `Function`. Called once per registered builtin during
+    /// `emit_helper_bodies`.
+    pub(super) fn emit_helper_body(
+        self,
+        _registry: &TypeRegistry,
+    ) -> Result<Function, WasmGcError> {
+        match self {
+            Self::IntToString => emit_int_to_string_stub(),
+        }
+    }
+}
+
+/// Per-module registry of used builtins.
+#[derive(Default)]
+pub(super) struct BuiltinRegistry {
+    /// Insertion order — wasm fn indices and type indices follow it.
+    order: Vec<BuiltinName>,
+    wasm_fn_idx: HashMap<BuiltinName, u32>,
+    wasm_type_idx: HashMap<BuiltinName, u32>,
 }
 
 impl BuiltinRegistry {
@@ -86,110 +128,69 @@ impl BuiltinRegistry {
         Self::default()
     }
 
-    /// Register `name` if it's a known builtin and we haven't seen it
-    /// yet. `next_wasm_fn_idx` and `next_type_idx` are the slot
-    /// counters the caller maintains; we return the (possibly new)
-    /// slot info.
-    pub(super) fn register(
-        &mut self,
-        name: &str,
-        next_wasm_fn_idx: &mut u32,
-        next_type_idx: &mut u32,
-    ) -> Result<Option<BuiltinSlot>, WasmGcError> {
-        if let Some(existing) = self.used.get(name) {
-            return Ok(Some(existing.clone()));
+    pub(super) fn register(&mut self, name: BuiltinName) {
+        if !self.order.contains(&name) {
+            self.order.push(name);
         }
-        let Some(spec) = lookup_spec(name) else {
-            return Ok(None);
-        };
-        let slot = BuiltinSlot {
-            wasm_fn_idx: *next_wasm_fn_idx,
-            wasm_type_idx: *next_type_idx,
-            params: spec.params,
-            results: spec.results,
-            name: spec.canonical_name,
-        };
-        *next_wasm_fn_idx += 1;
-        *next_type_idx += 1;
-        self.used.insert(name.to_string(), slot.clone());
-        self.order.push(name.to_string());
-        Ok(Some(slot))
     }
 
-    pub(super) fn lookup(&self, name: &str) -> Option<&BuiltinSlot> {
-        self.used.get(name)
+    pub(super) fn iter(&self) -> impl Iterator<Item = BuiltinName> + '_ {
+        self.order.iter().copied()
     }
 
-    /// Iterate registered builtins in insertion order — useful for
-    /// emitting type entries and code bodies in a stable sequence.
-    pub(super) fn iter_in_order(&self) -> impl Iterator<Item = &BuiltinSlot> {
-        self.order.iter().map(move |n| &self.used[n])
+    pub(super) fn assign_slots(&mut self, next_wasm_fn_idx: &mut u32, next_type_idx: &mut u32) {
+        for name in self.order.iter().copied() {
+            self.wasm_fn_idx.insert(name, *next_wasm_fn_idx);
+            self.wasm_type_idx.insert(name, *next_type_idx);
+            *next_wasm_fn_idx += 1;
+            *next_type_idx += 1;
+        }
     }
 
-    /// Emit the body of every registered builtin into `codes`, in
-    /// the same order they were declared. The caller has already
-    /// emitted matching entries in the type and function sections.
+    pub(super) fn lookup_wasm_fn_idx(&self, name: BuiltinName) -> Option<u32> {
+        self.wasm_fn_idx.get(&name).copied()
+    }
+
+    pub(super) fn lookup_wasm_type_idx(&self, name: BuiltinName) -> Option<u32> {
+        self.wasm_type_idx.get(&name).copied()
+    }
+
     pub(super) fn emit_helper_bodies(
         &self,
-        codes: &mut wasm_encoder::CodeSection,
+        codes: &mut CodeSection,
+        registry: &TypeRegistry,
     ) -> Result<(), WasmGcError> {
-        for slot in self.iter_in_order() {
-            let mut func = build_helper(slot)?;
-            // Each helper closes its own End; build_helper already
-            // emits it. Just push the function record.
-            let _ = &mut func;
+        for name in self.iter() {
+            let func = name.emit_helper_body(registry)?;
             codes.function(&func);
         }
         Ok(())
     }
 }
 
-/// Per-builtin static spec — what its wasm signature is and which
-/// emit thunk fills the body.
-struct BuiltinSpec {
-    canonical_name: &'static str,
-    params: Vec<ValType>,
-    results: Vec<ValType>,
-    /// Emits the body (instructions up to and including `End`) into
-    /// the supplied `Function`.
-    body: fn(&mut Function) -> Result<(), WasmGcError>,
+/// `(ref null $string_array)` — shared String repr.
+fn string_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
+    let idx = registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "builtin requires String repr but no string type slot was allocated".into(),
+        ))?;
+    Ok(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(idx),
+    }))
 }
 
-fn lookup_spec(name: &str) -> Option<BuiltinSpec> {
-    int::SPECS
-        .iter()
-        .chain(float::SPECS.iter())
-        .find(|s| s.canonical_name == name)
-        .map(|s| BuiltinSpec {
-            canonical_name: s.canonical_name,
-            params: s.params.to_vec(),
-            results: s.results.to_vec(),
-            body: s.body,
-        })
-}
-
-/// Static spec entry — `&[ValType]` slices used at the const level
-/// because each builtin's signature is fixed at compile time.
-pub(super) struct StaticBuiltin {
-    pub(super) canonical_name: &'static str,
-    pub(super) params: &'static [ValType],
-    pub(super) results: &'static [ValType],
-    pub(super) body: fn(&mut Function) -> Result<(), WasmGcError>,
-}
-
-fn build_helper(slot: &BuiltinSlot) -> Result<Function, WasmGcError> {
-    let body_fn = lookup_spec(slot.name)
-        .ok_or(WasmGcError::Validation(format!(
-            "registered builtin `{}` has no spec",
-            slot.name
-        )))?
-        .body;
-    // Helpers don't need extra locals at the top level — each spec
-    // declares its own via wasm `local` in the body. To keep the
-    // shape uniform we let the body-fn add its locals via a
-    // pre-emit hook in the future; for now they're all "primitives
-    // in, primitive out" and don't need extra locals.
+/// Phase-3c stub for `Int.toString`. Real body — digit-conversion
+/// loop building `(array i8)` of ASCII bytes — lands in the next
+/// commit. Today: `unreachable` so a program that actually calls
+/// `Int.toString` fails fast at runtime with a wasm trap, not an
+/// invalid-module error. The fn signature is correct so other
+/// scenarios that only TYPE through `Int.toString` (e.g. main
+/// returns Unit and the call result is dropped) won't validate-fail.
+fn emit_int_to_string_stub() -> Result<Function, WasmGcError> {
     let mut func = Function::new([]);
-    body_fn(&mut func)?;
+    func.instruction(&Instruction::Unreachable);
+    func.instruction(&Instruction::End);
     Ok(func)
 }
