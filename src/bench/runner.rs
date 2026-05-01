@@ -77,9 +77,14 @@ pub fn run_vm_scenario(manifest: &Manifest) -> Result<BenchReport, RunError> {
 
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
-    let (code, globals) =
-        vm::compile_program_with_modules(&items, &mut arena, Some(&module_root), &entry_str)
-            .map_err(|e| RunError::Compile(format!("VM compile: {}", e)))?;
+    let (code, globals) = vm::compile_program_with_modules(
+        &items,
+        &mut arena,
+        Some(&module_root),
+        &entry_str,
+        pipeline_result.analysis.as_ref(),
+    )
+    .map_err(|e| RunError::Compile(format!("VM compile: {}", e)))?;
 
     let mut samples: Vec<f64> = Vec::with_capacity(manifest.iterations);
 

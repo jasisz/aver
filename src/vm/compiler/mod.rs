@@ -16,38 +16,21 @@ use super::symbol::{VmSymbolTable, VmVariantCtor};
 use super::types::{CodeStore, FnChunk};
 
 /// Compile a parsed + TCO-transformed + resolved program into bytecode.
-/// Also loads dependent modules if a `module` declaration with `depends` is present.
+///
+/// `analysis` carries per-fn `FnAnalysis.allocates` from the pipeline's
+/// analyze stage; the VM compiler reads `chunk.no_alloc` from it
+/// directly. `None` triggers an in-place `compute_alloc_info` fallback
+/// for ad-hoc test harnesses (no production caller passes None).
 pub fn compile_program(
     items: &[TopLevel],
     arena: &mut Arena,
+    analysis: Option<&crate::ir::AnalysisResult>,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
-    compile_program_with_modules(items, arena, None, "")
+    compile_program_with_modules(items, arena, None, "", analysis)
 }
 
 /// Compile with explicit module root for `depends` resolution.
 pub fn compile_program_with_modules(
-    items: &[TopLevel],
-    arena: &mut Arena,
-    module_root: Option<&str>,
-    source_file: &str,
-) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
-    compile_program_inner(
-        items,
-        arena,
-        source_file,
-        ModuleSource::Disk(module_root),
-        None,
-    )
-}
-
-/// Variant that reads the per-fn `allocates` flag from the supplied
-/// analysis result instead of recomputing `compute_alloc_info` locally.
-/// Callers that ran the canonical pipeline pass `Some(&pipeline_result.analysis)`;
-/// the simpler entry point above passes `None` and falls back to the
-/// in-place compute. Behavior is identical today (Vm/Wasm/Neutral
-/// `AllocPolicy` impls agree on every name); separating the API lets
-/// the alloc_info computation move to the pipeline once policies diverge.
-pub fn compile_program_with_modules_and_analysis(
     items: &[TopLevel],
     arena: &mut Arena,
     module_root: Option<&str>,
@@ -71,13 +54,14 @@ pub fn compile_program_with_loaded_modules(
     arena: &mut Arena,
     loaded: Vec<crate::source::LoadedModule>,
     source_file: &str,
+    analysis: Option<&crate::ir::AnalysisResult>,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
     compile_program_inner(
         items,
         arena,
         source_file,
         ModuleSource::Loaded(loaded),
-        None,
+        analysis,
     )
 }
 
@@ -1004,7 +988,8 @@ fn cellAt(grid: Vector<Int>, idx: Int) -> Int
         crate::ir::pipeline::resolve(&mut items);
 
         let mut arena = Arena::new();
-        let (code, _globals) = compile_program(&items, &mut arena).expect("vm compile should pass");
+        let (code, _globals) =
+            compile_program(&items, &mut arena, None).expect("vm compile should pass");
         let fn_id = code.find("cellAt").expect("cellAt should exist");
         let chunk = code.get(fn_id);
 
@@ -1029,7 +1014,8 @@ fn updateOrKeep(vec: Vector<Int>, idx: Int, value: Int) -> Vector<Int>
         crate::ir::pipeline::resolve(&mut items);
 
         let mut arena = Arena::new();
-        let (code, _globals) = compile_program(&items, &mut arena).expect("vm compile should pass");
+        let (code, _globals) =
+            compile_program(&items, &mut arena, None).expect("vm compile should pass");
         let fn_id = code
             .find("updateOrKeep")
             .expect("updateOrKeep should exist");
@@ -1058,7 +1044,8 @@ fn bucket(n: Int) -> Int
         crate::ir::pipeline::resolve(&mut items);
 
         let mut arena = Arena::new();
-        let (code, _globals) = compile_program(&items, &mut arena).expect("vm compile should pass");
+        let (code, _globals) =
+            compile_program(&items, &mut arena, None).expect("vm compile should pass");
         let fn_id = code.find("bucket").expect("bucket should exist");
         let chunk = code.get(fn_id);
 
@@ -1091,7 +1078,8 @@ fn listenWith(context: Int, handler: Int) -> Unit
         crate::ir::pipeline::resolve(&mut items);
 
         let mut arena = Arena::new();
-        let (code, _globals) = compile_program(&items, &mut arena).expect("vm compile should pass");
+        let (code, _globals) =
+            compile_program(&items, &mut arena, None).expect("vm compile should pass");
         assert!(code.find("listen").is_some(), "listen should compile");
         assert!(
             code.find("listenWith").is_some(),

@@ -439,8 +439,12 @@ pub fn run_verify_for_items_vm_with_mode(
 
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
+    // verify path runs `pipeline::tco/typecheck/resolve` directly without
+    // the canonical `pipeline::run`, so no AnalysisResult is available
+    // here — the in-place `compute_alloc_info` fallback inside the VM
+    // compiler kicks in.
     let (code, globals) =
-        vm::compile_program_with_modules(&items, &mut arena, base_dir, source_file)
+        vm::compile_program_with_modules(&items, &mut arena, base_dir, source_file, None)
             .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
     if let Some(cfg) = config {
@@ -508,7 +512,7 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode(
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
     let (code, globals) =
-        vm::compile_program_with_loaded_modules(&items, &mut arena, loaded, source_file)
+        vm::compile_program_with_loaded_modules(&items, &mut arena, loaded, source_file, None)
             .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
     if let Some(cfg) = config {

@@ -212,6 +212,7 @@ fn replay_recording_file_vm(
         &mut arena,
         Some(&replay_module_root),
         &recording.program_file,
+        pipeline_result.analysis.as_ref(),
     )
     .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);

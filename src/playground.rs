@@ -635,8 +635,14 @@ fn run_record_inner(
 
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
-    let (code, globals) = vm::compile_program_with_loaded_modules(&items, &mut arena, loaded, "")
-        .map_err(|e| format!("Compile error: {}", e.msg))?;
+    let (code, globals) = vm::compile_program_with_loaded_modules(
+        &items,
+        &mut arena,
+        loaded,
+        "",
+        pipeline_result.analysis.as_ref(),
+    )
+    .map_err(|e| format!("Compile error: {}", e.msg))?;
 
     let mut machine = vm::VM::new(code, globals, arena);
     machine.set_silent_console(true);
@@ -778,8 +784,14 @@ fn replay_run_inner(
 
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
-    let (code, globals) = vm::compile_program_with_loaded_modules(&items, &mut arena, loaded, "")
-        .map_err(|e| format!("Compile error: {}", e.msg))?;
+    let (code, globals) = vm::compile_program_with_loaded_modules(
+        &items,
+        &mut arena,
+        loaded,
+        "",
+        pipeline_result.analysis.as_ref(),
+    )
+    .map_err(|e| format!("Compile error: {}", e.msg))?;
 
     let mut machine = vm::VM::new(code, globals, arena);
     machine.set_silent_console(true);

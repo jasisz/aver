@@ -1048,11 +1048,10 @@ pub(super) fn cmd_run_vm(
 
     // Compile to bytecode. The analysis result from the pipeline carries
     // per-fn `FnAnalysis.allocates` flags so the VM compiler doesn't
-    // recompute `compute_alloc_info` on the same items. (Vm/Neutral
-    // policies agree today; the plumbing makes the contract explicit.)
+    // recompute `compute_alloc_info` on the same items.
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
-    let (code, globals) = match vm::compile_program_with_modules_and_analysis(
+    let (code, globals) = match vm::compile_program_with_modules(
         &items,
         &mut arena,
         Some(&module_root),

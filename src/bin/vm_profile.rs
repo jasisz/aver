@@ -258,9 +258,14 @@ fn run_vm_command(
 
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
-    let (code, globals) =
-        vm::compile_program_with_modules(&items, &mut arena, Some(module_root), file)
-            .map_err(|e| format!("VM compile error: {}", e))?;
+    let (code, globals) = vm::compile_program_with_modules(
+        &items,
+        &mut arena,
+        Some(module_root),
+        file,
+        pipeline_result.analysis.as_ref(),
+    )
+    .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = VM::new(code, globals, arena);
     if let Some(config) = aver::config::ProjectConfig::load_from_dir(Path::new(module_root))
         .map_err(|e| format!("aver.toml: {}", e))?
