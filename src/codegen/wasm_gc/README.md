@@ -155,12 +155,14 @@ The compile path itself is correct and competitive: `Expr::InterpolatedStr` lowe
 
 The same `app.av` (~120 lines, full router with `/`, `/api`, `/fractal`, `/llms.txt`, 404 fallback) compiles for both backends and produces identical (status, content-type, body) per route. Numbers below are for `GET /fractal?cx=-0.7463&cy=0.1102&w=0.012` (the seahorse zoom — 200×120 grid, 600 iter cap, ~kilo-cons-cells per render) under Node 25.2.1, 30-iter harness, full fetch handler path (request fields decoded, routing, render, response headers materialised):
 
-| Stack                                | mean    | p50     | p95     | min     | wasm size | body size |
-|--------------------------------------|--------:|--------:|--------:|--------:|----------:|----------:|
-| wasm-local + `--bridge fetch`        | 33.2 ms | 32.9 ms | 34.4 ms | 32.3 ms | 34.0 KB   | 240 KB    |
-| wasm-gc + `--handler X` synth wrapper| **5.23 ms** | **5.03 ms** | 6.68 ms | 4.78 ms | **22.0 KB** | **195 KB** |
+| Stack                                | mean (raw) | mean (`wasm-opt -O3`) | wasm size raw → -O3 | body size |
+|--------------------------------------|-----------:|----------------------:|--------------------:|----------:|
+| wasm-local + `--bridge fetch`        | 33.2 ms    | 32.2 ms (−3 %)        | 34.0 → 31.0 KB      | 240 KB    |
+| wasm-gc + `--handler X` synth wrapper| **5.23 ms**| **5.11 ms** (−2 %)    | **22.0 → 19.8 KB**  | 195 KB    |
 
-wasm-gc wins by 6.4× on render time, ships a 35 % smaller wasm binary, and even produces a 19 % smaller response body (the legacy path adds OBJ_STRING headers / wrapping that the wasm-gc lowering never materialises). Routing, response shape, and header semantics live entirely in Aver in both cases — `tools/edge-gc/worker.js` is ~120 lines that translate JS strings ↔ `(array i8)` and pump the eight `aver/*` host imports.
+wasm-gc wins by 6.3× on render time across both raw and `wasm-opt -O3` runs — the gap is structural (type-direct lowering, native tail-call, no NaN-box), not a peephole the optimiser can close. Binary size shrinks by ~10 % under -O3 on either backend; runtime barely moves, so Cranelift / V8 are already doing the heavy lifting. Routing, response shape, and header semantics live entirely in Aver in both cases — `tools/edge-gc/worker.js` is ~120 lines that translate JS strings ↔ `(array i8)` and pump the eight `aver/*` host imports.
+
+The 19 % smaller body (195 KB vs 240 KB) on the wasm-gc path is **not** a saving — it's a regression flagged for follow-up: the wasm-gc-emitted `paletteIdx` collapses palette indices into a narrow range (mostly `1`/`2`), so `runHtml`'s RLE squashes adjacent cells more aggressively. Likely the `Float.floor → i64.trunc_f64_s` change (Aver `Float.floor` returns `Int` per stdlib) interacts badly with the `Result.withDefault(Int.mod(Float.floor(nu) + 1, 30), 0) + 1` chain. Render speed is real; render correctness needs a fix before this lands as the default.
 
 ```bash
 cargo run --features wasm -- compile bench/scenarios/string_interp.av --target wasm-gc -o /tmp/out
