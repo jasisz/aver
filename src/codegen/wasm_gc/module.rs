@@ -120,6 +120,20 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
     )?;
     map_helpers.emit_helper_types(&mut types, &registry)?;
 
+    // 7) List / Vector.fromList / String.split-join helpers — per-T
+    //    instantiation list ops, plus singleton split/join when the
+    //    surface code uses them.
+    let needs_split_join = items_use_string_split_join(items);
+    let mut list_helpers = super::lists::ListHelperRegistry::default();
+    list_helpers.assign_slots(
+        &registry.list_order,
+        &registry.vector_order,
+        needs_split_join,
+        &mut next_builtin_fn_idx,
+        &mut next_type_idx,
+    )?;
+    list_helpers.emit_helper_types(&mut types, &registry)?;
+
     module.section(&types);
 
     // ── Import section ─────────────────────────────────────────────
@@ -148,6 +162,7 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
         funcs.function(type_idx);
     }
     map_helpers.emit_function_section(&mut funcs);
+    list_helpers.emit_function_section(&mut funcs);
     module.section(&funcs);
 
     // Build the fn-name → wasm-fn-idx map. With K imports:
@@ -186,11 +201,27 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
             map_helpers_lookup.insert(canonical.clone(), h);
         }
     }
+    let mut list_ops_lookup: HashMap<String, super::lists::ListOps> = HashMap::new();
+    for canonical in &registry.list_order {
+        if let Some(o) = list_helpers.list_ops_for(canonical) {
+            list_ops_lookup.insert(canonical.clone(), o);
+        }
+    }
+    let mut vfl_ops_lookup: HashMap<String, super::lists::VectorFromListOps> = HashMap::new();
+    for canonical in &registry.list_order {
+        if let Some(o) = list_helpers.vfl_ops_for(canonical) {
+            vfl_ops_lookup.insert(canonical.clone(), o);
+        }
+    }
+    let string_split_ops = list_helpers.string_split_ops();
     let fn_map = FnMap {
         by_name,
         builtins: builtin_idx_lookup,
         effects: effect_idx_lookup,
         map_helpers: map_helpers_lookup,
+        list_ops: list_ops_lookup,
+        vfl_ops: vfl_ops_lookup,
+        string_split_ops,
     };
 
     // ── Export section ─────────────────────────────────────────────
@@ -247,6 +278,9 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
     // instantiation) — emitted last so their wasm fn indices line up
     // with what `MapHelperRegistry::assign_slots` recorded.
     map_helpers.emit_helper_bodies(&mut codes, &registry)?;
+
+    // List / Vector.fromList / String.split-join helper bodies.
+    list_helpers.emit_helper_bodies(&mut codes, &registry)?;
 
     module.section(&codes);
 
@@ -603,8 +637,59 @@ fn discover_builtins_in_expr(
                 }
             }
         }
+        Expr::List(items) => {
+            for item in items {
+                discover_builtins_in_expr(&item.node, builtins, effects);
+            }
+        }
         _ => {}
     }
+}
+
+/// True iff any reachable fn body calls `String.split` or `String.join`.
+/// Used to gate registration of the (T=String) split/join helpers in
+/// `lists::ListHelperRegistry::assign_slots`.
+fn items_use_string_split_join(items: &[TopLevel]) -> bool {
+    use crate::ast::{Expr, FnBody, Stmt};
+    fn walk(e: &Expr) -> bool {
+        match e {
+            Expr::FnCall(callee, args) => {
+                if let Expr::Attr(_parent, member) = &callee.node
+                    && let Some(p) = expr_to_dotted_head(&callee.node)
+                    && p == "String"
+                    && (member == "split" || member == "join")
+                {
+                    return true;
+                }
+                walk(&callee.node) || args.iter().any(|a| walk(&a.node))
+            }
+            Expr::BinOp(_, l, r) => walk(&l.node) || walk(&r.node),
+            Expr::Match { subject, arms } => {
+                walk(&subject.node) || arms.iter().any(|a| walk(&a.body.node))
+            }
+            Expr::TailCall(boxed) => boxed.args.iter().any(|a| walk(&a.node)),
+            Expr::Attr(obj, _) => walk(&obj.node),
+            Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| walk(&e.node)),
+            Expr::Constructor(_, payload) => payload.as_deref().map(|p| walk(&p.node)).unwrap_or(false),
+            Expr::List(items) => items.iter().any(|x| walk(&x.node)),
+            Expr::InterpolatedStr(_) => false,
+            _ => false,
+        }
+    }
+    for item in items {
+        if let TopLevel::FnDef(fd) = item {
+            let FnBody::Block(stmts) = fd.body.as_ref();
+            for stmt in stmts {
+                let e = match stmt {
+                    Stmt::Binding(_, _, e) | Stmt::Expr(e) => &e.node,
+                };
+                if walk(e) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Extract `Parent` from an `Attr(Parent, _)` callee — the parent is

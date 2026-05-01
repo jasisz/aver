@@ -85,6 +85,15 @@ pub(super) enum BuiltinName {
     /// over its parts and calls this) and the future `String.join`
     /// shape (interleave separator, then call this).
     StringConcatN,
+    StringStartsWith,
+    StringContains,
+    StringSlice,
+    StringToUpper,
+    StringToLower,
+    StringTrim,
+    IntFromString,
+    FloatFromString,
+    FloatToString,
 }
 
 impl BuiltinName {
@@ -92,6 +101,15 @@ impl BuiltinName {
         match s {
             "Int.toString" => Some(Self::IntToString),
             "String.len" => Some(Self::StringLength),
+            "String.startsWith" => Some(Self::StringStartsWith),
+            "String.contains" => Some(Self::StringContains),
+            "String.slice" => Some(Self::StringSlice),
+            "String.toUpper" => Some(Self::StringToUpper),
+            "String.toLower" => Some(Self::StringToLower),
+            "String.trim" => Some(Self::StringTrim),
+            "Int.fromString" => Some(Self::IntFromString),
+            "Float.fromString" => Some(Self::FloatFromString),
+            "Float.toString" => Some(Self::FloatToString),
             _ => None,
         }
     }
@@ -112,6 +130,15 @@ impl BuiltinName {
             Self::IntToString => "Int.toString",
             Self::StringLength => "String.len",
             Self::StringConcatN => "__wasmgc_concat_n",
+            Self::StringStartsWith => "String.startsWith",
+            Self::StringContains => "String.contains",
+            Self::StringSlice => "String.slice",
+            Self::StringToUpper => "String.toUpper",
+            Self::StringToLower => "String.toLower",
+            Self::StringTrim => "String.trim",
+            Self::IntFromString => "Int.fromString",
+            Self::FloatFromString => "Float.fromString",
+            Self::FloatToString => "Float.toString",
         }
     }
 
@@ -120,6 +147,20 @@ impl BuiltinName {
             Self::IntToString => Ok(vec![ValType::I64]),
             Self::StringLength => Ok(vec![string_ref_ty(registry)?]),
             Self::StringConcatN => Ok(vec![string_array_ref_ty(registry)?]),
+            Self::StringStartsWith | Self::StringContains => {
+                Ok(vec![string_ref_ty(registry)?, string_ref_ty(registry)?])
+            }
+            Self::StringSlice => Ok(vec![
+                string_ref_ty(registry)?,
+                ValType::I64,
+                ValType::I64,
+            ]),
+            Self::StringToUpper | Self::StringToLower | Self::StringTrim => {
+                Ok(vec![string_ref_ty(registry)?])
+            }
+            Self::IntFromString => Ok(vec![string_ref_ty(registry)?]),
+            Self::FloatFromString => Ok(vec![string_ref_ty(registry)?]),
+            Self::FloatToString => Ok(vec![ValType::F64]),
         }
     }
 
@@ -128,6 +169,14 @@ impl BuiltinName {
             Self::IntToString => Ok(vec![string_ref_ty(registry)?]),
             Self::StringLength => Ok(vec![ValType::I64]),
             Self::StringConcatN => Ok(vec![string_ref_ty(registry)?]),
+            Self::StringStartsWith | Self::StringContains => Ok(vec![ValType::I32]),
+            Self::StringSlice
+            | Self::StringToUpper
+            | Self::StringToLower
+            | Self::StringTrim
+            | Self::FloatToString => Ok(vec![string_ref_ty(registry)?]),
+            Self::IntFromString => Ok(vec![result_ref_ty(registry, "Result<Int,String>")?]),
+            Self::FloatFromString => Ok(vec![result_ref_ty(registry, "Result<Float,String>")?]),
         }
     }
 
@@ -139,6 +188,15 @@ impl BuiltinName {
             Self::IntToString => emit_int_to_string(registry),
             Self::StringLength => emit_string_length(registry),
             Self::StringConcatN => emit_string_concat_n(registry),
+            Self::StringStartsWith => emit_string_starts_with(registry),
+            Self::StringContains => emit_string_contains(registry),
+            Self::StringSlice => emit_string_slice(registry),
+            Self::StringToUpper => emit_string_case(registry, true),
+            Self::StringToLower => emit_string_case(registry, false),
+            Self::StringTrim => emit_string_trim(registry),
+            Self::IntFromString => emit_int_from_string(registry),
+            Self::FloatFromString => emit_float_from_string(registry),
+            Self::FloatToString => emit_float_to_string(registry),
         }
     }
 }
@@ -204,6 +262,23 @@ fn string_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
         .ok_or(WasmGcError::Validation(
             "builtin requires String repr but no string type slot was allocated".into(),
         ))?;
+    Ok(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(idx),
+    }))
+}
+
+/// `(ref null $result_T_E)` — Result instantiation reference. The
+/// canonical comes spaceless (e.g. `Result<Int,String>`).
+fn result_ref_ty(
+    registry: &TypeRegistry,
+    canonical: &str,
+) -> Result<ValType, WasmGcError> {
+    let idx = registry
+        .result_type_idx(canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "builtin requires `{canonical}` slot but it wasn't registered"
+        )))?;
     Ok(ValType::Ref(wasm_encoder::RefType {
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(idx),
@@ -537,6 +612,1119 @@ fn emit_string_length(registry: &TypeRegistry) -> Result<Function, WasmGcError> 
             local.get $s
             array.len
             i64.extend_i32_u)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// Helper preamble: declare `$string` at the user module's index by
+/// padding the WAT type section with empty struct types.
+fn string_module_preamble(registry: &TypeRegistry) -> Result<(u32, String), WasmGcError> {
+    let string_idx = registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "helper requires String slot to be allocated".into(),
+        ))?;
+    let padding = wat_helper::padding_types(string_idx);
+    let preamble = format!("{padding}(type $string (array (mut i8)))\n");
+    Ok((string_idx, preamble))
+}
+
+/// Pad the WAT type section so that both `$string` and a Result<T,E>
+/// land at their user-module indices. Result types follow the user
+/// module's String slot (and any other types — list, vector, option,
+/// other results — that come between in the registry order).
+fn string_and_result_preamble(
+    registry: &TypeRegistry,
+    canonical: &str,
+    ok_field: &str,
+    err_field: &str,
+) -> Result<String, WasmGcError> {
+    let string_idx = registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "helper requires String slot to be allocated".into(),
+        ))?;
+    let result_idx =
+        registry
+            .result_type_idx(canonical)
+            .ok_or(WasmGcError::Validation(format!(
+                "helper requires `{canonical}` slot to be allocated"
+            )))?;
+    if result_idx <= string_idx {
+        return Err(WasmGcError::Validation(format!(
+            "helper expects result idx {result_idx} > string idx {string_idx}"
+        )));
+    }
+    let pre_string = wat_helper::padding_types(string_idx);
+    let between = wat_helper::padding_types(result_idx - string_idx - 1);
+    Ok(format!(
+        "{pre_string}(type $string (array (mut i8)))\n{between}(type $result (struct (field (mut i32)) (field (mut {ok_field})) (field (mut {err_field}))))\n"
+    ))
+}
+
+/// `String.startsWith(s, prefix) -> Bool`. ASCII byte-wise; mirrors
+/// the legacy `rt_str_starts_with` shape but skips the generic find
+/// loop — startsWith is just a bounded byte-equal compare.
+fn emit_string_starts_with(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let (_, preamble) = string_module_preamble(registry)?;
+    let wat = format!(
+        r#"
+        (module
+          {preamble}
+          (func (export "helper")
+                (param $s (ref null $string))
+                (param $p (ref null $string))
+                (result i32)
+            (local $slen i32)
+            (local $plen i32)
+            (local $i i32)
+
+            local.get $s array.len local.set $slen
+            local.get $p array.len local.set $plen
+
+            ;; prefix longer than s → false
+            local.get $plen
+            local.get $slen
+            i32.gt_u
+            (if (then i32.const 0 return))
+
+            i32.const 0 local.set $i
+            (block $done
+              (loop $cmp
+                local.get $i
+                local.get $plen
+                i32.ge_u
+                br_if $done
+
+                local.get $s
+                local.get $i
+                array.get_u $string
+
+                local.get $p
+                local.get $i
+                array.get_u $string
+
+                i32.ne
+                (if (then i32.const 0 return))
+
+                local.get $i
+                i32.const 1
+                i32.add
+                local.set $i
+                br $cmp))
+            i32.const 1)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `String.contains(s, needle) -> Bool`. Naive O(s_len * needle_len)
+/// scan — sufficient for fractal use (small needles like `"&"`,
+/// `"="`). Inner loop bails on first mismatch.
+fn emit_string_contains(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let (_, preamble) = string_module_preamble(registry)?;
+    let wat = format!(
+        r#"
+        (module
+          {preamble}
+          (func (export "helper")
+                (param $s (ref null $string))
+                (param $n (ref null $string))
+                (result i32)
+            (local $slen i32)
+            (local $nlen i32)
+            (local $limit i32)
+            (local $pos i32)
+            (local $i i32)
+
+            local.get $s array.len local.set $slen
+            local.get $n array.len local.set $nlen
+
+            ;; empty needle → true
+            local.get $nlen
+            i32.eqz
+            (if (then i32.const 1 return))
+
+            ;; needle longer than s → false
+            local.get $nlen
+            local.get $slen
+            i32.gt_u
+            (if (then i32.const 0 return))
+
+            ;; limit = slen - nlen
+            local.get $slen
+            local.get $nlen
+            i32.sub
+            local.set $limit
+
+            i32.const 0 local.set $pos
+            (block $outer_done
+              (loop $outer
+                local.get $pos
+                local.get $limit
+                i32.gt_u
+                br_if $outer_done
+
+                i32.const 0 local.set $i
+                (block $inner_done
+                  (loop $inner
+                    local.get $i
+                    local.get $nlen
+                    i32.ge_u
+                    (if (then i32.const 1 return))
+
+                    local.get $s
+                    local.get $pos
+                    local.get $i
+                    i32.add
+                    array.get_u $string
+
+                    local.get $n
+                    local.get $i
+                    array.get_u $string
+
+                    i32.ne
+                    br_if $inner_done
+
+                    local.get $i
+                    i32.const 1
+                    i32.add
+                    local.set $i
+                    br $inner))
+
+                local.get $pos
+                i32.const 1
+                i32.add
+                local.set $pos
+                br $outer))
+            i32.const 0)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `String.slice(s, start, end) -> String`. Byte-indexed slice;
+/// clamps both ends to `[0, len(s)]` and `start..end`. Empty when
+/// `start >= end`. Same byte-based semantics as the wasm-gc
+/// `String.len` (both report bytes, not code points).
+fn emit_string_slice(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let (_, preamble) = string_module_preamble(registry)?;
+    let wat = format!(
+        r#"
+        (module
+          {preamble}
+          (func (export "helper")
+                (param $s (ref null $string))
+                (param $start64 i64)
+                (param $end64 i64)
+                (result (ref null $string))
+            (local $slen i32)
+            (local $start i32)
+            (local $end i32)
+            (local $len i32)
+            (local $out (ref null $string))
+
+            local.get $s array.len local.set $slen
+
+            ;; start = clamp(start64, 0, slen)
+            local.get $start64
+            i64.const 0
+            i64.lt_s
+            (if (result i32)
+              (then i32.const 0)
+              (else
+                local.get $start64
+                local.get $slen
+                i64.extend_i32_u
+                i64.gt_s
+                (if (result i32)
+                  (then local.get $slen)
+                  (else local.get $start64 i32.wrap_i64))))
+            local.set $start
+
+            local.get $end64
+            i64.const 0
+            i64.lt_s
+            (if (result i32)
+              (then i32.const 0)
+              (else
+                local.get $end64
+                local.get $slen
+                i64.extend_i32_u
+                i64.gt_s
+                (if (result i32)
+                  (then local.get $slen)
+                  (else local.get $end64 i32.wrap_i64))))
+            local.set $end
+
+            ;; len = max(0, end - start)
+            local.get $end
+            local.get $start
+            i32.le_s
+            (if (result i32)
+              (then i32.const 0)
+              (else
+                local.get $end
+                local.get $start
+                i32.sub))
+            local.set $len
+
+            local.get $len
+            array.new_default $string
+            local.set $out
+
+            local.get $len
+            i32.eqz
+            (if (then local.get $out return))
+
+            ;; array.copy out[0..len] <- s[start..start+len]
+            local.get $out
+            i32.const 0
+            local.get $s
+            local.get $start
+            local.get $len
+            array.copy $string $string
+
+            local.get $out)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `String.toUpper` / `String.toLower`. ASCII-only. `to_upper=true`
+/// shifts `'a'..'z'` down by 32; otherwise shifts `'A'..'Z'` up.
+fn emit_string_case(
+    registry: &TypeRegistry,
+    to_upper: bool,
+) -> Result<Function, WasmGcError> {
+    let (_, preamble) = string_module_preamble(registry)?;
+    let (lo, hi, delta) = if to_upper {
+        ("0x61", "0x7A", "i32.const 32 i32.sub")
+    } else {
+        ("0x41", "0x5A", "i32.const 32 i32.add")
+    };
+    let wat = format!(
+        r#"
+        (module
+          {preamble}
+          (func (export "helper")
+                (param $s (ref null $string))
+                (result (ref null $string))
+            (local $len i32)
+            (local $i i32)
+            (local $ch i32)
+            (local $out (ref null $string))
+
+            local.get $s array.len local.set $len
+            local.get $len array.new_default $string local.set $out
+
+            i32.const 0 local.set $i
+            (block $done
+              (loop $cp
+                local.get $i
+                local.get $len
+                i32.ge_u
+                br_if $done
+
+                local.get $s
+                local.get $i
+                array.get_u $string
+                local.set $ch
+
+                local.get $ch
+                i32.const {lo}
+                i32.ge_u
+                local.get $ch
+                i32.const {hi}
+                i32.le_u
+                i32.and
+                (if
+                  (then
+                    local.get $ch
+                    {delta}
+                    local.set $ch))
+
+                local.get $out
+                local.get $i
+                local.get $ch
+                array.set $string
+
+                local.get $i
+                i32.const 1
+                i32.add
+                local.set $i
+                br $cp))
+            local.get $out)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `String.trim`. Trims ASCII whitespace (space, tab, LF, CR) from
+/// both ends; allocates a fresh string sized to the inner slice.
+fn emit_string_trim(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let (_, preamble) = string_module_preamble(registry)?;
+    let wat = format!(
+        r#"
+        (module
+          {preamble}
+          (func (export "helper")
+                (param $s (ref null $string))
+                (result (ref null $string))
+            (local $len i32)
+            (local $start i32)
+            (local $end i32)
+            (local $ch i32)
+            (local $new_len i32)
+            (local $out (ref null $string))
+
+            local.get $s array.len local.set $len
+
+            i32.const 0 local.set $start
+            (block $sd
+              (loop $st
+                local.get $start
+                local.get $len
+                i32.ge_u
+                br_if $sd
+
+                local.get $s
+                local.get $start
+                array.get_u $string
+                local.set $ch
+
+                local.get $ch i32.const 0x20 i32.eq
+                local.get $ch i32.const 0x09 i32.eq i32.or
+                local.get $ch i32.const 0x0A i32.eq i32.or
+                local.get $ch i32.const 0x0D i32.eq i32.or
+                i32.eqz
+                br_if $sd
+
+                local.get $start
+                i32.const 1
+                i32.add
+                local.set $start
+                br $st))
+
+            local.get $len local.set $end
+            (block $ed
+              (loop $et
+                local.get $end
+                local.get $start
+                i32.le_u
+                br_if $ed
+
+                local.get $s
+                local.get $end
+                i32.const 1
+                i32.sub
+                array.get_u $string
+                local.set $ch
+
+                local.get $ch i32.const 0x20 i32.eq
+                local.get $ch i32.const 0x09 i32.eq i32.or
+                local.get $ch i32.const 0x0A i32.eq i32.or
+                local.get $ch i32.const 0x0D i32.eq i32.or
+                i32.eqz
+                br_if $ed
+
+                local.get $end
+                i32.const 1
+                i32.sub
+                local.set $end
+                br $et))
+
+            local.get $end
+            local.get $start
+            i32.sub
+            local.set $new_len
+
+            local.get $new_len
+            array.new_default $string
+            local.set $out
+
+            local.get $new_len
+            i32.eqz
+            (if (then local.get $out return))
+
+            local.get $out
+            i32.const 0
+            local.get $s
+            local.get $start
+            local.get $new_len
+            array.copy $string $string
+
+            local.get $out)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `Int.fromString(s) -> Result<Int, String>`. Parses optional `-`
+/// followed by ASCII digits. Empty / non-digit input → `Result.Err(s)`.
+/// Result struct field layout: `(mut i32 tag) (mut i64 ok) (mut $string err)`,
+/// tag 1 = Ok, 0 = Err.
+fn emit_int_from_string(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let preamble = string_and_result_preamble(
+        registry,
+        "Result<Int,String>",
+        "i64",
+        "(ref null $string)",
+    )?;
+    let wat = format!(
+        r#"
+        (module
+          {preamble}
+          (func (export "helper")
+                (param $s (ref null $string))
+                (result (ref null $result))
+            (local $len i32)
+            (local $idx i32)
+            (local $negative i32)
+            (local $value i64)
+            (local $ch i32)
+            (local $saw_digit i32)
+
+            local.get $s array.len local.set $len
+
+            ;; Empty input → Err(s)
+            local.get $len
+            i32.eqz
+            (if
+              (then
+                i32.const 0
+                i64.const 0
+                local.get $s
+                struct.new $result
+                return))
+
+            ;; Optional leading '-'
+            local.get $s
+            i32.const 0
+            array.get_u $string
+            i32.const 0x2D
+            i32.eq
+            (if
+              (then
+                i32.const 1 local.set $negative
+                i32.const 1 local.set $idx))
+
+            (block $loop_done
+              (loop $loop
+                local.get $idx
+                local.get $len
+                i32.ge_u
+                br_if $loop_done
+
+                local.get $s
+                local.get $idx
+                array.get_u $string
+                local.set $ch
+
+                local.get $ch i32.const 0x30 i32.lt_u
+                local.get $ch i32.const 0x39 i32.gt_u
+                i32.or
+                (if
+                  (then
+                    i32.const 0
+                    i64.const 0
+                    local.get $s
+                    struct.new $result
+                    return))
+
+                i32.const 1 local.set $saw_digit
+
+                local.get $value
+                i64.const 10
+                i64.mul
+                local.get $ch
+                i32.const 0x30
+                i32.sub
+                i64.extend_i32_u
+                i64.add
+                local.set $value
+
+                local.get $idx
+                i32.const 1
+                i32.add
+                local.set $idx
+                br $loop))
+
+            ;; Lone "-" → Err
+            local.get $saw_digit
+            i32.eqz
+            (if
+              (then
+                i32.const 0
+                i64.const 0
+                local.get $s
+                struct.new $result
+                return))
+
+            local.get $negative
+            (if
+              (then
+                i64.const 0
+                local.get $value
+                i64.sub
+                local.set $value))
+
+            i32.const 1
+            local.get $value
+            ref.null $string
+            struct.new $result)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `Float.fromString(s) -> Result<Float, String>`. Port of the legacy
+/// `rt_float_from_str`; same automaton (sign / mantissa / decimal /
+/// exponent), bytes from `array.get_u` instead of linear-memory loads.
+fn emit_float_from_string(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let preamble = string_and_result_preamble(
+        registry,
+        "Result<Float,String>",
+        "f64",
+        "(ref null $string)",
+    )?;
+    let wat = format!(
+        r#"
+        (module
+          {preamble}
+          (func (export "helper")
+                (param $s (ref null $string))
+                (result (ref null $result))
+            (local $len i32)
+            (local $idx i32)
+            (local $negative i32)
+            (local $seen_dot i32)
+            (local $saw_digit i32)
+            (local $exp_state i32)        ;; 0=none, 1=just-saw-e, 2=after-sign-or-digit
+            (local $exp_negative i32)
+            (local $saw_exp_digit i32)
+            (local $exp_value i32)
+            (local $value f64)
+            (local $frac_div f64)
+            (local $ch i32)
+            (local $digit i32)
+
+            local.get $s array.len local.set $len
+
+            f64.const 0 local.set $value
+            f64.const 1 local.set $frac_div
+
+            local.get $len
+            i32.const 0
+            i32.gt_s
+            (if
+              (then
+                local.get $s
+                i32.const 0
+                array.get_u $string
+                i32.const 0x2D
+                i32.eq
+                (if
+                  (then
+                    i32.const 1 local.set $negative
+                    i32.const 1 local.set $idx))))
+
+            (block $loop_done
+              (loop $loop
+                local.get $idx
+                local.get $len
+                i32.ge_u
+                br_if $loop_done
+
+                local.get $s
+                local.get $idx
+                array.get_u $string
+                local.set $ch
+
+                ;; Exponent sign just after e/E.
+                local.get $exp_state
+                i32.const 1
+                i32.eq
+                local.get $ch
+                i32.const 0x2B
+                i32.eq
+                i32.and
+                (if
+                  (then
+                    i32.const 2 local.set $exp_state
+                    local.get $idx i32.const 1 i32.add local.set $idx
+                    br $loop))
+
+                local.get $exp_state
+                i32.const 1
+                i32.eq
+                local.get $ch
+                i32.const 0x2D
+                i32.eq
+                i32.and
+                (if
+                  (then
+                    i32.const 1 local.set $exp_negative
+                    i32.const 2 local.set $exp_state
+                    local.get $idx i32.const 1 i32.add local.set $idx
+                    br $loop))
+
+                ;; Inside exponent digits.
+                local.get $exp_state
+                (if
+                  (then
+                    local.get $ch i32.const 0x30 i32.lt_u
+                    local.get $ch i32.const 0x39 i32.gt_u
+                    i32.or
+                    (if
+                      (then
+                        i32.const 0
+                        f64.const 0
+                        local.get $s
+                        struct.new $result
+                        return))
+
+                    i32.const 1 local.set $saw_exp_digit
+                    i32.const 2 local.set $exp_state
+
+                    local.get $ch
+                    i32.const 0x30
+                    i32.sub
+                    local.set $digit
+
+                    local.get $exp_value
+                    i32.const 10
+                    i32.mul
+                    local.get $digit
+                    i32.add
+                    local.set $exp_value
+
+                    local.get $idx i32.const 1 i32.add local.set $idx
+                    br $loop))
+
+                ;; Decimal point.
+                local.get $ch
+                i32.const 0x2E
+                i32.eq
+                (if
+                  (then
+                    local.get $seen_dot
+                    (if
+                      (then
+                        i32.const 0
+                        f64.const 0
+                        local.get $s
+                        struct.new $result
+                        return))
+                    i32.const 1 local.set $seen_dot
+                    local.get $idx i32.const 1 i32.add local.set $idx
+                    br $loop))
+
+                ;; Exponent marker.
+                local.get $ch i32.const 0x65 i32.eq
+                local.get $ch i32.const 0x45 i32.eq
+                i32.or
+                (if
+                  (then
+                    local.get $saw_digit
+                    i32.eqz
+                    (if
+                      (then
+                        i32.const 0
+                        f64.const 0
+                        local.get $s
+                        struct.new $result
+                        return))
+                    i32.const 1 local.set $exp_state
+                    local.get $idx i32.const 1 i32.add local.set $idx
+                    br $loop))
+
+                ;; Mantissa digit.
+                local.get $ch i32.const 0x30 i32.lt_u
+                local.get $ch i32.const 0x39 i32.gt_u
+                i32.or
+                (if
+                  (then
+                    i32.const 0
+                    f64.const 0
+                    local.get $s
+                    struct.new $result
+                    return))
+
+                i32.const 1 local.set $saw_digit
+
+                local.get $ch
+                i32.const 0x30
+                i32.sub
+                local.set $digit
+
+                local.get $seen_dot
+                (if
+                  (then
+                    local.get $frac_div
+                    f64.const 10
+                    f64.mul
+                    local.set $frac_div
+
+                    local.get $value
+                    local.get $digit
+                    f64.convert_i32_u
+                    local.get $frac_div
+                    f64.div
+                    f64.add
+                    local.set $value)
+                  (else
+                    local.get $value
+                    f64.const 10
+                    f64.mul
+                    local.get $digit
+                    f64.convert_i32_u
+                    f64.add
+                    local.set $value))
+
+                local.get $idx
+                i32.const 1
+                i32.add
+                local.set $idx
+                br $loop))
+
+            ;; Reject empty / lone '-'
+            local.get $saw_digit
+            i32.eqz
+            (if
+              (then
+                i32.const 0
+                f64.const 0
+                local.get $s
+                struct.new $result
+                return))
+
+            ;; Dangling exponent marker
+            local.get $exp_state
+            i32.const 1
+            i32.eq
+            (if
+              (then
+                i32.const 0
+                f64.const 0
+                local.get $s
+                struct.new $result
+                return))
+
+            ;; Exponent sign with no digits
+            local.get $exp_state
+            i32.const 2
+            i32.eq
+            local.get $saw_exp_digit
+            i32.eqz
+            i32.and
+            (if
+              (then
+                i32.const 0
+                f64.const 0
+                local.get $s
+                struct.new $result
+                return))
+
+            ;; Apply exponent.
+            (block $exp_done
+              (loop $exp
+                local.get $exp_value
+                i32.eqz
+                br_if $exp_done
+
+                local.get $exp_negative
+                (if
+                  (then
+                    local.get $value
+                    f64.const 10
+                    f64.div
+                    local.set $value)
+                  (else
+                    local.get $value
+                    f64.const 10
+                    f64.mul
+                    local.set $value))
+
+                local.get $exp_value
+                i32.const 1
+                i32.sub
+                local.set $exp_value
+                br $exp))
+
+            local.get $negative
+            (if
+              (then
+                f64.const 0
+                local.get $value
+                f64.sub
+                local.set $value))
+
+            i32.const 1
+            local.get $value
+            ref.null $string
+            struct.new $result)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `Float.toString(f) -> String`. Shortest-roundtrip f64 → ASCII;
+/// port of the legacy `rt_float_to_str` algorithm but writing into a
+/// 32-byte scratch `(array i8)` instead of linear memory, then
+/// `array.copy` into a result string sized to the actual output.
+fn emit_float_to_string(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let (_, preamble) = string_module_preamble(registry)?;
+    let wat = format!(
+        r#"
+        (module
+          {preamble}
+          (func (export "helper")
+                (param $val f64)
+                (result (ref null $string))
+            (local $is_neg i32)
+            (local $abs_val f64)
+            (local $int_part i64)
+            (local $pos i32)
+            (local $start_pos i32)
+            (local $pow f64)
+            (local $n i32)
+            (local $scaled i64)
+            (local $frac_int i64)
+            (local $frac_pos i32)
+            (local $frac_digits i32)
+            (local $end_pos i32)
+            (local $buf (ref null $string))
+            (local $out_len i32)
+            (local $out (ref null $string))
+
+            ;; 64-byte scratch buffer; integer part right-to-left at [0..21],
+            ;; '.' at 21, fractional digits at [22..22+n].
+            i32.const 64
+            array.new_default $string
+            local.set $buf
+
+            local.get $val
+            f64.const 0
+            f64.lt
+            local.set $is_neg
+
+            local.get $val
+            f64.abs
+            local.set $abs_val
+
+            local.get $abs_val
+            f64.floor
+            i64.trunc_f64_s
+            local.set $int_part
+
+            i32.const 21 local.set $pos
+
+            ;; Integer part right-to-left.
+            local.get $int_part
+            i64.eqz
+            (if
+              (then
+                local.get $pos i32.const 1 i32.sub local.set $pos
+                local.get $buf
+                local.get $pos
+                i32.const 0x30
+                array.set $string)
+              (else
+                (block $idone
+                  (loop $iloop
+                    local.get $int_part
+                    i64.eqz
+                    br_if $idone
+
+                    local.get $pos i32.const 1 i32.sub local.set $pos
+
+                    local.get $buf
+                    local.get $pos
+                    local.get $int_part
+                    i64.const 10
+                    i64.rem_u
+                    i32.wrap_i64
+                    i32.const 0x30
+                    i32.add
+                    array.set $string
+
+                    local.get $int_part
+                    i64.const 10
+                    i64.div_u
+                    local.set $int_part
+                    br $iloop))))
+
+            ;; Negative sign.
+            local.get $is_neg
+            (if
+              (then
+                local.get $pos i32.const 1 i32.sub local.set $pos
+                local.get $buf
+                local.get $pos
+                i32.const 0x2D
+                array.set $string))
+
+            local.get $pos local.set $start_pos
+
+            ;; Whole number? abs == floor(abs)
+            local.get $abs_val
+            local.get $abs_val
+            f64.floor
+            f64.eq
+            (if
+              (then
+                ;; end_pos = 21
+                i32.const 21 local.set $end_pos)
+              (else
+                ;; Find shortest N (1..15).
+                f64.const 1 local.set $pow
+                i32.const 0 local.set $n
+
+                (block $ndone
+                  (loop $nloop
+                    local.get $n i32.const 1 i32.add local.set $n
+                    local.get $pow f64.const 10 f64.mul local.set $pow
+
+                    local.get $abs_val
+                    local.get $pow
+                    f64.mul
+                    f64.floor
+                    i64.trunc_f64_s
+                    local.set $scaled
+
+                    local.get $scaled
+                    f64.convert_i64_s
+                    local.get $pow
+                    f64.div
+                    local.get $abs_val
+                    f64.eq
+                    br_if $ndone
+
+                    local.get $n
+                    i32.const 15
+                    i32.ge_s
+                    br_if $ndone
+
+                    br $nloop))
+
+                ;; frac_int = ((scaled % pow_i64) + pow_i64) % pow_i64
+                local.get $scaled
+                local.get $pow
+                i64.trunc_f64_s
+                i64.rem_s
+                local.get $pow
+                i64.trunc_f64_s
+                i64.add
+                local.get $pow
+                i64.trunc_f64_s
+                i64.rem_s
+                local.set $frac_int
+
+                ;; '.' at 21
+                local.get $buf
+                i32.const 21
+                i32.const 0x2E
+                array.set $string
+
+                ;; Fractional digits right-to-left at [22..22+n].
+                i32.const 22
+                local.get $n
+                i32.add
+                i32.const 1
+                i32.sub
+                local.set $frac_pos
+
+                local.get $n local.set $frac_digits
+
+                (block $fdone
+                  (loop $floop
+                    local.get $frac_digits
+                    i32.eqz
+                    br_if $fdone
+
+                    local.get $buf
+                    local.get $frac_pos
+                    local.get $frac_int
+                    i64.const 10
+                    i64.rem_u
+                    i32.wrap_i64
+                    i32.const 0x30
+                    i32.add
+                    array.set $string
+
+                    local.get $frac_int
+                    i64.const 10
+                    i64.div_u
+                    local.set $frac_int
+
+                    local.get $frac_pos
+                    i32.const 1
+                    i32.sub
+                    local.set $frac_pos
+
+                    local.get $frac_digits
+                    i32.const 1
+                    i32.sub
+                    local.set $frac_digits
+                    br $floop))
+
+                ;; Strip trailing zeros: end_pos = 22 + n; while end_pos > 22
+                ;; and buf[end_pos-1] == '0', end_pos--.
+                i32.const 22
+                local.get $n
+                i32.add
+                local.set $end_pos
+
+                (block $sdone
+                  (loop $sloop
+                    local.get $end_pos
+                    i32.const 22
+                    i32.le_s
+                    br_if $sdone
+
+                    local.get $buf
+                    local.get $end_pos
+                    i32.const 1
+                    i32.sub
+                    array.get_u $string
+                    i32.const 0x30
+                    i32.ne
+                    br_if $sdone
+
+                    local.get $end_pos
+                    i32.const 1
+                    i32.sub
+                    local.set $end_pos
+                    br $sloop))))
+
+            ;; out_len = end_pos - start_pos
+            local.get $end_pos
+            local.get $start_pos
+            i32.sub
+            local.set $out_len
+
+            local.get $out_len
+            array.new_default $string
+            local.set $out
+
+            local.get $out
+            i32.const 0
+            local.get $buf
+            local.get $start_pos
+            local.get $out_len
+            array.copy $string $string
+
+            local.get $out)
         )
     "#
     );

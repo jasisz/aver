@@ -234,6 +234,22 @@ impl TypeRegistry {
                 );
             }
         }
+        // Eagerly register `Option<T>` for every `Vector<T>` — a
+        // `match Vector.get(v, i) { Option.Some(x) -> ...; Option.None -> ... }`
+        // requires the boxed Option<T> slot, but the surface code
+        // doesn't spell out `Option<String>` in any signature.
+        // Mirrors the eager `Option<V>` registration done below for
+        // `Map<K, V>`.
+        for vec_canonical in &vector_order {
+            if let Some(elem) = TypeRegistry::vector_element_type(vec_canonical) {
+                let opt = format!("Option<{}>", elem.trim());
+                if !option_types.contains_key(&opt) {
+                    option_types.insert(opt.clone(), next_idx);
+                    option_order.push(opt);
+                    next_idx += 1;
+                }
+            }
+        }
 
         // `Result<T, E>` instantiations — same shape as Option but with
         // two payload fields. Discovered ahead of List/Map so a
@@ -1103,6 +1119,11 @@ fn collect_string_literals_in_expr(
         Expr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
                 collect_string_literals_in_expr(&e.node, out, idx);
+            }
+        }
+        Expr::List(items) => {
+            for item in items {
+                collect_string_literals_in_expr(&item.node, out, idx);
             }
         }
         _ => {}

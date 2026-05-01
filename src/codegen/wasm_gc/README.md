@@ -108,8 +108,9 @@ After phase 3a + 3b/1 + 3c **and `ir::escape` IR pass with both record-access an
 | `string_interp`   | (tbd)   | 5.17ms     | 6.65s   | 1287x slower ⚠ (wasmtime GC, V8 wins) |
 | `map_build`       | (tbd)   | 940µs      | 695µs   | **1.4x faster** ✨ |
 | `map_lookup`      | (tbd)   | 1.16ms     | 2.20ms  | 1.9x slower ⚠ (wasmtime GC, V8 wins) |
+| `fractal_seahorse`| (tbd)   | (tbd)      | 6.41s   | engine-bound, multi-module compile path ✅ |
 
-**10/12 wasm-gc wins, 2 engine-bound regressions on wasmtime.** Both alloc-heavy patterns (`record`, `match_dispatch`) now go through escape analysis at the IR level — no struct/variant alloc reaches codegen. `vector_ops` lands on native `(array (mut i64))` with bounds-checked `array.set`/`array.get` and zero Option boxing — the legacy backend round-trips every read/write through runtime helpers + AverVector allocation. `Map<K,V>` is monomorphised per instantiation: per-K hash + eq helpers, per-(K,V) empty/set/get/len helpers, open-addressing flat hashtable, 16384-bucket fixed cap (resize is a phase-3c+ extension).
+**13/13 wasm-gc compile + run, 2 engine-bound regressions on wasmtime.** Both alloc-heavy patterns (`record`, `match_dispatch`) now go through escape analysis at the IR level — no struct/variant alloc reaches codegen. `vector_ops` lands on native `(array (mut i64))` with bounds-checked `array.set`/`array.get` and zero Option boxing — the legacy backend round-trips every read/write through runtime helpers + AverVector allocation. `Map<K,V>` is monomorphised per instantiation: per-K hash + eq helpers, per-(K,V) empty/set/get/len helpers, open-addressing flat hashtable, 16384-bucket fixed cap (resize is a phase-3c+ extension).
 
 ### Cross-engine + cross-backend matrix
 
@@ -129,6 +130,7 @@ Same source, both backends (`wasm-local` legacy linear-memory + `wasm-gc`), both
 | string_interp     | 5.17ms         | 4.25ms    | 6,654ms ⚠   | **2.86ms** |
 | map_build         | 940µs          | 606µs     | 695µs        | **179µs** |
 | map_lookup        | 1.16ms         | 693µs     | 1.75ms       | **427µs** |
+| fractal_seahorse  | (tbd)          | (tbd)     | 6.41s        | (tbd)     |
 
 (Bold = winner per scenario.)
 
@@ -201,7 +203,7 @@ Rejected alternatives:
 
 ## Bench coverage status
 
-Working (12/13 bench scenarios):
+Working (13/13 bench scenarios):
 - fib, countdown — pure numeric tail recursion
 - newtype_bare, newtype_record, newtype_variant — newtype optimization erases wrappers
 - match_dispatch — multi-arm variant dispatch via `ref.test`
@@ -210,8 +212,6 @@ Working (12/13 bench scenarios):
 - vector_ops — `Vector<T>` as `(array (mut T))`, fused `Option.withDefault` shapes lower to bounds-checked `array.set`/`array.get` with zero Option boxing
 - string_interp — String literals via passive data segments + `array.new_data`; `Expr::InterpolatedStr` lowers natively (skipping `interp_lower`) to `array.new_fixed (Vector<String>) N` + variadic concat helper. Same primitive will back `String.join`. Engine-bound on wasmtime today (see note above)
 - map_build, map_lookup — `Map<K,V>` monomorphised per instantiation, open-addressing hashtable with linear probing. Per-K helpers (DJB2 hash + byte-eq for K=String), per-(K,V) helpers (empty/set/get/len). Map.get returns real boxed `Option<V>`. Wasmtime engine-bound on `map_lookup` (600k Option struct allocs); V8 lands the wins
-
-Pending (1/13 — multi-module mode):
-- fractal_seahorse — `depends [Fractal]`. Multi-module compile is a separate **mode** for wasm-gc, not the default — the wasip2 Component Model handles cross-module linking, not a static linker baked into the compiler
+- fractal_seahorse — `depends [Fractal]`. Multi-module flatten loader (`flatten_multimodule` in `src/main/commands.rs`) inlines dep modules into the compile unit; full Mandelbrot render works through the same single-binary path. Per-instantiation `List<T>` helpers (`len` / `reverse`), per-(`List<T>`, `Vector<T>`) `Vector.fromList`, plus singleton `String.split` / `String.join` (T=String) live in `lists.rs`. Boxed `Vector.get`, `Result.withDefault(Int.mod(…), default)` fusion, full WAT bodies for `String.startsWith` / `String.contains` / `String.slice` / `String.toUpper` / `String.toLower` / `String.trim` / `Int.fromString` / `Float.fromString` / `Float.toString` round it out. Engine-bound on wasmtime (~6.4s/30 iter), same alloc-heavy tax `string_interp` already pays
 
 ## Phase plan
