@@ -5,23 +5,14 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 ## Unreleased
 
 ### Added
-- **`aver compile --explain-passes`** — runs the pipeline (no codegen) and prints a per-pass diagnostic report: tail-call conversions, interpolations lowered, fusion sites + sinks fired, slots resolved, last-use markers annotated, alloc/recursion facts. Per-pass `PassDiagnostic` carries a typed `PassReport` enum (one variant per stage) on `PipelineResult.pass_diagnostics`; backs the failable-invariant CI checks ("fail if buffer_build no longer fires on the canonical shape", "fail if hot fn loses no-alloc status").
-- **`aver compile --explain-passes --json`** — typed per-stage shape, no English literal parsing required by CI scripts. Each pass emits `{stage, data: {...stage-specific fields}}`: TCO has `tail_calls_added` / `fns_changed: [{name, before, after}]` / `non_tail_recursive: [{fn, recursive_calls, line}]`; BufferBuild has `rewrites` / `synthesized: [String]` / `sinks: [String]` / `rewrites_by_sink: {String: usize}`; Analyze has `total_fns` / `no_alloc_fns` / `recursive_fns` / `mutual_tco_members`; etc. `schema_version: 1` pins the shape.
-- **`PipelineResult.buffer_build`** — pass report (rewrites, synthesized fns, per-sink rewrite counts) replaces the opaque `(usize, usize)` tuple. Sink list is alphabetised; `synthesized` is the appended `<sink>__buffered` fn names.
-- **`compiler_visible_allocs` populated in `aver bench` reports** — IR-level alloc-site count using the target-stable `NeutralAllocPolicy`. Same number across `vm` / `wasm-local` / `rust` runners. `aver bench --compare baseline.json` reports any change; growth past baseline is a hard regression alongside p50/p95 timing.
-- **`aver bench --baseline-dir DIR`** — auto-picks `<host.os>-<host.arch>-<backend.name>.json` from `DIR` and gates the run against it. Silent skip when no matching baseline exists (one CI workflow gates wherever a baseline is pinned, runs cleanly on hosts without one). Works in both single-scenario and directory mode; directory mode reads the file as NDJSON and matches each scenario by name.
-- **`aver bench --save-baseline` extended to directory mode** — writes NDJSON of every scenario to one file, the same shape `--baseline-dir` reads. Run once on a target machine to capture, commit to `bench/baselines/`, gate every PR thereafter.
-- **`bench/baselines/macos-aarch64-vm.json` committed** — 13-scenario reference baseline captured on aarch64 macOS in release mode. Linux baseline gets captured automatically on first CI run; commit `linux-x86_64-vm.json` to enable the gate there.
-- **GitHub Actions `Bench Gate` job** — release-mode build + `aver bench bench/scenarios/ --target=vm --baseline-dir bench/baselines/ --fail-on-regression`. Bench results uploaded as artifact (30-day retention).
-- **`response_bytes` populated across all three targets**
-  - `vm`: byte length of `main`'s return value rendered through `aver_display` (`null` for `Unit`-returning scenarios — those print for side effect)
-  - `wasm-local`: total bytes the guest wrote through `fd_write` (sum of iovec lengths read from guest memory; counter accumulates per iteration)
-  - `rust`: actual stdout byte count from the spawned binary's subprocess output
-  - VM uses "rendered return value" semantics; wasm-local/rust use "actual stdout". `aver bench --compare` matches same-target baselines only, so divergence is contained.
-- **`tests/explain_passes_spec.rs`** — schema-stability tests for `--explain-passes --json`. Pin `schema_version: 1`, the canonical 7-stage ordering, the typed fields per pass variant. Renaming or removing fields requires bumping schema version.
+- **`aver compile --explain-passes [--json]`** — typed per-pass diagnostic report (TCO conversions, interpolations lowered, fusion sites + sinks fired, slots resolved, alloc/recursion facts). JSON shape is one `{stage, data}` block per pass with stage-specific fields; `schema_version: 1` pins the contract for CI gates (`tests/explain_passes_spec.rs`).
+- **`aver bench` populates `compiler_visible_allocs`** (IR-level via `NeutralAllocPolicy`, same across all three targets) and **`response_bytes`** (`vm`: rendered return value via `aver_display`; `wasm-local`: `fd_write` iovec sum; `rust`: subprocess stdout). `--compare` gates both as exact-match alongside p50/p95.
+- **`aver bench --baseline-dir DIR`** auto-picks `<host.os>-<host.arch>-<backend.name>.json`; silent skip when no match. Directory mode supports `--save-baseline` (NDJSON, same shape `--baseline-dir` reads) — `bench/baselines/macos-aarch64-vm.json` ships as the reference.
+- **GitHub Actions `Bench Gate` job** runs `aver bench bench/scenarios/ --target=vm --baseline-dir bench/baselines/ --fail-on-regression` on every PR; results upload as 30-day artifact.
 
 ### Changed
-- **`aver check` no longer prints the `↻ N buffer-build sink(s) [...]` summary** — same data is now exposed through `aver compile --explain-passes` with richer per-sink rewrite counts and synthesized fn names. Default `aver check` summary stays focused on diagnostics.
+- **`PipelineResult.buffer_build`** is now a typed `BufferBuildPassReport` (sinks, synthesized fns, per-sink rewrite counts) instead of an opaque `(usize, usize)` tuple.
+- **`aver check`** no longer prints the `↻ N buffer-build sink(s) […]` summary — same data with richer detail is now in `aver compile --explain-passes`.
 
 ## 0.15.1 "Traversal" — pipeline foundation + observability (unreleased)
 
