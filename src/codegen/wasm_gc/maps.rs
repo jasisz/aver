@@ -1,0 +1,725 @@
+//! `Map<K, V>` helper bodies — per-instantiation hashtable primitives.
+//!
+//! Strategy: monomorphise per (K, V), same as Vector / Option. Each
+//! instantiation owns four wasm fns (`empty`, `set`, `get`, `len`)
+//! plus shares one pair of K-keyed helpers (`hash<K>`, `eq<K, K>`)
+//! across every `Map<K, *>` that uses the same K.
+//!
+//! Phase-3c MVP only emits these for `K = String` (the bench shape).
+//! Other K kinds surface as Unimplemented when their hash / eq would
+//! need writing — see `emit_hash_for` / `emit_eq_for`.
+//!
+//! Open-addressing layout, fixed initial capacity, no resize:
+//!
+//! ```text
+//! struct $map_KV {
+//!   mut i32 size;
+//!   mut i32 cap;
+//!   mut (ref null $keys_array)   keys;
+//!   mut (ref null $values_array) values;
+//! }
+//! ```
+//!
+//! Empty slot marker = `keys[i] == null` (only valid for `K` that
+//! cannot legitimately be null, which Aver guarantees for ref types
+//! since the type system rejects null at the source level).
+//!
+//! Resize is a phase-3c+ extension. Cap is fixed at 16384 entries
+//! today — large enough for the bench scenarios (5000 keys), small
+//! enough to keep the `array.new_default` allocation under wasmtime's
+//! GC heap pressure threshold.
+
+use std::collections::HashMap;
+
+use wasm_encoder::{
+    BlockType, CodeSection, Function, HeapType, Instruction, RefType, ValType,
+};
+
+use super::WasmGcError;
+use super::types::{MapSlots, TypeRegistry};
+
+/// Initial bucket count — power of two so masking with `cap-1`
+/// instead of `i32.rem_u` works. Sized for the bench scenarios.
+const INITIAL_CAP: i32 = 16384;
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct KeyHelpers {
+    /// `hash : (ref null $K) -> i32`
+    pub(super) hash: u32,
+    /// `eq : (ref null $K, ref null $K) -> i32`
+    pub(super) eq: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct MapKVHelpers {
+    pub(super) empty: u32,
+    pub(super) set: u32,
+    pub(super) get: u32,
+    pub(super) len: u32,
+}
+
+#[derive(Default)]
+pub(super) struct MapHelperRegistry {
+    /// K (Aver type string) → its hash+eq fn indices.
+    key: HashMap<String, KeyHelpers>,
+    /// Canonical `Map<K, V>` → its four method indices.
+    kv: HashMap<String, MapKVHelpers>,
+    /// Insertion order — drives type-section + code-section emit.
+    key_order: Vec<String>,
+    kv_order: Vec<String>,
+    /// Per-helper wasm type indices (parallel to fn indices). Stored
+    /// here so the type section emit can look them up.
+    key_type_indices: HashMap<String, (u32, u32)>, // (hash type idx, eq type idx)
+    kv_type_indices: HashMap<String, (u32, u32, u32, u32)>,
+}
+
+impl MapHelperRegistry {
+    /// Register all helpers needed for the given map instantiations.
+    /// Must be called after `BuiltinRegistry::assign_slots` so the
+    /// fn-idx counter is past user fns + pure builtins.
+    pub(super) fn assign_slots(
+        &mut self,
+        map_canonicals: &[String],
+        registry: &TypeRegistry,
+        next_wasm_fn_idx: &mut u32,
+        next_type_idx: &mut u32,
+    ) -> Result<(), WasmGcError> {
+        // First pass: assign K-keyed helpers (hash, eq) per unique K.
+        for canonical in map_canonicals {
+            let (k_aver, _) = super::types::parse_map_kv(canonical).ok_or(
+                WasmGcError::Validation(format!(
+                    "MapHelperRegistry: cannot parse K, V from `{canonical}`"
+                )),
+            )?;
+            if !self.key.contains_key(k_aver) {
+                let hash_type_idx = *next_type_idx;
+                *next_type_idx += 1;
+                let eq_type_idx = *next_type_idx;
+                *next_type_idx += 1;
+                let hash_fn = *next_wasm_fn_idx;
+                *next_wasm_fn_idx += 1;
+                let eq_fn = *next_wasm_fn_idx;
+                *next_wasm_fn_idx += 1;
+                self.key.insert(
+                    k_aver.to_string(),
+                    KeyHelpers { hash: hash_fn, eq: eq_fn },
+                );
+                self.key_type_indices.insert(
+                    k_aver.to_string(),
+                    (hash_type_idx, eq_type_idx),
+                );
+                self.key_order.push(k_aver.to_string());
+            }
+        }
+
+        // Second pass: per (K, V) helpers.
+        for canonical in map_canonicals {
+            if self.kv.contains_key(canonical) {
+                continue;
+            }
+            let empty_type_idx = *next_type_idx;
+            *next_type_idx += 1;
+            let set_type_idx = *next_type_idx;
+            *next_type_idx += 1;
+            let get_type_idx = *next_type_idx;
+            *next_type_idx += 1;
+            let len_type_idx = *next_type_idx;
+            *next_type_idx += 1;
+            let empty_fn = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
+            let set_fn = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
+            let get_fn = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
+            let len_fn = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
+
+            // Validate K is supported now (only `String` in phase 3c).
+            let (k_aver, _) = super::types::parse_map_kv(canonical).ok_or(
+                WasmGcError::Validation(format!("bad map canonical `{canonical}`")),
+            )?;
+            if k_aver != "String" {
+                return Err(WasmGcError::Unimplemented(
+                    "phase 3c — Map<K, V> with K != String (need hash + eq for that K)",
+                ));
+            }
+            let _ = registry; // touch so the borrow-checker is happy
+
+            self.kv.insert(
+                canonical.clone(),
+                MapKVHelpers {
+                    empty: empty_fn,
+                    set: set_fn,
+                    get: get_fn,
+                    len: len_fn,
+                },
+            );
+            self.kv_type_indices.insert(
+                canonical.clone(),
+                (empty_type_idx, set_type_idx, get_type_idx, len_type_idx),
+            );
+            self.kv_order.push(canonical.clone());
+        }
+        Ok(())
+    }
+
+    pub(super) fn key_helpers(&self, k_aver: &str) -> Option<KeyHelpers> {
+        self.key.get(k_aver).copied()
+    }
+
+    pub(super) fn kv_helpers(&self, canonical: &str) -> Option<MapKVHelpers> {
+        self.kv.get(canonical).copied()
+    }
+
+    /// Emit fn-type entries (in slot order) for every registered
+    /// helper. Caller's `TypeSection` must be at `next_type_idx`'s
+    /// starting position from the assign_slots call.
+    pub(super) fn emit_helper_types(
+        &self,
+        types: &mut wasm_encoder::TypeSection,
+        registry: &TypeRegistry,
+    ) -> Result<(), WasmGcError> {
+        for k_aver in &self.key_order {
+            let k_val = super::types::aver_to_wasm(k_aver, Some(registry))?.ok_or(
+                WasmGcError::Validation(format!("Map K `{k_aver}` has no wasm rep")),
+            )?;
+            // hash : (K) -> i32
+            types.ty().function([k_val], [ValType::I32]);
+            // eq : (K, K) -> i32
+            types.ty().function([k_val, k_val], [ValType::I32]);
+        }
+        for canonical in &self.kv_order {
+            let slots = registry.map_slots(canonical).ok_or(WasmGcError::Validation(
+                format!("Map slots missing for `{canonical}`"),
+            ))?;
+            let map_ref = ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(slots.map),
+            });
+            let (k_aver, v_aver) = super::types::parse_map_kv(canonical).ok_or(
+                WasmGcError::Validation(format!("parse_map_kv `{canonical}`")),
+            )?;
+            let k_val = super::types::aver_to_wasm(k_aver, Some(registry))?.ok_or(
+                WasmGcError::Validation(format!("Map K `{k_aver}` has no wasm rep")),
+            )?;
+            let v_val = super::types::aver_to_wasm(v_aver, Some(registry))?.ok_or(
+                WasmGcError::Validation(format!("Map V `{v_aver}` has no wasm rep")),
+            )?;
+            let opt_idx = registry
+                .option_type_idx(&format!("Option<{v_aver}>"))
+                .ok_or(WasmGcError::Validation(format!(
+                    "Option<{v_aver}> not registered (Map.get needs it)"
+                )))?;
+            let opt_ref = ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(opt_idx),
+            });
+
+            // empty : () -> Map
+            types.ty().function([], [map_ref]);
+            // set : (Map, K, V) -> Map
+            types.ty().function([map_ref, k_val, v_val], [map_ref]);
+            // get : (Map, K) -> Option<V>
+            types.ty().function([map_ref, k_val], [opt_ref]);
+            // len : (Map) -> i64
+            types.ty().function([map_ref], [ValType::I64]);
+        }
+        Ok(())
+    }
+
+    /// Emit one `funcs.function(<type_idx>)` entry per registered
+    /// helper, in the same order as `emit_helper_types`.
+    pub(super) fn emit_function_section(
+        &self,
+        funcs: &mut wasm_encoder::FunctionSection,
+    ) {
+        for k in &self.key_order {
+            let (h, e) = self.key_type_indices[k];
+            funcs.function(h);
+            funcs.function(e);
+        }
+        for canonical in &self.kv_order {
+            let (em, st, gt, ln) = self.kv_type_indices[canonical];
+            funcs.function(em);
+            funcs.function(st);
+            funcs.function(gt);
+            funcs.function(ln);
+        }
+    }
+
+    /// Emit code bodies for every registered helper, in the same
+    /// order as `emit_helper_types`.
+    pub(super) fn emit_helper_bodies(
+        &self,
+        codes: &mut CodeSection,
+        registry: &TypeRegistry,
+    ) -> Result<(), WasmGcError> {
+        for k_aver in &self.key_order {
+            codes.function(&emit_hash_for(k_aver, registry)?);
+            codes.function(&emit_eq_for(k_aver, registry)?);
+        }
+        for canonical in &self.kv_order {
+            let (k_aver, _) = super::types::parse_map_kv(canonical).ok_or(
+                WasmGcError::Validation(format!("parse_map_kv `{canonical}`")),
+            )?;
+            let key_h = self
+                .key_helpers(k_aver)
+                .ok_or(WasmGcError::Validation(format!(
+                    "key helpers missing for K=`{k_aver}`"
+                )))?;
+            codes.function(&emit_map_empty(canonical, registry)?);
+            codes.function(&emit_map_set(canonical, registry, key_h)?);
+            codes.function(&emit_map_get(canonical, registry, key_h)?);
+            codes.function(&emit_map_len(canonical, registry)?);
+        }
+        Ok(())
+    }
+}
+
+/// `hash : (K) -> i32`. Phase 3c: only K=String supported.
+fn emit_hash_for(k_aver: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    match k_aver {
+        "String" => emit_hash_string(registry),
+        other => Err(WasmGcError::Unimplemented(match other {
+            "Int" => "phase 3c — hash for K=Int (need separate empty-marker scheme)",
+            _ => "phase 3c — hash for non-String K",
+        })),
+    }
+}
+
+fn emit_eq_for(k_aver: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    match k_aver {
+        "String" => emit_eq_string(registry),
+        _ => Err(WasmGcError::Unimplemented(
+            "phase 3c — eq for non-String K",
+        )),
+    }
+}
+
+fn string_idx(registry: &TypeRegistry) -> Result<u32, WasmGcError> {
+    registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "Map<String, _> helper requires String slot".into(),
+        ))
+}
+
+/// DJB2 hash over the byte content of a `(ref null $string)`.
+/// `h = 5381; for b in s: h = h * 33 + b`. Standard non-cryptographic
+/// hash used in legacy backend's `rt_hash_string` shape.
+fn emit_hash_string(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let s_idx = string_idx(registry)?;
+    let mut f = Function::new([
+        (1, ValType::I32), // local 1: h
+        (1, ValType::I32), // local 2: i
+        (1, ValType::I32), // local 3: n
+    ]);
+    // h = 5381
+    f.instruction(&Instruction::I32Const(5381));
+    f.instruction(&Instruction::LocalSet(1));
+    // n = arr.len
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::LocalSet(3));
+    // i = 0
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(2));
+    // loop
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    // if i >= n break
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1)); // break out of block
+    // h = h * 33 + s[i]   (h * 33 = (h << 5) + h)
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32Const(5));
+    f.instruction(&Instruction::I32Shl);
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::ArrayGetU(s_idx));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(1));
+    // i++
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // loop
+    f.instruction(&Instruction::End); // block
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// Byte-equal compare of two `(ref null $string)`. Returns 1 if equal.
+fn emit_eq_string(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let s_idx = string_idx(registry)?;
+    let mut f = Function::new([
+        (1, ValType::I32), // local 2: i
+        (1, ValType::I32), // local 3: n
+    ]);
+    // If lens differ → 0
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    // n = a.len
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::LocalSet(3));
+    // i = 0
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(2));
+    // loop: while i < n: if a[i]!=b[i] return 0; i++
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::ArrayGetU(s_idx));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::ArrayGetU(s_idx));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // loop
+    f.instruction(&Instruction::End); // block
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn slots_for(canonical: &str, registry: &TypeRegistry) -> Result<MapSlots, WasmGcError> {
+    registry
+        .map_slots(canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Map slots missing for `{canonical}`"
+        )))
+}
+
+/// `empty() -> Map<K, V>`. Allocates fresh keys/values arrays at
+/// `INITIAL_CAP` and a struct wrapping them.
+fn emit_map_empty(canonical: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let slots = slots_for(canonical, registry)?;
+    let mut f = Function::new([]);
+    // size = 0; cap = INITIAL_CAP; keys = array.new_default; values = array.new_default
+    f.instruction(&Instruction::I32Const(0)); // size
+    f.instruction(&Instruction::I32Const(INITIAL_CAP)); // cap
+    f.instruction(&Instruction::I32Const(INITIAL_CAP));
+    f.instruction(&Instruction::ArrayNewDefault(slots.keys_array));
+    f.instruction(&Instruction::I32Const(INITIAL_CAP));
+    f.instruction(&Instruction::ArrayNewDefault(slots.values_array));
+    f.instruction(&Instruction::StructNew(slots.map));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `set(map, k, v) -> map`. Linear-probing open-addressing insert.
+/// Mutates `map` in place; returns same ref.
+fn emit_map_set(
+    canonical: &str,
+    registry: &TypeRegistry,
+    keyh: KeyHelpers,
+) -> Result<Function, WasmGcError> {
+    let slots = slots_for(canonical, registry)?;
+    let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
+    let k_val = super::types::aver_to_wasm(k_aver, Some(registry))?.unwrap();
+    let v_val = super::types::aver_to_wasm(v_aver, Some(registry))?.unwrap();
+    // params: 0=map, 1=k, 2=v
+    // locals: 3=cap, 4=mask, 5=idx, 6=keys, 7=values, 8=cur_key
+    let mut f = Function::new([
+        (1, ValType::I32), // 3: cap
+        (1, ValType::I32), // 4: mask
+        (1, ValType::I32), // 5: idx
+        (
+            1,
+            ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(slots.keys_array),
+            }),
+        ), // 6: keys
+        (
+            1,
+            ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(slots.values_array),
+            }),
+        ), // 7: values
+        (1, k_val),        // 8: cur_key
+    ]);
+    let _ = v_val;
+
+    // cap = map.cap; mask = cap - 1; keys = map.keys; values = map.values
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 2,
+    });
+    f.instruction(&Instruction::LocalSet(6));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 3,
+    });
+    f.instruction(&Instruction::LocalSet(7));
+
+    // idx = hash(k) & mask
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(keyh.hash));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(5));
+
+    // loop forever (cap is large enough that probe always finds slot)
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    // cur_key = keys[idx]
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::ArrayGet(slots.keys_array));
+    f.instruction(&Instruction::LocalSet(8));
+
+    // if cur_key == null: empty slot, insert.
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    // keys[idx] = k
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::ArraySet(slots.keys_array));
+    // values[idx] = v
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::ArraySet(slots.values_array));
+    // map.size += 1
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::StructSet {
+        struct_type_index: slots.map,
+        field_index: 0,
+    });
+    // return map
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // else if eq(cur_key, k): update.
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(keyh.eq));
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::ArraySet(slots.values_array));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // else: idx = (idx + 1) & mask; continue
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // loop
+    f.instruction(&Instruction::End); // block
+    f.instruction(&Instruction::Unreachable);
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `get(map, k) -> Option<V>`. Linear-probing lookup; null slot →
+/// None, matching key → Some(value).
+fn emit_map_get(
+    canonical: &str,
+    registry: &TypeRegistry,
+    keyh: KeyHelpers,
+) -> Result<Function, WasmGcError> {
+    let slots = slots_for(canonical, registry)?;
+    let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
+    let k_val = super::types::aver_to_wasm(k_aver, Some(registry))?.unwrap();
+    let v_val = super::types::aver_to_wasm(v_aver, Some(registry))?.unwrap();
+    let opt_canonical = format!("Option<{v_aver}>");
+    let opt_idx = registry.option_type_idx(&opt_canonical).ok_or(
+        WasmGcError::Validation(format!(
+            "Map.get: Option<{v_aver}> not registered"
+        )),
+    )?;
+
+    let mut f = Function::new([
+        (1, ValType::I32), // 2: cap
+        (1, ValType::I32), // 3: mask
+        (1, ValType::I32), // 4: idx
+        (
+            1,
+            ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(slots.keys_array),
+            }),
+        ), // 5: keys
+        (
+            1,
+            ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(slots.values_array),
+            }),
+        ), // 6: values
+        (1, k_val),        // 7: cur_key
+    ]);
+    // cap, mask, keys, values
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 2,
+    });
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 3,
+    });
+    f.instruction(&Instruction::LocalSet(6));
+    // idx = hash(k) & mask
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(keyh.hash));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(4));
+
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::ArrayGet(slots.keys_array));
+    f.instruction(&Instruction::LocalSet(7));
+    // if cur_key == null → return None
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    emit_default_value_for(&mut f, v_val);
+    f.instruction(&Instruction::StructNew(opt_idx));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    // if eq(cur_key, k) → return Some(values[idx])
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(keyh.eq));
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::ArrayGet(slots.values_array));
+    f.instruction(&Instruction::StructNew(opt_idx));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    // else: idx = (idx + 1) & mask
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // loop
+    f.instruction(&Instruction::End); // block
+    f.instruction(&Instruction::Unreachable);
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `len(map) -> i64`. Reads `size` from the struct, widens to i64.
+fn emit_map_len(canonical: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let slots = slots_for(canonical, registry)?;
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::I64ExtendI32U);
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// Push a default value of the given wasm type onto the stack — used
+/// by `Map.get`'s None branch where the Option's `value` field needs
+/// some payload (read by no well-typed Aver code, since pattern match
+/// dispatches on tag first).
+fn emit_default_value_for(f: &mut Function, ty: ValType) {
+    match ty {
+        ValType::I32 => {
+            f.instruction(&Instruction::I32Const(0));
+        }
+        ValType::I64 => {
+            f.instruction(&Instruction::I64Const(0));
+        }
+        ValType::F32 => {
+            f.instruction(&Instruction::F32Const(0.0.into()));
+        }
+        ValType::F64 => {
+            f.instruction(&Instruction::F64Const(0.0.into()));
+        }
+        ValType::Ref(rt) => {
+            f.instruction(&Instruction::RefNull(rt.heap_type));
+        }
+        ValType::V128 => {
+            // V128 not used by Aver primitives; emit a zero literal
+            // for completeness so the helper still type-checks if a
+            // future `Vector<V128>` ever surfaces.
+            f.instruction(&Instruction::V128Const(0));
+        }
+    }
+}

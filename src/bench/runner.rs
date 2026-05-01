@@ -566,8 +566,22 @@ fn run_wasm_gc(manifest: &Manifest) -> Result<BenchReport, RunError> {
                 .map_err(|e| RunError::Runtime(format!("invoke main: {}", e)))?;
             return Ok(String::new());
         }
+        // Reference returns (e.g. `main: () -> String`, where `String`
+        // is `(ref null $string_array)`): fall back to a dynamic call.
+        // Bench mode only needs the timing; rendering the byte content
+        // would require introspecting the array element-by-element via
+        // the wasmtime GC API. Report `[ref]` as the rendered result.
+        if let Some(f) = instance.get_func(&mut store, "main") {
+            let n_results = f.ty(&store).results().len();
+            let mut out: Vec<wasmtime::Val> = (0..n_results)
+                .map(|_| wasmtime::Val::AnyRef(None))
+                .collect();
+            f.call(&mut store, &[], &mut out)
+                .map_err(|e| RunError::Runtime(format!("invoke main: {}", e)))?;
+            return Ok(String::from("[ref]"));
+        }
         Err(RunError::Runtime(
-            "main export must return Int / Float / Unit (i64 / f64 / ())".into(),
+            "main export must be a function".into(),
         ))
     };
 

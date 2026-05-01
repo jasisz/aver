@@ -76,6 +76,15 @@ mod wat_helper;
 pub(super) enum BuiltinName {
     IntToString,
     StringLength,
+    /// Variadic-by-array string concatenation: `(array (ref null $string))
+    /// -> (ref null $string)`. Sums the per-part lengths once,
+    /// allocates the result, copies each part. O(total_len) regardless
+    /// of part count — replaces what would otherwise be an O(N²)
+    /// `String.concat` chain. Used by `Expr::InterpolatedStr` (each
+    /// interpolation builds a fixed-size `array.new_fixed` of refs
+    /// over its parts and calls this) and the future `String.join`
+    /// shape (interleave separator, then call this).
+    StringConcatN,
 }
 
 impl BuiltinName {
@@ -87,10 +96,22 @@ impl BuiltinName {
         }
     }
 
+    /// Builtins whose surface name is internal to the wasm-gc backend
+    /// (not addressable from Aver source). These get registered
+    /// explicitly when the codegen emit path needs them — currently
+    /// `Expr::InterpolatedStr` registers `StringConcatN`.
+    pub(super) fn internal_canonical(self) -> &'static str {
+        match self {
+            Self::StringConcatN => "__wasmgc_concat_n",
+            _ => self.canonical(),
+        }
+    }
+
     pub(super) fn canonical(self) -> &'static str {
         match self {
             Self::IntToString => "Int.toString",
             Self::StringLength => "String.len",
+            Self::StringConcatN => "__wasmgc_concat_n",
         }
     }
 
@@ -98,6 +119,7 @@ impl BuiltinName {
         match self {
             Self::IntToString => Ok(vec![ValType::I64]),
             Self::StringLength => Ok(vec![string_ref_ty(registry)?]),
+            Self::StringConcatN => Ok(vec![string_array_ref_ty(registry)?]),
         }
     }
 
@@ -105,6 +127,7 @@ impl BuiltinName {
         match self {
             Self::IntToString => Ok(vec![string_ref_ty(registry)?]),
             Self::StringLength => Ok(vec![ValType::I64]),
+            Self::StringConcatN => Ok(vec![string_ref_ty(registry)?]),
         }
     }
 
@@ -115,6 +138,7 @@ impl BuiltinName {
         match self {
             Self::IntToString => emit_int_to_string(registry),
             Self::StringLength => emit_string_length(registry),
+            Self::StringConcatN => emit_string_concat_n(registry),
         }
     }
 }
@@ -179,6 +203,22 @@ fn string_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
         .string_array_type_idx
         .ok_or(WasmGcError::Validation(
             "builtin requires String repr but no string type slot was allocated".into(),
+        ))?;
+    Ok(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(idx),
+    }))
+}
+
+/// `(ref null (array (ref null $string)))` — the Vector<String> shape
+/// the variadic concat helper consumes. Reuses the registry's
+/// monomorphised `Vector<String>` slot (registered by
+/// `TypeRegistry::build` whenever an `InterpolatedStr` is reachable).
+fn string_array_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
+    let idx = registry
+        .vector_type_idx("Vector<String>")
+        .ok_or(WasmGcError::Validation(
+            "concat-N helper requires Vector<String> slot but it wasn't registered".into(),
         ))?;
     Ok(ValType::Ref(wasm_encoder::RefType {
         nullable: true,
@@ -353,6 +393,126 @@ fn emit_int_to_string(registry: &TypeRegistry) -> Result<Function, WasmGcError> 
                     array.set $string))
 
                 local.get $arr)))
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// Variadic concat: `(array (ref null $string)) -> (ref null $string)`.
+/// Two-pass: sum part lengths, allocate the result, then copy each
+/// part into its slot. O(total_len) regardless of part count, vs the
+/// O(N²) bytes copied by a left-folded `String.concat` chain.
+fn emit_string_concat_n(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let string_idx = registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "concat-N helper requires String slot".into(),
+        ))?;
+    let vec_idx = registry
+        .vector_type_idx("Vector<String>")
+        .ok_or(WasmGcError::Validation(
+            "concat-N helper requires Vector<String> slot".into(),
+        ))?;
+    if vec_idx <= string_idx {
+        return Err(WasmGcError::Validation(format!(
+            "concat-N helper expects vector_idx > string_idx (got {vec_idx} vs {string_idx})"
+        )));
+    }
+    let pre_string = wat_helper::padding_types(string_idx);
+    let between = wat_helper::padding_types(vec_idx - string_idx - 1);
+    let wat = format!(
+        r#"
+        (module
+          {pre_string}
+          (type $string (array (mut i8)))
+          {between}
+          (type $string_array (array (mut (ref null $string))))
+          (func (export "helper") (param $arr (ref null $string_array)) (result (ref null $string))
+            (local $total i32)
+            (local $i i32)
+            (local $n i32)
+            (local $part (ref null $string))
+            (local $part_len i32)
+            (local $out (ref null $string))
+            (local $dst i32)
+
+            ;; n = arr.len
+            local.get $arr
+            array.len
+            local.set $n
+
+            ;; Sum total length.
+            i32.const 0
+            local.set $total
+            i32.const 0
+            local.set $i
+            (block $sum_done
+              (loop $sum
+                local.get $i
+                local.get $n
+                i32.ge_u
+                br_if $sum_done
+
+                local.get $total
+                local.get $arr
+                local.get $i
+                array.get $string_array
+                array.len
+                i32.add
+                local.set $total
+
+                local.get $i
+                i32.const 1
+                i32.add
+                local.set $i
+                br $sum))
+
+            ;; Allocate the result.
+            local.get $total
+            array.new_default $string
+            local.set $out
+
+            ;; Copy each part into out[dst..dst+part_len].
+            i32.const 0
+            local.set $dst
+            i32.const 0
+            local.set $i
+            (block $copy_done
+              (loop $copy
+                local.get $i
+                local.get $n
+                i32.ge_u
+                br_if $copy_done
+
+                local.get $arr
+                local.get $i
+                array.get $string_array
+                local.set $part
+
+                local.get $part
+                array.len
+                local.set $part_len
+
+                local.get $out
+                local.get $dst
+                local.get $part
+                i32.const 0
+                local.get $part_len
+                array.copy $string $string
+
+                local.get $dst
+                local.get $part_len
+                i32.add
+                local.set $dst
+
+                local.get $i
+                i32.const 1
+                i32.add
+                local.set $i
+                br $copy))
+
+            local.get $out)
         )
     "#
     );

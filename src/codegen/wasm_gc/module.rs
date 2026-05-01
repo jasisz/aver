@@ -20,14 +20,15 @@
 use std::collections::HashMap;
 
 use wasm_encoder::{
-    CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection, ImportSection,
-    Instruction, Module, TypeSection, ValType,
+    CodeSection, DataCountSection, DataSection, EntityType, ExportKind, ExportSection, Function,
+    FunctionSection, ImportSection, Instruction, Module, TypeSection, ValType,
 };
 
 use super::WasmGcError;
 use super::body::{FnEntry, FnMap, emit_fn_body};
 use super::builtins::{BuiltinName, BuiltinRegistry};
 use super::effects::{EffectName, EffectRegistry};
+use super::maps::MapHelperRegistry;
 use super::types::{TypeRegistry, param_types, record_struct_type, return_results};
 
 use crate::ast::{Expr, FnDef, Stmt, TopLevel, TypeDef};
@@ -108,6 +109,17 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
         let r = name.results(&registry)?;
         types.ty().function(p, r);
     }
+
+    // 6) Map helper fn types (per-K hash + eq, per-(K,V) empty/set/get/len).
+    let mut map_helpers = MapHelperRegistry::default();
+    map_helpers.assign_slots(
+        &registry.map_order,
+        &registry,
+        &mut next_builtin_fn_idx,
+        &mut next_type_idx,
+    )?;
+    map_helpers.emit_helper_types(&mut types, &registry)?;
+
     module.section(&types);
 
     // ── Import section ─────────────────────────────────────────────
@@ -135,6 +147,7 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
             .expect("just-assigned builtin type idx");
         funcs.function(type_idx);
     }
+    map_helpers.emit_function_section(&mut funcs);
     module.section(&funcs);
 
     // Build the fn-name → wasm-fn-idx map. With K imports:
@@ -167,10 +180,17 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
             .expect("registered effect has wasm fn idx");
         effect_idx_lookup.insert(name.canonical().to_string(), idx);
     }
+    let mut map_helpers_lookup: HashMap<String, super::maps::MapKVHelpers> = HashMap::new();
+    for canonical in &registry.map_order {
+        if let Some(h) = map_helpers.kv_helpers(canonical) {
+            map_helpers_lookup.insert(canonical.clone(), h);
+        }
+    }
     let fn_map = FnMap {
         by_name,
         builtins: builtin_idx_lookup,
         effects: effect_idx_lookup,
+        map_helpers: map_helpers_lookup,
     };
 
     // ── Export section ─────────────────────────────────────────────
@@ -181,6 +201,15 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
         exports.export(&fd.name, ExportKind::Func, wasm_idx);
     }
     module.section(&exports);
+
+    // ── Data count section (must precede code when using passive
+    //     segments via array.new_data / data.drop).
+    if !registry.string_literals.is_empty() {
+        let count = DataCountSection {
+            count: registry.string_literals.len() as u32,
+        };
+        module.section(&count);
+    }
 
     // ── Code section ───────────────────────────────────────────────
     let mut codes = CodeSection::new();
@@ -214,7 +243,23 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
     // real impls land in `builtins/` per phase 3c roadmap.
     builtin_registry.emit_helper_bodies(&mut codes, &registry)?;
 
+    // Map helper bodies (hash, eq, empty, set, get, len per
+    // instantiation) — emitted last so their wasm fn indices line up
+    // with what `MapHelperRegistry::assign_slots` recorded.
+    map_helpers.emit_helper_bodies(&mut codes, &registry)?;
+
     module.section(&codes);
+
+    // ── Data section ───────────────────────────────────────────────
+    // Passive segments holding String literal byte sequences. Emitted
+    // last; `array.new_data $string $segment_idx` reads from these.
+    if !registry.string_literals.is_empty() {
+        let mut data = DataSection::new();
+        for bytes in &registry.string_literals {
+            data.passive(bytes.iter().copied());
+        }
+        module.section(&data);
+    }
 
     let bytes = module.finish();
     if let Err(e) = validate(&bytes) {
@@ -277,17 +322,123 @@ fn emit_user_types(
         }
     }
 
-    // String type: `(array i8)`. Mutable=false because Aver strings
-    // are immutable; helpers that build new strings (Int.toString,
-    // String.concat) allocate a fresh array each time and copy.
+    // String type: `(array (mut i8))`. Emitted before any `Vector<T>`
+    // slot so a `Vector<String>` array element can reference `$string`
+    // by an already-assigned smaller index. Mutable=true at the wasm
+    // type level so helpers (Int.toString etc.) can `array.set` to
+    // fill a freshly-allocated array; Aver-side immutability is a
+    // surface-language guarantee — no user-level op exposes mutation.
     if registry.string_array_type_idx.is_some() {
-        // mutable=true at the wasm type level so helpers (Int.toString
-        // etc.) can `array.set` to fill a freshly-allocated array.
-        // Aver-side immutability is a surface-language guarantee — no
-        // user-level op exposes mutation.
         types
             .ty()
             .array(&wasm_encoder::StorageType::I8, true /* mutable */);
+    }
+
+    // Vector<T> instantiations — emit one `(array (mut T))` per
+    // registered slot, in registry insertion order so `vector_type_idx`
+    // matches the type-section position. Mutable=true so `Vector.set`
+    // can `array.set` in place; Aver-side immutability is preserved
+    // by API contract (no user-level ops mutate without returning a
+    // fresh handle).
+    for canonical in &registry.vector_order {
+        let element = TypeRegistry::vector_element_type(canonical).ok_or(
+            WasmGcError::Validation(format!(
+                "registered vector `{canonical}` has no parsable element type"
+            )),
+        )?;
+        let elem_val = super::types::aver_to_wasm(element, Some(registry))?.ok_or(
+            WasmGcError::Validation(format!(
+                "Vector element type `{element}` has no wasm representation"
+            )),
+        )?;
+        types
+            .ty()
+            .array(&wasm_encoder::StorageType::Val(elem_val), true);
+    }
+
+    // Option<T> instantiations — `(struct (mut i32 tag) (mut T value))`.
+    // Emitted after vectors so an `Option<Vector<T>>` chain can land
+    // safely (Option struct sits at a higher index than the inner
+    // Vector slot it references). Both fields mutable for symmetry
+    // with constructors emitting `struct.new` directly.
+    for canonical in &registry.option_order {
+        let element = TypeRegistry::option_element_type(canonical).ok_or(
+            WasmGcError::Validation(format!(
+                "registered option `{canonical}` has no parsable element type"
+            )),
+        )?;
+        let elem_val = super::types::aver_to_wasm(element, Some(registry))?.ok_or(
+            WasmGcError::Validation(format!(
+                "Option element type `{element}` has no wasm representation"
+            )),
+        )?;
+        types.ty().struct_([
+            wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                mutable: true,
+            },
+            wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(elem_val),
+                mutable: true,
+            },
+        ]);
+    }
+
+    // `Map<K, V>` — three wasm types per registered instantiation,
+    // emitted in registry insertion order (keys array, values array,
+    // map struct) so the struct's nested ref fields reference the
+    // arrays by an already-assigned lower idx.
+    for canonical in &registry.map_order {
+        let (k_aver, v_aver) = super::types::parse_map_kv(canonical).ok_or(
+            WasmGcError::Validation(format!(
+                "registered map `{canonical}` has no parsable K, V"
+            )),
+        )?;
+        let k_val = super::types::aver_to_wasm(k_aver, Some(registry))?.ok_or(
+            WasmGcError::Validation(format!(
+                "Map key type `{k_aver}` has no wasm representation"
+            )),
+        )?;
+        let v_val = super::types::aver_to_wasm(v_aver, Some(registry))?.ok_or(
+            WasmGcError::Validation(format!(
+                "Map value type `{v_aver}` has no wasm representation"
+            )),
+        )?;
+        types
+            .ty()
+            .array(&wasm_encoder::StorageType::Val(k_val), true);
+        types
+            .ty()
+            .array(&wasm_encoder::StorageType::Val(v_val), true);
+        let slots = registry
+            .map_slots(canonical)
+            .expect("just-registered map slots");
+        let keys_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(slots.keys_array),
+        });
+        let values_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(slots.values_array),
+        });
+        types.ty().struct_([
+            wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                mutable: true,
+            },
+            wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                mutable: true,
+            },
+            wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(keys_ref),
+                mutable: true,
+            },
+            wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(values_ref),
+                mutable: true,
+            },
+        ]);
     }
 
     Ok(())
@@ -325,6 +476,7 @@ fn discover_builtins_in_expr(
     builtins: &mut BuiltinRegistry,
     effects: &mut EffectRegistry,
 ) {
+    use crate::ast::StrPart;
     match expr {
         Expr::FnCall(callee, args) => {
             if let Expr::Attr(_parent, member) = &callee.node
@@ -367,6 +519,21 @@ fn discover_builtins_in_expr(
         Expr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
                 discover_builtins_in_expr(&e.node, builtins, effects);
+            }
+        }
+        // `InterpolatedStr` lowers to `array.new_fixed` + the variadic
+        // concat helper. Register it here so the helper's wasm fn
+        // index is allocated by the time emission runs. Each Parsed
+        // part may also need `Int.toString` (if its type is Int) —
+        // we conservatively register that too; unused registrations
+        // are stripped by `wasm-opt -Oz`.
+        Expr::InterpolatedStr(parts) => {
+            builtins.register(BuiltinName::StringConcatN);
+            builtins.register(BuiltinName::IntToString);
+            for p in parts {
+                if let StrPart::Parsed(inner) = p {
+                    discover_builtins_in_expr(&inner.node, builtins, effects);
+                }
             }
         }
         _ => {}

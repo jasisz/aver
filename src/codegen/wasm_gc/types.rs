@@ -40,6 +40,33 @@ pub(super) struct TypeRegistry {
     /// `record_name → field list` so `Attr` can resolve a field name
     /// to its struct field index + type.
     pub(super) record_fields: HashMap<String, Vec<(String, String)>>,
+    /// Per-instantiation `Vector<T>` slot. Key is the canonical Aver
+    /// type string (e.g. `"Vector<Int>"`). Value is the wasm type idx
+    /// of the underlying `(array (mut T))`. Monomorphized: each `T`
+    /// reachable in the program gets its own slot, so element access
+    /// is type-direct (no anyref / no boxing).
+    pub(super) vector_types: HashMap<String, u32>,
+    /// Insertion order for `vector_types` — used by module emit so
+    /// type-section entries land at the indices the registry recorded.
+    pub(super) vector_order: Vec<String>,
+    /// Per-instantiation `Option<T>` slot. Same monomorphisation
+    /// strategy as `vector_types`. Each `Option<T>` lowers to a
+    /// `(struct (mut i32 tag) (mut T value))` — tag=0 None, tag=1
+    /// Some. The `value` field carries a default for None (zero for
+    /// numerics, null for ref types) so `struct.new` always has a
+    /// valid initial value; pattern matching reads `tag` first and
+    /// only consumes `value` on the Some branch.
+    pub(super) option_types: HashMap<String, u32>,
+    pub(super) option_order: Vec<String>,
+    /// Per-instantiation `Map<K, V>` slot triple (keys array, values
+    /// array, map struct). Same monomorphisation strategy as Vector /
+    /// Option — each unique `Map<K, V>` reachable in the program
+    /// gets its own three slots and four helper bodies (empty, set,
+    /// get, len). Phase-3c MVP supports `K = String`; other K kinds
+    /// surface as Unimplemented when their hash / eq helpers would
+    /// need to be emitted.
+    pub(super) map_types: HashMap<String, MapSlots>,
+    pub(super) map_order: Vec<String>,
     /// Total number of user-type slots reserved in the type section.
     /// Function types start AFTER these.
     pub(super) user_type_count: u32,
@@ -48,6 +75,12 @@ pub(super) struct TypeRegistry {
     /// reachable from the program (most numeric bench scenarios).
     /// See `builtins/` README for the full repr decision.
     pub(super) string_array_type_idx: Option<u32>,
+    /// Per-byte-sequence passive data segment for `String` literals.
+    /// Each unique literal in the program lands at one segment idx;
+    /// `Expr::Literal(Literal::Str(_))` lowers to `array.new_data
+    /// $string $segment_idx` with offset=0, size=len.
+    pub(super) string_literals: Vec<Vec<u8>>,
+    pub(super) string_literal_idx: HashMap<Vec<u8>, u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -55,6 +88,16 @@ pub(super) struct VariantInfo {
     pub(super) parent: String,
     pub(super) type_idx: u32,
     pub(super) fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct MapSlots {
+    /// `(array (mut K))` — keys array; element type derived from `K`.
+    pub(super) keys_array: u32,
+    /// `(array (mut V))` — values array; element type derived from `V`.
+    pub(super) values_array: u32,
+    /// `(struct (mut i32 size) (mut i32 cap) (mut keys_ref) (mut values_ref))`.
+    pub(super) map: u32,
 }
 
 impl TypeRegistry {
@@ -93,15 +136,15 @@ impl TypeRegistry {
             }
         }
 
-        // Allocate String type slot if any signature references String
-        // OR any fn body calls a String-producing/consuming builtin
-        // (Int.toString, String.len, etc.). The body-walk catches the
-        // case where String only appears as an intermediate value.
+        // Allocate the String type slot first (after records/variants)
+        // so any `Vector<String>` registered below sits at a higher
+        // index than `$string` and can reference it without crossing
+        // the rec-group boundary.
         let needs_string = items.iter().any(|item| match item {
             TopLevel::FnDef(fd) => {
                 fd.return_type.contains("String")
                     || fd.params.iter().any(|(_, t)| t.contains("String"))
-                    || fn_body_uses_string_builtin(fd)
+                    || fn_body_produces_string(fd)
             }
             _ => false,
         });
@@ -113,13 +156,186 @@ impl TypeRegistry {
             None
         };
 
+        // Discover monomorphized `Vector<T>` instantiations. Walk fn
+        // signatures (params + return types) and binding annotations;
+        // each unique `Vector<T>` gets its own `(array (mut T))` slot.
+        // Inferred Vectors (from `Vector.new` whose annotation is
+        // implicit) still surface here when the surrounding param /
+        // return type spells out the element type, which is the
+        // canonical bench shape today.
+        let mut vector_types: HashMap<String, u32> = HashMap::new();
+        let mut vector_order: Vec<String> = Vec::new();
+        for item in items {
+            if let TopLevel::FnDef(fd) = item {
+                collect_vectors_from_str(
+                    &fd.return_type,
+                    &mut vector_types,
+                    &mut vector_order,
+                    &mut next_idx,
+                );
+                for (_, ty) in &fd.params {
+                    collect_vectors_from_str(
+                        ty,
+                        &mut vector_types,
+                        &mut vector_order,
+                        &mut next_idx,
+                    );
+                }
+                collect_vectors_from_fn_body(
+                    fd,
+                    &mut vector_types,
+                    &mut vector_order,
+                    &mut next_idx,
+                );
+            }
+        }
+
+        // `Option<T>` instantiations follow the same shape — scan
+        // signatures + bodies for any `Option<T>` reference and
+        // allocate a struct slot per unique `T`.
+        let mut option_types: HashMap<String, u32> = HashMap::new();
+        let mut option_order: Vec<String> = Vec::new();
+        for item in items {
+            if let TopLevel::FnDef(fd) = item {
+                collect_options_from_str(
+                    &fd.return_type,
+                    &mut option_types,
+                    &mut option_order,
+                    &mut next_idx,
+                );
+                for (_, ty) in &fd.params {
+                    collect_options_from_str(
+                        ty,
+                        &mut option_types,
+                        &mut option_order,
+                        &mut next_idx,
+                    );
+                }
+                collect_options_from_fn_body(
+                    fd,
+                    &mut option_types,
+                    &mut option_order,
+                    &mut next_idx,
+                );
+            }
+        }
+
+        // `Map<K, V>` discovery — same monomorphisation strategy as
+        // Vector / Option. Walk fn signatures + bodies for any
+        // `Map<K, V>` reference, allocate three wasm slots per unique
+        // instantiation (keys array, values array, map struct), and
+        // eagerly register the matching `Option<V>` since `Map.get`
+        // returns it.
+        let mut map_types: HashMap<String, MapSlots> = HashMap::new();
+        let mut map_order: Vec<String> = Vec::new();
+        let mut pending_maps: Vec<String> = Vec::new();
+        for item in items {
+            if let TopLevel::FnDef(fd) = item {
+                collect_maps_from_str(&fd.return_type, &mut pending_maps);
+                for (_, ty) in &fd.params {
+                    collect_maps_from_str(ty, &mut pending_maps);
+                }
+            }
+        }
+        // Dedup in encounter order.
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for canonical in pending_maps {
+            if !seen.insert(canonical.clone()) {
+                continue;
+            }
+            // Eagerly register Option<V> — `Map.get` over this
+            // instantiation returns it.
+            if let Some((_, v)) = parse_map_kv(&canonical) {
+                let opt = format!("Option<{v}>");
+                if !option_types.contains_key(&opt) {
+                    option_types.insert(opt.clone(), next_idx);
+                    option_order.push(opt);
+                    next_idx += 1;
+                }
+            }
+            // Allocate three slots: keys_array, values_array, map.
+            // Order: arrays first so the struct (higher idx) can
+            // reference them without crossing rec-group boundaries.
+            let keys_array = next_idx;
+            next_idx += 1;
+            let values_array = next_idx;
+            next_idx += 1;
+            let map = next_idx;
+            next_idx += 1;
+            map_types.insert(
+                canonical.clone(),
+                MapSlots {
+                    keys_array,
+                    values_array,
+                    map,
+                },
+            );
+            map_order.push(canonical);
+        }
+
+        // Discover unique String literals — each gets a passive data
+        // segment idx assigned in encounter order. Walk fn bodies + any
+        // string literals embedded in expressions; canonicalise on
+        // raw byte content (Aver strings are UTF-8).
+        let mut string_literals: Vec<Vec<u8>> = Vec::new();
+        let mut string_literal_idx: HashMap<Vec<u8>, u32> = HashMap::new();
+        for item in items {
+            if let TopLevel::FnDef(fd) = item {
+                collect_string_literals_in_fn(fd, &mut string_literals, &mut string_literal_idx);
+            }
+        }
+
         Self {
             records,
             variants,
             record_fields,
+            vector_types,
+            vector_order,
+            option_types,
+            option_order,
+            map_types,
+            map_order,
             user_type_count: next_idx,
             string_array_type_idx,
+            string_literals,
+            string_literal_idx,
         }
+    }
+
+    pub(super) fn map_slots(&self, canonical: &str) -> Option<MapSlots> {
+        self.map_types.get(canonical).copied()
+    }
+
+    pub(super) fn option_type_idx(&self, canonical: &str) -> Option<u32> {
+        self.option_types.get(canonical).copied()
+    }
+
+    /// Element-type Aver string for a registered `Option<T>` (analog
+    /// to `vector_element_type`).
+    pub(super) fn option_element_type(canonical: &str) -> Option<&str> {
+        let trimmed = canonical.trim();
+        let inner = trimmed.strip_prefix("Option<")?.strip_suffix('>')?;
+        Some(inner.trim())
+    }
+
+    /// Passive-data-segment idx for a String literal, allocated during
+    /// `build`. Each unique byte sequence gets one segment.
+    pub(super) fn string_literal_segment(&self, bytes: &[u8]) -> Option<u32> {
+        self.string_literal_idx.get(bytes).copied()
+    }
+
+    /// Wasm type idx for a canonical Aver `Vector<T>` string, if the
+    /// instantiation was registered during `build`.
+    pub(super) fn vector_type_idx(&self, canonical: &str) -> Option<u32> {
+        self.vector_types.get(canonical).copied()
+    }
+
+    /// Element-type Aver string for a registered `Vector<T>`. Used by
+    /// module emit to resolve the wasm storage type of array elements.
+    pub(super) fn vector_element_type(canonical: &str) -> Option<&str> {
+        let trimmed = canonical.trim();
+        let inner = trimmed.strip_prefix("Vector<")?.strip_suffix('>')?;
+        Some(inner.trim())
     }
 
     pub(super) fn record_type_idx(&self, name: &str) -> Option<u32> {
@@ -185,15 +401,312 @@ fn is_primitive(ty: &str) -> bool {
     matches!(ty.trim(), "Int" | "Float" | "Bool")
 }
 
-/// True if any expression in the fn body references a builtin that
-/// has String in its signature. Used by `TypeRegistry::build` to
-/// decide whether to allocate the `(array i8)` slot.
-///
-/// Curated list — kept in sync with `builtins::BuiltinName`. When
-/// the BuiltinRegistry grows, extend this too. Underapproximation
-/// is the safe default: an unknown String builtin produces a clear
-/// "no String slot allocated" validation error pointing here.
-fn fn_body_uses_string_builtin(fd: &crate::ast::FnDef) -> bool {
+/// Walk a type string looking for `Vector<...>` substrings (with
+/// balanced angle brackets). Each unique instantiation is registered
+/// in `out` and order-tracked, with a freshly allocated wasm type idx.
+/// Recurses into the element type so nested forms like
+/// `Vector<Vector<Int>>` register both the outer and inner shapes —
+/// the element of the outer needs a wasm-resolvable type.
+fn collect_vectors_from_str(
+    type_str: &str,
+    out: &mut HashMap<String, u32>,
+    order: &mut Vec<String>,
+    next_idx: &mut u32,
+) {
+    let trimmed = type_str.trim();
+    let bytes = trimmed.as_bytes();
+    let mut i = 0;
+    while i + 7 <= bytes.len() {
+        if &bytes[i..i + 7] == b"Vector<" {
+            // Find the matching `>` for this `Vector<`.
+            let mut depth: i32 = 1;
+            let mut j = i + 7;
+            while j < bytes.len() && depth > 0 {
+                match bytes[j] {
+                    b'<' => depth += 1,
+                    b'>' => depth -= 1,
+                    _ => {}
+                }
+                j += 1;
+            }
+            if depth == 0 {
+                let canonical: String = trimmed[i..j]
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                if !out.contains_key(&canonical) {
+                    out.insert(canonical.clone(), *next_idx);
+                    order.push(canonical.clone());
+                    *next_idx += 1;
+                }
+                // Recurse into the element substring (between `Vector<`
+                // and the matching `>`) so nested Vectors register
+                // before they're referenced as element types.
+                let element = &trimmed[i + 7..j - 1];
+                collect_vectors_from_str(element, out, order, next_idx);
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
+/// `Option<...>` discovery — same shape as `collect_vectors_from_str`.
+fn collect_options_from_str(
+    type_str: &str,
+    out: &mut HashMap<String, u32>,
+    order: &mut Vec<String>,
+    next_idx: &mut u32,
+) {
+    let trimmed = type_str.trim();
+    let bytes = trimmed.as_bytes();
+    let mut i = 0;
+    while i + 7 <= bytes.len() {
+        if &bytes[i..i + 7] == b"Option<" {
+            let mut depth: i32 = 1;
+            let mut j = i + 7;
+            while j < bytes.len() && depth > 0 {
+                match bytes[j] {
+                    b'<' => depth += 1,
+                    b'>' => depth -= 1,
+                    _ => {}
+                }
+                j += 1;
+            }
+            if depth == 0 {
+                let canonical: String = trimmed[i..j]
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                if !out.contains_key(&canonical) {
+                    out.insert(canonical.clone(), *next_idx);
+                    order.push(canonical.clone());
+                    *next_idx += 1;
+                }
+                let element = &trimmed[i + 7..j - 1];
+                collect_options_from_str(element, out, order, next_idx);
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
+/// Walk fn body for `Option.Some(payload)` constructors and bindings
+/// that imply an `Option<T>` instantiation. Unlike Vector, the bench
+/// scenarios mostly leave Option<T> implicit — `Map.get` returns
+/// `Option<V>` where V is read off `Map<K,V>` — so the body walk is
+/// the primary discovery path.
+fn collect_options_from_fn_body(
+    fd: &crate::ast::FnDef,
+    out: &mut HashMap<String, u32>,
+    order: &mut Vec<String>,
+    next_idx: &mut u32,
+) {
+    use crate::ast::{FnBody, Stmt};
+    let FnBody::Block(stmts) = fd.body.as_ref();
+    for stmt in stmts {
+        if let Stmt::Binding(_, Some(annot), _) = stmt {
+            collect_options_from_str(annot, out, order, next_idx);
+        }
+        let expr = match stmt {
+            Stmt::Binding(_, _, e) | Stmt::Expr(e) => &e.node,
+        };
+        collect_options_from_expr(expr, out, order, next_idx);
+    }
+}
+
+fn collect_options_from_expr(
+    expr: &crate::ast::Expr,
+    out: &mut HashMap<String, u32>,
+    order: &mut Vec<String>,
+    next_idx: &mut u32,
+) {
+    use crate::ast::Expr;
+    match expr {
+        Expr::FnCall(callee, args) => {
+            collect_options_from_expr(&callee.node, out, order, next_idx);
+            for a in args {
+                collect_options_from_expr(&a.node, out, order, next_idx);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            collect_options_from_expr(&l.node, out, order, next_idx);
+            collect_options_from_expr(&r.node, out, order, next_idx);
+        }
+        Expr::Match { subject, arms } => {
+            collect_options_from_expr(&subject.node, out, order, next_idx);
+            for arm in arms {
+                collect_options_from_expr(&arm.body.node, out, order, next_idx);
+            }
+        }
+        Expr::TailCall(boxed) => {
+            for a in &boxed.args {
+                collect_options_from_expr(&a.node, out, order, next_idx);
+            }
+        }
+        Expr::Attr(obj, _) => collect_options_from_expr(&obj.node, out, order, next_idx),
+        Expr::RecordCreate { fields, .. } => {
+            for (_, e) in fields {
+                collect_options_from_expr(&e.node, out, order, next_idx);
+            }
+        }
+        Expr::Constructor(_, payload) => {
+            if let Some(p) = payload.as_deref() {
+                collect_options_from_expr(&p.node, out, order, next_idx);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Walk fn body looking for binding annotations and `Vector.new` calls
+/// that imply a `Vector<T>` instantiation. The fill-arg's type fixes
+/// `T` for `Vector.new`; binding annotations carry the type string
+/// directly. Mirrors the surface-level discovery — the vector_ops
+/// bench spells out `Vector<Int>` in fn signatures so this body walk
+/// is a defensive backstop, not the primary discovery path.
+fn collect_vectors_from_fn_body(
+    fd: &crate::ast::FnDef,
+    out: &mut HashMap<String, u32>,
+    order: &mut Vec<String>,
+    next_idx: &mut u32,
+) {
+    use crate::ast::{FnBody, Stmt};
+    let FnBody::Block(stmts) = fd.body.as_ref();
+    for stmt in stmts {
+        if let Stmt::Binding(_, Some(annot), _) = stmt {
+            collect_vectors_from_str(annot, out, order, next_idx);
+        }
+        let expr = match stmt {
+            Stmt::Binding(_, _, e) | Stmt::Expr(e) => &e.node,
+        };
+        collect_vectors_from_expr(expr, out, order, next_idx);
+    }
+}
+
+fn collect_vectors_from_expr(
+    expr: &crate::ast::Expr,
+    out: &mut HashMap<String, u32>,
+    order: &mut Vec<String>,
+    next_idx: &mut u32,
+) {
+    use crate::ast::{Expr, StrPart};
+    match expr {
+        Expr::FnCall(callee, args) => {
+            collect_vectors_from_expr(&callee.node, out, order, next_idx);
+            for a in args {
+                collect_vectors_from_expr(&a.node, out, order, next_idx);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            collect_vectors_from_expr(&l.node, out, order, next_idx);
+            collect_vectors_from_expr(&r.node, out, order, next_idx);
+        }
+        Expr::Match { subject, arms } => {
+            collect_vectors_from_expr(&subject.node, out, order, next_idx);
+            for arm in arms {
+                collect_vectors_from_expr(&arm.body.node, out, order, next_idx);
+            }
+        }
+        Expr::TailCall(boxed) => {
+            for a in &boxed.args {
+                collect_vectors_from_expr(&a.node, out, order, next_idx);
+            }
+        }
+        Expr::Attr(obj, _) => collect_vectors_from_expr(&obj.node, out, order, next_idx),
+        Expr::RecordCreate { fields, .. } => {
+            for (_, e) in fields {
+                collect_vectors_from_expr(&e.node, out, order, next_idx);
+            }
+        }
+        Expr::Constructor(_, payload) => {
+            if let Some(p) = payload.as_deref() {
+                collect_vectors_from_expr(&p.node, out, order, next_idx);
+            }
+        }
+        Expr::InterpolatedStr(parts) => {
+            // Interpolation lowers to an `array.new_fixed (array (ref
+            // null $string)) N` + variadic concat. The array type
+            // shares a slot with `Vector<String>` (same wasm shape),
+            // so register it here even if no Aver-level signature
+            // mentions Vector<String>.
+            collect_vectors_from_str("Vector<String>", out, order, next_idx);
+            for p in parts {
+                if let StrPart::Parsed(inner) = p {
+                    collect_vectors_from_expr(&inner.node, out, order, next_idx);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Walk a type string looking for `Map<K, V>` substrings (with
+/// balanced angle brackets), append each canonical (whitespace-
+/// stripped) form to `out`. Recurses into both K and V so nested
+/// types (`Map<String, Vector<Int>>`) register every reachable
+/// outer + inner instantiation.
+fn collect_maps_from_str(type_str: &str, out: &mut Vec<String>) {
+    let trimmed = type_str.trim();
+    let bytes = trimmed.as_bytes();
+    let mut i = 0;
+    while i + 4 <= bytes.len() {
+        if &bytes[i..i + 4] == b"Map<" {
+            let mut depth: i32 = 1;
+            let mut j = i + 4;
+            while j < bytes.len() && depth > 0 {
+                match bytes[j] {
+                    b'<' => depth += 1,
+                    b'>' => depth -= 1,
+                    _ => {}
+                }
+                j += 1;
+            }
+            if depth == 0 {
+                let canonical: String = trimmed[i..j]
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                out.push(canonical);
+                // Recurse into the K, V substring.
+                let inner = &trimmed[i + 4..j - 1];
+                collect_maps_from_str(inner, out);
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
+/// Split a canonical `Map<K, V>` into its `K` and `V` parts (both
+/// borrowed slices of the input). Returns `None` if the string
+/// doesn't match the expected shape.
+pub(super) fn parse_map_kv(canonical: &str) -> Option<(&str, &str)> {
+    let inner = canonical.trim().strip_prefix("Map<")?.strip_suffix('>')?;
+    let bytes = inner.as_bytes();
+    let mut depth: i32 = 0;
+    for (idx, b) in bytes.iter().enumerate() {
+        match b {
+            b'<' => depth += 1,
+            b'>' => depth -= 1,
+            b',' if depth == 0 => {
+                return Some((inner[..idx].trim(), inner[idx + 1..].trim()));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// True if any expression in the fn body produces a String value —
+/// via a literal, an interpolation, or a String-producing builtin.
+/// Used by `TypeRegistry::build` to decide whether to allocate the
+/// `(array i8)` slot.
+fn fn_body_produces_string(fd: &crate::ast::FnDef) -> bool {
     use crate::ast::{Expr, FnBody, Stmt};
     let FnBody::Block(stmts) = fd.body.as_ref();
     stmts.iter().any(|s| match s {
@@ -213,7 +726,10 @@ fn expr_uses_string(expr: &crate::ast::Expr) -> bool {
                 };
                 if let Some(p) = parent_name {
                     let dotted = format!("{p}.{member}");
-                    if matches!(dotted.as_str(), "Int.toString" | "String.len") {
+                    if matches!(
+                        dotted.as_str(),
+                        "Int.toString" | "String.len" | "String.concat"
+                    ) {
                         return true;
                     }
                 }
@@ -231,7 +747,89 @@ fn expr_uses_string(expr: &crate::ast::Expr) -> bool {
             .is_some_and(|p| expr_uses_string(&p.node)),
         Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| expr_uses_string(&e.node)),
         Expr::Literal(crate::ast::Literal::Str(_)) => true,
+        Expr::InterpolatedStr(_) => true,
         _ => false,
+    }
+}
+
+/// Walk a fn body, collecting unique String literals into a per-segment
+/// table. Both `Literal::Str` and the `Literal` parts of an
+/// `InterpolatedStr` count — each unique byte sequence gets a passive
+/// data segment.
+fn collect_string_literals_in_fn(
+    fd: &crate::ast::FnDef,
+    out: &mut Vec<Vec<u8>>,
+    idx: &mut HashMap<Vec<u8>, u32>,
+) {
+    use crate::ast::{FnBody, Stmt};
+    let FnBody::Block(stmts) = fd.body.as_ref();
+    for stmt in stmts {
+        let expr = match stmt {
+            Stmt::Binding(_, _, e) | Stmt::Expr(e) => &e.node,
+        };
+        collect_string_literals_in_expr(expr, out, idx);
+    }
+}
+
+fn intern_literal(bytes: Vec<u8>, out: &mut Vec<Vec<u8>>, idx: &mut HashMap<Vec<u8>, u32>) {
+    if !idx.contains_key(&bytes) {
+        let n = out.len() as u32;
+        idx.insert(bytes.clone(), n);
+        out.push(bytes);
+    }
+}
+
+fn collect_string_literals_in_expr(
+    expr: &crate::ast::Expr,
+    out: &mut Vec<Vec<u8>>,
+    idx: &mut HashMap<Vec<u8>, u32>,
+) {
+    use crate::ast::{Expr, Literal, StrPart};
+    match expr {
+        Expr::Literal(Literal::Str(s)) => intern_literal(s.as_bytes().to_vec(), out, idx),
+        Expr::InterpolatedStr(parts) => {
+            for p in parts {
+                match p {
+                    StrPart::Literal(s) => intern_literal(s.as_bytes().to_vec(), out, idx),
+                    StrPart::Parsed(inner) => {
+                        collect_string_literals_in_expr(&inner.node, out, idx);
+                    }
+                }
+            }
+        }
+        Expr::FnCall(callee, args) => {
+            collect_string_literals_in_expr(&callee.node, out, idx);
+            for a in args {
+                collect_string_literals_in_expr(&a.node, out, idx);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            collect_string_literals_in_expr(&l.node, out, idx);
+            collect_string_literals_in_expr(&r.node, out, idx);
+        }
+        Expr::Match { subject, arms } => {
+            collect_string_literals_in_expr(&subject.node, out, idx);
+            for a in arms {
+                collect_string_literals_in_expr(&a.body.node, out, idx);
+            }
+        }
+        Expr::TailCall(boxed) => {
+            for a in &boxed.args {
+                collect_string_literals_in_expr(&a.node, out, idx);
+            }
+        }
+        Expr::Attr(obj, _) => collect_string_literals_in_expr(&obj.node, out, idx),
+        Expr::Constructor(_, payload) => {
+            if let Some(p) = payload.as_deref() {
+                collect_string_literals_in_expr(&p.node, out, idx);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, e) in fields {
+                collect_string_literals_in_expr(&e.node, out, idx);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -296,14 +894,55 @@ pub(super) fn aver_to_wasm(
             "String reachable from a fn signature but no string type slot was allocated".into(),
         ));
     }
+    // `Vector<T>` resolves to `(ref null $vector_T)`. The registry's
+    // `vector_types` map is keyed on whitespace-stripped canonical
+    // form so `Vector<Int>` and `Vector< Int >` collide on the same
+    // slot.
+    if trimmed.starts_with("Vector<") && trimmed.ends_with('>')
+        && let Some(reg) = registry
+    {
+        let canonical: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+        if let Some(idx) = reg.vector_type_idx(&canonical) {
+            return Ok(Some(ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(idx),
+            })));
+        }
+    }
+    // `Option<T>` resolves to `(ref null $option_T)`.
+    if trimmed.starts_with("Option<") && trimmed.ends_with('>')
+        && let Some(reg) = registry
+    {
+        let canonical: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+        if let Some(idx) = reg.option_type_idx(&canonical) {
+            return Ok(Some(ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(idx),
+            })));
+        }
+    }
+    // `Map<K, V>` — monomorphised per instantiation. The registry
+    // discovers each unique `Map<K, V>` in fn signatures and
+    // allocates a slot triple (keys array, values array, struct).
+    if trimmed.starts_with("Map<") && trimmed.ends_with('>')
+        && let Some(reg) = registry
+    {
+        let canonical: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+        if let Some(slots) = reg.map_slots(&canonical) {
+            return Ok(Some(ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(slots.map),
+            })));
+        }
+    }
     // Compound types not yet lowered.
     Err(WasmGcError::Unimplemented(match trimmed {
         _ if trimmed.starts_with("List<") => "phase 3c — List<T>",
         _ if trimmed.starts_with("Tuple<") => "phase 3c — Tuple",
         _ if trimmed.starts_with("Map<") => "phase 3c — Map<K,V>",
-        _ if trimmed.starts_with("Vector<") => "phase 3c — Vector<T>",
+        _ if trimmed.starts_with("Vector<") => "phase 3c — Vector<T> (instantiation not registered)",
         _ if trimmed.starts_with("Result<") => "phase 3c — Result",
-        _ if trimmed.starts_with("Option<") => "phase 3c — Option",
+        _ if trimmed.starts_with("Option<") => "phase 3c — Option<T> (instantiation not registered)",
         _ => "unknown type — likely a generic / inferred parameter that needs phase 3c",
     }))
 }

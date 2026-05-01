@@ -13,6 +13,7 @@ use crate::ir::AnalysisResult;
 mod body;
 mod builtins;
 mod effects;
+mod maps;
 mod module;
 #[cfg(test)]
 mod tests;

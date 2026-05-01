@@ -4688,6 +4688,15 @@ fn cmd_compile_wasm_gc(
                 base_dir: Some(&module_root),
             }),
             alloc_policy: Some(&neutral_policy),
+            // wasm-gc backend lowers `Expr::InterpolatedStr` natively
+            // to a `String.concat` chain (immutable arrays match the
+            // engine's GC primitives). The `__buf_*` pipeline that
+            // `interp_lower` produces targets bump-allocator backends
+            // (legacy wasm, VM); for wasm-gc it would force us to
+            // emulate a mutable buffer over `(struct len array)` with
+            // grow-on-append, when `array.copy` x2 is the idiomatic
+            // shape. Keep the source InterpolatedStr in the IR.
+            run_interp_lower: false,
             ..Default::default()
         },
     );

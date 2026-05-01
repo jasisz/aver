@@ -101,11 +101,56 @@ After phase 3a + 3b/1 + 3c **and `ir::escape` IR pass with both record-access an
 | `newtype_bare`    | 963µs   | 43µs       | 19µs    | **2.3x faster** |
 | `newtype_record`  | 966µs   | 45µs       | 20µs    | **2.3x faster** |
 | `newtype_variant` | 976µs   | 44µs       | 19µs    | **2.3x faster** |
-| `match_dispatch`  | 5.67ms  | 66µs       | 42µs    | **1.6x faster** ✨ |
-| `record`          | (tbd)   | 47µs       | 27µs    | **1.7x faster** ✨ |
+| `match_dispatch`  | 5.67ms  | 66µs       | 41µs    | **1.6x faster** ✨ |
+| `record`          | (tbd)   | 47µs       | 34µs    | **1.4x faster** ✨ |
 | `factorial`       | 21µs    | 41µs       | 19µs    | **2.2x faster** |
+| `vector_ops`      | (tbd)   | 8.75ms     | 48µs    | **182x faster** ✨✨ |
+| `string_interp`   | (tbd)   | 5.17ms     | 6.65s   | 1287x slower ⚠ (wasmtime GC, V8 wins) |
+| `map_build`       | (tbd)   | 940µs      | 695µs   | **1.4x faster** ✨ |
+| `map_lookup`      | (tbd)   | 1.16ms     | 2.20ms  | 1.9x slower ⚠ (wasmtime GC, V8 wins) |
 
-**8/8 wasm-gc wins. Zero regressions across the tested set.** Both alloc-heavy patterns (`record`, `match_dispatch`) now go through escape analysis at the IR level — no struct/variant alloc reaches codegen.
+**10/12 wasm-gc wins, 2 engine-bound regressions on wasmtime.** Both alloc-heavy patterns (`record`, `match_dispatch`) now go through escape analysis at the IR level — no struct/variant alloc reaches codegen. `vector_ops` lands on native `(array (mut i64))` with bounds-checked `array.set`/`array.get` and zero Option boxing — the legacy backend round-trips every read/write through runtime helpers + AverVector allocation. `Map<K,V>` is monomorphised per instantiation: per-K hash + eq helpers, per-(K,V) empty/set/get/len helpers, open-addressing flat hashtable, 16384-bucket fixed cap (resize is a phase-3c+ extension).
+
+### Cross-engine + cross-backend matrix
+
+Same source, both backends (`wasm-local` legacy linear-memory + `wasm-gc`), both engines (wasmtime 44, V8 in Node 25), same 30-iteration harness:
+
+| Scenario          | local·wasmtime | local·V8  | gc·wasmtime  | gc·V8     |
+|-------------------|---------------:|----------:|-------------:|----------:|
+| fib               | 42µs           | 6µs       | **5µs**      | 7µs       |
+| countdown         | 47µs           | 27µs      | **16µs**     | 22µs      |
+| factorial         | 41µs           | <1µs      | 19µs         | <1µs      |
+| match_dispatch    | 66µs           | 34µs      | **41µs**     | 55µs      |
+| record            | 47µs           | 23µs      | 34µs         | **20µs**  |
+| newtype_bare      | 43µs           | 24µs      | **19µs**     | 20µs      |
+| newtype_record    | 45µs           | 28µs      | **20µs**     | 21µs      |
+| newtype_variant   | 44µs           | 27µs      | **19µs**     | 21µs      |
+| vector_ops        | 8.75ms         | 9.09ms    | 48µs         | **42µs**  |
+| string_interp     | 5.17ms         | 4.25ms    | 6,654ms ⚠   | **2.86ms** |
+| map_build         | 940µs          | 606µs     | 695µs        | **179µs** |
+| map_lookup        | 1.16ms         | 693µs     | 2.20ms ⚠     | **480µs** |
+
+(Bold = winner per scenario.)
+
+Findings:
+
+- **wasm-gc wins or ties everywhere** in a sane engine. Across V8 + wasm-gc, every scenario is at-or-better than every other combination — including a 1.5× win over `wasm-local·V8` on `string_interp` and 200× on `vector_ops`.
+- **`wasm-local` doesn't benefit from V8** — it uses linear memory + a bump allocator, no engine GC, so V8 and wasmtime treat it the same. Engine choice barely moves the number.
+- **wasmtime + wasm-gc is competitive on pure numeric** (fib, countdown, match_dispatch) — Cranelift's codegen is solid; differences are noise. Penalty appears only on alloc-heavy paths.
+- **`string_interp` wasmtime: 6.65s (vs 2.86ms on V8 — 2300× slower).** Same wasm binary, engine-bound. Wasmtime 44's GC heap path: every `array.new_default(N)` + `array.copy` hits the allocator + write barriers, and the bench accumulates ~30 MB of intermediate strings per iteration. Wasmtime's GC is new (2024) and unoptimised; V8 has had a decade. The compile path is sane and fast — V8 actually beats `wasm-local` on the same workload.
+- **`vector_ops` is structurally 200× wasm-gc on either engine** — the legacy backend round-trips every `Vector.set` / `Vector.get` through runtime helpers + `AverVector` allocation; native `array.set` / `array.get` is the right shape.
+- **`map_lookup` on wasmtime regresses 1.9× vs wasm-local.** Each `Map.get` allocates a fresh `Option<Int>` struct (Some or None) — 20,000 lookups × 30 iterations = ~600k allocations through wasmtime's GC heap. Same workload on V8 finishes in 480µs (1.4× faster than wasm-local·V8). Engine cost again, not a compile-path issue. A future `Option.withDefault(Map.get(m, k), default)` fused shape (analogous to the `Vector.get` fusion in `body.rs`) would skip Option allocation in this hot path entirely.
+
+The compile path itself is correct and competitive: `Expr::InterpolatedStr` lowers to a single `array.new_fixed (Vector<String>) N` + variadic concat helper that is O(total_len) bytes copied (not O(N²) like a left-folded `String.concat` chain would be). Same primitive (`array.new_fixed` + variadic concat) will back `String.join` once it lands.
+
+**For realistic numbers under wasm-gc, use a browser-class engine.** A V8 bench harness lives at `tools/wasm-gc-bench-v8.mjs`. Requires Node 22+ for stable wasm-gc support — Node 20's V8 rejects packed `i8` array types.
+
+```bash
+cargo run --features wasm -- compile bench/scenarios/string_interp.av --target wasm-gc -o /tmp/out
+node tools/wasm-gc-bench-v8.mjs /tmp/out/string_interp.wasm
+```
+
+Folding V8 into the main `aver bench` runner (alongside or instead of wasmtime) is on the 0.16 polish list.
 
 Massive cross-backend wins from the same IR pass:
 - `match_dispatch` wasm-local: 332µs → 66µs (**5x**) and wasm-gc: 1.62ms → 42µs (**38x**)
@@ -153,16 +198,17 @@ Rejected alternatives:
 
 ## Bench coverage status
 
-Working (8/13 bench scenarios):
+Working (12/13 bench scenarios):
 - fib, countdown — pure numeric tail recursion
 - newtype_bare, newtype_record, newtype_variant — newtype optimization erases wrappers
 - match_dispatch — multi-arm variant dispatch via `ref.test`
 - record — struct field access in hot loop
 - factorial — `Int.toString` + `Console.print` (silenced in bench mode)
+- vector_ops — `Vector<T>` as `(array (mut T))`, fused `Option.withDefault` shapes lower to bounds-checked `array.set`/`array.get` with zero Option boxing
+- string_interp — String literals via passive data segments + `array.new_data`; `Expr::InterpolatedStr` lowers natively (skipping `interp_lower`) to `array.new_fixed (Vector<String>) N` + variadic concat helper. Same primitive will back `String.join`. Engine-bound on wasmtime today (see note above)
+- map_build, map_lookup — `Map<K,V>` monomorphised per instantiation, open-addressing hashtable with linear probing. Per-K helpers (DJB2 hash + byte-eq for K=String), per-(K,V) helpers (empty/set/get/len). Map.get returns real boxed `Option<V>`. Wasmtime engine-bound on `map_lookup` (600k Option struct allocs); V8 lands the wins
 
-Pending (5/13 — phase 3c continues):
-- string_interp, fractal_seahorse — String literals + `__buf_*` interp lowering
-- map_build, map_lookup — `Map<K,V>` repr (flat hashtable struct)
-- vector_ops — `Vector<T>` (wasm `(array T)`)
+Pending (1/13 — multi-module mode):
+- fractal_seahorse — `depends [Fractal]`. Multi-module compile is a separate **mode** for wasm-gc, not the default — the wasip2 Component Model handles cross-module linking, not a static linker baked into the compiler
 
 ## Phase plan
