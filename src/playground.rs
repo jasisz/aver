@@ -145,8 +145,8 @@ fn build_ctx(
 /// Single-file Aver source → Lean 4 project files.
 #[cfg(feature = "runtime")]
 pub fn proof_lean_files(source: &str) -> Result<HashMap<String, String>, String> {
-    let ctx = build_ctx(source, false)?;
-    let output = codegen::lean::transpile(&ctx);
+    let mut ctx = build_ctx(source, false)?;
+    let output = codegen::lean::transpile(&mut ctx);
     Ok(output.files.into_iter().collect())
 }
 
@@ -221,8 +221,8 @@ pub fn proof_lean_files_project(
     files: &HashMap<String, String>,
     entry: &str,
 ) -> Result<HashMap<String, String>, String> {
-    let ctx = build_project_ctx(files, entry, false)?;
-    let output = codegen::lean::transpile(&ctx);
+    let mut ctx = build_project_ctx(files, entry, false)?;
+    let output = codegen::lean::transpile(&mut ctx);
     Ok(output.files.into_iter().collect())
 }
 

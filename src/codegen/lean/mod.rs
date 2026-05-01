@@ -755,25 +755,12 @@ pub(crate) fn recursive_pure_fn_names(ctx: &CodegenContext) -> HashSet<String> {
         .into_iter()
         .map(|fd| fd.name.clone())
         .collect();
-    // Read recursion fact from the analyze stage (production path through
-    // `build_context`). Falls back to ad-hoc compute when `ctx.recursive_fns`
-    // is empty but `ctx.items` has fns — the tell-tale shape of a test
-    // helper that built the ctx piecewise via `empty_ctx`. Idempotent for
-    // production: programs with genuinely no recursion compute the same
-    // empty set again.
-    let recursive: std::borrow::Cow<'_, HashSet<String>> =
-        if ctx.recursive_fns.is_empty() && !ctx.items.is_empty() {
-            let mut callgraph_items = ctx.items.clone();
-            for module in &ctx.modules {
-                for fd in &module.fn_defs {
-                    callgraph_items.push(TopLevel::FnDef(fd.clone()));
-                }
-            }
-            std::borrow::Cow::Owned(crate::call_graph::find_recursive_fns(&callgraph_items))
-        } else {
-            std::borrow::Cow::Borrowed(&ctx.recursive_fns)
-        };
-    recursive
+    // `ctx.recursive_fns` is the single source of truth — populated by
+    // `build_context` from analyze in production, by `refresh_facts()`
+    // (called from each `transpile*` entry point) in test stubs. Aver's
+    // module DAG keeps cross-module recursion impossible, so the union
+    // of per-module sets is the correct global view.
+    ctx.recursive_fns
         .iter()
         .filter(|name| pure_names.contains(name.as_str()))
         .cloned()
@@ -855,7 +842,14 @@ pub fn proof_mode_issues(ctx: &CodegenContext) -> Vec<String> {
 }
 
 /// Transpile an Aver program to a Lean 4 project.
-pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
+///
+/// Takes `&mut ctx` so it can run `ctx.refresh_facts()` upfront — keeps
+/// the derived sets (`mutual_tco_members`, `recursive_fns`) in sync with
+/// the current items + modules. Idempotent: production callers go through
+/// `build_context` which already populated them, so refresh recomputes
+/// the same answer; test stubs that build the ctx piecewise (push items
+/// in-place, bypass `build_context`) get the fresh sets they need.
+pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
     transpile_with_verify_mode(ctx, VerifyEmitMode::NativeDecide)
 }
 
@@ -864,9 +858,10 @@ pub fn transpile(ctx: &CodegenContext) -> ProjectOutput {
 /// Uses recursion plans validated by `proof_mode_issues` and emits supported
 /// recursive functions without `partial`, adding `termination_by` scaffolding.
 pub fn transpile_for_proof_mode(
-    ctx: &CodegenContext,
+    ctx: &mut CodegenContext,
     verify_mode: VerifyEmitMode,
 ) -> ProjectOutput {
+    ctx.refresh_facts();
     transpile_unified(ctx, verify_mode, LeanEmitMode::Proof)
 }
 
@@ -876,9 +871,10 @@ pub fn transpile_for_proof_mode(
 /// - `Sorry` emits `example ... := by sorry`
 /// - `TheoremSkeleton` emits named theorem skeletons with `sorry`
 pub fn transpile_with_verify_mode(
-    ctx: &CodegenContext,
+    ctx: &mut CodegenContext,
     verify_mode: VerifyEmitMode,
 ) -> ProjectOutput {
+    ctx.refresh_facts();
     transpile_unified(ctx, verify_mode, LeanEmitMode::Standard)
 }
 
@@ -1208,13 +1204,9 @@ fn transpile_unified(
 ) -> ProjectOutput {
     use crate::codegen::recursion::RecursionPlan;
 
-    // Same fallback shape as `recursive_pure_fn_names` — read from analyze
-    // stage when populated, ad-hoc compute when test stubs left it empty.
-    let recursive_fns: HashSet<String> = if ctx.recursive_fns.is_empty() && !ctx.items.is_empty() {
-        crate::call_graph::find_recursive_fns(&ctx.items)
-    } else {
-        ctx.recursive_fns.clone()
-    };
+    // Read recursion fact from `ctx.recursive_fns` — populated upstream
+    // by `refresh_facts()` (test stubs) or `build_context` (production).
+    let recursive_fns: HashSet<String> = ctx.recursive_fns.clone();
     let recursive_names = recursive_pure_fn_names(ctx);
     let recursive_types = recursive_type_names(ctx);
     let (plans, _proof_issues) = match emit_mode {
@@ -1757,7 +1749,7 @@ mod tests {
 
     #[test]
     fn lean_output_without_map_usage_omits_map_prelude() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module NoMap
     intent = "Simple pure program without maps."
@@ -1770,7 +1762,7 @@ verify addOne
 "#,
             "nomap",
         );
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
 
         assert!(
@@ -1782,7 +1774,8 @@ verify addOne
 
     #[test]
     fn transpile_emits_native_decide_for_verify_by_default() {
-        let out = transpile(&empty_ctx_with_verify_case());
+        let mut ctx = empty_ctx_with_verify_case();
+        let out = transpile(&mut ctx);
         let lean = out
             .files
             .iter()
@@ -1793,7 +1786,8 @@ verify addOne
 
     #[test]
     fn transpile_can_emit_sorry_for_verify_when_requested() {
-        let out = transpile_with_verify_mode(&empty_ctx_with_verify_case(), VerifyEmitMode::Sorry);
+        let mut ctx = empty_ctx_with_verify_case();
+        let out = transpile_with_verify_mode(&mut ctx, VerifyEmitMode::Sorry);
         let lean = out
             .files
             .iter()
@@ -1804,10 +1798,8 @@ verify addOne
 
     #[test]
     fn transpile_can_emit_theorem_skeletons_for_verify() {
-        let out = transpile_with_verify_mode(
-            &empty_ctx_with_verify_case(),
-            VerifyEmitMode::TheoremSkeleton,
-        );
+        let mut ctx = empty_ctx_with_verify_case();
+        let out = transpile_with_verify_mode(&mut ctx, VerifyEmitMode::TheoremSkeleton);
         let lean = out
             .files
             .iter()
@@ -1819,10 +1811,8 @@ verify addOne
 
     #[test]
     fn theorem_skeleton_numbering_is_global_per_function_across_verify_blocks() {
-        let out = transpile_with_verify_mode(
-            &empty_ctx_with_two_verify_blocks_same_fn(),
-            VerifyEmitMode::TheoremSkeleton,
-        );
+        let mut ctx = empty_ctx_with_two_verify_blocks_same_fn();
+        let out = transpile_with_verify_mode(&mut ctx, VerifyEmitMode::TheoremSkeleton);
         let lean = out
             .files
             .iter()
@@ -1834,7 +1824,8 @@ verify addOne
 
     #[test]
     fn transpile_emits_named_theorems_for_verify_law() {
-        let out = transpile(&empty_ctx_with_verify_law());
+        let mut ctx = empty_ctx_with_verify_law();
+        let out = transpile(&mut ctx);
         let lean = out
             .files
             .iter()
@@ -1873,7 +1864,7 @@ verify addOne
 
     #[test]
     fn transpile_emits_guarded_theorems_for_verify_law_when_clause() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module GuardedLaw
     intent =
@@ -1892,7 +1883,7 @@ verify pickGreater law ordered
 "#,
             "guarded_law",
         );
-        let out = transpile_with_verify_mode(&ctx, VerifyEmitMode::TheoremSkeleton);
+        let out = transpile_with_verify_mode(&mut ctx, VerifyEmitMode::TheoremSkeleton);
         let lean = generated_lean_file(&out);
 
         assert!(lean.contains("-- when (a > b)"));
@@ -1909,7 +1900,7 @@ verify pickGreater law ordered
 
     #[test]
     fn transpile_uses_spec_theorem_names_for_declared_spec_laws() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module SpecDemo
     intent =
@@ -1931,7 +1922,7 @@ verify absVal law absValSpec
 "#,
             "spec_demo",
         );
-        let out = transpile_with_verify_mode(&ctx, VerifyEmitMode::TheoremSkeleton);
+        let out = transpile_with_verify_mode(&mut ctx, VerifyEmitMode::TheoremSkeleton);
         let lean = generated_lean_file(&out);
 
         assert!(lean.contains("-- verify law absVal.spec absValSpec (5 cases)"));
@@ -1947,7 +1938,7 @@ verify absVal law absValSpec
 
     #[test]
     fn transpile_keeps_noncanonical_spec_laws_as_regular_law_names() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module SpecLawShape
     intent =
@@ -1965,7 +1956,7 @@ verify foo law fooSpec
 "#,
             "spec_law_shape",
         );
-        let out = transpile_with_verify_mode(&ctx, VerifyEmitMode::TheoremSkeleton);
+        let out = transpile_with_verify_mode(&mut ctx, VerifyEmitMode::TheoremSkeleton);
         let lean = generated_lean_file(&out);
 
         assert!(lean.contains("-- verify law foo.fooSpec (2 cases)"));
@@ -1975,7 +1966,7 @@ verify foo law fooSpec
 
     #[test]
     fn transpile_auto_proves_linear_int_canonical_spec_law_in_auto_mode() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module SpecGap
     intent =
@@ -1993,7 +1984,7 @@ verify inc law incSpec
 "#,
             "spec_gap",
         );
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let lean = generated_lean_file(&out);
 
         assert!(lean.contains("-- verify law inc.spec incSpec (3 cases)"));
@@ -2008,7 +1999,7 @@ verify inc law incSpec
 
     #[test]
     fn transpile_auto_proves_guarded_canonical_spec_law_in_auto_mode() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module GuardedSpecGap
     intent =
@@ -2031,7 +2022,7 @@ verify clampNonNegative law clampNonNegativeSpec
 "#,
             "guarded_spec_gap",
         );
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let lean = generated_lean_file(&out);
 
         assert!(lean.contains("-- when (x >= 0)"));
@@ -2048,7 +2039,7 @@ verify clampNonNegative law clampNonNegativeSpec
 
     #[test]
     fn transpile_auto_proves_simp_normalized_canonical_spec_law_in_auto_mode() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module SpecGapNonlinear
     intent =
@@ -2066,7 +2057,7 @@ verify square law squareSpec
 "#,
             "spec_gap_nonlinear",
         );
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let lean = generated_lean_file(&out);
 
         assert!(lean.contains("-- verify law square.spec squareSpec (3 cases)"));
@@ -2112,7 +2103,7 @@ verify square law squareSpec
             trace: false,
             cases_givens: vec![],
         }));
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let lean = out
             .files
             .iter()
@@ -2167,7 +2158,7 @@ verify square law squareSpec
             trace: false,
             cases_givens: vec![],
         }));
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let lean = out
             .files
             .iter()
@@ -2273,7 +2264,7 @@ verify square law squareSpec
             trace: false,
             cases_givens: vec![],
         }));
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let lean = out
             .files
             .iter()
@@ -2417,7 +2408,7 @@ verify square law squareSpec
             cases_givens: vec![],
         }));
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let lean = out
             .files
             .iter()
@@ -2513,7 +2504,7 @@ verify square law squareSpec
             trace: false,
             cases_givens: vec![],
         }));
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let lean = out
             .files
             .iter()
@@ -2691,7 +2682,7 @@ verify square law squareSpec
             cases_givens: vec![],
         }));
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let lean = out
             .files
             .iter()
@@ -2703,7 +2694,7 @@ verify square law squareSpec
 
     #[test]
     fn transpile_auto_proves_direct_recursive_sum_law_by_structural_induction() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Mirror
     intent =
@@ -2724,7 +2715,7 @@ verify mirror law involutive
 "#,
             "mirror",
         );
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
 
         assert!(
@@ -2986,7 +2977,7 @@ verify mirror law involutive
             cases_givens: vec![],
         }));
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let lean = out
             .files
             .iter()
@@ -3086,7 +3077,7 @@ verify mirror law involutive
             cases_givens: vec![],
         }));
 
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let lean = out
             .files
             .iter()
@@ -3153,7 +3144,7 @@ verify mirror law involutive
             trace: false,
             cases_givens: vec![],
         }));
-        let out = transpile_with_verify_mode(&ctx, VerifyEmitMode::TheoremSkeleton);
+        let out = transpile_with_verify_mode(&mut ctx, VerifyEmitMode::TheoremSkeleton);
         let lean = out
             .files
             .iter()
@@ -3200,6 +3191,7 @@ verify mirror law involutive
         ctx.items.push(TopLevel::FnDef(down.clone()));
         ctx.fn_defs.push(down);
 
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -3207,7 +3199,7 @@ verify mirror law involutive
             issues
         );
 
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = out
             .files
             .iter()
@@ -3263,6 +3255,7 @@ verify mirror law involutive
         ctx.items.push(TopLevel::FnDef(repeat_like.clone()));
         ctx.fn_defs.push(repeat_like);
 
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -3270,7 +3263,7 @@ verify mirror law involutive
             issues
         );
 
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = out
             .files
             .iter()
@@ -3320,6 +3313,7 @@ verify mirror law involutive
         ctx.items.push(TopLevel::FnDef(normalize.clone()));
         ctx.fn_defs.push(normalize);
 
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -3327,7 +3321,7 @@ verify mirror law involutive
             issues
         );
 
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = out
             .files
             .iter()
@@ -3368,6 +3362,7 @@ verify mirror law involutive
         ctx.items.push(TopLevel::FnDef(len.clone()));
         ctx.fn_defs.push(len);
 
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -3417,6 +3412,7 @@ verify mirror law involutive
         ctx.items.push(TopLevel::FnDef(len_from.clone()));
         ctx.fn_defs.push(len_from);
 
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -3424,7 +3420,7 @@ verify mirror law involutive
             issues
         );
 
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
         assert!(lean.contains("termination_by xs.length"));
         assert!(!lean.contains("partial def lenFrom"));
@@ -3480,6 +3476,7 @@ verify mirror law involutive
         ctx.items.push(TopLevel::FnDef(skip_ws.clone()));
         ctx.fn_defs.push(skip_ws);
 
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -3487,7 +3484,7 @@ verify mirror law involutive
             issues
         );
 
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
         assert!(lean.contains("def skipWs__fuel"));
         assert!(!lean.contains("partial def skipWs"));
@@ -3559,6 +3556,7 @@ verify mirror law involutive
         ctx.fn_defs.push(even);
         ctx.fn_defs.push(odd);
 
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -3566,7 +3564,7 @@ verify mirror law involutive
             issues
         );
 
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
         assert!(lean.contains("def even__fuel"));
         assert!(lean.contains("def odd__fuel"));
@@ -3656,6 +3654,7 @@ verify mirror law involutive
         ctx.fn_defs.push(f);
         ctx.fn_defs.push(g);
 
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -3663,7 +3662,7 @@ verify mirror law involutive
             issues
         );
 
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
         assert!(lean.contains("def f__fuel"));
         assert!(lean.contains("def g__fuel"));
@@ -3724,6 +3723,7 @@ verify mirror law involutive
         ctx.fn_defs.push(f);
         ctx.fn_defs.push(g);
 
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -3731,7 +3731,7 @@ verify mirror law involutive
             issues
         );
 
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
         assert!(lean.contains("mutual"));
         assert!(lean.contains("def f__fuel"));
@@ -3759,6 +3759,7 @@ verify mirror law involutive
         ctx.items.push(TopLevel::FnDef(recursive_fn.clone()));
         ctx.fn_defs.push(recursive_fn);
 
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.iter().any(|i| i.contains("outside proof subset")),
@@ -3781,6 +3782,7 @@ verify mirror law involutive
         ctx.items.push(TopLevel::TypeDef(recursive_type.clone()));
         ctx.type_defs.push(recursive_type);
 
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues
@@ -3793,11 +3795,11 @@ verify mirror law involutive
 
     #[test]
     fn law_auto_example_exports_real_proof_artifacts() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             include_str!("../../../examples/formal/law_auto.av"),
             "law_auto",
         );
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
 
         assert!(lean.contains("theorem add_law_commutative :"));
@@ -3810,7 +3812,8 @@ verify mirror law involutive
 
     #[test]
     fn json_example_stays_inside_proof_subset() {
-        let ctx = ctx_from_source(include_str!("../../../examples/data/json.av"), "json");
+        let mut ctx = ctx_from_source(include_str!("../../../examples/data/json.av"), "json");
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -3821,8 +3824,8 @@ verify mirror law involutive
 
     #[test]
     fn json_example_uses_total_defs_and_domain_guarded_laws_in_proof_mode() {
-        let ctx = ctx_from_source(include_str!("../../../examples/data/json.av"), "json");
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let mut ctx = ctx_from_source(include_str!("../../../examples/data/json.av"), "json");
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
 
         assert!(!lean.contains("partial def"));
@@ -3863,7 +3866,7 @@ verify mirror law involutive
 
     #[test]
     fn transpile_injects_builtin_network_types_and_vector_get_support() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 fn firstOrMissing(xs: Vector<String>) -> Result<String, String>
     Option.toResult(Vector.get(xs, 0), "missing")
@@ -3882,7 +3885,7 @@ fn connPort(conn: Tcp.Connection) -> Int
 "#,
             "network_helpers",
         );
-        let out = transpile(&ctx);
+        let out = transpile(&mut ctx);
         let lean = generated_lean_file(&out);
 
         assert!(lean.contains("structure HttpResponse where"));
@@ -3895,11 +3898,11 @@ fn connPort(conn: Tcp.Connection) -> Int
 
     #[test]
     fn law_auto_example_has_no_sorry_in_proof_mode() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             include_str!("../../../examples/formal/law_auto.av"),
             "law_auto",
         );
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
         assert!(
             !lean.contains("sorry"),
@@ -3910,7 +3913,8 @@ fn connPort(conn: Tcp.Connection) -> Int
 
     #[test]
     fn map_example_has_no_sorry_in_proof_mode() {
-        let ctx = ctx_from_source(include_str!("../../../examples/data/map.av"), "map");
+        let mut ctx = ctx_from_source(include_str!("../../../examples/data/map.av"), "map");
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -3918,7 +3922,7 @@ fn connPort(conn: Tcp.Connection) -> Int
             issues
         );
 
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
         // After codegen change: universal theorems that can't be auto-proved get sorry
         assert!(lean.contains("theorem incCount_law_trackedCountStepsByOne :"));
@@ -3932,10 +3936,11 @@ fn connPort(conn: Tcp.Connection) -> Int
 
     #[test]
     fn spec_laws_example_has_no_sorry_in_proof_mode() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             include_str!("../../../examples/formal/spec_laws.av"),
             "spec_laws",
         );
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -3943,7 +3948,7 @@ fn connPort(conn: Tcp.Connection) -> Int
             issues
         );
 
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
         assert!(
             !lean.contains("sorry"),
@@ -3956,8 +3961,8 @@ fn connPort(conn: Tcp.Connection) -> Int
 
     #[test]
     fn rle_example_exports_sampled_roundtrip_laws_without_sorry() {
-        let ctx = ctx_from_source(include_str!("../../../examples/data/rle.av"), "rle");
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let mut ctx = ctx_from_source(include_str!("../../../examples/data/rle.av"), "rle");
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
 
         assert!(
@@ -3974,11 +3979,11 @@ fn connPort(conn: Tcp.Connection) -> Int
 
     #[test]
     fn fibonacci_example_uses_fuelized_int_countdown_in_proof_mode() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             include_str!("../../../examples/data/fibonacci.av"),
             "fibonacci",
         );
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
 
         assert!(lean.contains("def fibTR__fuel"));
@@ -3989,10 +3994,11 @@ fn connPort(conn: Tcp.Connection) -> Int
 
     #[test]
     fn fibonacci_example_stays_inside_proof_subset() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             include_str!("../../../examples/data/fibonacci.av"),
             "fibonacci",
         );
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -4003,7 +4009,7 @@ fn connPort(conn: Tcp.Connection) -> Int
 
     #[test]
     fn fibonacci_example_matches_general_linear_recurrence_shapes() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             include_str!("../../../examples/data/fibonacci.av"),
             "fibonacci",
         );
@@ -4018,11 +4024,11 @@ fn connPort(conn: Tcp.Connection) -> Int
 
     #[test]
     fn fibonacci_example_auto_proves_general_linear_recurrence_spec_law() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             include_str!("../../../examples/data/fibonacci.av"),
             "fibonacci",
         );
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
 
         assert!(lean.contains("private def fibSpec__nat : Nat -> Int"));
@@ -4038,7 +4044,7 @@ fn connPort(conn: Tcp.Connection) -> Int
 
     #[test]
     fn pell_like_example_auto_proves_same_general_shape() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module Pell
     intent =
@@ -4068,6 +4074,7 @@ verify pell law pellSpec
 "#,
             "pell",
         );
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -4075,7 +4082,7 @@ verify pell law pellSpec
             issues
         );
 
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
         assert!(lean.contains("private def pellSpec__nat : Nat -> Int"));
         assert!(lean.contains("private theorem pell_eq_pellSpec__worker_nat_shift"));
@@ -4087,7 +4094,7 @@ verify pell law pellSpec
 
     #[test]
     fn nonlinear_pair_state_recurrence_is_not_auto_proved_as_linear_shape() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             r#"
 module WeirdRec
     intent =
@@ -4117,7 +4124,7 @@ verify weird law weirdSpec
 "#,
             "weirdrec",
         );
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
 
         // After codegen change: emit sorry instead of omitting universal theorems
@@ -4128,7 +4135,8 @@ verify weird law weirdSpec
 
     #[test]
     fn date_example_stays_inside_proof_subset() {
-        let ctx = ctx_from_source(include_str!("../../../examples/data/date.av"), "date");
+        let mut ctx = ctx_from_source(include_str!("../../../examples/data/date.av"), "date");
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -4136,7 +4144,7 @@ verify weird law weirdSpec
             issues
         );
 
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
         assert!(!lean.contains("partial def"));
         assert!(lean.contains("def parseIntSlice (s : String) (from' : Int) (to : Int) : Int :="));
@@ -4144,10 +4152,11 @@ verify weird law weirdSpec
 
     #[test]
     fn temperature_example_stays_inside_proof_subset() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             include_str!("../../../examples/core/temperature.av"),
             "temperature",
         );
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -4155,7 +4164,7 @@ verify weird law weirdSpec
             issues
         );
 
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
         assert!(!lean.contains("partial def"));
         assert!(
@@ -4167,10 +4176,11 @@ verify weird law weirdSpec
 
     #[test]
     fn quicksort_example_stays_inside_proof_subset() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             include_str!("../../../examples/data/quicksort.av"),
             "quicksort",
         );
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -4178,7 +4188,7 @@ verify weird law weirdSpec
             issues
         );
 
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
         assert!(lean.contains("def isOrderedFrom"));
         assert!(!lean.contains("partial def isOrderedFrom"));
@@ -4187,10 +4197,11 @@ verify weird law weirdSpec
 
     #[test]
     fn grok_s_language_example_uses_total_ranked_sizeof_mutual_recursion() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             include_str!("../../../examples/core/grok_s_language.av"),
             "grok_s_language",
         );
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -4198,7 +4209,7 @@ verify weird law weirdSpec
             issues
         );
 
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
         assert!(lean.contains("mutual"));
         assert!(lean.contains("def eval__fuel"));
@@ -4219,14 +4230,15 @@ verify weird law weirdSpec
 
     #[test]
     fn lambda_example_keeps_only_eval_outside_proof_subset() {
-        let ctx = ctx_from_source(include_str!("../../../examples/core/lambda.av"), "lambda");
+        let mut ctx = ctx_from_source(include_str!("../../../examples/core/lambda.av"), "lambda");
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert_eq!(
             issues,
             vec!["recursive function 'eval' is outside proof subset (currently supported: Int countdown, second-order affine Int recurrences with pair-state worker, structural recursion on List/recursive ADTs, String+position, mutual Int countdown, mutual String+position, and ranked sizeOf recursion)".to_string()]
         );
 
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
         assert!(lean.contains("def termToString__fuel"));
         assert!(lean.contains("def subst__fuel"));
@@ -4239,10 +4251,11 @@ verify weird law weirdSpec
 
     #[test]
     fn mission_control_example_stays_inside_proof_subset() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             include_str!("../../../examples/apps/mission_control.av"),
             "mission_control",
         );
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -4250,7 +4263,7 @@ verify weird law weirdSpec
             issues
         );
 
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
         assert!(!lean.contains("partial def normalizeAngle"));
         assert!(lean.contains("def normalizeAngle__fuel"));
@@ -4258,10 +4271,11 @@ verify weird law weirdSpec
 
     #[test]
     fn notepad_store_example_stays_inside_proof_subset() {
-        let ctx = ctx_from_source(
+        let mut ctx = ctx_from_source(
             include_str!("../../../examples/apps/notepad/store.av"),
             "notepad_store",
         );
+        ctx.refresh_facts();
         let issues = proof_mode_issues(&ctx);
         assert!(
             issues.is_empty(),
@@ -4269,7 +4283,7 @@ verify weird law weirdSpec
             issues
         );
 
-        let out = transpile_for_proof_mode(&ctx, VerifyEmitMode::NativeDecide);
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
         assert!(lean.contains("def deserializeLine (line : String) : Except String Note :="));
         assert!(lean.contains("Except String (List Note)"));

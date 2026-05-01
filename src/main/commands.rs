@@ -4472,7 +4472,7 @@ pub(super) fn cmd_proof(
     backend: &super::cli::ProofBackend,
     verify_mode: &super::cli::ProofVerifyMode,
 ) {
-    let (ctx, _module_root) = build_codegen_context(
+    let (mut ctx, _module_root) = build_codegen_context(
         file,
         project_name,
         module_root_override,
@@ -4518,7 +4518,7 @@ pub(super) fn cmd_proof(
 
     match backend {
         super::cli::ProofBackend::Lean => {
-            cmd_proof_lean(file, output_dir, &ctx, verify_mode);
+            cmd_proof_lean(file, output_dir, &mut ctx, verify_mode);
         }
         super::cli::ProofBackend::Dafny => {
             cmd_proof_dafny(file, output_dir, &ctx);
@@ -4529,7 +4529,7 @@ pub(super) fn cmd_proof(
 fn cmd_proof_lean(
     file: &str,
     output_dir: &str,
-    ctx: &codegen::CodegenContext,
+    ctx: &mut codegen::CodegenContext,
     verify_mode: &super::cli::ProofVerifyMode,
 ) {
     let proof_issues = lean_codegen::proof_mode_findings(ctx);
