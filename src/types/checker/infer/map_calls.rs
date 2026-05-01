@@ -11,7 +11,7 @@ impl TypeChecker {
         let list_ty = |v: Type| Type::List(Box::new(v));
         let tuple2 = |k: Type, v: Type| Type::Tuple(vec![k, v]);
         let is_hashable_key_type = |ty: &Type| {
-            // The HAMT runtime hashes any heap value through rt_deep_hash,
+            // The Map runtime hashes any heap value through rt_deep_hash,
             // so user-defined types (variants/records/tuples/lists) are
             // first-class keys alongside the built-in scalars.
             !matches!(ty, Type::Fn { .. } | Type::Unit)

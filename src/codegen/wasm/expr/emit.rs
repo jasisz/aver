@@ -1472,10 +1472,10 @@ impl<'a> ExprEmitter<'a> {
 
     fn emit_map_literal(&mut self, entries: &[(Spanned<Expr>, Spanned<Expr>)]) {
         // Build a `List<(K, V)>` from the entries (regular OBJ_LIST_CONS
-        // with an OBJ_TUPLE in each head), then fold it into a HAMT via
-        // `rt_map_from_list`. Pre-HAMT we used to chain OBJ_MAP_ENTRY
-        // cells and treat the chain itself as the map; the HAMT
-        // runtime only walks `OBJ_HAMT` roots, so we have to convert.
+        // with an OBJ_TUPLE in each head), then fold it into a flat
+        // OBJ_MAP via `rt_map_from_list`. (Pre-0.14 maps were
+        // OBJ_MAP_ENTRY cons-list shaped — assoc-list semantics, O(N)
+        // lookups; the flat hashtable runtime needs a real OBJ_MAP.)
         //
         // Key kind / value-ptr flag come from the static types of the
         // first entry (if any). All entries in a literal share the
@@ -1558,7 +1558,7 @@ impl<'a> ExprEmitter<'a> {
             self.instructions.push(Instruction::Call(self.rt.list_cons));
         }
 
-        // Fold the list of tuples into a HAMT.
+        // Fold the list of tuples into a flat OBJ_MAP.
         self.instructions.push(Instruction::I32Const(key_kind));
         self.instructions
             .push(Instruction::I32Const(value_ptr_flag));
@@ -1792,10 +1792,10 @@ impl<'a> ExprEmitter<'a> {
             // Yard semantics: compact when this iteration's growth
             // exceeds the threshold. The original 256-byte cutoff was
             // calibrated for the linked-list map era (~24B per cons
-            // cell) and fires *every* iteration once HAMT or any other
-            // structurally-sharing data type allocates 4-5 nodes per
-            // step (~600B) — death by a thousand compactions. 16384
-            // matches the mutual-TCO branch's watermark threshold.
+            // cell) and fires *every* iteration once a structurally
+            // sharing data type allocates 4-5 nodes per step (~600B)
+            // — death by a thousand compactions. 16384 matches the
+            // mutual-TCO branch's watermark threshold.
             //
             // Pure no-alloc self-recursive fns skip the whole compaction
             // pass — they don't generate garbage to begin with.
