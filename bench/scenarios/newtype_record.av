@@ -1,15 +1,29 @@
-module Bench
+module NewtypeRecord
+    intent = "Bench — newtype overhead via single-field record (UserId wraps an Int). Same compute as newtype_bare but every Int goes through wrap+field-access; the gap between the two is the cost of nominal newtype safety on each backend."
+    depends []
+    effects []
 
 record UserId
     raw: Int
 
 fn unwrap(id: UserId) -> Int
+    ? "Field access on a single-field record."
     id.raw
 
+verify unwrap
+    unwrap(UserId(raw = 0)) => 0
+    unwrap(UserId(raw = 42)) => 42
+
 fn sumLoop(n: Int, acc: Int) -> Int
+    ? "Tail-recursive sum over wrap/unwrap on every iteration."
     match n
         0 -> acc
         _ -> sumLoop(n - 1, acc + unwrap(UserId(raw = n)))
 
+verify sumLoop
+    sumLoop(0, 0) => 0
+    sumLoop(5, 0) => 15
+
 fn main() -> Int
+    ? "Bench entry — return value ignored."
     sumLoop(20000, 0)

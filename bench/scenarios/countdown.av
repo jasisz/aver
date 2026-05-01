@@ -1,9 +1,19 @@
-module Bench
+module Countdown
+    intent = "Bench — single-fn tail-recursive countdown. Measures pure tail-call loop cost without arithmetic, allocation, or pattern shape."
+    depends []
+    effects []
 
 fn countdown(n: Int) -> Int
+    ? "Tight tail-recursive loop counting down to zero. The ideal shape for TCO."
     match n
         0 -> 0
         _ -> countdown(n - 1)
 
+verify countdown
+    countdown(0) => 0
+    countdown(1) => 0
+    countdown(100) => 0
+
 fn main() -> Int
+    ? "Bench entry — return value ignored."
     countdown(20000)

@@ -1,10 +1,19 @@
-module Bench
+module MapBuild
+    intent = "Bench — Map.set in a tight loop. Measures hashtable insert + key allocation cost."
+    depends []
+    effects []
 
 fn buildMap(n: Int, m: Map<String, Int>) -> Map<String, Int>
+    ? "Tail-recursively insert n entries with stringified Int keys."
     match n
         0 -> m
         _ -> buildMap(n - 1, Map.set(m, Int.toString(n), n))
 
+verify buildMap
+    Map.len(buildMap(0, Map.empty())) => 0
+    Map.len(buildMap(5, Map.empty())) => 5
+
 fn main() -> Int
+    ? "Bench entry — return value ignored."
     m = buildMap(5000, Map.empty())
     Map.len(m)

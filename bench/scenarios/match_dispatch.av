@@ -1,4 +1,7 @@
-module Bench
+module MatchDispatch
+    intent = "Bench — sum-type pattern match in a hot loop. Measures variant tag dispatch + payload extraction cost across backends."
+    depends []
+    effects []
 
 type Shape
     Circle(Float)
@@ -6,12 +9,19 @@ type Shape
     Triangle(Float, Float)
 
 fn area(s: Shape) -> Float
+    ? "Compute area via match on the sum-type variant."
     match s
         Shape.Circle(r) -> 3.14159 * r * r
         Shape.Square(side) -> side * side
         Shape.Triangle(base, height) -> 0.5 * base * height
 
+verify area
+    area(Shape.Circle(1.0)) => 3.14159
+    area(Shape.Square(2.0)) => 4.0
+    area(Shape.Triangle(3.0, 4.0)) => 6.0
+
 fn sumAreas(n: Int, acc: Float, variant: Int) -> Float
+    ? "Tail-recursive sum of areas; the `variant` knob picks which Shape constructor to allocate per iteration so each variant gets its own dispatch path."
     match n
         0 -> acc
         _ -> match variant
@@ -19,5 +29,11 @@ fn sumAreas(n: Int, acc: Float, variant: Int) -> Float
             2 -> sumAreas(n - 1, acc + area(Shape.Square(Float.fromInt(n))), variant)
             _ -> sumAreas(n - 1, acc + area(Shape.Triangle(Float.fromInt(n), Float.fromInt(n))), variant)
 
+verify sumAreas
+    sumAreas(0, 0.0, 1) => 0.0
+    sumAreas(1, 0.0, 2) => 1.0
+    sumAreas(2, 0.0, 2) => 5.0
+
 fn main() -> Float
+    ? "Bench entry — return value ignored."
     sumAreas(10000, 0.0, 1) + sumAreas(10000, 0.0, 2) + sumAreas(10000, 0.0, 3)

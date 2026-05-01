@@ -1,9 +1,19 @@
-module Bench
+module NewtypeBare
+    intent = "Bench — baseline for the newtype overhead trio. Plain Int sum with no wrapper layer; numbers from this scenario are the ceiling for newtype_record / newtype_variant."
+    depends []
+    effects []
 
 fn sumLoop(n: Int, acc: Int) -> Int
+    ? "Tail-recursive sum 1..=n on raw Int."
     match n
         0 -> acc
         _ -> sumLoop(n - 1, acc + n)
 
+verify sumLoop
+    sumLoop(0, 0) => 0
+    sumLoop(5, 0) => 15
+    sumLoop(10, 0) => 55
+
 fn main() -> Int
+    ? "Bench entry — return value ignored."
     sumLoop(20000, 0)

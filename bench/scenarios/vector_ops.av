@@ -1,15 +1,29 @@
-module Bench
+module VectorOps
+    intent = "Bench — Vector.set / Vector.get in tight loops. Measures owned-mutate fast path on backends that have it (VM, WASM)."
+    depends []
+    effects []
 
 fn fillVector(v: Vector<Int>, n: Int, i: Int) -> Vector<Int>
+    ? "Tail-recursive fill: write i*i at position i for i in 0..n."
     match i == n
         true -> v
         false -> fillVector(Option.withDefault(Vector.set(v, i, i * i), v), n, i + 1)
 
+verify fillVector
+    Vector.get(fillVector(Vector.new(3, 0), 3, 0), 0) => Option.Some(0)
+    Vector.get(fillVector(Vector.new(3, 0), 3, 0), 2) => Option.Some(4)
+
 fn sumVector(v: Vector<Int>, n: Int, i: Int, acc: Int) -> Int
+    ? "Tail-recursive sum across positions 0..n; missing slots count as 0."
     match i == n
         true -> acc
         false -> sumVector(v, n, i + 1, acc + Option.withDefault(Vector.get(v, i), 0))
 
+verify sumVector
+    sumVector(Vector.new(3, 0), 3, 0, 0) => 0
+    sumVector(fillVector(Vector.new(3, 0), 3, 0), 3, 0, 0) => 5
+
 fn main() -> Int
+    ? "Bench entry — return value ignored."
     v = fillVector(Vector.new(5000, 0), 5000, 0)
     sumVector(v, 5000, 0, 0)

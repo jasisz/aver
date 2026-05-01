@@ -1,9 +1,19 @@
-module Bench
+module StringInterp
+    intent = "Bench — string interpolation in a hot recursive loop. Measures the interp_lower → __buf_* lowering pipeline; old chained-concat shape was O(N²), the buffer pipeline is O(total_len)."
+    depends []
+    effects []
 
 fn buildString(n: Int, acc: String) -> String
+    ? "Tail-recursively prepend a separator and the stringified counter to acc. The interpolation in the recursive arm fires the buffer pipeline."
     match n
         0 -> acc
         _ -> buildString(n - 1, "{acc}-{Int.toString(n)}")
 
+verify buildString
+    buildString(0, "x") => "x"
+    buildString(1, "x") => "x-1"
+    buildString(3, "x") => "x-3-2-1"
+
 fn main() -> String
+    ? "Bench entry — return value ignored."
     buildString(5000, "start")
