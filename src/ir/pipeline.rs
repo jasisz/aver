@@ -371,4 +371,176 @@ fn broken() -> Int
         // Tco fired, typecheck fired, then we bailed out — no later stages.
         assert_eq!(fired, vec![PipelineStage::Tco, PipelineStage::Typecheck]);
     }
+
+    #[test]
+    fn analyze_populates_result_when_enabled() {
+        let mut items = parse(
+            r#"
+module M
+    intent = "test"
+    depends []
+
+fn id(n: Int) -> Int
+    n
+
+fn dub(n: Int) -> Int
+    n + n
+"#,
+        );
+        let result = run(
+            &mut items,
+            PipelineConfig {
+                typecheck: Some(TypecheckMode::Full { base_dir: None }),
+                ..Default::default()
+            },
+        );
+        let analysis = result
+            .analysis
+            .expect("analyze runs by default and must populate result");
+        assert!(
+            analysis.fn_analyses.contains_key("id"),
+            "every user fn shows up in fn_analyses, got keys: {:?}",
+            analysis.fn_analyses.keys().collect::<Vec<_>>()
+        );
+        assert!(analysis.fn_analyses.contains_key("dub"));
+    }
+
+    #[test]
+    fn analyze_skipped_when_disabled() {
+        let mut items = parse(
+            r#"
+module M
+    intent = "test"
+    depends []
+
+fn id(n: Int) -> Int
+    n
+"#,
+        );
+        let result = run(
+            &mut items,
+            PipelineConfig {
+                typecheck: Some(TypecheckMode::Full { base_dir: None }),
+                run_analyze: false,
+                ..Default::default()
+            },
+        );
+        assert!(
+            result.analysis.is_none(),
+            "run_analyze=false must leave PipelineResult.analysis as None"
+        );
+    }
+
+    #[test]
+    fn alloc_policy_populates_per_fn_allocates() {
+        let mut items = parse(
+            r#"
+module M
+    intent = "test"
+    depends []
+
+fn pure_one() -> Int
+    1
+
+fn allocates_list(n: Int) -> List<Int>
+    [n, n, n]
+"#,
+        );
+        let policy = crate::ir::NeutralAllocPolicy;
+        let result = run(
+            &mut items,
+            PipelineConfig {
+                typecheck: Some(TypecheckMode::Full { base_dir: None }),
+                alloc_policy: Some(&policy),
+                ..Default::default()
+            },
+        );
+        let analysis = result.analysis.expect("analyze ran");
+        assert_eq!(
+            analysis
+                .fn_analyses
+                .get("pure_one")
+                .and_then(|fa| fa.allocates),
+            Some(false),
+            "pure_one returns a literal — proven not to allocate"
+        );
+        assert_eq!(
+            analysis
+                .fn_analyses
+                .get("allocates_list")
+                .and_then(|fa| fa.allocates),
+            Some(true),
+            "list literal allocates under the neutral policy"
+        );
+    }
+
+    #[test]
+    fn analyze_without_policy_leaves_allocates_unset() {
+        let mut items = parse(
+            r#"
+module M
+    intent = "test"
+    depends []
+
+fn id(n: Int) -> Int
+    n
+"#,
+        );
+        let result = run(
+            &mut items,
+            PipelineConfig {
+                typecheck: Some(TypecheckMode::Full { base_dir: None }),
+                // alloc_policy: None — analyze runs but skips compute_alloc_info
+                ..Default::default()
+            },
+        );
+        let analysis = result.analysis.expect("analyze ran");
+        let fa = analysis
+            .fn_analyses
+            .get("id")
+            .expect("id is in the analysis");
+        assert!(
+            fa.allocates.is_none(),
+            "without an alloc_policy, allocates stays None (every other field still set)"
+        );
+    }
+
+    #[test]
+    fn last_use_runs_only_after_resolve() {
+        // Pipeline ordering invariant: LastUse needs Resolved nodes to
+        // annotate. Skipping Resolve while running LastUse is legal but
+        // the pass becomes a no-op (no resolved slots in the IR yet).
+        // Here we verify it doesn't panic and pipeline returns normally.
+        let mut items = parse(
+            r#"
+module M
+    intent = "test"
+    depends []
+
+fn id(n: Int) -> Int
+    n
+"#,
+        );
+        let mut fired: Vec<PipelineStage> = Vec::new();
+        run(
+            &mut items,
+            PipelineConfig {
+                typecheck: Some(TypecheckMode::Full { base_dir: None }),
+                run_resolve: false,
+                run_analyze: false,
+                on_after_pass: Some(Box::new(|stage, _| fired.push(stage))),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            fired,
+            vec![
+                PipelineStage::Tco,
+                PipelineStage::Typecheck,
+                PipelineStage::InterpLower,
+                PipelineStage::BufferBuild,
+                PipelineStage::LastUse, // fires even without Resolve — a no-op pass
+            ]
+        );
+    }
 }
