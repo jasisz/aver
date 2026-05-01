@@ -4697,6 +4697,7 @@ fn cmd_compile_wasm_gc(
             // grow-on-append, when `array.copy` x2 is the idiomatic
             // shape. Keep the source InterpolatedStr in the IR.
             run_interp_lower: false,
+            run_buffer_build: false,
             ..Default::default()
         },
     );
@@ -4714,7 +4715,7 @@ fn cmd_compile_wasm_gc(
     // `call $fn` after rewriting `Attr(Ident("Fractal"), "render")`
     // call sites to `Ident("Fractal_render")`. Component Model is a
     // future separate mode (see `project_wasm_gc_multimodule.md`).
-    let dep_modules = load_compile_deps(&items, &module_root, false /* run_interp_lower */, true /* run_buffer_build */);
+    let dep_modules = load_compile_deps(&items, &module_root, false /* run_interp_lower */, false /* run_buffer_build */);
     flatten_multimodule(&mut items, &dep_modules);
 
     let bytes = match wasm_gc::compile_to_wasm_gc(&items, result.analysis.as_ref()) {

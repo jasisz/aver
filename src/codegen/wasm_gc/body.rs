@@ -143,6 +143,15 @@ fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
             if arms.iter().any(arm_is_option_pattern) {
                 return true;
             }
+            if arms.iter().any(arm_is_result_pattern) {
+                return true;
+            }
+            if arms
+                .iter()
+                .any(|a| matches!(&a.pattern, Pattern::EmptyList | Pattern::Cons(_, _)))
+            {
+                return true;
+            }
             // Arm needs a scratch when it's a multi-arm Constructor
             // match against a non-newtype variant.
             let constructor_arms: Vec<_> = arms
@@ -200,6 +209,13 @@ fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
         Expr::RecordCreate { fields, .. } => fields
             .iter()
             .any(|(_, e)| expr_needs_scratch(&e.node, registry)),
+        // List literal with elements uses the scratch slot for the
+        // running tail during the right-fold; empty literal lowers to
+        // a single ref.null and doesn't need it.
+        Expr::List(items) if !items.is_empty() => true,
+        Expr::List(items) => items
+            .iter()
+            .any(|e| expr_needs_scratch(&e.node, registry)),
         _ => false,
     }
 }
@@ -218,10 +234,46 @@ fn arm_is_option_pattern(arm: &MatchArm) -> bool {
     false
 }
 
+/// True when a match arm targets `Result.Ok(_)` or `Result.Err(_)`.
+fn arm_is_result_pattern(arm: &MatchArm) -> bool {
+    if let Pattern::Constructor(name, _) = &arm.pattern {
+        let bare = name.rsplit('.').next().unwrap_or(name);
+        return name == "Result.Ok"
+            || name == "Result.Err"
+            || ((bare == "Ok" || bare == "Err") && name.starts_with("Result"));
+    }
+    false
+}
+
 /// For an Option-shaped match subject, recover the inner T as an Aver
 /// type string by reverse-looking-up the wasm type of the subject in
 /// the registry's option table. Used by pre-pass slot allocation
 /// (`Option.Some(v)` binds `v` to a slot whose wasm type depends on T).
+/// For a Result-shaped match subject, recover (T, E) Aver type
+/// strings via reverse-lookup on the registered result_order.
+fn subject_result_te(
+    subject: &Expr,
+    registry: &TypeRegistry,
+    fd: &FnDef,
+    fn_map: &FnMap,
+) -> Result<(String, String), WasmGcError> {
+    let wasm_ty = infer_expr_wasm_type(subject, registry, fd, fn_map)?;
+    if let Some(ValType::Ref(rt)) = wasm_ty
+        && let wasm_encoder::HeapType::Concrete(idx) = rt.heap_type
+    {
+        for canonical in &registry.result_order {
+            if registry.result_types.get(canonical).copied() == Some(idx)
+                && let Some((t, e)) = TypeRegistry::result_te(canonical)
+            {
+                return Ok((t.to_string(), e.to_string()));
+            }
+        }
+    }
+    Err(WasmGcError::Validation(
+        "Result match subject's wasm type doesn't map to a registered Result<T,E>".into(),
+    ))
+}
+
 fn subject_option_inner_type(
     subject: &Expr,
     registry: &TypeRegistry,
@@ -303,6 +355,32 @@ fn collect_expr_binding_slots(
                 }
                 return Ok(());
             }
+            // Built-in Result arms — Ok binds T (field 1), Err binds
+            // E (field 2). Recover canonical from the subject's wasm
+            // type via reverse-lookup in result_order.
+            let is_result = arms.iter().any(arm_is_result_pattern);
+            if is_result {
+                let (t_aver, e_aver) =
+                    subject_result_te(&subject.node, registry, fd, fn_map)?;
+                for arm in arms {
+                    if let Pattern::Constructor(name, bindings) = &arm.pattern
+                        && arm_is_result_pattern(arm)
+                    {
+                        let bare = name.rsplit('.').next().unwrap_or(name);
+                        let inner_ty = if bare == "Ok" { &t_aver } else { &e_aver };
+                        for binding_name in bindings {
+                            if binding_name == "_" {
+                                continue;
+                            }
+                            if let Some(v) = aver_to_wasm(inner_ty, Some(registry))? {
+                                out.push(v);
+                            }
+                        }
+                    }
+                    collect_expr_binding_slots(&arm.body.node, out, registry, fd, fn_map)?;
+                }
+                return Ok(());
+            }
             for arm in arms {
                 if let Pattern::Constructor(name, bindings) = &arm.pattern {
                     let bare = name.rsplit('.').next().unwrap_or(name);
@@ -325,11 +403,37 @@ fn collect_expr_binding_slots(
                         }
                     }
                 }
-                if let Pattern::Cons(_, _) = &arm.pattern {
-                    // Phase 3b: List binding slots
-                    return Err(WasmGcError::Unimplemented(
-                        "phase 3b — Cons pattern bindings",
-                    ));
+                if let Pattern::Cons(head_name, tail_name) = &arm.pattern {
+                    // Cons pattern bindings — head: T, tail: (ref null
+                    // $list_T). Both come from the subject's
+                    // `List<T>` instantiation; recover by inferring
+                    // the wasm type of the subject.
+                    let subject_ty =
+                        infer_expr_wasm_type(&subject.node, registry, fd, fn_map)?;
+                    if let Some(ValType::Ref(rt)) = subject_ty
+                        && let wasm_encoder::HeapType::Concrete(idx) = rt.heap_type
+                    {
+                        // Reverse-lookup canonical from list_order.
+                        let mut elem_ty: Option<ValType> = None;
+                        for canonical in &registry.list_order {
+                            if registry.list_types.get(canonical).copied() == Some(idx)
+                                && let Some(elem) = TypeRegistry::list_element_type(canonical)
+                            {
+                                elem_ty = aver_to_wasm(elem, Some(registry))?;
+                                break;
+                            }
+                        }
+                        if let Some(et) = elem_ty {
+                            if head_name != "_" {
+                                out.push(et);
+                            }
+                            if tail_name != "_" {
+                                // Tail has the same list ref shape as
+                                // the subject.
+                                out.push(ValType::Ref(rt));
+                            }
+                        }
+                    }
                 }
                 collect_expr_binding_slots(&arm.body.node, out, registry, fd, fn_map)?;
             }
@@ -774,6 +878,9 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
         Expr::Literal(Literal::Float(_)) => Ok("Float".into()),
         Expr::Literal(Literal::Bool(_)) => Ok("Bool".into()),
         Expr::Literal(Literal::Unit) => Ok("Unit".into()),
+        Expr::Literal(Literal::Str(_)) => Ok("String".into()),
+        Expr::Literal(_) => Ok("Int".into()),
+        Expr::InterpolatedStr(_) => Ok("String".into()),
         Expr::Resolved { name, .. } => {
             // Look up the param/binding type. Falls back to "Int" only
             // if we can't recover the original aver type — most
@@ -850,6 +957,43 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
                     }
                     if dotted == "Option.None" {
                         return Ok(ctx.return_type.to_string());
+                    }
+                    // Result constructors: payload type fixes T (Ok)
+                    // or E (Err); the other position is recovered
+                    // from the surrounding Result<T,E> instantiation.
+                    if dotted == "Result.Ok" && args.len() == 1 {
+                        let t = infer_aver_type(&args[0].node, ctx)?;
+                        // Find a registered Result with matching T,
+                        // fall back to ctx.return_type.
+                        if let Some(c) = ctx.registry.result_order.iter().find(|c| {
+                            TypeRegistry::result_te(c)
+                                .is_some_and(|(t2, _)| t2 == t.trim())
+                        }) {
+                            return Ok(c.clone());
+                        }
+                        return Ok(ctx.return_type.to_string());
+                    }
+                    if dotted == "Result.Err" && args.len() == 1 {
+                        let e = infer_aver_type(&args[0].node, ctx)?;
+                        if let Some(c) = ctx.registry.result_order.iter().find(|c| {
+                            TypeRegistry::result_te(c)
+                                .is_some_and(|(_, e2)| e2 == e.trim())
+                        }) {
+                            return Ok(c.clone());
+                        }
+                        return Ok(ctx.return_type.to_string());
+                    }
+                    if dotted == "List.prepend" && args.len() == 2 {
+                        return infer_aver_type(&args[1].node, ctx);
+                    }
+                    if dotted == "List.empty" {
+                        if ctx.registry.list_order.len() == 1 {
+                            return Ok(ctx.registry.list_order[0].clone());
+                        }
+                        return Ok(ctx.return_type.to_string());
+                    }
+                    if dotted == "List.length" || dotted == "List.len" {
+                        return Ok("Int".into());
                     }
                     // Map ops — type derives from the canonical of the
                     // map argument (or from the only registered
@@ -933,9 +1077,19 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
                 Ok("Int".into())
             }
         }
-        _ => Err(WasmGcError::Unimplemented(
-            "expression shape outside phase 2/3/4",
-        )),
+        Expr::List(items) => {
+            if let Some(first) = items.first() {
+                let elem = infer_aver_type(&first.node, ctx)?;
+                Ok(format!("List<{elem}>"))
+            } else if ctx.registry.list_order.len() == 1 {
+                Ok(ctx.registry.list_order[0].clone())
+            } else {
+                Ok(ctx.return_type.to_string())
+            }
+        }
+        other => Err(WasmGcError::Validation(format!(
+            "infer_aver_type: unsupported expression shape: {other:?}"
+        ))),
     }
 }
 
@@ -1235,6 +1389,9 @@ fn emit_expr(
         Expr::InterpolatedStr(parts) => {
             emit_interpolated_str(func, parts, slots, ctx)?;
         }
+        Expr::List(items) => {
+            emit_list_literal(func, items, slots, ctx)?;
+        }
         Expr::Ident(_) => {
             return Err(WasmGcError::Unimplemented(
                 "bare Ident reached emitter (resolver should have produced Resolved)",
@@ -1308,6 +1465,34 @@ fn emit_expr(
                             args.len()
                         ))),
                     };
+                }
+                if let Expr::Ident(p) = &parent.node
+                    && p == "Result"
+                    && (member == "Ok" || member == "Err")
+                {
+                    return emit_result_constructor(
+                        func,
+                        member,
+                        args.first(),
+                        slots,
+                        ctx,
+                    );
+                }
+                // `List.prepend(head, tail)` — direct Cons cell.
+                if let Expr::Ident(p) = &parent.node
+                    && p == "List"
+                    && member == "prepend"
+                    && args.len() == 2
+                {
+                    return emit_list_prepend(func, &args[0], &args[1], slots, ctx);
+                }
+                // `List.empty()` — null ref of the surrounding list type.
+                if let Expr::Ident(p) = &parent.node
+                    && p == "List"
+                    && member == "empty"
+                    && args.is_empty()
+                {
+                    return emit_list_empty(func, ctx);
                 }
                 if let Some(info) = ctx.registry.variant(member).cloned() {
                     return emit_constructor_with_args(func, &info, args, slots, ctx);
@@ -1495,6 +1680,424 @@ fn struct_name_of(
         }
     }
     Ok(None)
+}
+
+/// `Result.Ok(v)` / `Result.Err(e)` — three-field struct (tag, ok,
+/// err). Tag=1 for Ok, 0 for Err. Unused payload field gets a default
+/// value (zero/null) so `struct.new` always has a balanced argument
+/// list — well-typed pattern match never reads it.
+fn emit_result_constructor(
+    func: &mut Function,
+    variant: &str,
+    payload: Option<&Spanned<Expr>>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let payload = payload.ok_or(WasmGcError::Validation(format!(
+        "Result.{variant} requires a payload"
+    )))?;
+    let payload_ty = infer_aver_type(&payload.node, ctx)?;
+    // Find a registered Result<T,E> where the matching position
+    // matches the payload's inferred type. Fallback: pick the only
+    // registered Result instantiation, or use the fn's return type.
+    let canonical = if ctx.registry.result_order.len() == 1 {
+        ctx.registry.result_order[0].clone()
+    } else {
+        let return_canonical: String = ctx
+            .return_type
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        if ctx.registry.result_type_idx(&return_canonical).is_some() {
+            return_canonical
+        } else {
+            // Try matching the payload type against T (Ok) or E (Err).
+            ctx.registry
+                .result_order
+                .iter()
+                .find(|c| {
+                    if let Some((t, e)) = TypeRegistry::result_te(c) {
+                        let match_pos = if variant == "Ok" { t } else { e };
+                        match_pos == payload_ty.trim()
+                    } else {
+                        false
+                    }
+                })
+                .cloned()
+                .ok_or(WasmGcError::Validation(format!(
+                    "Result.{variant}({payload_ty}) — no registered Result<T,E> instantiation matches"
+                )))?
+        }
+    };
+    let res_idx = ctx
+        .registry
+        .result_type_idx(&canonical)
+        .expect("just-resolved canonical");
+    let (t_aver, e_aver) = TypeRegistry::result_te(&canonical).ok_or(
+        WasmGcError::Validation(format!("Result canonical `{canonical}` malformed")),
+    )?;
+
+    if variant == "Ok" {
+        func.instruction(&Instruction::I32Const(1));
+        emit_expr(func, &payload.node, slots, ctx)?;
+        emit_default_value(func, e_aver, ctx.registry)?;
+    } else {
+        func.instruction(&Instruction::I32Const(0));
+        emit_default_value(func, t_aver, ctx.registry)?;
+        emit_expr(func, &payload.node, slots, ctx)?;
+    }
+    func.instruction(&Instruction::StructNew(res_idx));
+    Ok(())
+}
+
+/// `List.prepend(head, tail)` → `struct.new $list_T head tail`.
+fn emit_list_prepend(
+    func: &mut Function,
+    head: &Spanned<Expr>,
+    tail: &Spanned<Expr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let tail_ty = infer_aver_type(&tail.node, ctx)?;
+    let canonical: String = tail_ty.chars().filter(|c| !c.is_whitespace()).collect();
+    let list_idx = ctx
+        .registry
+        .list_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "List.prepend: tail type `{tail_ty}` is not a registered List<T>"
+        )))?;
+    emit_expr(func, &head.node, slots, ctx)?;
+    emit_expr(func, &tail.node, slots, ctx)?;
+    func.instruction(&Instruction::StructNew(list_idx));
+    Ok(())
+}
+
+/// `List.empty()` — `ref.null $list_T` of whatever List<T> the
+/// surrounding context expects.
+fn emit_list_empty(func: &mut Function, ctx: &EmitCtx<'_>) -> Result<(), WasmGcError> {
+    let canonical = if ctx.registry.list_order.len() == 1 {
+        ctx.registry.list_order[0].clone()
+    } else {
+        ctx.return_type
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+    };
+    let list_idx = ctx
+        .registry
+        .list_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "List.empty: cannot resolve list instantiation (got `{canonical}`)"
+        )))?;
+    func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        list_idx,
+    )));
+    Ok(())
+}
+
+/// `[a, b, c]` literal → `Cons a (Cons b (Cons c null))`.
+fn emit_list_literal(
+    func: &mut Function,
+    items: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let canonical = if let Some(first) = items.first() {
+        let elem_ty = infer_aver_type(&first.node, ctx)?;
+        format!("List<{elem_ty}>")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+    } else if ctx.registry.list_order.len() == 1 {
+        ctx.registry.list_order[0].clone()
+    } else {
+        ctx.return_type
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+    };
+    let list_idx = ctx
+        .registry
+        .list_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "List literal: cannot resolve list instantiation (got `{canonical}`)"
+        )))?;
+    // Emit innermost first: `null`, then for each element from right
+    // to left, `head; struct.new $list_T` with the previous tail.
+    func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        list_idx,
+    )));
+    for item in items.iter().rev() {
+        // Stack: [..., tail]; we want [head, tail] for struct.new.
+        // But emit_expr pushes head on top, leaving [tail, head].
+        // Use a synthetic local? Simpler: re-order via a dance.
+        // Actually struct.new pops fields in declaration order
+        // (field 0 head, field 1 tail), so we need [head, tail] on
+        // stack with head at lower position. Currently stack has
+        // [tail]; we push head with emit_expr which leaves
+        // [tail, head]. struct.new pops (head, tail) — that's
+        // (top, below) = (head, tail). Correct: declaration order
+        // popped from top → head first.
+        // Verify: spec says fields are pushed in declaration order
+        // (field 0 first), so caller pushes [field_0, field_1, ...]
+        // bottom-to-top. struct.new pops them top-to-bottom which
+        // gives field_N, ..., field_0. So we need [head, tail] on
+        // stack with head pushed first (bottom). Currently bottom
+        // is tail (we pushed it first). Wrong order.
+        //
+        // Re-emit in the right order: push head, push tail,
+        // struct.new. Loop from rightmost element folding tail.
+        let _ = item;
+    }
+    // Re-implement the fold cleanly: build by left-fold from right
+    // since we need the outer-most tail first.
+    // Reset: we already pushed null; now use a buffered Function to
+    // re-emit. Simpler: rewrite via a plain right-fold with locals.
+    // wasm doesn't expose stack swap, so use a synthetic local for
+    // the running tail.
+    // The idiomatic shape:
+    //   tail_local = null
+    //   for item in items.rev():
+    //     emit head
+    //     local.get tail_local
+    //     struct.new $list
+    //     local.set tail_local
+    //   local.get tail_local
+    // But we can't allocate a fresh local mid-emit. Use the existing
+    // subject_scratch (eq ref) — it's general enough to hold a list
+    // ref via subtyping (every list ref is a struct ref, subtype of
+    // eq). Cast on read.
+    if !items.is_empty() {
+        let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+            "List literal with elements needs a scratch slot but none was reserved".into(),
+        ))?;
+        // Pop the null we pushed eagerly; restart with proper fold.
+        func.instruction(&Instruction::Drop);
+        // Initialise scratch with null tail.
+        func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+            list_idx,
+        )));
+        func.instruction(&Instruction::LocalSet(scratch));
+        for item in items.iter().rev() {
+            emit_expr(func, &item.node, slots, ctx)?;
+            // load current tail; nullable cast (null is valid empty list)
+            func.instruction(&Instruction::LocalGet(scratch));
+            func.instruction(&Instruction::RefCastNullable(
+                wasm_encoder::HeapType::Concrete(list_idx),
+            ));
+            func.instruction(&Instruction::StructNew(list_idx));
+            func.instruction(&Instruction::LocalSet(scratch));
+        }
+        func.instruction(&Instruction::LocalGet(scratch));
+        func.instruction(&Instruction::RefCastNullable(
+            wasm_encoder::HeapType::Concrete(list_idx),
+        ));
+    }
+    Ok(())
+}
+
+/// `match list { [] -> a; [head, ..tail] -> b }` — null check on the
+/// list ref selects the empty branch; otherwise cast + struct.get
+/// the head and tail. Subject must be a registered `List<T>`.
+fn emit_list_match(
+    func: &mut Function,
+    subject: &Spanned<Expr>,
+    arms: &[MatchArm],
+    block_ty: wasm_encoder::BlockType,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "List match needs a subject scratch slot but none was reserved".into(),
+    ))?;
+    let subject_ty = infer_aver_type(&subject.node, ctx)?;
+    let canonical: String = subject_ty.chars().filter(|c| !c.is_whitespace()).collect();
+    let list_idx = ctx
+        .registry
+        .list_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "List match: subject type `{subject_ty}` is not a registered List<T>"
+        )))?;
+
+    let mut empty_arm: Option<&MatchArm> = None;
+    let mut cons_arm: Option<&MatchArm> = None;
+    for arm in arms {
+        match &arm.pattern {
+            Pattern::EmptyList => empty_arm = Some(arm),
+            Pattern::Cons(_, _) => cons_arm = Some(arm),
+            Pattern::Wildcard => {
+                if empty_arm.is_none() {
+                    empty_arm = Some(arm);
+                } else if cons_arm.is_none() {
+                    cons_arm = Some(arm);
+                }
+            }
+            _ => {}
+        }
+    }
+    let empty_arm = empty_arm.ok_or(WasmGcError::Validation(
+        "List match missing empty arm".into(),
+    ))?;
+    let cons_arm = cons_arm.ok_or(WasmGcError::Validation(
+        "List match missing cons arm".into(),
+    ))?;
+
+    emit_expr(func, &subject.node, slots, ctx)?;
+    func.instruction(&Instruction::LocalSet(scratch));
+
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::RefIsNull);
+    func.instruction(&Instruction::If(block_ty));
+    emit_expr(func, &empty_arm.body.node, slots, ctx)?;
+    func.instruction(&Instruction::Else);
+    if let Pattern::Cons(head_name, tail_name) = &cons_arm.pattern {
+        if head_name != "_" {
+            let slot = ctx
+                .self_local_slot(head_name)
+                .ok_or(WasmGcError::Validation(format!(
+                    "Cons head binding `{head_name}` has no resolver slot"
+                )))?;
+            func.instruction(&Instruction::LocalGet(scratch));
+            func.instruction(&Instruction::RefCastNonNull(
+                wasm_encoder::HeapType::Concrete(list_idx),
+            ));
+            func.instruction(&Instruction::StructGet {
+                struct_type_index: list_idx,
+                field_index: 0,
+            });
+            func.instruction(&Instruction::LocalSet(slot));
+        }
+        if tail_name != "_" {
+            let slot = ctx
+                .self_local_slot(tail_name)
+                .ok_or(WasmGcError::Validation(format!(
+                    "Cons tail binding `{tail_name}` has no resolver slot"
+                )))?;
+            func.instruction(&Instruction::LocalGet(scratch));
+            func.instruction(&Instruction::RefCastNonNull(
+                wasm_encoder::HeapType::Concrete(list_idx),
+            ));
+            func.instruction(&Instruction::StructGet {
+                struct_type_index: list_idx,
+                field_index: 1,
+            });
+            func.instruction(&Instruction::LocalSet(slot));
+        }
+    }
+    emit_expr(func, &cons_arm.body.node, slots, ctx)?;
+    func.instruction(&Instruction::End);
+    Ok(())
+}
+
+/// `match res { Result.Ok(v) -> a; Result.Err(e) -> b }` — tag
+/// dispatch on field 0 (i32), bind v from field 1 (T) or e from
+/// field 2 (E).
+fn emit_result_match(
+    func: &mut Function,
+    subject: &Spanned<Expr>,
+    arms: &[MatchArm],
+    block_ty: wasm_encoder::BlockType,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "Result match needs a subject scratch slot but none was reserved".into(),
+    ))?;
+    let subject_ty = infer_aver_type(&subject.node, ctx)?;
+    let canonical: String = subject_ty.chars().filter(|c| !c.is_whitespace()).collect();
+    let res_idx = ctx
+        .registry
+        .result_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Result match: subject type `{subject_ty}` is not a registered Result<T,E>"
+        )))?;
+
+    let mut ok_arm: Option<&MatchArm> = None;
+    let mut err_arm: Option<&MatchArm> = None;
+    for arm in arms {
+        match &arm.pattern {
+            Pattern::Constructor(name, _) => {
+                let bare = name.rsplit('.').next().unwrap_or(name);
+                if bare == "Ok" {
+                    ok_arm = Some(arm);
+                } else if bare == "Err" {
+                    err_arm = Some(arm);
+                }
+            }
+            Pattern::Wildcard => {
+                if err_arm.is_none() {
+                    err_arm = Some(arm);
+                } else if ok_arm.is_none() {
+                    ok_arm = Some(arm);
+                }
+            }
+            _ => {}
+        }
+    }
+    let ok_arm = ok_arm.ok_or(WasmGcError::Validation(
+        "Result match missing Ok arm".into(),
+    ))?;
+    let err_arm = err_arm.ok_or(WasmGcError::Validation(
+        "Result match missing Err arm".into(),
+    ))?;
+
+    emit_expr(func, &subject.node, slots, ctx)?;
+    func.instruction(&Instruction::LocalSet(scratch));
+
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::RefCastNonNull(
+        wasm_encoder::HeapType::Concrete(res_idx),
+    ));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: res_idx,
+        field_index: 0,
+    });
+    func.instruction(&Instruction::I32Const(1));
+    func.instruction(&Instruction::I32Eq);
+    func.instruction(&Instruction::If(block_ty));
+    if let Pattern::Constructor(_, bindings) = &ok_arm.pattern
+        && let Some(name) = bindings.first()
+        && name != "_"
+    {
+        let slot = ctx
+            .self_local_slot(name)
+            .ok_or(WasmGcError::Validation(format!(
+                "Result.Ok binding `{name}` has no resolver slot"
+            )))?;
+        func.instruction(&Instruction::LocalGet(scratch));
+        func.instruction(&Instruction::RefCastNonNull(
+            wasm_encoder::HeapType::Concrete(res_idx),
+        ));
+        func.instruction(&Instruction::StructGet {
+            struct_type_index: res_idx,
+            field_index: 1,
+        });
+        func.instruction(&Instruction::LocalSet(slot));
+    }
+    emit_expr(func, &ok_arm.body.node, slots, ctx)?;
+    func.instruction(&Instruction::Else);
+    if let Pattern::Constructor(_, bindings) = &err_arm.pattern
+        && let Some(name) = bindings.first()
+        && name != "_"
+    {
+        let slot = ctx
+            .self_local_slot(name)
+            .ok_or(WasmGcError::Validation(format!(
+                "Result.Err binding `{name}` has no resolver slot"
+            )))?;
+        func.instruction(&Instruction::LocalGet(scratch));
+        func.instruction(&Instruction::RefCastNonNull(
+            wasm_encoder::HeapType::Concrete(res_idx),
+        ));
+        func.instruction(&Instruction::StructGet {
+            struct_type_index: res_idx,
+            field_index: 2,
+        });
+        func.instruction(&Instruction::LocalSet(slot));
+    }
+    emit_expr(func, &err_arm.body.node, slots, ctx)?;
+    func.instruction(&Instruction::End);
+    Ok(())
 }
 
 /// Fused `match Map.get(m, k) { Option.Some(v) -> body1; Option.None
@@ -2588,6 +3191,12 @@ fn emit_constructor(
     if name == "Option.None" || (bare == "None" && name.starts_with("Option")) {
         return emit_option_constructor(func, None, Some(ctx.return_type), slots, ctx);
     }
+    if name == "Result.Ok" || (bare == "Ok" && name.starts_with("Result")) {
+        return emit_result_constructor(func, "Ok", payload, slots, ctx);
+    }
+    if name == "Result.Err" || (bare == "Err" && name.starts_with("Result")) {
+        return emit_result_constructor(func, "Err", payload, slots, ctx);
+    }
     let info = ctx
         .registry
         .variant(name)
@@ -2689,6 +3298,21 @@ fn emit_match(
         emit_expr(func, &f.node, slots, ctx)?;
         func.instruction(&Instruction::End);
         return Ok(());
+    }
+
+    // List match — `[] -> ...; [head, ..tail] -> ...`. Subject is
+    // `(ref null $list_T)`; empty = ref.is_null, cons = struct.get
+    // head/tail.
+    if arms
+        .iter()
+        .any(|a| matches!(&a.pattern, Pattern::EmptyList | Pattern::Cons(_, _)))
+    {
+        return emit_list_match(func, subject, arms, block_ty, slots, ctx);
+    }
+
+    // Built-in `Result<T, E>` match — tag-based, two payload fields.
+    if arms.iter().any(arm_is_result_pattern) {
+        return emit_result_match(func, subject, arms, block_ty, slots, ctx);
     }
 
     // Built-in `Option<T>` match — tag-based dispatch on the struct's

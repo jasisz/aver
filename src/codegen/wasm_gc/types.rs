@@ -58,6 +58,21 @@ pub(super) struct TypeRegistry {
     /// only consumes `value` on the Some branch.
     pub(super) option_types: HashMap<String, u32>,
     pub(super) option_order: Vec<String>,
+    /// Per-instantiation `List<T>` slot. Each `List<T>` lowers to a
+    /// recursive struct `(struct (field T) (field (ref null $list_T)))`
+    /// — Cons cell. Empty list = `(ref null $list_T)` null. Self-
+    /// reference is allowed within a single type definition (wasm spec
+    /// implicitly makes each top-level type its own rec group).
+    pub(super) list_types: HashMap<String, u32>,
+    pub(super) list_order: Vec<String>,
+    /// Per-instantiation `Result<T, E>` slot. Each `Result<T, E>`
+    /// lowers to `(struct (mut i32 tag) (mut T ok_value) (mut E
+    /// err_value))` — tag=0 Err, tag=1 Ok. Both payload fields exist
+    /// concurrently because the struct can't be a sum at the wasm
+    /// type level; the unused field is filled with a default (zero
+    /// for primitives, null for refs).
+    pub(super) result_types: HashMap<String, u32>,
+    pub(super) result_order: Vec<String>,
     /// Per-instantiation `Map<K, V>` slot triple (keys array, values
     /// array, map struct). Same monomorphisation strategy as Vector /
     /// Option — each unique `Map<K, V>` reachable in the program
@@ -220,6 +235,52 @@ impl TypeRegistry {
             }
         }
 
+        // `Result<T, E>` instantiations — same shape as Option but with
+        // two payload fields. Discovered ahead of List/Map so a
+        // `List<Result<T,E>>` chain can reference Result by lower idx.
+        let mut result_types: HashMap<String, u32> = HashMap::new();
+        let mut result_order: Vec<String> = Vec::new();
+        for item in items {
+            if let TopLevel::FnDef(fd) = item {
+                collect_results_from_str(
+                    &fd.return_type,
+                    &mut result_types,
+                    &mut result_order,
+                    &mut next_idx,
+                );
+                for (_, ty) in &fd.params {
+                    collect_results_from_str(
+                        ty,
+                        &mut result_types,
+                        &mut result_order,
+                        &mut next_idx,
+                    );
+                }
+            }
+        }
+
+        // `List<T>` instantiations — recursive struct per T.
+        let mut list_types: HashMap<String, u32> = HashMap::new();
+        let mut list_order: Vec<String> = Vec::new();
+        for item in items {
+            if let TopLevel::FnDef(fd) = item {
+                collect_lists_from_str(
+                    &fd.return_type,
+                    &mut list_types,
+                    &mut list_order,
+                    &mut next_idx,
+                );
+                for (_, ty) in &fd.params {
+                    collect_lists_from_str(
+                        ty,
+                        &mut list_types,
+                        &mut list_order,
+                        &mut next_idx,
+                    );
+                }
+            }
+        }
+
         // `Map<K, V>` discovery — same monomorphisation strategy as
         // Vector / Option. Walk fn signatures + bodies for any
         // `Map<K, V>` reference, allocate three wasm slots per unique
@@ -293,6 +354,10 @@ impl TypeRegistry {
             vector_order,
             option_types,
             option_order,
+            list_types,
+            list_order,
+            result_types,
+            result_order,
             map_types,
             map_order,
             user_type_count: next_idx,
@@ -300,6 +365,38 @@ impl TypeRegistry {
             string_literals,
             string_literal_idx,
         }
+    }
+
+    pub(super) fn list_type_idx(&self, canonical: &str) -> Option<u32> {
+        self.list_types.get(canonical).copied()
+    }
+
+    pub(super) fn list_element_type(canonical: &str) -> Option<&str> {
+        let trimmed = canonical.trim();
+        let inner = trimmed.strip_prefix("List<")?.strip_suffix('>')?;
+        Some(inner.trim())
+    }
+
+    pub(super) fn result_type_idx(&self, canonical: &str) -> Option<u32> {
+        self.result_types.get(canonical).copied()
+    }
+
+    /// Split `Result<T, E>` into (T, E) borrowed slices.
+    pub(super) fn result_te(canonical: &str) -> Option<(&str, &str)> {
+        let inner = canonical.trim().strip_prefix("Result<")?.strip_suffix('>')?;
+        let bytes = inner.as_bytes();
+        let mut depth: i32 = 0;
+        for (idx, b) in bytes.iter().enumerate() {
+            match b {
+                b'<' => depth += 1,
+                b'>' => depth -= 1,
+                b',' if depth == 0 => {
+                    return Some((inner[..idx].trim(), inner[idx + 1..].trim()));
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     pub(super) fn map_slots(&self, canonical: &str) -> Option<MapSlots> {
@@ -444,6 +541,90 @@ fn collect_vectors_from_str(
                 // before they're referenced as element types.
                 let element = &trimmed[i + 7..j - 1];
                 collect_vectors_from_str(element, out, order, next_idx);
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
+/// `Result<T, E>` discovery — handles nested commas via depth tracking.
+fn collect_results_from_str(
+    type_str: &str,
+    out: &mut HashMap<String, u32>,
+    order: &mut Vec<String>,
+    next_idx: &mut u32,
+) {
+    let trimmed = type_str.trim();
+    let bytes = trimmed.as_bytes();
+    let mut i = 0;
+    while i + 7 <= bytes.len() {
+        if &bytes[i..i + 7] == b"Result<" {
+            let mut depth: i32 = 1;
+            let mut j = i + 7;
+            while j < bytes.len() && depth > 0 {
+                match bytes[j] {
+                    b'<' => depth += 1,
+                    b'>' => depth -= 1,
+                    _ => {}
+                }
+                j += 1;
+            }
+            if depth == 0 {
+                let canonical: String = trimmed[i..j]
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                if !out.contains_key(&canonical) {
+                    out.insert(canonical.clone(), *next_idx);
+                    order.push(canonical.clone());
+                    *next_idx += 1;
+                }
+                let inner = &trimmed[i + 7..j - 1];
+                collect_results_from_str(inner, out, order, next_idx);
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
+/// `List<...>` discovery.
+fn collect_lists_from_str(
+    type_str: &str,
+    out: &mut HashMap<String, u32>,
+    order: &mut Vec<String>,
+    next_idx: &mut u32,
+) {
+    let trimmed = type_str.trim();
+    let bytes = trimmed.as_bytes();
+    let mut i = 0;
+    while i + 5 <= bytes.len() {
+        if &bytes[i..i + 5] == b"List<" {
+            let mut depth: i32 = 1;
+            let mut j = i + 5;
+            while j < bytes.len() && depth > 0 {
+                match bytes[j] {
+                    b'<' => depth += 1,
+                    b'>' => depth -= 1,
+                    _ => {}
+                }
+                j += 1;
+            }
+            if depth == 0 {
+                let canonical: String = trimmed[i..j]
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                if !out.contains_key(&canonical) {
+                    out.insert(canonical.clone(), *next_idx);
+                    order.push(canonical.clone());
+                    *next_idx += 1;
+                }
+                let element = &trimmed[i + 5..j - 1];
+                collect_lists_from_str(element, out, order, next_idx);
                 i = j;
                 continue;
             }
@@ -921,6 +1102,31 @@ pub(super) fn aver_to_wasm(
             })));
         }
     }
+    // `List<T>` — recursive Cons cell `(struct (T) (ref null $list_T))`.
+    // Empty list = null ref.
+    if trimmed.starts_with("List<") && trimmed.ends_with('>')
+        && let Some(reg) = registry
+    {
+        let canonical: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+        if let Some(idx) = reg.list_type_idx(&canonical) {
+            return Ok(Some(ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(idx),
+            })));
+        }
+    }
+    // `Result<T, E>` — `(struct (mut i32 tag) (mut T ok) (mut E err))`.
+    if trimmed.starts_with("Result<") && trimmed.ends_with('>')
+        && let Some(reg) = registry
+    {
+        let canonical: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+        if let Some(idx) = reg.result_type_idx(&canonical) {
+            return Ok(Some(ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(idx),
+            })));
+        }
+    }
     // `Map<K, V>` — monomorphised per instantiation. The registry
     // discovers each unique `Map<K, V>` in fn signatures and
     // allocates a slot triple (keys array, values array, struct).
@@ -936,15 +1142,9 @@ pub(super) fn aver_to_wasm(
         }
     }
     // Compound types not yet lowered.
-    Err(WasmGcError::Unimplemented(match trimmed {
-        _ if trimmed.starts_with("List<") => "phase 3c — List<T>",
-        _ if trimmed.starts_with("Tuple<") => "phase 3c — Tuple",
-        _ if trimmed.starts_with("Map<") => "phase 3c — Map<K,V>",
-        _ if trimmed.starts_with("Vector<") => "phase 3c — Vector<T> (instantiation not registered)",
-        _ if trimmed.starts_with("Result<") => "phase 3c — Result",
-        _ if trimmed.starts_with("Option<") => "phase 3c — Option<T> (instantiation not registered)",
-        _ => "unknown type — likely a generic / inferred parameter that needs phase 3c",
-    }))
+    Err(WasmGcError::Validation(format!(
+        "aver_to_wasm: cannot lower type `{trimmed}` to a wasm representation"
+    )))
 }
 
 fn primitive_to_wasm(name: &str) -> Option<ValType> {

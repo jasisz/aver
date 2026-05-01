@@ -384,6 +384,73 @@ fn emit_user_types(
         ]);
     }
 
+    // `Result<T, E>` — emitted before List/Map so `List<Result<T,E>>`
+    // can reference Result by lower idx.
+    for canonical in &registry.result_order {
+        let (t_aver, e_aver) = TypeRegistry::result_te(canonical).ok_or(
+            WasmGcError::Validation(format!(
+                "registered result `{canonical}` has no parsable T, E"
+            )),
+        )?;
+        let t_val = super::types::aver_to_wasm(t_aver, Some(registry))?.ok_or(
+            WasmGcError::Validation(format!(
+                "Result T type `{t_aver}` has no wasm representation"
+            )),
+        )?;
+        let e_val = super::types::aver_to_wasm(e_aver, Some(registry))?.ok_or(
+            WasmGcError::Validation(format!(
+                "Result E type `{e_aver}` has no wasm representation"
+            )),
+        )?;
+        types.ty().struct_([
+            wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                mutable: true,
+            },
+            wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(t_val),
+                mutable: true,
+            },
+            wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(e_val),
+                mutable: true,
+            },
+        ]);
+    }
+
+    // `List<T>` — recursive Cons cell. Self-reference works because
+    // wasm-gc treats each top-level struct as its own implicit rec
+    // group (the type's own idx is in scope inside its body).
+    for canonical in &registry.list_order {
+        let element = TypeRegistry::list_element_type(canonical).ok_or(
+            WasmGcError::Validation(format!(
+                "registered list `{canonical}` has no parsable element type"
+            )),
+        )?;
+        let elem_val = super::types::aver_to_wasm(element, Some(registry))?.ok_or(
+            WasmGcError::Validation(format!(
+                "List element type `{element}` has no wasm representation"
+            )),
+        )?;
+        let own_idx = registry
+            .list_type_idx(canonical)
+            .expect("just-registered list slot");
+        let tail_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(own_idx),
+        });
+        types.ty().struct_([
+            wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(elem_val),
+                mutable: false,
+            },
+            wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(tail_ref),
+                mutable: false,
+            },
+        ]);
+    }
+
     // `Map<K, V>` — three wasm types per registered instantiation,
     // emitted in registry insertion order (keys array, values array,
     // map struct) so the struct's nested ref fields reference the
