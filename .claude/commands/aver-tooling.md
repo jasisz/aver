@@ -145,12 +145,15 @@ aver bench bench/scenarios/fib.toml --target=wasm-local      # requires --featur
 aver bench bench/scenarios/fib.toml --target=rust            # native binary, subprocess per iter
 aver bench bench/scenarios/fib.toml --save-baseline base.json
 aver bench bench/scenarios/fib.toml --compare base.json --fail-on-regression
+aver bench bench/scenarios/ --save-baseline bench/baselines/<host>-<arch>-vm.json   # capture baseline (NDJSON)
+aver bench bench/scenarios/ --baseline-dir bench/baselines/ --fail-on-regression   # CI gate
 ```
 
 - Three input shapes: `.av` (ad-hoc, defaults + `--iterations` / `--warmup` overrides), `.toml` (named manifest with per-scenario tolerance + expected shape), directory (globs `*.toml`).
 - Three targets: `vm` (default, in-process), `wasm-local` (wasmtime in-process), `rust` (native binary).
 - Reports include `backend` (aver version, build, wasmtime version) and `host` (os/arch/cpus) so cross-machine runs disambiguate.
-- `--save-baseline` / `--compare` need a `.toml` manifest (per-scenario tolerance lives there).
+- `--save-baseline` works in both single-scenario (pretty JSON) and directory (NDJSON) mode. `--compare` is single-scenario only.
+- `--baseline-dir DIR` auto-picks `<host.os>-<host.arch>-<backend.name>.json` from `DIR`. Silent skip when no matching baseline exists — single workflow gates wherever a baseline is pinned. CI uses this.
 - See [docs/bench.md](docs/bench.md) for the full reference.
 
 ### Proof

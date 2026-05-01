@@ -270,6 +270,7 @@ fn main() {
             json,
             save_baseline,
             compare,
+            baseline_dir,
             fail_on_regression,
         } => {
             commands::cmd_bench(commands::BenchOptions {
@@ -280,6 +281,7 @@ fn main() {
                 json: *json,
                 save_baseline: save_baseline.as_deref(),
                 compare: compare.as_deref(),
+                baseline_dir: baseline_dir.as_deref(),
                 fail_on_regression: *fail_on_regression,
             });
         }

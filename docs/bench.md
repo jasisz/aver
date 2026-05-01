@@ -85,9 +85,9 @@ wall_time_p95_pct = 35.0    # default 30.0
 
 `backend.aver_version` is the package version of the binary that ran the bench (`CARGO_PKG_VERSION` at compile time). `backend.build` is `release` or `debug`. `backend.wasmtime_version` is set only for `--target=wasm-local`. `host.os`/`host.arch` come from `std::env::consts`; `host.cpus` from `std::thread::available_parallelism`.
 
-`response_bytes` and `compiler_visible_allocs` ship as `Option<usize>` from day one but stay `null` in 0.15.1 — stdout capture and IR-level alloc counting land in 0.15.2.
+`compiler_visible_allocs` is populated as of 0.15.2 (IR-level alloc-site count via `NeutralAllocPolicy`). `response_bytes` stays `null` until stdout capture lands later in the cycle.
 
-### Baseline + regression gate (local)
+### Baseline + regression gate (single scenario)
 
 ```bash
 # Capture once on a stable machine
@@ -102,7 +102,26 @@ aver bench bench/scenarios/fib.toml \
     --fail-on-regression
 ```
 
-Tolerances are configurable per-scenario via `[tolerance]` in the TOML (`wall_time_p50_pct = 25.0`, etc.). `--fail-on-regression` exits 1 when any gated metric exceeds budget. `--compare` is single-scenario only; directory-mode comparison is the 0.15.2 baseline-snapshot workflow.
+Tolerances are configurable per-scenario via `[tolerance]` in the TOML (`wall_time_p50_pct = 25.0`, etc.). `--fail-on-regression` exits 1 when any gated metric exceeds budget. `compiler_visible_allocs` is also gated — exact-match, growth past baseline is a regression.
+
+### Baseline + regression gate (directory mode, the CI shape)
+
+```bash
+# Capture all scenarios once on the target host
+aver bench bench/scenarios/ \
+    --target=vm \
+    --save-baseline bench/baselines/<host.os>-<host.arch>-vm.json
+
+# Gate every PR run against the committed baseline
+aver bench bench/scenarios/ \
+    --target=vm \
+    --baseline-dir bench/baselines/ \
+    --fail-on-regression
+```
+
+`--baseline-dir DIR` auto-picks `<host.os>-<host.arch>-<backend.name>.json` from `DIR` based on the current machine. When no matching file exists, the gate is silently skipped — one CI workflow gates wherever a baseline is pinned, runs cleanly on hosts without one. Repo currently ships `bench/baselines/macos-aarch64-vm.json`; Linux baseline gets captured automatically on first CI run, commit `bench/baselines/linux-x86_64-vm.json` from that artifact to enable gating there.
+
+The CI `Bench Gate` job in `.github/workflows/ci.yml` runs `aver bench bench/scenarios/ --target=vm --baseline-dir bench/baselines/ --fail-on-regression --json` on every PR; results upload as a 30-day-retention artifact.
 
 ### NDJSON output for streaming
 

@@ -530,10 +530,19 @@ pub(super) enum Commands {
         /// `PATH`. Prints a diff (per-metric delta vs. tolerance) and,
         /// when combined with `--fail-on-regression`, exits 1 if any
         /// gated metric is over its tolerance budget.
-        #[arg(long, value_name = "PATH")]
+        #[arg(long, value_name = "PATH", conflicts_with = "baseline_dir")]
         compare: Option<String>,
-        /// Exit non-zero when `--compare` finds a regression. Use this
-        /// in CI to gate merges on bench numbers staying within tolerance.
+        /// Auto-pick a baseline file from `DIR` based on the running
+        /// machine: `<host.os>-<host.arch>-<backend.name>.json` (e.g.
+        /// `macos-aarch64-vm.json`). Falls back silently to no-compare
+        /// when no matching file exists — lets a single CI workflow
+        /// gate against a per-host pinned baseline without per-runner
+        /// branching. Mutually exclusive with `--compare`.
+        #[arg(long, value_name = "DIR", conflicts_with = "compare")]
+        baseline_dir: Option<String>,
+        /// Exit non-zero when `--compare` / `--baseline-dir` finds a
+        /// regression. Use this in CI to gate merges on bench numbers
+        /// staying within tolerance.
         #[arg(long)]
         fail_on_regression: bool,
     },

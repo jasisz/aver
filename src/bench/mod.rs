@@ -25,10 +25,10 @@
 
 mod compare;
 pub mod manifest;
-mod report;
+pub mod report;
 mod runner;
 
 pub use compare::{DiffReport, MetricDiff, diff, format_diff};
 pub use manifest::{BenchTarget, Manifest, ManifestError, Tolerance};
-pub use report::{BenchReport, IterationStats, ScenarioMetadata, format_human};
+pub use report::{BenchReport, HostInfo, IterationStats, ScenarioMetadata, format_human};
 pub use runner::run_scenario;
