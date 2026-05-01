@@ -22,6 +22,8 @@ pub(super) enum EffectName {
     /// `Console.print(String) -> Unit`. Imported as `aver.console_print`
     /// — the host writes the string to its stdout (or equivalent).
     ConsolePrint,
+    ConsoleError,
+    ConsoleWarn,
     /// `Time.unixMs() -> Int`. Imported as `aver.time_unix_ms` — host
     /// supplies the current unix timestamp in milliseconds.
     TimeUnixMs,
@@ -31,6 +33,8 @@ impl EffectName {
     pub(super) fn from_dotted(s: &str) -> Option<Self> {
         match s {
             "Console.print" => Some(Self::ConsolePrint),
+            "Console.error" => Some(Self::ConsoleError),
+            "Console.warn" => Some(Self::ConsoleWarn),
             "Time.unixMs" => Some(Self::TimeUnixMs),
             _ => None,
         }
@@ -39,6 +43,8 @@ impl EffectName {
     pub(super) fn canonical(self) -> &'static str {
         match self {
             Self::ConsolePrint => "Console.print",
+            Self::ConsoleError => "Console.error",
+            Self::ConsoleWarn => "Console.warn",
             Self::TimeUnixMs => "Time.unixMs",
         }
     }
@@ -48,32 +54,27 @@ impl EffectName {
     pub(super) fn import_pair(self) -> (&'static str, &'static str) {
         match self {
             Self::ConsolePrint => ("aver", "console_print"),
+            Self::ConsoleError => ("aver", "console_error"),
+            Self::ConsoleWarn => ("aver", "console_warn"),
             Self::TimeUnixMs => ("aver", "time_unix_ms"),
         }
     }
 
     /// Param types declared in the wasm import. We use `(ref null any)`
-    /// for String-typed args even though our internal type is the
-    /// concrete `(ref null (array i8))`. Reasons:
-    ///
-    /// - Wasm-gc has subtyping: every concrete struct/array ref is a
-    ///   subtype of `any`, so passing a `(ref null $string)` to a
-    ///   `(ref null any)` param is statically OK.
-    /// - The host (browser, workerd, wasmtime stub) doesn't have
-    ///   visibility into our concrete type indices — using `any` lets
-    ///   them implement the import without depending on our internal
-    ///   type layout. Same shape rustc-wasm uses for opaque externref
-    ///   imports.
+    /// for String-typed args — see ConsolePrint comment above for the
+    /// subtyping rationale.
     pub(super) fn params(self, _registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
         match self {
-            Self::ConsolePrint => Ok(vec![any_ref_ty()]),
+            Self::ConsolePrint | Self::ConsoleError | Self::ConsoleWarn => {
+                Ok(vec![any_ref_ty()])
+            }
             Self::TimeUnixMs => Ok(vec![]),
         }
     }
 
     pub(super) fn results(self, _registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
         match self {
-            Self::ConsolePrint => Ok(vec![]),
+            Self::ConsolePrint | Self::ConsoleError | Self::ConsoleWarn => Ok(vec![]),
             Self::TimeUnixMs => Ok(vec![ValType::I64]),
         }
     }

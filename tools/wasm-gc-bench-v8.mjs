@@ -28,6 +28,8 @@ const imports = {
   // returns 0n for deterministic runs.
   aver: {
     console_print: (_ref) => {},
+    console_error: (_ref) => {},
+    console_warn: (_ref) => {},
     time_unix_ms: () => 0n,
   },
 };

@@ -2799,6 +2799,42 @@ fn emit_dotted_builtin(
             func.instruction(&Instruction::I32Eqz);
             Ok(())
         }
+        // String.fromInt is just a different spelling of Int.toString
+        // — same `(i64) -> $string` shape, same helper. Aver allows
+        // both in source. Same goes for String.fromFloat once
+        // Float.toString lands.
+        "String.fromInt" if args.len() == 1 => {
+            let to_string_idx =
+                ctx.fn_map.builtins.get("Int.toString").copied().ok_or(
+                    WasmGcError::Validation(
+                        "String.fromInt requires Int.toString builtin".into(),
+                    ),
+                )?;
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            func.instruction(&Instruction::Call(to_string_idx));
+            Ok(())
+        }
+        // Vector.len is a single wasm instruction over our concrete
+        // `(array T)` representation, plus widening to Aver's i64.
+        "Vector.len" if args.len() == 1 => {
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            func.instruction(&Instruction::ArrayLen);
+            func.instruction(&Instruction::I64ExtendI32U);
+            Ok(())
+        }
+        // String.len already lives behind a builtin helper (legacy
+        // matched behaviour). Map String.length here to keep both
+        // surface spellings viable without a second helper.
+        "String.length" if args.len() == 1 => {
+            let len_idx = ctx.fn_map.builtins.get("String.len").copied().ok_or(
+                WasmGcError::Validation(
+                    "String.length requires String.len builtin".into(),
+                ),
+            )?;
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            func.instruction(&Instruction::Call(len_idx));
+            Ok(())
+        }
         // Vector.new(size, fill) -> Vector<T>. Element type T is read
         // off the fill argument. Lowers to native `array.new $vector_T`.
         "Vector.new" => emit_vector_new(func, args, slots, ctx),

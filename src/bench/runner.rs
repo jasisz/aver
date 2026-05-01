@@ -539,10 +539,20 @@ fn run_wasm_gc(manifest: &Manifest) -> Result<BenchReport, RunError> {
             .func_new(
                 "aver",
                 "console_print",
-                console_print_ty,
+                console_print_ty.clone(),
                 |_caller, _params, _results| Ok(()),
             )
             .map_err(|e| RunError::Setup(format!("stub aver/console_print: {}", e)))?;
+        for fname in ["console_error", "console_warn"] {
+            linker
+                .func_new(
+                    "aver",
+                    fname,
+                    console_print_ty.clone(),
+                    |_caller, _params, _results| Ok(()),
+                )
+                .map_err(|e| RunError::Setup(format!("stub aver/{fname}: {e}")))?;
+        }
         // Time.unixMs — bench mode uses a fixed value to keep runs
         // deterministic; the production host wires this to the real
         // `Date.now()` / `clock_gettime` equivalent.
