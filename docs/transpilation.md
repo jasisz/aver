@@ -28,6 +28,8 @@ Options:
       --explain-passes             Run the full pipeline (no codegen) and print a per-pass diagnostic report.
                                    Reports tail-call conversions, interpolations lowered, fusion sites + sinks,
                                    slots resolved, last-use markers, alloc/recursion facts.
+      --json                       Emit the per-pass report as JSON (with --explain-passes); shape is
+                                   { schema_version: 1, passes: [{ stage, summary, details: [...] }, ... ] }.
 ```
 
 ### `--emit-ir-after` quick map

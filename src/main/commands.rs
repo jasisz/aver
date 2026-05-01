@@ -3691,11 +3691,13 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
 }
 
 /// `aver compile FILE --explain-passes` — runs the canonical pipeline
-/// (no codegen) and prints a human-readable per-pass diagnostic report
-/// describing what each stage actually did. The data backs failable-
-/// invariant CI gates ("fail if buffer_build no longer fires on the
-/// canonical shape", "fail if hot fn loses no-alloc status").
-pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>) {
+/// (no codegen) and prints a per-pass diagnostic report describing what
+/// each stage actually did. Defaults to a human-readable report; `json`
+/// switches to a stable machine-readable shape (`schema_version: 1`)
+/// consumable by CI scripts and the failable-invariant gates ("fail if
+/// buffer_build no longer fires on the canonical shape", "fail if hot
+/// fn loses no-alloc status").
+pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>, json: bool) {
     use aver::ir::{PipelineConfig, TypecheckMode};
 
     let module_root = resolve_module_root(module_root_override);
@@ -3732,7 +3734,11 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>)
         process::exit(1);
     }
 
-    print!("{}", render_pass_diagnostics(&result.pass_diagnostics));
+    if json {
+        print!("{}", render_pass_diagnostics_json(&result.pass_diagnostics));
+    } else {
+        print!("{}", render_pass_diagnostics(&result.pass_diagnostics));
+    }
 }
 
 fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> String {
@@ -3746,6 +3752,31 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
         }
         out.push('\n');
     }
+    out
+}
+
+fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) -> String {
+    use aver::diagnostics::json_escape;
+    let mut out = String::new();
+    out.push_str("{\"schema_version\":1,\"passes\":[");
+    for (i, d) in diags.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "{{\"stage\":{},\"summary\":{},\"details\":[",
+            json_escape(d.stage.name()),
+            json_escape(&d.summary),
+        ));
+        for (j, line) in d.details.iter().enumerate() {
+            if j > 0 {
+                out.push(',');
+            }
+            out.push_str(&json_escape(line));
+        }
+        out.push_str("]}");
+    }
+    out.push_str("]}\n");
     out
 }
 

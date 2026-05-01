@@ -437,9 +437,15 @@ pub(super) enum Commands {
         /// Drives the failable-invariant CI checks ("fail if buffer_build
         /// no longer fires on the canonical shape", "fail if hot fn
         /// loses no-alloc status"). Output is human-readable; pair with
-        /// `--emit-ir-after=PASS` to inspect the actual IR.
+        /// `--emit-ir-after=PASS` to inspect the actual IR. Pair with
+        /// `--json` for a machine-readable shape consumable by CI scripts.
         #[arg(long, default_value_t = false)]
         explain_passes: bool,
+        /// JSON output for `--explain-passes`. One object per pass
+        /// (`stage`, `summary`, `details`), top-level wrapper has
+        /// `schema_version: 1` so consumers can pin against the shape.
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
     /// Emit a standalone aver_runtime / aver_to_wasi artifact to disk.
     /// Internal release tooling — used by tools/release/* to publish

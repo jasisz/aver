@@ -187,6 +187,7 @@ fn main() {
             optimize,
             emit_ir_after,
             explain_passes,
+            json,
         } => {
             let policy_mode = (*policy).unwrap_or(if *with_replay {
                 CompilePolicyMode::Runtime
@@ -223,9 +224,10 @@ fn main() {
             }
             // `--explain-passes` runs the full pipeline (no codegen) and
             // prints a per-pass diagnostic report. Same short-circuit
-            // shape as `--emit-ir-after`.
+            // shape as `--emit-ir-after`. `--json` switches to a stable
+            // machine-readable shape for CI consumption.
             if *explain_passes {
-                commands::cmd_explain_passes(file, module_root.as_deref());
+                commands::cmd_explain_passes(file, module_root.as_deref(), *json);
                 return;
             }
             commands::cmd_compile(commands::CompileOptions {
