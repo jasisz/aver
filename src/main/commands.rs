@@ -4707,6 +4707,16 @@ fn cmd_compile_wasm_gc(
         process::exit(1);
     }
 
+    // Multi-module: load `depends [...]` modules and flatten them
+    // into a single item list with module-prefixed fn names. Single-
+    // binary linking — every reachable fn from every module ends up
+    // in the same wasm module, so cross-module calls are plain
+    // `call $fn` after rewriting `Attr(Ident("Fractal"), "render")`
+    // call sites to `Ident("Fractal_render")`. Component Model is a
+    // future separate mode (see `project_wasm_gc_multimodule.md`).
+    let dep_modules = load_compile_deps(&items, &module_root, false /* run_interp_lower */, true /* run_buffer_build */);
+    flatten_multimodule(&mut items, &dep_modules);
+
     let bytes = match wasm_gc::compile_to_wasm_gc(&items, result.analysis.as_ref()) {
         Ok(b) => b,
         Err(e) => {
@@ -5373,6 +5383,183 @@ fn cmd_proof_dafny(file: &str, output_dir: &str, ctx: &codegen::CodegenContext) 
 /// so the buffer-build pass fires on sinks living in dep modules too. Split
 /// per-stage rather than a bundled flag so this matches the pipeline gates
 /// 1-to-1 with no magic translation in between.
+/// Single-binary multi-module flatten for the wasm-gc backend.
+/// Walks each loaded `ModuleInfo`, prefixes every fn name with
+/// `{module_prefix}_`, rewrites bare same-module call sites to use
+/// the prefixed name, then appends the dep's `TypeDef`s and `FnDef`s
+/// onto the entry items. Cross-module callsites in the entry —
+/// `Attr(Ident("Fractal"), "render")` shape — are rewritten to
+/// `Ident("Fractal_render")` so the wasm-gc emitter sees them as a
+/// regular fn call.
+///
+/// Component Model is a future separate mode; this single-binary
+/// path is the bench-friendly default.
+#[cfg(feature = "wasm")]
+fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[ModuleInfo]) {
+    use aver::ast::{Expr, FnBody, Spanned, Stmt, TopLevel};
+
+    if dep_modules.is_empty() {
+        return;
+    }
+
+    // Build the prefix set once — drives both same-module rewriting
+    // (within each dep) and cross-module rewriting (in the entry).
+    let prefixes: std::collections::HashSet<String> =
+        dep_modules.iter().map(|m| m.prefix.clone()).collect();
+
+    fn prefixed(prefix: &str, name: &str) -> String {
+        format!("{}_{}", prefix.replace('.', "_"), name)
+    }
+
+    fn rewrite_expr(
+        expr: &mut Expr,
+        prefixes: &std::collections::HashSet<String>,
+        same_module_prefix: Option<&str>,
+        same_module_fns: &std::collections::HashSet<String>,
+    ) {
+        match expr {
+            Expr::FnCall(callee, args) => {
+                // Rewrite callee:
+                // 1. `Attr(Ident("Foo"), "bar")` where `Foo` is a
+                //    module prefix → `Ident("Foo_bar")`.
+                // 2. `Ident("bar")` where `bar` is a same-module fn →
+                //    `Ident("{prefix}_bar")`.
+                let mut new_callee: Option<Expr> = None;
+                if let Expr::Attr(parent, member) = &callee.node
+                    && let Expr::Ident(p) = &parent.node
+                    && prefixes.contains(p)
+                {
+                    new_callee = Some(Expr::Ident(prefixed(p, member)));
+                } else if let Expr::Ident(name) = &callee.node
+                    && let Some(prefix) = same_module_prefix
+                    && same_module_fns.contains(name)
+                {
+                    new_callee = Some(Expr::Ident(prefixed(prefix, name)));
+                }
+                if let Some(rep) = new_callee {
+                    callee.node = rep;
+                }
+                rewrite_expr(&mut callee.node, prefixes, same_module_prefix, same_module_fns);
+                for a in args.iter_mut() {
+                    rewrite_expr(&mut a.node, prefixes, same_module_prefix, same_module_fns);
+                }
+            }
+            Expr::TailCall(boxed) => {
+                if let Some(prefix) = same_module_prefix
+                    && same_module_fns.contains(&boxed.target)
+                {
+                    boxed.target = prefixed(prefix, &boxed.target);
+                }
+                for a in boxed.args.iter_mut() {
+                    rewrite_expr(&mut a.node, prefixes, same_module_prefix, same_module_fns);
+                }
+            }
+            Expr::BinOp(_, l, r) => {
+                rewrite_expr(&mut l.node, prefixes, same_module_prefix, same_module_fns);
+                rewrite_expr(&mut r.node, prefixes, same_module_prefix, same_module_fns);
+            }
+            Expr::Match { subject, arms } => {
+                rewrite_expr(&mut subject.node, prefixes, same_module_prefix, same_module_fns);
+                for arm in arms.iter_mut() {
+                    rewrite_expr(&mut arm.body.node, prefixes, same_module_prefix, same_module_fns);
+                }
+            }
+            Expr::Attr(obj, _) => {
+                rewrite_expr(&mut obj.node, prefixes, same_module_prefix, same_module_fns);
+            }
+            Expr::Constructor(_, payload) => {
+                if let Some(p) = payload.as_deref_mut() {
+                    rewrite_expr(&mut p.node, prefixes, same_module_prefix, same_module_fns);
+                }
+            }
+            Expr::RecordCreate { fields, .. } => {
+                for (_, e) in fields.iter_mut() {
+                    rewrite_expr(&mut e.node, prefixes, same_module_prefix, same_module_fns);
+                }
+            }
+            Expr::RecordUpdate { base, updates, .. } => {
+                rewrite_expr(&mut base.node, prefixes, same_module_prefix, same_module_fns);
+                for (_, e) in updates.iter_mut() {
+                    rewrite_expr(&mut e.node, prefixes, same_module_prefix, same_module_fns);
+                }
+            }
+            Expr::List(xs) | Expr::Tuple(xs) | Expr::IndependentProduct(xs, _) => {
+                for x in xs.iter_mut() {
+                    rewrite_expr(&mut x.node, prefixes, same_module_prefix, same_module_fns);
+                }
+            }
+            Expr::MapLiteral(entries) => {
+                for (k, v) in entries.iter_mut() {
+                    rewrite_expr(&mut k.node, prefixes, same_module_prefix, same_module_fns);
+                    rewrite_expr(&mut v.node, prefixes, same_module_prefix, same_module_fns);
+                }
+            }
+            Expr::ErrorProp(inner) => {
+                rewrite_expr(&mut inner.node, prefixes, same_module_prefix, same_module_fns);
+            }
+            Expr::InterpolatedStr(parts) => {
+                use aver::ast::StrPart;
+                for part in parts.iter_mut() {
+                    if let StrPart::Parsed(inner) = part {
+                        rewrite_expr(&mut inner.node, prefixes, same_module_prefix, same_module_fns);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn rewrite_stmts(
+        stmts: &mut Vec<Stmt>,
+        prefixes: &std::collections::HashSet<String>,
+        same_module_prefix: Option<&str>,
+        same_module_fns: &std::collections::HashSet<String>,
+    ) {
+        for stmt in stmts.iter_mut() {
+            match stmt {
+                Stmt::Binding(_, _, e) | Stmt::Expr(e) => {
+                    rewrite_expr(&mut e.node, prefixes, same_module_prefix, same_module_fns);
+                }
+            }
+        }
+    }
+
+    // Rewrite entry items first: cross-module calls (no same-module
+    // prefix to apply, only `Attr(Ident("Foo"), "bar")` rewriting).
+    let empty_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for item in items.iter_mut() {
+        if let TopLevel::FnDef(fd) = item {
+            let body_arc = std::sync::Arc::make_mut(&mut fd.body);
+            let FnBody::Block(stmts) = body_arc;
+            rewrite_stmts(stmts, &prefixes, None, &empty_set);
+        }
+    }
+
+    // Append every dep module's TypeDefs + FnDefs (with rewriting).
+    for dep in dep_modules {
+        let same_module_fns: std::collections::HashSet<String> =
+            dep.fn_defs.iter().map(|fd| fd.name.clone()).collect();
+        for td in &dep.type_defs {
+            items.push(TopLevel::TypeDef(td.clone()));
+        }
+        for fd in &dep.fn_defs {
+            let mut new_fd = fd.clone();
+            // Rewrite the body's same-module bare calls to the
+            // prefixed name, plus any cross-module `Attr(Ident("Bar"),
+            // "baz")` shape (a dep can `depends [Other]` too).
+            let body_arc = std::sync::Arc::make_mut(&mut new_fd.body);
+            let FnBody::Block(stmts) = body_arc;
+            rewrite_stmts(stmts, &prefixes, Some(&dep.prefix), &same_module_fns);
+            // Finally, prefix the fn's own name.
+            new_fd.name = prefixed(&dep.prefix, &fd.name);
+            items.push(TopLevel::FnDef(new_fd));
+        }
+    }
+
+    // Sanity-strip Spanned import warnings (Spanned isn't imported above).
+    let _ = std::any::TypeId::of::<Spanned<Expr>>();
+}
+
 fn load_compile_deps(
     items: &[TopLevel],
     module_root: &str,
