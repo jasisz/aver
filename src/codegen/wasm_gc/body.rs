@@ -171,6 +171,20 @@ fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
             expr_needs_scratch(&l.node, registry) || expr_needs_scratch(&r.node, registry)
         }
         Expr::FnCall(callee, args) => {
+            // `Option.withDefault(opt, default)` falls back to the
+            // boxed path when the inner shape isn't a fused
+            // Vector/Map. The boxed emitter stashes the Option in the
+            // scratch slot for tag inspection. Conservatively reserve
+            // scratch for any Option.withDefault call — the cost of
+            // an unused scratch local is one wasm value, the cost of
+            // missing it is a validation crash.
+            if let Expr::Attr(parent, member) = &callee.node
+                && let Expr::Ident(p) = &parent.node
+                && p == "Option"
+                && member == "withDefault"
+            {
+                return true;
+            }
             expr_needs_scratch(&callee.node, registry)
                 || args.iter().any(|a| expr_needs_scratch(&a.node, registry))
         }
@@ -2086,11 +2100,115 @@ fn emit_option_with_default(
                 _ => {}
             }
         }
+        if parent_name == Some("Map") && member == "get" && inner_args.len() == 2 {
+            return emit_map_get_or_default(
+                func,
+                &inner_args[0],
+                &inner_args[1],
+                default_arg,
+                slots,
+                ctx,
+            );
+        }
     }
 
-    Err(WasmGcError::Unimplemented(
-        "phase 3c — Option.withDefault outside the fused Vector.set/get shapes (real Option<T> boxing)",
-    ))
+    // Real Option<T> boxing fallback — `Map.get(...)` (or any other
+    // Option-producing call) followed by an arbitrary default. The
+    // value still has to materialise as a concrete Option struct;
+    // dispatch through tag-based pattern match: if Some, return the
+    // payload; if None, return the default.
+    emit_option_with_default_boxed(func, opt_arg, default_arg, slots, ctx)
+}
+
+/// Generic `Option.withDefault(opt, default)` — emits `opt`, reads
+/// its tag, returns either the value field or the default. Used when
+/// no fused shape applies. Allocates the Option if `opt` is itself a
+/// shape that allocates (e.g. `Map.get`); the surrounding caller is
+/// expected to use a fused emitter when the alloc is avoidable.
+fn emit_option_with_default_boxed(
+    func: &mut Function,
+    opt_arg: &Spanned<Expr>,
+    default_arg: &Spanned<Expr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let opt_aver = infer_aver_type(&opt_arg.node, ctx)?;
+    let canonical: String = opt_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    let opt_idx = ctx
+        .registry
+        .option_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Option.withDefault: opt arg of type `{opt_aver}` is not a registered Option<T>"
+        )))?;
+    let element = super::types::TypeRegistry::option_element_type(&canonical).ok_or(
+        WasmGcError::Validation(format!(
+            "Option.withDefault: cannot parse element type from `{canonical}`"
+        )),
+    )?;
+    let elem_val = aver_to_wasm(element, Some(ctx.registry))?.ok_or(
+        WasmGcError::Validation(format!(
+            "Option.withDefault: element type `{element}` has no wasm representation"
+        )),
+    )?;
+    let block_ty = wasm_encoder::BlockType::Result(elem_val);
+
+    // Stash opt in scratch, peek at tag.
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "Option.withDefault (boxed) needs a scratch slot but none was reserved".into(),
+    ))?;
+    emit_expr(func, &opt_arg.node, slots, ctx)?;
+    func.instruction(&Instruction::LocalSet(scratch));
+
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::RefCastNonNull(
+        wasm_encoder::HeapType::Concrete(opt_idx),
+    ));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: opt_idx,
+        field_index: 0,
+    });
+    func.instruction(&Instruction::I32Const(1));
+    func.instruction(&Instruction::I32Eq);
+    func.instruction(&Instruction::If(block_ty));
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::RefCastNonNull(
+        wasm_encoder::HeapType::Concrete(opt_idx),
+    ));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: opt_idx,
+        field_index: 1,
+    });
+    func.instruction(&Instruction::Else);
+    emit_expr(func, &default_arg.node, slots, ctx)?;
+    func.instruction(&Instruction::End);
+    Ok(())
+}
+
+/// Fused `Option.withDefault(Map.get(m, k), default)` → call to the
+/// per-instantiation `get_or_default` helper. No `Option<V>` ever
+/// allocates on the hot lookup path.
+fn emit_map_get_or_default(
+    func: &mut Function,
+    map: &Spanned<Expr>,
+    key: &Spanned<Expr>,
+    default: &Spanned<Expr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let map_aver = infer_aver_type(&map.node, ctx)?;
+    let canonical: String = map_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    let helpers = ctx
+        .fn_map
+        .map_helpers
+        .get(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Map.get fusion: map argument has type `{map_aver}` but no helpers are registered"
+        )))?;
+    emit_expr(func, &map.node, slots, ctx)?;
+    emit_expr(func, &key.node, slots, ctx)?;
+    emit_expr(func, &default.node, slots, ctx)?;
+    func.instruction(&Instruction::Call(helpers.get_or_default));
+    Ok(())
 }
 
 /// Fused `Option.withDefault(Vector.set(v, i, x), v)`: bounds-checked
