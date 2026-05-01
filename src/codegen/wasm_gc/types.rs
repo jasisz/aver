@@ -1134,7 +1134,30 @@ fn expr_uses_string(expr: &crate::ast::Expr) -> bool {
                     let dotted = format!("{p}.{member}");
                     if matches!(
                         dotted.as_str(),
-                        "Int.toString" | "String.len" | "String.concat"
+                        "Int.toString"
+                            | "Float.toString"
+                            | "String.len"
+                            | "String.length"
+                            | "String.concat"
+                            | "String.startsWith"
+                            | "String.contains"
+                            | "String.slice"
+                            | "String.toUpper"
+                            | "String.toLower"
+                            | "String.trim"
+                            | "String.replace"
+                            | "String.split"
+                            | "String.join"
+                            | "String.fromInt"
+                            | "String.fromFloat"
+                            // `Int.mod`, `Int.fromString`, `Float.fromString`
+                            // return Result<_, String> — touching them
+                            // forces the String slot for the error
+                            // payload even when the program never
+                            // reads the Err arm.
+                            | "Int.mod"
+                            | "Int.fromString"
+                            | "Float.fromString"
                     ) {
                         return true;
                     }

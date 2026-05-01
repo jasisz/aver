@@ -650,14 +650,17 @@ fn emit_string_split(
     f.instruction(&Instruction::LocalGet(8));
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::LocalSet(8));
-    // search_pos += sep_len; part_start = search_pos
+    // search_pos += sep_len; part_start = search_pos. Then loop again.
+    // Stack at this `Br`: if-block (0), outer-loop (1), outer-block (2).
+    // We want to continue iterating, i.e. jump to the outer-loop
+    // header — that's `Br(1)`. `Br(2)` would exit the whole search.
     f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalSet(5));
     f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::LocalSet(4));
-    f.instruction(&Instruction::Br(2));
+    f.instruction(&Instruction::Br(1));
     f.instruction(&Instruction::End);
 
     // not found: search_pos += 1
