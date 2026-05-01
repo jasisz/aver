@@ -2297,35 +2297,12 @@ fn run_check_for_file(
                     suppressed_count
                 ));
             }
-            // Perf-shape note: detect canonical buffer-build sink fns
-            // and the call sites that actually wrap them in a known
-            // consumer (currently `String.join`). Both numbers matter:
-            // a sink with zero fusion sites is a candidate that nobody
-            // is consuming; a fusion site without a matching sink is
-            // unreachable. Pure info today; the 0.15+ deforestation
-            // lowering rewrites these pairs into buffer-write loops.
-            let mut tco_items = items.clone();
-            aver::ir::pipeline::tco(&mut tco_items);
-            let fn_defs: Vec<&aver::ast::FnDef> = tco_items
-                .iter()
-                .filter_map(|it| match it {
-                    TopLevel::FnDef(fd) => Some(fd),
-                    _ => None,
-                })
-                .collect();
-            let sinks = aver::ir::compute_buffer_build_sinks(&fn_defs);
-            if !sinks.is_empty() {
-                let sites = aver::ir::find_fusion_sites(&fn_defs, &sinks);
-                let mut names: Vec<&str> = sinks.keys().map(|s| s.as_str()).collect();
-                names.sort();
-                summary_parts.push(format!(
-                    "{} {} buffer-build sink(s) [{}], {} fusion site(s)",
-                    "↻".cyan(),
-                    sinks.len(),
-                    names.join(", "),
-                    sites.len()
-                ));
-            }
+            // Buffer-build sink/fusion summary used to print here. As of
+            // 0.15.2 the same data (sinks, fusion sites, synthesized
+            // variants, per-sink rewrite counts) is surfaced through
+            // `aver compile --explain-passes` — keeping it out of the
+            // default `aver check` summary so the line stays focused on
+            // diagnostics.
             println!("  {}", summary_parts.join(" | "));
         }
 
@@ -3376,7 +3353,24 @@ pub(super) struct BenchOptions<'a> {
     pub json: bool,
     pub save_baseline: Option<&'a str>,
     pub compare: Option<&'a str>,
+    pub baseline_dir: Option<&'a str>,
     pub fail_on_regression: bool,
+}
+
+/// Pick the baseline file for the current host out of `dir`. Naming:
+/// `<host.os>-<host.arch>-<backend.name>.json`. Returns `None` when no
+/// match exists — the caller treats that as "skip the gate" so a single
+/// CI workflow can run on multiple hosts and only gate where a baseline
+/// is actually pinned.
+fn pick_host_baseline(dir: &Path, target: aver::bench::BenchTarget) -> Option<std::path::PathBuf> {
+    let host = aver::bench::report::HostInfo::capture();
+    let filename = format!("{}-{}-{}.json", host.os, host.arch, target.name());
+    let candidate = dir.join(&filename);
+    if candidate.is_file() {
+        Some(candidate)
+    } else {
+        None
+    }
 }
 
 /// `aver bench (SCENARIO.toml | SCENARIO_DIR) [flags]`
@@ -3467,35 +3461,95 @@ pub(super) fn cmd_bench(opts: BenchOptions<'_>) {
         print!("{}", aver::bench::format_human(&report));
     }
 
-    if let Some(baseline_path) = opts.compare {
-        let baseline_text = match std::fs::read_to_string(baseline_path) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!(
-                    "{}",
-                    format!("compare: cannot read baseline '{}': {}", baseline_path, e).red()
-                );
-                process::exit(1);
-            }
-        };
-        let baseline: aver::bench::BenchReport = match serde_json::from_str(&baseline_text) {
-            Ok(b) => b,
-            Err(e) => {
-                eprintln!(
-                    "{}",
-                    format!("compare: cannot parse baseline '{}': {}", baseline_path, e).red()
-                );
-                process::exit(1);
-            }
-        };
-        let diff = aver::bench::diff(&report, &baseline, manifest.tolerance);
-        if !opts.json {
-            println!();
-            print!("{}", aver::bench::format_diff(&diff));
-        }
-        if diff.regressed && opts.fail_on_regression {
+    let baseline_pick: Option<std::path::PathBuf> = match (opts.compare, opts.baseline_dir) {
+        (Some(p), _) => Some(std::path::PathBuf::from(p)),
+        (None, Some(dir)) => pick_host_baseline(Path::new(dir), target),
+        _ => None,
+    };
+    if let Some(baseline_path) = baseline_pick {
+        compare_against_baseline(&baseline_path, &report, manifest.tolerance, &opts);
+    }
+}
+
+fn compare_against_baseline(
+    baseline_path: &Path,
+    report: &aver::bench::BenchReport,
+    tolerance: aver::bench::Tolerance,
+    opts: &BenchOptions<'_>,
+) {
+    let baseline_text = match std::fs::read_to_string(baseline_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!(
+                "{}",
+                format!(
+                    "compare: cannot read baseline '{}': {}",
+                    baseline_path.display(),
+                    e
+                )
+                .red()
+            );
             process::exit(1);
         }
+    };
+    // Two file shapes: a pretty-printed single `BenchReport` (the
+    // `--save-baseline` output for single-scenario mode) or an NDJSON
+    // file (one report per line, the dir-mode shape we use for
+    // committed CI baselines). Try single first; on failure, parse
+    // NDJSON and pick the entry matching the current scenario name.
+    let baseline: aver::bench::BenchReport = match serde_json::from_str(&baseline_text) {
+        Ok(b) => b,
+        Err(_) => {
+            let mut found: Option<aver::bench::BenchReport> = None;
+            for line in baseline_text.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                match serde_json::from_str::<aver::bench::BenchReport>(trimmed) {
+                    Ok(r) if r.scenario.name == report.scenario.name => {
+                        found = Some(r);
+                        break;
+                    }
+                    Ok(_) => continue,
+                    Err(e) => {
+                        eprintln!(
+                            "{}",
+                            format!(
+                                "compare: cannot parse baseline '{}': {}",
+                                baseline_path.display(),
+                                e
+                            )
+                            .red()
+                        );
+                        process::exit(1);
+                    }
+                }
+            }
+            match found {
+                Some(b) => b,
+                None => {
+                    eprintln!(
+                        "{}",
+                        format!(
+                            "compare: baseline '{}' has no entry for scenario '{}'",
+                            baseline_path.display(),
+                            report.scenario.name
+                        )
+                        .red()
+                    );
+                    return;
+                }
+            }
+        }
+    };
+    let diff = aver::bench::diff(report, &baseline, tolerance);
+    if !opts.json {
+        println!();
+        print!("{}", aver::bench::format_diff(&diff));
+    }
+    if diff.regressed && opts.fail_on_regression {
+        process::exit(1);
     }
 }
 
@@ -3525,14 +3579,19 @@ fn synth_manifest_for_av(
 
 /// Directory mode: run every `*.toml` in `dir` (alphabetical), emit one
 /// report per scenario. NDJSON when `--json` is set, human-readable
-/// blocks separated by blank lines otherwise. `--compare` /
-/// `--save-baseline` are single-scenario only and rejected here with a
-/// clear error.
+/// blocks separated by blank lines otherwise. `--compare` is single-
+/// scenario only (rejected here with a clear error). `--save-baseline`
+/// in dir mode writes NDJSON of every report to that path — same shape
+/// as `--json` output, suitable for committing as a CI baseline.
+/// `--baseline-dir` loads `<DIR>/<host.os>-<host.arch>-<backend.name>.json`
+/// (NDJSON) and compares each current scenario against its same-named
+/// counterpart in the baseline.
 fn run_bench_dir(dir: &Path, target: aver::bench::BenchTarget, opts: &BenchOptions<'_>) {
-    if opts.compare.is_some() || opts.save_baseline.is_some() {
+    if opts.compare.is_some() {
         eprintln!(
             "{}",
-            "directory mode: --compare / --save-baseline only work on a single scenario".red()
+            "directory mode: --compare needs a single scenario; use --baseline-dir DIR for batch gating"
+                .red()
         );
         process::exit(1);
     }
@@ -3565,7 +3624,57 @@ fn run_bench_dir(dir: &Path, target: aver::bench::BenchTarget, opts: &BenchOptio
         process::exit(1);
     }
 
+    let baseline_index: Option<std::collections::HashMap<String, aver::bench::BenchReport>> =
+        opts.baseline_dir.and_then(|baseline_dir| {
+            let baseline_path = pick_host_baseline(Path::new(baseline_dir), target)?;
+            let text = match std::fs::read_to_string(&baseline_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!(
+                        "{}",
+                        format!(
+                            "baseline-dir: cannot read '{}': {}",
+                            baseline_path.display(),
+                            e
+                        )
+                        .red()
+                    );
+                    process::exit(1);
+                }
+            };
+            let mut index: std::collections::HashMap<String, aver::bench::BenchReport> =
+                std::collections::HashMap::new();
+            for (lineno, line) in text.lines().enumerate() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                match serde_json::from_str::<aver::bench::BenchReport>(trimmed) {
+                    Ok(r) => {
+                        index.insert(r.scenario.name.clone(), r);
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "{}",
+                            format!(
+                                "baseline-dir: parse error '{}' line {}: {}",
+                                baseline_path.display(),
+                                lineno + 1,
+                                e
+                            )
+                            .red()
+                        );
+                        process::exit(1);
+                    }
+                }
+            }
+            Some(index)
+        });
+
+    let mut save_buffer: Vec<String> = Vec::new();
+    let mut any_regression = false;
     let mut first = true;
+    let mut diff_blocks: Vec<String> = Vec::new();
     for manifest_path in &manifest_paths {
         let manifest = match aver::bench::Manifest::load(manifest_path) {
             Ok(m) => m,
@@ -3581,6 +3690,59 @@ fn run_bench_dir(dir: &Path, target: aver::bench::BenchTarget, opts: &BenchOptio
                 process::exit(1);
             }
         };
+
+        if let Some(baseline_idx) = baseline_index.as_ref() {
+            if let Some(baseline_report) = baseline_idx.get(&manifest.name) {
+                let diff = aver::bench::diff(&report, baseline_report, manifest.tolerance);
+                if diff.regressed {
+                    any_regression = true;
+                }
+                if !opts.json {
+                    diff_blocks.push(aver::bench::format_diff(&diff));
+                } else {
+                    // In JSON mode, emit the diff as an extra NDJSON line
+                    // tagged so consumers can `jq -c 'select(.kind == "diff")'`.
+                    let regressed = diff.regressed;
+                    let scenario = diff.scenario.clone();
+                    let p50 = diff.p50;
+                    let p95 = diff.p95;
+                    let notes_arr: String = diff
+                        .notes
+                        .iter()
+                        .map(|n| serde_json::to_string(n).unwrap_or_else(|_| "\"\"".to_string()))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    println!(
+                        "{{\"kind\":\"diff\",\"scenario\":{},\"regressed\":{},\"p50\":{{\"baseline_ms\":{},\"current_ms\":{},\"delta_pct\":{},\"tolerance_pct\":{},\"regressed\":{}}},\"p95\":{{\"baseline_ms\":{},\"current_ms\":{},\"delta_pct\":{},\"tolerance_pct\":{},\"regressed\":{}}},\"notes\":[{}]}}",
+                        serde_json::to_string(&scenario).unwrap_or_else(|_| "\"\"".to_string()),
+                        regressed,
+                        p50.baseline,
+                        p50.current,
+                        p50.delta_pct,
+                        p50.tolerance_pct,
+                        p50.regressed,
+                        p95.baseline,
+                        p95.current,
+                        p95.delta_pct,
+                        p95.tolerance_pct,
+                        p95.regressed,
+                        notes_arr,
+                    );
+                }
+            } else if !opts.json {
+                diff_blocks.push(format!("{}: no baseline entry — skipped\n", manifest.name));
+            }
+        }
+
+        if opts.save_baseline.is_some() {
+            match serde_json::to_string(&report) {
+                Ok(text) => save_buffer.push(text),
+                Err(e) => {
+                    eprintln!("{}", format!("save-baseline JSON encode: {}", e).red());
+                    process::exit(1);
+                }
+            }
+        }
 
         if opts.json {
             // NDJSON: one compact report per line, no surrounding array.
@@ -3599,6 +3761,41 @@ fn run_bench_dir(dir: &Path, target: aver::bench::BenchTarget, opts: &BenchOptio
             print!("{}", aver::bench::format_human(&report));
         }
         first = false;
+    }
+
+    if let Some(save_path) = opts.save_baseline {
+        let body = save_buffer.join("\n");
+        let with_trailing = if body.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", body)
+        };
+        if let Err(e) = std::fs::write(save_path, with_trailing) {
+            eprintln!(
+                "{}",
+                format!("save-baseline write '{}': {}", save_path, e).red()
+            );
+            process::exit(1);
+        }
+        eprintln!(
+            "{}",
+            format!(
+                "Saved baseline → {} ({} scenario(s))",
+                save_path,
+                save_buffer.len()
+            )
+            .cyan()
+        );
+    }
+
+    if !diff_blocks.is_empty() && !opts.json {
+        println!();
+        for block in &diff_blocks {
+            print!("{}", block);
+        }
+    }
+    if any_regression && opts.fail_on_regression {
+        process::exit(1);
     }
 }
 
@@ -3711,6 +3908,334 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
             process::exit(1);
         }
     }
+}
+
+/// `aver compile FILE --explain-passes` — runs the canonical pipeline
+/// (no codegen) and prints a per-pass diagnostic report describing what
+/// each stage actually did. Defaults to a human-readable report; `json`
+/// switches to a stable machine-readable shape (`schema_version: 1`)
+/// consumable by CI scripts and the failable-invariant gates ("fail if
+/// buffer_build no longer fires on the canonical shape", "fail if hot
+/// fn loses no-alloc status").
+pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>, json: bool) {
+    use aver::ir::{PipelineConfig, TypecheckMode};
+
+    let module_root = resolve_module_root(module_root_override);
+    let source = match read_file(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+    let mut items = match parse_file(&source) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+
+    let neutral_policy = aver::ir::NeutralAllocPolicy;
+    let result = aver::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full {
+                base_dir: Some(&module_root),
+            }),
+            alloc_policy: Some(&neutral_policy),
+            ..Default::default()
+        },
+    );
+    if let Some(tc) = &result.typecheck
+        && !tc.errors.is_empty()
+    {
+        eprintln!("{}", super::shared::format_type_errors(&tc.errors).red());
+        process::exit(1);
+    }
+
+    if json {
+        print!("{}", render_pass_diagnostics_json(&result.pass_diagnostics));
+    } else {
+        print!("{}", render_pass_diagnostics(&result.pass_diagnostics));
+    }
+}
+
+fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> String {
+    use aver::ir::pipeline::PassReport;
+    let mut out = String::new();
+    out.push_str("compiler pipeline — per-pass report\n");
+    out.push_str("====================================\n\n");
+    for diag in diags {
+        let label = format!("[{}]", diag.stage.name());
+        match &diag.report {
+            PassReport::Tco {
+                tail_calls_added,
+                fns_changed,
+                non_tail_recursive,
+            } => {
+                if *tail_calls_added == 0 {
+                    out.push_str(&format!("{label} no calls converted to tail calls\n"));
+                } else {
+                    out.push_str(&format!(
+                        "{label} {tail_calls_added} callsite(s) converted to tail calls\n"
+                    ));
+                }
+                for c in fns_changed {
+                    out.push_str(&format!(
+                        "  • {}: {} → {} tail call(s)\n",
+                        c.name, c.before, c.after
+                    ));
+                }
+                if !non_tail_recursive.is_empty() {
+                    let total_calls: usize =
+                        non_tail_recursive.iter().map(|w| w.recursive_calls).sum();
+                    out.push_str(&format!(
+                        "  • {} non-tail recursive callsite(s) remain in {} fn(s)\n",
+                        total_calls,
+                        non_tail_recursive.len()
+                    ));
+                }
+            }
+            PassReport::Typecheck {
+                items_checked,
+                errors,
+                error_messages,
+            } => {
+                if *errors == 0 {
+                    out.push_str(&format!(
+                        "{label} {items_checked} top-level item(s) checked, no errors\n"
+                    ));
+                } else {
+                    out.push_str(&format!("{label} {errors} type error(s)\n"));
+                    for msg in error_messages {
+                        out.push_str(&format!("  • {msg}\n"));
+                    }
+                }
+            }
+            PassReport::InterpLower {
+                interpolations_lowered,
+                fns_changed,
+            } => {
+                if *interpolations_lowered == 0 {
+                    out.push_str(&format!("{label} no interpolations to lower\n"));
+                } else {
+                    out.push_str(&format!(
+                        "{label} {interpolations_lowered} interpolation literal(s) lowered to buffer pipeline\n"
+                    ));
+                }
+                for c in fns_changed {
+                    out.push_str(&format!(
+                        "  • {}: {} → {} interpolation(s)\n",
+                        c.name, c.before, c.after
+                    ));
+                }
+            }
+            PassReport::BufferBuild(r) => {
+                if r.rewrites == 0 {
+                    out.push_str(&format!(
+                        "{label} no fusion sites detected on canonical String.join shape\n"
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "{label} {} fusion site(s) rewritten, {} buffered variant(s) synthesized\n",
+                        r.rewrites,
+                        r.synthesized.len()
+                    ));
+                    for (sink, count) in &r.rewrites_by_sink {
+                        out.push_str(&format!("  • sink {sink}: {count} rewrite(s)\n"));
+                    }
+                    for fn_name in &r.synthesized {
+                        out.push_str(&format!("  • synthesized {fn_name}\n"));
+                    }
+                }
+            }
+            PassReport::Resolve {
+                slots_resolved,
+                fns_with_slots,
+            } => {
+                out.push_str(&format!(
+                    "{label} {slots_resolved} ident(s) resolved to slot lookups across {fns_with_slots} fn(s)\n"
+                ));
+            }
+            PassReport::LastUse {
+                last_use_marked,
+                total_resolved,
+            } => {
+                out.push_str(&format!(
+                    "{label} {last_use_marked} of {total_resolved} resolved slot(s) marked last-use (move-eligible)\n"
+                ));
+            }
+            PassReport::Analyze {
+                total_fns,
+                no_alloc_fns,
+                recursive_fns,
+                mutual_tco_members,
+                unknown_alloc,
+            } => {
+                out.push_str(&format!(
+                    "{label} {total_fns} fn(s) analyzed: {no_alloc_fns} no-alloc, {recursive_fns} recursive, {mutual_tco_members} mutual-TCO member(s)\n"
+                ));
+                if *unknown_alloc > 0 {
+                    out.push_str(&format!(
+                        "  • {unknown_alloc} fn(s) skipped alloc classification (no policy supplied)\n"
+                    ));
+                }
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) -> String {
+    use aver::diagnostics::json_escape;
+    use aver::ir::pipeline::PassReport;
+
+    fn json_str(s: &str) -> String {
+        json_escape(s)
+    }
+    fn json_str_array(items: &[String]) -> String {
+        let mut out = String::from("[");
+        for (i, s) in items.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push_str(&json_str(s));
+        }
+        out.push(']');
+        out
+    }
+    fn json_fn_change(c: &aver::ir::pipeline::FnCountChange) -> String {
+        format!(
+            "{{\"name\":{},\"before\":{},\"after\":{}}}",
+            json_str(&c.name),
+            c.before,
+            c.after
+        )
+    }
+    fn json_fn_changes(cs: &[aver::ir::pipeline::FnCountChange]) -> String {
+        let mut out = String::from("[");
+        for (i, c) in cs.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push_str(&json_fn_change(c));
+        }
+        out.push(']');
+        out
+    }
+
+    let mut out = String::new();
+    out.push_str("{\"schema_version\":1,\"passes\":[");
+    for (i, d) in diags.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "{{\"stage\":{},\"data\":",
+            json_str(d.stage.name())
+        ));
+        match &d.report {
+            PassReport::Tco {
+                tail_calls_added,
+                fns_changed,
+                non_tail_recursive,
+            } => {
+                let mut nontail = String::from("[");
+                for (j, w) in non_tail_recursive.iter().enumerate() {
+                    if j > 0 {
+                        nontail.push(',');
+                    }
+                    nontail.push_str(&format!(
+                        "{{\"fn\":{},\"recursive_calls\":{},\"line\":{}}}",
+                        json_str(&w.fn_name),
+                        w.recursive_calls,
+                        w.line
+                    ));
+                }
+                nontail.push(']');
+                out.push_str(&format!(
+                    "{{\"tail_calls_added\":{},\"fns_changed\":{},\"non_tail_recursive\":{}}}",
+                    tail_calls_added,
+                    json_fn_changes(fns_changed),
+                    nontail
+                ));
+            }
+            PassReport::Typecheck {
+                items_checked,
+                errors,
+                error_messages,
+            } => {
+                out.push_str(&format!(
+                    "{{\"items_checked\":{},\"errors\":{},\"error_messages\":{}}}",
+                    items_checked,
+                    errors,
+                    json_str_array(error_messages)
+                ));
+            }
+            PassReport::InterpLower {
+                interpolations_lowered,
+                fns_changed,
+            } => {
+                out.push_str(&format!(
+                    "{{\"interpolations_lowered\":{},\"fns_changed\":{}}}",
+                    interpolations_lowered,
+                    json_fn_changes(fns_changed)
+                ));
+            }
+            PassReport::BufferBuild(r) => {
+                let mut by_sink = String::from("{");
+                for (j, (k, v)) in r.rewrites_by_sink.iter().enumerate() {
+                    if j > 0 {
+                        by_sink.push(',');
+                    }
+                    by_sink.push_str(&format!("{}:{}", json_str(k), v));
+                }
+                by_sink.push('}');
+                out.push_str(&format!(
+                    "{{\"rewrites\":{},\"synthesized\":{},\"sinks\":{},\"rewrites_by_sink\":{}}}",
+                    r.rewrites,
+                    json_str_array(&r.synthesized),
+                    json_str_array(&r.sink_fns),
+                    by_sink
+                ));
+            }
+            PassReport::Resolve {
+                slots_resolved,
+                fns_with_slots,
+            } => {
+                out.push_str(&format!(
+                    "{{\"slots_resolved\":{},\"fns_with_slots\":{}}}",
+                    slots_resolved, fns_with_slots
+                ));
+            }
+            PassReport::LastUse {
+                last_use_marked,
+                total_resolved,
+            } => {
+                out.push_str(&format!(
+                    "{{\"last_use_marked\":{},\"total_resolved\":{}}}",
+                    last_use_marked, total_resolved
+                ));
+            }
+            PassReport::Analyze {
+                total_fns,
+                no_alloc_fns,
+                recursive_fns,
+                mutual_tco_members,
+                unknown_alloc,
+            } => {
+                out.push_str(&format!(
+                    "{{\"total_fns\":{},\"no_alloc_fns\":{},\"recursive_fns\":{},\"mutual_tco_members\":{},\"unknown_alloc\":{}}}",
+                    total_fns, no_alloc_fns, recursive_fns, mutual_tco_members, unknown_alloc
+                ));
+            }
+        }
+        out.push('}');
+    }
+    out.push_str("]}\n");
+    out
 }
 
 pub(super) fn cmd_compile(opts: CompileOptions<'_>) {

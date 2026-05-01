@@ -22,6 +22,8 @@
 //! are independent flags so callers can mix them however they need.
 
 use crate::ast::TopLevel;
+use crate::ir::buffer_build::BufferBuildPassReport;
+use crate::ir::pass_diag::{self, CountsByFn};
 use crate::ir::{AllocPolicy, AnalysisResult, CallLowerCtx};
 use crate::source::LoadedModule;
 use crate::types::checker::{TypeCheckResult, run_type_check_full, run_type_check_with_loaded};
@@ -117,17 +119,99 @@ impl<'a> Default for PipelineConfig<'a> {
     }
 }
 
+/// Typed per-pass report. Each variant carries the structured facts a
+/// CI gate cares about — counts, fn names, error messages — so scripts
+/// don't have to regex-parse human-readable summaries. The text and
+/// JSON renderers in `cmd_explain_passes` derive their output from
+/// these values.
+#[derive(Debug, Clone)]
+pub enum PassReport {
+    Tco {
+        /// Total tail-call rewrites this pass made.
+        tail_calls_added: usize,
+        /// Per-fn before/after, alphabetised by `name`.
+        fns_changed: Vec<FnCountChange>,
+        /// Recursive callsites that did NOT convert (still call the fn
+        /// in non-tail position). Empty when the pass was clean.
+        non_tail_recursive: Vec<NonTailEntry>,
+    },
+    Typecheck {
+        items_checked: usize,
+        errors: usize,
+        /// Up to the first 5 error messages (full list still on
+        /// `PipelineResult.typecheck`).
+        error_messages: Vec<String>,
+    },
+    InterpLower {
+        interpolations_lowered: usize,
+        /// Per-fn before/after counts for fns whose interpolation count
+        /// dropped during the pass.
+        fns_changed: Vec<FnCountChange>,
+    },
+    BufferBuild(BufferBuildPassReport),
+    Resolve {
+        slots_resolved: usize,
+        fns_with_slots: usize,
+    },
+    LastUse {
+        last_use_marked: usize,
+        total_resolved: usize,
+    },
+    Analyze {
+        total_fns: usize,
+        no_alloc_fns: usize,
+        recursive_fns: usize,
+        mutual_tco_members: usize,
+        /// Fns whose `allocates` is `None` because no `alloc_policy` was
+        /// configured. Surfaces a misconfigured pipeline run.
+        unknown_alloc: usize,
+    },
+}
+
+/// Per-fn counter delta — used by `Tco` and `InterpLower` reports to
+/// surface which functions a pass actually changed.
+#[derive(Debug, Clone)]
+pub struct FnCountChange {
+    pub name: String,
+    pub before: usize,
+    pub after: usize,
+}
+
+/// One non-tail recursive callsite the TCO pass couldn't rewrite.
+#[derive(Debug, Clone)]
+pub struct NonTailEntry {
+    pub fn_name: String,
+    pub recursive_calls: usize,
+    pub line: usize,
+}
+
+/// Per-pass diagnostic record. `report` carries the typed facts; `stage`
+/// labels which pass produced them. Drives `aver compile --explain-passes`
+/// and the future failable-invariant CI checks (`fail if buffer_build
+/// no longer fires on the canonical shape`, `fail if hot fn loses
+/// no-alloc status`, etc.).
+#[derive(Debug, Clone)]
+pub struct PassDiagnostic {
+    pub stage: PipelineStage,
+    pub report: PassReport,
+}
+
 #[derive(Default)]
 pub struct PipelineResult {
     /// Typecheck output, present iff `config.typecheck` was set. Callers
     /// inspect `.errors` and decide what to do — the orchestrator does not
     /// exit on its own.
     pub typecheck: Option<TypeCheckResult>,
-    /// `(rewrites, synthesized)` from the buffer-build pass when it ran.
-    pub buffer_build_stats: Option<(usize, usize)>,
+    /// Buffer-build pass report — sinks fired, synthesized fns,
+    /// per-sink rewrite counts. `None` when the pass was disabled.
+    pub buffer_build: Option<BufferBuildPassReport>,
     /// IR-level analysis facts (per-fn body shape, thin kind, alloc info)
     /// when `run_analyze` was on. `None` when the stage was disabled.
     pub analysis: Option<AnalysisResult>,
+    /// Per-stage diagnostic records — one per pass that actually ran.
+    /// Drives `aver compile --explain-passes`; consumed by the future
+    /// CI failable-invariant checks.
+    pub pass_diagnostics: Vec<PassDiagnostic>,
 }
 
 // ── Per-stage entry points ──────────────────────────────────────────
@@ -165,8 +249,9 @@ pub fn interp_lower(items: &mut [TopLevel]) {
 
 /// Buffer-build deforestation pass — detects `String.join(<builder>(args, []), sep)`
 /// shapes, rewrites them to `__buf_finalize(<builder>__buffered(...))`, and
-/// appends the synthesized buffered variants to `items`. Returns `(rewrites, synthesized)`.
-pub fn buffer_build(items: &mut Vec<TopLevel>) -> (usize, usize) {
+/// appends the synthesized buffered variants to `items`. Returns a
+/// [`BufferBuildPassReport`] describing what fired.
+pub fn buffer_build(items: &mut Vec<TopLevel>) -> BufferBuildPassReport {
     crate::ir::run_buffer_build_pass(items)
 }
 
@@ -197,13 +282,21 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
     let mut result = PipelineResult::default();
 
     if cfg.run_tco {
+        let pre = pass_diag::collect(items);
         tco(items);
+        let post = pass_diag::collect(items);
+        result
+            .pass_diagnostics
+            .push(diag_for_tco(&pre, &post, items));
         fire(&mut cfg, PipelineStage::Tco, items);
     }
 
     if let Some(mode) = cfg.typecheck.as_ref() {
         let tc = typecheck(items, mode);
         let has_errors = !tc.errors.is_empty();
+        result
+            .pass_diagnostics
+            .push(diag_for_typecheck(&tc, items.len()));
         result.typecheck = Some(tc);
         fire(&mut cfg, PipelineStage::Typecheck, items);
         if has_errors {
@@ -212,22 +305,33 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
     }
 
     if cfg.run_interp_lower {
+        let pre = pass_diag::collect(items);
         interp_lower(items);
+        let post = pass_diag::collect(items);
+        result
+            .pass_diagnostics
+            .push(diag_for_interp_lower(&pre, &post));
         fire(&mut cfg, PipelineStage::InterpLower, items);
     }
 
     if cfg.run_buffer_build {
-        result.buffer_build_stats = Some(buffer_build(items));
+        let report = buffer_build(items);
+        result.pass_diagnostics.push(diag_for_buffer_build(&report));
+        result.buffer_build = Some(report);
         fire(&mut cfg, PipelineStage::BufferBuild, items);
     }
 
     if cfg.run_resolve {
         resolve(items);
+        let post = pass_diag::collect(items);
+        result.pass_diagnostics.push(diag_for_resolve(&post));
         fire(&mut cfg, PipelineStage::Resolve, items);
     }
 
     if cfg.run_last_use {
         last_use(items);
+        let post = pass_diag::collect(items);
+        result.pass_diagnostics.push(diag_for_last_use(&post));
         fire(&mut cfg, PipelineStage::LastUse, items);
     }
 
@@ -239,7 +343,9 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         // codegen pipelines should plumb a real ctx through `cfg.call_ctx`
         // once the inliner needs accurate body shape data.
         let adapter = CallCtxAdapter(cfg.call_ctx);
-        result.analysis = Some(crate::ir::analyze(items, cfg.alloc_policy, &adapter));
+        let analysis = crate::ir::analyze(items, cfg.alloc_policy, &adapter);
+        result.pass_diagnostics.push(diag_for_analyze(&analysis));
+        result.analysis = Some(analysis);
         fire(&mut cfg, PipelineStage::Analyze, items);
     }
 
@@ -267,6 +373,145 @@ impl<'a> CallLowerCtx for CallCtxAdapter<'a> {
 fn fire(cfg: &mut PipelineConfig<'_>, stage: PipelineStage, items: &[TopLevel]) {
     if let Some(cb) = cfg.on_after_pass.as_mut() {
         cb(stage, items);
+    }
+}
+
+// ── PassDiagnostic builders ─────────────────────────────────────────
+
+fn diag_for_tco(pre: &CountsByFn, post: &CountsByFn, items: &[TopLevel]) -> PassDiagnostic {
+    let pre_total = pass_diag::total(pre);
+    let post_total = pass_diag::total(post);
+    let tail_calls_added = post_total.tail_calls.saturating_sub(pre_total.tail_calls);
+
+    let fns_changed: Vec<FnCountChange> = pass_diag::fns_that_grew(pre, post, |c| c.tail_calls)
+        .into_iter()
+        .map(|name| {
+            let before = pre.get(&name).copied().unwrap_or_default().tail_calls;
+            let after = post.get(&name).copied().unwrap_or_default().tail_calls;
+            FnCountChange {
+                name,
+                before,
+                after,
+            }
+        })
+        .collect();
+
+    let non_tail_recursive: Vec<NonTailEntry> =
+        crate::tail_check::collect_non_tail_recursion_warnings(items)
+            .into_iter()
+            .map(|w| NonTailEntry {
+                fn_name: w.fn_name,
+                recursive_calls: w.recursive_calls,
+                line: w.line,
+            })
+            .collect();
+
+    PassDiagnostic {
+        stage: PipelineStage::Tco,
+        report: PassReport::Tco {
+            tail_calls_added,
+            fns_changed,
+            non_tail_recursive,
+        },
+    }
+}
+
+fn diag_for_typecheck(tc: &TypeCheckResult, item_count: usize) -> PassDiagnostic {
+    let error_messages = if tc.errors.is_empty() {
+        Vec::new()
+    } else {
+        tc.errors
+            .iter()
+            .take(5)
+            .map(|e| e.message.clone())
+            .collect()
+    };
+    PassDiagnostic {
+        stage: PipelineStage::Typecheck,
+        report: PassReport::Typecheck {
+            items_checked: item_count,
+            errors: tc.errors.len(),
+            error_messages,
+        },
+    }
+}
+
+fn diag_for_interp_lower(pre: &CountsByFn, post: &CountsByFn) -> PassDiagnostic {
+    let interpolations_lowered = pass_diag::total(pre)
+        .interpolations
+        .saturating_sub(pass_diag::total(post).interpolations);
+    let fns_changed: Vec<FnCountChange> = pass_diag::fns_that_grew(post, pre, |c| c.interpolations)
+        .into_iter()
+        .map(|name| {
+            let before = pre.get(&name).copied().unwrap_or_default().interpolations;
+            let after = post.get(&name).copied().unwrap_or_default().interpolations;
+            FnCountChange {
+                name,
+                before,
+                after,
+            }
+        })
+        .collect();
+    PassDiagnostic {
+        stage: PipelineStage::InterpLower,
+        report: PassReport::InterpLower {
+            interpolations_lowered,
+            fns_changed,
+        },
+    }
+}
+
+fn diag_for_buffer_build(report: &BufferBuildPassReport) -> PassDiagnostic {
+    PassDiagnostic {
+        stage: PipelineStage::BufferBuild,
+        report: PassReport::BufferBuild(report.clone()),
+    }
+}
+
+fn diag_for_resolve(post: &CountsByFn) -> PassDiagnostic {
+    let slots_resolved = pass_diag::total(post).resolved;
+    let fns_with_slots = post.values().filter(|c| c.resolved > 0).count();
+    PassDiagnostic {
+        stage: PipelineStage::Resolve,
+        report: PassReport::Resolve {
+            slots_resolved,
+            fns_with_slots,
+        },
+    }
+}
+
+fn diag_for_last_use(post: &CountsByFn) -> PassDiagnostic {
+    let totals = pass_diag::total(post);
+    PassDiagnostic {
+        stage: PipelineStage::LastUse,
+        report: PassReport::LastUse {
+            last_use_marked: totals.last_use_resolved,
+            total_resolved: totals.resolved,
+        },
+    }
+}
+
+fn diag_for_analyze(analysis: &AnalysisResult) -> PassDiagnostic {
+    let total_fns = analysis.fn_analyses.len();
+    let no_alloc_fns = analysis
+        .fn_analyses
+        .values()
+        .filter(|fa| fa.allocates == Some(false))
+        .count();
+    let unknown_alloc = analysis
+        .fn_analyses
+        .values()
+        .filter(|fa| fa.allocates.is_none())
+        .count();
+    PassDiagnostic {
+        stage: PipelineStage::Analyze,
+        report: PassReport::Analyze {
+            total_fns,
+            no_alloc_fns,
+            recursive_fns: analysis.recursive_fns.len(),
+            mutual_tco_members: analysis.mutual_tco_members.len(),
+            unknown_alloc,
+        },
     }
 }
 
@@ -542,5 +787,82 @@ fn id(n: Int) -> Int
                 PipelineStage::LastUse, // fires even without Resolve — a no-op pass
             ]
         );
+    }
+
+    #[test]
+    fn pass_diagnostics_recorded_for_each_stage_that_ran() {
+        let mut items = parse(
+            r#"
+module M
+    intent = "test"
+    depends []
+
+fn factorial(n: Int, acc: Int) -> Int
+    match n
+        0 -> acc
+        _ -> factorial(n - 1, acc * n)
+"#,
+        );
+        let result = run(
+            &mut items,
+            PipelineConfig {
+                typecheck: Some(TypecheckMode::Full { base_dir: None }),
+                ..Default::default()
+            },
+        );
+        let stages: Vec<PipelineStage> = result.pass_diagnostics.iter().map(|d| d.stage).collect();
+        assert_eq!(
+            stages,
+            vec![
+                PipelineStage::Tco,
+                PipelineStage::Typecheck,
+                PipelineStage::InterpLower,
+                PipelineStage::BufferBuild,
+                PipelineStage::Resolve,
+                PipelineStage::LastUse,
+                PipelineStage::Analyze,
+            ]
+        );
+
+        let tco_diag = &result.pass_diagnostics[0];
+        match &tco_diag.report {
+            PassReport::Tco {
+                tail_calls_added,
+                fns_changed,
+                ..
+            } => {
+                assert!(*tail_calls_added >= 1, "factorial got at least one TCO");
+                assert!(
+                    fns_changed.iter().any(|c| c.name == "factorial"),
+                    "fns_changed must list factorial: {fns_changed:?}"
+                );
+            }
+            other => panic!("expected Tco report, got {other:?}"),
+        }
+
+        let bb_diag = result
+            .pass_diagnostics
+            .iter()
+            .find(|d| d.stage == PipelineStage::BufferBuild)
+            .unwrap();
+        match &bb_diag.report {
+            PassReport::BufferBuild(r) => {
+                assert_eq!(r.rewrites, 0, "factorial-only program has no fusion sites")
+            }
+            other => panic!("expected BufferBuild report, got {other:?}"),
+        }
+
+        let resolve_diag = result
+            .pass_diagnostics
+            .iter()
+            .find(|d| d.stage == PipelineStage::Resolve)
+            .unwrap();
+        match &resolve_diag.report {
+            PassReport::Resolve { slots_resolved, .. } => assert!(
+                *slots_resolved > 0,
+                "factorial body resolves at least one ident"
+            ),
+            other => panic!("expected Resolve report, got {other:?}"),
+        }
     }
 }

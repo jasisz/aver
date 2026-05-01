@@ -25,6 +25,11 @@ Options:
       --emit-ir-after <PASS>       Print IR after the named pipeline stage and exit before codegen.
                                    PASS ∈ { parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze }.
                                    Use diff -u between two stages to see exactly which expressions a pass rewrote.
+      --explain-passes             Run the full pipeline (no codegen) and print a per-pass diagnostic report.
+                                   Reports tail-call conversions, interpolations lowered, fusion sites + sinks,
+                                   slots resolved, last-use markers, alloc/recursion facts.
+      --json                       Emit the per-pass report as JSON (with --explain-passes); shape is
+                                   { schema_version: 1, passes: [{ stage, summary, details: [...] }, ... ] }.
 ```
 
 ### `--emit-ir-after` quick map
@@ -41,6 +46,35 @@ The compiler runs IR transforms in a fixed seven-stage pipeline (see `src/ir/pip
 | `resolve`      | `Expr::Ident` → `<name>` (resolved slot), `<resolved>` collapse for unknown |
 | `last_use`     | Final references annotated as `<name:last>` so backends MOVE instead of COPY |
 | `analyze`      | FnDef headers gain fact tags `[no_alloc, locals=N, recursive×N, body=…]`    |
+
+### `--explain-passes` — per-pass diagnostic report
+
+Same pipeline, different lens. Instead of dumping IR shapes, prints a structured report of what each pass actually decided:
+
+```
+$ aver compile fuse_demo.av --explain-passes
+compiler pipeline — per-pass report
+====================================
+
+[tco] 1 callsite(s) converted to tail calls
+  • build: 0 → 1 tail call(s)
+
+[typecheck] 3 top-level item(s) checked, no errors
+
+[interp_lower] no interpolations to lower
+
+[buffer_build] 1 fusion site(s) rewritten, 1 buffered variant(s) synthesized
+  • sink build: 1 rewrite(s)
+  • synthesized build__buffered
+
+[resolve] 12 ident(s) resolved to slot lookups across 2 fn(s)
+
+[last_use] 11 of 12 resolved slot(s) marked last-use (move-eligible)
+
+[analyze] 3 fn(s) analyzed: 0 no-alloc, 2 recursive, 0 mutual-TCO member(s)
+```
+
+Pair with `--emit-ir-after=PASS` when the report says something fired and you want to see the resulting IR. Use case: build a CI gate that fails when buffer_build stops fusing on a known canonical site, or when a hot fn loses its `no_alloc` status.
 
 ## `aver proof`
 

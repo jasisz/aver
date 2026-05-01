@@ -186,6 +186,8 @@ fn main() {
             handler,
             optimize,
             emit_ir_after,
+            explain_passes,
+            json,
         } => {
             let policy_mode = (*policy).unwrap_or(if *with_replay {
                 CompilePolicyMode::Runtime
@@ -218,6 +220,14 @@ fn main() {
             // in 0.15.1 without touching the compile path otherwise.
             if let Some(stage) = emit_ir_after.as_deref() {
                 commands::cmd_emit_ir_after(file, module_root.as_deref(), stage);
+                return;
+            }
+            // `--explain-passes` runs the full pipeline (no codegen) and
+            // prints a per-pass diagnostic report. Same short-circuit
+            // shape as `--emit-ir-after`. `--json` switches to a stable
+            // machine-readable shape for CI consumption.
+            if *explain_passes {
+                commands::cmd_explain_passes(file, module_root.as_deref(), *json);
                 return;
             }
             commands::cmd_compile(commands::CompileOptions {
@@ -260,6 +270,7 @@ fn main() {
             json,
             save_baseline,
             compare,
+            baseline_dir,
             fail_on_regression,
         } => {
             commands::cmd_bench(commands::BenchOptions {
@@ -270,6 +281,7 @@ fn main() {
                 json: *json,
                 save_baseline: save_baseline.as_deref(),
                 compare: compare.as_deref(),
+                baseline_dir: baseline_dir.as_deref(),
                 fail_on_regression: *fail_on_regression,
             });
         }

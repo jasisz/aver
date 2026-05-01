@@ -123,12 +123,14 @@ aver compile file.av -o /tmp/out --module-root .
 aver compile file.av --target wasm -o /tmp/out
 aver compile file.av --target wasm --wasm-opt oz -o /tmp/out
 aver compile file.av --emit-ir-after=PASS
+aver compile file.av --explain-passes
 ```
 
 - Default: Rust codegen, emits a modular Cargo project
 - `--target wasm`: standalone WASM module with aver/* imports
 - `--wasm-opt oz`: post-process with binaryen for ~50% size reduction
 - `--emit-ir-after=PASS`: print the IR snapshot after the named pipeline stage and exit before codegen. PASS ∈ { `parse`, `tco`, `typecheck`, `interp_lower`, `buffer_build`, `resolve`, `last_use`, `analyze` }. `diff -u` between two stages shows exactly what each pass rewrote.
+- `--explain-passes`: run the full pipeline (no codegen) and print a per-pass diagnostic report — tail-call conversions, interpolations lowered, fusion sites rewritten + sinks synthesized, slots resolved, last-use markers annotated, alloc/recursion facts. Drives failable-invariant CI checks ("fail if buffer_build no longer fires on the canonical shape", "fail if hot fn loses no-alloc status"). Pair with `--json` for typed-per-stage shape: `{schema_version: 1, passes: [{stage, data: {...stage-specific fields}}, ...]}` — buffer_build's `data` exposes `rewrites`, `synthesized`, `sinks`, `rewrites_by_sink`; analyze's exposes `total_fns`, `no_alloc_fns`, `recursive_fns`, `mutual_tco_members`. `jq '.passes[] | select(.stage=="buffer_build") | .data.rewrites'` instead of regex-parsing summary strings.
 
 ### Bench
 
@@ -143,12 +145,15 @@ aver bench bench/scenarios/fib.toml --target=wasm-local      # requires --featur
 aver bench bench/scenarios/fib.toml --target=rust            # native binary, subprocess per iter
 aver bench bench/scenarios/fib.toml --save-baseline base.json
 aver bench bench/scenarios/fib.toml --compare base.json --fail-on-regression
+aver bench bench/scenarios/ --save-baseline bench/baselines/<host>-<arch>-vm.json   # capture baseline (NDJSON)
+aver bench bench/scenarios/ --baseline-dir bench/baselines/ --fail-on-regression   # CI gate
 ```
 
 - Three input shapes: `.av` (ad-hoc, defaults + `--iterations` / `--warmup` overrides), `.toml` (named manifest with per-scenario tolerance + expected shape), directory (globs `*.toml`).
 - Three targets: `vm` (default, in-process), `wasm-local` (wasmtime in-process), `rust` (native binary).
 - Reports include `backend` (aver version, build, wasmtime version) and `host` (os/arch/cpus) so cross-machine runs disambiguate.
-- `--save-baseline` / `--compare` need a `.toml` manifest (per-scenario tolerance lives there).
+- `--save-baseline` works in both single-scenario (pretty JSON) and directory (NDJSON) mode. `--compare` is single-scenario only.
+- `--baseline-dir DIR` auto-picks `<host.os>-<host.arch>-<backend.name>.json` from `DIR`. Silent skip when no matching baseline exists — single workflow gates wherever a baseline is pinned. CI uses this.
 - See [docs/bench.md](docs/bench.md) for the full reference.
 
 ### Proof

@@ -62,3 +62,40 @@ jobs:
 
       - name: Build (wasm release)
         run: cargo build -p aver-lang --features wasm --release
+
+  bench:
+    name: Bench Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build aver (release)
+        run: cargo build --release --bin aver
+
+      - name: Run bench scenarios
+        # `--baseline-dir bench/baselines/` auto-picks the file matching
+        # this runner's host (`<os>-<arch>-vm.json`). When no matching
+        # baseline exists, the bench run still produces reports but the
+        # gate is silently skipped — first run on a new host won't fail
+        # the build, just won't gate. To pin a Linux baseline, run
+        # `aver bench bench/scenarios/ --target=vm --json --save-baseline
+        # bench/baselines/linux-x86_64-vm.json` on this runner and
+        # commit the result.
+        run: |
+          ./target/release/aver bench bench/scenarios/ \
+            --target=vm \
+            --baseline-dir bench/baselines/ \
+            --fail-on-regression \
+            --json | tee bench-results.ndjson
+
+      - name: Upload bench results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: bench-results.ndjson
+          retention-days: 30

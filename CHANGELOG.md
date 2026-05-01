@@ -4,7 +4,21 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
-## 0.15.1 "Traversal" — pipeline foundation + observability (unreleased)
+## 0.15.2 "Traversal" — observability lands, regression gate closes (unreleased)
+
+> _Every pipeline pass exposes its decisions through one typed shape; bench reports gain the metrics that make regressions catchable; CI gates them per-host without per-runner branching._
+
+### Added
+- **`aver compile --explain-passes [--json]`** — typed per-pass diagnostic report (TCO conversions, interpolations lowered, fusion sites + sinks fired, slots resolved, alloc/recursion facts). JSON shape is one `{stage, data}` block per pass with stage-specific fields; `schema_version: 1` pins the contract for CI gates (`tests/explain_passes_spec.rs`).
+- **`aver bench` populates `compiler_visible_allocs`** (IR-level via `NeutralAllocPolicy`, same across all three targets) and **`response_bytes`** (`vm`: rendered return value via `aver_display`; `wasm-local`: `fd_write` iovec sum; `rust`: subprocess stdout). `--compare` gates both as exact-match alongside p50/p95.
+- **`aver bench --baseline-dir DIR`** auto-picks `<host.os>-<host.arch>-<backend.name>.json`; silent skip when no match. Directory mode supports `--save-baseline` (NDJSON, same shape `--baseline-dir` reads) — `bench/baselines/macos-aarch64-vm.json` ships as the reference.
+- **GitHub Actions `Bench Gate` job** runs `aver bench bench/scenarios/ --target=vm --baseline-dir bench/baselines/ --fail-on-regression` on every PR; results upload as 30-day artifact.
+
+### Changed
+- **`PipelineResult.buffer_build`** is now a typed `BufferBuildPassReport` (sinks, synthesized fns, per-sink rewrite counts) instead of an opaque `(usize, usize)` tuple.
+- **`aver check`** no longer prints the `↻ N buffer-build sink(s) […]` summary — same data with richer detail is now in `aver compile --explain-passes`.
+
+## 0.15.1 "Traversal" — pipeline foundation + observability (2026-05-01)
 
 > _The compiler grew a real pipeline. Every IR transform is a named ordered stage, every consumer reads derived facts from one place, every backend's relationship to the IR is a documented contract._
 

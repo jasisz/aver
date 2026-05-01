@@ -1,13 +1,14 @@
 //! Baseline comparison — diff a current `BenchReport` against a stored
 //! one and decide whether the run regressed past the configured tolerance.
 //!
-//! Two metrics gated in 0.15.1: `p50_ms` and `p95_ms`. `response_bytes`
-//! and `passes_applied` mismatches are reported but not gated yet —
-//! once `response_bytes` capture lands in 0.15.2, exact-match becomes
-//! a hard regression. `passes_applied` mismatch is interesting (a pass
-//! stopped firing) but happens legitimately when a pipeline-level
-//! refactor changes which stages run, so it's reported at info level
-//! for now.
+//! Gated metrics (any failure flips `regressed=true`):
+//! - `p50_ms` / `p95_ms` (per `[tolerance]` budget)
+//! - `compiler_visible_allocs` (exact match — growth past baseline is a
+//!   regression, shrinkage is reported as improvement)
+//! - `response_bytes` (exact match when both sides have a number)
+//!
+//! `passes_applied` mismatch is reported as a note but not gated —
+//! pipeline refactors legitimately change which stages run.
 
 use crate::bench::manifest::Tolerance;
 use crate::bench::report::BenchReport;
@@ -77,18 +78,50 @@ pub fn diff(current: &BenchReport, baseline: &BenchReport, tolerance: Tolerance)
             baseline.passes_applied, current.passes_applied
         ));
     }
-    match (current.response_bytes, baseline.response_bytes) {
-        (Some(c), Some(b)) if c != b => {
-            notes.push(format!("response_bytes: baseline={} current={}", b, c));
+    // `response_bytes` exact-match: any mismatch is reported and gated.
+    // Output bytes change ⇒ semantics changed (different result, different
+    // formatting) ⇒ regression. `None` on either side is a wash (capture
+    // not available), no gate.
+    let mut response_bytes_regressed = false;
+    if let (Some(c), Some(b)) = (current.response_bytes, baseline.response_bytes)
+        && c != b
+    {
+        notes.push(format!(
+            "response_bytes: baseline={} current={} — regression",
+            b, c
+        ));
+        response_bytes_regressed = true;
+    }
+
+    // `compiler_visible_allocs` is exact-match — any change is reported.
+    // Growing past baseline is a regression (a hot fn just learned to
+    // allocate); shrinking is good but worth noting (a fusion fired
+    // that didn't before, codegen got tighter, or the manifest changed).
+    let mut allocs_regressed = false;
+    if let (Some(c), Some(b)) = (
+        current.compiler_visible_allocs,
+        baseline.compiler_visible_allocs,
+    ) && c != b
+    {
+        if c > b {
+            notes.push(format!(
+                "compiler_visible_allocs grew: baseline={} current={} — regression",
+                b, c
+            ));
+            allocs_regressed = true;
+        } else {
+            notes.push(format!(
+                "compiler_visible_allocs shrank: baseline={} current={} — improvement",
+                b, c
+            ));
         }
-        _ => {}
     }
 
     DiffReport {
         scenario: current.scenario.name.clone(),
         p50,
         p95,
-        regressed: p50.regressed || p95.regressed,
+        regressed: p50.regressed || p95.regressed || allocs_regressed || response_bytes_regressed,
         notes,
     }
 }

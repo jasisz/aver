@@ -22,7 +22,8 @@ It is built around one idea: the risky part of AI-written code is usually not sy
 - `aver context` exports the contract-level view of a module graph for humans or LLMs
 - `aver compile` turns an Aver module graph into a Rust/Cargo project or a standalone WASM module
 - `aver compile --emit-ir-after=PASS` prints the IR snapshot after any pipeline stage (`tco`, `typecheck`, `interp_lower`, `buffer_build`, `resolve`, `last_use`, `analyze`); a `diff -u` between two stages shows exactly what each pass rewrote
-- `aver bench` runs scenario manifests across `vm` / `wasm-local` / `rust` targets with structured reports (NDJSON for batch) — see [docs/bench.md](docs/bench.md)
+- `aver compile --explain-passes [--json]` reports per-pass decisions (tail-call conversions, fusion sites + sinks, slots resolved, alloc/recursion facts) — typed JSON for CI gates that fail on observability regressions
+- `aver bench` runs scenario manifests across `vm` / `wasm-local` / `rust` targets with structured reports (NDJSON for batch); `--baseline-dir` autodetects per-host baselines for CI gating — see [docs/bench.md](docs/bench.md)
 - `aver proof` exports the pure subset of an Aver module graph to a Lean 4 proof project (default) or Dafny verification file (`--backend dafny`)
 
 This is not a language optimized for humans to type by hand all day. It is optimized for AI to generate code that humans can inspect, constrain, test, and ship.

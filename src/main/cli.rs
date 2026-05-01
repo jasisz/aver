@@ -430,6 +430,22 @@ pub(super) enum Commands {
         /// before any pass runs.
         #[arg(long, value_name = "PASS")]
         emit_ir_after: Option<String>,
+        /// Run the full pipeline and print a per-pass diagnostic report
+        /// describing what fired (tail-call conversions, interpolations
+        /// lowered, fusion sites rewritten, sinks synthesized, slots
+        /// resolved, last-use markers annotated, alloc/recursion facts).
+        /// Drives the failable-invariant CI checks ("fail if buffer_build
+        /// no longer fires on the canonical shape", "fail if hot fn
+        /// loses no-alloc status"). Output is human-readable; pair with
+        /// `--emit-ir-after=PASS` to inspect the actual IR. Pair with
+        /// `--json` for a machine-readable shape consumable by CI scripts.
+        #[arg(long, default_value_t = false)]
+        explain_passes: bool,
+        /// JSON output for `--explain-passes`. One object per pass
+        /// (`stage`, `summary`, `details`), top-level wrapper has
+        /// `schema_version: 1` so consumers can pin against the shape.
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
     /// Emit a standalone aver_runtime / aver_to_wasi artifact to disk.
     /// Internal release tooling — used by tools/release/* to publish
@@ -514,10 +530,19 @@ pub(super) enum Commands {
         /// `PATH`. Prints a diff (per-metric delta vs. tolerance) and,
         /// when combined with `--fail-on-regression`, exits 1 if any
         /// gated metric is over its tolerance budget.
-        #[arg(long, value_name = "PATH")]
+        #[arg(long, value_name = "PATH", conflicts_with = "baseline_dir")]
         compare: Option<String>,
-        /// Exit non-zero when `--compare` finds a regression. Use this
-        /// in CI to gate merges on bench numbers staying within tolerance.
+        /// Auto-pick a baseline file from `DIR` based on the running
+        /// machine: `<host.os>-<host.arch>-<backend.name>.json` (e.g.
+        /// `macos-aarch64-vm.json`). Falls back silently to no-compare
+        /// when no matching file exists — lets a single CI workflow
+        /// gate against a per-host pinned baseline without per-runner
+        /// branching. Mutually exclusive with `--compare`.
+        #[arg(long, value_name = "DIR", conflicts_with = "compare")]
+        baseline_dir: Option<String>,
+        /// Exit non-zero when `--compare` / `--baseline-dir` finds a
+        /// regression. Use this in CI to gate merges on bench numbers
+        /// staying within tolerance.
         #[arg(long)]
         fail_on_regression: bool,
     },
