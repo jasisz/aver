@@ -110,3 +110,24 @@ for (const c of cases) {
     `  body length: ${r.body.length}`
   );
 }
+
+// Bench: 30 iters of /fractal seahorse (full handler shape — request
+// fields + headers map build + render + headers walk + response_text)
+// so the number is comparable to `tools/edge/test-app.mjs`.
+const BENCH_N = 30;
+const samples = [];
+const benchHeaders = { 'cf-ipcountry': 'PL' };
+for (let i = 0; i < BENCH_N; i++) {
+  const a = process.hrtime.bigint();
+  run('GET', '/fractal', 'cx=-0.7463&cy=0.1102&w=0.012', '', benchHeaders);
+  const b = process.hrtime.bigint();
+  samples.push(Number(b - a) / 1e6);
+}
+samples.sort((a, b) => a - b);
+const fmt = (x) => x.toFixed(3);
+console.log(
+  `\nbench /fractal (${BENCH_N} iters, V8 ${process.version}): ` +
+  `min=${fmt(samples[0])}ms p50=${fmt(samples[Math.floor(BENCH_N / 2)])}ms ` +
+  `p95=${fmt(samples[Math.floor(BENCH_N * 0.95)])}ms ` +
+  `mean=${fmt(samples.reduce((a, b) => a + b, 0) / BENCH_N)}ms`
+);

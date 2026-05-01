@@ -151,6 +151,17 @@ The compile path itself is correct and competitive: `Expr::InterpolatedStr` lowe
 
 **For realistic numbers under wasm-gc, use a browser-class engine.** A V8 bench harness lives at `tools/wasm-gc-bench-v8.mjs`. Requires Node 22+ for stable wasm-gc support — Node 20's V8 rejects packed `i8` array types.
 
+### Edge handler bench: `tools/edge/app.av` end-to-end on V8
+
+The same `app.av` (~120 lines, full router with `/`, `/api`, `/fractal`, `/llms.txt`, 404 fallback) compiles for both backends and produces identical (status, content-type, body) per route. Numbers below are for `GET /fractal?cx=-0.7463&cy=0.1102&w=0.012` (the seahorse zoom — 200×120 grid, 600 iter cap, ~kilo-cons-cells per render) under Node 25.2.1, 30-iter harness, full fetch handler path (request fields decoded, routing, render, response headers materialised):
+
+| Stack                                | mean    | p50     | p95     | min     | wasm size | body size |
+|--------------------------------------|--------:|--------:|--------:|--------:|----------:|----------:|
+| wasm-local + `--bridge fetch`        | 33.2 ms | 32.9 ms | 34.4 ms | 32.3 ms | 34.0 KB   | 240 KB    |
+| wasm-gc + `--handler X` synth wrapper| **5.23 ms** | **5.03 ms** | 6.68 ms | 4.78 ms | **22.0 KB** | **195 KB** |
+
+wasm-gc wins by 6.4× on render time, ships a 35 % smaller wasm binary, and even produces a 19 % smaller response body (the legacy path adds OBJ_STRING headers / wrapping that the wasm-gc lowering never materialises). Routing, response shape, and header semantics live entirely in Aver in both cases — `tools/edge-gc/worker.js` is ~120 lines that translate JS strings ↔ `(array i8)` and pump the eight `aver/*` host imports.
+
 ```bash
 cargo run --features wasm -- compile bench/scenarios/string_interp.av --target wasm-gc -o /tmp/out
 node tools/wasm-gc-bench-v8.mjs /tmp/out/string_interp.wasm
