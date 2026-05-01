@@ -160,6 +160,18 @@ The same `app.av` (~120 lines, full router with `/`, `/api`, `/fractal`, `/llms.
 | wasm-local + `--bridge fetch`        | 33.2 ms    | 32.2 ms (−3 %)        | 34.0 → 31.0 KB      | 240 KB    |
 | wasm-gc + `--handler X` synth wrapper| **32.5 ms**| 31.8 ms (−2 %)        | **22.0 → 19.8 KB**  | 240 KB    |
 
+### Tail-call A/B
+
+`AVER_WASM_GC_NO_TAIL_CALL=1` swaps `return_call` for plain `call` so the proposal's contribution is measurable in isolation:
+
+| Scenario          | TCO ON    | TCO OFF             | gap |
+|-------------------|----------:|--------------------:|-----|
+| fib(15)           | 8 µs      | 6 µs                | neutral (15-deep stack, no overflow risk either way) |
+| countdown(100k)   | 28 µs     | RangeError: max stack | required for the 100K-deep chain |
+| fractal seahorse  | 32.1 ms   | 58.6 ms             | **1.83× wider** |
+
+The fractal measurement comes from the mutual `mandelIter` ↔ `mandelStep` recursion (up to 600 iterations per pixel × 24 000 pixels). Without `return_call` every iteration adds a frame; the engine handles it but pays the per-frame cost. The legacy `--target wasm` backend manually compiles its own trampoline (loop + `call_indirect`) on top of MVP wasm and gets a similar effect — that's why the seahorse render lines up at ~33 ms across both backends. Native `return_call` matches the trampoline shape, doesn't beat it.
+
 Render time effectively a tie now. The earlier 6× gap was a self-inflicted illusion: a `String.split` bug in the wasm-gc backend — `Br(2)` after a successful match exited the whole search loop instead of looping again — meant every `?cx=…&cy=…&w=…` query collapsed to a 2-element list. `Fractal.viewFromQuery` fell back to `fullView` (cxRange = 2.5, iterFor → 80) instead of seahorse (cxRange = 0.012, iterFor → 600). The renderer was doing 7.5× less work, not running 6× faster. Body size matched the legacy 240 KB output once split was fixed.
 
 What the comparison still shows: wasm-gc binary is ~35 % smaller (22 KB vs 34 KB; the legacy path bundles its own runtime, the wasm-gc path delegates to engine GC), and `wasm-opt -O3` claws back ~10 % on either side without changing the runtime story — Cranelift / V8 are already optimising the hot path. The structural advantages of the wasm-gc backend (type-direct lowering, native tail-call, no NaN-box) don't materialise in this workload; the seahorse render is dominated by f64 arithmetic and the recursive Mandelbrot iterator that both backends compile to roughly the same shape. Binary size and runtime simplicity are the genuine wins; raw speed parity is the honest outcome.

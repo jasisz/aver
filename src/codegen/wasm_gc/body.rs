@@ -4470,14 +4470,21 @@ fn emit_tail_call(
     for arg in args {
         emit_expr(func, &arg.node, slots, ctx)?;
     }
-    if target == ctx.self_fn_name {
-        func.instruction(&Instruction::ReturnCall(ctx.self_wasm_idx));
+    // `AVER_WASM_GC_NO_TAIL_CALL=1` swaps `return_call` for a plain
+    // `call` + fall-through return — used to A/B whether the
+    // tail-call proposal is doing meaningful work on a given bench.
+    // Deep recursion will trash the stack with this on; only flip it
+    // for shallow scenarios.
+    let no_tail_call = std::env::var_os("AVER_WASM_GC_NO_TAIL_CALL").is_some();
+    let target_idx = if target == ctx.self_fn_name {
+        ctx.self_wasm_idx
     } else {
-        // Direct (non-self) tail call to a known fn — wasm-gc still
-        // supports `return_call` here. Mutual-TCO via a function
-        // table is a phase 4b refinement once we have an SCC bench
-        // that needs it.
-        func.instruction(&Instruction::ReturnCall(entry.wasm_idx));
+        entry.wasm_idx
+    };
+    if no_tail_call {
+        func.instruction(&Instruction::Call(target_idx));
+    } else {
+        func.instruction(&Instruction::ReturnCall(target_idx));
     }
     Ok(())
 }
