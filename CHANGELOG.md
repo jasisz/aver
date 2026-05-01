@@ -9,27 +9,25 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 > _The compiler grew a real pipeline. Every IR transform is a named ordered stage, every consumer reads derived facts from one place, every backend's relationship to the IR is a documented contract._
 
 ### Added
-- **Ordered 7-stage pipeline** (`src/ir/pipeline.rs`): `tco → typecheck → interp_lower → buffer_build → resolve → last_use → analyze`. Per-stage public functions (`pipeline::tco`, `pipeline::resolve`, …) plus per-stage `run_*` flags on `PipelineConfig`. Replaces five duplicated inline sequences. No bundled `apply_traversal_lowering` knob — `run_interp_lower` and `run_buffer_build` are independent gates.
-- **`Analyze` stage** centralises five analyses (`compute_alloc_info`, `tailcall_scc_components`, `find_recursive_fns`, `recursive_callsite_counts`, `classify_thin_fn_def`) into one `PipelineResult.analysis`. Codegen / dump / future inliner read from there instead of recomputing.
-- **`LastUse` stage** split out of the resolver. `--emit-ir-after=resolve` shows slots without ownership flags; `--emit-ir-after=last_use` shows the `<name:last>` annotations VM/Rust/WASM use to MOVE instead of COPY.
-- **`aver compile --emit-ir-after=PASS`** for `parse` plus the seven pipeline stages. Output uses Aver-like surface syntax with pass markers (`<tail-call:fn>`, `<name:last>`, `__buf_*`); `diff -u` between stages shows exactly what each pass rewrote. Post-analyze, FnDef headers carry fact tags like `[no_alloc, locals=2, recursive×2, body=block:3 (direct)]`.
-- **`aver bench` scenario harness** (`docs/bench.md`). Three targets: `vm` (default, in-process), `wasm-local` (wasmtime in-process, requires `--features wasm`), `rust` (native binary via `aver compile --target rust` + `cargo build`). TOML manifest pinning entry / iterations / warmup / args / `[expected]` / `[tolerance]`. Single-scenario or directory mode (NDJSON with `--json`). Reports include `backend` (aver version, build, wasmtime version) and `host` (os/arch/cpus) blocks. Thirteen scenarios in `bench/scenarios/` shared with `cargo bench` via `include_str!`. Release script (`tools/release.py`) runs the full suite as a smoke gate.
-- **`aver bench --save-baseline` / `--compare` / `--fail-on-regression`** for local p50/p95 regression checks. 0.15.1 ships as a local-use feature; CI gate (checked-in baselines + cross-machine calibration) is 0.15.2.
+- **Ordered 7-stage pipeline** (`tco → typecheck → interp_lower → buffer_build → resolve → last_use → analyze`) as the single source of truth, with per-stage public functions and per-stage `PipelineConfig` flags.
+- **`Analyze` stage** centralises five ad-hoc IR analyses (alloc info, mutual-TCO membership, recursive fns, callsite counts, body classification) into one `PipelineResult.analysis` codegen reads from.
+- **`LastUse` stage** split out of the resolver — `<name:last>` markers in IR dump show which slots VM/Rust/WASM MOVE instead of COPY.
+- **`aver compile --emit-ir-after=PASS`** prints the IR snapshot after any pipeline stage; `diff -u` between two stages shows exactly what each pass rewrote.
+- **`aver bench` scenario harness** with three targets (`vm` / `wasm-local` / `rust`), TOML manifests, NDJSON for batch runs, `--save-baseline` / `--compare` / `--fail-on-regression`, and `backend` + `host` identity blocks in every report. Thirteen scenarios shared with `cargo bench` via `include_str!`. See [docs/bench.md](docs/bench.md).
 
 ### Fixed
-- **Proof export traversal leak.** `aver proof --backend lean` skipped traversal on the entry but `load_module_recursive` ran it anyway on dep modules, leaking synthesized `<fn>__buffered` variants into Lean/Dafny codegen. Per-stage flags now thread through to dep loads.
-- **Playground bypassed deforestation.** `compile_to_wasm` / `compile_project_to_wasm` / `compile_rust_files{,_project}` predated 0.15 and never ran traversal — playground artifacts were measurably slower than CLI artifacts for the same source. Replay/record paths similarly unified (recordings store effects, not IR shape, so deforestation is safe). All paths now use the canonical pipeline.
+- **Proof export traversal leak.** Dep modules ignored the proof-export flag and ran deforestation anyway, leaking synthesized `<fn>__buffered` variants into Lean/Dafny output.
+- **Playground bypassed deforestation.** Browser-compiled WASM/Rust artifacts were measurably slower than equivalent CLI compiles. All playground compile / replay / record paths now use the canonical pipeline.
 
 ### Changed
-- **`PipelineConfig` is per-stage booleans.** `apply_traversal_lowering` exists only at the CLI boundary (`build_codegen_context`); below that it's split flags 1-to-1 with pipeline gates. `stop_after` removed.
-- **`pipeline::*` is the only entry point** — direct calls to `tco::transform_program` / `resolver::resolve_program` / `run_type_check_full` etc. are gone from production and tests.
-- **Codegen consumers read from analysis.** `compute_memo_fns`, `codegen::build_context.mutual_tco_members`/`recursive_fns`, Rust trampoline emission, Lean's `recursive_pure_fn_names`, VM `chunk.no_alloc`, WASM `no_alloc_by_canonical` — all read pre-computed facts. `CodegenContext` carries `fn_analyses` unioned across entry + dep modules (sound under Aver's module DAG; cross-module SCCs are mathematically impossible — pinned in `docs` and memory). Lean test stubs (32 `empty_ctx()` sites) keep working because `transpile*` takes `&mut ctx` and runs `refresh_facts()` upfront.
-- **VM compile API consolidated.** All three entry points (`compile_program`, `compile_program_with_modules`, `compile_program_with_loaded_modules`) take `analysis: Option<&AnalysisResult>` as a peer parameter. No `_and_analysis` variant.
-- **`Expr::Resolved` printer** shows `<name>` or `<name:last>` instead of opaque `<resolved>`.
+- **`PipelineConfig` is per-stage booleans.** No bundled `apply_traversal_lowering` knob; `stop_after` removed. Caller-level proof-vs-runtime distinction translates to per-stage flags at the CLI boundary.
+- **`pipeline::*` is the single entry point** for IR transforms and analyses — direct calls to `tco::transform_program` / `resolver::resolve_program` / `run_type_check_full` etc. are gone from production and tests.
+- **Codegen consumers read derived facts from `PipelineResult.analysis` / `CodegenContext`** instead of recomputing. Aver's module DAG makes per-module unions sound (cross-module SCCs are mathematically impossible — pinned in `src/ir/analyze.rs` doc and memory).
+- **VM compile API consolidated.** All three entry points take `analysis: Option<&AnalysisResult>` as a peer parameter; no `_and_analysis` variant.
 
 ### Pipeline contract (new)
-- **WASM and Rust codegen no longer handle `Expr::InterpolatedStr`.** `interp_lower` is a mandatory predecessor stage; the codegen branches that handled it pre-pipeline are `unreachable!()`. ~100 lines of dead code + helper enums (`emit_interpolated_str` / `DisplayKind` / `expr_display_type`) deleted.
-- **VM keeps its `compile_interpolated_str`** — the REPL is the only legitimate consumer of pre-lower IR (full pipeline overhead per line not worth amortising for snippet eval).
+- **WASM and Rust codegen no longer handle `Expr::InterpolatedStr`** — `interp_lower` is now a mandatory predecessor stage. ~100 lines of dead code + helper enums deleted, replaced with `unreachable!()` + contract comments.
+- **VM keeps its `compile_interpolated_str`** — the REPL is the only legitimate consumer of pre-lower IR.
 
 ## 0.15.0 "Traversal" (2026-04-30)
 
