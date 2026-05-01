@@ -432,6 +432,36 @@ fn wasm_type_of(
             }
         }
         Expr::FnCall(callee, _) => {
+            // Dotted callee: builtin or variant constructor.
+            if let Expr::Attr(parent, member) = &callee.node {
+                let parent_name = match &parent.node {
+                    Expr::Ident(n) => Some(n.as_str()),
+                    Expr::Resolved { name, .. } => Some(name.as_str()),
+                    _ => None,
+                };
+                if let Some(p) = parent_name {
+                    let dotted = format!("{p}.{member}");
+                    // Inline numeric conversions FIRST (specific
+                    // before fallback).
+                    if dotted == "Float.fromInt" {
+                        return Ok(Some(ValType::F64));
+                    }
+                    if dotted == "Int.fromFloat" {
+                        return Ok(Some(ValType::I64));
+                    }
+                    // Registered builtins from the BuiltinRegistry —
+                    // checked via the by-name table on `ctx.fn_map`.
+                    if ctx.fn_map.builtins.contains_key(&dotted) {
+                        let aver_ty = builtin_aver_result_type(&dotted);
+                        return aver_to_wasm(aver_ty, Some(ctx.registry));
+                    }
+                    // Variant constructor — returns the parent type's
+                    // ref-type carrier.
+                    if let Some(info) = ctx.registry.variant(member) {
+                        return aver_to_wasm(&info.parent, Some(ctx.registry));
+                    }
+                }
+            }
             let name = match &callee.node {
                 Expr::Ident(n) => n.as_str(),
                 Expr::Resolved { name, .. } => name.as_str(),

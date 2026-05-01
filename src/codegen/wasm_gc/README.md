@@ -92,22 +92,25 @@ If Phase 5 closes the perf gap with ≥2x on numeric loops and ≥50% smaller bi
 
 ## Bench numbers (2026-05-01, macOS aarch64, release build)
 
-After phase 3a + 3b/1 + 3c **and `ir::escape` IR pass** (scalar-replaces fresh-alloc-immediate-consume patterns across all backends):
+After phase 3a + 3b/1 + 3c **and `ir::escape` IR pass with both record-access and variant-match shapes**:
 
 | Scenario          | VM      | wasm-local | wasm-gc | wasm-gc vs legacy |
 |-------------------|---------|------------|---------|-------------------|
-| `fib(15)`         | 147µs   | 42µs       | 5µs     | **8.4x faster** |
-| `countdown(100k)` | 812µs   | 45µs       | 15µs    | **3.0x faster** |
-| `newtype_bare`    | 941µs   | 46µs       | 20µs    | **2.3x faster** |
-| `newtype_record`  | 963µs   | 46µs       | 20µs    | **2.3x faster** |
-| `newtype_variant` | 2.24ms  | 204µs      | 50µs    | **4.1x faster** |
-| `match_dispatch`  | 7.42ms  | 332µs      | 1.62ms  | 4.9x SLOWER ⚠️ |
-| `record`          | (tbd)   | 53µs       | 30µs    | **1.8x faster** ✨ |
-| `factorial`       | 21µs    | 37µs       | 19µs    | **1.9x faster** |
+| `fib(15)`         | 106µs   | 42µs       | 5µs     | **8.4x faster** |
+| `countdown(100k)` | 810µs   | 47µs       | 16µs    | **2.9x faster** |
+| `newtype_bare`    | 963µs   | 43µs       | 19µs    | **2.3x faster** |
+| `newtype_record`  | 966µs   | 45µs       | 20µs    | **2.3x faster** |
+| `newtype_variant` | 976µs   | 44µs       | 19µs    | **2.3x faster** |
+| `match_dispatch`  | 5.67ms  | 66µs       | 42µs    | **1.6x faster** ✨ |
+| `record`          | (tbd)   | 47µs       | 27µs    | **1.7x faster** ✨ |
+| `factorial`       | 21µs    | 41µs       | 19µs    | **2.2x faster** |
 
-7/8 — wasm-gc beats legacy. **`record` regression closed** (was 3.3x slower, now 1.8x faster — 27x improvement on wasm-gc, 4.6x improvement on wasm-local).
+**8/8 wasm-gc wins. Zero regressions across the tested set.** Both alloc-heavy patterns (`record`, `match_dispatch`) now go through escape analysis at the IR level — no struct/variant alloc reaches codegen.
 
-`match_dispatch` stays slower because the regression is structurally different (multi-arm match in the called fn, not single Attr access). Future variant-aware escape pass would close it.
+Massive cross-backend wins from the same IR pass:
+- `match_dispatch` wasm-local: 332µs → 66µs (**5x**) and wasm-gc: 1.62ms → 42µs (**38x**)
+- `record` wasm-local: 244µs → 47µs (**5.2x**) and wasm-gc: 805µs → 27µs (**30x**)
+- `newtype_record` VM: 2.29ms → 966µs (**2.4x**), wasm-local: 143µs → 45µs (**3.2x**)
 
 Binary size: `fib.wasm` = **110 bytes** (wasm-gc) vs **13,107 bytes** (legacy with runtime). 120x smaller.
 

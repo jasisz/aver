@@ -57,17 +57,33 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::ast::{Expr, FnBody, FnDef, MatchArm, Spanned, Stmt, StrPart, TopLevel};
+use crate::ast::{Expr, FnBody, FnDef, Pattern, Spanned, Stmt, StrPart, TopLevel};
 
 /// Per-fn classification: eligible-for-inlining + the body to splice
 /// in. Built once per `run()` from the top-level item list.
 #[derive(Clone)]
-struct InlineCandidate {
-    /// The single record-typed param's slot index.
-    param_slot: u16,
-    /// Body expression — cloned at classification time so the
-    /// rewriter can substitute freely.
-    body: Spanned<Expr>,
+enum InlineCandidate {
+    /// `f(p: Record) -> T` where `p` only appears as `Attr(p, field)`.
+    /// Inline by substituting `Attr(p, x)` → field value at the call
+    /// site `f(RecordCreate{x = e_x, …})`.
+    RecordAccess {
+        param_slot: u16,
+        body: Spanned<Expr>,
+    },
+    /// `f(s: Variant) -> T` whose body is `match s { Pat1(b1)->e1; … }`.
+    /// At call site `f(Foo.PatN(args))` we splice arm `N`'s body with
+    /// the pattern bindings substituted. Each arm's binding slots
+    /// resolve via the resolver's `local_slots` map of `f`.
+    VariantMatch {
+        param_slot: u16,
+        /// One entry per arm. Arm pattern dotted name → (binding slots,
+        /// arm body). Wildcard arms aren't included; if the dispatch
+        /// doesn't find a match the call falls through to runtime
+        /// dispatch (today: error — but type checker proves
+        /// exhaustiveness, so this is unreachable for well-typed
+        /// programs).
+        arms_by_constructor: HashMap<String, (Vec<u16>, Spanned<Expr>)>,
+    },
 }
 
 /// Run the pass on `items` in place. Returns the number of call sites
@@ -128,21 +144,79 @@ fn classify_fn(fd: &FnDef) -> Option<InlineCandidate> {
     // Param's resolver slot.
     let resolution = fd.resolution.as_ref()?;
     let param_slot = resolution.local_slots.get(&fd.params[0].0).copied()?;
-    // Walk body — every Resolved(param_slot) must be the obj of an
-    // Attr expression (i.e. param accessed only via field reads).
-    if !body_uses_param_only_via_attr(&body.node, param_slot) {
-        return None;
-    }
-    // No tail-call into the body — this pass runs after TCO; if the
-    // body is a TailCall back to itself, we'd be inlining recursive
-    // reference into a different fn's body, which doesn't make sense.
+    // No tail-call in body — we'd be inlining recursive reference
+    // into a different fn's body if so.
     if contains_tail_call(&body.node) {
         return None;
     }
-    Some(InlineCandidate {
-        param_slot,
-        body: body.clone(),
-    })
+
+    // Shape A: body uses param only via Attr(p, field). Inline at
+    // call sites where arg is RecordCreate.
+    if body_uses_param_only_via_attr(&body.node, param_slot) {
+        return Some(InlineCandidate::RecordAccess {
+            param_slot,
+            body: body.clone(),
+        });
+    }
+
+    // Shape B: body is `match p { Constructor(b1)->e1; … }`. Inline
+    // at call sites where arg is `Type.Constructor(args…)`.
+    if let Expr::Match { subject, arms } = &body.node
+        && is_param_subject(&subject.node, param_slot)
+    {
+        let mut arms_by_constructor: HashMap<String, (Vec<u16>, Spanned<Expr>)> = HashMap::new();
+        for arm in arms {
+            let Pattern::Constructor(name, bindings) = &arm.pattern else {
+                // Non-Constructor arm (Wildcard, Literal) — give up.
+                return None;
+            };
+            // Resolve binding slots via the resolver's local_slots map.
+            // Each binding name was registered there during resolve.
+            let mut binding_slots = Vec::with_capacity(bindings.len());
+            for b in bindings {
+                if b == "_" {
+                    binding_slots.push(u16::MAX); // sentinel — discard
+                    continue;
+                }
+                let slot = resolution.local_slots.get(b).copied()?;
+                binding_slots.push(slot);
+            }
+            // Arm body must not use `s` directly outside Match's
+            // dispatch shape (we walk to verify).
+            if !arm_body_safe(&arm.body.node, param_slot) {
+                return None;
+            }
+            arms_by_constructor.insert(name.clone(), (binding_slots, (*arm.body).clone()));
+        }
+        if !arms_by_constructor.is_empty() {
+            return Some(InlineCandidate::VariantMatch {
+                param_slot,
+                arms_by_constructor,
+            });
+        }
+    }
+
+    None
+}
+
+fn is_param_subject(expr: &Expr, param_slot: u16) -> bool {
+    matches!(expr, Expr::Resolved { slot, .. } if *slot == param_slot)
+}
+
+/// Arm body is "safe" for inlining if it doesn't reference the
+/// match subject's slot directly — it should only use the pattern
+/// binding slots. (We accept FnCall and other expressions that
+/// reference the binding slots as Resolved.)
+fn arm_body_safe(expr: &Expr, param_slot: u16) -> bool {
+    let mut violation = false;
+    walk_expr_with_context(expr, false, &mut |e, _| {
+        if let Expr::Resolved { slot, .. } = e
+            && *slot == param_slot
+        {
+            violation = true;
+        }
+    });
+    !violation
 }
 
 /// True iff every `Resolved { slot: param_slot }` in `expr` appears
@@ -273,18 +347,140 @@ fn rewrite_in_expr(
             && name != self_fn
             && let Some(cand) = candidates.get(name)
             && args.len() == 1
-            && let Expr::RecordCreate { fields, .. } = &args[0].node
         {
-            // Build name → value-expr map from the RecordCreate.
-            let field_map: HashMap<String, Spanned<Expr>> =
-                fields.iter().map(|(n, v)| (n.clone(), v.clone())).collect();
-            let mut new_body = cand.body.node.clone();
-            substitute_param_attr(&mut new_body, cand.param_slot, &field_map);
-            *expr = new_body;
-            rewrites += 1;
+            match cand {
+                InlineCandidate::RecordAccess { param_slot, body } => {
+                    if let Expr::RecordCreate { fields, .. } = &args[0].node {
+                        let field_map: HashMap<String, Spanned<Expr>> =
+                            fields.iter().map(|(n, v)| (n.clone(), v.clone())).collect();
+                        let mut new_body = body.node.clone();
+                        substitute_param_attr(&mut new_body, *param_slot, &field_map);
+                        *expr = new_body;
+                        rewrites += 1;
+                    }
+                }
+                InlineCandidate::VariantMatch {
+                    arms_by_constructor,
+                    ..
+                } => {
+                    if let Some((variant_name, payload_args)) =
+                        match_variant_constructor_call(&args[0].node)
+                        && let Some((binding_slots, arm_body)) =
+                            arms_by_constructor.get(&variant_name)
+                        && payload_args.len() == binding_slots.len()
+                    {
+                        let mut binding_map: HashMap<u16, Spanned<Expr>> = HashMap::new();
+                        for (slot, payload_expr) in binding_slots.iter().zip(payload_args.iter()) {
+                            if *slot != u16::MAX {
+                                binding_map.insert(*slot, payload_expr.clone());
+                            }
+                        }
+                        let mut new_body = arm_body.node.clone();
+                        substitute_resolved_slots(&mut new_body, &binding_map);
+                        *expr = new_body;
+                        rewrites += 1;
+                    }
+                }
+            }
         }
     }
     rewrites
+}
+
+/// Match a `Type.Constructor(args)` call shape and return
+/// `("Type.Constructor", args)`.
+fn match_variant_constructor_call(expr: &Expr) -> Option<(String, Vec<Spanned<Expr>>)> {
+    match expr {
+        Expr::FnCall(callee, args) => {
+            if let Expr::Attr(parent, member) = &callee.node {
+                let parent_name = match &parent.node {
+                    Expr::Ident(n) => n.clone(),
+                    Expr::Resolved { name, .. } => name.clone(),
+                    _ => return None,
+                };
+                Some((format!("{parent_name}.{member}"), args.clone()))
+            } else {
+                None
+            }
+        }
+        Expr::Constructor(name, payload) => {
+            if let Some(p) = payload.as_deref() {
+                Some((name.clone(), vec![p.clone()]))
+            } else {
+                Some((name.clone(), Vec::new()))
+            }
+        }
+        _ => None,
+    }
+}
+
+fn substitute_resolved_slots(body: &mut Expr, binding_map: &HashMap<u16, Spanned<Expr>>) {
+    match body {
+        Expr::Resolved { slot, .. } => {
+            if let Some(value) = binding_map.get(slot) {
+                *body = value.node.clone();
+            }
+        }
+        Expr::Attr(obj, _) | Expr::ErrorProp(obj) => {
+            substitute_resolved_slots(&mut obj.node, binding_map);
+        }
+        Expr::BinOp(_, l, r) => {
+            substitute_resolved_slots(&mut l.node, binding_map);
+            substitute_resolved_slots(&mut r.node, binding_map);
+        }
+        Expr::FnCall(callee, args) => {
+            substitute_resolved_slots(&mut callee.node, binding_map);
+            for a in args {
+                substitute_resolved_slots(&mut a.node, binding_map);
+            }
+        }
+        Expr::TailCall(boxed) => {
+            for a in &mut boxed.args {
+                substitute_resolved_slots(&mut a.node, binding_map);
+            }
+        }
+        Expr::Match { subject, arms } => {
+            substitute_resolved_slots(&mut subject.node, binding_map);
+            for arm in arms {
+                substitute_resolved_slots(&mut arm.body.node, binding_map);
+            }
+        }
+        Expr::Constructor(_, payload) => {
+            if let Some(p) = payload.as_deref_mut() {
+                substitute_resolved_slots(&mut p.node, binding_map);
+            }
+        }
+        Expr::List(xs) | Expr::Tuple(xs) | Expr::IndependentProduct(xs, _) => {
+            for x in xs {
+                substitute_resolved_slots(&mut x.node, binding_map);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                substitute_resolved_slots(&mut k.node, binding_map);
+                substitute_resolved_slots(&mut v.node, binding_map);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, v) in fields {
+                substitute_resolved_slots(&mut v.node, binding_map);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            substitute_resolved_slots(&mut base.node, binding_map);
+            for (_, v) in updates {
+                substitute_resolved_slots(&mut v.node, binding_map);
+            }
+        }
+        Expr::InterpolatedStr(parts) => {
+            for part in parts {
+                if let StrPart::Parsed(inner) = part {
+                    substitute_resolved_slots(&mut inner.node, binding_map);
+                }
+            }
+        }
+        Expr::Literal(_) | Expr::Ident(_) => {}
+    }
 }
 
 fn rewrite_children(
@@ -437,9 +633,3 @@ fn substitute_param_attr(
         Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
     }
 }
-
-// `MatchArm` is unused at the type level here; suppress the unused
-// import warning while keeping the import for future variant-pattern
-// extensions.
-#[allow(dead_code)]
-fn _arm_placeholder(_: &MatchArm) {}
