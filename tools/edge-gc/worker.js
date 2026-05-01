@@ -1,41 +1,39 @@
 // tools/edge-gc — Cloudflare Workers bootstrap for the wasm-gc
-// backend. Mirrors `tools/edge/dist/worker.js` but talks to the
-// wasm-gc ABI: strings live as `(ref null (array i8))` (engine-
-// managed) and travel between JS and guest through a tiny
-// linear-memory transport buffer + two `__rt_string_*` exports.
+// backend's fetch bridge. The companion `aver compile --target
+// wasm-gc --handler handler` synthesises an `aver_http_handle()`
+// wrapper in the .wasm that:
 //
-// Why an LM transport instead of per-byte exports: per-byte calls
-// would trigger one JS↔wasm boundary crossing per UTF-8 byte, ~100
-// ns each on V8. A 50 KB fractal page would spend ~10 ms purely on
-// I/O, eclipsing the actual render. Bulk-copy via TextEncoder/
-// TextDecoder + a single `__rt_string_from_lm` / `__rt_string_to_lm`
-// call per direction stays inside one boundary crossing; the loop
-// runs at native wasm speed.
+//   1. reads request fields via `Request.*` host imports,
+//   2. allocates an `HttpRequest` struct,
+//   3. calls the user's `handler(req: HttpRequest) -> HttpResponse`,
+//   4. walks the response's `headers: Map<String, List<String>>`
+//      and dispatches one `Response.setHeader(name, value)` per
+//      (key, value) pair,
+//   5. finalises with `Response.text(status, body)`.
 //
-// Why no `aver/console_print` etc.: this handler's only effect
-// surface is the exported `handle(query) -> String` function.
-// Future expansions (Time, Console, Http) need their imports back —
-// see `tools/edge/dist/worker.js` for the legacy-backend shape.
+// Routing, response shape, and header semantics are all decided in
+// Aver — this file's only job is to translate JS strings ↔ wasm-gc
+// `(array i8)` carriers via the LM transport (`__rt_string_*`) and
+// to construct the request-headers map via the per-instance Map
+// helpers (`__rt_map_string_list_string_*` + `__rt_list_string_cons`).
+//
+// Why no JSPI / Suspending stub for Http.*: the user code in
+// `app.av` doesn't call `Http.*`. When that changes, follow the
+// `tools/edge/dist/worker.js` JSPI shape; everything else stays.
 
-import userWasm from "./handler.wasm";
+import userWasm from "./app.wasm";
 
 let exports = null;
+let instancePromise = null;
+let pendingReq = null;
+let pendingBody = "";
+let pendingResponse = null;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8");
 
-async function init() {
-  // userWasm is a `WebAssembly.Module` (Wrangler's `CompiledWasm`
-  // import binding). Direct `instantiate(module, imports)` returns
-  // the Instance; no `{ instance, module }` wrapper.
-  const instance = await WebAssembly.instantiate(userWasm, {});
-  exports = instance.exports;
-}
-
 function memU8() {
-  // `memory.grow` detaches the previous ArrayBuffer, so we re-view
-  // every call rather than caching. Build runs are short enough
-  // that the overhead is invisible vs a per-call detach check.
+  // ArrayBuffer detaches on memory.grow, so re-view per call.
   return new Uint8Array(exports.memory.buffer);
 }
 
@@ -45,35 +43,96 @@ function ensurePages(needed) {
 }
 
 function jsToAver(text) {
-  // Worst-case UTF-8 is 3 bytes per JS char (4 with surrogate pairs,
-  // but those span two JS chars so the bound holds). Grow LM
-  // upfront so `encodeInto` never trips the buffer end.
-  const upperBytes = text.length * 3;
+  const s = text ?? "";
+  // 3-byte worst-case UTF-8 per JS char (4 with surrogates, but those
+  // span two JS chars so the bound holds). Grow LM upfront so
+  // `encodeInto` never trips the buffer end.
+  const upperBytes = s.length * 3;
   ensurePages(((upperBytes + 65535) >> 16) || 1);
-  const { written } = encoder.encodeInto(text, memU8());
+  const { written } = encoder.encodeInto(s, memU8());
   return exports.__rt_string_from_lm(written);
 }
 
 function averToJs(s) {
   const len = exports.__rt_string_to_lm(s);
-  // Re-view in case the guest's loop triggered memory.grow during
-  // the array-to-LM copy (1 page initial, max 16, so worst case
-  // 1 MiB). decode'd subarray is a fresh JS string.
   return decoder.decode(memU8().subarray(0, len));
+}
+
+function buildHeadersMap(jsHeaders) {
+  // Collapse the JS Headers iterator into [name, [values...]] pairs.
+  // Same-name fields per RFC 9110 §5.3 collapse into one comma-joined
+  // entry by the standard iterator; for Set-Cookie (RFC 6265, must
+  // stay distinct) we use `getSetCookie()` when the host provides it.
+  const grouped = new Map();
+  for (const [name, value] of jsHeaders) {
+    const lower = name.toLowerCase();
+    if (lower === "set-cookie") continue; // handled below
+    if (!grouped.has(lower)) grouped.set(lower, [value]);
+    else grouped.get(lower).push(value);
+  }
+  if (typeof jsHeaders.getSetCookie === "function") {
+    const cookies = jsHeaders.getSetCookie();
+    if (cookies.length > 0) grouped.set("set-cookie", cookies);
+  }
+
+  let map = exports.__rt_map_string_list_string_empty();
+  for (const [name, values] of grouped) {
+    // Build the `List<String>` LIFO — cons stacks head onto tail —
+    // then walk the JS values in reverse so the resulting Aver list
+    // surfaces them in source order.
+    let list = null;
+    for (let i = values.length - 1; i >= 0; i--) {
+      list = exports.__rt_list_string_cons(jsToAver(values[i]), list);
+    }
+    map = exports.__rt_map_string_list_string_set(map, jsToAver(name), list);
+  }
+  return map;
+}
+
+async function init() {
+  const imports = {
+    aver: {
+      time_unix_ms: () => BigInt(Date.now()),
+      request_method: () => jsToAver(pendingReq.method),
+      request_url: () => jsToAver(new URL(pendingReq.url).pathname),
+      request_query: () => jsToAver(new URL(pendingReq.url).search.slice(1)),
+      request_body: () => jsToAver(pendingBody),
+      request_headers_load: () => buildHeadersMap(pendingReq.headers),
+      response_text: (status, bodyRef) => {
+        pendingResponse.status = Number(status);
+        pendingResponse.body = averToJs(bodyRef);
+      },
+      response_set_header: (nameRef, valueRef) => {
+        pendingResponse.headers.push([averToJs(nameRef), averToJs(valueRef)]);
+      },
+    },
+  };
+  const instance = await WebAssembly.instantiate(userWasm, imports);
+  exports = instance.exports;
 }
 
 export default {
   async fetch(request) {
-    if (!exports) await init();
-    const url = new URL(request.url);
-    // The Aver handler takes the query string (after `?`), not a
-    // full URL — that's the surface `Fractal.viewFromQuery` parses.
-    const query = url.search.slice(1);
-    const queryRef = jsToAver(query);
-    const responseRef = exports.handle(queryRef);
-    const body = averToJs(responseRef);
-    return new Response(body, {
-      headers: { "content-type": "text/html;charset=utf-8" },
-    });
+    if (!instancePromise) instancePromise = init();
+    await instancePromise;
+
+    pendingBody = await request.text();
+    pendingReq = request;
+    pendingResponse = { status: 200, body: "", headers: [] };
+    try {
+      exports.aver_http_handle();
+    } finally {
+      pendingReq = null;
+      pendingBody = "";
+    }
+
+    const r = pendingResponse;
+    pendingResponse = null;
+    const headers = new Headers();
+    for (const [name, value] of r.headers) headers.append(name, value);
+    if (!headers.has("content-type")) {
+      headers.set("content-type", "text/plain;charset=utf-8");
+    }
+    return new Response(r.body, { status: r.status, headers });
   },
 };

@@ -27,6 +27,49 @@ pub(super) enum EffectName {
     /// `Time.unixMs() -> Int`. Imported as `aver.time_unix_ms` — host
     /// supplies the current unix timestamp in milliseconds.
     TimeUnixMs,
+    // ── Fetch bridge — used by `--handler X` on `--target wasm-gc`.
+    //   The synthesised `aver_http_handle` wrapper reads request
+    //   fields through these and dispatches the user's HttpResponse
+    //   via `Response.text` / `Response.setHeader`. Native wasm-gc
+    //   shapes — refs to `(array i8)` carriers, not `(ptr, len)`
+    //   pairs. Map<String, List<String>> for headers carries the
+    //   per-instance struct ref the registry's Map slot allocates.
+    /// `() -> String` — HTTP method (`"GET"`, `"POST"`, …).
+    RequestMethod,
+    /// `() -> String` — pathname only (no query string).
+    RequestUrl,
+    /// `() -> String` — query string after `?`, no leading `?`.
+    RequestQuery,
+    /// `() -> String` — request body (empty string when absent).
+    RequestBody,
+    /// `() -> Map<String, List<String>>` — host-supplied request
+    /// headers map. Empty map when the request has no headers.
+    RequestHeadersLoad,
+    /// `(status: Int, body: String) -> Unit` — finalize the
+    /// pending response. Header writes (`Response.setHeader`) must
+    /// happen BEFORE this call.
+    ResponseText,
+    /// `(name: String, value: String) -> Unit` — append a header
+    /// to the pending response. Multi-value headers are produced
+    /// by repeated calls with the same name.
+    ResponseSetHeader,
+    // ── Outgoing HTTP (Http.* surface) — the aver_http_handle
+    //   wrapper doesn't use these, but user code reachable from
+    //   the handler may; register them so the typechecker's
+    //   `! [Http.send]` declaration has a wasm import to resolve.
+    /// `(method: String, url: String, body: String, contentType: String)
+    /// -> (status: Int, body: String, headers: Map<String, List<String>>, err: String)`.
+    HttpSend,
+    /// `(name: String, value: String) -> Unit`.
+    HttpAddRequestHeader,
+    /// `() -> Unit`.
+    HttpClearRequestHeaders,
+    /// `(name: String) -> String` — Workers env binding lookup;
+    /// returns empty string when the binding is absent.
+    EnvGet,
+    /// `(name: String, value: String) -> Unit` — no-op on
+    /// Workers (env is read-only).
+    EnvSet,
 }
 
 impl EffectName {
@@ -36,6 +79,18 @@ impl EffectName {
             "Console.error" => Some(Self::ConsoleError),
             "Console.warn" => Some(Self::ConsoleWarn),
             "Time.unixMs" => Some(Self::TimeUnixMs),
+            "Request.method" => Some(Self::RequestMethod),
+            "Request.url" | "Request.path" => Some(Self::RequestUrl),
+            "Request.query" => Some(Self::RequestQuery),
+            "Request.body" => Some(Self::RequestBody),
+            "Request.headersLoad" | "Request.headers" => Some(Self::RequestHeadersLoad),
+            "Response.text" => Some(Self::ResponseText),
+            "Response.setHeader" => Some(Self::ResponseSetHeader),
+            "Http.send" => Some(Self::HttpSend),
+            "Http.addRequestHeader" => Some(Self::HttpAddRequestHeader),
+            "Http.clearRequestHeaders" => Some(Self::HttpClearRequestHeaders),
+            "Env.get" => Some(Self::EnvGet),
+            "Env.set" => Some(Self::EnvSet),
             _ => None,
         }
     }
@@ -46,6 +101,18 @@ impl EffectName {
             Self::ConsoleError => "Console.error",
             Self::ConsoleWarn => "Console.warn",
             Self::TimeUnixMs => "Time.unixMs",
+            Self::RequestMethod => "Request.method",
+            Self::RequestUrl => "Request.url",
+            Self::RequestQuery => "Request.query",
+            Self::RequestBody => "Request.body",
+            Self::RequestHeadersLoad => "Request.headersLoad",
+            Self::ResponseText => "Response.text",
+            Self::ResponseSetHeader => "Response.setHeader",
+            Self::HttpSend => "Http.send",
+            Self::HttpAddRequestHeader => "Http.addRequestHeader",
+            Self::HttpClearRequestHeaders => "Http.clearRequestHeaders",
+            Self::EnvGet => "Env.get",
+            Self::EnvSet => "Env.set",
         }
     }
 
@@ -57,27 +124,91 @@ impl EffectName {
             Self::ConsoleError => ("aver", "console_error"),
             Self::ConsoleWarn => ("aver", "console_warn"),
             Self::TimeUnixMs => ("aver", "time_unix_ms"),
+            Self::RequestMethod => ("aver", "request_method"),
+            Self::RequestUrl => ("aver", "request_url"),
+            Self::RequestQuery => ("aver", "request_query"),
+            Self::RequestBody => ("aver", "request_body"),
+            Self::RequestHeadersLoad => ("aver", "request_headers_load"),
+            Self::ResponseText => ("aver", "response_text"),
+            Self::ResponseSetHeader => ("aver", "response_set_header"),
+            Self::HttpSend => ("aver", "http_send"),
+            Self::HttpAddRequestHeader => ("aver", "http_add_request_header"),
+            Self::HttpClearRequestHeaders => ("aver", "http_clear_request_headers"),
+            Self::EnvGet => ("aver", "env_get"),
+            Self::EnvSet => ("aver", "env_set"),
         }
     }
 
-    /// Param types declared in the wasm import. We use `(ref null any)`
-    /// for String-typed args — see ConsolePrint comment above for the
-    /// subtyping rationale.
-    pub(super) fn params(self, _registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
+    /// Param types declared in the wasm import. Strings are passed as
+    /// `(ref null any)` — engine subtyping accepts our `(ref null
+    /// $string)` and the host doesn't have to know the concrete type
+    /// idx. The headers Map crossing uses the registered concrete
+    /// `Map<String, List<String>>` ref so the host bridge has a
+    /// type-safe handle.
+    pub(super) fn params(self, registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
         match self {
             Self::ConsolePrint | Self::ConsoleError | Self::ConsoleWarn => {
                 Ok(vec![any_ref_ty()])
             }
             Self::TimeUnixMs => Ok(vec![]),
+            Self::RequestMethod
+            | Self::RequestUrl
+            | Self::RequestQuery
+            | Self::RequestBody
+            | Self::RequestHeadersLoad
+            | Self::HttpClearRequestHeaders => Ok(vec![]),
+            Self::ResponseText => Ok(vec![ValType::I64, any_ref_ty()]),
+            Self::ResponseSetHeader => Ok(vec![any_ref_ty(), any_ref_ty()]),
+            Self::HttpSend => Ok(vec![
+                any_ref_ty(),
+                any_ref_ty(),
+                any_ref_ty(),
+                any_ref_ty(),
+            ]),
+            Self::HttpAddRequestHeader => Ok(vec![any_ref_ty(), any_ref_ty()]),
+            Self::EnvGet => Ok(vec![any_ref_ty()]),
+            Self::EnvSet => Ok(vec![any_ref_ty(), any_ref_ty()]),
         }
     }
 
-    pub(super) fn results(self, _registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
+    pub(super) fn results(self, registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
         match self {
             Self::ConsolePrint | Self::ConsoleError | Self::ConsoleWarn => Ok(vec![]),
             Self::TimeUnixMs => Ok(vec![ValType::I64]),
+            Self::RequestMethod
+            | Self::RequestUrl
+            | Self::RequestQuery
+            | Self::RequestBody
+            | Self::EnvGet => Ok(vec![string_ref_ty(registry)?]),
+            Self::RequestHeadersLoad => Ok(vec![map_string_list_string_ref_ty(registry)?]),
+            Self::ResponseText
+            | Self::ResponseSetHeader
+            | Self::HttpAddRequestHeader
+            | Self::HttpClearRequestHeaders
+            | Self::EnvSet => Ok(vec![]),
+            Self::HttpSend => Ok(vec![
+                ValType::I64,
+                string_ref_ty(registry)?,
+                map_string_list_string_ref_ty(registry)?,
+                string_ref_ty(registry)?,
+            ]),
         }
     }
+}
+
+fn map_string_list_string_ref_ty(
+    registry: &TypeRegistry,
+) -> Result<ValType, WasmGcError> {
+    let slots = registry
+        .map_slots("Map<String,List<String>>")
+        .ok_or(WasmGcError::Validation(
+            "fetch effect requires `Map<String, List<String>>` slot but none was registered"
+                .into(),
+        ))?;
+    Ok(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(slots.map),
+    }))
 }
 
 fn any_ref_ty() -> ValType {

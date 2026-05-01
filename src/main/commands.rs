@@ -4383,7 +4383,13 @@ fn cmd_compile_wasm(
         // native tail calls, no custom runtime. Short-circuits before
         // the legacy adapter dance.
         if matches!(target, super::cli::CompileTarget::WasmGc) {
-            cmd_compile_wasm_gc(file, output_dir, project_name, module_root_override);
+            cmd_compile_wasm_gc(
+                file,
+                output_dir,
+                project_name,
+                module_root_override,
+                handler.as_deref(),
+            );
             return;
         }
 
@@ -4660,6 +4666,7 @@ fn cmd_compile_wasm_gc(
     output_dir: &str,
     project_name: Option<&str>,
     module_root_override: Option<&str>,
+    handler: Option<&str>,
 ) {
     use aver::codegen::wasm_gc;
 
@@ -4718,7 +4725,11 @@ fn cmd_compile_wasm_gc(
     let dep_modules = load_compile_deps(&items, &module_root, false /* run_interp_lower */, false /* run_buffer_build */);
     flatten_multimodule(&mut items, &dep_modules);
 
-    let bytes = match wasm_gc::compile_to_wasm_gc(&items, result.analysis.as_ref()) {
+    let bytes = match wasm_gc::compile_to_wasm_gc_with_handler(
+        &items,
+        result.analysis.as_ref(),
+        handler,
+    ) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("{}", format!("{e}").red());

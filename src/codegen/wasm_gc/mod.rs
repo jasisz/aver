@@ -47,5 +47,18 @@ pub fn compile_to_wasm_gc(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module(items)
+    module::emit_module(items, None)
+}
+
+/// Same as `compile_to_wasm_gc` but exports a JS-callable
+/// `aver_http_handle(method, url, query, body, country) ->
+/// (status, body)` wrapper around the named user fn (whose
+/// signature must be `(HttpRequest) -> HttpResponse`). Equivalent
+/// to the legacy backend's `--bridge fetch`.
+pub fn compile_to_wasm_gc_with_handler(
+    items: &[TopLevel],
+    _analysis: Option<&AnalysisResult>,
+    handler: Option<&str>,
+) -> Result<Vec<u8>, WasmGcError> {
+    module::emit_module(items, handler)
 }

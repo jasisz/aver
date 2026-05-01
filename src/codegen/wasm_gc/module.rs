@@ -33,8 +33,11 @@ use super::types::{TypeRegistry, param_types, record_struct_type, return_results
 
 use crate::ast::{Expr, FnDef, Stmt, TopLevel, TypeDef};
 
-pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
-    let registry = TypeRegistry::build(items);
+pub(super) fn emit_module(
+    items: &[TopLevel],
+    handler_name: Option<&str>,
+) -> Result<Vec<u8>, WasmGcError> {
+    let registry = TypeRegistry::build_with_handler(items, handler_name.is_some());
 
     let fn_defs: Vec<&FnDef> = items
         .iter()
@@ -53,6 +56,24 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
     let mut effect_registry = EffectRegistry::new();
     for fd in &fn_defs {
         discover_builtins_in_fn(fd, &mut builtin_registry, &mut effect_registry);
+    }
+    // `--handler X` shape — the synthesised `aver_http_handle`
+    // wrapper reads `Request.*` and dispatches `Response.text` /
+    // `Response.setHeader`, so register them up front. The user
+    // handler may also touch `Http.*` / `Env.*`, which discovery
+    // already picks up through `discover_builtins_in_fn`.
+    if handler_name.is_some() {
+        for eff in [
+            EffectName::RequestMethod,
+            EffectName::RequestUrl,
+            EffectName::RequestQuery,
+            EffectName::RequestBody,
+            EffectName::RequestHeadersLoad,
+            EffectName::ResponseText,
+            EffectName::ResponseSetHeader,
+        ] {
+            effect_registry.register(eff);
+        }
     }
 
     if fn_defs.is_empty() {
@@ -135,6 +156,65 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
     )?;
     list_helpers.emit_helper_types(&mut types, &registry)?;
 
+    // 8a) `aver_http_handle` wrapper — `--handler X` synthesises a
+    //     no-arg fn that reads request fields via the `Request.*`
+    //     effects, builds an `HttpRequest`, calls the user's
+    //     `handler`, then walks the response Map and dispatches per
+    //     header before finalising via `Response.text`. Slot the type
+    //     and fn idx now; the body lands at the end of the code
+    //     section (after every helper) so the wrapper's fn idx is
+    //     the highest in the module.
+    let handler_wrapper: Option<HandlerWrapper> = if let Some(name) = handler_name {
+        let user_idx = fn_defs
+            .iter()
+            .position(|fd| fd.name == name)
+            .ok_or_else(|| {
+                WasmGcError::Validation(format!(
+                    "--handler `{name}` doesn't match any fn in this module"
+                ))
+            })?;
+        // wrapper is `() -> ()`; status/body land via Response.text.
+        types.ty().function([], []);
+        let wrapper_type = next_type_idx;
+        next_type_idx += 1;
+        // list_cons : (head: ref string, tail: ref list_String) -> ref list_String
+        let s_idx = registry
+            .string_array_type_idx
+            .ok_or(WasmGcError::Validation(
+                "handler wrapper requires String slot".into(),
+            ))?;
+        let list_idx = registry
+            .list_type_idx("List<String>")
+            .ok_or(WasmGcError::Validation(
+                "handler wrapper requires List<String> slot".into(),
+            ))?;
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(s_idx),
+        });
+        let l_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(list_idx),
+        });
+        types.ty().function([s_ref, l_ref], [l_ref]);
+        let list_cons_type = next_type_idx;
+        next_type_idx += 1;
+
+        let wrapper_fn = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        let list_cons_fn = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(HandlerWrapper {
+            user_handler_idx: user_idx,
+            wrapper_type,
+            wrapper_fn,
+            list_cons_type,
+            list_cons_fn,
+        })
+    } else {
+        None
+    };
+
     // 8) Host-bridge helpers + LM transport buffer — see
     //    `BridgeIndices` for the why. Emit only when the registry
     //    actually allocated a String slot.
@@ -188,6 +268,10 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
     }
     map_helpers.emit_function_section(&mut funcs);
     list_helpers.emit_function_section(&mut funcs);
+    if let Some(hw) = &handler_wrapper {
+        funcs.function(hw.wrapper_type);
+        funcs.function(hw.list_cons_type);
+    }
     if let Some(b) = &bridge {
         funcs.function(b.from_lm_type);
         funcs.function(b.to_lm_type);
@@ -290,6 +374,26 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
         exports.export("__rt_memory_grow", ExportKind::Func, b.grow_fn);
         exports.export("memory", ExportKind::Memory, 0);
     }
+    if let Some(hw) = &handler_wrapper {
+        exports.export("aver_http_handle", ExportKind::Func, hw.wrapper_fn);
+        exports.export("__rt_list_string_cons", ExportKind::Func, hw.list_cons_fn);
+        // Map<String,List<String>> bridge: the JS host needs to build
+        // a request-headers map to satisfy `request_headers_load`.
+        // Re-export the per-instance Map helper slots under stable
+        // bridge names.
+        if let Some(map_h) = map_helpers.kv_helpers("Map<String,List<String>>") {
+            exports.export(
+                "__rt_map_string_list_string_empty",
+                ExportKind::Func,
+                map_h.empty,
+            );
+            exports.export(
+                "__rt_map_string_list_string_set",
+                ExportKind::Func,
+                map_h.set,
+            );
+        }
+    }
     module.section(&exports);
 
     // ── Data count section (must precede code when using passive
@@ -344,6 +448,17 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
 
     // List / Vector.fromList / String.split-join helper bodies.
     list_helpers.emit_helper_bodies(&mut codes, &registry)?;
+
+    if let Some(hw) = &handler_wrapper {
+        let user_handler_wasm_idx = import_count + 1 + (hw.user_handler_idx as u32);
+        codes.function(&emit_handler_wrapper(
+            &registry,
+            &fn_map,
+            user_handler_wasm_idx,
+        )?);
+        codes.function(&emit_list_string_cons(&registry)?);
+        let _ = hw.list_cons_type; // type idx already consumed by emit_function_section
+    }
 
     if bridge.is_some() {
         emit_bridge_bodies(&mut codes, &registry)?;
@@ -807,6 +922,317 @@ fn expr_to_dotted_head(expr: &Expr) -> Option<&str> {
 
 /// Validate emitted bytes with `wasmparser` configured for the wasm-gc
 /// + tail-call feature set we target.
+/// `__rt_list_string_cons(head, tail) -> list`. Lets the JS host
+/// build a `(ref null $list_String)` from outside without going
+/// through user code; used by the host bridge that satisfies
+/// `request_headers_load`.
+fn emit_list_string_cons(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let list_idx = registry
+        .list_type_idx("List<String>")
+        .ok_or(WasmGcError::Validation(
+            "list_cons helper requires List<String> slot".into(),
+        ))?;
+    let mut f = wasm_encoder::Function::new([]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::StructNew(list_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// Slots reserved for the synthesised `aver_http_handle` wrapper.
+struct HandlerWrapper {
+    /// Position of the user's `(HttpRequest) -> HttpResponse` fn in
+    /// `fn_defs`.
+    user_handler_idx: usize,
+    wrapper_type: u32,
+    wrapper_fn: u32,
+    /// Type + fn indices for `__rt_list_string_cons(head, tail) ->
+    /// List<String>`. Lets the JS host build a `List<String>` from
+    /// the outside (e.g. for the request-headers map's value lists).
+    list_cons_type: u32,
+    list_cons_fn: u32,
+}
+
+/// Synthesise the body of `aver_http_handle()`. Reads the request
+/// fields via `Request.*` imports, allocates an `HttpRequest`,
+/// invokes the user handler, walks the resulting `HttpResponse`'s
+/// headers Map and dispatches one `Response.setHeader(name, value)`
+/// per (key, value) pair before finalising via `Response.text(status,
+/// body)`. Mirrors the `--bridge fetch` shape from the legacy
+/// backend (`src/codegen/wasm/expr/emit.rs::emit_record_create`).
+fn emit_handler_wrapper(
+    registry: &TypeRegistry,
+    fn_map: &super::body::FnMap,
+    user_handler_wasm_idx: u32,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    use wasm_encoder::{BlockType, Function, HeapType, Instruction, RefType};
+
+    let s_idx = registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "aver_http_handle wrapper requires String slot".into(),
+        ))?;
+    let req_idx = registry
+        .records
+        .get("HttpRequest")
+        .copied()
+        .ok_or(WasmGcError::Validation(
+            "aver_http_handle wrapper requires HttpRequest record slot".into(),
+        ))?;
+    let resp_idx = registry
+        .records
+        .get("HttpResponse")
+        .copied()
+        .ok_or(WasmGcError::Validation(
+            "aver_http_handle wrapper requires HttpResponse record slot".into(),
+        ))?;
+    let map_slots = registry
+        .map_slots("Map<String,List<String>>")
+        .ok_or(WasmGcError::Validation(
+            "aver_http_handle wrapper requires `Map<String, List<String>>` slot".into(),
+        ))?;
+    let list_idx = registry
+        .list_type_idx("List<String>")
+        .ok_or(WasmGcError::Validation(
+            "aver_http_handle wrapper requires `List<String>` slot".into(),
+        ))?;
+
+    let request_method_fn = fn_map
+        .effects
+        .get("Request.method")
+        .copied()
+        .ok_or(WasmGcError::Validation("Request.method effect not registered".into()))?;
+    let request_url_fn = fn_map
+        .effects
+        .get("Request.url")
+        .copied()
+        .ok_or(WasmGcError::Validation("Request.url effect not registered".into()))?;
+    let request_query_fn = fn_map
+        .effects
+        .get("Request.query")
+        .copied()
+        .ok_or(WasmGcError::Validation("Request.query effect not registered".into()))?;
+    let request_body_fn = fn_map
+        .effects
+        .get("Request.body")
+        .copied()
+        .ok_or(WasmGcError::Validation("Request.body effect not registered".into()))?;
+    let request_headers_load_fn = fn_map
+        .effects
+        .get("Request.headersLoad")
+        .copied()
+        .ok_or(WasmGcError::Validation(
+            "Request.headersLoad effect not registered".into(),
+        ))?;
+    let response_text_fn = fn_map
+        .effects
+        .get("Response.text")
+        .copied()
+        .ok_or(WasmGcError::Validation("Response.text effect not registered".into()))?;
+    let response_set_header_fn = fn_map
+        .effects
+        .get("Response.setHeader")
+        .copied()
+        .ok_or(WasmGcError::Validation(
+            "Response.setHeader effect not registered".into(),
+        ))?;
+
+    let s_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(s_idx),
+    });
+    let req_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(req_idx),
+    });
+    let resp_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(resp_idx),
+    });
+    let map_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(map_slots.map),
+    });
+    let keys_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(map_slots.keys_array),
+    });
+    let values_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(map_slots.values_array),
+    });
+    let list_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(list_idx),
+    });
+
+    // Locals layout (after the empty params):
+    //  0=method, 1=url, 2=query, 3=body, 4=req_headers, 5=req,
+    //  6=resp, 7=status, 8=resp_body, 9=resp_headers,
+    // 10=keys_arr, 11=values_arr, 12=cap, 13=i,
+    // 14=key, 15=values_list.
+    let mut f = Function::new([
+        (4, s_ref),
+        (1, map_ref),
+        (1, req_ref),
+        (1, resp_ref),
+        (1, ValType::I64),
+        (1, s_ref),
+        (1, map_ref),
+        (1, keys_ref),
+        (1, values_ref),
+        (2, ValType::I32),
+        (1, s_ref),
+        (1, list_ref),
+    ]);
+
+    // Build HttpRequest from host effects.
+    f.instruction(&Instruction::Call(request_method_fn));
+    f.instruction(&Instruction::RefCastNullable(HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::LocalSet(0));
+    f.instruction(&Instruction::Call(request_url_fn));
+    f.instruction(&Instruction::RefCastNullable(HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::Call(request_query_fn));
+    f.instruction(&Instruction::RefCastNullable(HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::Call(request_body_fn));
+    f.instruction(&Instruction::RefCastNullable(HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::Call(request_headers_load_fn));
+    f.instruction(&Instruction::LocalSet(4));
+
+    // struct.new $http_request method url query body headers
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::StructNew(req_idx));
+    f.instruction(&Instruction::LocalSet(5));
+
+    // resp = handler(req)
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::Call(user_handler_wasm_idx));
+    f.instruction(&Instruction::LocalSet(6));
+
+    // status = resp.status (i64)
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: resp_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::LocalSet(7));
+    // resp_body = resp.body
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: resp_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(8));
+    // resp_headers = resp.headers (Map ref)
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: resp_idx,
+        field_index: 2,
+    });
+    f.instruction(&Instruction::LocalSet(9));
+
+    // Read map cap + arrays into iteration slots.
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: map_slots.map,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(12));
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: map_slots.map,
+        field_index: 2,
+    });
+    f.instruction(&Instruction::LocalSet(10));
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: map_slots.map,
+        field_index: 3,
+    });
+    f.instruction(&Instruction::LocalSet(11));
+
+    // i = 0
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(13));
+    // outer block / loop over the keys array
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    // if i >= cap break
+    f.instruction(&Instruction::LocalGet(13));
+    f.instruction(&Instruction::LocalGet(12));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+
+    // key = keys_arr[i]
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::LocalGet(13));
+    f.instruction(&Instruction::ArrayGet(map_slots.keys_array));
+    f.instruction(&Instruction::LocalSet(14));
+
+    // if key non-null, walk values list
+    f.instruction(&Instruction::LocalGet(14));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    // values_list = values_arr[i]
+    f.instruction(&Instruction::LocalGet(11));
+    f.instruction(&Instruction::LocalGet(13));
+    f.instruction(&Instruction::ArrayGet(map_slots.values_array));
+    f.instruction(&Instruction::LocalSet(15));
+    // Walk list: while not null: response_set_header(key, head); cur = tail.
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(15));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::BrIf(1));
+    // response_set_header(key, list.head)
+    f.instruction(&Instruction::LocalGet(14));
+    f.instruction(&Instruction::LocalGet(15));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: list_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::Call(response_set_header_fn));
+    // cur = cur.tail
+    f.instruction(&Instruction::LocalGet(15));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: list_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(15));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // list loop
+    f.instruction(&Instruction::End); // list block
+    f.instruction(&Instruction::End); // if key non-null
+
+    // i++
+    f.instruction(&Instruction::LocalGet(13));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(13));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // outer loop
+    f.instruction(&Instruction::End); // outer block
+
+    // response_text(status, body)
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::Call(response_text_fn));
+
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
 /// Wasm fn-type and fn-idx slots for the two `__rt_string_*` host
 /// bridge exports plus the linear-memory transport buffer.
 ///

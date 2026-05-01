@@ -7,7 +7,7 @@
 
 name = "aver-edge-gc-demo"
 main = "worker.js"
-compatibility_date = "2024-11-01"
+compatibility_date = "2025-01-01"
 
 [observability]
 [observability.logs]

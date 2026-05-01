@@ -121,6 +121,20 @@ impl TypeRegistry {
     /// later passes (fn signature emit, body emit) can reference them
     /// without ordering tricks.
     pub(super) fn build(items: &[TopLevel]) -> Self {
+        Self::build_with_handler(items, false)
+    }
+
+    /// Build the registry with a `--handler` shape — pre-register
+    /// HttpRequest/HttpResponse refs in case the handler fn is the
+    /// only place they appear (otherwise the auto-discovery picks
+    /// them up). Also intern the `"cf-ipcountry"` string literal so
+    /// the synthesised `aver_http_handle` wrapper has a valid data
+    /// segment to source it from.
+    pub(super) fn build_with_handler(items: &[TopLevel], _handler_active: bool) -> Self {
+        // _handler_active is consumed by `items_reference_name`
+        // overrides below so the rest of the builder stays
+        // unchanged.
+        let handler_active = _handler_active;
         let mut records = HashMap::new();
         let mut variants = HashMap::new();
         let mut record_fields = HashMap::new();
@@ -160,7 +174,15 @@ impl TypeRegistry {
         // to wait until after the dependencies.
         let mut builtin_record_names: Vec<String> = Vec::new();
         for record in crate::codegen::builtin_records::BUILTIN_RECORDS {
-            if !items_reference_name(items, record.aver_name) {
+            // `--handler` mode forces HttpRequest + HttpResponse to be
+            // registered even if no fn signature mentions them — the
+            // synthesised `aver_http_handle` wrapper builds an
+            // HttpRequest from host effects and reads HttpResponse
+            // back, both of which are codegen-only references.
+            let force = handler_active
+                && (record.aver_name == "HttpRequest"
+                    || record.aver_name == "HttpResponse");
+            if !force && !items_reference_name(items, record.aver_name) {
                 continue;
             }
             if record_fields.contains_key(record.aver_name) {
@@ -292,6 +314,11 @@ impl TypeRegistry {
                 );
             }
         }
+        if handler_active && !list_types.contains_key("List<String>") {
+            list_types.insert("List<String>".to_string(), next_idx);
+            list_order.push("List<String>".to_string());
+            next_idx += 1;
+        }
 
         // `Option<T>` instantiations follow the same shape — scan
         // signatures + bodies for any `Option<T>` reference and
@@ -355,6 +382,13 @@ impl TypeRegistry {
                     collect_maps_from_str(ty, &mut pending_maps_for_options);
                 }
             }
+        }
+        if handler_active
+            && !pending_maps_for_options
+                .iter()
+                .any(|m| m == "Map<String,List<String>>")
+        {
+            pending_maps_for_options.push("Map<String,List<String>>".to_string());
         }
         let mut seen_map_v: std::collections::HashSet<String> =
             std::collections::HashSet::new();
@@ -445,6 +479,7 @@ impl TypeRegistry {
         // raw byte content (Aver strings are UTF-8).
         let mut string_literals: Vec<Vec<u8>> = Vec::new();
         let mut string_literal_idx: HashMap<Vec<u8>, u32> = HashMap::new();
+        let _ = handler_active;
         for item in items {
             if let TopLevel::FnDef(fd) = item {
                 collect_string_literals_in_fn(fd, &mut string_literals, &mut string_literal_idx);
