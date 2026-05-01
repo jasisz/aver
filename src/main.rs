@@ -185,6 +185,7 @@ fn main() {
             preset,
             handler,
             optimize,
+            emit_ir_after,
         } => {
             let policy_mode = (*policy).unwrap_or(if *with_replay {
                 CompilePolicyMode::Runtime
@@ -212,6 +213,13 @@ fn main() {
                 ),
                 None => (*target, *bridge, *pack),
             };
+            // `--emit-ir-after=PASS` short-circuits before codegen — print
+            // the IR snapshot for the named stage and exit. Drives observability
+            // in 0.15.1 without touching the compile path otherwise.
+            if let Some(stage) = emit_ir_after.as_deref() {
+                commands::cmd_emit_ir_after(file, module_root.as_deref(), stage);
+                return;
+            }
             commands::cmd_compile(commands::CompileOptions {
                 file,
                 output_dir: output,

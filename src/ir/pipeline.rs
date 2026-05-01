@@ -188,3 +188,102 @@ fn fire(cfg: &mut PipelineConfig<'_>, stage: PipelineStage, items: &[TopLevel]) 
         cb(stage, items);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::source::parse_source;
+
+    fn parse(src: &str) -> Vec<TopLevel> {
+        parse_source(src).expect("parse failed")
+    }
+
+    #[test]
+    fn default_config_fires_every_stage_in_order() {
+        let mut items = parse(
+            r#"
+module M
+    intent = "test"
+    depends []
+
+fn id(n: Int) -> Int
+    n
+"#,
+        );
+        let mut fired: Vec<PipelineStage> = Vec::new();
+        run(
+            &mut items,
+            PipelineConfig {
+                typecheck: Some(TypecheckMode::Full { base_dir: None }),
+                on_after_pass: Some(Box::new(|stage, _| fired.push(stage))),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            fired,
+            vec![
+                PipelineStage::Tco,
+                PipelineStage::Typecheck,
+                PipelineStage::InterpLower,
+                PipelineStage::BufferBuild,
+                PipelineStage::Resolve,
+            ]
+        );
+    }
+
+    #[test]
+    fn disabled_stages_dont_fire() {
+        let mut items = parse(
+            r#"
+module M
+    intent = "test"
+    depends []
+
+fn id(n: Int) -> Int
+    n
+"#,
+        );
+        let mut fired: Vec<PipelineStage> = Vec::new();
+        run(
+            &mut items,
+            PipelineConfig {
+                typecheck: None,
+                run_interp_lower: false,
+                run_buffer_build: false,
+                on_after_pass: Some(Box::new(|stage, _| fired.push(stage))),
+                ..Default::default()
+            },
+        );
+        assert_eq!(fired, vec![PipelineStage::Tco, PipelineStage::Resolve]);
+    }
+
+    #[test]
+    fn typecheck_errors_skip_later_stages() {
+        // Reference an undefined identifier so typecheck reports an error.
+        let mut items = parse(
+            r#"
+module M
+    intent = "test"
+    depends []
+
+fn broken() -> Int
+    undefined_thing
+"#,
+        );
+        let mut fired: Vec<PipelineStage> = Vec::new();
+        let result = run(
+            &mut items,
+            PipelineConfig {
+                typecheck: Some(TypecheckMode::Full { base_dir: None }),
+                on_after_pass: Some(Box::new(|stage, _| fired.push(stage))),
+                ..Default::default()
+            },
+        );
+        assert!(
+            !result.typecheck.unwrap().errors.is_empty(),
+            "typecheck must surface the undefined identifier"
+        );
+        // Tco fired, typecheck fired, then we bailed out — no later stages.
+        assert_eq!(fired, vec![PipelineStage::Tco, PipelineStage::Typecheck]);
+    }
+}

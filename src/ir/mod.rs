@@ -2,6 +2,7 @@ mod alloc_info;
 mod body;
 mod buffer_build;
 mod calls;
+pub mod dump;
 mod interp_lower;
 pub mod last_use;
 mod leaf;

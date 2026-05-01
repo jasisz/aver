@@ -3349,6 +3349,98 @@ fn write_codegen_output(
     println!("  {}", build_hint.cyan());
 }
 
+/// `aver compile FILE --emit-ir-after=PASS` — runs the canonical pipeline
+/// (full traversal lowering, runtime shape) and prints the IR after the
+/// requested stage to stdout, then exits without invoking codegen.
+///
+/// Stage names match `aver::ir::PipelineStage::name()` plus `parse` for
+/// the pre-pipeline AST. Anything else is rejected with an error listing
+/// the legal stage names.
+pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, stage_name: &str) {
+    use aver::ir::{PipelineConfig, PipelineStage, TypecheckMode, dump};
+
+    let target_stage = match stage_name {
+        "parse" => None, // pre-pipeline snapshot
+        "tco" => Some(PipelineStage::Tco),
+        "typecheck" => Some(PipelineStage::Typecheck),
+        "interp_lower" => Some(PipelineStage::InterpLower),
+        "buffer_build" => Some(PipelineStage::BufferBuild),
+        "resolve" => Some(PipelineStage::Resolve),
+        other => {
+            eprintln!(
+                "{}",
+                format!(
+                    "unknown --emit-ir-after stage '{}'; expected one of: \
+                     parse, tco, typecheck, interp_lower, buffer_build, resolve",
+                    other
+                )
+                .red()
+            );
+            process::exit(1);
+        }
+    };
+
+    let module_root = resolve_module_root(module_root_override);
+    let source = match read_file(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+    let mut items = match parse_file(&source) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+
+    if target_stage.is_none() {
+        // `--emit-ir-after=parse` — no pipeline runs.
+        print!("{}", dump::dump_items(&items));
+        return;
+    }
+
+    let captured = std::cell::RefCell::new(None::<String>);
+    let target = target_stage.unwrap();
+    let pipeline_result = aver::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full {
+                base_dir: Some(&module_root),
+            }),
+            on_after_pass: Some(Box::new(|stage, items_after| {
+                if stage == target {
+                    *captured.borrow_mut() = Some(dump::dump_items(items_after));
+                }
+            })),
+            ..Default::default()
+        },
+    );
+    if let Some(tc) = &pipeline_result.typecheck
+        && !tc.errors.is_empty()
+    {
+        eprintln!("{}", super::shared::format_type_errors(&tc.errors).red());
+        process::exit(1);
+    }
+
+    match captured.into_inner() {
+        Some(text) => print!("{}", text),
+        None => {
+            eprintln!(
+                "{}",
+                format!(
+                    "stage '{}' did not run (likely disabled or skipped after typecheck errors)",
+                    stage_name
+                )
+                .red()
+            );
+            process::exit(1);
+        }
+    }
+}
+
 pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
     let CompileOptions {
         file,

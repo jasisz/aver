@@ -423,6 +423,13 @@ pub(super) enum Commands {
         /// for runtime tuning (`-O3`).
         #[arg(long, value_enum)]
         optimize: Option<WasmOptMode>,
+        /// Print the IR after the named pipeline stage and exit before codegen.
+        /// One of: `tco`, `typecheck`, `interp_lower`, `buffer_build`, `resolve`.
+        /// Use `--emit-ir-after=resolve` to see the final IR that goes into
+        /// codegen. Pass `parse` to see the AST as the parser produced it,
+        /// before any pass runs.
+        #[arg(long, value_name = "PASS")]
+        emit_ir_after: Option<String>,
     },
     /// Emit a standalone aver_runtime / aver_to_wasi artifact to disk.
     /// Internal release tooling — used by tools/release/* to publish
