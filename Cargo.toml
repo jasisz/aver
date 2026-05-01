@@ -62,7 +62,7 @@ wasm-bindgen = { version = "0.2", optional = true }
 wasm-encoder = { version = "0.225", optional = true }
 wasmparser = { version = "0.225", optional = true }
 wasmprinter = { version = "0.225", optional = true }
-wasmtime = { version = "29", optional = true, default-features = false, features = ["cranelift", "runtime", "gc", "gc-drc"] }
+wasmtime = { version = "44", optional = true, default-features = false, features = ["cranelift", "runtime", "gc", "gc-drc"] }
 wat = { version = "1", optional = true }
 
 [dev-dependencies]

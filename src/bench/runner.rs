@@ -489,40 +489,68 @@ fn run_wasm_gc(manifest: &Manifest) -> Result<BenchReport, RunError> {
 
     // Engine config: enable GC + tail calls. wasmtime defaults vary
     // by version; pin them on so the bench doesn't depend on cwd or
-    // env vars.
+    // env vars. Multi-value, bulk memory, etc. are commonly default-
+    // on but we set them explicitly to match the CLI's `--wasm gc
+    // --wasm tail-call` shape.
     let mut config = Config::new();
+    // Match the wasmtime CLI's `--wasm gc --wasm tail-call` runtime
+    // configuration. `wasm_gc` requires the cranelift backend to know
+    // about gc; `wasm_function_references` is a transitive dep of GC;
+    // `wasm_tail_call` enables `return_call(_indirect)` execution.
+    // `cranelift_opt_level(Speed)` matches the CLI's default which
+    // turns on the codegen paths that handle ref.cast properly.
     config.wasm_gc(true);
     config.wasm_tail_call(true);
     config.wasm_function_references(true);
     config.wasm_reference_types(true);
+    config.wasm_multi_value(true);
+    config.wasm_bulk_memory(true);
+    config.cranelift_opt_level(wasmtime::OptLevel::Speed);
+    // Be generous with wasm stack — tail-call return_call should
+    // not need extra room, but if cranelift generates a regular
+    // call we don't want to fail at 10K iterations. Default is
+    // 1MB; bump to 8MB.
+    config.max_wasm_stack(8 * 1024 * 1024);
     let engine = Engine::new(&config)
         .map_err(|e| RunError::Setup(format!("wasmtime engine config: {}", e)))?;
     let module = Module::new(&engine, &bytes)
         .map_err(|e| RunError::Setup(format!("wasmtime compile module: {}", e)))?;
 
-    let run_one = |module: &Module, engine: &Engine| -> Result<u64, RunError> {
+    let run_one = |module: &Module, engine: &Engine| -> Result<String, RunError> {
         let mut store = Store::new(engine, ());
-        // wasm-gc backend (phase 4) emits no imports, so the linker
-        // is empty — instantiation is a single call.
+        // wasm-gc backend emits no imports, so the linker is empty.
         let instance = wasmtime::Instance::new(&mut store, module, &[])
             .map_err(|e| RunError::Runtime(format!("instantiate: {}", e)))?;
-        // Invoke `main` directly — phase-4 main returns `Int` (i64).
-        // `_start` is exported too but it just calls main and drops
-        // the result; we want the value back to populate response_bytes.
-        let main_fn = instance
-            .get_typed_func::<(), i64>(&mut store, "main")
-            .map_err(|e| RunError::Runtime(format!("main export: {}", e)))?;
-        let result = main_fn
-            .call(&mut store, ())
-            .map_err(|e| RunError::Runtime(format!("invoke main: {}", e)))?;
-        Ok(result as u64)
+        // Try `main: () -> i64` first (Int return), then `() -> f64`
+        // (Float), then `() -> ()` (Unit). The order matches the
+        // most common bench shapes.
+        if let Ok(f) = instance.get_typed_func::<(), i64>(&mut store, "main") {
+            let v = f
+                .call(&mut store, ())
+                .map_err(|e| RunError::Runtime(format!("invoke main: {}", e)))?;
+            return Ok(v.to_string());
+        }
+        if let Ok(f) = instance.get_typed_func::<(), f64>(&mut store, "main") {
+            let v = f
+                .call(&mut store, ())
+                .map_err(|e| RunError::Runtime(format!("invoke main: {}", e)))?;
+            return Ok(format!("{v}"));
+        }
+        if let Ok(f) = instance.get_typed_func::<(), ()>(&mut store, "main") {
+            f.call(&mut store, ())
+                .map_err(|e| RunError::Runtime(format!("invoke main: {}", e)))?;
+            return Ok(String::new());
+        }
+        Err(RunError::Runtime(
+            "main export must return Int / Float / Unit (i64 / f64 / ())".into(),
+        ))
     };
 
     let mut samples: Vec<f64> = Vec::with_capacity(manifest.iterations);
     for _ in 0..manifest.warmup {
         run_one(&module, &engine)?;
     }
-    let mut last_result: u64 = 0;
+    let mut last_result = String::new();
     for _ in 0..manifest.iterations {
         let t = Instant::now();
         last_result = run_one(&module, &engine)?;
@@ -537,10 +565,10 @@ fn run_wasm_gc(manifest: &Manifest) -> Result<BenchReport, RunError> {
         passes,
         compute_visible_allocs(manifest),
     );
-    // wasm-gc invokes `main` directly and gets back i64 — no stdout
-    // is involved. Use the same "rendered return value" semantic as
-    // the VM target: count bytes of the decimal representation.
-    report.response_bytes = Some(last_result.to_string().len());
+    // wasm-gc invokes `main` directly. Use the same "rendered return
+    // value" semantic as the VM target: count bytes of the decimal
+    // representation.
+    report.response_bytes = Some(last_result.len());
     Ok(report)
 }
 
