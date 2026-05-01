@@ -116,6 +116,46 @@ impl TypeRegistry {
             .and_then(|fs| fs.iter().find(|(n, _)| n == field))
             .map(|(_, t)| t.as_str())
     }
+
+    /// Newtype optimization: a `record Foo { x: T }` (single primitive
+    /// field) or `type Foo = Foo(T)` (single-variant sum, single primitive
+    /// payload) is structurally equivalent to `T`. We erase the wrapper
+    /// at the wasm level — every `Foo` slot carries `T` directly,
+    /// `RecordCreate { Foo, x = e }` lowers to just `e`, `Attr(_, x)`
+    /// lowers to identity, `match obj { Foo.Foo(n) -> body }` binds `n`
+    /// to the underlying `T` value with no `struct.get`. Same trick
+    /// rustc uses for `struct UserId(u64)`.
+    pub(super) fn newtype_underlying(&self, type_name: &str) -> Option<&str> {
+        // Record case: exactly one field, primitive type.
+        if let Some(fields) = self.record_fields.get(type_name)
+            && fields.len() == 1
+            && is_primitive(&fields[0].1)
+        {
+            return Some(fields[0].1.as_str());
+        }
+        // Sum case: parent has exactly one variant, that variant has
+        // exactly one field, that field is primitive.
+        let mut variants_of_parent = self.variants.values().filter(|v| v.parent == type_name);
+        if let Some(only) = variants_of_parent.next()
+            && variants_of_parent.next().is_none()
+            && only.fields.len() == 1
+            && is_primitive(&only.fields[0])
+        {
+            return Some(only.fields[0].as_str());
+        }
+        None
+    }
+
+    /// Same predicate but addressed by variant constructor name (so
+    /// emit sites can ask "is this constructor a newtype wrapper?").
+    pub(super) fn variant_is_newtype(&self, variant_name: &str) -> Option<&str> {
+        let info = self.variants.get(variant_name)?;
+        self.newtype_underlying(&info.parent)
+    }
+}
+
+fn is_primitive(ty: &str) -> bool {
+    matches!(ty.trim(), "Int" | "Float" | "Bool")
 }
 
 /// Resolve an Aver type-annotation string to a wasm value type, or to
@@ -133,6 +173,13 @@ pub(super) fn aver_to_wasm(
         return Ok(None);
     }
     if let Some(reg) = registry {
+        // Newtype optimization — a single-field record / single-variant
+        // sum of a primitive lowers to the underlying primitive
+        // everywhere. Saves an allocation per wrap and a struct.get
+        // per unwrap.
+        if let Some(underlying) = reg.newtype_underlying(trimmed) {
+            return Ok(primitive_to_wasm(underlying));
+        }
         if let Some(idx) = reg.record_type_idx(trimmed) {
             return Ok(Some(struct_ref(idx)));
         }

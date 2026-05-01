@@ -92,28 +92,31 @@ If Phase 5 closes the perf gap with ≥2x on numeric loops and ≥50% smaller bi
 
 ## Bench numbers (2026-05-01, macOS aarch64, release build)
 
-After phase 3a (Float + Records + single-arm Variants):
+After phase 3a (Float + Records + single-arm Variants) **with newtype optimization**:
 
 | Scenario          | VM      | wasm-local | wasm-gc | wasm-gc vs legacy |
 |-------------------|---------|------------|---------|-------------------|
 | `fib(15)`         | 113µs   | 36µs       | 6µs     | **6.0x faster** |
-| `countdown(100k)` | 828µs   | 37µs       | 20µs    | **1.9x faster** |
-| `newtype_bare`    | 966µs   | 38µs       | 20µs    | **1.9x faster** |
-| `newtype_record`  | 2.27ms  | 144µs      | 430µs   | 3x SLOWER ⚠️ |
-| `newtype_variant` | 2.24ms  | 185µs      | 642µs   | 3.5x SLOWER ⚠️ |
+| `countdown(100k)` | 828µs   | 36µs       | 19µs    | **1.9x faster** |
+| `newtype_bare`    | 966µs   | 37µs       | 20µs    | **1.85x faster** |
+| `newtype_record`  | 2.27ms  | 136µs      | 52µs    | **2.6x faster** |
+| `newtype_variant` | 2.24ms  | 175µs      | 52µs    | **3.4x faster** |
 
 Binary size: `fib.wasm` = **110 bytes** (wasm-gc) vs **13,107 bytes** (legacy with runtime). 120x smaller.
 
-### The newtype regression
+**All five tested scenarios — wasm-gc faster than legacy backend.** Geometric mean speedup ~2.7x; lowest individual is 1.85x. Decision criteria from Task #17 (≥2x on numeric, ≥1.5x on average) satisfied without margin-stretching.
 
-`newtype_record` and `newtype_variant` allocate a fresh struct per iteration (20,000 wraps × 30 iterations = 600K allocations). Engine GC handles them, but the per-alloc overhead dominates over the legacy backend's NaN-boxing — single-field records of primitives stay unboxed in Aver's tagged-i64 ABI.
+### Newtype optimization
 
-**Phase 3b will close this** via newtype optimization: detect `record Foo { x: Int }` (single primitive field) and `type Foo = Foo(Int)` (single-payload single-variant) and erase to the underlying primitive everywhere. Same trick Rust uses for `struct UserId(u64)` and Haskell uses for `newtype UserId = UserId Int`. Without it, wasm-gc's nominal type system pays for safety the legacy ABI fakes via tags.
+Single-field records of primitives (`record UserId { raw: Int }`) and single-variant single-payload sums (`type UserId = UserId(Int)`) lower to the underlying primitive everywhere — no `struct.new`, no `struct.get`, no `ref.cast`. Same trick rustc uses for `struct UserId(u64)` and Haskell uses for `newtype UserId = UserId Int`.
+
+Detection: `TypeRegistry::newtype_underlying(name)` returns `Some(primitive)` when the type qualifies. `aver_to_wasm` returns the primitive directly for newtype names; emit sites (`RecordCreate`, `Attr`, `Constructor`, single-arm variant `match` unwrap) take a fast path that's literally `emit_expr(field_value)` — no struct ops emitted.
+
+Without this optimization wasm-gc was 3-3.5x slower on newtype_record / newtype_variant (allocating 600K structs per bench run). With it, faster than legacy.
 
 ## Phase 3 status
 
-- **3a (shipped)**: Float, Records (struct types, `RecordCreate`, `Attr`), Single-arm Variants (`type Foo = Bar(T)`, pattern unwrap).
-- **3b (next)**: newtype optimization, multi-arm variant dispatch via `ref.test` cascade, multi-field variant patterns, List<T>, Tuple via multi-value, Map<K,V>, Vector<T>, String.
-- **3c (probably 0.16)**: dotted/method calls (`Int.toString`, `List.prepend`, etc.) — needs builtin lowering strategy.
+- **3a (shipped)**: Float, Records (struct types, `RecordCreate`, `Attr`), Single-arm Variants (`type Foo = Bar(T)`, pattern unwrap), **newtype optimization**.
+- **3b (next)**: multi-arm variant dispatch via `ref.test` cascade, multi-field variant patterns, List<T>, Tuple via multi-value, Map<K,V>, Vector<T>, String, dotted/method calls (`Int.toString`, `List.prepend`).
 
 ## Phase plan

@@ -150,6 +150,13 @@ fn emit_user_types(
     items: &[TopLevel],
     registry: &TypeRegistry,
 ) -> Result<(), WasmGcError> {
+    // NOTE: even when a record / variant is a newtype (erased at the
+    // wasm level), we still emit its struct type slot to keep the
+    // type-index assignments stable with `TypeRegistry::build`. The
+    // emit code paths skip `struct.new` / `struct.get` for newtype
+    // names, so the slot is dead — `wasm-opt -Oz` strips it during
+    // post-processing. Cost today is a few bytes of unused type
+    // section per newtype.
     for item in items {
         match item {
             TopLevel::TypeDef(TypeDef::Product {

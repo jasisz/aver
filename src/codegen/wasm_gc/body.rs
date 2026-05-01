@@ -110,10 +110,18 @@ fn collect_expr_binding_slots(
             for arm in arms {
                 if let Pattern::Constructor(name, bindings) = &arm.pattern {
                     let bare = name.rsplit('.').next().unwrap_or(name);
-                    if let Some(info) = registry.variant(bare) {
+                    if let Some(info) = registry.variant(bare).cloned() {
                         for (binding_name, field_ty) in bindings.iter().zip(info.fields.iter()) {
                             if binding_name != "_" {
-                                if let Some(v) = aver_to_wasm(field_ty, Some(registry))? {
+                                // Newtype: binding gets the underlying
+                                // primitive directly, no struct ref.
+                                let target_ty =
+                                    if registry.newtype_underlying(&info.parent).is_some() {
+                                        aver_to_wasm(&info.parent, Some(registry))?
+                                    } else {
+                                        aver_to_wasm(field_ty, Some(registry))?
+                                    };
+                                if let Some(v) = target_ty {
                                     out.push(v);
                                 }
                             }
@@ -221,6 +229,7 @@ pub(super) fn emit_fn_body(
         return_type: fd.return_type.as_str(),
         registry,
         resolution: fd.resolution.as_ref(),
+        params: &fd.params,
     };
 
     for (i, stmt) in stmts.iter().enumerate() {
@@ -276,6 +285,10 @@ struct EmitCtx<'a> {
     /// pipeline always populates it for production paths; tests may
     /// pre-resolve manually).
     resolution: Option<&'a crate::ast::FnResolution>,
+    /// Param name → declared aver type. Used to recover the original
+    /// type of a Resolved param when its wasm slot has been erased
+    /// to a primitive (newtype optimization).
+    params: &'a [(String, String)],
 }
 
 impl<'a> EmitCtx<'a> {
@@ -407,16 +420,36 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<&'static str, WasmG
     }
 }
 
-/// Slot-table-free variant of `struct_name_of` for use during type
-/// inference (where we don't have the slot table handy). Walks the
-/// expression looking for a Resolved that the registry recognises.
+/// Best-effort record-type-name lookup that walks the AST plus the
+/// fn's param/binding type table — used when the slot's wasm ValType
+/// isn't a struct ref (newtype optimization erases it to a primitive,
+/// so `struct_name_of` based on slots can't see the original type).
 fn struct_name_of_unboxed(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<Option<String>, WasmGcError> {
     if let Expr::Resolved { name, .. } = expr {
+        // First: is the name itself a record?
         if ctx.registry.records.contains_key(name) {
             return Ok(Some(name.clone()));
         }
+        // Otherwise: look up the variable's declared type via the
+        // resolution-driven param map (we don't have a binding-type
+        // map yet, so this only works for params).
+        if let Some(ty) = lookup_var_type(name, ctx) {
+            if ctx.registry.records.contains_key(&ty) {
+                return Ok(Some(ty));
+            }
+        }
     }
     Ok(None)
+}
+
+/// Look up an Aver type-name string for a local variable. Today this
+/// walks `FnDef.params`; a phase 3b-cleanup binding-type map would
+/// extend it to `let`-bindings too.
+fn lookup_var_type(name: &str, ctx: &EmitCtx<'_>) -> Option<String> {
+    ctx.params
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, ty)| ty.clone())
 }
 
 trait IntoStatic {
@@ -578,6 +611,15 @@ fn emit_record_create(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
+    // Newtype optimization: skip struct.new — emit the single field's
+    // value directly. Same shape `aver_to_wasm` reports for newtype
+    // types, so locals/params match primitive ValType.
+    if ctx.registry.newtype_underlying(type_name).is_some() {
+        let field = fields.first().ok_or(WasmGcError::Validation(format!(
+            "newtype record `{type_name}` requires one field"
+        )))?;
+        return emit_expr(func, &field.1.node, slots, ctx);
+    }
     let type_idx = ctx
         .registry
         .record_type_idx(type_name)
@@ -618,10 +660,19 @@ fn emit_attr_get(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    // Walk `obj` to its slot type — currently only Resolved on a
-    // record-typed slot is supported. Generic Attr lookup over
-    // arbitrary subexpressions needs phase 3b.
-    let record_name = struct_name_of(&obj.node, slots, ctx)?.ok_or(WasmGcError::Unimplemented(
+    // Try the slot table first (Resolved on record-typed slot), then
+    // fall back to walking the AST for newtype detection (where the
+    // slot type is the underlying primitive, not a struct ref).
+    let from_slots = struct_name_of(&obj.node, slots, ctx)?;
+    let from_ast = struct_name_of_unboxed(&obj.node, ctx)?;
+    if let Some(name) = from_ast.as_deref()
+        && ctx.registry.newtype_underlying(name).is_some()
+    {
+        // Newtype: Attr is identity — just emit `obj` and return its
+        // primitive value directly.
+        return emit_expr(func, &obj.node, slots, ctx);
+    }
+    let record_name = from_slots.or(from_ast).ok_or(WasmGcError::Unimplemented(
         "phase 3b — Attr on non-Resolved obj (chained access)",
     ))?;
     let type_idx = ctx
@@ -702,6 +753,22 @@ fn emit_single_variant_match(
         )));
     }
 
+    // Newtype optimization: single-variant sum of single primitive →
+    // pattern match is just "bind subject to the binding". No cast,
+    // no struct.get.
+    if ctx.registry.newtype_underlying(&info.parent).is_some() && bindings.len() == 1 {
+        let binding_name = &bindings[0];
+        let slot = ctx
+            .self_local_slot(binding_name)
+            .ok_or(WasmGcError::Validation(format!(
+                "binding `{binding_name}` has no resolver slot"
+            )))?;
+        emit_expr(func, &subject.node, slots, ctx)?;
+        func.instruction(&Instruction::LocalSet(slot));
+        emit_expr(func, &body.node, slots, ctx)?;
+        return Ok(());
+    }
+
     // Phase 3a: single-variant sum types only. `ref.cast` lets us
     // narrow `(ref null eq)` to the concrete variant struct.
     let variant_idx = info.type_idx;
@@ -779,6 +846,11 @@ fn emit_constructor_with_args(
             info.fields.len(),
             args.len()
         )));
+    }
+    // Newtype optimization for single-payload single-variant sums:
+    // skip struct.new — emit the payload directly.
+    if ctx.registry.newtype_underlying(&info.parent).is_some() {
+        return emit_expr(func, &args[0].node, slots, ctx);
     }
     for arg in args {
         emit_expr(func, &arg.node, slots, ctx)?;
