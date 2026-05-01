@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use wasm_encoder::{Function, Instruction, ValType};
 
 use super::WasmGcError;
-use super::types::aver_to_wasm;
+use super::types::{TypeRegistry, aver_to_wasm};
 
 use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt};
 // Re-export the trait so the IntoStatic impls below stay private.
@@ -46,26 +46,148 @@ struct SlotTable {
 }
 
 impl SlotTable {
-    /// Reserve slots for params (in declaration order, skipping `Unit`-typed
-    /// ones since wasm has no zero-width values).
-    fn from_params(params: &[(String, String)]) -> Result<Self, WasmGcError> {
-        let mut by_slot = Vec::with_capacity(params.len());
-        for (_, ty) in params {
-            if let Some(v) = aver_to_wasm(ty)? {
+    /// Pre-scan a fn's full local layout: params, then every binding
+    /// produced by `Stmt::Binding` or pattern-bind in `match`. Slot
+    /// indices must match what the resolver assigned, since
+    /// `Resolved.slot` and `Pattern::Constructor` bindings reference
+    /// slot numbers directly.
+    ///
+    /// Walks the body, infers each slot's wasm type from its binding
+    /// source, builds a dense `Vec<ValType>` indexed by slot number.
+    fn build_for_fn(fd: &FnDef, registry: &TypeRegistry) -> Result<Self, WasmGcError> {
+        let mut by_slot: Vec<ValType> = Vec::new();
+        // Params first — slots 0..N.
+        for (_, ty) in &fd.params {
+            if let Some(v) = aver_to_wasm(ty, Some(registry))? {
                 by_slot.push(v);
             }
+        }
+        // Walk body to collect binding slots (resolver order).
+        let FnBody::Block(stmts) = fd.body.as_ref();
+        for stmt in stmts {
+            collect_binding_slots(stmt, &mut by_slot, registry, fd)?;
         }
         Ok(Self { by_slot })
     }
 
-    fn declare(&mut self, ty: ValType) -> u32 {
-        let slot = self.by_slot.len() as u32;
-        self.by_slot.push(ty);
-        slot
-    }
-
     fn extra_locals(&self, params_count: usize) -> Vec<ValType> {
         self.by_slot.iter().skip(params_count).copied().collect()
+    }
+}
+
+fn collect_binding_slots(
+    stmt: &Stmt,
+    out: &mut Vec<ValType>,
+    registry: &TypeRegistry,
+    fd: &FnDef,
+) -> Result<(), WasmGcError> {
+    match stmt {
+        Stmt::Binding(_, annot, expr) => {
+            let ty = if let Some(t) = annot.as_deref() {
+                aver_to_wasm(t, Some(registry))?
+            } else {
+                infer_expr_wasm_type(&expr.node, registry, fd)?
+            };
+            if let Some(v) = ty {
+                out.push(v);
+            }
+            collect_expr_binding_slots(&expr.node, out, registry, fd)?;
+        }
+        Stmt::Expr(spanned) => collect_expr_binding_slots(&spanned.node, out, registry, fd)?,
+    }
+    Ok(())
+}
+
+fn collect_expr_binding_slots(
+    expr: &Expr,
+    out: &mut Vec<ValType>,
+    registry: &TypeRegistry,
+    fd: &FnDef,
+) -> Result<(), WasmGcError> {
+    match expr {
+        Expr::Match { subject, arms } => {
+            collect_expr_binding_slots(&subject.node, out, registry, fd)?;
+            for arm in arms {
+                if let Pattern::Constructor(name, bindings) = &arm.pattern {
+                    let bare = name.rsplit('.').next().unwrap_or(name);
+                    if let Some(info) = registry.variant(bare) {
+                        for (binding_name, field_ty) in bindings.iter().zip(info.fields.iter()) {
+                            if binding_name != "_" {
+                                if let Some(v) = aver_to_wasm(field_ty, Some(registry))? {
+                                    out.push(v);
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Pattern::Cons(_, _) = &arm.pattern {
+                    // Phase 3b: List binding slots
+                    return Err(WasmGcError::Unimplemented(
+                        "phase 3b — Cons pattern bindings",
+                    ));
+                }
+                collect_expr_binding_slots(&arm.body.node, out, registry, fd)?;
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            collect_expr_binding_slots(&l.node, out, registry, fd)?;
+            collect_expr_binding_slots(&r.node, out, registry, fd)?;
+        }
+        Expr::FnCall(callee, args) => {
+            collect_expr_binding_slots(&callee.node, out, registry, fd)?;
+            for arg in args {
+                collect_expr_binding_slots(&arg.node, out, registry, fd)?;
+            }
+        }
+        Expr::TailCall(boxed) => {
+            for arg in &boxed.args {
+                collect_expr_binding_slots(&arg.node, out, registry, fd)?;
+            }
+        }
+        Expr::Attr(obj, _) => collect_expr_binding_slots(&obj.node, out, registry, fd)?,
+        Expr::Constructor(_, payload) => {
+            if let Some(p) = payload.as_deref() {
+                collect_expr_binding_slots(&p.node, out, registry, fd)?;
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, e) in fields {
+                collect_expr_binding_slots(&e.node, out, registry, fd)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Best-effort wasm type inference for slot pre-allocation. Mirrors
+/// `infer_aver_type` but doesn't need an `EmitCtx` — runs before bodies
+/// are emitted.
+fn infer_expr_wasm_type(
+    expr: &Expr,
+    registry: &TypeRegistry,
+    _fd: &FnDef,
+) -> Result<Option<ValType>, WasmGcError> {
+    match expr {
+        Expr::Literal(Literal::Int(_)) => Ok(Some(ValType::I64)),
+        Expr::Literal(Literal::Float(_)) => Ok(Some(ValType::F64)),
+        Expr::Literal(Literal::Bool(_)) => Ok(Some(ValType::I32)),
+        Expr::Literal(Literal::Unit) => Ok(None),
+        Expr::BinOp(op, _, _) => match op {
+            BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => {
+                Ok(Some(ValType::I32))
+            }
+            _ => Ok(Some(ValType::I64)),
+        },
+        Expr::RecordCreate { type_name, .. } => aver_to_wasm(type_name, Some(registry)),
+        Expr::Constructor(name, _) => {
+            if let Some(info) = registry.variant(name) {
+                aver_to_wasm(&info.parent, Some(registry))
+            } else {
+                Ok(Some(ValType::I64))
+            }
+        }
+        _ => Ok(Some(ValType::I64)),
     }
 }
 
@@ -86,8 +208,9 @@ pub(super) fn emit_fn_body(
     fd: &FnDef,
     fn_map: &FnMap,
     self_wasm_idx: u32,
+    registry: &TypeRegistry,
 ) -> Result<Vec<ValType>, WasmGcError> {
-    let mut slots = SlotTable::from_params(&fd.params)?;
+    let slots = SlotTable::build_for_fn(fd, registry)?;
     let FnBody::Block(stmts) = fd.body.as_ref();
     let last_idx = stmts.len().saturating_sub(1);
 
@@ -96,24 +219,30 @@ pub(super) fn emit_fn_body(
         self_wasm_idx,
         self_fn_name: fd.name.as_str(),
         return_type: fd.return_type.as_str(),
+        registry,
+        resolution: fd.resolution.as_ref(),
     };
 
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last = i == last_idx;
         match stmt {
-            Stmt::Binding(_, annot, expr) => {
-                let ty = infer_aver_type(&expr.node, &ctx)?;
-                let wasm_ty = aver_to_wasm(annot.as_deref().unwrap_or(ty))?;
+            Stmt::Binding(name, _annot, expr) => {
                 emit_expr(func, &expr.node, &slots, &ctx)?;
-                if let Some(wasm_ty) = wasm_ty {
-                    let slot = slots.declare(wasm_ty);
+                let slot = ctx
+                    .self_local_slot(name)
+                    .ok_or(WasmGcError::Validation(format!(
+                        "binding `{name}` has no resolver slot"
+                    )))?;
+                // Skip the local.set for Unit-typed bindings — they
+                // produce no stack value.
+                if (slot as usize) < slots.by_slot.len() {
                     func.instruction(&Instruction::LocalSet(slot));
                 }
             }
             Stmt::Expr(spanned) => {
                 emit_expr(func, &spanned.node, &slots, &ctx)?;
                 let aver_ty = infer_aver_type(&spanned.node, &ctx)?;
-                let produces_value = aver_to_wasm(aver_ty)?.is_some();
+                let produces_value = aver_to_wasm(aver_ty, Some(ctx.registry))?.is_some();
                 if !is_last && produces_value {
                     func.instruction(&Instruction::Drop);
                 }
@@ -141,6 +270,68 @@ struct EmitCtx<'a> {
     self_wasm_idx: u32,
     self_fn_name: &'a str,
     return_type: &'a str,
+    registry: &'a TypeRegistry,
+    /// Resolver's local-name → slot map for the current fn. `None`
+    /// when the fn was emitted without `resolution` populated (the
+    /// pipeline always populates it for production paths; tests may
+    /// pre-resolve manually).
+    resolution: Option<&'a crate::ast::FnResolution>,
+}
+
+impl<'a> EmitCtx<'a> {
+    /// Look up a local-name → wasm slot. Resolver slots are 1:1 with
+    /// wasm local indices.
+    fn self_local_slot(&self, name: &str) -> Option<u32> {
+        self.resolution
+            .as_ref()
+            .and_then(|r| r.local_slots.get(name).copied())
+            .map(|s| s as u32)
+    }
+}
+
+/// Return the wasm type an expression evaluates to, or `None` for
+/// Unit (no value pushed). Used by binop emission to pick i64 vs f64
+/// ops without running a separate type-check pass.
+fn wasm_type_of(
+    expr: &Expr,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<ValType>, WasmGcError> {
+    match expr {
+        Expr::Literal(Literal::Int(_)) => Ok(Some(ValType::I64)),
+        Expr::Literal(Literal::Float(_)) => Ok(Some(ValType::F64)),
+        Expr::Literal(Literal::Bool(_)) => Ok(Some(ValType::I32)),
+        Expr::Literal(Literal::Unit) => Ok(None),
+        Expr::Resolved { slot, .. } => Ok(slots.by_slot.get(*slot as usize).copied()),
+        Expr::BinOp(op, l, _) => {
+            // Comparisons always yield Bool (i32); arithmetic preserves
+            // operand type.
+            match op {
+                BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => {
+                    Ok(Some(ValType::I32))
+                }
+                _ => wasm_type_of(&l.node, slots, ctx),
+            }
+        }
+        Expr::FnCall(callee, _) => {
+            let name = match &callee.node {
+                Expr::Ident(n) => n.as_str(),
+                Expr::Resolved { name, .. } => name.as_str(),
+                _ => return Ok(None),
+            };
+            if let Some(entry) = ctx.fn_map.by_name.get(name) {
+                Ok(aver_to_wasm(&entry.return_type, Some(ctx.registry))?)
+            } else {
+                Ok(None)
+            }
+        }
+        Expr::Match { arms, .. } => arms
+            .first()
+            .map(|a| wasm_type_of(&a.body.node, slots, ctx))
+            .unwrap_or(Ok(None)),
+        Expr::TailCall(_) => aver_to_wasm(ctx.return_type, Some(ctx.registry)),
+        _ => Ok(None),
+    }
 }
 
 /// Type inference over the limited shape phase 2/4 emits. Returns the
@@ -190,10 +381,42 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<&'static str, WasmG
         // back to the caller's frame); for inference purposes we report
         // the enclosing fn's return type.
         Expr::TailCall(_) => Ok(static_type_str(ctx.return_type)),
+        Expr::RecordCreate { type_name, .. } => Ok(static_type_str(type_name)),
+        Expr::Attr(obj, field) => {
+            // Phase 3a: best-effort — if we can identify the record
+            // type of `obj`, look up the field's declared type.
+            // Otherwise fall back to "Int" (most bench scenarios with
+            // Attr access do unwrap a numeric field).
+            if let Ok(Some(record_name)) = struct_name_of_unboxed(&obj.node, ctx) {
+                if let Some(ty) = ctx.registry.record_field_type(&record_name, field) {
+                    return Ok(static_type_str(ty));
+                }
+            }
+            Ok("Int")
+        }
+        Expr::Constructor(name, _) => {
+            if let Some(info) = ctx.registry.variant(name) {
+                Ok(static_type_str(&info.parent))
+            } else {
+                Ok("Int")
+            }
+        }
         _ => Err(WasmGcError::Unimplemented(
-            "expression shape outside phase 2/4",
+            "expression shape outside phase 2/3/4",
         )),
     }
+}
+
+/// Slot-table-free variant of `struct_name_of` for use during type
+/// inference (where we don't have the slot table handy). Walks the
+/// expression looking for a Resolved that the registry recognises.
+fn struct_name_of_unboxed(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<Option<String>, WasmGcError> {
+    if let Expr::Resolved { name, .. } = expr {
+        if ctx.registry.records.contains_key(name) {
+            return Ok(Some(name.clone()));
+        }
+    }
+    Ok(None)
 }
 
 trait IntoStatic {
@@ -264,27 +487,52 @@ fn emit_expr(
         Expr::BinOp(op, l, r) => {
             emit_expr(func, &l.node, slots, ctx)?;
             emit_expr(func, &r.node, slots, ctx)?;
-            let inst = match op {
-                BinOp::Add => Instruction::I64Add,
-                BinOp::Sub => Instruction::I64Sub,
-                BinOp::Mul => Instruction::I64Mul,
-                BinOp::Div => Instruction::I64DivS,
-                BinOp::Eq => Instruction::I64Eq,
-                BinOp::Neq => Instruction::I64Ne,
-                BinOp::Lt => Instruction::I64LtS,
-                BinOp::Gt => Instruction::I64GtS,
-                BinOp::Lte => Instruction::I64LeS,
-                BinOp::Gte => Instruction::I64GeS,
+            // Pick op-set by the operand wasm type. Aver's type checker
+            // has already proven both operands have the same type, so
+            // peeking at the LHS suffices.
+            let operand = wasm_type_of(&l.node, slots, ctx)?;
+            let inst = match (operand, op) {
+                (Some(ValType::F64), BinOp::Add) => Instruction::F64Add,
+                (Some(ValType::F64), BinOp::Sub) => Instruction::F64Sub,
+                (Some(ValType::F64), BinOp::Mul) => Instruction::F64Mul,
+                (Some(ValType::F64), BinOp::Div) => Instruction::F64Div,
+                (Some(ValType::F64), BinOp::Eq) => Instruction::F64Eq,
+                (Some(ValType::F64), BinOp::Neq) => Instruction::F64Ne,
+                (Some(ValType::F64), BinOp::Lt) => Instruction::F64Lt,
+                (Some(ValType::F64), BinOp::Gt) => Instruction::F64Gt,
+                (Some(ValType::F64), BinOp::Lte) => Instruction::F64Le,
+                (Some(ValType::F64), BinOp::Gte) => Instruction::F64Ge,
+                // Default to i64 ops for Int. Bool ops would land here
+                // too if Aver had `&&` / `||` as BinOps; today they're
+                // builtins (Bool.and / Bool.or), routed through FnCall.
+                (_, BinOp::Add) => Instruction::I64Add,
+                (_, BinOp::Sub) => Instruction::I64Sub,
+                (_, BinOp::Mul) => Instruction::I64Mul,
+                (_, BinOp::Div) => Instruction::I64DivS,
+                (_, BinOp::Eq) => Instruction::I64Eq,
+                (_, BinOp::Neq) => Instruction::I64Ne,
+                (_, BinOp::Lt) => Instruction::I64LtS,
+                (_, BinOp::Gt) => Instruction::I64GtS,
+                (_, BinOp::Lte) => Instruction::I64LeS,
+                (_, BinOp::Gte) => Instruction::I64GeS,
             };
             func.instruction(&inst);
         }
         Expr::FnCall(callee, args) => {
+            // `Type.Variant(args)` parses as `FnCall(Attr(_, name),
+            // args)` — route to struct.new when `name` is a known
+            // variant, otherwise fall through to a real fn call.
+            if let Expr::Attr(_parent, variant_name) = &callee.node
+                && let Some(info) = ctx.registry.variant(variant_name).cloned()
+            {
+                return emit_constructor_with_args(func, &info, args, slots, ctx);
+            }
             let name = match &callee.node {
                 Expr::Ident(n) => n.as_str(),
                 Expr::Resolved { name, .. } => name.as_str(),
                 _ => {
                     return Err(WasmGcError::Unimplemented(
-                        "phase 3 — dotted / method calls",
+                        "phase 3b — dotted / method calls (Int.toString, List.prepend, etc.)",
                     ));
                 }
             };
@@ -302,12 +550,280 @@ fn emit_expr(
         }
         Expr::Match { subject, arms } => emit_match(func, subject, arms, slots, ctx)?,
         Expr::TailCall(boxed) => emit_tail_call(func, &boxed.target, &boxed.args, slots, ctx)?,
+        Expr::RecordCreate { type_name, fields } => {
+            emit_record_create(func, type_name, fields, slots, ctx)?
+        }
+        Expr::Attr(obj, field) => emit_attr_get(func, obj, field, slots, ctx)?,
+        Expr::Constructor(name, payload) => {
+            emit_constructor(func, name, payload.as_deref(), slots, ctx)?
+        }
         _ => {
             return Err(WasmGcError::Unimplemented(
-                "expression shape outside phase 2/4",
+                "expression shape outside phase 2/3/4",
             ));
         }
     }
+    Ok(())
+}
+
+/// Lower `RecordCreate { type_name, fields }` to `struct.new $type_idx`.
+/// Aver records have `RecordCreate` field order coming from source
+/// position — we re-order to the declaration order from `TypeRegistry`
+/// before pushing values, so the wasm struct layout always matches the
+/// declared shape.
+fn emit_record_create(
+    func: &mut Function,
+    type_name: &str,
+    fields: &[(String, Spanned<Expr>)],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let type_idx = ctx
+        .registry
+        .record_type_idx(type_name)
+        .ok_or(WasmGcError::Validation(format!(
+            "unknown record type `{type_name}`"
+        )))?;
+    let decl_fields = ctx
+        .registry
+        .record_fields
+        .get(type_name)
+        .ok_or(WasmGcError::Validation(format!(
+            "record `{type_name}` missing field list"
+        )))?;
+    // Push fields in declaration order. Aver guarantees the user
+    // supplies every declared field (the type checker enforces
+    // exhaustiveness).
+    for (decl_name, _) in decl_fields {
+        let provided =
+            fields
+                .iter()
+                .find(|(n, _)| n == decl_name)
+                .ok_or(WasmGcError::Validation(format!(
+                    "record `{type_name}` missing field `{decl_name}`"
+                )))?;
+        emit_expr(func, &provided.1.node, slots, ctx)?;
+    }
+    func.instruction(&Instruction::StructNew(type_idx));
+    Ok(())
+}
+
+/// Lower `Attr(obj, field)` to `obj; struct.get $type_idx $field_idx`.
+/// We need to know the struct type of `obj` — for now we infer it
+/// from the slot's wasm type via the registry's reverse map.
+fn emit_attr_get(
+    func: &mut Function,
+    obj: &Spanned<Expr>,
+    field: &str,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    // Walk `obj` to its slot type — currently only Resolved on a
+    // record-typed slot is supported. Generic Attr lookup over
+    // arbitrary subexpressions needs phase 3b.
+    let record_name = struct_name_of(&obj.node, slots, ctx)?.ok_or(WasmGcError::Unimplemented(
+        "phase 3b — Attr on non-Resolved obj (chained access)",
+    ))?;
+    let type_idx = ctx
+        .registry
+        .record_type_idx(&record_name)
+        .ok_or(WasmGcError::Validation(format!(
+            "unknown record type `{record_name}` for Attr"
+        )))?;
+    let field_idx =
+        ctx.registry
+            .record_field_index(&record_name, field)
+            .ok_or(WasmGcError::Validation(format!(
+                "record `{record_name}` has no field `{field}`"
+            )))?;
+    emit_expr(func, &obj.node, slots, ctx)?;
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: type_idx,
+        field_index: field_idx,
+    });
+    Ok(())
+}
+
+/// Try to find the record-type name that an expression evaluates to.
+/// Phase 3a handles the common case: `Resolved` whose slot is a
+/// concrete struct ref. For deeper analysis (Attr → Attr chains) we'd
+/// need a real type-of-expr pass.
+fn struct_name_of(
+    expr: &Expr,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<String>, WasmGcError> {
+    if let Expr::Resolved { slot, .. } = expr {
+        if let Some(ValType::Ref(rt)) = slots.by_slot.get(*slot as usize) {
+            if let wasm_encoder::HeapType::Concrete(idx) = rt.heap_type {
+                // Reverse-lookup the registry by type idx.
+                for (name, recorded_idx) in &ctx.registry.records {
+                    if *recorded_idx == idx {
+                        return Ok(Some(name.clone()));
+                    }
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Lower a single-arm `match subject { Variant(bindings) -> body }`.
+/// Used for newtype-style sum types: cast subject down to the concrete
+/// variant struct, extract each field into its bound local, then emit
+/// the body. No dispatch required — the type checker has already
+/// proven this is the only variant the subject can be.
+///
+/// Multi-arm variant matches need `ref.test` + cascading branches; that
+/// lands in phase 3b.
+fn emit_single_variant_match(
+    func: &mut Function,
+    subject: &Spanned<Expr>,
+    constructor: &str,
+    bindings: &[String],
+    body: &Spanned<Expr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    // Constructor names in patterns are dotted (e.g. `UserId.UserId`);
+    // the registry stores by the bare variant name.
+    let bare = constructor.rsplit('.').next().unwrap_or(constructor);
+    let info = ctx
+        .registry
+        .variant(bare)
+        .ok_or(WasmGcError::Validation(format!(
+            "unknown variant `{constructor}` in match pattern"
+        )))?;
+    if bindings.len() != info.fields.len() {
+        return Err(WasmGcError::Validation(format!(
+            "variant `{constructor}` has {} field(s) but pattern binds {}",
+            info.fields.len(),
+            bindings.len()
+        )));
+    }
+
+    // Phase 3a: single-variant sum types only. `ref.cast` lets us
+    // narrow `(ref null eq)` to the concrete variant struct.
+    let variant_idx = info.type_idx;
+    let cast_ty = wasm_encoder::HeapType::Concrete(variant_idx);
+
+    if bindings.is_empty() {
+        // Nullary constructor — body doesn't need any binds, just
+        // emit it. Subject still needs to be evaluated for side
+        // effects, then dropped.
+        emit_expr(func, &subject.node, slots, ctx)?;
+        func.instruction(&Instruction::Drop);
+        emit_expr(func, &body.node, slots, ctx)?;
+        return Ok(());
+    }
+
+    // Stash the cast subject in a fresh local slot so we can
+    // struct.get each field without recomputing.
+    emit_expr(func, &subject.node, slots, ctx)?;
+    func.instruction(&Instruction::RefCastNonNull(cast_ty));
+    // We need a slot to hold the cast ref. Use a synthetic one — the
+    // resolver doesn't allocate extra slots for the implicit cast,
+    // but we know the wasm fn has a final scratch slot we can declare.
+    // Rather than mutate `slots` mid-emit, we use the binding slots
+    // directly: extract each field into its corresponding binding
+    // slot and discard the cast ref afterwards. To do that, we need
+    // the cast ref on the stack N times (once per binding). Easiest:
+    // pre-stash by using local 0 of the variant_idx type… but we
+    // can't declare locals here.
+    //
+    // Workaround: extract directly while consuming the cast each
+    // time. wasm doesn't give us a "dup", but `local.tee` writes to
+    // a local AND leaves the value on stack. So:
+    //
+    //   subject → cast → local.tee $b0
+    //   struct.get 0   ;; field 0 → on stack
+    //   local.set $b0  ;; bind n
+    //
+    // This works for single-binding case. For multiple bindings we'd
+    // need a real scratch slot. Phase 3a covers the single-binding
+    // newtype shape and rejects the rest.
+    if bindings.len() == 1 {
+        let binding_name = &bindings[0];
+        let slot = ctx
+            .self_local_slot(binding_name)
+            .ok_or(WasmGcError::Validation(format!(
+                "binding `{binding_name}` has no resolver slot"
+            )))?;
+        func.instruction(&Instruction::StructGet {
+            struct_type_index: variant_idx,
+            field_index: 0,
+        });
+        func.instruction(&Instruction::LocalSet(slot));
+        emit_expr(func, &body.node, slots, ctx)?;
+        return Ok(());
+    }
+
+    Err(WasmGcError::Unimplemented(
+        "phase 3b — multi-binding variant patterns (need a scratch slot)",
+    ))
+}
+
+/// Lower a `Type.Variant(args...)` call (parsed as `FnCall(Attr, args)`)
+/// to `struct.new $variant_type_idx`. Used by both the Constructor expr
+/// path and the disguised-FnCall path.
+fn emit_constructor_with_args(
+    func: &mut Function,
+    info: &super::types::VariantInfo,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    if args.len() != info.fields.len() {
+        return Err(WasmGcError::Validation(format!(
+            "variant has {} field(s) but call supplied {}",
+            info.fields.len(),
+            args.len()
+        )));
+    }
+    for arg in args {
+        emit_expr(func, &arg.node, slots, ctx)?;
+    }
+    func.instruction(&Instruction::StructNew(info.type_idx));
+    Ok(())
+}
+
+/// Lower `Constructor(name, Some(payload))` or nullary `Constructor(name, None)`
+/// to `struct.new $variant_type_idx`. Variants are positional (no field
+/// names), so payload values are pushed in source order before
+/// `struct.new`.
+fn emit_constructor(
+    func: &mut Function,
+    name: &str,
+    payload: Option<&Spanned<Expr>>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let info = ctx
+        .registry
+        .variant(name)
+        .ok_or(WasmGcError::Validation(format!(
+            "unknown variant constructor `{name}`"
+        )))?;
+    // Aver's AST treats single-payload constructors as `Some(expr)` —
+    // multi-field variants come through as `Some(Tuple(...))`. Phase
+    // 3a only handles the single-payload case directly; tuple-payload
+    // variants need phase 3b (Tuple lowering) to come online.
+    let payload_count = info.fields.len();
+    if payload_count == 0 {
+        // Nullary constructor — empty struct.
+        func.instruction(&Instruction::StructNew(info.type_idx));
+        return Ok(());
+    }
+    if payload_count > 1 {
+        return Err(WasmGcError::Unimplemented(
+            "phase 3b — multi-field variant constructors (need Tuple lowering)",
+        ));
+    }
+    let payload = payload.ok_or(WasmGcError::Validation(format!(
+        "variant `{name}` expects 1 payload but got 0"
+    )))?;
+    emit_expr(func, &payload.node, slots, ctx)?;
+    func.instruction(&Instruction::StructNew(info.type_idx));
     Ok(())
 }
 
@@ -333,7 +849,7 @@ fn emit_match(
         return Err(WasmGcError::Validation("match has no arms".into()));
     }
     let result_ty_str = infer_aver_type(&arms[0].body.node, ctx)?;
-    let result_wasm = aver_to_wasm(result_ty_str)?;
+    let result_wasm = aver_to_wasm(result_ty_str, Some(ctx.registry))?;
     let block_ty = match result_wasm {
         Some(v) => wasm_encoder::BlockType::Result(v),
         None => wasm_encoder::BlockType::Empty,
@@ -385,9 +901,18 @@ fn emit_match(
         return Ok(());
     }
 
+    // Phase 3a: single-arm Constructor pattern — `match obj { Foo.Bar(n) -> body }`.
+    // Common in newtype-style sum types where the constructor unpacks
+    // a single payload. Multi-arm dispatching across variants is phase 3b.
+    if arms.len() == 1
+        && let Pattern::Constructor(name, bindings) = &arms[0].pattern
+    {
+        return emit_single_variant_match(func, subject, name, bindings, &arms[0].body, slots, ctx);
+    }
+
     if subject_ty != "Int" {
         return Err(WasmGcError::Unimplemented(
-            "phase 4 — match subject must be Int or Bool",
+            "phase 4 — match subject must be Int or Bool (or single-arm Constructor)",
         ));
     }
 

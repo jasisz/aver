@@ -92,17 +92,28 @@ If Phase 5 closes the perf gap with ≥2x on numeric loops and ≥50% smaller bi
 
 ## Bench numbers (2026-05-01, macOS aarch64, release build)
 
-Phase 4 baseline. Tail-call enabled scenarios that don't need compound types:
+After phase 3a (Float + Records + single-arm Variants):
 
-| Scenario        | VM       | wasm-local | wasm-gc | wasm-gc vs legacy | wasm-gc vs VM |
-|-----------------|----------|------------|---------|-------------------|---------------|
-| `fib(15)` p50   | 208µs    | 38µs       | 6µs     | **6.3x faster**   | **35x faster** |
-| `countdown` p50 | 966µs    | 36µs       | 19µs    | **1.9x faster**   | **51x faster** |
+| Scenario          | VM      | wasm-local | wasm-gc | wasm-gc vs legacy |
+|-------------------|---------|------------|---------|-------------------|
+| `fib(15)`         | 113µs   | 36µs       | 6µs     | **6.0x faster** |
+| `countdown(100k)` | 828µs   | 37µs       | 20µs    | **1.9x faster** |
+| `newtype_bare`    | 966µs   | 38µs       | 20µs    | **1.9x faster** |
+| `newtype_record`  | 2.27ms  | 144µs      | 430µs   | 3x SLOWER ⚠️ |
+| `newtype_variant` | 2.24ms  | 185µs      | 642µs   | 3.5x SLOWER ⚠️ |
 
-Binary size:
+Binary size: `fib.wasm` = **110 bytes** (wasm-gc) vs **13,107 bytes** (legacy with runtime). 120x smaller.
 
-| Scenario | wasm-local (with runtime) | wasm-gc (no runtime) | Ratio          |
-|----------|---------------------------|----------------------|----------------|
-| `fib`    | 13,107 bytes              | 110 bytes            | **120x smaller** |
+### The newtype regression
 
-Decision criteria from Task #17 ("≥2x faster on numeric loops AND ≥50% smaller binary, OR ≥1.5x faster on average"): satisfied with significant headroom. **Recommendation: cut legacy backend in 0.16 once phase 3 (compound types) lowers the remaining bench scenarios.**
+`newtype_record` and `newtype_variant` allocate a fresh struct per iteration (20,000 wraps × 30 iterations = 600K allocations). Engine GC handles them, but the per-alloc overhead dominates over the legacy backend's NaN-boxing — single-field records of primitives stay unboxed in Aver's tagged-i64 ABI.
+
+**Phase 3b will close this** via newtype optimization: detect `record Foo { x: Int }` (single primitive field) and `type Foo = Foo(Int)` (single-payload single-variant) and erase to the underlying primitive everywhere. Same trick Rust uses for `struct UserId(u64)` and Haskell uses for `newtype UserId = UserId Int`. Without it, wasm-gc's nominal type system pays for safety the legacy ABI fakes via tags.
+
+## Phase 3 status
+
+- **3a (shipped)**: Float, Records (struct types, `RecordCreate`, `Attr`), Single-arm Variants (`type Foo = Bar(T)`, pattern unwrap).
+- **3b (next)**: newtype optimization, multi-arm variant dispatch via `ref.test` cascade, multi-field variant patterns, List<T>, Tuple via multi-value, Map<K,V>, Vector<T>, String.
+- **3c (probably 0.16)**: dotted/method calls (`Int.toString`, `List.prepend`, etc.) — needs builtin lowering strategy.
+
+## Phase plan

@@ -1,10 +1,21 @@
 //! Top-level wasm module assembly.
 //!
-//! Walks the post-pipeline IR, emits a `(type ...)` per fn signature,
-//! a `(func ...)` per Aver fn, and exports `_start` (calling `main`)
-//! plus `main` itself. Validation runs `wasmparser` with GC + tail-call
-//! features enabled before returning bytes — encoder bugs surface
-//! immediately.
+//! Walks post-pipeline IR, assembles a wasm-gc module:
+//!
+//! 1. **Type section**, two layers in order:
+//!    - User-type slots (records, variant constructors) — assigned by
+//!      `TypeRegistry::build` so emit sites already know their indices.
+//!    - Function types — one per Aver fn, plus type-0 reserved for
+//!      `_start: () -> ()`.
+//! 2. **Function section** — one entry per Aver fn referencing the
+//!    function-type idx assigned in step 1.
+//! 3. **Export section** — `_start` (always at fn idx 0) plus every
+//!    user fn by name.
+//! 4. **Code section** — `_start` calls `main` and drops any return
+//!    value; user fns get their bodies from `body::emit_fn_body`.
+//!
+//! Validation runs `wasmparser` with GC + tail-call features before
+//! returning bytes.
 
 use std::collections::HashMap;
 
@@ -15,11 +26,13 @@ use wasm_encoder::{
 
 use super::WasmGcError;
 use super::body::{FnEntry, FnMap, emit_fn_body};
-use super::types::{param_types, return_results};
+use super::types::{TypeRegistry, param_types, record_struct_type, return_results};
 
-use crate::ast::{FnDef, TopLevel};
+use crate::ast::{FnDef, TopLevel, TypeDef};
 
 pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
+    let registry = TypeRegistry::build(items);
+
     let fn_defs: Vec<&FnDef> = items
         .iter()
         .filter_map(|it| match it {
@@ -41,31 +54,38 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
     let mut module = Module::new();
 
     // ── Type section ───────────────────────────────────────────────
-    // One function type per fn — phase 2 has no type-sharing pass,
-    // monomorphic-by-name is fine. `_start` gets type 0 (() -> ()).
     let mut types = TypeSection::new();
-    types.ty().function([], []); // type 0: _start
+
+    // 1) User types in `TypeRegistry` order. Indices match what the
+    //    registry recorded so emit sites can reference them directly.
+    emit_user_types(&mut types, items, &registry)?;
+
+    // 2) `_start` type — () -> ().
+    types.ty().function([], []);
+    let start_type_idx = registry.user_type_count;
+
+    // 3) One fn type per user fn. `fn_type_indices[i]` is the wasm
+    //    type idx for the i-th user fn (in declaration order).
     let mut fn_type_indices: Vec<u32> = Vec::with_capacity(fn_defs.len());
     for fd in &fn_defs {
-        let params = param_types(&fd.params)?;
-        let results = return_results(&fd.return_type)?;
-        let idx = (fn_type_indices.len() as u32) + 1; // +1 for the _start type at 0
+        let params = param_types(&fd.params, Some(&registry))?;
+        let results = return_results(&fd.return_type, Some(&registry))?;
+        let idx = start_type_idx + 1 + (fn_type_indices.len() as u32);
         types.ty().function(params, results);
         fn_type_indices.push(idx);
     }
     module.section(&types);
 
     // ── Function section ───────────────────────────────────────────
-    // _start at index 0, then user fns in declaration order.
     let mut funcs = FunctionSection::new();
-    funcs.function(0); // _start uses type 0
+    funcs.function(start_type_idx); // _start at wasm fn idx 0
     for type_idx in &fn_type_indices {
         funcs.function(*type_idx);
     }
     module.section(&funcs);
 
-    // Build the fn-name → wasm-fn-idx map for `body.rs::emit_fn_body`.
-    // _start sits at wasm fn idx 0; user fns start at 1.
+    // Build the fn-name → wasm-fn-idx map. _start at idx 0; user fns
+    // start at 1.
     let mut by_name: HashMap<String, FnEntry> = HashMap::new();
     for (i, fd) in fn_defs.iter().enumerate() {
         by_name.insert(
@@ -101,24 +121,16 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
     start.instruction(&Instruction::End);
     codes.function(&start);
 
-    // User fns. `emit_fn_body` walks the Aver body and pushes wasm
-    // instructions; it returns the list of extra locals (beyond
-    // params) so we can build the wasm `Function` with the right
-    // local count. We do a two-step: pre-collect locals first via
-    // a dry run, then re-emit. Cleaner than threading partial state
-    // back from `emit_fn_body`.
     for (i, fd) in fn_defs.iter().enumerate() {
         let self_wasm_idx = (i as u32) + 1;
-
-        // Dry run: emit into a throwaway fn just to discover what
-        // extra locals the body needs. Cheaper than threading a
-        // pre-pass through every emit fn.
+        // Dry run: discover extra locals by emitting into a throwaway
+        // fn. Cheaper than threading a separate pre-pass.
         let mut probe = Function::new([]);
-        let extra_locals_dry = emit_fn_body(&mut probe, fd, &fn_map, self_wasm_idx)?;
+        let extra_locals_dry = emit_fn_body(&mut probe, fd, &fn_map, self_wasm_idx, &registry)?;
 
         let local_groups: Vec<(u32, ValType)> = extra_locals_dry.iter().map(|v| (1, *v)).collect();
         let mut func = Function::new(local_groups);
-        let _ = emit_fn_body(&mut func, fd, &fn_map, self_wasm_idx)?;
+        let _ = emit_fn_body(&mut func, fd, &fn_map, self_wasm_idx, &registry)?;
         codes.function(&func);
     }
 
@@ -126,18 +138,56 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
 
     let bytes = module.finish();
     if let Err(e) = validate(&bytes) {
-        // Dump invalid bytes to /tmp for inspection — `wasm-tools print`
-        // can show what the encoder produced even when validation
-        // refused it.
+        // Dump invalid bytes for `wasm-tools print` inspection.
         let _ = std::fs::write("/tmp/aver_wasm_gc_invalid.wasm", &bytes);
         return Err(e);
     }
     Ok(bytes)
 }
 
+fn emit_user_types(
+    types: &mut TypeSection,
+    items: &[TopLevel],
+    registry: &TypeRegistry,
+) -> Result<(), WasmGcError> {
+    for item in items {
+        match item {
+            TopLevel::TypeDef(TypeDef::Product {
+                name: _, fields, ..
+            }) => {
+                let st = record_struct_type(fields, registry)?;
+                types.ty().struct_(st.fields.iter().copied());
+            }
+            TopLevel::TypeDef(TypeDef::Sum { variants, .. }) => {
+                // Each variant constructor → its own struct type.
+                // Phase 3a: no shared subtype hierarchy; each variant
+                // stands alone, parent type is encoded as `(ref null eq)`
+                // in user-facing slots.
+                for v in variants {
+                    let mut fields = Vec::new();
+                    for ty in &v.fields {
+                        let val_ty = super::types::aver_to_wasm(ty, Some(registry))?.ok_or(
+                            WasmGcError::Validation(format!(
+                                "variant `{}` field of type {ty} has no wasm representation",
+                                v.name
+                            )),
+                        )?;
+                        fields.push(wasm_encoder::FieldType {
+                            element_type: wasm_encoder::StorageType::Val(val_ty),
+                            mutable: false,
+                        });
+                    }
+                    types.ty().struct_(fields);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// Validate emitted bytes with `wasmparser` configured for the wasm-gc
-/// + tail-call feature set we target. Catches encoder bugs early and
-/// pins the assumed feature surface.
+/// + tail-call feature set we target.
 fn validate(bytes: &[u8]) -> Result<(), WasmGcError> {
     use wasmparser::{Validator, WasmFeatures};
 
