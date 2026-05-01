@@ -166,6 +166,8 @@ fn run_one_vm(
 
 #[cfg(feature = "wasm")]
 fn run_wasm_local(manifest: &Manifest) -> Result<BenchReport, RunError> {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use wasmtime::{Caller, Engine, Linker, Module, Store};
 
     // Compile the entry to a standalone WASI-bundled `.wasm` once. We
@@ -206,21 +208,48 @@ fn run_wasm_local(manifest: &Manifest) -> Result<BenchReport, RunError> {
     let module = Module::new(&engine, &bytes)
         .map_err(|e| RunError::Setup(format!("wasmtime compile module: {}", e)))?;
 
-    let run_one = |module: &Module, engine: &Engine| -> Result<(), RunError> {
+    let run_one = |module: &Module, engine: &Engine| -> Result<u64, RunError> {
         let mut store = Store::new(engine, ());
         let mut linker = Linker::new(engine);
         // Aver's wasip1 bridge declares the full wasi_snapshot_preview1
-        // import set unconditionally. Bench programs return Int from main
-        // and never touch the host (no print, no fs, no rand) — so each
-        // import gets a no-op stub returning errno 0. If a future bench
-        // scenario actually uses an effect, replace these with real
-        // wasmtime-wasi handlers.
+        // import set unconditionally. Bench programs that don't actually
+        // touch the host (no fs, no rand) get no-op stubs returning
+        // errno 0. The exception is `fd_write`: we read the iovec list
+        // from guest memory, sum the byte lengths, write the total back
+        // to `nwritten`, and accumulate the count into a per-iteration
+        // counter so `BenchReport.response_bytes` can report what the
+        // guest tried to write.
         let ws = "wasi_snapshot_preview1";
+        let bytes_written = Arc::new(AtomicU64::new(0));
+        let bw = bytes_written.clone();
         linker
             .func_wrap(
                 ws,
                 "fd_write",
-                |_: Caller<'_, ()>, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
+                move |mut caller: Caller<'_, ()>,
+                      _fd: i32,
+                      iovs_ptr: i32,
+                      iovs_len: i32,
+                      nwritten_ptr: i32|
+                      -> i32 {
+                    let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory())
+                    else {
+                        return 0;
+                    };
+                    let mut total: u32 = 0;
+                    let mut iov_buf = [0u8; 8];
+                    for i in 0..iovs_len {
+                        let off = (iovs_ptr as usize).saturating_add((i as usize) * 8);
+                        if memory.read(&caller, off, &mut iov_buf).is_err() {
+                            break;
+                        }
+                        let len = u32::from_le_bytes(iov_buf[4..8].try_into().unwrap());
+                        total = total.saturating_add(len);
+                    }
+                    let _ = memory.write(&mut caller, nwritten_ptr as usize, &total.to_le_bytes());
+                    bw.fetch_add(total as u64, Ordering::Relaxed);
+                    0
+                },
             )
             .and_then(|l| {
                 l.func_wrap(
@@ -378,16 +407,17 @@ fn run_wasm_local(manifest: &Manifest) -> Result<BenchReport, RunError> {
         start
             .call(&mut store, ())
             .map_err(|e| RunError::Runtime(format!("invoke _start: {}", e)))?;
-        Ok(())
+        Ok(bytes_written.load(Ordering::Relaxed))
     };
 
     let mut samples: Vec<f64> = Vec::with_capacity(manifest.iterations);
     for _ in 0..manifest.warmup {
         run_one(&module, &engine)?;
     }
+    let mut last_bytes: u64 = 0;
     for _ in 0..manifest.iterations {
         let t = Instant::now();
-        run_one(&module, &engine)?;
+        last_bytes = run_one(&module, &engine)?;
         samples.push(t.elapsed().as_secs_f64() * 1000.0);
     }
 
@@ -395,13 +425,20 @@ fn run_wasm_local(manifest: &Manifest) -> Result<BenchReport, RunError> {
     // record the canonical full-pipeline label so the JSON shape stays
     // consistent across targets.
     let passes = canonical_passes();
-    Ok(build_report(
+    let mut report = build_report(
         manifest,
         BenchTarget::WasmLocal,
         &samples,
         passes,
         compute_visible_allocs(manifest),
-    ))
+    );
+    // wasm-local response_bytes counts what the guest actually tried to
+    // write through `fd_write` (sum of iovec lengths). Differs from the
+    // VM target's "rendered return value" semantics — same-target
+    // baselines still gate cleanly because we never compare across
+    // targets.
+    report.response_bytes = Some(last_bytes as usize);
+    Ok(report)
 }
 
 #[cfg(not(feature = "wasm"))]
@@ -469,7 +506,7 @@ fn run_rust(manifest: &Manifest) -> Result<BenchReport, RunError> {
         )));
     }
 
-    let run_one = |bin: &std::path::Path, args: &[String]| -> Result<(), RunError> {
+    let run_one = |bin: &std::path::Path, args: &[String]| -> Result<usize, RunError> {
         let output = Command::new(bin)
             .args(args)
             .output()
@@ -482,27 +519,34 @@ fn run_rust(manifest: &Manifest) -> Result<BenchReport, RunError> {
                 String::from_utf8_lossy(&output.stderr)
             )));
         }
-        Ok(())
+        Ok(output.stdout.len())
     };
 
     let mut samples: Vec<f64> = Vec::with_capacity(manifest.iterations);
     for _ in 0..manifest.warmup {
         run_one(&binary, &manifest.args)?;
     }
+    let mut last_bytes: usize = 0;
     for _ in 0..manifest.iterations {
         let t = Instant::now();
-        run_one(&binary, &manifest.args)?;
+        last_bytes = run_one(&binary, &manifest.args)?;
         samples.push(t.elapsed().as_secs_f64() * 1000.0);
     }
 
     let passes = canonical_passes();
-    Ok(build_report(
+    let mut report = build_report(
         manifest,
         BenchTarget::Rust,
         &samples,
         passes,
         compute_visible_allocs(manifest),
-    ))
+    );
+    // Rust target captures actual stdout from the spawned binary.
+    // Same "actual bytes printed" semantics as wasm-local; differs
+    // from the VM target's "rendered return value" semantics, but
+    // baselines compare same-target only.
+    report.response_bytes = Some(last_bytes);
+    Ok(report)
 }
 
 // ── Shared helpers ─────────────────────────────────────────────────────

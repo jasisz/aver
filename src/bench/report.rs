@@ -18,15 +18,24 @@ pub struct BenchReport {
     /// to compare like-for-like across runs.
     pub host: HostInfo,
     pub iterations: IterationStats,
-    /// UTF-8 byte count of the last iteration's "result". For VM target
-    /// this is the byte length of `main`'s return value rendered through
-    /// `aver_display` (the same code path `Console.print` uses). Returns
-    /// `None` when `main` returns `Unit` — those scenarios print to
-    /// stdout for their effect, and the bench runner silences console
-    /// output during measurement. Future iterations may add real stdout
-    /// capture for print-only scenarios; for now `None` is the clean
-    /// "not measured" signal. Wasm-local / Rust runners stay `null`
-    /// pending equivalent capture for those targets.
+    /// UTF-8 byte count of the last iteration's "result". Semantics
+    /// vary by target:
+    ///
+    /// - `vm`: byte length of `main`'s return value rendered through
+    ///   `aver_display` (same path `Console.print` uses). `None` when
+    ///   `main` returns `Unit` — those scenarios print for side effect,
+    ///   and bench mode silences the console.
+    /// - `wasm-local`: total bytes the guest tried to write through
+    ///   `fd_write` (sum of iovec lengths) during the last iteration.
+    ///   `0` when the guest never called `fd_write` (most scenarios
+    ///   that don't print).
+    /// - `rust`: actual stdout byte count from the spawned binary's
+    ///   subprocess output. `0` when the binary printed nothing.
+    ///
+    /// VM and wasm-local/rust use different shapes ("rendered return
+    /// value" vs "actual stdout"). `aver bench --compare` only ever
+    /// matches same-target baselines, so the divergence doesn't break
+    /// gating — the field is exact-match within a target.
     pub response_bytes: Option<usize>,
     /// `true` when the run satisfied every `[expected]` constraint in
     /// the manifest. `null` when the manifest has no expectations.

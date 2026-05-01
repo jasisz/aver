@@ -13,7 +13,12 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 - **`aver bench --save-baseline` extended to directory mode** — writes NDJSON of every scenario to one file, the same shape `--baseline-dir` reads. Run once on a target machine to capture, commit to `bench/baselines/`, gate every PR thereafter.
 - **`bench/baselines/macos-aarch64-vm.json` committed** — 13-scenario reference baseline captured on aarch64 macOS in release mode. Linux baseline gets captured automatically on first CI run; commit `linux-x86_64-vm.json` to enable the gate there.
 - **GitHub Actions `Bench Gate` job** — release-mode build + `aver bench bench/scenarios/ --target=vm --baseline-dir bench/baselines/ --fail-on-regression`. Bench results uploaded as artifact (30-day retention).
-- **`response_bytes` populated for VM target** — UTF-8 byte count of `main`'s return value rendered through `aver_display` (the same path `Console.print` uses). `null` for `Unit`-returning scenarios (those print for side effect; capture lands in a future iteration). `aver bench --compare` gates `response_bytes` exact-match — any mismatch is a regression alongside p50/p95 and `compiler_visible_allocs`.
+- **`response_bytes` populated across all three targets**
+  - `vm`: byte length of `main`'s return value rendered through `aver_display` (`null` for `Unit`-returning scenarios — those print for side effect)
+  - `wasm-local`: total bytes the guest wrote through `fd_write` (sum of iovec lengths read from guest memory; counter accumulates per iteration)
+  - `rust`: actual stdout byte count from the spawned binary's subprocess output
+  - VM uses "rendered return value" semantics; wasm-local/rust use "actual stdout". `aver bench --compare` matches same-target baselines only, so divergence is contained.
+- **`tests/explain_passes_spec.rs`** — schema-stability tests for `--explain-passes --json`. Pin `schema_version: 1`, the canonical 7-stage ordering, the typed fields per pass variant. Renaming or removing fields requires bumping schema version.
 
 ### Changed
 - **`aver check` no longer prints the `↻ N buffer-build sink(s) [...]` summary** — same data is now exposed through `aver compile --explain-passes` with richer per-sink rewrite counts and synthesized fn names. Default `aver check` summary stays focused on diagnostics.
