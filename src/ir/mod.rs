@@ -13,7 +13,10 @@ pub mod pipeline;
 pub mod vars;
 
 pub use analyze::{AnalysisResult, BodyShape, FnAnalysis, NeutralAllocPolicy, analyze};
-pub use pipeline::{PipelineConfig, PipelineResult, PipelineStage, TypecheckMode};
+pub use pipeline::{
+    FnCountChange, NonTailEntry, PassDiagnostic, PassReport, PipelineConfig, PipelineResult,
+    PipelineStage, TypecheckMode,
+};
 
 pub use alloc_info::{
     AllocPolicy, compute_alloc_info, count_alloc_sites_in_fn, count_alloc_sites_in_program,

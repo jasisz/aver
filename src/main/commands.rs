@@ -3742,13 +3742,126 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
 }
 
 fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> String {
+    use aver::ir::pipeline::PassReport;
     let mut out = String::new();
     out.push_str("compiler pipeline — per-pass report\n");
     out.push_str("====================================\n\n");
     for diag in diags {
-        out.push_str(&format!("[{}] {}\n", diag.stage.name(), diag.summary));
-        for line in &diag.details {
-            out.push_str(&format!("  • {line}\n"));
+        let label = format!("[{}]", diag.stage.name());
+        match &diag.report {
+            PassReport::Tco {
+                tail_calls_added,
+                fns_changed,
+                non_tail_recursive,
+            } => {
+                if *tail_calls_added == 0 {
+                    out.push_str(&format!("{label} no calls converted to tail calls\n"));
+                } else {
+                    out.push_str(&format!(
+                        "{label} {tail_calls_added} callsite(s) converted to tail calls\n"
+                    ));
+                }
+                for c in fns_changed {
+                    out.push_str(&format!(
+                        "  • {}: {} → {} tail call(s)\n",
+                        c.name, c.before, c.after
+                    ));
+                }
+                if !non_tail_recursive.is_empty() {
+                    let total_calls: usize =
+                        non_tail_recursive.iter().map(|w| w.recursive_calls).sum();
+                    out.push_str(&format!(
+                        "  • {} non-tail recursive callsite(s) remain in {} fn(s)\n",
+                        total_calls,
+                        non_tail_recursive.len()
+                    ));
+                }
+            }
+            PassReport::Typecheck {
+                items_checked,
+                errors,
+                error_messages,
+            } => {
+                if *errors == 0 {
+                    out.push_str(&format!(
+                        "{label} {items_checked} top-level item(s) checked, no errors\n"
+                    ));
+                } else {
+                    out.push_str(&format!("{label} {errors} type error(s)\n"));
+                    for msg in error_messages {
+                        out.push_str(&format!("  • {msg}\n"));
+                    }
+                }
+            }
+            PassReport::InterpLower {
+                interpolations_lowered,
+                fns_changed,
+            } => {
+                if *interpolations_lowered == 0 {
+                    out.push_str(&format!("{label} no interpolations to lower\n"));
+                } else {
+                    out.push_str(&format!(
+                        "{label} {interpolations_lowered} interpolation literal(s) lowered to buffer pipeline\n"
+                    ));
+                }
+                for c in fns_changed {
+                    out.push_str(&format!(
+                        "  • {}: {} → {} interpolation(s)\n",
+                        c.name, c.before, c.after
+                    ));
+                }
+            }
+            PassReport::BufferBuild(r) => {
+                if r.rewrites == 0 {
+                    out.push_str(&format!(
+                        "{label} no fusion sites detected on canonical String.join shape\n"
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "{label} {} fusion site(s) rewritten, {} buffered variant(s) synthesized\n",
+                        r.rewrites,
+                        r.synthesized.len()
+                    ));
+                    for (sink, count) in &r.rewrites_by_sink {
+                        out.push_str(&format!("  • sink {sink}: {count} rewrite(s)\n"));
+                    }
+                    for fn_name in &r.synthesized {
+                        out.push_str(&format!("  • synthesized {fn_name}\n"));
+                    }
+                }
+            }
+            PassReport::Resolve {
+                slots_resolved,
+                fns_with_slots,
+            } => {
+                out.push_str(&format!(
+                    "{label} {slots_resolved} ident(s) resolved to slot lookups across {fns_with_slots} fn(s)\n"
+                ));
+            }
+            PassReport::LastUse {
+                last_use_marked,
+                total_resolved,
+            } => {
+                out.push_str(&format!(
+                    "{label} {last_use_marked} of {total_resolved} resolved slot(s) marked last-use (move-eligible)\n"
+                ));
+            }
+            PassReport::Analyze {
+                total_fns,
+                no_alloc_fns,
+                recursive_fns,
+                mutual_tco_members,
+                unknown_alloc,
+            } => {
+                out.push_str(&format!(
+                    "{label} {total_fns} fn(s) analyzed: {no_alloc_fns} no-alloc, {recursive_fns} recursive, {mutual_tco_members} mutual-TCO member(s)\n"
+                ));
+                if *unknown_alloc > 0 {
+                    out.push_str(&format!(
+                        "  • {unknown_alloc} fn(s) skipped alloc classification (no policy supplied)\n"
+                    ));
+                }
+            }
         }
         out.push('\n');
     }
@@ -3757,6 +3870,42 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
 
 fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) -> String {
     use aver::diagnostics::json_escape;
+    use aver::ir::pipeline::PassReport;
+
+    fn json_str(s: &str) -> String {
+        json_escape(s)
+    }
+    fn json_str_array(items: &[String]) -> String {
+        let mut out = String::from("[");
+        for (i, s) in items.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push_str(&json_str(s));
+        }
+        out.push(']');
+        out
+    }
+    fn json_fn_change(c: &aver::ir::pipeline::FnCountChange) -> String {
+        format!(
+            "{{\"name\":{},\"before\":{},\"after\":{}}}",
+            json_str(&c.name),
+            c.before,
+            c.after
+        )
+    }
+    fn json_fn_changes(cs: &[aver::ir::pipeline::FnCountChange]) -> String {
+        let mut out = String::from("[");
+        for (i, c) in cs.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push_str(&json_fn_change(c));
+        }
+        out.push(']');
+        out
+    }
+
     let mut out = String::new();
     out.push_str("{\"schema_version\":1,\"passes\":[");
     for (i, d) in diags.iter().enumerate() {
@@ -3764,17 +3913,106 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
             out.push(',');
         }
         out.push_str(&format!(
-            "{{\"stage\":{},\"summary\":{},\"details\":[",
-            json_escape(d.stage.name()),
-            json_escape(&d.summary),
+            "{{\"stage\":{},\"data\":",
+            json_str(d.stage.name())
         ));
-        for (j, line) in d.details.iter().enumerate() {
-            if j > 0 {
-                out.push(',');
+        match &d.report {
+            PassReport::Tco {
+                tail_calls_added,
+                fns_changed,
+                non_tail_recursive,
+            } => {
+                let mut nontail = String::from("[");
+                for (j, w) in non_tail_recursive.iter().enumerate() {
+                    if j > 0 {
+                        nontail.push(',');
+                    }
+                    nontail.push_str(&format!(
+                        "{{\"fn\":{},\"recursive_calls\":{},\"line\":{}}}",
+                        json_str(&w.fn_name),
+                        w.recursive_calls,
+                        w.line
+                    ));
+                }
+                nontail.push(']');
+                out.push_str(&format!(
+                    "{{\"tail_calls_added\":{},\"fns_changed\":{},\"non_tail_recursive\":{}}}",
+                    tail_calls_added,
+                    json_fn_changes(fns_changed),
+                    nontail
+                ));
             }
-            out.push_str(&json_escape(line));
+            PassReport::Typecheck {
+                items_checked,
+                errors,
+                error_messages,
+            } => {
+                out.push_str(&format!(
+                    "{{\"items_checked\":{},\"errors\":{},\"error_messages\":{}}}",
+                    items_checked,
+                    errors,
+                    json_str_array(error_messages)
+                ));
+            }
+            PassReport::InterpLower {
+                interpolations_lowered,
+                fns_changed,
+            } => {
+                out.push_str(&format!(
+                    "{{\"interpolations_lowered\":{},\"fns_changed\":{}}}",
+                    interpolations_lowered,
+                    json_fn_changes(fns_changed)
+                ));
+            }
+            PassReport::BufferBuild(r) => {
+                let mut by_sink = String::from("{");
+                for (j, (k, v)) in r.rewrites_by_sink.iter().enumerate() {
+                    if j > 0 {
+                        by_sink.push(',');
+                    }
+                    by_sink.push_str(&format!("{}:{}", json_str(k), v));
+                }
+                by_sink.push('}');
+                out.push_str(&format!(
+                    "{{\"rewrites\":{},\"synthesized\":{},\"sinks\":{},\"rewrites_by_sink\":{}}}",
+                    r.rewrites,
+                    json_str_array(&r.synthesized),
+                    json_str_array(&r.sink_fns),
+                    by_sink
+                ));
+            }
+            PassReport::Resolve {
+                slots_resolved,
+                fns_with_slots,
+            } => {
+                out.push_str(&format!(
+                    "{{\"slots_resolved\":{},\"fns_with_slots\":{}}}",
+                    slots_resolved, fns_with_slots
+                ));
+            }
+            PassReport::LastUse {
+                last_use_marked,
+                total_resolved,
+            } => {
+                out.push_str(&format!(
+                    "{{\"last_use_marked\":{},\"total_resolved\":{}}}",
+                    last_use_marked, total_resolved
+                ));
+            }
+            PassReport::Analyze {
+                total_fns,
+                no_alloc_fns,
+                recursive_fns,
+                mutual_tco_members,
+                unknown_alloc,
+            } => {
+                out.push_str(&format!(
+                    "{{\"total_fns\":{},\"no_alloc_fns\":{},\"recursive_fns\":{},\"mutual_tco_members\":{},\"unknown_alloc\":{}}}",
+                    total_fns, no_alloc_fns, recursive_fns, mutual_tco_members, unknown_alloc
+                ));
+            }
         }
-        out.push_str("]}");
+        out.push('}');
     }
     out.push_str("]}\n");
     out
