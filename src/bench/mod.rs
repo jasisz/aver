@@ -28,5 +28,5 @@ mod report;
 mod runner;
 
 pub use manifest::{Manifest, ManifestError};
-pub use report::{BenchReport, IterationStats, ScenarioMetadata};
+pub use report::{BenchReport, IterationStats, ScenarioMetadata, format_human};
 pub use runner::run_vm_scenario;

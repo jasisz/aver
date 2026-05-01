@@ -252,8 +252,12 @@ fn main() {
         } => {
             why_cmd::cmd_why(file, module_root.as_deref(), *verbose, *json);
         }
-        Commands::Bench { scenario, target } => {
-            commands::cmd_bench(scenario, target);
+        Commands::Bench {
+            scenario,
+            target,
+            json,
+        } => {
+            commands::cmd_bench(scenario, target, *json);
         }
         Commands::Proof {
             file,

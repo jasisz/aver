@@ -46,6 +46,66 @@ pub struct IterationStats {
     pub p99_ms: f64,
 }
 
+/// Render `report` as a multi-line human-readable summary (default
+/// `aver bench` output). The shape is deliberately compact — bench
+/// engineers want one glance to read pass list + percentiles, not
+/// a wall of pretty-printed JSON.
+pub fn format_human(report: &BenchReport) -> String {
+    use std::fmt::Write;
+
+    fn fmt_ms(ms: f64) -> String {
+        if ms >= 1.0 {
+            format!("{:.2}ms", ms)
+        } else {
+            format!("{:.0}µs", ms * 1000.0)
+        }
+    }
+
+    let mut out = String::new();
+    let s = &report.scenario;
+    let it = &report.iterations;
+    writeln!(out, "{} [{}]", s.name, s.target).ok();
+    writeln!(out, "  entry:        {}", s.entry).ok();
+    writeln!(
+        out,
+        "  iterations:   {} (warmup {})",
+        s.iterations_count, s.warmup_count
+    )
+    .ok();
+    writeln!(
+        out,
+        "  passes:       {}",
+        if report.passes_applied.is_empty() {
+            "(none)".to_string()
+        } else {
+            report.passes_applied.join(", ")
+        }
+    )
+    .ok();
+    writeln!(
+        out,
+        "  wall_time:    min={}  p50={}  p95={}  max={}  mean={}",
+        fmt_ms(it.min_ms),
+        fmt_ms(it.p50_ms),
+        fmt_ms(it.p95_ms),
+        fmt_ms(it.max_ms),
+        fmt_ms(it.mean_ms),
+    )
+    .ok();
+    if let Some(bytes) = report.response_bytes {
+        writeln!(out, "  response:     {} bytes", bytes).ok();
+    }
+    if let Some(matched) = report.expected_match {
+        writeln!(
+            out,
+            "  expected:     {}",
+            if matched { "ok" } else { "MISMATCH" }
+        )
+        .ok();
+    }
+    out
+}
+
 impl IterationStats {
     pub fn from_samples(samples: &[f64]) -> Self {
         assert!(!samples.is_empty(), "IterationStats requires ≥1 sample");

@@ -3349,11 +3349,12 @@ fn write_codegen_output(
     println!("  {}", build_hint.cyan());
 }
 
-/// `aver bench SCENARIO.toml --target=vm` — load the scenario manifest,
-/// run the canonical pipeline + VM for `warmup + iterations` runs, and
-/// print a structured JSON report to stdout. Future targets (`wasm-local`,
-/// `wasm-cloudflare`) land in 0.15.2.
-pub(super) fn cmd_bench(scenario_path: &str, target: &str) {
+/// `aver bench SCENARIO.toml [--target=vm] [--json]` — load the scenario
+/// manifest, run the canonical pipeline + VM for `warmup + iterations`
+/// runs, and report wall-time stats. Human-readable text by default;
+/// `--json` produces the structured shape that the 0.15.2 baseline-compare
+/// workflow consumes.
+pub(super) fn cmd_bench(scenario_path: &str, target: &str, json: bool) {
     if target != "vm" {
         eprintln!(
             "{}",
@@ -3374,18 +3375,24 @@ pub(super) fn cmd_bench(scenario_path: &str, target: &str) {
         }
     };
 
-    match aver::bench::run_vm_scenario(&manifest) {
-        Ok(report) => match serde_json::to_string_pretty(&report) {
-            Ok(json) => println!("{}", json),
-            Err(e) => {
-                eprintln!("{}", format!("bench JSON encode: {}", e).red());
-                process::exit(1);
-            }
-        },
+    let report = match aver::bench::run_vm_scenario(&manifest) {
+        Ok(r) => r,
         Err(e) => {
             eprintln!("{}", format!("bench run: {}", e).red());
             process::exit(1);
         }
+    };
+
+    if json {
+        match serde_json::to_string_pretty(&report) {
+            Ok(text) => println!("{}", text),
+            Err(e) => {
+                eprintln!("{}", format!("bench JSON encode: {}", e).red());
+                process::exit(1);
+            }
+        }
+    } else {
+        print!("{}", aver::bench::format_human(&report));
     }
 }
 
