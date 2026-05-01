@@ -365,3 +365,50 @@ pub fn build_context(
         synthesized_buffered_fns,
     }
 }
+
+impl CodegenContext {
+    /// Recompute `mutual_tco_members` and `recursive_fns` from current
+    /// `items` + `modules`. Used by test helpers that build the context
+    /// piecewise (push items in-place, bypass `build_context`) so the
+    /// derived sets stay in sync. Idempotent — production callers go
+    /// through `build_context`, where these are already populated from
+    /// the analyze stage; calling `refresh_facts` again is a no-op for
+    /// them (computes the same answer).
+    pub fn refresh_facts(&mut self) {
+        let entry_fn_refs: Vec<&FnDef> =
+            self.fn_defs.iter().filter(|fd| fd.name != "main").collect();
+
+        let mut mutual_tco_members: HashSet<String> = HashSet::new();
+        for group in crate::call_graph::tailcall_scc_components(&entry_fn_refs) {
+            if group.len() < 2 {
+                continue;
+            }
+            for fd in group {
+                mutual_tco_members.insert(fd.name.clone());
+            }
+        }
+        for module in &self.modules {
+            let mod_fns: Vec<&FnDef> = module.fn_defs.iter().collect();
+            for group in crate::call_graph::tailcall_scc_components(&mod_fns) {
+                if group.len() < 2 {
+                    continue;
+                }
+                for fd in group {
+                    mutual_tco_members.insert(fd.name.clone());
+                }
+            }
+        }
+        self.mutual_tco_members = mutual_tco_members;
+
+        let mut recursive_fns: HashSet<String> = crate::call_graph::find_recursive_fns(&self.items);
+        for module in &self.modules {
+            let mod_items: Vec<TopLevel> = module
+                .fn_defs
+                .iter()
+                .map(|fd| TopLevel::FnDef(fd.clone()))
+                .collect();
+            recursive_fns.extend(crate::call_graph::find_recursive_fns(&mod_items));
+        }
+        self.recursive_fns = recursive_fns;
+    }
+}

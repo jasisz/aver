@@ -755,23 +755,28 @@ pub(crate) fn recursive_pure_fn_names(ctx: &CodegenContext) -> HashSet<String> {
         .into_iter()
         .map(|fd| fd.name.clone())
         .collect();
-    // TODO: read from `ctx.recursive_fns` once Lean's empty_ctx-based test
-    // helpers populate it. Today they construct a CodegenContext piecewise
-    // and push items in-place, bypassing `build_context` (which is where
-    // `recursive_fns` gets populated from the analyze stage). Reverting to
-    // ad-hoc `find_recursive_fns(&ctx.items)` keeps those tests working
-    // until the test setup is migrated. Production callers go through
-    // `build_context`, so the ctx field IS populated for them — Lean just
-    // doesn't read from it yet.
-    let mut callgraph_items = ctx.items.clone();
-    for module in &ctx.modules {
-        for fd in &module.fn_defs {
-            callgraph_items.push(TopLevel::FnDef(fd.clone()));
-        }
-    }
-    crate::call_graph::find_recursive_fns(&callgraph_items)
-        .into_iter()
-        .filter(|name| pure_names.contains(name))
+    // Read recursion fact from the analyze stage (production path through
+    // `build_context`). Falls back to ad-hoc compute when `ctx.recursive_fns`
+    // is empty but `ctx.items` has fns — the tell-tale shape of a test
+    // helper that built the ctx piecewise via `empty_ctx`. Idempotent for
+    // production: programs with genuinely no recursion compute the same
+    // empty set again.
+    let recursive: std::borrow::Cow<'_, HashSet<String>> =
+        if ctx.recursive_fns.is_empty() && !ctx.items.is_empty() {
+            let mut callgraph_items = ctx.items.clone();
+            for module in &ctx.modules {
+                for fd in &module.fn_defs {
+                    callgraph_items.push(TopLevel::FnDef(fd.clone()));
+                }
+            }
+            std::borrow::Cow::Owned(crate::call_graph::find_recursive_fns(&callgraph_items))
+        } else {
+            std::borrow::Cow::Borrowed(&ctx.recursive_fns)
+        };
+    recursive
+        .iter()
+        .filter(|name| pure_names.contains(name.as_str()))
+        .cloned()
         .collect()
 }
 
@@ -1203,11 +1208,13 @@ fn transpile_unified(
 ) -> ProjectOutput {
     use crate::codegen::recursion::RecursionPlan;
 
-    // Same TODO as `recursive_pure_fn_names` — Lean's empty_ctx test
-    // pattern bypasses `build_context`, so reading from `ctx.recursive_fns`
-    // would give an empty set in tests that push items in-place. Use
-    // ad-hoc compute until the test stubs migrate.
-    let recursive_fns = crate::call_graph::find_recursive_fns(&ctx.items);
+    // Same fallback shape as `recursive_pure_fn_names` — read from analyze
+    // stage when populated, ad-hoc compute when test stubs left it empty.
+    let recursive_fns: HashSet<String> = if ctx.recursive_fns.is_empty() && !ctx.items.is_empty() {
+        crate::call_graph::find_recursive_fns(&ctx.items)
+    } else {
+        ctx.recursive_fns.clone()
+    };
     let recursive_names = recursive_pure_fn_names(ctx);
     let recursive_types = recursive_type_names(ctx);
     let (plans, _proof_issues) = match emit_mode {
