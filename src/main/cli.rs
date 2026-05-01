@@ -483,9 +483,24 @@ pub(super) enum Commands {
         target: String,
         /// Emit the structured JSON report instead of the human-readable
         /// summary. Use this in CI / scripts; the JSON shape is the
-        /// stable contract for the 0.15.2 baseline-compare workflow.
+        /// stable contract for `--compare baseline.json`.
         #[arg(long)]
         json: bool,
+        /// Save the resulting report (JSON) at `PATH`. Use this once on
+        /// a stable machine to capture a baseline; subsequent runs compare
+        /// against it via `--compare`.
+        #[arg(long, value_name = "PATH")]
+        save_baseline: Option<String>,
+        /// Compare the current run against a baseline JSON report at
+        /// `PATH`. Prints a diff (per-metric delta vs. tolerance) and,
+        /// when combined with `--fail-on-regression`, exits 1 if any
+        /// gated metric is over its tolerance budget.
+        #[arg(long, value_name = "PATH")]
+        compare: Option<String>,
+        /// Exit non-zero when `--compare` finds a regression. Use this
+        /// in CI to gate merges on bench numbers staying within tolerance.
+        #[arg(long)]
+        fail_on_regression: bool,
     },
     /// Export pure Aver code to a proof/verification project
     Proof {

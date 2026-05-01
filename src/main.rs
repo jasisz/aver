@@ -256,8 +256,18 @@ fn main() {
             scenario,
             target,
             json,
+            save_baseline,
+            compare,
+            fail_on_regression,
         } => {
-            commands::cmd_bench(scenario, target, *json);
+            commands::cmd_bench(commands::BenchOptions {
+                scenario_path: scenario,
+                target,
+                json: *json,
+                save_baseline: save_baseline.as_deref(),
+                compare: compare.as_deref(),
+                fail_on_regression: *fail_on_regression,
+            });
         }
         Commands::Proof {
             file,

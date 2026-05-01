@@ -46,6 +46,30 @@ pub struct Manifest {
     pub warmup: usize,
     pub args: Vec<String>,
     pub expected: ExpectedShape,
+    pub tolerance: Tolerance,
+}
+
+/// Per-metric regression tolerances used by `--compare baseline.json`.
+/// Defaults are deliberately loose for 0.15.1 — the bench harness is new
+/// and machines vary. Tighten per-scenario in TOML once a baseline is
+/// stable on the target machine.
+#[derive(Debug, Clone, Copy)]
+pub struct Tolerance {
+    /// Maximum allowed `p50_ms` increase as a percentage of baseline.
+    /// Default 20.0 (i.e. +20% over baseline counts as a regression).
+    pub wall_time_p50_pct: f64,
+    /// Maximum allowed `p95_ms` increase, percentage. Default 30.0 —
+    /// p95 is noisier than p50 by nature, so the bar is looser.
+    pub wall_time_p95_pct: f64,
+}
+
+impl Default for Tolerance {
+    fn default() -> Self {
+        Self {
+            wall_time_p50_pct: 20.0,
+            wall_time_p95_pct: 30.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -148,6 +172,20 @@ impl Manifest {
             _ => ExpectedShape::default(),
         };
 
+        let tolerance = match table.get("tolerance") {
+            Some(toml::Value::Table(t)) => {
+                let mut tol = Tolerance::default();
+                if let Some(v) = t.get("wall_time_p50_pct").and_then(|v| v.as_float()) {
+                    tol.wall_time_p50_pct = v;
+                }
+                if let Some(v) = t.get("wall_time_p95_pct").and_then(|v| v.as_float()) {
+                    tol.wall_time_p95_pct = v;
+                }
+                tol
+            }
+            _ => Tolerance::default(),
+        };
+
         Ok(Manifest {
             name,
             entry,
@@ -155,6 +193,7 @@ impl Manifest {
             warmup,
             args,
             expected,
+            tolerance,
         })
     }
 }

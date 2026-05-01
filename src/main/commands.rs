@@ -3349,25 +3349,36 @@ fn write_codegen_output(
     println!("  {}", build_hint.cyan());
 }
 
-/// `aver bench SCENARIO.toml [--target=vm] [--json]` — load the scenario
-/// manifest, run the canonical pipeline + VM for `warmup + iterations`
-/// runs, and report wall-time stats. Human-readable text by default;
-/// `--json` produces the structured shape that the 0.15.2 baseline-compare
-/// workflow consumes.
-pub(super) fn cmd_bench(scenario_path: &str, target: &str, json: bool) {
-    if target != "vm" {
+pub(super) struct BenchOptions<'a> {
+    pub scenario_path: &'a str,
+    pub target: &'a str,
+    pub json: bool,
+    pub save_baseline: Option<&'a str>,
+    pub compare: Option<&'a str>,
+    pub fail_on_regression: bool,
+}
+
+/// `aver bench SCENARIO.toml [--target=vm] [--json] [--save-baseline PATH]
+///                            [--compare PATH] [--fail-on-regression]`
+///
+/// Loads the manifest, runs the canonical pipeline + VM, optionally compares
+/// against a stored baseline, and prints a human-readable summary or the
+/// structured JSON shape. Used both for local "did I regress?" checks and
+/// for the CI gate (`--compare ... --fail-on-regression`).
+pub(super) fn cmd_bench(opts: BenchOptions<'_>) {
+    if opts.target != "vm" {
         eprintln!(
             "{}",
             format!(
                 "bench target '{}' not yet implemented; only `vm` is available in 0.15.1",
-                target
+                opts.target
             )
             .red()
         );
         process::exit(1);
     }
 
-    let manifest = match aver::bench::Manifest::load(Path::new(scenario_path)) {
+    let manifest = match aver::bench::Manifest::load(Path::new(opts.scenario_path)) {
         Ok(m) => m,
         Err(e) => {
             eprintln!("{}", format!("scenario load: {}", e).red());
@@ -3383,7 +3394,23 @@ pub(super) fn cmd_bench(scenario_path: &str, target: &str, json: bool) {
         }
     };
 
-    if json {
+    if let Some(path) = opts.save_baseline {
+        match serde_json::to_string_pretty(&report) {
+            Ok(text) => {
+                if let Err(e) = std::fs::write(path, format!("{}\n", text)) {
+                    eprintln!("{}", format!("save-baseline write '{}': {}", path, e).red());
+                    process::exit(1);
+                }
+                eprintln!("{}", format!("Saved baseline → {}", path).cyan());
+            }
+            Err(e) => {
+                eprintln!("{}", format!("save-baseline JSON encode: {}", e).red());
+                process::exit(1);
+            }
+        }
+    }
+
+    if opts.json {
         match serde_json::to_string_pretty(&report) {
             Ok(text) => println!("{}", text),
             Err(e) => {
@@ -3393,6 +3420,37 @@ pub(super) fn cmd_bench(scenario_path: &str, target: &str, json: bool) {
         }
     } else {
         print!("{}", aver::bench::format_human(&report));
+    }
+
+    if let Some(baseline_path) = opts.compare {
+        let baseline_text = match std::fs::read_to_string(baseline_path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!(
+                    "{}",
+                    format!("compare: cannot read baseline '{}': {}", baseline_path, e).red()
+                );
+                process::exit(1);
+            }
+        };
+        let baseline: aver::bench::BenchReport = match serde_json::from_str(&baseline_text) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!(
+                    "{}",
+                    format!("compare: cannot parse baseline '{}': {}", baseline_path, e).red()
+                );
+                process::exit(1);
+            }
+        };
+        let diff = aver::bench::diff(&report, &baseline, manifest.tolerance);
+        if !opts.json {
+            println!();
+            print!("{}", aver::bench::format_diff(&diff));
+        }
+        if diff.regressed && opts.fail_on_regression {
+            process::exit(1);
+        }
     }
 }
 
