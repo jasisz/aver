@@ -92,19 +92,20 @@ If Phase 5 closes the perf gap with ≥2x on numeric loops and ≥50% smaller bi
 
 ## Bench numbers (2026-05-01, macOS aarch64, release build)
 
-After phase 3a (Float + Records + Variants + newtype opt) **and phase 3b/1 (multi-arm dispatch)**:
+After phase 3a (Float + Records + Variants + newtype opt), 3b/1 (multi-arm dispatch), and **3c (String repr + Int.toString + String.len + Console.print as host import)**:
 
 | Scenario          | VM      | wasm-local | wasm-gc | wasm-gc vs legacy |
 |-------------------|---------|------------|---------|-------------------|
-| `fib(15)`         | 136µs   | 42µs       | 4µs     | **10.5x faster** |
-| `countdown(100k)` | 900µs   | 49µs       | 14µs    | **3.5x faster** |
-| `newtype_bare`    | 934µs   | 44µs       | 21µs    | **2.1x faster** |
-| `newtype_record`  | 2.42ms  | 146µs      | 47µs    | **3.1x faster** |
-| `newtype_variant` | 2.26ms  | 196µs      | 47µs    | **4.2x faster** |
-| `match_dispatch`  | 7.62ms  | 338µs      | 1.58ms  | 4.7x SLOWER ⚠️ |
-| `record`          | 3.90ms  | 247µs      | 827µs   | 3.4x SLOWER ⚠️ |
+| `fib(15)`         | 109µs   | 41µs       | 5µs     | **8.2x faster** |
+| `countdown(100k)` | 814µs   | 44µs       | 17µs    | **2.6x faster** |
+| `newtype_bare`    | 969µs   | 42µs       | 19µs    | **2.2x faster** |
+| `newtype_record`  | 2.29ms  | 143µs      | 51µs    | **2.8x faster** |
+| `newtype_variant` | 2.28ms  | 201µs      | 48µs    | **4.2x faster** |
+| `match_dispatch`  | 7.37ms  | 356µs      | 1.54ms  | 4.3x SLOWER ⚠️ |
+| `record`          | 3.98ms  | 244µs      | 805µs   | 3.3x SLOWER ⚠️ |
+| `factorial`       | 20µs    | 38µs       | 19µs    | **2.0x faster** |
 
-5/7 scenarios — wasm-gc beats legacy by 2.1× to 10.5×. 2/7 — wasm-gc loses to legacy.
+6/8 — wasm-gc beats legacy by 2.0× to 8.2×. 2/8 — alloc-heavy hot-loop regressions persist (same scenarios as before — engine GC overhead vs NaN-boxing for short-lived structs).
 
 Binary size: `fib.wasm` = **110 bytes** (wasm-gc) vs **13,107 bytes** (legacy with runtime). 120x smaller.
 
@@ -145,9 +146,18 @@ Rejected alternatives:
 - Inline-emit per call site → bloats every callsite with the same 30-instruction body
 - JS String Builtins → browser-only, niche
 
-## Bench coverage status (phase 3a + 3b/1)
+## Bench coverage status
 
-Working: fib, countdown, newtype_bare, newtype_record, newtype_variant, match_dispatch, record (7/13 bench scenarios).
-Pending phase 3c: factorial, string_interp, fractal_seahorse, map_build, map_lookup, vector_ops.
+Working (8/13 bench scenarios):
+- fib, countdown — pure numeric tail recursion
+- newtype_bare, newtype_record, newtype_variant — newtype optimization erases wrappers
+- match_dispatch — multi-arm variant dispatch via `ref.test`
+- record — struct field access in hot loop
+- factorial — `Int.toString` + `Console.print` (silenced in bench mode)
+
+Pending (5/13 — phase 3c continues):
+- string_interp, fractal_seahorse — String literals + `__buf_*` interp lowering
+- map_build, map_lookup — `Map<K,V>` repr (flat hashtable struct)
+- vector_ops — `Vector<T>` (wasm `(array T)`)
 
 ## Phase plan
