@@ -610,9 +610,9 @@ fn intrinsic_call(line: usize, name: &str, args: Vec<Spanned<Expr>>) -> Spanned<
 /// rewrite both match on `Expr::Ident` shapes that the resolver
 /// rewrites to `Expr::Resolved`).
 ///
-/// Returns the count of fusion sites rewritten + buffered variants
-/// synthesized for diagnostic / bench reporting.
-pub fn run_buffer_build_pass(items: &mut Vec<crate::ast::TopLevel>) -> (usize, usize) {
+/// Returns a [`BufferBuildPassReport`] describing what fired, for
+/// diagnostic / bench reporting and `--explain-passes`.
+pub fn run_buffer_build_pass(items: &mut Vec<crate::ast::TopLevel>) -> BufferBuildPassReport {
     let fn_refs: Vec<&FnDef> = items
         .iter()
         .filter_map(|it| match it {
@@ -622,7 +622,7 @@ pub fn run_buffer_build_pass(items: &mut Vec<crate::ast::TopLevel>) -> (usize, u
         .collect();
     let all_sinks = compute_buffer_build_sinks(&fn_refs);
     if all_sinks.is_empty() {
-        return (0, 0);
+        return BufferBuildPassReport::default();
     }
     let sites = find_fusion_sites(&fn_refs, &all_sinks);
 
@@ -662,7 +662,40 @@ pub fn run_buffer_build_pass(items: &mut Vec<crate::ast::TopLevel>) -> (usize, u
         items.push(crate::ast::TopLevel::FnDef(fd.clone()));
     }
 
-    (sites.len(), synthesized.len())
+    let mut sink_fns: Vec<String> = sinks.keys().cloned().collect();
+    sink_fns.sort();
+    let synthesized_fns: Vec<String> = synthesized.iter().map(|fd| fd.name.clone()).collect();
+
+    let mut rewrites_by_sink: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    for site in &sites {
+        *rewrites_by_sink.entry(site.sink_fn.clone()).or_default() += 1;
+    }
+
+    BufferBuildPassReport {
+        rewrites: sites.len(),
+        synthesized: synthesized_fns,
+        sink_fns,
+        rewrites_by_sink,
+    }
+}
+
+/// Per-pass report — what buffer_build did during a single pipeline run.
+/// Drives `aver compile --explain-passes`; consumed by the bench
+/// regression checks (e.g. "fail if buffer_build no longer fires on the
+/// canonical shape").
+#[derive(Debug, Clone, Default)]
+pub struct BufferBuildPassReport {
+    /// Number of fusion sites rewritten in place.
+    pub rewrites: usize,
+    /// Names of synthesized `<sink>__buffered` variants appended to
+    /// the items list.
+    pub synthesized: Vec<String>,
+    /// Sink fns whose buffered variant actually fired (matches one of
+    /// `synthesized` minus the `__buffered` suffix). Sorted.
+    pub sink_fns: Vec<String>,
+    /// Per-sink rewrite counts. Sorted alphabetically by sink fn.
+    pub rewrites_by_sink: std::collections::BTreeMap<String, usize>,
 }
 
 /// Apply fusion-site rewrite to a single fn body. Internal helper
@@ -1575,9 +1608,13 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
             crate::ast::TopLevel::FnDef(caller),
         ];
         let initial_count = items.len();
-        let (sites, synth) = run_buffer_build_pass(&mut items);
-        assert_eq!(sites, 0, "no fusion sites — no rewriteable call");
-        assert_eq!(synth, 0, "no synth — nothing to fuse against");
+        let report = run_buffer_build_pass(&mut items);
+        assert_eq!(report.rewrites, 0, "no fusion sites — no rewriteable call");
+        assert_eq!(
+            report.synthesized.len(),
+            0,
+            "no synth — nothing to fuse against"
+        );
         assert_eq!(items.len(), initial_count, "no buffered variant appended");
     }
 
@@ -1654,12 +1691,16 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
             crate::ast::TopLevel::FnDef(sink),
             crate::ast::TopLevel::FnDef(caller),
         ];
-        let (sites, synth) = run_buffer_build_pass(&mut items);
+        let report = run_buffer_build_pass(&mut items);
         assert_eq!(
-            sites, 1,
+            report.rewrites, 1,
             "external-reverse pattern should be one fusion site"
         );
-        assert_eq!(synth, 1, "exactly one buffered variant for the used sink");
+        assert_eq!(
+            report.synthesized.len(),
+            1,
+            "exactly one buffered variant for the used sink"
+        );
 
         // The synthesized variant should be appended.
         let synth_present = items.iter().any(|it| match it {

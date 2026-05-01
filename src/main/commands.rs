@@ -2297,35 +2297,12 @@ fn run_check_for_file(
                     suppressed_count
                 ));
             }
-            // Perf-shape note: detect canonical buffer-build sink fns
-            // and the call sites that actually wrap them in a known
-            // consumer (currently `String.join`). Both numbers matter:
-            // a sink with zero fusion sites is a candidate that nobody
-            // is consuming; a fusion site without a matching sink is
-            // unreachable. Pure info today; the 0.15+ deforestation
-            // lowering rewrites these pairs into buffer-write loops.
-            let mut tco_items = items.clone();
-            aver::ir::pipeline::tco(&mut tco_items);
-            let fn_defs: Vec<&aver::ast::FnDef> = tco_items
-                .iter()
-                .filter_map(|it| match it {
-                    TopLevel::FnDef(fd) => Some(fd),
-                    _ => None,
-                })
-                .collect();
-            let sinks = aver::ir::compute_buffer_build_sinks(&fn_defs);
-            if !sinks.is_empty() {
-                let sites = aver::ir::find_fusion_sites(&fn_defs, &sinks);
-                let mut names: Vec<&str> = sinks.keys().map(|s| s.as_str()).collect();
-                names.sort();
-                summary_parts.push(format!(
-                    "{} {} buffer-build sink(s) [{}], {} fusion site(s)",
-                    "↻".cyan(),
-                    sinks.len(),
-                    names.join(", "),
-                    sites.len()
-                ));
-            }
+            // Buffer-build sink/fusion summary used to print here. As of
+            // 0.15.2 the same data (sinks, fusion sites, synthesized
+            // variants, per-sink rewrite counts) is surfaced through
+            // `aver compile --explain-passes` — keeping it out of the
+            // default `aver check` summary so the line stays focused on
+            // diagnostics.
             println!("  {}", summary_parts.join(" | "));
         }
 
@@ -3711,6 +3688,65 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
             process::exit(1);
         }
     }
+}
+
+/// `aver compile FILE --explain-passes` — runs the canonical pipeline
+/// (no codegen) and prints a human-readable per-pass diagnostic report
+/// describing what each stage actually did. The data backs failable-
+/// invariant CI gates ("fail if buffer_build no longer fires on the
+/// canonical shape", "fail if hot fn loses no-alloc status").
+pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>) {
+    use aver::ir::{PipelineConfig, TypecheckMode};
+
+    let module_root = resolve_module_root(module_root_override);
+    let source = match read_file(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+    let mut items = match parse_file(&source) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+
+    let neutral_policy = aver::ir::NeutralAllocPolicy;
+    let result = aver::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full {
+                base_dir: Some(&module_root),
+            }),
+            alloc_policy: Some(&neutral_policy),
+            ..Default::default()
+        },
+    );
+    if let Some(tc) = &result.typecheck
+        && !tc.errors.is_empty()
+    {
+        eprintln!("{}", super::shared::format_type_errors(&tc.errors).red());
+        process::exit(1);
+    }
+
+    print!("{}", render_pass_diagnostics(&result.pass_diagnostics));
+}
+
+fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> String {
+    let mut out = String::new();
+    out.push_str("compiler pipeline — per-pass report\n");
+    out.push_str("====================================\n\n");
+    for diag in diags {
+        out.push_str(&format!("[{}] {}\n", diag.stage.name(), diag.summary));
+        for line in &diag.details {
+            out.push_str(&format!("  • {line}\n"));
+        }
+        out.push('\n');
+    }
+    out
 }
 
 pub(super) fn cmd_compile(opts: CompileOptions<'_>) {

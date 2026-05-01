@@ -8,6 +8,7 @@ mod interp_lower;
 pub mod last_use;
 mod leaf;
 mod matches;
+mod pass_diag;
 pub mod pipeline;
 pub mod vars;
 

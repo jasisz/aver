@@ -4,6 +4,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
+### Added
+- **`aver compile --explain-passes`** — runs the pipeline (no codegen) and prints a per-pass diagnostic report: tail-call conversions, interpolations lowered, fusion sites + sinks fired, slots resolved, last-use markers annotated, alloc/recursion facts. Per-pass `PassDiagnostic` records land on `PipelineResult.pass_diagnostics`; backs the failable-invariant CI checks ("fail if buffer_build no longer fires on the canonical shape", "fail if hot fn loses no-alloc status").
+- **`PipelineResult.buffer_build`** — pass report (rewrites, synthesized fns, per-sink rewrite counts) replaces the opaque `(usize, usize)` tuple. Sink list is alphabetised; `synthesized` is the appended `<sink>__buffered` fn names.
+
 ## 0.15.1 "Traversal" — pipeline foundation + observability (unreleased)
 
 > _The compiler grew a real pipeline. Every IR transform is a named ordered stage, every consumer reads derived facts from one place, every backend's relationship to the IR is a documented contract._

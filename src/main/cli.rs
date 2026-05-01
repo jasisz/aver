@@ -430,6 +430,16 @@ pub(super) enum Commands {
         /// before any pass runs.
         #[arg(long, value_name = "PASS")]
         emit_ir_after: Option<String>,
+        /// Run the full pipeline and print a per-pass diagnostic report
+        /// describing what fired (tail-call conversions, interpolations
+        /// lowered, fusion sites rewritten, sinks synthesized, slots
+        /// resolved, last-use markers annotated, alloc/recursion facts).
+        /// Drives the failable-invariant CI checks ("fail if buffer_build
+        /// no longer fires on the canonical shape", "fail if hot fn
+        /// loses no-alloc status"). Output is human-readable; pair with
+        /// `--emit-ir-after=PASS` to inspect the actual IR.
+        #[arg(long, default_value_t = false)]
+        explain_passes: bool,
     },
     /// Emit a standalone aver_runtime / aver_to_wasi artifact to disk.
     /// Internal release tooling — used by tools/release/* to publish

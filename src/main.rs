@@ -186,6 +186,7 @@ fn main() {
             handler,
             optimize,
             emit_ir_after,
+            explain_passes,
         } => {
             let policy_mode = (*policy).unwrap_or(if *with_replay {
                 CompilePolicyMode::Runtime
@@ -218,6 +219,13 @@ fn main() {
             // in 0.15.1 without touching the compile path otherwise.
             if let Some(stage) = emit_ir_after.as_deref() {
                 commands::cmd_emit_ir_after(file, module_root.as_deref(), stage);
+                return;
+            }
+            // `--explain-passes` runs the full pipeline (no codegen) and
+            // prints a per-pass diagnostic report. Same short-circuit
+            // shape as `--emit-ir-after`.
+            if *explain_passes {
+                commands::cmd_explain_passes(file, module_root.as_deref());
                 return;
             }
             commands::cmd_compile(commands::CompileOptions {
