@@ -128,7 +128,7 @@ Same source, both backends (`wasm-local` legacy linear-memory + `wasm-gc`), both
 | vector_ops        | 8.75ms         | 9.09ms    | 48µs         | **42µs**  |
 | string_interp     | 5.17ms         | 4.25ms    | 6,654ms ⚠   | **2.86ms** |
 | map_build         | 940µs          | 606µs     | 695µs        | **179µs** |
-| map_lookup        | 1.16ms         | 693µs     | 2.20ms ⚠     | **480µs** |
+| map_lookup        | 1.16ms         | 693µs     | 1.75ms       | **427µs** |
 
 (Bold = winner per scenario.)
 
@@ -139,7 +139,10 @@ Findings:
 - **wasmtime + wasm-gc is competitive on pure numeric** (fib, countdown, match_dispatch) — Cranelift's codegen is solid; differences are noise. Penalty appears only on alloc-heavy paths.
 - **`string_interp` wasmtime: 6.65s (vs 2.86ms on V8 — 2300× slower).** Same wasm binary, engine-bound. Wasmtime 44's GC heap path: every `array.new_default(N)` + `array.copy` hits the allocator + write barriers, and the bench accumulates ~30 MB of intermediate strings per iteration. Wasmtime's GC is new (2024) and unoptimised; V8 has had a decade. The compile path is sane and fast — V8 actually beats `wasm-local` on the same workload.
 - **`vector_ops` is structurally 200× wasm-gc on either engine** — the legacy backend round-trips every `Vector.set` / `Vector.get` through runtime helpers + `AverVector` allocation; native `array.set` / `array.get` is the right shape.
-- **`map_lookup` on wasmtime regresses 1.9× vs wasm-local.** Each `Map.get` allocates a fresh `Option<Int>` struct (Some or None) — 20,000 lookups × 30 iterations = ~600k allocations through wasmtime's GC heap. Same workload on V8 finishes in 480µs (1.4× faster than wasm-local·V8). Engine cost again, not a compile-path issue. A fused `Option.withDefault(Map.get(m, k), default)` shape (analogous to the `Vector.get` fusion) **is implemented** in `body.rs::emit_map_get_or_default` — calls a `get_or_default(m, k, def) -> V` per-(K,V) helper that runs the same probe loop with no Option allocation. It cuts wasmtime to 1.41ms (1.7× faster) on a withDefault-shaped variant. The bench scenario itself uses pattern-match dispatch (`match Map.get { Option.Some(v) -> ...; Option.None -> ... }`) which doesn't yet collapse to the same shape — extending fusion to that case is a follow-up.
+- **`map_lookup` was the wasmtime tail-end story.** Naive shape (each `Map.get` boxes `Option<Int>` → ~600k struct allocations × 30 iterations) sat at 2.20ms / 1.9× vs wasm-local. Two fused shapes ship with this backend:
+  - `Option.withDefault(Map.get(m, k), default)` → per-(K,V) `get_or_default` helper. Probe loop returns the value (or default) directly. Backs the `withDefault` surface form.
+  - `match Map.get(m, k) { Option.Some(v) -> ...; Option.None -> ... }` → per-(K,V) `get_pair` helper with multi-result `(i32 found, V value)` return. Caller pops `value` into the binding slot, branches on `found`. Backs the explicit pattern-match surface form (the bench's actual shape).
+  Pattern fusion alone cuts wasmtime to **1.75ms (1.36× faster than naive)** without changing the source. V8 falls in line at 427µs (1.6× faster than wasm-local·V8). Vector fusion (already shipped) goes through `ir::leaf::classify_leaf_op` so the recognition logic is shared with Rust / Lean backends — Map fusion stays local because legacy `wasm-local` uses a runtime helper and doesn't benefit from a leaf shape.
 
 The compile path itself is correct and competitive: `Expr::InterpolatedStr` lowers to a single `array.new_fixed (Vector<String>) N` + variadic concat helper that is O(total_len) bytes copied (not O(N²) like a left-folded `String.concat` chain would be). Same primitive (`array.new_fixed` + variadic concat) will back `String.join` once it lands.
 

@@ -62,6 +62,11 @@ pub(super) struct MapKVHelpers {
     /// returns `values[idx]` directly on a key match and the supplied
     /// default on an empty slot.
     pub(super) get_or_default: u32,
+    /// `get_pair(m, k) -> (i32 found, V value)`. Multi-result return
+    /// that backs the fused `match Map.get(m, k) { Some(v) -> ...;
+    /// None -> ... }` shape. Caller pops `value` into the binding
+    /// slot, then branches on `found` — no Option<V> ever allocates.
+    pub(super) get_pair: u32,
 }
 
 #[derive(Default)]
@@ -76,7 +81,7 @@ pub(super) struct MapHelperRegistry {
     /// Per-helper wasm type indices (parallel to fn indices). Stored
     /// here so the type section emit can look them up.
     key_type_indices: HashMap<String, (u32, u32)>, // (hash type idx, eq type idx)
-    kv_type_indices: HashMap<String, (u32, u32, u32, u32, u32)>,
+    kv_type_indices: HashMap<String, (u32, u32, u32, u32, u32, u32)>,
 }
 
 impl MapHelperRegistry {
@@ -123,8 +128,8 @@ impl MapHelperRegistry {
             if self.kv.contains_key(canonical) {
                 continue;
             }
-            // Five fn type slots and five fn idx slots:
-            // empty, set, get, len, get_or_default.
+            // Six fn type slots and six fn idx slots:
+            // empty, set, get, len, get_or_default, get_pair.
             let empty_type_idx = *next_type_idx;
             *next_type_idx += 1;
             let set_type_idx = *next_type_idx;
@@ -135,6 +140,8 @@ impl MapHelperRegistry {
             *next_type_idx += 1;
             let god_type_idx = *next_type_idx;
             *next_type_idx += 1;
+            let pair_type_idx = *next_type_idx;
+            *next_type_idx += 1;
             let empty_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
             let set_fn = *next_wasm_fn_idx;
@@ -144,6 +151,8 @@ impl MapHelperRegistry {
             let len_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
             let god_fn = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
+            let pair_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
 
             // Validate K is supported now (only `String` in phase 3c).
@@ -165,6 +174,7 @@ impl MapHelperRegistry {
                     get: get_fn,
                     len: len_fn,
                     get_or_default: god_fn,
+                    get_pair: pair_fn,
                 },
             );
             self.kv_type_indices.insert(
@@ -175,6 +185,7 @@ impl MapHelperRegistry {
                     get_type_idx,
                     len_type_idx,
                     god_type_idx,
+                    pair_type_idx,
                 ),
             );
             self.kv_order.push(canonical.clone());
@@ -244,6 +255,10 @@ impl MapHelperRegistry {
             types.ty().function([map_ref], [ValType::I64]);
             // get_or_default : (Map, K, V) -> V
             types.ty().function([map_ref, k_val, v_val], [v_val]);
+            // get_pair : (Map, K) -> (i32 found, V value) — multi-result
+            types
+                .ty()
+                .function([map_ref, k_val], [ValType::I32, v_val]);
             let _ = opt_ref; // (consumed by `get`)
         }
         Ok(())
@@ -261,12 +276,13 @@ impl MapHelperRegistry {
             funcs.function(e);
         }
         for canonical in &self.kv_order {
-            let (em, st, gt, ln, god) = self.kv_type_indices[canonical];
+            let (em, st, gt, ln, god, pair) = self.kv_type_indices[canonical];
             funcs.function(em);
             funcs.function(st);
             funcs.function(gt);
             funcs.function(ln);
             funcs.function(god);
+            funcs.function(pair);
         }
     }
 
@@ -295,6 +311,7 @@ impl MapHelperRegistry {
             codes.function(&emit_map_get(canonical, registry, key_h)?);
             codes.function(&emit_map_len(canonical, registry)?);
             codes.function(&emit_map_get_or_default(canonical, registry, key_h)?);
+            codes.function(&emit_map_get_pair(canonical, registry, key_h)?);
         }
         Ok(())
     }
@@ -804,6 +821,118 @@ fn emit_map_get_or_default(
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::Unreachable);
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `get_pair(map, k) -> (i32 found, V value)`. Backs the fused
+/// `match Map.get(m, k) { Option.Some(v) -> ...; Option.None -> ... }`
+/// shape — the caller pops `value` into the binding slot and branches
+/// on `found`. No `Option<V>` ever allocates.
+///
+/// On an empty slot returns `(0, default<V>)` so the multi-result
+/// signature stays well-typed; on a key match returns `(1, values[idx])`.
+fn emit_map_get_pair(
+    canonical: &str,
+    registry: &TypeRegistry,
+    keyh: KeyHelpers,
+) -> Result<Function, WasmGcError> {
+    let slots = slots_for(canonical, registry)?;
+    let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
+    let k_val = super::types::aver_to_wasm(k_aver, Some(registry))?.unwrap();
+    let v_val = super::types::aver_to_wasm(v_aver, Some(registry))?.unwrap();
+    let _ = k_val;
+    // params: 0=map, 1=k
+    // locals: 2=cap, 3=mask, 4=idx, 5=keys, 6=values, 7=cur_key
+    let mut f = Function::new([
+        (1, ValType::I32), // 2: cap
+        (1, ValType::I32), // 3: mask
+        (1, ValType::I32), // 4: idx
+        (
+            1,
+            ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(slots.keys_array),
+            }),
+        ),
+        (
+            1,
+            ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(slots.values_array),
+            }),
+        ),
+        (1, k_val), // 7: cur_key
+    ]);
+
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 2,
+    });
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 3,
+    });
+    f.instruction(&Instruction::LocalSet(6));
+
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(keyh.hash));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(4));
+
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::ArrayGet(slots.keys_array));
+    f.instruction(&Instruction::LocalSet(7));
+
+    // empty slot → return (0, default<V>)
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    emit_default_value_for(&mut f, v_val);
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // key match → return (1, values[idx])
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(keyh.eq));
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::ArrayGet(slots.values_array));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // probe forward
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(4));
     f.instruction(&Instruction::Br(0));
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);

@@ -24,6 +24,7 @@ use super::WasmGcError;
 use super::types::{TypeRegistry, aver_to_wasm};
 
 use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt};
+use crate::ir::{CallLowerCtx, LeafOp, classify_leaf_op};
 
 /// Maps fn name → wasm fn index + return type. Built once per module.
 pub(super) struct FnMap {
@@ -660,6 +661,32 @@ impl<'a> EmitCtx<'a> {
             .as_ref()
             .and_then(|r| r.local_slots.get(name).copied())
             .map(|s| s as u32)
+    }
+}
+
+/// `CallLowerCtx` impl so the shared IR-level shape recognition
+/// (`classify_leaf_op`, `classify_call_plan`) can be reused here
+/// instead of each backend re-implementing the same patterns. Wasm-gc
+/// is single-module today so module resolution returns None; the
+/// other two predicates fall out of the registry + binding/param
+/// tables we already maintain.
+impl<'a> CallLowerCtx for EmitCtx<'a> {
+    fn is_local_value(&self, name: &str) -> bool {
+        self.params.iter().any(|(n, _)| n == name) || self.binding_types.contains_key(name)
+    }
+
+    fn is_user_type(&self, name: &str) -> bool {
+        self.registry.records.contains_key(name)
+            || self.registry.variants.contains_key(name)
+            || self
+                .registry
+                .variants
+                .values()
+                .any(|info| info.parent == name)
+    }
+
+    fn resolve_module_call<'b>(&self, _dotted: &'b str) -> Option<(&'b str, &'b str)> {
+        None
     }
 }
 
@@ -1470,6 +1497,91 @@ fn struct_name_of(
     Ok(None)
 }
 
+/// Fused `match Map.get(m, k) { Option.Some(v) -> body1; Option.None
+/// -> body2 }` — calls the per-(K,V) `get_pair` helper which returns
+/// `(i32 found, V value)` as a multi-result. The caller pops `value`
+/// into the binding slot, then branches on `found`. Never allocates
+/// Option<V>; same probe loop runs but its result lands directly on
+/// the wasm stack.
+fn emit_map_get_match_fused(
+    func: &mut Function,
+    map: &Spanned<Expr>,
+    key: &Spanned<Expr>,
+    arms: &[MatchArm],
+    block_ty: wasm_encoder::BlockType,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let map_aver = infer_aver_type(&map.node, ctx)?;
+    let canonical: String = map_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    let helpers = ctx
+        .fn_map
+        .map_helpers
+        .get(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Map.get match fusion: map type `{map_aver}` has no helpers"
+        )))?;
+
+    // Locate the Some / None arms (wildcard counts as None catch-all).
+    let mut some_arm: Option<&MatchArm> = None;
+    let mut none_arm: Option<&MatchArm> = None;
+    for arm in arms {
+        match &arm.pattern {
+            Pattern::Constructor(name, _) => {
+                let bare = name.rsplit('.').next().unwrap_or(name);
+                if bare == "Some" {
+                    some_arm = Some(arm);
+                } else if bare == "None" {
+                    none_arm = Some(arm);
+                }
+            }
+            Pattern::Wildcard => {
+                if none_arm.is_none() {
+                    none_arm = Some(arm);
+                } else if some_arm.is_none() {
+                    some_arm = Some(arm);
+                }
+            }
+            _ => {}
+        }
+    }
+    let some_arm = some_arm.ok_or(WasmGcError::Validation(
+        "Map.get match fusion missing Some arm".into(),
+    ))?;
+    let none_arm = none_arm.ok_or(WasmGcError::Validation(
+        "Map.get match fusion missing None arm".into(),
+    ))?;
+
+    emit_expr(func, &map.node, slots, ctx)?;
+    emit_expr(func, &key.node, slots, ctx)?;
+    func.instruction(&Instruction::Call(helpers.get_pair));
+    // Stack now: [..., found(i32), value(V)]. Pop V into the Some
+    // binding slot (if any); the value is harmlessly dead in the
+    // None branch (we always pop, regardless of which arm fires —
+    // wasm requires a balanced stack across the branch boundary).
+    if let Pattern::Constructor(_, bindings) = &some_arm.pattern
+        && let Some(binding_name) = bindings.first()
+        && binding_name != "_"
+    {
+        let slot = ctx
+            .self_local_slot(binding_name)
+            .ok_or(WasmGcError::Validation(format!(
+                "Map.get fusion: Some binding `{binding_name}` has no resolver slot"
+            )))?;
+        func.instruction(&Instruction::LocalSet(slot));
+    } else {
+        // No binding (or wildcard) — drop the value.
+        func.instruction(&Instruction::Drop);
+    }
+    // Stack: [..., found(i32)]. Branch.
+    func.instruction(&Instruction::If(block_ty));
+    emit_expr(func, &some_arm.body.node, slots, ctx)?;
+    func.instruction(&Instruction::Else);
+    emit_expr(func, &none_arm.body.node, slots, ctx)?;
+    func.instruction(&Instruction::End);
+    Ok(())
+}
+
 /// `match opt { Option.Some(v) -> ...; Option.None -> ... }` —
 /// tag-based dispatch on the Option struct's first field.
 ///
@@ -2067,56 +2179,78 @@ fn emit_option_with_default(
     let opt_arg = &args[0];
     let default_arg = &args[1];
 
-    if let Expr::FnCall(inner_callee, inner_args) = &opt_arg.node
-        && let Expr::Attr(parent, member) = &inner_callee.node
-    {
-        let parent_name = match &parent.node {
-            Expr::Ident(n) => Some(n.as_str()),
-            Expr::Resolved { name, .. } => Some(name.as_str()),
-            _ => None,
-        };
-        if parent_name == Some("Vector") {
-            match member.as_str() {
-                "set" if inner_args.len() == 3 && default_arg == &inner_args[0] => {
-                    return emit_vector_set_or_default(
-                        func,
-                        &inner_args[0],
-                        &inner_args[1],
-                        &inner_args[2],
-                        slots,
-                        ctx,
-                    );
-                }
-                "get" if inner_args.len() == 2 => {
-                    return emit_vector_get_or_default(
-                        func,
-                        &inner_args[0],
-                        &inner_args[1],
-                        default_arg,
-                        slots,
-                        ctx,
-                    );
-                }
-                _ => {}
+    // Try the shared IR-level leaf classifier first — same code path
+    // the Rust / Lean backends use, so adding a new fused shape (e.g.
+    // `IntModOrDefaultLiteral`) lights up across every backend
+    // automatically. The classifier is re-run on the parent call
+    // because `Option.withDefault` is the shape's outer shell.
+    let outer_call = Expr::FnCall(
+        Box::new(Spanned {
+            node: Expr::Attr(
+                Box::new(Spanned {
+                    node: Expr::Ident("Option".into()),
+                    line: 0,
+                }),
+                "withDefault".into(),
+            ),
+            line: 0,
+        }),
+        args.to_vec(),
+    );
+    if let Some(leaf) = classify_leaf_op(&outer_call, ctx) {
+        match leaf {
+            LeafOp::VectorSetOrDefaultSameVector {
+                vector,
+                index,
+                value,
+            } => {
+                return emit_vector_set_or_default(func, vector, index, value, slots, ctx);
             }
-        }
-        if parent_name == Some("Map") && member == "get" && inner_args.len() == 2 {
-            return emit_map_get_or_default(
-                func,
-                &inner_args[0],
-                &inner_args[1],
-                default_arg,
-                slots,
-                ctx,
-            );
+            LeafOp::VectorGetOrDefaultLiteral {
+                vector,
+                index,
+                default_literal,
+            } => {
+                let default_spanned = Spanned {
+                    node: Expr::Literal(default_literal.clone()),
+                    line: 0,
+                };
+                return emit_vector_get_or_default(
+                    func,
+                    vector,
+                    index,
+                    &default_spanned,
+                    slots,
+                    ctx,
+                );
+            }
+            _ => {}
         }
     }
 
-    // Real Option<T> boxing fallback — `Map.get(...)` (or any other
-    // Option-producing call) followed by an arbitrary default. The
-    // value still has to materialise as a concrete Option struct;
-    // dispatch through tag-based pattern match: if Some, return the
-    // payload; if None, return the default.
+    // `Option.withDefault(Map.get(m, k), default)` — Map fusion isn't
+    // in `LeafOp` (legacy backends use runtime helpers and don't need
+    // a per-shape leaf), so handle it locally.
+    if let Expr::FnCall(inner_callee, inner_args) = &opt_arg.node
+        && let Expr::Attr(parent, member) = &inner_callee.node
+        && let Expr::Ident(p) = &parent.node
+        && p == "Map"
+        && member == "get"
+        && inner_args.len() == 2
+    {
+        return emit_map_get_or_default(
+            func,
+            &inner_args[0],
+            &inner_args[1],
+            default_arg,
+            slots,
+            ctx,
+        );
+    }
+
+    // Real Option<T> boxing fallback — `Option.withDefault` over an
+    // arbitrary Option-producing call. The value materialises as a
+    // concrete struct; dispatch through tag-based pattern match.
     emit_option_with_default_boxed(func, opt_arg, default_arg, slots, ctx)
 }
 
@@ -2562,6 +2696,27 @@ fn emit_match(
     // user-variant table and the subject is always a (ref null
     // $option_T).
     if arms.iter().any(arm_is_option_pattern) {
+        // Fused shape: `match Map.get(m, k) { Option.Some(v) -> ...;
+        // Option.None -> ... }` lowers via the per-(K,V) get_pair
+        // helper — multi-result `(found, value)` return — without
+        // ever allocating an Option<V>.
+        if let Expr::FnCall(callee, fn_args) = &subject.node
+            && let Expr::Attr(parent, member) = &callee.node
+            && let Expr::Ident(p) = &parent.node
+            && p == "Map"
+            && member == "get"
+            && fn_args.len() == 2
+        {
+            return emit_map_get_match_fused(
+                func,
+                &fn_args[0],
+                &fn_args[1],
+                arms,
+                block_ty,
+                slots,
+                ctx,
+            );
+        }
         return emit_option_match(func, subject, arms, block_ty, slots, ctx);
     }
 
