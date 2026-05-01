@@ -93,13 +93,15 @@ impl TypeRegistry {
             }
         }
 
-        // Allocate String type slot if any signature references String.
-        // Primary representation: `(array i8)` — engine-managed byte
-        // sequence, self-contained (no host imports).
+        // Allocate String type slot if any signature references String
+        // OR any fn body calls a String-producing/consuming builtin
+        // (Int.toString, String.len, etc.). The body-walk catches the
+        // case where String only appears as an intermediate value.
         let needs_string = items.iter().any(|item| match item {
             TopLevel::FnDef(fd) => {
                 fd.return_type.contains("String")
                     || fd.params.iter().any(|(_, t)| t.contains("String"))
+                    || fn_body_uses_string_builtin(fd)
             }
             _ => false,
         });
@@ -181,6 +183,56 @@ impl TypeRegistry {
 
 fn is_primitive(ty: &str) -> bool {
     matches!(ty.trim(), "Int" | "Float" | "Bool")
+}
+
+/// True if any expression in the fn body references a builtin that
+/// has String in its signature. Used by `TypeRegistry::build` to
+/// decide whether to allocate the `(array i8)` slot.
+///
+/// Curated list — kept in sync with `builtins::BuiltinName`. When
+/// the BuiltinRegistry grows, extend this too. Underapproximation
+/// is the safe default: an unknown String builtin produces a clear
+/// "no String slot allocated" validation error pointing here.
+fn fn_body_uses_string_builtin(fd: &crate::ast::FnDef) -> bool {
+    use crate::ast::{Expr, FnBody, Stmt};
+    let FnBody::Block(stmts) = fd.body.as_ref();
+    stmts.iter().any(|s| match s {
+        Stmt::Binding(_, _, e) | Stmt::Expr(e) => expr_uses_string(&e.node),
+    })
+}
+
+fn expr_uses_string(expr: &crate::ast::Expr) -> bool {
+    use crate::ast::Expr;
+    match expr {
+        Expr::FnCall(callee, args) => {
+            if let Expr::Attr(parent, member) = &callee.node {
+                let parent_name = match &parent.node {
+                    Expr::Ident(n) => Some(n.as_str()),
+                    Expr::Resolved { name, .. } => Some(name.as_str()),
+                    _ => None,
+                };
+                if let Some(p) = parent_name {
+                    let dotted = format!("{p}.{member}");
+                    if matches!(dotted.as_str(), "Int.toString" | "String.len") {
+                        return true;
+                    }
+                }
+            }
+            expr_uses_string(&callee.node) || args.iter().any(|a| expr_uses_string(&a.node))
+        }
+        Expr::BinOp(_, l, r) => expr_uses_string(&l.node) || expr_uses_string(&r.node),
+        Expr::Match { subject, arms } => {
+            expr_uses_string(&subject.node) || arms.iter().any(|a| expr_uses_string(&a.body.node))
+        }
+        Expr::TailCall(boxed) => boxed.args.iter().any(|a| expr_uses_string(&a.node)),
+        Expr::Attr(obj, _) => expr_uses_string(&obj.node),
+        Expr::Constructor(_, payload) => payload
+            .as_deref()
+            .is_some_and(|p| expr_uses_string(&p.node)),
+        Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| expr_uses_string(&e.node)),
+        Expr::Literal(crate::ast::Literal::Str(_)) => true,
+        _ => false,
+    }
 }
 
 /// Resolve an Aver type-annotation string to a wasm value type, or to

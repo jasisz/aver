@@ -75,12 +75,14 @@ mod wat_helper;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum BuiltinName {
     IntToString,
+    StringLength,
 }
 
 impl BuiltinName {
     pub(super) fn from_dotted(s: &str) -> Option<Self> {
         match s {
             "Int.toString" => Some(Self::IntToString),
+            "String.len" => Some(Self::StringLength),
             _ => None,
         }
     }
@@ -88,18 +90,21 @@ impl BuiltinName {
     pub(super) fn canonical(self) -> &'static str {
         match self {
             Self::IntToString => "Int.toString",
+            Self::StringLength => "String.len",
         }
     }
 
-    pub(super) fn params(self, _registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
+    pub(super) fn params(self, registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
         match self {
             Self::IntToString => Ok(vec![ValType::I64]),
+            Self::StringLength => Ok(vec![string_ref_ty(registry)?]),
         }
     }
 
     pub(super) fn results(self, registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
         match self {
             Self::IntToString => Ok(vec![string_ref_ty(registry)?]),
+            Self::StringLength => Ok(vec![ValType::I64]),
         }
     }
 
@@ -109,6 +114,7 @@ impl BuiltinName {
     pub(super) fn emit_helper_body(self, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
         match self {
             Self::IntToString => emit_int_to_string(registry),
+            Self::StringLength => emit_string_length(registry),
         }
     }
 }
@@ -347,6 +353,30 @@ fn emit_int_to_string(registry: &TypeRegistry) -> Result<Function, WasmGcError> 
                     array.set $string))
 
                 local.get $arr)))
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `String.length(s) -> Int`. Trivial wrapper over the wasm-gc
+/// `array.len` instruction; widened to i64 to match Aver's `Int`.
+fn emit_string_length(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let string_idx = registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "String.length helper requires String slot to be allocated".into(),
+        ))?;
+    let padding = wat_helper::padding_types(string_idx);
+    let wat = format!(
+        r#"
+        (module
+          {padding}
+          (type $string (array (mut i8)))
+          (func (export "helper") (param $s (ref null $string)) (result i64)
+            local.get $s
+            array.len
+            i64.extend_i32_u)
         )
     "#
     );

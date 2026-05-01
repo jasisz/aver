@@ -627,6 +627,7 @@ fn static_type_str(ty: &str) -> &'static str {
 fn builtin_aver_result_type(dotted: &str) -> &'static str {
     match dotted {
         "Int.toString" => "String",
+        "String.len" => "Int",
         _ => "Int",
     }
 }
