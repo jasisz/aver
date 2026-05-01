@@ -21,17 +21,14 @@ pub fn build_aver_runtime_wasm() -> Result<Vec<u8>, String> {
 pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
     let mut items = parse_source(source)?;
 
-    // Single-file WASM compile path. Traversal lowering is intentionally
-    // off here — playground's single-file `compile_to_wasm` predates 0.15
-    // and re-enabling it without a regression sweep across the cached
-    // playground artifacts would silently shift their bytes. See the
-    // 0.15.x rollout plan for when this catches up to the CLI.
+    // Full pipeline — matches CLI `aver compile --target wasm`. Pre-0.15
+    // the playground bypassed interp_lower + buffer_build by accident
+    // (the deforestation work landed without a playground update). Bytes
+    // shifting compared to old cached artifacts is a fix, not a regression.
     let pipeline_result = crate::ir::pipeline::run(
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::Full { base_dir: None }),
-            run_interp_lower: false,
-            run_buffer_build: false,
             ..Default::default()
         },
     );
@@ -74,15 +71,12 @@ pub fn compile_project_to_wasm(
     let root_depends = module_depends(&entry_items);
     let loaded = load_module_tree_from_map(&root_depends, files)?;
 
-    // Multi-file WASM compile path. Traversal disabled like
-    // `compile_to_wasm` — preserve current playground bytes until the
-    // explicit rollout in 0.15.x.
+    // Full pipeline — matches CLI `aver compile --target wasm` for multi-file
+    // projects. Same legacy gap as `compile_to_wasm`; same fix.
     let pipeline_result = crate::ir::pipeline::run(
         &mut entry_items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
-            run_interp_lower: false,
-            run_buffer_build: false,
             ..Default::default()
         },
     );
@@ -91,7 +85,10 @@ pub fn compile_project_to_wasm(
         return Err(format_tc_errors(&tc_result.errors));
     }
 
-    let modules: Vec<codegen::ModuleInfo> = loaded.into_iter().map(loaded_to_module_info).collect();
+    let modules: Vec<codegen::ModuleInfo> = loaded
+        .into_iter()
+        .map(|m| loaded_to_module_info(m, true))
+        .collect();
 
     let ctx = codegen::build_context(
         entry_items,
@@ -110,19 +107,22 @@ pub fn compile_project_to_wasm(
 // in the browser via `buildZip`. Same as what `aver proof --backend
 // {lean,dafny}` and `aver compile --target rust` produce on disk.
 
+/// Single-file pipeline runner shared by proof (Lean/Dafny) and Rust
+/// target paths. `apply_traversal_lowering` is the proof-vs-runtime
+/// distinction: proof exporters consume source-level IR (interp_lower
+/// + buffer_build off), the Rust target wants the deforested form.
 #[cfg(feature = "runtime")]
-fn build_ctx(source: &str) -> Result<codegen::CodegenContext, String> {
+fn build_ctx(
+    source: &str,
+    apply_traversal_lowering: bool,
+) -> Result<codegen::CodegenContext, String> {
     let mut items = parse_source(source)?;
-    // Proof / Rust single-file path. No resolver here — the proof
-    // exporters (Lean/Dafny) and `compile_rust_files` consume source-level
-    // names. No traversal either — proof export wants the source-level IR.
     let pipeline_result = crate::ir::pipeline::run(
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::Full { base_dir: None }),
-            run_interp_lower: false,
-            run_buffer_build: false,
-            run_resolve: false,
+            run_interp_lower: apply_traversal_lowering,
+            run_buffer_build: apply_traversal_lowering,
             ..Default::default()
         },
     );
@@ -142,7 +142,7 @@ fn build_ctx(source: &str) -> Result<codegen::CodegenContext, String> {
 /// Single-file Aver source → Lean 4 project files.
 #[cfg(feature = "runtime")]
 pub fn proof_lean_files(source: &str) -> Result<HashMap<String, String>, String> {
-    let ctx = build_ctx(source)?;
+    let ctx = build_ctx(source, false)?;
     let output = codegen::lean::transpile(&ctx);
     Ok(output.files.into_iter().collect())
 }
@@ -150,15 +150,16 @@ pub fn proof_lean_files(source: &str) -> Result<HashMap<String, String>, String>
 /// Single-file Aver source → Dafny project files.
 #[cfg(feature = "runtime")]
 pub fn proof_dafny_files(source: &str) -> Result<HashMap<String, String>, String> {
-    let ctx = build_ctx(source)?;
+    let ctx = build_ctx(source, false)?;
     let output = codegen::dafny::transpile(&ctx);
     Ok(output.files.into_iter().collect())
 }
 
-/// Single-file Aver source → Rust/Cargo project files.
+/// Single-file Aver source → Rust/Cargo project files. Full pipeline so
+/// the Rust output matches CLI `aver compile --target rust`.
 #[cfg(feature = "runtime")]
 pub fn compile_rust_files(source: &str) -> Result<HashMap<String, String>, String> {
-    let mut ctx = build_ctx(source)?;
+    let mut ctx = build_ctx(source, true)?;
     let output = codegen::rust::transpile(&mut ctx);
     Ok(output.files.into_iter().collect())
 }
@@ -170,6 +171,7 @@ pub fn compile_rust_files(source: &str) -> Result<HashMap<String, String>, Strin
 fn build_project_ctx(
     files: &HashMap<String, String>,
     entry: &str,
+    apply_traversal_lowering: bool,
 ) -> Result<codegen::CodegenContext, String> {
     let entry_source = files
         .get(entry)
@@ -179,15 +181,14 @@ fn build_project_ctx(
     let root_depends = module_depends(&entry_items);
     let loaded = load_module_tree_from_map(&root_depends, files)?;
 
-    // Proof / Rust multi-file path. Traversal off (proof / Rust exporters
-    // both want source-level IR); resolver runs because the multi-file
-    // proof codegen depends on resolved local indices.
+    // Multi-file pipeline. `apply_traversal_lowering` mirrors the CLI
+    // proof-vs-runtime distinction at this API boundary.
     let pipeline_result = crate::ir::pipeline::run(
         &mut entry_items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
-            run_interp_lower: false,
-            run_buffer_build: false,
+            run_interp_lower: apply_traversal_lowering,
+            run_buffer_build: apply_traversal_lowering,
             ..Default::default()
         },
     );
@@ -196,7 +197,10 @@ fn build_project_ctx(
         return Err(format_tc_errors(&tc_result.errors));
     }
 
-    let modules: Vec<codegen::ModuleInfo> = loaded.into_iter().map(loaded_to_module_info).collect();
+    let modules: Vec<codegen::ModuleInfo> = loaded
+        .into_iter()
+        .map(|m| loaded_to_module_info(m, apply_traversal_lowering))
+        .collect();
 
     Ok(codegen::build_context(
         entry_items,
@@ -213,7 +217,7 @@ pub fn proof_lean_files_project(
     files: &HashMap<String, String>,
     entry: &str,
 ) -> Result<HashMap<String, String>, String> {
-    let ctx = build_project_ctx(files, entry)?;
+    let ctx = build_project_ctx(files, entry, false)?;
     let output = codegen::lean::transpile(&ctx);
     Ok(output.files.into_iter().collect())
 }
@@ -224,18 +228,19 @@ pub fn proof_dafny_files_project(
     files: &HashMap<String, String>,
     entry: &str,
 ) -> Result<HashMap<String, String>, String> {
-    let ctx = build_project_ctx(files, entry)?;
+    let ctx = build_project_ctx(files, entry, false)?;
     let output = codegen::dafny::transpile(&ctx);
     Ok(output.files.into_iter().collect())
 }
 
-/// Multi-file Aver project → Rust/Cargo project files.
+/// Multi-file Aver project → Rust/Cargo project files. Full pipeline
+/// so the Rust output matches CLI `aver compile --target rust`.
 #[cfg(feature = "runtime")]
 pub fn compile_rust_files_project(
     files: &HashMap<String, String>,
     entry: &str,
 ) -> Result<HashMap<String, String>, String> {
-    let mut ctx = build_project_ctx(files, entry)?;
+    let mut ctx = build_project_ctx(files, entry, true)?;
     let output = codegen::rust::transpile(&mut ctx);
     Ok(output.files.into_iter().collect())
 }
@@ -250,17 +255,19 @@ fn module_depends(items: &[TopLevel]) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn loaded_to_module_info(m: LoadedModule) -> codegen::ModuleInfo {
+/// Lower a single dep module from the virtual filesystem. `apply_traversal_lowering`
+/// mirrors the entry-level decision so the dep modules go through the
+/// same pipeline shape as the entry — proof exporters get source-level IR
+/// end-to-end, runtime targets get the deforested form.
+fn loaded_to_module_info(m: LoadedModule, apply_traversal_lowering: bool) -> codegen::ModuleInfo {
     let mut items = m.items;
-    // Dep modules in the playground virtual fs: TCO + resolver only,
-    // no typecheck (entry-level typecheck has already validated cross-module
-    // refs against `loaded`), no traversal (preserve current playground
-    // bytes — see `compile_to_wasm` comment).
+    // No typecheck — entry-level typecheck has already validated
+    // cross-module refs against `loaded`.
     crate::ir::pipeline::run(
         &mut items,
         PipelineConfig {
-            run_interp_lower: false,
-            run_buffer_build: false,
+            run_interp_lower: apply_traversal_lowering,
+            run_buffer_build: apply_traversal_lowering,
             ..Default::default()
         },
     );
@@ -603,15 +610,13 @@ fn run_record_inner(
 
     let (mut items, loaded) = parse_and_load(entry_source, files, entry)?;
 
-    // Record path skips traversal (matches replay_cmd.rs — recordings
-    // captured pre-traversal would mismatch on replay if the live path
-    // started using deforested IR).
+    // Full pipeline. Recordings store effects, not IR shape — running
+    // interp_lower + buffer_build during record produces the same
+    // effect sequence as the un-lowered run (matches replay_cmd.rs fix).
     let pipeline_result = crate::ir::pipeline::run(
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
-            run_interp_lower: false,
-            run_buffer_build: false,
             ..Default::default()
         },
     );
@@ -749,13 +754,12 @@ fn replay_run_inner(
 
     let (mut items, loaded) = parse_and_load(&entry_source, files, entry)?;
 
-    // Replay path skips traversal (mirrors replay_cmd.rs).
+    // Full pipeline — recordings store effects, not IR shape (mirrors
+    // replay_cmd.rs and the playground record path).
     let pipeline_result = crate::ir::pipeline::run(
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
-            run_interp_lower: false,
-            run_buffer_build: false,
             ..Default::default()
         },
     );

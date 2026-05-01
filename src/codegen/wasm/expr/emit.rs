@@ -3,7 +3,7 @@
 /// emit_expr, emit_block, emit_binop, emit_fn_call, emit_wrap,
 /// emit_variant_constructor, emit_constructor, emit_error_prop,
 /// emit_list, emit_tuple, emit_record_create, emit_field_access,
-/// emit_map_literal, emit_interpolated_str, emit_str_part,
+/// emit_map_literal,
 /// emit_tailcall, emit_literal, emit_string_literal, emit_default_init.
 use std::collections::HashMap;
 
@@ -73,7 +73,16 @@ impl<'a> ExprEmitter<'a> {
             Expr::Match { subject, arms } => self.emit_match(subject, arms),
             Expr::Constructor(name, inner) => self.emit_constructor(name, inner),
             Expr::ErrorProp(inner) => self.emit_error_prop(inner),
-            Expr::InterpolatedStr(parts) => self.emit_interpolated_str(parts),
+            // Pipeline contract: `interp_lower` always runs before WASM
+            // codegen — it desugars `Expr::InterpolatedStr` into the
+            // shared `__buf_*` + `__to_str` intrinsic chain that every
+            // runtime backend handles uniformly. Reaching this arm means
+            // the pipeline was misconfigured (interp_lower disabled for
+            // a path that emits WASM); bug in the caller.
+            Expr::InterpolatedStr(_) => unreachable!(
+                "InterpolatedStr should have been lowered by ir::interp_lower; \
+                 WASM codegen runs only on lowered IR (see ir::pipeline contract)"
+            ),
             Expr::List(items) => self.emit_list(items),
             Expr::Tuple(items) => self.emit_tuple(items),
             Expr::RecordCreate { type_name, fields } => {
@@ -1651,38 +1660,6 @@ impl<'a> ExprEmitter<'a> {
             WasmType::I64 => {
                 self.instructions.push(Instruction::Call(self.rt.obj_field));
             }
-        }
-    }
-
-    fn emit_interpolated_str(&mut self, parts: &[StrPart]) {
-        if parts.is_empty() {
-            self.emit_string_literal("");
-            return;
-        }
-        if parts.len() == 1 {
-            match &parts[0] {
-                StrPart::Literal(s) => self.emit_string_literal(s),
-                StrPart::Parsed(expr) => {
-                    // Convert expression to string
-                    self.emit_value_to_str(&expr.node);
-                }
-            }
-            return;
-        }
-
-        // Multi-part: emit first part, then concat remaining
-        self.emit_str_part(&parts[0]);
-        for part in &parts[1..] {
-            self.emit_str_part(part);
-            self.instructions
-                .push(Instruction::Call(self.rt.str_concat));
-        }
-    }
-
-    fn emit_str_part(&mut self, part: &StrPart) {
-        match part {
-            StrPart::Literal(s) => self.emit_string_literal(s),
-            StrPart::Parsed(expr) => self.emit_value_to_str(&expr.node),
         }
     }
 

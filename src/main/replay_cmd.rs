@@ -184,18 +184,19 @@ fn replay_recording_file_vm(
     let source = read_file(&replay_program_file)?;
     let mut items = parse_file(&source)?;
 
-    // Replay path skips interp_lower / buffer_build (preserved from
-    // pre-pipeline behavior — recordings made before 0.15 reference the
-    // unlowered IR; re-enabling traversal on replay would be a separate
-    // compatibility audit).
+    // Full pipeline. Recordings store effect syscalls (`Console.print(...)`
+    // with concrete args) — they don't reference IR shape or bytecode, so
+    // running interp_lower + buffer_build during replay produces the same
+    // effect sequence as the original recording. Earlier pipeline migration
+    // skipped these stages out of misplaced caution; re-enabling them
+    // matches CLI run semantics and lets replay benefit from the same
+    // deforestation the original run had.
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
             typecheck: Some(aver::ir::TypecheckMode::Full {
                 base_dir: Some(&replay_module_root),
             }),
-            run_interp_lower: false,
-            run_buffer_build: false,
             ..Default::default()
         },
     );

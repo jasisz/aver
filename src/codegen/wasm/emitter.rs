@@ -1763,14 +1763,11 @@ fn collect_strings_from_expr(expr: &Expr, strings: &mut HashSet<String>) {
         Expr::Literal(Literal::Str(s)) => {
             strings.insert(s.clone());
         }
-        Expr::InterpolatedStr(parts) => {
-            for part in parts {
-                if let StrPart::Literal(s) = part {
-                    strings.insert(s.clone());
-                } else if let StrPart::Parsed(e) = part {
-                    collect_strings_from_expr(&e.node, strings);
-                }
-            }
+        // Unreachable post-pipeline — `interp_lower` rewrites InterpolatedStr
+        // to a chain of `__buf_append(... Literal::Str(s))` calls, so the
+        // `Literal(Str)` arm above already collects every literal.
+        Expr::InterpolatedStr(_) => {
+            unreachable!("InterpolatedStr should have been lowered by ir::interp_lower")
         }
         Expr::BinOp(_, lhs, rhs) => {
             collect_strings_from_expr(&lhs.node, strings);

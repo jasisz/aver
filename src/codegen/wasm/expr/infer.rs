@@ -123,7 +123,9 @@ impl<'a> ExprEmitter<'a> {
             | Expr::RecordCreate { .. }
             | Expr::RecordUpdate { .. } => WasmType::I32,
             Expr::IndependentProduct(_, _) => WasmType::I32,
-            Expr::InterpolatedStr(_) => WasmType::I32,
+            Expr::InterpolatedStr(_) => {
+                unreachable!("InterpolatedStr should have been lowered by ir::interp_lower")
+            }
             Expr::Attr(base, field) => {
                 if let Expr::Ident(base_name)
                 | Expr::Resolved {
@@ -262,7 +264,9 @@ impl<'a> ExprEmitter<'a> {
                 }
                 self.infer_record_field_aver_type(base, field)
             }
-            Expr::InterpolatedStr(_) => Some(Type::Str),
+            Expr::InterpolatedStr(_) => {
+                unreachable!("InterpolatedStr should have been lowered by ir::interp_lower")
+            }
             _ => None,
         }
     }

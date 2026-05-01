@@ -274,7 +274,15 @@ fn emit_expr_with_options(
             let inner_str = emit_expr(&inner.node, ctx, ectx);
             format!("{}?", inner_str)
         }
-        Expr::InterpolatedStr(parts) => emit_interpolated_str(parts, ctx, ectx),
+        // Pipeline contract: `interp_lower` always runs before Rust codegen
+        // — it rewrites `Expr::InterpolatedStr` to `__buf_*` + `__to_str`
+        // intrinsic chains that the runtime backends share. Reaching this
+        // arm means the pipeline was misconfigured (interp_lower disabled
+        // for a path that emits Rust); bug in the caller.
+        Expr::InterpolatedStr(_) => unreachable!(
+            "InterpolatedStr should have been lowered by ir::interp_lower; \
+             Rust codegen runs only on lowered IR (see ir::pipeline contract)"
+        ),
         Expr::List(elements) => {
             if elements.is_empty() {
                 "aver_rt::AverList::empty()".to_string()
@@ -1218,40 +1226,6 @@ fn clone_arg_with_options(
     maybe_clone(code, expr, ectx)
 }
 
-enum DisplayKind {
-    /// Rust's Display trait matches aver_display (String, i64, f64, bool)
-    Native,
-}
-
-/// Check if an expression's type can use Rust's native Display instead of aver_display.
-fn expr_display_type(expr: &Expr, ectx: &EmitCtx) -> Option<DisplayKind> {
-    match expr {
-        Expr::Literal(Literal::Int(_) | Literal::Float(_) | Literal::Bool(_) | Literal::Str(_)) => {
-            Some(DisplayKind::Native)
-        }
-        Expr::Ident(name) => {
-            let ty = ectx.local_types.get(name)?;
-            if matches!(ty, Type::Str | Type::Int | Type::Float | Type::Bool) {
-                Some(DisplayKind::Native)
-            } else {
-                None
-            }
-        }
-        Expr::BinOp(op, _, _) => {
-            // Comparison ops return bool, arithmetic returns the same type (unknown here)
-            if matches!(
-                op,
-                BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte
-            ) {
-                Some(DisplayKind::Native)
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
-}
-
 fn emit_constructor(
     name: &str,
     arg: &Option<Box<Expr>>,
@@ -1297,46 +1271,6 @@ fn emit_constructor(
                 .unwrap_or_else(|| "()".to_string());
             format!("{}({})", name, inner)
         }
-    }
-}
-
-fn emit_interpolated_str(parts: &[StrPart], ctx: &CodegenContext, ectx: &EmitCtx) -> String {
-    if parts.is_empty() {
-        return "AverStr::from(\"\")".to_string();
-    }
-
-    let mut fmt_str = String::new();
-    let mut fmt_args = Vec::new();
-
-    for part in parts {
-        match part {
-            StrPart::Literal(s) => {
-                // Escape braces for format! macro
-                let escaped = s.replace('{', "{{").replace('}', "}}");
-                fmt_str.push_str(&escaped);
-            }
-            StrPart::Parsed(expr) => {
-                fmt_str.push_str("{}");
-                let emitted = emit_expr(&expr.node, ctx, ectx);
-                // Skip aver_display when the expression type is known to be displayable natively.
-                // String, Int (i64), Float (f64), Bool all have Display impls matching aver_display.
-                let arg = match expr_display_type(&expr.node, ectx) {
-                    Some(DisplayKind::Native) => emitted,
-                    _ => format!("aver_rt::aver_display(&{})", emitted),
-                };
-                fmt_args.push(arg);
-            }
-        }
-    }
-
-    if fmt_args.is_empty() {
-        format!("AverStr::from({:?})", fmt_str)
-    } else {
-        format!(
-            "AverStr::from(format!({:?}, {}))",
-            fmt_str,
-            fmt_args.join(", ")
-        )
     }
 }
 
