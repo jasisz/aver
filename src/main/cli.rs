@@ -469,6 +469,18 @@ pub(super) enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Run a benchmark scenario (TOML manifest) and emit a structured JSON report.
+    ///
+    /// 0.15.1 ships VM target only. `wasm-local` and `wasm-cloudflare` follow
+    /// in 0.15.2. Use `aver bench bench/scenarios/foo.toml` to time a single
+    /// scenario; `--compare baseline.json` (0.15.2) gates regressions.
+    Bench {
+        /// Scenario manifest path (e.g. `bench/scenarios/factorial.toml`).
+        scenario: String,
+        /// Bench target. Only `vm` is implemented in 0.15.1.
+        #[arg(long, default_value = "vm")]
+        target: String,
+    },
     /// Export pure Aver code to a proof/verification project
     Proof {
         file: String,

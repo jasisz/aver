@@ -2,6 +2,8 @@ extern crate self as aver;
 
 pub mod ast;
 pub mod ast_rewrite;
+#[cfg(feature = "runtime")]
+pub mod bench;
 pub mod call_graph;
 pub mod checker;
 pub mod codegen;

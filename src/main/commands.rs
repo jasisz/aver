@@ -3349,6 +3349,46 @@ fn write_codegen_output(
     println!("  {}", build_hint.cyan());
 }
 
+/// `aver bench SCENARIO.toml --target=vm` — load the scenario manifest,
+/// run the canonical pipeline + VM for `warmup + iterations` runs, and
+/// print a structured JSON report to stdout. Future targets (`wasm-local`,
+/// `wasm-cloudflare`) land in 0.15.2.
+pub(super) fn cmd_bench(scenario_path: &str, target: &str) {
+    if target != "vm" {
+        eprintln!(
+            "{}",
+            format!(
+                "bench target '{}' not yet implemented; only `vm` is available in 0.15.1",
+                target
+            )
+            .red()
+        );
+        process::exit(1);
+    }
+
+    let manifest = match aver::bench::Manifest::load(Path::new(scenario_path)) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("{}", format!("scenario load: {}", e).red());
+            process::exit(1);
+        }
+    };
+
+    match aver::bench::run_vm_scenario(&manifest) {
+        Ok(report) => match serde_json::to_string_pretty(&report) {
+            Ok(json) => println!("{}", json),
+            Err(e) => {
+                eprintln!("{}", format!("bench JSON encode: {}", e).red());
+                process::exit(1);
+            }
+        },
+        Err(e) => {
+            eprintln!("{}", format!("bench run: {}", e).red());
+            process::exit(1);
+        }
+    }
+}
+
 /// `aver compile FILE --emit-ir-after=PASS` — runs the canonical pipeline
 /// (full traversal lowering, runtime shape) and prints the IR after the
 /// requested stage to stdout, then exits without invoking codegen.

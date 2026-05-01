@@ -1,0 +1,160 @@
+//! Scenario manifest: TOML on disk, struct in memory.
+//!
+//! ```toml
+//! # bench/scenarios/factorial.toml
+//! name  = "factorial"             # optional, defaults to file stem
+//! entry = "/tmp/factorial.av"     # absolute or relative to manifest dir
+//! iterations = 50
+//! warmup     = 5
+//! args       = []                 # CLI args passed to `main`, default empty
+//!
+//! [expected]
+//! # response_bytes = 23           # exact match (optional)
+//! # response_bytes_min = 100      # range match (optional)
+//! # response_bytes_max = 200
+//! ```
+//!
+//! Keep the format dumb: TOML, flat, no env vars, no string templates.
+//! A scenario is meant to be the simplest reproducible thing that pins
+//! a measurement, not a generic test runner. If a scenario needs more
+//! than this, that's a sign to write a small Aver harness fn in the
+//! `entry` file rather than to grow this struct.
+
+use std::path::{Path, PathBuf};
+
+#[derive(Debug)]
+pub enum ManifestError {
+    Read(String),
+    Parse(String),
+    Validate(String),
+}
+
+impl std::fmt::Display for ManifestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Read(m) | Self::Parse(m) | Self::Validate(m) => f.write_str(m),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Manifest {
+    pub name: String,
+    /// Absolute path to the entry `.av` file.
+    pub entry: PathBuf,
+    pub iterations: usize,
+    pub warmup: usize,
+    pub args: Vec<String>,
+    pub expected: ExpectedShape,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ExpectedShape {
+    pub response_bytes: Option<usize>,
+    pub response_bytes_min: Option<usize>,
+    pub response_bytes_max: Option<usize>,
+}
+
+impl Manifest {
+    pub fn load(path: &Path) -> Result<Self, ManifestError> {
+        let raw = std::fs::read_to_string(path)
+            .map_err(|e| ManifestError::Read(format!("cannot read '{}': {}", path.display(), e)))?;
+        let table: toml::Value = raw.parse().map_err(|e: toml::de::Error| {
+            ManifestError::Parse(format!("{}: {}", path.display(), e))
+        })?;
+        let manifest_dir = path.parent().unwrap_or_else(|| Path::new("."));
+        Self::from_toml(&table, path, manifest_dir)
+    }
+
+    fn from_toml(
+        table: &toml::Value,
+        manifest_path: &Path,
+        manifest_dir: &Path,
+    ) -> Result<Self, ManifestError> {
+        let entry_raw = table.get("entry").and_then(|v| v.as_str()).ok_or_else(|| {
+            ManifestError::Validate(format!(
+                "{}: missing required `entry = \"...\"`",
+                manifest_path.display()
+            ))
+        })?;
+        let entry_path = Path::new(entry_raw);
+        let entry = if entry_path.is_absolute() {
+            entry_path.to_path_buf()
+        } else {
+            manifest_dir.join(entry_path)
+        };
+        if !entry.exists() {
+            return Err(ManifestError::Validate(format!(
+                "{}: entry '{}' does not exist (resolved to '{}')",
+                manifest_path.display(),
+                entry_raw,
+                entry.display()
+            )));
+        }
+
+        let name = table
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                manifest_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("scenario")
+                    .to_string()
+            });
+
+        let iterations = table
+            .get("iterations")
+            .and_then(|v| v.as_integer())
+            .unwrap_or(10) as usize;
+        let warmup = table
+            .get("warmup")
+            .and_then(|v| v.as_integer())
+            .unwrap_or(1) as usize;
+
+        if iterations == 0 {
+            return Err(ManifestError::Validate(format!(
+                "{}: `iterations` must be > 0",
+                manifest_path.display()
+            )));
+        }
+
+        let args = table
+            .get("args")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let expected = match table.get("expected") {
+            Some(toml::Value::Table(t)) => ExpectedShape {
+                response_bytes: t
+                    .get("response_bytes")
+                    .and_then(|v| v.as_integer())
+                    .map(|n| n as usize),
+                response_bytes_min: t
+                    .get("response_bytes_min")
+                    .and_then(|v| v.as_integer())
+                    .map(|n| n as usize),
+                response_bytes_max: t
+                    .get("response_bytes_max")
+                    .and_then(|v| v.as_integer())
+                    .map(|n| n as usize),
+            },
+            _ => ExpectedShape::default(),
+        };
+
+        Ok(Manifest {
+            name,
+            entry,
+            iterations,
+            warmup,
+            args,
+            expected,
+        })
+    }
+}

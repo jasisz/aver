@@ -1,0 +1,8 @@
+# Smallest scenario — proves the harness fires every pipeline stage and
+# the VM target end-to-end on a pure Aver entry. Useful as a bench smoke
+# test before the heavier scenarios run.
+name       = "factorial"
+entry      = "factorial.av"
+iterations = 50
+warmup     = 5
+args       = []
