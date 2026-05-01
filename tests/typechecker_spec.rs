@@ -603,8 +603,8 @@ fn error_map_set_key_type_mismatch() {
 
 #[test]
 fn map_key_type_accepts_user_defined_via_deep_hash() {
-    // The HAMT runtime hashes any heap structure by value, so List<Int>
-    // (and other user-defined types) is a valid map key.
+    // The Map runtime hashes any heap structure by value (rt_deep_hash),
+    // so List<Int> (and other user-defined types) is a valid map key.
     let src = concat!(
         "fn ok() -> Map<List<Int>, Int>\n",
         "    Map.fromList([([1], 2)])\n",

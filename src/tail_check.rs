@@ -243,8 +243,8 @@ fn dotted_name(expr: &Spanned<Expr>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use crate::ast::TopLevel;
-    use crate::types::checker::run_type_check_full;
-    use crate::{parser::Parser, tco};
+    use crate::ir::TypecheckMode;
+    use crate::parser::Parser;
 
     use super::*;
 
@@ -265,7 +265,7 @@ fn fib(n: Int) -> Int
         _ -> fib(n - 1) + fib(n - 2)
 "#;
         let mut items = parse(src);
-        tco::transform_program(&mut items);
+        crate::ir::pipeline::tco(&mut items);
 
         let warnings = collect_non_tail_recursion_warnings(&items);
         assert_eq!(warnings.len(), 1);
@@ -286,7 +286,7 @@ fn factorial(n: Int, acc: Int) -> Int
         _ -> factorial(n - 1, acc * n)
 "#;
         let mut items = parse(src);
-        tco::transform_program(&mut items);
+        crate::ir::pipeline::tco(&mut items);
 
         let warnings = collect_non_tail_recursion_warnings(&items);
         assert!(warnings.is_empty());
@@ -306,7 +306,7 @@ fn isOdd(n: Int) -> Bool
         _ -> isEven(n - 1)
 "#;
         let mut items = parse(src);
-        tco::transform_program(&mut items);
+        crate::ir::pipeline::tco(&mut items);
 
         let warnings = collect_non_tail_recursion_warnings(&items);
         assert!(warnings.is_empty());
@@ -329,8 +329,8 @@ verify fib law fibSpec
     fib(n) => fibSpec(n)
 "#;
         let mut items = parse(src);
-        tco::transform_program(&mut items);
-        let tc = run_type_check_full(&items, None);
+        crate::ir::pipeline::tco(&mut items);
+        let tc = crate::ir::pipeline::typecheck(&items, &TypecheckMode::Full { base_dir: None });
 
         let warnings = collect_non_tail_recursion_warnings_with_sigs(&items, &tc.fn_sigs);
         assert!(

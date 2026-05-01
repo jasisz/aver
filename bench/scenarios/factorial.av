@@ -1,0 +1,20 @@
+module Factorial
+    intent = "Bench smoke — tail-recursive factorial; the simplest scenario that fires every pipeline stage."
+    depends []
+    effects [Console.print]
+
+fn factorial(n: Int, acc: Int) -> Int
+    ? "Tail-recursive factorial; TCO turns the recursive call into a loop."
+    match n
+        0 -> acc
+        _ -> factorial(n - 1, acc * n)
+
+verify factorial
+    factorial(0, 1) => 1
+    factorial(5, 1) => 120
+    factorial(10, 1) => 3628800
+
+fn main() -> Unit
+    ? "Print 10! to verify the run completed end-to-end."
+    ! [Console.print]
+    Console.print(Int.toString(factorial(10, 1)))

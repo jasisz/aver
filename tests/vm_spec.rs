@@ -32,7 +32,7 @@ fn vm_run(src: &str) -> NanValue {
     resolver::resolve_program(&mut items);
 
     let mut arena = Arena::new();
-    let (code, globals) = vm::compile_program(&items, &mut arena).expect("compile failed");
+    let (code, globals) = vm::compile_program(&items, &mut arena, None).expect("compile failed");
     let mut machine = vm::VM::new(code, globals, arena);
     machine.run().expect("VM execution failed")
 }
@@ -52,6 +52,7 @@ fn vm_run_with_module_root_and_arena(src: &str, module_root: &Path) -> (NanValue
                 .expect("module root must be valid UTF-8"),
         ),
         "",
+        None,
     )
     .expect("compile failed");
     let mut machine = vm::VM::new(code, globals, arena);
@@ -67,7 +68,7 @@ fn vm_run_with_arena(src: &str) -> (NanValue, Arena) {
     resolver::resolve_program(&mut items);
 
     let mut arena = Arena::new();
-    let (code, globals) = vm::compile_program(&items, &mut arena).expect("compile failed");
+    let (code, globals) = vm::compile_program(&items, &mut arena, None).expect("compile failed");
     let mut machine = vm::VM::new(code, globals, arena);
     let result = machine.run().expect("VM execution failed");
     let arena = std::mem::replace(&mut machine.arena, Arena::new());
@@ -80,7 +81,7 @@ fn vm_machine(src: &str) -> vm::VM {
     resolver::resolve_program(&mut items);
 
     let mut arena = Arena::new();
-    let (code, globals) = vm::compile_program(&items, &mut arena).expect("compile failed");
+    let (code, globals) = vm::compile_program(&items, &mut arena, None).expect("compile failed");
     vm::VM::new(code, globals, arena)
 }
 
@@ -90,7 +91,7 @@ fn vm_compile(src: &str) -> vm::CodeStore {
     resolver::resolve_program(&mut items);
 
     let mut arena = Arena::new();
-    let (code, _globals) = vm::compile_program(&items, &mut arena).expect("compile failed");
+    let (code, _globals) = vm::compile_program(&items, &mut arena, None).expect("compile failed");
     code
 }
 
@@ -1510,7 +1511,7 @@ fn vm_effect_violation() {
     resolver::resolve_program(&mut items);
 
     let mut arena = Arena::new();
-    let (code, globals) = vm::compile_program(&items, &mut arena).expect("compile failed");
+    let (code, globals) = vm::compile_program(&items, &mut arena, None).expect("compile failed");
     let mut machine = vm::VM::new(code, globals, arena);
     let result = machine.run();
     assert!(result.is_err(), "should fail with effect violation");
@@ -1547,6 +1548,7 @@ fn vm_respects_aver_toml_runtime_policy() {
                 .expect("module root must be valid UTF-8"),
         ),
         "",
+        None,
     )
     .expect("compile failed");
     let mut machine = vm::VM::new(code, globals, arena);
@@ -1606,7 +1608,8 @@ fn main() -> Result<Unit, String>
         resolver::resolve_program(&mut items);
 
         let mut arena = Arena::new();
-        let (code, globals) = vm::compile_program(&items, &mut arena).expect("compile failed");
+        let (code, globals) =
+            vm::compile_program(&items, &mut arena, None).expect("compile failed");
         let mut machine = vm::VM::new(code, globals, arena);
         machine.set_runtime_policy(
             ProjectConfig::parse(&format!("[independence]\nmode = \"{mode}\"\n"))

@@ -194,10 +194,11 @@ impl<'a> ExprEmitter<'a> {
                     .push(Instruction::Call(self.rt.map_entries));
             }
             "Map.fromList" if args.len() == 1 => {
-                // Fold the `List<(K, V)>` into a HAMT via the runtime
-                // helper. Pre-HAMT this was an identity ("the list IS
-                // a map"); now `rt_map_get` and friends only know how
-                // to walk HAMT roots, so we have to materialize one.
+                // Fold the `List<(K, V)>` into a flat OBJ_MAP via the
+                // runtime helper. The pre-0.14 association-list
+                // representation used to make this an identity ("the
+                // list IS a map"); the flat hashtable runtime needs
+                // a real OBJ_MAP, so we materialize one.
                 let (key_kind, value_ptr_flag) = self.map_from_list_kind_and_ptr_flag(&args[0]);
                 self.instructions.push(Instruction::I32Const(key_kind));
                 self.instructions

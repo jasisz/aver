@@ -13,10 +13,7 @@ use aver::codegen::ModuleInfo;
 use aver::codegen::lean as lean_codegen;
 use aver::codegen::rust as rust_codegen;
 use aver::nan_value::{Arena, NanValueConvert};
-use aver::resolver;
 use aver::source::{find_module_file, require_module_declaration};
-use aver::tco;
-use aver::types::checker::run_type_check_full;
 use aver::types::{Type, parse_type_str};
 use aver::verify_law::{
     collect_contextual_helper_law_hints, collect_missing_helper_law_hints,
@@ -1028,11 +1025,19 @@ pub(super) fn cmd_run_vm(
         }
     };
 
-    // TCO transform
-    tco::transform_program(&mut items);
-
-    // Type check
-    let tc_result = run_type_check_full(&items, Some(&module_root));
+    // Compiler pipeline: tco → typecheck → interp_lower → buffer_build → resolve.
+    // Single source of truth lives in `aver::ir::pipeline`; see that module
+    // for ordering invariants between stages.
+    let pipeline_result = aver::ir::pipeline::run(
+        &mut items,
+        aver::ir::PipelineConfig {
+            typecheck: Some(aver::ir::TypecheckMode::Full {
+                base_dir: Some(&module_root),
+            }),
+            ..Default::default()
+        },
+    );
+    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
     if !tc_result.errors.is_empty() {
         eprintln!(
             "{}",
@@ -1041,28 +1046,24 @@ pub(super) fn cmd_run_vm(
         process::exit(1);
     }
 
-    // 0.15 Traversal — buffer-build deforestation pass. Same hook
-    // point as the codegen pipeline (between TCO and resolver). VM
-    // dispatches `__buf_*` intrinsics directly to dedicated opcodes
-    // (BUFFER_NEW / APPEND / APPEND_SEP_UNLESS_FIRST / FINALIZE)
-    // backed by `vm.buffer_pool`.
-    aver::ir::lower_interpolation_pass(&mut items);
-    let _traversal_stats = aver::ir::run_buffer_build_pass(&mut items);
-
-    // Resolver
-    resolver::resolve_program(&mut items);
-
-    // Compile to bytecode
+    // Compile to bytecode. The analysis result from the pipeline carries
+    // per-fn `FnAnalysis.allocates` flags so the VM compiler doesn't
+    // recompute `compute_alloc_info` on the same items.
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
-    let (code, globals) =
-        match vm::compile_program_with_modules(&items, &mut arena, Some(&module_root), file) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("{}", format!("VM compile error: {}", e).red());
-                process::exit(1);
-            }
-        };
+    let (code, globals) = match vm::compile_program_with_modules(
+        &items,
+        &mut arena,
+        Some(&module_root),
+        file,
+        pipeline_result.analysis.as_ref(),
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{}", format!("VM compile error: {}", e).red());
+            process::exit(1);
+        }
+    };
 
     // Execute
     let mut machine = vm::VM::new(code, globals, arena);
@@ -2093,8 +2094,21 @@ pub(super) fn cmd_run_self_hosted(
                 process::exit(1);
             }
         };
-        tco::transform_program(&mut items);
-        let tc = run_type_check_full(&items, Some(&mr));
+        // Self-host preflight only needs TCO + typecheck — codegen runs
+        // in the spawned binary, not here.
+        let pipeline_result = aver::ir::pipeline::run(
+            &mut items,
+            aver::ir::PipelineConfig {
+                typecheck: Some(aver::ir::TypecheckMode::Full {
+                    base_dir: Some(&mr),
+                }),
+                run_interp_lower: false,
+                run_buffer_build: false,
+                run_resolve: false,
+                ..Default::default()
+            },
+        );
+        let tc = pipeline_result.typecheck.expect("typecheck was requested");
         if !tc.errors.is_empty() {
             eprintln!("{}", format_type_errors(&tc.errors).red());
             process::exit(1);
@@ -2291,7 +2305,7 @@ fn run_check_for_file(
             // unreachable. Pure info today; the 0.15+ deforestation
             // lowering rewrites these pairs into buffer-write loops.
             let mut tco_items = items.clone();
-            aver::tco::transform_program(&mut tco_items);
+            aver::ir::pipeline::tco(&mut tco_items);
             let fn_defs: Vec<&aver::ast::FnDef> = tco_items
                 .iter()
                 .filter_map(|it| match it {
@@ -3242,39 +3256,33 @@ fn build_codegen_context(
         process::exit(1);
     }
 
-    // TCO transform
-    tco::transform_program(&mut items);
-
-    // Static type check (runs before resolution — works on Ident nodes)
-    let tc_result = run_type_check_full(&items, Some(&module_root));
+    // Compiler pipeline. The `apply_traversal_lowering` parameter at the
+    // command-level API is the proof-export distinction — Lean/Dafny
+    // exporters want source-level IR (interp_lower + buffer_build off),
+    // runtime backends (VM/WASM/Rust) want the deforested form. See
+    // `aver::ir::pipeline` for the canonical stage order and invariants.
+    let pipeline_result = aver::ir::pipeline::run(
+        &mut items,
+        aver::ir::PipelineConfig {
+            typecheck: Some(aver::ir::TypecheckMode::Full {
+                base_dir: Some(&module_root),
+            }),
+            run_interp_lower: apply_traversal_lowering,
+            run_buffer_build: apply_traversal_lowering,
+            ..Default::default()
+        },
+    );
+    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
     if !tc_result.errors.is_empty() {
         print_type_errors(&tc_result.errors);
         process::exit(1);
     }
 
-    // 0.15 Traversal — buffer-build deforestation pass. Detects
-    // canonical `String.join(<builder>(args, []), sep)` shapes,
-    // rewrites them to `__buf_finalize(<builder>__buffered(args.., __buf_new(8192), sep))`,
-    // and appends synthesized buffered variants. Must run between
-    // TCO and resolver because both detection and rewrite match on
-    // `Expr::Ident` / `Expr::TailCall` shapes that the resolver
-    // pass would later replace with `Expr::Resolved` nodes.
-    //
-    // Skipped for proof export: Lean/Dafny codegen wants source-level
-    // IR (functional, no `__buf_*` runtime intrinsics it can't lower
-    // back to a proof obligation). The peer-review's three-IR-levels
-    // model in action — runtime backends get the optimized form, proof
-    // exporters get the source-level shape.
-    if apply_traversal_lowering {
-        aver::ir::lower_interpolation_pass(&mut items);
-        let _traversal_stats = aver::ir::run_buffer_build_pass(&mut items);
-    }
-
-    // Resolve locals + annotate last-use (unified across all backends)
-    resolver::resolve_program(&mut items);
-
-    // Compute memo-eligible functions
-    let memo_fns = compute_memo_fns(&items, &tc_result);
+    // Memo eligibility reads from `PipelineResult.analysis` — the analyze
+    // stage already collected `recursive_fns` and `recursive_call_count`
+    // facts; `compute_memo_fns` just filters by typecheck signature
+    // (effects, memo-safe param types).
+    let memo_fns = compute_memo_fns(&items, &tc_result, pipeline_result.analysis.as_ref());
 
     // Derive project name from file if not specified
     let name = project_name.map(|s| s.to_string()).unwrap_or_else(|| {
@@ -3285,8 +3293,18 @@ fn build_codegen_context(
             .to_string()
     });
 
-    // Load dependent modules for codegen
-    let modules = load_compile_deps(&items, &module_root);
+    // Load dependent modules for codegen. Dep modules run the same pipeline
+    // shape as the entry — per-stage flags are forwarded so proof exporters
+    // get source-level IR end-to-end (without this, dep modules would
+    // always run interp_lower + buffer_build even when the entry skipped
+    // them, leaking synthesized `__buffered` variants into Lean/Dafny
+    // codegen).
+    let modules = load_compile_deps(
+        &items,
+        &module_root,
+        apply_traversal_lowering, // run_interp_lower
+        apply_traversal_lowering, // run_buffer_build
+    );
 
     let use_runtime_policy = matches!(policy_mode, super::cli::CompilePolicyMode::Runtime);
     let use_scoped_runtime = with_replay || use_runtime_policy;
@@ -3305,8 +3323,17 @@ fn build_codegen_context(
         }
     };
 
-    // Build codegen context
-    let mut ctx = codegen::build_context(items, &tc_result, memo_fns, name, modules);
+    // Build codegen context. `entry_analysis` carries `mutual_tco_members`,
+    // `recursive_fns`, and per-fn `FnAnalysis` from the analyze stage; codegen
+    // unions these with each `module.analysis` to build a global view.
+    let mut ctx = codegen::build_context(
+        items,
+        &tc_result,
+        pipeline_result.analysis.as_ref(),
+        memo_fns,
+        name,
+        modules,
+    );
     ctx.policy = policy;
     ctx.emit_replay_runtime = use_scoped_runtime;
     ctx.runtime_policy_from_env = use_runtime_policy;
@@ -3339,6 +3366,351 @@ fn write_codegen_output(
         format!("Compiled {} → {}/ [{}]", file, output_dir, target_label).green()
     );
     println!("  {}", build_hint.cyan());
+}
+
+pub(super) struct BenchOptions<'a> {
+    pub scenario_path: &'a str,
+    pub target: &'a str,
+    pub iterations: Option<usize>,
+    pub warmup: Option<usize>,
+    pub json: bool,
+    pub save_baseline: Option<&'a str>,
+    pub compare: Option<&'a str>,
+    pub fail_on_regression: bool,
+}
+
+/// `aver bench (SCENARIO.toml | SCENARIO_DIR) [flags]`
+///
+/// Single-manifest mode runs one scenario; directory mode globs every
+/// `*.toml` inside, sorts alphabetically, runs each in turn. Single-mode
+/// supports `--save-baseline` / `--compare` / `--fail-on-regression`.
+/// Directory mode emits NDJSON (one report per line) when `--json` is
+/// passed; without `--json` it prints the human form for each scenario
+/// separated by blank lines. `--compare` is single-scenario only —
+/// directory-mode comparison is the 0.15.2 baseline-snapshot workflow.
+pub(super) fn cmd_bench(opts: BenchOptions<'_>) {
+    let target = match aver::bench::BenchTarget::parse(opts.target) {
+        Ok(t) => t,
+        Err(msg) => {
+            eprintln!("{}", msg.red());
+            process::exit(1);
+        }
+    };
+
+    let scenario_path = Path::new(opts.scenario_path);
+    if scenario_path.is_dir() {
+        run_bench_dir(scenario_path, target, &opts);
+        return;
+    }
+
+    // Two single-file shapes: `.toml` manifest (full per-scenario
+    // tolerances + expected shape) or `.av` source directly (ad-hoc
+    // synthesized manifest with `--iterations` / `--warmup` overrides
+    // on top of defaults). Anything else falls through to manifest
+    // load and surfaces whatever parse error TOML throws.
+    let is_av = scenario_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("av"));
+    let manifest = if is_av {
+        if opts.compare.is_some() || opts.save_baseline.is_some() {
+            eprintln!(
+                "{}",
+                "ad-hoc `.av` mode: --compare / --save-baseline need a `.toml` manifest with per-scenario tolerances".red()
+            );
+            process::exit(1);
+        }
+        synth_manifest_for_av(scenario_path, opts.iterations, opts.warmup)
+    } else {
+        match aver::bench::Manifest::load(scenario_path) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("{}", format!("scenario load: {}", e).red());
+                process::exit(1);
+            }
+        }
+    };
+
+    let report = match aver::bench::run_scenario(&manifest, target) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{}", format!("bench run: {}", e).red());
+            process::exit(1);
+        }
+    };
+
+    if let Some(path) = opts.save_baseline {
+        match serde_json::to_string_pretty(&report) {
+            Ok(text) => {
+                if let Err(e) = std::fs::write(path, format!("{}\n", text)) {
+                    eprintln!("{}", format!("save-baseline write '{}': {}", path, e).red());
+                    process::exit(1);
+                }
+                eprintln!("{}", format!("Saved baseline → {}", path).cyan());
+            }
+            Err(e) => {
+                eprintln!("{}", format!("save-baseline JSON encode: {}", e).red());
+                process::exit(1);
+            }
+        }
+    }
+
+    if opts.json {
+        match serde_json::to_string_pretty(&report) {
+            Ok(text) => println!("{}", text),
+            Err(e) => {
+                eprintln!("{}", format!("bench JSON encode: {}", e).red());
+                process::exit(1);
+            }
+        }
+    } else {
+        print!("{}", aver::bench::format_human(&report));
+    }
+
+    if let Some(baseline_path) = opts.compare {
+        let baseline_text = match std::fs::read_to_string(baseline_path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!(
+                    "{}",
+                    format!("compare: cannot read baseline '{}': {}", baseline_path, e).red()
+                );
+                process::exit(1);
+            }
+        };
+        let baseline: aver::bench::BenchReport = match serde_json::from_str(&baseline_text) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!(
+                    "{}",
+                    format!("compare: cannot parse baseline '{}': {}", baseline_path, e).red()
+                );
+                process::exit(1);
+            }
+        };
+        let diff = aver::bench::diff(&report, &baseline, manifest.tolerance);
+        if !opts.json {
+            println!();
+            print!("{}", aver::bench::format_diff(&diff));
+        }
+        if diff.regressed && opts.fail_on_regression {
+            process::exit(1);
+        }
+    }
+}
+
+/// Build an in-memory `Manifest` for the ad-hoc `.av` form. CLI flags
+/// override the defaults; `[expected]` and `[tolerance]` stay at their
+/// defaults — those need a real TOML manifest to opt into.
+fn synth_manifest_for_av(
+    av_path: &Path,
+    iterations: Option<usize>,
+    warmup: Option<usize>,
+) -> aver::bench::Manifest {
+    let name = av_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("scenario")
+        .to_string();
+    aver::bench::Manifest {
+        name,
+        entry: av_path.to_path_buf(),
+        iterations: iterations.unwrap_or(30),
+        warmup: warmup.unwrap_or(3),
+        args: Vec::new(),
+        expected: aver::bench::manifest::ExpectedShape::default(),
+        tolerance: aver::bench::Tolerance::default(),
+    }
+}
+
+/// Directory mode: run every `*.toml` in `dir` (alphabetical), emit one
+/// report per scenario. NDJSON when `--json` is set, human-readable
+/// blocks separated by blank lines otherwise. `--compare` /
+/// `--save-baseline` are single-scenario only and rejected here with a
+/// clear error.
+fn run_bench_dir(dir: &Path, target: aver::bench::BenchTarget, opts: &BenchOptions<'_>) {
+    if opts.compare.is_some() || opts.save_baseline.is_some() {
+        eprintln!(
+            "{}",
+            "directory mode: --compare / --save-baseline only work on a single scenario".red()
+        );
+        process::exit(1);
+    }
+
+    let mut manifest_paths: Vec<std::path::PathBuf> = Vec::new();
+    match std::fs::read_dir(dir) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("toml") {
+                    manifest_paths.push(path);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "{}",
+                format!("scenarios dir '{}': {}", dir.display(), e).red()
+            );
+            process::exit(1);
+        }
+    }
+    manifest_paths.sort();
+
+    if manifest_paths.is_empty() {
+        eprintln!(
+            "{}",
+            format!("scenarios dir '{}' has no *.toml manifests", dir.display()).red()
+        );
+        process::exit(1);
+    }
+
+    let mut first = true;
+    for manifest_path in &manifest_paths {
+        let manifest = match aver::bench::Manifest::load(manifest_path) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("{}", format!("scenario load: {}", e).red());
+                process::exit(1);
+            }
+        };
+        let report = match aver::bench::run_scenario(&manifest, target) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("{}", format!("bench run ({}): {}", manifest.name, e).red());
+                process::exit(1);
+            }
+        };
+
+        if opts.json {
+            // NDJSON: one compact report per line, no surrounding array.
+            // Streams trivially through `jq -c .iterations.p50_ms` etc.
+            match serde_json::to_string(&report) {
+                Ok(text) => println!("{}", text),
+                Err(e) => {
+                    eprintln!("{}", format!("bench JSON encode: {}", e).red());
+                    process::exit(1);
+                }
+            }
+        } else {
+            if !first {
+                println!();
+            }
+            print!("{}", aver::bench::format_human(&report));
+        }
+        first = false;
+    }
+}
+
+/// `aver compile FILE --emit-ir-after=PASS` — runs the canonical pipeline
+/// (full traversal lowering, runtime shape) and prints the IR after the
+/// requested stage to stdout, then exits without invoking codegen.
+///
+/// Stage names match `aver::ir::PipelineStage::name()` plus `parse` for
+/// the pre-pipeline AST. Anything else is rejected with an error listing
+/// the legal stage names.
+pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, stage_name: &str) {
+    use aver::ir::{PipelineConfig, PipelineStage, TypecheckMode, dump};
+
+    let target_stage = match stage_name {
+        "parse" => None, // pre-pipeline snapshot
+        "tco" => Some(PipelineStage::Tco),
+        "typecheck" => Some(PipelineStage::Typecheck),
+        "interp_lower" => Some(PipelineStage::InterpLower),
+        "buffer_build" => Some(PipelineStage::BufferBuild),
+        "resolve" => Some(PipelineStage::Resolve),
+        "last_use" => Some(PipelineStage::LastUse),
+        "analyze" => Some(PipelineStage::Analyze),
+        other => {
+            eprintln!(
+                "{}",
+                format!(
+                    "unknown --emit-ir-after stage '{}'; expected one of: \
+                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze",
+                    other
+                )
+                .red()
+            );
+            process::exit(1);
+        }
+    };
+
+    let module_root = resolve_module_root(module_root_override);
+    let source = match read_file(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+    let mut items = match parse_file(&source) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+
+    if target_stage.is_none() {
+        // `--emit-ir-after=parse` — no pipeline runs, no analysis available.
+        print!("{}", dump::dump_items(&items, None));
+        return;
+    }
+
+    // Snapshot the IR at the requested stage. Per-fn analysis facts are
+    // only attached when the snapshot was taken at or after the analyze
+    // stage — earlier snapshots get rendered without facts (the FnDef
+    // header collapses to its plain `fn name(...) -> T` form).
+    let captured = std::cell::RefCell::new(None::<Vec<aver::ast::TopLevel>>);
+    let target = target_stage.unwrap();
+    let neutral_policy = aver::ir::NeutralAllocPolicy;
+    let pipeline_result = aver::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full {
+                base_dir: Some(&module_root),
+            }),
+            // `--emit-ir` is a diagnostic, so attach the neutral policy
+            // — the dump's `[no_alloc]` annotation matches the shared
+            // VM/WASM baseline. Codegen pipelines should pass their
+            // backend-specific policy when consuming the analysis.
+            alloc_policy: Some(&neutral_policy),
+            on_after_pass: Some(Box::new(|stage, items_after| {
+                if stage == target {
+                    *captured.borrow_mut() = Some(items_after.to_vec());
+                }
+            })),
+            ..Default::default()
+        },
+    );
+    if let Some(tc) = &pipeline_result.typecheck
+        && !tc.errors.is_empty()
+    {
+        eprintln!("{}", super::shared::format_type_errors(&tc.errors).red());
+        process::exit(1);
+    }
+
+    match captured.into_inner() {
+        Some(snapshot) => {
+            let analysis_for_dump = if target == PipelineStage::Analyze {
+                pipeline_result.analysis.as_ref()
+            } else {
+                None
+            };
+            print!("{}", dump::dump_items(&snapshot, analysis_for_dump));
+        }
+        None => {
+            eprintln!(
+                "{}",
+                format!(
+                    "stage '{}' did not run (likely disabled or skipped after typecheck errors)",
+                    stage_name
+                )
+                .red()
+            );
+            process::exit(1);
+        }
+    }
 }
 
 pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
@@ -4229,7 +4601,7 @@ pub(super) fn cmd_proof(
     backend: &super::cli::ProofBackend,
     verify_mode: &super::cli::ProofVerifyMode,
 ) {
-    let (ctx, _module_root) = build_codegen_context(
+    let (mut ctx, _module_root) = build_codegen_context(
         file,
         project_name,
         module_root_override,
@@ -4275,7 +4647,7 @@ pub(super) fn cmd_proof(
 
     match backend {
         super::cli::ProofBackend::Lean => {
-            cmd_proof_lean(file, output_dir, &ctx, verify_mode);
+            cmd_proof_lean(file, output_dir, &mut ctx, verify_mode);
         }
         super::cli::ProofBackend::Dafny => {
             cmd_proof_dafny(file, output_dir, &ctx);
@@ -4286,7 +4658,7 @@ pub(super) fn cmd_proof(
 fn cmd_proof_lean(
     file: &str,
     output_dir: &str,
-    ctx: &codegen::CodegenContext,
+    ctx: &mut codegen::CodegenContext,
     verify_mode: &super::cli::ProofVerifyMode,
 ) {
     let proof_issues = lean_codegen::proof_mode_findings(ctx);
@@ -4347,7 +4719,19 @@ fn cmd_proof_dafny(file: &str, output_dir: &str, ctx: &codegen::CodegenContext) 
 }
 
 /// Load dependent modules for codegen (recursive, with circular import detection).
-fn load_compile_deps(items: &[TopLevel], module_root: &str) -> Vec<ModuleInfo> {
+///
+/// `run_interp_lower` and `run_buffer_build` mirror the entry-module decision —
+/// proof exporters (Lean/Dafny) pass `false` for both so dep modules also
+/// stay source-level; runtime backends (VM/WASM/Rust) pass `true` for both
+/// so the buffer-build pass fires on sinks living in dep modules too. Split
+/// per-stage rather than a bundled flag so this matches the pipeline gates
+/// 1-to-1 with no magic translation in between.
+fn load_compile_deps(
+    items: &[TopLevel],
+    module_root: &str,
+    run_interp_lower: bool,
+    run_buffer_build: bool,
+) -> Vec<ModuleInfo> {
     let module = items.iter().find_map(|i| {
         if let TopLevel::Module(m) = i {
             Some(m)
@@ -4363,7 +4747,14 @@ fn load_compile_deps(items: &[TopLevel], module_root: &str) -> Vec<ModuleInfo> {
     let mut loaded = std::collections::HashSet::new();
 
     for dep_name in &module.depends {
-        load_module_recursive(dep_name, module_root, &mut result, &mut loaded);
+        load_module_recursive(
+            dep_name,
+            module_root,
+            run_interp_lower,
+            run_buffer_build,
+            &mut result,
+            &mut loaded,
+        );
     }
 
     result
@@ -4372,6 +4763,8 @@ fn load_compile_deps(items: &[TopLevel], module_root: &str) -> Vec<ModuleInfo> {
 fn load_module_recursive(
     name: &str,
     module_root: &str,
+    run_interp_lower: bool,
+    run_buffer_build: bool,
     result: &mut Vec<ModuleInfo>,
     loaded: &mut std::collections::HashSet<String>,
 ) {
@@ -4414,16 +4807,22 @@ fn load_module_recursive(
         process::exit(1);
     }
 
-    tco::transform_program(&mut items);
-    // 0.15 Traversal — run the deforestation pass on dep modules too,
-    // BETWEEN TCO and resolver. The fusion-site rewrite + buffered-fn
-    // synthesis must see `Expr::Ident` shapes that resolver later
-    // rewrites to `Expr::Resolved`. Without this, sinks living in
-    // dep modules (like Fractal's `allRows`) compile unchanged and
-    // the bench shows zero perf delta.
-    aver::ir::lower_interpolation_pass(&mut items);
-    let _traversal_stats = aver::ir::run_buffer_build_pass(&mut items);
-    resolver::resolve_program(&mut items);
+    // Dep modules go through the same pipeline shape as the entry. Typecheck
+    // runs at the entry-module level via `build_codegen_context`, so we skip
+    // it here. The `analyze` stage runs on the dep module's items so the
+    // ModuleInfo we publish carries per-module mutual_tco_members /
+    // recursive_fns / FnAnalysis facts; codegen builds its global view by
+    // unioning per-module sets (sound under Aver's module DAG invariant).
+    let neutral_policy = aver::ir::NeutralAllocPolicy;
+    let pipeline_result = aver::ir::pipeline::run(
+        &mut items,
+        aver::ir::PipelineConfig {
+            run_interp_lower,
+            run_buffer_build,
+            alloc_policy: Some(&neutral_policy),
+            ..Default::default()
+        },
+    );
 
     let depends = items
         .iter()
@@ -4445,7 +4844,14 @@ fn load_module_recursive(
         }
     }) {
         for dep in &mod_block.depends {
-            load_module_recursive(dep, module_root, result, loaded);
+            load_module_recursive(
+                dep,
+                module_root,
+                run_interp_lower,
+                run_buffer_build,
+                result,
+                loaded,
+            );
         }
     }
 
@@ -4480,6 +4886,7 @@ fn load_module_recursive(
         depends,
         type_defs,
         fn_defs,
+        analysis: pipeline_result.analysis,
     });
 }
 
@@ -4522,6 +4929,8 @@ mod tests {
             emit_self_host_support: false,
             extra_fn_defs: Vec::new(),
             mutual_tco_members: HashSet::new(),
+            recursive_fns: HashSet::new(),
+            fn_analyses: HashMap::new(),
             buffer_build_sinks: HashMap::new(),
             buffer_fusion_sites: Vec::new(),
             synthesized_buffered_fns: Vec::new(),

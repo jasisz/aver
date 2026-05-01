@@ -1,0 +1,10 @@
+# Fractal seahorse zoom — exercises the deforestation pass end-to-end.
+# `tools/edge/bench.av` renders a 200x120 Mandelbrot full-frame plus a
+# 220-iteration zoom. The buffer-build pass fires on `Fractal.allRows`
+# (sink) and on the interpolated `Console.print` line; without it this
+# scenario would chain N×M intermediate `String.cons` allocations.
+name       = "fractal_seahorse"
+entry      = "../../tools/edge/bench.av"
+iterations = 5
+warmup     = 1
+args       = []

@@ -1,0 +1,5 @@
+name       = "fib"
+entry      = "fib.av"
+iterations = 30
+warmup     = 3
+args       = []

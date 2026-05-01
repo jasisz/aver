@@ -10,9 +10,6 @@ use aver::replay::{
     JsonValue, RecordedOutcome, SessionRecording, first_diff_path, format_json, json_to_value,
     parse_session_recording, value_to_json,
 };
-use aver::resolver;
-use aver::tco;
-use aver::types::checker::run_type_check_full;
 use aver::value::{Value, aver_repr, list_to_vec};
 use aver::vm;
 
@@ -186,14 +183,27 @@ fn replay_recording_file_vm(
     let replay_program_file = resolve_replay_program_file(&recording, &replay_module_root);
     let source = read_file(&replay_program_file)?;
     let mut items = parse_file(&source)?;
-    tco::transform_program(&mut items);
 
-    let tc_result = run_type_check_full(&items, Some(&replay_module_root));
+    // Full pipeline. Recordings store effect syscalls (`Console.print(...)`
+    // with concrete args) — they don't reference IR shape or bytecode, so
+    // running interp_lower + buffer_build during replay produces the same
+    // effect sequence as the original recording. Earlier pipeline migration
+    // skipped these stages out of misplaced caution; re-enabling them
+    // matches CLI run semantics and lets replay benefit from the same
+    // deforestation the original run had.
+    let pipeline_result = aver::ir::pipeline::run(
+        &mut items,
+        aver::ir::PipelineConfig {
+            typecheck: Some(aver::ir::TypecheckMode::Full {
+                base_dir: Some(&replay_module_root),
+            }),
+            ..Default::default()
+        },
+    );
+    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
     if !tc_result.errors.is_empty() {
         return Err(crate::shared::format_type_errors(&tc_result.errors));
     }
-
-    resolver::resolve_program(&mut items);
 
     let mut arena = aver::nan_value::Arena::new();
     vm::register_service_types(&mut arena);
@@ -202,6 +212,7 @@ fn replay_recording_file_vm(
         &mut arena,
         Some(&replay_module_root),
         &recording.program_file,
+        pipeline_result.analysis.as_ref(),
     )
     .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);

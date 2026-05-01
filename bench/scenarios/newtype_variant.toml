@@ -1,0 +1,5 @@
+name       = "newtype_variant"
+entry      = "newtype_variant.av"
+iterations = 30
+warmup     = 3
+args       = []

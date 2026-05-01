@@ -20,11 +20,8 @@ use crate::checker::{
 };
 use crate::config::ProjectConfig;
 use crate::nan_value::{Arena, NanValueConvert};
-use crate::resolver;
-use crate::tco;
 use crate::types::checker::effect_classification::{EffectDimension, classify, is_classified};
 use crate::types::checker::hostile_effects::{HostileProfile, hostile_profiles_for};
-use crate::types::checker::run_type_check_full;
 use crate::value::{Value, aver_repr, list_from_vec};
 use crate::verify_law::expand::{ExpandedCase, ExpansionMode, expand_law_cases};
 use crate::vm;
@@ -403,7 +400,7 @@ pub fn run_verify_for_items_vm_with_mode(
     source_file: &str,
     mode: ExpansionMode,
 ) -> Result<Vec<VerifyResult>, String> {
-    tco::transform_program(&mut items);
+    crate::ir::pipeline::tco(&mut items);
 
     if mode == ExpansionMode::Hostile {
         // Inject hostile effect-profile stubs as `TopLevel::FnDef` before
@@ -420,7 +417,8 @@ pub fn run_verify_for_items_vm_with_mode(
         inject_hostile_effect_stubs_for_blocks(&mut items, &preview_blocks);
     }
 
-    let tc_result = run_type_check_full(&items, base_dir);
+    let tc_result =
+        crate::ir::pipeline::typecheck(&items, &crate::ir::TypecheckMode::Full { base_dir });
     if !tc_result.errors.is_empty() {
         return Err(format_type_errors(&tc_result.errors));
     }
@@ -437,12 +435,16 @@ pub fn run_verify_for_items_vm_with_mode(
     }
 
     let plans = build_verify_vm_plans(&mut items, &verify_blocks);
-    resolver::resolve_program(&mut items);
+    crate::ir::pipeline::resolve(&mut items);
 
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
+    // verify path runs `pipeline::tco/typecheck/resolve` directly without
+    // the canonical `pipeline::run`, so no AnalysisResult is available
+    // here — the in-place `compute_alloc_info` fallback inside the VM
+    // compiler kicks in.
     let (code, globals) =
-        vm::compile_program_with_modules(&items, &mut arena, base_dir, source_file)
+        vm::compile_program_with_modules(&items, &mut arena, base_dir, source_file, None)
             .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
     if let Some(cfg) = config {
@@ -480,14 +482,15 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode(
     source_file: &str,
     mode: ExpansionMode,
 ) -> Result<Vec<VerifyResult>, String> {
-    tco::transform_program(&mut items);
+    crate::ir::pipeline::tco(&mut items);
 
     if mode == ExpansionMode::Hostile {
         let preview_blocks = merge_verify_blocks(&items);
         inject_hostile_effect_stubs_for_blocks(&mut items, &preview_blocks);
     }
 
-    let tc_result = crate::types::checker::run_type_check_with_loaded(&items, &loaded);
+    let tc_result =
+        crate::ir::pipeline::typecheck(&items, &crate::ir::TypecheckMode::WithLoaded(&loaded));
     if !tc_result.errors.is_empty() {
         return Err(format_type_errors(&tc_result.errors));
     }
@@ -504,12 +507,12 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode(
     }
 
     let plans = build_verify_vm_plans(&mut items, &verify_blocks);
-    resolver::resolve_program(&mut items);
+    crate::ir::pipeline::resolve(&mut items);
 
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
     let (code, globals) =
-        vm::compile_program_with_loaded_modules(&items, &mut arena, loaded, source_file)
+        vm::compile_program_with_loaded_modules(&items, &mut arena, loaded, source_file, None)
             .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
     if let Some(cfg) = config {

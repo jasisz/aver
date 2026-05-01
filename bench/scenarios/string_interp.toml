@@ -1,0 +1,5 @@
+name       = "string_interp"
+entry      = "string_interp.av"
+iterations = 30
+warmup     = 3
+args       = []

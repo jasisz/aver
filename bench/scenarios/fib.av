@@ -1,0 +1,21 @@
+module Fib
+    intent = "Bench — naive recursive Fibonacci. Non-tail by design; measures call-frame overhead and dispatch cost across backends."
+    depends []
+    effects []
+
+fn fib(n: Int) -> Int
+    ? "Non-tail recursive Fibonacci. Intentionally inefficient — exists to stress per-call overhead, not to compute Fibonacci."
+    match n
+        0 -> 0
+        1 -> 1
+        _ -> fib(n - 1) + fib(n - 2)
+
+verify fib
+    fib(0) => 0
+    fib(1) => 1
+    fib(5) => 5
+    fib(10) => 55
+
+fn main() -> Int
+    ? "Bench entry — bench harness ignores the return value; main exists so cargo bench can compile this as a binary."
+    fib(15)

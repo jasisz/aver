@@ -101,11 +101,13 @@ fn is_generative_like(effect: &str) -> bool {
 mod tests {
     use super::*;
     use crate::source::parse_source;
-    use crate::types::checker::run_type_check_full;
 
     fn warnings_for(src: &str) -> Vec<CheckFinding> {
         let items = parse_source(src).expect("parse");
-        let tc = run_type_check_full(&items, None);
+        let tc = crate::ir::pipeline::typecheck(
+            &items,
+            &crate::ir::TypecheckMode::Full { base_dir: None },
+        );
         collect_plain_cases_effectful_warnings(&items, &tc.fn_sigs)
     }
 

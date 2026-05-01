@@ -391,7 +391,10 @@ fn demo() -> (Unit, Unit)
     (left(), right())!
 "#,
         );
-        let tc = crate::types::checker::run_type_check_full(&items, None);
+        let tc = crate::ir::pipeline::typecheck(
+            &items,
+            &crate::ir::TypecheckMode::Full { base_dir: None },
+        );
         assert!(
             tc.errors.is_empty(),
             "unexpected type errors: {:?}",
@@ -427,7 +430,10 @@ fn demo() -> (Bool, Option<String>)
     (left(), right())!
 "#,
         );
-        let tc = crate::types::checker::run_type_check_full(&items, None);
+        let tc = crate::ir::pipeline::typecheck(
+            &items,
+            &crate::ir::TypecheckMode::Full { base_dir: None },
+        );
         assert!(
             tc.errors.is_empty(),
             "unexpected type errors: {:?}",
@@ -458,7 +464,10 @@ fn demo() -> (Unit, Unit)
     (left(), right())!
 "#,
         );
-        let tc = crate::types::checker::run_type_check_full(&items, None);
+        let tc = crate::ir::pipeline::typecheck(
+            &items,
+            &crate::ir::TypecheckMode::Full { base_dir: None },
+        );
         assert!(
             tc.errors.is_empty(),
             "unexpected type errors: {:?}",
@@ -487,7 +496,10 @@ fn demo() -> (Unit, Unit)
     (left(), right())!
 "#,
         );
-        let tc = crate::types::checker::run_type_check_full(&items, None);
+        let tc = crate::ir::pipeline::typecheck(
+            &items,
+            &crate::ir::TypecheckMode::Full { base_dir: None },
+        );
         assert!(
             tc.errors.is_empty(),
             "unexpected type errors: {:?}",

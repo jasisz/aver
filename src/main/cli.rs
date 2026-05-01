@@ -423,6 +423,13 @@ pub(super) enum Commands {
         /// for runtime tuning (`-O3`).
         #[arg(long, value_enum)]
         optimize: Option<WasmOptMode>,
+        /// Print the IR after the named pipeline stage and exit before codegen.
+        /// One of: `tco`, `typecheck`, `interp_lower`, `buffer_build`, `resolve`.
+        /// Use `--emit-ir-after=resolve` to see the final IR that goes into
+        /// codegen. Pass `parse` to see the AST as the parser produced it,
+        /// before any pass runs.
+        #[arg(long, value_name = "PASS")]
+        emit_ir_after: Option<String>,
     },
     /// Emit a standalone aver_runtime / aver_to_wasi artifact to disk.
     /// Internal release tooling — used by tools/release/* to publish
@@ -461,6 +468,58 @@ pub(super) enum Commands {
         /// Output as NDJSON (one object per line)
         #[arg(long)]
         json: bool,
+    },
+    /// Run benchmark scenario(s) and report wall-time stats.
+    ///
+    /// `scenario` can be a single TOML manifest (`bench/scenarios/fib.toml`)
+    /// or a directory containing them — the directory form globs every
+    /// `*.toml` file inside, runs each in alphabetical order, and emits
+    /// one report per scenario. With `--json`, batch runs emit NDJSON
+    /// (one report per line) so consumers can stream them.
+    ///
+    /// Human-readable text by default; `--json` produces the structured
+    /// shape used by `--compare baseline.json` (0.15.2 CI gate).
+    /// 0.15.1 ships VM target only; `wasm-local` and `wasm-cloudflare`
+    /// follow in 0.15.2.
+    Bench {
+        /// What to run:
+        /// - `bench/scenarios/foo.toml` — named manifest (per-scenario tolerances, expected shape)
+        /// - `bench/scenarios/foo.av`  — ad-hoc, defaults + `--iterations` / `--warmup` overrides
+        /// - `bench/scenarios/`         — directory globs every `*.toml`, alphabetical
+        scenario: String,
+        /// Bench target: `vm` (in-process), `wasm-local` (wasmtime
+        /// in-process, requires the `wasm` feature), `rust` (native
+        /// binary via `aver compile --target rust` + `cargo build`).
+        #[arg(long, default_value = "vm")]
+        target: String,
+        /// Number of timed iterations (ad-hoc `.av` mode only; ignored
+        /// for `.toml` and directory mode). Default 30.
+        #[arg(long, value_name = "N")]
+        iterations: Option<usize>,
+        /// Warmup iterations not included in stats (ad-hoc `.av` mode
+        /// only). Default 3.
+        #[arg(long, value_name = "N")]
+        warmup: Option<usize>,
+        /// Emit the structured JSON report instead of the human-readable
+        /// summary. Use this in CI / scripts; the JSON shape is the
+        /// stable contract for `--compare baseline.json`.
+        #[arg(long)]
+        json: bool,
+        /// Save the resulting report (JSON) at `PATH`. Use this once on
+        /// a stable machine to capture a baseline; subsequent runs compare
+        /// against it via `--compare`.
+        #[arg(long, value_name = "PATH")]
+        save_baseline: Option<String>,
+        /// Compare the current run against a baseline JSON report at
+        /// `PATH`. Prints a diff (per-metric delta vs. tolerance) and,
+        /// when combined with `--fail-on-regression`, exits 1 if any
+        /// gated metric is over its tolerance budget.
+        #[arg(long, value_name = "PATH")]
+        compare: Option<String>,
+        /// Exit non-zero when `--compare` finds a regression. Use this
+        /// in CI to gate merges on bench numbers staying within tolerance.
+        #[arg(long)]
+        fail_on_regression: bool,
     },
     /// Export pure Aver code to a proof/verification project
     Proof {

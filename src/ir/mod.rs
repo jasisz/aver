@@ -1,12 +1,18 @@
 mod alloc_info;
+mod analyze;
 mod body;
 mod buffer_build;
 mod calls;
+pub mod dump;
 mod interp_lower;
 pub mod last_use;
 mod leaf;
 mod matches;
+pub mod pipeline;
 pub mod vars;
+
+pub use analyze::{AnalysisResult, BodyShape, FnAnalysis, NeutralAllocPolicy, analyze};
+pub use pipeline::{PipelineConfig, PipelineResult, PipelineStage, TypecheckMode};
 
 pub use alloc_info::{AllocPolicy, compute_alloc_info};
 pub use body::{

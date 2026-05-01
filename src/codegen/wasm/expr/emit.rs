@@ -3,13 +3,13 @@
 /// emit_expr, emit_block, emit_binop, emit_fn_call, emit_wrap,
 /// emit_variant_constructor, emit_constructor, emit_error_prop,
 /// emit_list, emit_tuple, emit_record_create, emit_field_access,
-/// emit_map_literal, emit_interpolated_str, emit_str_part,
+/// emit_map_literal,
 /// emit_tailcall, emit_literal, emit_string_literal, emit_default_init.
 use std::collections::HashMap;
 
 use wasm_encoder::Instruction;
 
-use crate::ast::{BinOp, Expr, Literal, Spanned, Stmt, StrPart, TailCallData};
+use crate::ast::{BinOp, Expr, Literal, Spanned, Stmt, TailCallData};
 use crate::ir::{
     CallPlan, LeafOp, SemanticConstructor, WrapperKind, classify_call_plan,
     classify_constructor_name, classify_leaf_op,
@@ -73,7 +73,16 @@ impl<'a> ExprEmitter<'a> {
             Expr::Match { subject, arms } => self.emit_match(subject, arms),
             Expr::Constructor(name, inner) => self.emit_constructor(name, inner),
             Expr::ErrorProp(inner) => self.emit_error_prop(inner),
-            Expr::InterpolatedStr(parts) => self.emit_interpolated_str(parts),
+            // Pipeline contract: `interp_lower` always runs before WASM
+            // codegen — it desugars `Expr::InterpolatedStr` into the
+            // shared `__buf_*` + `__to_str` intrinsic chain that every
+            // runtime backend handles uniformly. Reaching this arm means
+            // the pipeline was misconfigured (interp_lower disabled for
+            // a path that emits WASM); bug in the caller.
+            Expr::InterpolatedStr(_) => unreachable!(
+                "InterpolatedStr should have been lowered by ir::interp_lower; \
+                 WASM codegen runs only on lowered IR (see ir::pipeline contract)"
+            ),
             Expr::List(items) => self.emit_list(items),
             Expr::Tuple(items) => self.emit_tuple(items),
             Expr::RecordCreate { type_name, fields } => {
@@ -1463,10 +1472,10 @@ impl<'a> ExprEmitter<'a> {
 
     fn emit_map_literal(&mut self, entries: &[(Spanned<Expr>, Spanned<Expr>)]) {
         // Build a `List<(K, V)>` from the entries (regular OBJ_LIST_CONS
-        // with an OBJ_TUPLE in each head), then fold it into a HAMT via
-        // `rt_map_from_list`. Pre-HAMT we used to chain OBJ_MAP_ENTRY
-        // cells and treat the chain itself as the map; the HAMT
-        // runtime only walks `OBJ_HAMT` roots, so we have to convert.
+        // with an OBJ_TUPLE in each head), then fold it into a flat
+        // OBJ_MAP via `rt_map_from_list`. (Pre-0.14 maps were
+        // OBJ_MAP_ENTRY cons-list shaped — assoc-list semantics, O(N)
+        // lookups; the flat hashtable runtime needs a real OBJ_MAP.)
         //
         // Key kind / value-ptr flag come from the static types of the
         // first entry (if any). All entries in a literal share the
@@ -1549,7 +1558,7 @@ impl<'a> ExprEmitter<'a> {
             self.instructions.push(Instruction::Call(self.rt.list_cons));
         }
 
-        // Fold the list of tuples into a HAMT.
+        // Fold the list of tuples into a flat OBJ_MAP.
         self.instructions.push(Instruction::I32Const(key_kind));
         self.instructions
             .push(Instruction::I32Const(value_ptr_flag));
@@ -1651,38 +1660,6 @@ impl<'a> ExprEmitter<'a> {
             WasmType::I64 => {
                 self.instructions.push(Instruction::Call(self.rt.obj_field));
             }
-        }
-    }
-
-    fn emit_interpolated_str(&mut self, parts: &[StrPart]) {
-        if parts.is_empty() {
-            self.emit_string_literal("");
-            return;
-        }
-        if parts.len() == 1 {
-            match &parts[0] {
-                StrPart::Literal(s) => self.emit_string_literal(s),
-                StrPart::Parsed(expr) => {
-                    // Convert expression to string
-                    self.emit_value_to_str(&expr.node);
-                }
-            }
-            return;
-        }
-
-        // Multi-part: emit first part, then concat remaining
-        self.emit_str_part(&parts[0]);
-        for part in &parts[1..] {
-            self.emit_str_part(part);
-            self.instructions
-                .push(Instruction::Call(self.rt.str_concat));
-        }
-    }
-
-    fn emit_str_part(&mut self, part: &StrPart) {
-        match part {
-            StrPart::Literal(s) => self.emit_string_literal(s),
-            StrPart::Parsed(expr) => self.emit_value_to_str(&expr.node),
         }
     }
 
@@ -1815,10 +1792,10 @@ impl<'a> ExprEmitter<'a> {
             // Yard semantics: compact when this iteration's growth
             // exceeds the threshold. The original 256-byte cutoff was
             // calibrated for the linked-list map era (~24B per cons
-            // cell) and fires *every* iteration once HAMT or any other
-            // structurally-sharing data type allocates 4-5 nodes per
-            // step (~600B) — death by a thousand compactions. 16384
-            // matches the mutual-TCO branch's watermark threshold.
+            // cell) and fires *every* iteration once a structurally
+            // sharing data type allocates 4-5 nodes per step (~600B)
+            // — death by a thousand compactions. 16384 matches the
+            // mutual-TCO branch's watermark threshold.
             //
             // Pure no-alloc self-recursive fns skip the whole compaction
             // pass — they don't generate garbage to begin with.

@@ -1,0 +1,5 @@
+name       = "map_build"
+entry      = "map_build.av"
+iterations = 30
+warmup     = 3
+args       = []

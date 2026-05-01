@@ -1,0 +1,5 @@
+name       = "record"
+entry      = "record.av"
+iterations = 30
+warmup     = 3
+args       = []

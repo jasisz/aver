@@ -61,7 +61,10 @@ mod tests {
     #[test]
     fn law_dependency_warning_points_at_missing_helper_laws_in_json() {
         let items = parse_items(include_str!("../../examples/data/json.av"));
-        let tc = crate::types::checker::run_type_check_full(&items, None);
+        let tc = crate::ir::pipeline::typecheck(
+            &items,
+            &crate::ir::TypecheckMode::Full { base_dir: None },
+        );
         assert!(
             tc.errors.is_empty(),
             "expected json example to type-check, got {:?}",

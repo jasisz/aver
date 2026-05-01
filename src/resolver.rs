@@ -14,15 +14,16 @@ use std::sync::Arc as Rc;
 
 use crate::ast::*;
 
-/// Run the resolver on all top-level function definitions,
-/// then annotate last-use information on all `Resolved` nodes.
+/// Run the resolver on all top-level function definitions. Stops after
+/// slot resolution — last-use ownership annotation is its own pipeline
+/// stage (`ir::pipeline::last_use`) so the two analyses are individually
+/// observable and skippable.
 pub fn resolve_program(items: &mut [TopLevel]) {
     for item in items.iter_mut() {
         if let TopLevel::FnDef(fd) = item {
             resolve_fn(fd);
         }
     }
-    crate::ir::last_use::annotate_program_last_use(items);
 }
 
 /// Resolve a single function definition.

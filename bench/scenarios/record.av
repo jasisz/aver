@@ -1,0 +1,31 @@
+module RecordBench
+    intent = "Bench — record construction + field access in a tight loop. Measures heap-record overhead vs. tagged primitives."
+    depends []
+    effects []
+
+record Point
+    x: Int
+    y: Int
+
+fn distance(p: Point) -> Int
+    ? "Squared distance from origin — pure record-field access."
+    p.x * p.x + p.y * p.y
+
+verify distance
+    distance(Point(x = 0, y = 0)) => 0
+    distance(Point(x = 3, y = 4)) => 25
+
+fn sumDistances(n: Int, acc: Int) -> Int
+    ? "Tail-recursive sum of squared distances over Point(n, 2n) for n down to 0."
+    match n
+        0 -> acc
+        _ -> sumDistances(n - 1, acc + distance(Point(x = n, y = n * 2)))
+
+verify sumDistances
+    sumDistances(0, 0) => 0
+    sumDistances(1, 0) => 5
+    sumDistances(2, 0) => 25
+
+fn main() -> Int
+    ? "Bench entry — return value ignored."
+    sumDistances(20000, 0)

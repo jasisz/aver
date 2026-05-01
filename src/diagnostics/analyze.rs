@@ -19,8 +19,6 @@ use crate::checker::{FindingSpan, collect_verify_law_dependency_warnings_in};
 use crate::source::{LoadedModule, parse_source};
 #[cfg(feature = "runtime")]
 use crate::tail_check::collect_non_tail_recursion_warnings_with_sigs;
-use crate::tco;
-use crate::types::checker::{run_type_check_full, run_type_check_with_loaded};
 
 /// Options for `analyze_source`. Defaults enable every available collector.
 #[derive(Clone, Debug)]
@@ -131,13 +129,16 @@ pub fn analyze_source(source: &str, options: &AnalyzeOptions) -> AnalysisReport 
     };
 
     let mut transformed = items.clone();
-    tco::transform_program(&mut transformed);
+    crate::ir::pipeline::tco(&mut transformed);
 
-    let tc_result = if let Some(loaded) = options.loaded_modules.as_deref() {
-        run_type_check_with_loaded(&items, loaded)
+    let mode = if let Some(loaded) = options.loaded_modules.as_deref() {
+        crate::ir::TypecheckMode::WithLoaded(loaded)
     } else {
-        run_type_check_full(&items, options.module_base_dir.as_deref())
+        crate::ir::TypecheckMode::Full {
+            base_dir: options.module_base_dir.as_deref(),
+        }
     };
+    let tc_result = crate::ir::pipeline::typecheck(&items, &mode);
 
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
 

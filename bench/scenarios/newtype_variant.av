@@ -1,0 +1,30 @@
+module NewtypeVariant
+    intent = "Bench — newtype overhead via single-variant sum type. Same compute as newtype_bare and newtype_record but every Int goes through `type UserId = UserId(Int)`; the third datapoint in the newtype trio."
+    depends []
+    effects []
+
+type UserId
+    UserId(Int)
+
+fn unwrap(id: UserId) -> Int
+    ? "Match-and-extract on a single-variant sum type."
+    match id
+        UserId.UserId(n) -> n
+
+verify unwrap
+    unwrap(UserId.UserId(0)) => 0
+    unwrap(UserId.UserId(42)) => 42
+
+fn sumLoop(n: Int, acc: Int) -> Int
+    ? "Tail-recursive sum over variant wrap/unwrap on every iteration."
+    match n
+        0 -> acc
+        _ -> sumLoop(n - 1, acc + unwrap(UserId.UserId(n)))
+
+verify sumLoop
+    sumLoop(0, 0) => 0
+    sumLoop(5, 0) => 15
+
+fn main() -> Int
+    ? "Bench entry — return value ignored."
+    sumLoop(20000, 0)

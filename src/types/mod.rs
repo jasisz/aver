@@ -645,7 +645,7 @@ mod tests {
         assert!(parse_type_str_strict("Result<Int>").is_err());
         assert!(parse_type_str_strict("Option<Int, String>").is_err());
         assert!(parse_type_str_strict("Map<Int>").is_err());
-        // List/User-type keys are now valid — HAMT runtime hashes deeply.
+        // List/User-type keys are now valid — runtime hashes deeply.
         assert!(parse_type_str_strict("Map<List<Int>, String>").is_ok());
         // Functions still cannot be hashed.
         assert!(parse_type_str_strict("Map<Fn(Int) -> Int, String>").is_err());

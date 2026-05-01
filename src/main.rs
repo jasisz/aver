@@ -185,6 +185,7 @@ fn main() {
             preset,
             handler,
             optimize,
+            emit_ir_after,
         } => {
             let policy_mode = (*policy).unwrap_or(if *with_replay {
                 CompilePolicyMode::Runtime
@@ -212,6 +213,13 @@ fn main() {
                 ),
                 None => (*target, *bridge, *pack),
             };
+            // `--emit-ir-after=PASS` short-circuits before codegen — print
+            // the IR snapshot for the named stage and exit. Drives observability
+            // in 0.15.1 without touching the compile path otherwise.
+            if let Some(stage) = emit_ir_after.as_deref() {
+                commands::cmd_emit_ir_after(file, module_root.as_deref(), stage);
+                return;
+            }
             commands::cmd_compile(commands::CompileOptions {
                 file,
                 output_dir: output,
@@ -243,6 +251,27 @@ fn main() {
             json,
         } => {
             why_cmd::cmd_why(file, module_root.as_deref(), *verbose, *json);
+        }
+        Commands::Bench {
+            scenario,
+            target,
+            iterations,
+            warmup,
+            json,
+            save_baseline,
+            compare,
+            fail_on_regression,
+        } => {
+            commands::cmd_bench(commands::BenchOptions {
+                scenario_path: scenario,
+                target,
+                iterations: *iterations,
+                warmup: *warmup,
+                json: *json,
+                save_baseline: save_baseline.as_deref(),
+                compare: compare.as_deref(),
+                fail_on_regression: *fail_on_regression,
+            });
         }
         Commands::Proof {
             file,

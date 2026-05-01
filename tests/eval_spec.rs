@@ -31,8 +31,9 @@ fn vm_compile(items: &[TopLevel]) -> vm::VM {
     resolve_program(&mut items);
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
-    let (code, globals) = vm::compile_program_with_modules(&items, &mut arena, None, "<test>")
-        .expect("VM compile failed");
+    let (code, globals) =
+        vm::compile_program_with_modules(&items, &mut arena, None, "<test>", None)
+            .expect("VM compile failed");
     vm::VM::new(code, globals, arena)
 }
 
@@ -2259,7 +2260,7 @@ mod module_runtime_tests {
             .to_str()
             .expect("module_root is not valid UTF-8");
         let (code, globals) =
-            vm::compile_program_with_modules(&items, &mut arena, Some(root_str), "<test>")
+            vm::compile_program_with_modules(&items, &mut arena, Some(root_str), "<test>", None)
                 .expect("VM compile failed");
         let mut machine = vm::VM::new(code, globals, arena);
         machine.run_top_level().expect("top-level failed");
@@ -2420,7 +2421,7 @@ fn startedAt() -> String
         vm::register_service_types(&mut arena);
         let root_str = root.to_str().expect("utf-8");
         let (code, globals) =
-            vm::compile_program_with_modules(&items, &mut arena, Some(root_str), "<test>")
+            vm::compile_program_with_modules(&items, &mut arena, Some(root_str), "<test>", None)
                 .expect("VM compile failed");
         let mut machine = vm::VM::new(code, globals, arena);
         machine.run_top_level().expect("top-level failed");

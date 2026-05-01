@@ -16,12 +16,17 @@ use super::symbol::{VmSymbolTable, VmVariantCtor};
 use super::types::{CodeStore, FnChunk};
 
 /// Compile a parsed + TCO-transformed + resolved program into bytecode.
-/// Also loads dependent modules if a `module` declaration with `depends` is present.
+///
+/// `analysis` carries per-fn `FnAnalysis.allocates` from the pipeline's
+/// analyze stage; the VM compiler reads `chunk.no_alloc` from it
+/// directly. `None` triggers an in-place `compute_alloc_info` fallback
+/// for ad-hoc test harnesses (no production caller passes None).
 pub fn compile_program(
     items: &[TopLevel],
     arena: &mut Arena,
+    analysis: Option<&crate::ir::AnalysisResult>,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
-    compile_program_with_modules(items, arena, None, "")
+    compile_program_with_modules(items, arena, None, "", analysis)
 }
 
 /// Compile with explicit module root for `depends` resolution.
@@ -30,8 +35,15 @@ pub fn compile_program_with_modules(
     arena: &mut Arena,
     module_root: Option<&str>,
     source_file: &str,
+    analysis: Option<&crate::ir::AnalysisResult>,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
-    compile_program_inner(items, arena, source_file, ModuleSource::Disk(module_root))
+    compile_program_inner(
+        items,
+        arena,
+        source_file,
+        ModuleSource::Disk(module_root),
+        analysis,
+    )
 }
 
 /// Compile using dependency modules that were already parsed off-disk
@@ -42,8 +54,15 @@ pub fn compile_program_with_loaded_modules(
     arena: &mut Arena,
     loaded: Vec<crate::source::LoadedModule>,
     source_file: &str,
+    analysis: Option<&crate::ir::AnalysisResult>,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
-    compile_program_inner(items, arena, source_file, ModuleSource::Loaded(loaded))
+    compile_program_inner(
+        items,
+        arena,
+        source_file,
+        ModuleSource::Loaded(loaded),
+        analysis,
+    )
 }
 
 enum ModuleSource<'a> {
@@ -56,6 +75,7 @@ fn compile_program_inner(
     arena: &mut Arena,
     source_file: &str,
     module_source: ModuleSource<'_>,
+    analysis: Option<&crate::ir::AnalysisResult>,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
     let mut compiler = ProgramCompiler::new();
     compiler.source_file = source_file.to_string();
@@ -172,11 +192,36 @@ fn compile_program_inner(
         })
         .collect();
     if !user_fn_defs.is_empty() {
-        let policy = super::VmAllocPolicy;
-        let alloc_info = crate::ir::compute_alloc_info(&user_fn_defs, &policy);
+        // Read the per-fn `allocates` flag from the supplied analysis
+        // when available (production path through the canonical
+        // pipeline); fall back to in-place `compute_alloc_info` for
+        // callers that haven't migrated. `VmAllocPolicy` and the
+        // pipeline-default `NeutralAllocPolicy` agree on every name
+        // today, so the two paths produce identical results.
+        let fallback_info = if analysis.is_none() {
+            let policy = super::VmAllocPolicy;
+            Some(crate::ir::compute_alloc_info(&user_fn_defs, &policy))
+        } else {
+            None
+        };
+        let allocates = |name: &str| -> bool {
+            if let Some(a) = analysis
+                && let Some(fa) = a.fn_analyses.get(name)
+                && let Some(b) = fa.allocates
+            {
+                return b;
+            }
+            if let Some(info) = fallback_info.as_ref() {
+                return *info.get(name).unwrap_or(&true);
+            }
+            // Analysis present but no `allocates` field — pipeline ran
+            // without an alloc_policy. Conservative default: assume yes.
+            true
+        };
         for fd in &user_fn_defs {
-            let allocates = *alloc_info.get(&fd.name).unwrap_or(&true);
-            if !allocates && let Some(fn_id) = compiler.code.find(&fd.name) {
+            if !allocates(&fd.name)
+                && let Some(fn_id) = compiler.code.find(&fd.name)
+            {
                 let chunk = &mut compiler.code.functions[fn_id as usize];
                 chunk.no_alloc = true;
                 // No-alloc bodies always satisfy `can_fast_return`'s
@@ -279,8 +324,13 @@ impl ProgramCompiler {
         mut mod_items: Vec<TopLevel>,
         arena: &mut Arena,
     ) -> Result<(), CompileError> {
-        crate::tco::transform_program(&mut mod_items);
-        crate::resolver::resolve_program(&mut mod_items);
+        // Internal VM dep-loading: TCO + resolver only. Caller already ran
+        // the full canonical pipeline on the entry; this path runs on
+        // freshly parsed dep items that are otherwise unprepared. Idempotent
+        // with `load_module_recursive`'s pipeline call when both touch the
+        // same module.
+        crate::ir::pipeline::tco(&mut mod_items);
+        crate::ir::pipeline::resolve(&mut mod_items);
 
         // Register types in Arena with qualified aliases.
         for mt in visibility::collect_module_types(&mod_items) {
@@ -934,11 +984,12 @@ fn cellAt(grid: Vector<Int>, idx: Int) -> Int
 "#;
 
         let mut items = parse_source(source).expect("source should parse");
-        crate::tco::transform_program(&mut items);
-        crate::resolver::resolve_program(&mut items);
+        crate::ir::pipeline::tco(&mut items);
+        crate::ir::pipeline::resolve(&mut items);
 
         let mut arena = Arena::new();
-        let (code, _globals) = compile_program(&items, &mut arena).expect("vm compile should pass");
+        let (code, _globals) =
+            compile_program(&items, &mut arena, None).expect("vm compile should pass");
         let fn_id = code.find("cellAt").expect("cellAt should exist");
         let chunk = code.get(fn_id);
 
@@ -959,11 +1010,12 @@ fn updateOrKeep(vec: Vector<Int>, idx: Int, value: Int) -> Vector<Int>
 "#;
 
         let mut items = parse_source(source).expect("source should parse");
-        crate::tco::transform_program(&mut items);
-        crate::resolver::resolve_program(&mut items);
+        crate::ir::pipeline::tco(&mut items);
+        crate::ir::pipeline::resolve(&mut items);
 
         let mut arena = Arena::new();
-        let (code, _globals) = compile_program(&items, &mut arena).expect("vm compile should pass");
+        let (code, _globals) =
+            compile_program(&items, &mut arena, None).expect("vm compile should pass");
         let fn_id = code
             .find("updateOrKeep")
             .expect("updateOrKeep should exist");
@@ -988,11 +1040,12 @@ fn bucket(n: Int) -> Int
 "#;
 
         let mut items = parse_source(source).expect("source should parse");
-        crate::tco::transform_program(&mut items);
-        crate::resolver::resolve_program(&mut items);
+        crate::ir::pipeline::tco(&mut items);
+        crate::ir::pipeline::resolve(&mut items);
 
         let mut arena = Arena::new();
-        let (code, _globals) = compile_program(&items, &mut arena).expect("vm compile should pass");
+        let (code, _globals) =
+            compile_program(&items, &mut arena, None).expect("vm compile should pass");
         let fn_id = code.find("bucket").expect("bucket should exist");
         let chunk = code.get(fn_id);
 
@@ -1021,11 +1074,12 @@ fn listenWith(context: Int, handler: Int) -> Unit
 "#;
 
         let mut items = parse_source(source).expect("source should parse");
-        crate::tco::transform_program(&mut items);
-        crate::resolver::resolve_program(&mut items);
+        crate::ir::pipeline::tco(&mut items);
+        crate::ir::pipeline::resolve(&mut items);
 
         let mut arena = Arena::new();
-        let (code, _globals) = compile_program(&items, &mut arena).expect("vm compile should pass");
+        let (code, _globals) =
+            compile_program(&items, &mut arena, None).expect("vm compile should pass");
         assert!(code.find("listen").is_some(), "listen should compile");
         assert!(
             code.find("listenWith").is_some(),

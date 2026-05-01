@@ -19,8 +19,7 @@ use crate::call_graph::{
     direct_calls, find_recursive_fns, recursive_callsite_counts, recursive_scc_ids,
 };
 use crate::checker::expr_to_str;
-use crate::tco;
-use crate::types::checker::{TypeCheckResult, run_type_check_full};
+use crate::types::checker::TypeCheckResult;
 use crate::verify_law::canonical_spec_ref;
 
 // ─── Canonical, CLI-shaped FileContext ────────────────────────────────────────
@@ -499,26 +498,55 @@ fn render_signature(fd: &FnDef) -> String {
 
 /// Functions that qualify for auto-memoization: pure, recursive with
 /// branching, and all parameter types memo-safe.
-pub fn compute_memo_fns(items: &[TopLevel], tc_result: &TypeCheckResult) -> HashSet<String> {
-    let recursive = find_recursive_fns(items);
-    let recursive_calls = recursive_callsite_counts(items);
+///
+/// Reads recursion facts from `PipelineResult.analysis` when the pipeline
+/// has run; falls back to ad-hoc computation when the analysis isn't
+/// available (callers that haven't migrated to the pipeline). The fallback
+/// path will go away once every consumer reads from analysis directly.
+pub fn compute_memo_fns(
+    items: &[TopLevel],
+    tc_result: &TypeCheckResult,
+    analysis: Option<&crate::ir::AnalysisResult>,
+) -> HashSet<String> {
     let mut memo = HashSet::new();
-    for fn_name in &recursive {
-        if let Some((params, _ret, effects)) = tc_result.fn_sigs.get(fn_name) {
-            if !effects.is_empty() {
-                continue;
+
+    let memo_check = |fn_name: &str, recursive_calls: usize| -> bool {
+        let Some((params, _ret, effects)) = tc_result.fn_sigs.get(fn_name) else {
+            return false;
+        };
+        if !effects.is_empty() {
+            return false;
+        }
+        if recursive_calls < 2 {
+            return false;
+        }
+        params
+            .iter()
+            .all(|ty| is_memo_safe_type(ty, &tc_result.memo_safe_types))
+    };
+
+    if let Some(analysis) = analysis {
+        for fn_name in &analysis.recursive_fns {
+            let calls = analysis
+                .fn_analyses
+                .get(fn_name)
+                .map(|a| a.recursive_call_count)
+                .unwrap_or(0);
+            if memo_check(fn_name, calls) {
+                memo.insert(fn_name.clone());
             }
-            if recursive_calls.get(fn_name).copied().unwrap_or(0) < 2 {
-                continue;
-            }
-            let all_safe = params
-                .iter()
-                .all(|ty| is_memo_safe_type(ty, &tc_result.memo_safe_types));
-            if all_safe {
+        }
+    } else {
+        let recursive = find_recursive_fns(items);
+        let recursive_calls = recursive_callsite_counts(items);
+        for fn_name in &recursive {
+            let calls = recursive_calls.get(fn_name).copied().unwrap_or(0);
+            if memo_check(fn_name, calls) {
                 memo.insert(fn_name.clone());
             }
         }
     }
+
     memo
 }
 
@@ -785,7 +813,7 @@ fn fn_has_tail_call(fd: &FnDef) -> bool {
 
 fn compute_context_fn_flags(items: &[TopLevel], module_root: Option<&str>) -> ContextFnFlags {
     let mut transformed = items.to_vec();
-    tco::transform_program(&mut transformed);
+    crate::ir::pipeline::tco(&mut transformed);
     let tco_fns = transformed
         .iter()
         .filter_map(|item| match item {
@@ -798,7 +826,12 @@ fn compute_context_fn_flags(items: &[TopLevel], module_root: Option<&str>) -> Co
     let recursive_scc_id = recursive_scc_ids(&transformed);
     let mut memo_qual = HashMap::new();
 
-    let tc_result = run_type_check_full(&transformed, module_root);
+    let tc_result = crate::ir::pipeline::typecheck(
+        &transformed,
+        &crate::ir::TypecheckMode::Full {
+            base_dir: module_root,
+        },
+    );
     if !tc_result.errors.is_empty() {
         for item in &transformed {
             if let TopLevel::FnDef(fd) = item {
@@ -844,7 +877,10 @@ fn compute_context_fn_flags(items: &[TopLevel], module_root: Option<&str>) -> Co
     }
 
     ContextFnFlags {
-        auto_memo: compute_memo_fns(&transformed, &tc_result),
+        // `aver context` doesn't run the full pipeline (its IR shape is
+        // pre-resolve/pre-analyze for diagnostic display), so pass `None`
+        // and let the fallback path compute recursion facts ad-hoc.
+        auto_memo: compute_memo_fns(&transformed, &tc_result, None),
         auto_tco: tco_fns,
         memo_qual,
         recursive_callsites,

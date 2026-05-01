@@ -122,11 +122,34 @@ Notes:
 aver compile file.av -o /tmp/out --module-root .
 aver compile file.av --target wasm -o /tmp/out
 aver compile file.av --target wasm --wasm-opt oz -o /tmp/out
+aver compile file.av --emit-ir-after=PASS
 ```
 
 - Default: Rust codegen, emits a modular Cargo project
 - `--target wasm`: standalone WASM module with aver/* imports
 - `--wasm-opt oz`: post-process with binaryen for ~50% size reduction
+- `--emit-ir-after=PASS`: print the IR snapshot after the named pipeline stage and exit before codegen. PASS ∈ { `parse`, `tco`, `typecheck`, `interp_lower`, `buffer_build`, `resolve`, `last_use`, `analyze` }. `diff -u` between two stages shows exactly what each pass rewrote.
+
+### Bench
+
+```bash
+aver bench foo.av                                            # ad-hoc, defaults (30 iter, 3 warmup)
+aver bench foo.av --iterations=50 --warmup=5                 # ad-hoc with overrides
+aver bench bench/scenarios/fib.toml                          # named manifest
+aver bench bench/scenarios/fib.toml --json                   # structured report
+aver bench bench/scenarios/                                  # directory mode (every *.toml)
+aver bench bench/scenarios/ --json                           # NDJSON
+aver bench bench/scenarios/fib.toml --target=wasm-local      # requires --features wasm
+aver bench bench/scenarios/fib.toml --target=rust            # native binary, subprocess per iter
+aver bench bench/scenarios/fib.toml --save-baseline base.json
+aver bench bench/scenarios/fib.toml --compare base.json --fail-on-regression
+```
+
+- Three input shapes: `.av` (ad-hoc, defaults + `--iterations` / `--warmup` overrides), `.toml` (named manifest with per-scenario tolerance + expected shape), directory (globs `*.toml`).
+- Three targets: `vm` (default, in-process), `wasm-local` (wasmtime in-process), `rust` (native binary).
+- Reports include `backend` (aver version, build, wasmtime version) and `host` (os/arch/cpus) so cross-machine runs disambiguate.
+- `--save-baseline` / `--compare` need a `.toml` manifest (per-scenario tolerance lives there).
+- See [docs/bench.md](docs/bench.md) for the full reference.
 
 ### Proof
 
