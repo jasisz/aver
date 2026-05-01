@@ -173,6 +173,14 @@ fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
             {
                 return true;
             }
+            // String-subject match (`match s { "literal" -> ... }`)
+            // stashes the subject ref in scratch and tests it against
+            // each literal — needs a scratch slot.
+            if arms.iter().any(|a| {
+                matches!(&a.pattern, Pattern::Literal(Literal::Str(_)))
+            }) {
+                return true;
+            }
             // Arm needs a scratch when it's a multi-arm Constructor
             // match against a non-newtype variant.
             let constructor_arms: Vec<_> = arms
@@ -236,6 +244,10 @@ fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
         Expr::List(items) => items
             .iter()
             .any(|e| expr_needs_scratch(&e.node, registry)),
+        Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
+            expr_needs_scratch(&k.node, registry)
+                || expr_needs_scratch(&v.node, registry)
+        }),
         _ => false,
     }
 }
@@ -300,17 +312,25 @@ fn subject_option_inner_type(
     fd: &FnDef,
     fn_map: &FnMap,
 ) -> Option<String> {
-    let wasm_ty = infer_expr_wasm_type(subject, registry, fd, fn_map).ok().flatten()?;
-    if let ValType::Ref(rt) = wasm_ty
-        && let wasm_encoder::HeapType::Concrete(idx) = rt.heap_type
-    {
-        for canonical in &registry.option_order {
-            if registry.option_types.get(canonical).copied() == Some(idx) {
-                return TypeRegistry::option_element_type(canonical).map(|s| s.to_string());
-            }
-        }
-    }
-    None
+    subject_option_inner_type_with_prev(subject, registry, fd, fn_map, &HashMap::new())
+}
+
+/// Variant that consults a pre-built binding-type map. Slot pre-pass
+/// uses this so `match Map.get(headers, ...)` over a binding correctly
+/// resolves to `Option<List<String>>` (sniff_with_prev sees `headers`
+/// is `Map<String, List<String>>`); the bare `infer_expr_wasm_type`
+/// path can't, because it only sees params.
+fn subject_option_inner_type_with_prev(
+    subject: &Expr,
+    registry: &TypeRegistry,
+    fd: &FnDef,
+    fn_map: &FnMap,
+    prev: &HashMap<String, String>,
+) -> Option<String> {
+    let aver = sniff_with_prev(subject, fd, fn_map, registry, prev)?;
+    let canonical: String = aver.chars().filter(|c| !c.is_whitespace()).collect();
+    let inner = canonical.strip_prefix("Option<")?.strip_suffix('>')?;
+    Some(inner.to_string())
 }
 
 fn collect_binding_slots(
@@ -357,7 +377,9 @@ fn collect_expr_binding_slots(
             // (read off the subject's option<T> wasm type).
             let is_option = arms.iter().any(arm_is_option_pattern);
             if is_option {
-                let inner = subject_option_inner_type(&subject.node, registry, fd, fn_map);
+                let inner = subject_option_inner_type_with_prev(
+                    &subject.node, registry, fd, fn_map, binding_types,
+                );
                 for arm in arms {
                     if let Pattern::Constructor(_, bindings) = &arm.pattern
                         && arm_is_option_pattern(arm)
@@ -1345,7 +1367,11 @@ fn collect_match_pattern_types(
             collect_match_pattern_types(&subject.node, fd, fn_map, registry, out);
             // Recover subject type so Result/Option bindings can
             // pick the right T/E.
-            let subject_ty = sniff_aver_type(&subject.node, fd, fn_map, registry);
+            // Use prev-aware sniff so e.g. `match Vector.get(v, 0)` over
+            // a `let`-bound `v: Vector<String>` infers the subject as
+            // `Option<String>`, which lets the Some-binding pick up
+            // the right element type.
+            let subject_ty = sniff_with_prev(&subject.node, fd, fn_map, registry, out);
             for arm in arms {
                 if let Pattern::Constructor(name, bindings) = &arm.pattern {
                     let bare = name.rsplit('.').next().unwrap_or(name);
@@ -1762,6 +1788,9 @@ fn emit_expr(
         Expr::List(items) => {
             emit_list_literal(func, items, slots, ctx)?;
         }
+        Expr::MapLiteral(entries) => {
+            emit_map_literal(func, entries, slots, ctx)?;
+        }
         Expr::Ident(_) => {
             return Err(WasmGcError::Unimplemented(
                 "bare Ident reached emitter (resolver should have produced Resolved)",
@@ -1923,7 +1952,8 @@ fn emit_expr(
         Expr::Constructor(name, payload) => {
             emit_constructor(func, name, payload.as_deref(), slots, ctx)?
         }
-        _ => {
+        other => {
+            eprintln!("UNIMPL EMIT shape={:?}", other);
             return Err(WasmGcError::Unimplemented(
                 "expression shape outside phase 2/3/4",
             ));
@@ -2166,6 +2196,54 @@ fn emit_list_empty(func: &mut Function, ctx: &EmitCtx<'_>) -> Result<(), WasmGcE
 }
 
 /// `[a, b, c]` literal → `Cons a (Cons b (Cons c null))`.
+/// `MapLiteral` emit: lower `{"k" => "v", ...}` to
+/// `Map.empty()` followed by one `Map.set(map, k, v)` per entry.
+/// Each `set` consumes the previous map ref, K, V from the stack and
+/// returns the updated map ref — so a sequence of set calls leaves
+/// the final map on top of the stack with no scratch slot needed.
+fn emit_map_literal(
+    func: &mut Function,
+    entries: &[(Spanned<Expr>, Spanned<Expr>)],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    // Empty map literal — fall back to whichever Map<K,V> the
+    // surrounding context expects, if there's exactly one registered.
+    let canonical: String = if entries.is_empty() {
+        if ctx.registry.map_order.len() == 1 {
+            ctx.registry.map_order[0].clone()
+        } else {
+            return Err(WasmGcError::Validation(
+                "empty MapLiteral: cannot resolve Map<K,V> instantiation \
+                 without context (multiple instantiations registered)"
+                    .into(),
+            ));
+        }
+    } else {
+        let k_aver = infer_aver_type(&entries[0].0.node, ctx)?;
+        let v_aver = infer_aver_type(&entries[0].1.node, ctx)?;
+        format!("Map<{},{}>", k_aver.trim(), v_aver.trim())
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect()
+    };
+    let helpers = ctx
+        .fn_map
+        .map_helpers
+        .get(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "MapLiteral: helpers missing for `{canonical}`"
+        )))?;
+
+    func.instruction(&Instruction::Call(helpers.empty));
+    for (k_expr, v_expr) in entries {
+        emit_expr(func, &k_expr.node, slots, ctx)?;
+        emit_expr(func, &v_expr.node, slots, ctx)?;
+        func.instruction(&Instruction::Call(helpers.set));
+    }
+    Ok(())
+}
+
 fn emit_list_literal(
     func: &mut Function,
     items: &[Spanned<Expr>],
@@ -2672,6 +2750,126 @@ fn emit_option_match(
 /// The last arm is treated as the default ("else of last ref.test")
 /// — the type checker has proven exhaustiveness, so an unmatched
 /// subject is impossible at runtime. Wildcard arms work the same way.
+/// Cascade of string-equality compares for `match s { "lit" -> body; ... }`.
+/// One arm at a time: stash subject in scratch, push (subject, literal),
+/// call `__wasmgc_string_eq`, branch on the i32 result. Wildcard /
+/// catch-all is the final else.
+fn emit_string_match(
+    func: &mut Function,
+    subject: &Spanned<Expr>,
+    arms: &[MatchArm],
+    block_ty: wasm_encoder::BlockType,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "String match needs a subject scratch slot but none was reserved".into(),
+    ))?;
+    let eq_idx = ctx
+        .fn_map
+        .builtins
+        .get("__wasmgc_string_eq")
+        .copied()
+        .ok_or(WasmGcError::Validation(
+            "String match: __wasmgc_string_eq builtin wasn't registered".into(),
+        ))?;
+    let s_idx = ctx
+        .registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "String match needs the String type slot allocated".into(),
+        ))?;
+    let read_subject = |func: &mut Function| {
+        func.instruction(&Instruction::LocalGet(scratch));
+        // scratch is `(ref null eq)` — every wasm-gc struct/array
+        // subtypes it. Cast back to `(ref null $string)` for
+        // `__wasmgc_string_eq`'s param shape.
+        func.instruction(&Instruction::RefCastNullable(
+            wasm_encoder::HeapType::Concrete(s_idx),
+        ));
+    };
+
+    // Stash subject; we read it once per arm.
+    emit_expr(func, &subject.node, slots, ctx)?;
+    func.instruction(&Instruction::LocalSet(scratch));
+
+    // Split arms: literal-string arms first (in source order), then
+    // a single default (wildcard or non-literal pattern). The type
+    // checker already proved exhaustivity.
+    let mut literal_arms: Vec<(&str, &MatchArm)> = Vec::new();
+    let mut default_arm: Option<&MatchArm> = None;
+    for arm in arms {
+        if let Pattern::Literal(Literal::Str(s)) = &arm.pattern {
+            literal_arms.push((s.as_str(), arm));
+        } else if default_arm.is_none() {
+            default_arm = Some(arm);
+        }
+    }
+    let default_arm = default_arm.ok_or(WasmGcError::Validation(
+        "String match without a default arm — type checker should have rejected".into(),
+    ))?;
+
+    // Cascade: emit one `if (eq subj literal) { body } else { ... }` per arm.
+    for _ in &literal_arms {
+        // The if's else branch lifts; we need one End per opened If.
+    }
+    let mut ends_to_close = 0usize;
+    for (lit, arm) in &literal_arms {
+        // `eq(subject, literal)` — read the cast subject + literal
+        read_subject(func);
+        // Emit literal as a String (passive data segment lookup).
+        emit_string_literal_bytes(func, lit.as_bytes(), ctx)?;
+        func.instruction(&Instruction::Call(eq_idx));
+        func.instruction(&Instruction::If(block_ty));
+        // Bind the variable if the pattern has one (string match
+        // patterns don't usually bind, so this is a no-op).
+        emit_expr(func, &arm.body.node, slots, ctx)?;
+        func.instruction(&Instruction::Else);
+        ends_to_close += 1;
+    }
+    // Default body in the innermost else. Aver's `_` (Wildcard)
+    // binds nothing; named bindings (`x -> body`) on a String match
+    // would need the resolver to surface a slot, which the current
+    // pattern shape doesn't expose. Surface forms in app.av use `_`,
+    // so we don't carry the name-binding case here.
+    emit_expr(func, &default_arm.body.node, slots, ctx)?;
+    for _ in 0..ends_to_close {
+        func.instruction(&Instruction::End);
+    }
+    Ok(())
+}
+
+/// Push a `(ref null $string)` onto the wasm stack from a UTF-8 byte
+/// slice. Looks up the literal in the registry's passive-segment
+/// table; the segment is intern-ed by `collect_string_literals_in_*`
+/// during pre-emit discovery.
+fn emit_string_literal_bytes(
+    func: &mut Function,
+    bytes: &[u8],
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let segment_idx = ctx
+        .registry
+        .string_literal_segment(bytes)
+        .ok_or(WasmGcError::Validation(format!(
+            "String literal `{:?}` was not registered in the data segment table",
+            std::str::from_utf8(bytes).unwrap_or("<non-utf8>")
+        )))?;
+    let s_idx = ctx
+        .registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "String literal needs string slot allocated".into(),
+        ))?;
+    func.instruction(&Instruction::I32Const(0)); // offset
+    func.instruction(&Instruction::I32Const(bytes.len() as i32));
+    func.instruction(&Instruction::ArrayNewData {
+        array_type_index: s_idx,
+        array_data_index: segment_idx,
+    });
+    Ok(())
+}
+
 fn emit_variant_dispatch(
     func: &mut Function,
     subject: &Spanned<Expr>,
@@ -4165,6 +4363,13 @@ fn emit_match(
         .any(|a| matches!(a.pattern, Pattern::Constructor(_, _)));
     if has_constructor_arm {
         return emit_variant_dispatch(func, subject, arms, block_ty, slots, ctx);
+    }
+
+    // String subject — `match path { "/" -> ...; "/api" -> ...; _ -> ... }`.
+    // Cascade of `__wasmgc_string_eq(subject, "literal")`. Wildcard /
+    // catch-all goes to the else branch.
+    if subject_ty == "String" {
+        return emit_string_match(func, subject, arms, block_ty, slots, ctx);
     }
 
     if subject_ty != "Int" {

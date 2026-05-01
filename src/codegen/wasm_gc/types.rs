@@ -150,6 +150,30 @@ impl TypeRegistry {
                 _ => {}
             }
         }
+        // Built-in records (`HttpRequest`, `HttpResponse`,
+        // `Tcp.Connection`, `Terminal.Size`) — populate `record_fields`
+        // up front so List / Map field-walking discovery can pick up
+        // `Map<String, List<String>>`, but defer slot assignment to the
+        // end of `build` because their fields reference String / Map /
+        // List which all sit at higher slots. Wasm-gc forward references
+        // outside a rec group are illegal, so the struct-type emit has
+        // to wait until after the dependencies.
+        let mut builtin_record_names: Vec<String> = Vec::new();
+        for record in crate::codegen::builtin_records::BUILTIN_RECORDS {
+            if !items_reference_name(items, record.aver_name) {
+                continue;
+            }
+            if record_fields.contains_key(record.aver_name) {
+                continue;
+            }
+            let mut fields_v: Vec<(String, String)> = Vec::new();
+            for f in record.fields {
+                let aver_ty = builtin_type_to_aver_string(&f.ty);
+                fields_v.push((f.name.to_string(), aver_ty));
+            }
+            record_fields.insert(record.aver_name.to_string(), fields_v);
+            builtin_record_names.push(record.aver_name.to_string());
+        }
 
         // Allocate the String type slot first (after records/variants)
         // so any `Vector<String>` registered below sits at a higher
@@ -205,6 +229,70 @@ impl TypeRegistry {
             }
         }
 
+        // `Result<T, E>` and `List<T>` instantiations land BEFORE
+        // options/maps so that `Option<List<String>>` /
+        // `Map<String, Result<...>>` can reference them by an
+        // already-assigned lower idx. Without this reordering the
+        // option struct's value-field forward-references the
+        // post-options list slot, which wasm-gc rejects outside a
+        // rec group.
+        let mut result_types: HashMap<String, u32> = HashMap::new();
+        let mut result_order: Vec<String> = Vec::new();
+        for item in items {
+            if let TopLevel::FnDef(fd) = item {
+                collect_results_from_str(
+                    &fd.return_type,
+                    &mut result_types,
+                    &mut result_order,
+                    &mut next_idx,
+                );
+                for (_, ty) in &fd.params {
+                    collect_results_from_str(
+                        ty,
+                        &mut result_types,
+                        &mut result_order,
+                        &mut next_idx,
+                    );
+                }
+                collect_results_from_builtin_uses(
+                    fd,
+                    &mut result_types,
+                    &mut result_order,
+                    &mut next_idx,
+                );
+            }
+        }
+        let mut list_types: HashMap<String, u32> = HashMap::new();
+        let mut list_order: Vec<String> = Vec::new();
+        for item in items {
+            if let TopLevel::FnDef(fd) = item {
+                collect_lists_from_str(
+                    &fd.return_type,
+                    &mut list_types,
+                    &mut list_order,
+                    &mut next_idx,
+                );
+                for (_, ty) in &fd.params {
+                    collect_lists_from_str(
+                        ty,
+                        &mut list_types,
+                        &mut list_order,
+                        &mut next_idx,
+                    );
+                }
+            }
+        }
+        for (_, fields) in record_fields.iter() {
+            for (_, ty) in fields {
+                collect_lists_from_str(
+                    ty,
+                    &mut list_types,
+                    &mut list_order,
+                    &mut next_idx,
+                );
+            }
+        }
+
         // `Option<T>` instantiations follow the same shape — scan
         // signatures + bodies for any `Option<T>` reference and
         // allocate a struct slot per unique `T`.
@@ -238,8 +326,6 @@ impl TypeRegistry {
         // `match Vector.get(v, i) { Option.Some(x) -> ...; Option.None -> ... }`
         // requires the boxed Option<T> slot, but the surface code
         // doesn't spell out `Option<String>` in any signature.
-        // Mirrors the eager `Option<V>` registration done below for
-        // `Map<K, V>`.
         for vec_canonical in &vector_order {
             if let Some(elem) = TypeRegistry::vector_element_type(vec_canonical) {
                 let opt = format!("Option<{}>", elem.trim());
@@ -250,59 +336,37 @@ impl TypeRegistry {
                 }
             }
         }
-
-        // `Result<T, E>` instantiations — same shape as Option but with
-        // two payload fields. Discovered ahead of List/Map so a
-        // `List<Result<T,E>>` chain can reference Result by lower idx.
-        let mut result_types: HashMap<String, u32> = HashMap::new();
-        let mut result_order: Vec<String> = Vec::new();
-        for item in items {
-            if let TopLevel::FnDef(fd) = item {
-                collect_results_from_str(
-                    &fd.return_type,
-                    &mut result_types,
-                    &mut result_order,
-                    &mut next_idx,
-                );
-                for (_, ty) in &fd.params {
-                    collect_results_from_str(
-                        ty,
-                        &mut result_types,
-                        &mut result_order,
-                        &mut next_idx,
-                    );
-                }
-                // Walk fn body for builtin calls whose Aver return
-                // type is a `Result<T, E>` not otherwise visible in
-                // signatures — e.g. `match Float.fromString(s) { ... }`
-                // where the surrounding fn returns plain `Float`.
-                collect_results_from_builtin_uses(
-                    fd,
-                    &mut result_types,
-                    &mut result_order,
-                    &mut next_idx,
-                );
+        // Eagerly register `Option<V>` for every `Map<K, V>` reachable
+        // anywhere — `Map.get` returns `Option<V>` and the slot has
+        // to land before the Map struct does so the wasm type section
+        // can reference it without a forward edge. Pre-discover the
+        // pending maps the same way the actual Map block does, then
+        // grab each V.
+        let mut pending_maps_for_options: Vec<String> = Vec::new();
+        for (_, fields) in record_fields.iter() {
+            for (_, ty) in fields {
+                collect_maps_from_str(ty, &mut pending_maps_for_options);
             }
         }
-
-        // `List<T>` instantiations — recursive struct per T.
-        let mut list_types: HashMap<String, u32> = HashMap::new();
-        let mut list_order: Vec<String> = Vec::new();
         for item in items {
             if let TopLevel::FnDef(fd) = item {
-                collect_lists_from_str(
-                    &fd.return_type,
-                    &mut list_types,
-                    &mut list_order,
-                    &mut next_idx,
-                );
+                collect_maps_from_str(&fd.return_type, &mut pending_maps_for_options);
                 for (_, ty) in &fd.params {
-                    collect_lists_from_str(
-                        ty,
-                        &mut list_types,
-                        &mut list_order,
-                        &mut next_idx,
-                    );
+                    collect_maps_from_str(ty, &mut pending_maps_for_options);
+                }
+            }
+        }
+        let mut seen_map_v: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        for canonical in &pending_maps_for_options {
+            if let Some((_, v)) = parse_map_kv(canonical)
+                && seen_map_v.insert(v.to_string())
+            {
+                let opt = format!("Option<{v}>");
+                if !option_types.contains_key(&opt) {
+                    option_types.insert(opt.clone(), next_idx);
+                    option_order.push(opt);
+                    next_idx += 1;
                 }
             }
         }
@@ -316,6 +380,13 @@ impl TypeRegistry {
         let mut map_types: HashMap<String, MapSlots> = HashMap::new();
         let mut map_order: Vec<String> = Vec::new();
         let mut pending_maps: Vec<String> = Vec::new();
+        // Built-in record fields contribute too — `HttpRequest.headers`
+        // / `HttpResponse.headers` carry `Map<String, List<String>>`.
+        for (_, fields) in record_fields.iter() {
+            for (_, ty) in fields {
+                collect_maps_from_str(ty, &mut pending_maps);
+            }
+        }
         for item in items {
             if let TopLevel::FnDef(fd) = item {
                 collect_maps_from_str(&fd.return_type, &mut pending_maps);
@@ -358,6 +429,14 @@ impl TypeRegistry {
                 },
             );
             map_order.push(canonical);
+        }
+
+        // Now that String / List / Map slots all exist, slot-assign
+        // the built-in records — they reference those types in their
+        // fields, so the struct-type emit needs them at lower indices.
+        for name in &builtin_record_names {
+            records.insert(name.clone(), next_idx);
+            next_idx += 1;
         }
 
         // Discover unique String literals — each gets a passive data
@@ -1102,6 +1181,9 @@ fn collect_string_literals_in_expr(
         Expr::Match { subject, arms } => {
             collect_string_literals_in_expr(&subject.node, out, idx);
             for a in arms {
+                if let crate::ast::Pattern::Literal(Literal::Str(s)) = &a.pattern {
+                    intern_literal(s.as_bytes().to_vec(), out, idx);
+                }
                 collect_string_literals_in_expr(&a.body.node, out, idx);
             }
         }
@@ -1124,6 +1206,12 @@ fn collect_string_literals_in_expr(
         Expr::List(items) => {
             for item in items {
                 collect_string_literals_in_expr(&item.node, out, idx);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                collect_string_literals_in_expr(&k.node, out, idx);
+                collect_string_literals_in_expr(&v.node, out, idx);
             }
         }
         _ => {}
@@ -1327,3 +1415,35 @@ pub(super) fn record_struct_type(
         fields: out.into_boxed_slice(),
     })
 }
+
+
+/// Aver type-string for a `BuiltinType` — Map and List forms use the
+/// canonical spelling the registry`s discovery pass already
+/// understands.
+fn builtin_type_to_aver_string(ty: &crate::codegen::builtin_records::BuiltinType) -> String {
+    use crate::codegen::builtin_records::BuiltinType;
+    match ty {
+        BuiltinType::Int => "Int".into(),
+        BuiltinType::Str => "String".into(),
+        BuiltinType::Bool => "Bool".into(),
+        BuiltinType::Float => "Float".into(),
+        BuiltinType::ListOf(name) => format!("List<{}>", name),
+        BuiltinType::MapStrListStr => "Map<String, List<String>>".into(),
+    }
+}
+
+/// True iff any FnDef signature or body literal mentions the given
+/// type name. Lightweight string scan over annotations + return
+/// types — a structural walk would be more precise but every name
+/// we register here is unique enough that substring match is OK.
+fn items_reference_name(items: &[crate::ast::TopLevel], name: &str) -> bool {
+    use crate::ast::TopLevel;
+    items.iter().any(|item| match item {
+        TopLevel::FnDef(fd) => {
+            fd.return_type.contains(name)
+                || fd.params.iter().any(|(_, t)| t.contains(name))
+        }
+        _ => false,
+    })
+}
+

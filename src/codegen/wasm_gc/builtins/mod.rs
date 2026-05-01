@@ -94,6 +94,14 @@ pub(super) enum BuiltinName {
     IntFromString,
     FloatFromString,
     FloatToString,
+    /// Internal byte-equal compare over two `(ref null $string)`.
+    /// Powers `match s { "literal" -> ... }` in user code (compiler
+    /// emits one `Call(string_eq)` per non-default arm) and any other
+    /// String equality the surface didn't already route through Map's
+    /// per-K eq helper. Surface name `__wasmgc_string_eq` is internal
+    /// (not addressable from Aver source); registry registers it
+    /// explicitly when discovery finds a String-subject match.
+    StringEq,
 }
 
 impl BuiltinName {
@@ -121,6 +129,7 @@ impl BuiltinName {
     pub(super) fn internal_canonical(self) -> &'static str {
         match self {
             Self::StringConcatN => "__wasmgc_concat_n",
+            Self::StringEq => "__wasmgc_string_eq",
             _ => self.canonical(),
         }
     }
@@ -139,6 +148,7 @@ impl BuiltinName {
             Self::IntFromString => "Int.fromString",
             Self::FloatFromString => "Float.fromString",
             Self::FloatToString => "Float.toString",
+            Self::StringEq => "__wasmgc_string_eq",
         }
     }
 
@@ -161,6 +171,7 @@ impl BuiltinName {
             Self::IntFromString => Ok(vec![string_ref_ty(registry)?]),
             Self::FloatFromString => Ok(vec![string_ref_ty(registry)?]),
             Self::FloatToString => Ok(vec![ValType::F64]),
+            Self::StringEq => Ok(vec![string_ref_ty(registry)?, string_ref_ty(registry)?]),
         }
     }
 
@@ -177,6 +188,7 @@ impl BuiltinName {
             | Self::FloatToString => Ok(vec![string_ref_ty(registry)?]),
             Self::IntFromString => Ok(vec![result_ref_ty(registry, "Result<Int,String>")?]),
             Self::FloatFromString => Ok(vec![result_ref_ty(registry, "Result<Float,String>")?]),
+            Self::StringEq => Ok(vec![ValType::I32]),
         }
     }
 
@@ -197,6 +209,7 @@ impl BuiltinName {
             Self::IntFromString => emit_int_from_string(registry),
             Self::FloatFromString => emit_float_from_string(registry),
             Self::FloatToString => emit_float_to_string(registry),
+            Self::StringEq => emit_string_eq(registry),
         }
     }
 }
@@ -1725,6 +1738,63 @@ fn emit_float_to_string(registry: &TypeRegistry) -> Result<Function, WasmGcError
             array.copy $string $string
 
             local.get $out)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `__wasmgc_string_eq(a, b) -> i32`. Byte-equal compare over two
+/// `(ref null $string)`. Returns 1 iff lens match and every byte
+/// agrees; 0 otherwise.
+fn emit_string_eq(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let (_, preamble) = string_module_preamble(registry)?;
+    let wat = format!(
+        r#"
+        (module
+          {preamble}
+          (func (export "helper")
+                (param $a (ref null $string))
+                (param $b (ref null $string))
+                (result i32)
+            (local $alen i32)
+            (local $i i32)
+
+            local.get $a array.len
+            local.get $b array.len
+            i32.ne
+            (if (then i32.const 0 return))
+
+            local.get $a array.len
+            local.set $alen
+            i32.const 0
+            local.set $i
+
+            (block $done
+              (loop $cmp
+                local.get $i
+                local.get $alen
+                i32.ge_u
+                br_if $done
+
+                local.get $a
+                local.get $i
+                array.get_u $string
+
+                local.get $b
+                local.get $i
+                array.get_u $string
+
+                i32.ne
+                (if (then i32.const 0 return))
+
+                local.get $i
+                i32.const 1
+                i32.add
+                local.set $i
+                br $cmp))
+
+            i32.const 1)
         )
     "#
     );

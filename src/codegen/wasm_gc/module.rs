@@ -60,10 +60,11 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
             "module has no fn definitions".into(),
         ));
     }
-    let main_idx = fn_defs
-        .iter()
-        .position(|fd| fd.name == "main")
-        .ok_or_else(|| WasmGcError::Validation("module has no `main` fn".into()))?;
+    // `main` is optional — modules that act as a Worker handler
+    // (e.g. `tools/edge-gc/handler.av`) export `handler` instead and
+    // never run `_start`. When absent, `_start` is emitted as a no-op
+    // so the module shape stays valid.
+    let main_idx: Option<usize> = fn_defs.iter().position(|fd| fd.name == "main");
 
     let mut module = Module::new();
 
@@ -303,13 +304,17 @@ pub(super) fn emit_module(items: &[TopLevel]) -> Result<Vec<u8>, WasmGcError> {
     // ── Code section ───────────────────────────────────────────────
     let mut codes = CodeSection::new();
 
-    // _start: call main, drop result if main returns a value.
-    let main_idx_wasm = import_count + 1 + (main_idx as u32);
-    let main_returns_value = !fn_defs[main_idx].return_type.trim().eq("Unit");
+    // _start: call main if present, drop its result on the way out;
+    // otherwise emit a no-op body. Worker-shaped modules without a
+    // top-level `main` rely on the host calling a different export.
     let mut start = Function::new([]);
-    start.instruction(&Instruction::Call(main_idx_wasm));
-    if main_returns_value {
-        start.instruction(&Instruction::Drop);
+    if let Some(idx) = main_idx {
+        let main_idx_wasm = import_count + 1 + (idx as u32);
+        let main_returns_value = !fn_defs[idx].return_type.trim().eq("Unit");
+        start.instruction(&Instruction::Call(main_idx_wasm));
+        if main_returns_value {
+            start.instruction(&Instruction::Drop);
+        }
     }
     start.instruction(&Instruction::End);
     codes.function(&start);
@@ -452,36 +457,8 @@ fn emit_user_types(
             .array(&wasm_encoder::StorageType::Val(elem_val), true);
     }
 
-    // Option<T> instantiations — `(struct (mut i32 tag) (mut T value))`.
-    // Emitted after vectors so an `Option<Vector<T>>` chain can land
-    // safely (Option struct sits at a higher index than the inner
-    // Vector slot it references). Both fields mutable for symmetry
-    // with constructors emitting `struct.new` directly.
-    for canonical in &registry.option_order {
-        let element = TypeRegistry::option_element_type(canonical).ok_or(
-            WasmGcError::Validation(format!(
-                "registered option `{canonical}` has no parsable element type"
-            )),
-        )?;
-        let elem_val = super::types::aver_to_wasm(element, Some(registry))?.ok_or(
-            WasmGcError::Validation(format!(
-                "Option element type `{element}` has no wasm representation"
-            )),
-        )?;
-        types.ty().struct_([
-            wasm_encoder::FieldType {
-                element_type: wasm_encoder::StorageType::Val(ValType::I32),
-                mutable: true,
-            },
-            wasm_encoder::FieldType {
-                element_type: wasm_encoder::StorageType::Val(elem_val),
-                mutable: true,
-            },
-        ]);
-    }
-
-    // `Result<T, E>` — emitted before List/Map so `List<Result<T,E>>`
-    // can reference Result by lower idx.
+    // `Result<T, E>` — emit BEFORE Option / List / Map so any of
+    // them can reference Result by an already-assigned lower idx.
     for canonical in &registry.result_order {
         let (t_aver, e_aver) = TypeRegistry::result_te(canonical).ok_or(
             WasmGcError::Validation(format!(
@@ -547,6 +524,35 @@ fn emit_user_types(
         ]);
     }
 
+    // Option<T> instantiations — `(struct (mut i32 tag) (mut T value))`.
+    // Emitted AFTER Result/List so `Option<List<T>>` /
+    // `Option<Result<T,E>>` can reference the inner type by an
+    // already-assigned lower idx (wasm-gc forward refs outside a rec
+    // group are illegal). Both fields mutable for symmetry with
+    // constructors emitting `struct.new` directly.
+    for canonical in &registry.option_order {
+        let element = TypeRegistry::option_element_type(canonical).ok_or(
+            WasmGcError::Validation(format!(
+                "registered option `{canonical}` has no parsable element type"
+            )),
+        )?;
+        let elem_val = super::types::aver_to_wasm(element, Some(registry))?.ok_or(
+            WasmGcError::Validation(format!(
+                "Option element type `{element}` has no wasm representation"
+            )),
+        )?;
+        types.ty().struct_([
+            wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                mutable: true,
+            },
+            wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(elem_val),
+                mutable: true,
+            },
+        ]);
+    }
+
     // `Map<K, V>` — three wasm types per registered instantiation,
     // emitted in registry insertion order (keys array, values array,
     // map struct) so the struct's nested ref fields reference the
@@ -602,6 +608,23 @@ fn emit_user_types(
                 mutable: true,
             },
         ]);
+    }
+
+    // Built-in records (HttpRequest / HttpResponse / Tcp.Connection /
+    // Terminal.Size) emit at the END of the type section so their
+    // struct fields can reference String / List<T> / Map<K,V> by
+    // already-assigned lower indices. `TypeRegistry::build` defers
+    // their slot assignment to the same point.
+    for record in crate::codegen::builtin_records::BUILTIN_RECORDS {
+        if !registry.records.contains_key(record.aver_name) {
+            continue;
+        }
+        let fields = registry
+            .record_fields
+            .get(record.aver_name)
+            .expect("builtin record registered without fields");
+        let st = super::types::record_struct_type(fields, registry)?;
+        types.ty().struct_(st.fields.iter().copied());
     }
 
     Ok(())
@@ -664,6 +687,18 @@ fn discover_builtins_in_expr(
         }
         Expr::Match { subject, arms } => {
             discover_builtins_in_expr(&subject.node, builtins, effects);
+            // String-subject match (`match path { "/" -> ... }`)
+            // needs `StringEq` to compare each non-default arm's
+            // literal against the subject. Register it eagerly when
+            // any arm is `Pattern::Literal(Str(_))`.
+            if arms.iter().any(|a| {
+                matches!(
+                    &a.pattern,
+                    crate::ast::Pattern::Literal(crate::ast::Literal::Str(_))
+                )
+            }) {
+                builtins.register(BuiltinName::StringEq);
+            }
             for arm in arms {
                 discover_builtins_in_expr(&arm.body.node, builtins, effects);
             }
