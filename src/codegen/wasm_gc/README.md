@@ -160,6 +160,27 @@ The same `app.av` (~120 lines, full router with `/`, `/api`, `/fractal`, `/llms.
 | wasm-local + `--bridge fetch`        | 33.2 ms    | 32.2 ms (−3 %)        | 34.0 → 31.0 KB      | 240 KB    |
 | wasm-gc + `--handler X` synth wrapper| **32.5 ms**| 31.8 ms (−2 %)        | **22.0 → 19.8 KB**  | 240 KB    |
 
+### Pushing the legacy backend further (negative result)
+
+Sweep over `wasm-opt` + Aver-side knobs to see if `--target wasm` had headroom on the seahorse:
+
+| Pipeline                                                     | mean    | wasm size |
+|--------------------------------------------------------------|--------:|----------:|
+| raw legacy emit                                              | 33.9 ms | 34.0 KB   |
+| `wasm-opt -O3 --converge` (current `--optimize speed`)       | 32.2 ms | 30.8 KB   |
+| `wasm-opt -O4 --converge`                                    | 32.0 ms | 30.6 KB   |
+| `-O3 --inlining-optimizing --flatten --simplify-locals-nostructure` | 32.0 ms | 32.2 KB   |
+
+Best case ~5.6 % off raw. The reason is structural: the seahorse render is bound by the `mandelStep` / `mandelIter` mutual recursion, which is `is_no_alloc` per the codegen heuristic — it already gets boundary-framing elision today (`emit_user_fn` skips `rt_save_heap_ptr` / `rt_truncate` when the body never touches the heap). The trampoline its tail-calls go through is a `loop + call_indirect` shape that Cranelift / V8 turn into the same code path `return_call` would produce — no peephole left there either.
+
+Concretely, the things one might still try cost more than they would buy on this workload:
+
+- **Native `return_call` in the legacy emit** instead of the manual trampoline — V8 handles either form identically when the callee is direct + sibling (which `mandelStep`/`mandelIter` are). The trampoline only adds cost in workloads that aren't already `is_no_alloc`, and those workloads aren't here.
+- **Eliding more memory ops** — runtime helpers (`rt_alloc`, `rt_str_*`) are already DCE'd out of `mandelStep` because it doesn't reach them. The fractal loop is pure f64 arithmetic + a few `i64.const` / `f64.convert_i64_s`. There's no extra `i32.load` / `i32.store` to remove.
+- **More aggressive Aver-side IR lowering** — `ir::escape` already strips the `Point` / `Shape` allocations that turned `match_dispatch` and `record` 5× faster. Mandelbrot doesn't allocate per pixel beyond the cons cell `runHtml` builds, and that's emitted by both backends identically.
+
+Bottom line: the legacy `--target wasm` backend really has said its last word on this workload. Further speedups would have to come from algorithmic changes (SIMD, parallel rows, a coarser dither) — not from the codegen.
+
 ### Tail-call A/B
 
 `AVER_WASM_GC_NO_TAIL_CALL=1` swaps `return_call` for plain `call` so the proposal's contribution is measurable in isolation:
