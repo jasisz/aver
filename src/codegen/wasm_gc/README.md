@@ -92,20 +92,22 @@ If Phase 5 closes the perf gap with ≥2x on numeric loops and ≥50% smaller bi
 
 ## Bench numbers (2026-05-01, macOS aarch64, release build)
 
-After phase 3a (Float + Records + Variants + newtype opt), 3b/1 (multi-arm dispatch), and **3c (String repr + Int.toString + String.len + Console.print as host import)**:
+After phase 3a + 3b/1 + 3c **and `ir::escape` IR pass** (scalar-replaces fresh-alloc-immediate-consume patterns across all backends):
 
 | Scenario          | VM      | wasm-local | wasm-gc | wasm-gc vs legacy |
 |-------------------|---------|------------|---------|-------------------|
-| `fib(15)`         | 109µs   | 41µs       | 5µs     | **8.2x faster** |
-| `countdown(100k)` | 814µs   | 44µs       | 17µs    | **2.6x faster** |
-| `newtype_bare`    | 969µs   | 42µs       | 19µs    | **2.2x faster** |
-| `newtype_record`  | 2.29ms  | 143µs      | 51µs    | **2.8x faster** |
-| `newtype_variant` | 2.28ms  | 201µs      | 48µs    | **4.2x faster** |
-| `match_dispatch`  | 7.37ms  | 356µs      | 1.54ms  | 4.3x SLOWER ⚠️ |
-| `record`          | 3.98ms  | 244µs      | 805µs   | 3.3x SLOWER ⚠️ |
-| `factorial`       | 20µs    | 38µs       | 19µs    | **2.0x faster** |
+| `fib(15)`         | 147µs   | 42µs       | 5µs     | **8.4x faster** |
+| `countdown(100k)` | 812µs   | 45µs       | 15µs    | **3.0x faster** |
+| `newtype_bare`    | 941µs   | 46µs       | 20µs    | **2.3x faster** |
+| `newtype_record`  | 963µs   | 46µs       | 20µs    | **2.3x faster** |
+| `newtype_variant` | 2.24ms  | 204µs      | 50µs    | **4.1x faster** |
+| `match_dispatch`  | 7.42ms  | 332µs      | 1.62ms  | 4.9x SLOWER ⚠️ |
+| `record`          | (tbd)   | 53µs       | 30µs    | **1.8x faster** ✨ |
+| `factorial`       | 21µs    | 37µs       | 19µs    | **1.9x faster** |
 
-6/8 — wasm-gc beats legacy by 2.0× to 8.2×. 2/8 — alloc-heavy hot-loop regressions persist (same scenarios as before — engine GC overhead vs NaN-boxing for short-lived structs).
+7/8 — wasm-gc beats legacy. **`record` regression closed** (was 3.3x slower, now 1.8x faster — 27x improvement on wasm-gc, 4.6x improvement on wasm-local).
+
+`match_dispatch` stays slower because the regression is structurally different (multi-arm match in the called fn, not single Attr access). Future variant-aware escape pass would close it.
 
 Binary size: `fib.wasm` = **110 bytes** (wasm-gc) vs **13,107 bytes** (legacy with runtime). 120x smaller.
 

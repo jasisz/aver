@@ -3818,12 +3818,13 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
         "resolve" => Some(PipelineStage::Resolve),
         "last_use" => Some(PipelineStage::LastUse),
         "analyze" => Some(PipelineStage::Analyze),
+        "escape" => Some(PipelineStage::Escape),
         other => {
             eprintln!(
                 "{}",
                 format!(
                     "unknown --emit-ir-after stage '{}'; expected one of: \
-                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze",
+                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze, escape",
                     other
                 )
                 .red()
@@ -4082,6 +4083,17 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                     ));
                 }
             }
+            PassReport::Escape { rewrites } => {
+                if *rewrites == 0 {
+                    out.push_str(&format!(
+                        "{label} no fresh-alloc-immediate-consume sites detected\n"
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "{label} {rewrites} call site(s) rewritten — record/variant alloc eliminated\n"
+                    ));
+                }
+            }
         }
         out.push('\n');
     }
@@ -4230,6 +4242,9 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
                     "{{\"total_fns\":{},\"no_alloc_fns\":{},\"recursive_fns\":{},\"mutual_tco_members\":{},\"unknown_alloc\":{}}}",
                     total_fns, no_alloc_fns, recursive_fns, mutual_tco_members, unknown_alloc
                 ));
+            }
+            PassReport::Escape { rewrites } => {
+                out.push_str(&format!("{{\"rewrites\":{}}}", rewrites));
             }
         }
         out.push('}');

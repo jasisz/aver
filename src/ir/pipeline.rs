@@ -37,6 +37,7 @@ pub enum PipelineStage {
     Resolve,
     LastUse,
     Analyze,
+    Escape,
 }
 
 impl PipelineStage {
@@ -49,6 +50,7 @@ impl PipelineStage {
             Self::Resolve => "resolve",
             Self::LastUse => "last_use",
             Self::Analyze => "analyze",
+            Self::Escape => "escape",
         }
     }
 }
@@ -86,6 +88,15 @@ pub struct PipelineConfig<'a> {
     /// per-fn body shape, thin-kind, locals count, and (when an
     /// `alloc_policy` is configured) policy-parametrized alloc info.
     pub run_analyze: bool,
+    /// Whether to run the escape-analysis rewriting pass after
+    /// `analyze`. Detects `FnCall(f, [RecordCreate{…}])` where `f`
+    /// only accesses the record via `Attr` and inlines `f`'s body
+    /// with field substitution — eliminates the fresh struct alloc
+    /// per call. Backend-agnostic: every backend benefits because
+    /// the `RecordCreate` simply disappears from the IR.
+    /// Proof exporters (Lean / Dafny) want the source-level shape
+    /// preserved and skip this stage.
+    pub run_escape: bool,
     /// Allocation policy used by `analyze`. `None` skips the alloc-info
     /// computation; every other analysis fact is still produced.
     /// Backends should pass their own policy (`VmAllocPolicy`,
@@ -112,6 +123,7 @@ impl<'a> Default for PipelineConfig<'a> {
             run_resolve: true,
             run_last_use: true,
             run_analyze: true,
+            run_escape: true,
             alloc_policy: None,
             call_ctx: None,
             on_after_pass: None,
@@ -165,6 +177,11 @@ pub enum PassReport {
         /// Fns whose `allocates` is `None` because no `alloc_policy` was
         /// configured. Surfaces a misconfigured pipeline run.
         unknown_alloc: usize,
+    },
+    Escape {
+        /// How many `FnCall(callee, [RecordCreate{…}])` sites the
+        /// pass rewrote into the inlined-and-substituted body.
+        rewrites: usize,
     },
 }
 
@@ -349,6 +366,12 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         fire(&mut cfg, PipelineStage::Analyze, items);
     }
 
+    if cfg.run_escape {
+        let rewrites = crate::ir::escape::run(items);
+        result.pass_diagnostics.push(diag_for_escape(rewrites));
+        fire(&mut cfg, PipelineStage::Escape, items);
+    }
+
     result
 }
 
@@ -491,6 +514,13 @@ fn diag_for_last_use(post: &CountsByFn) -> PassDiagnostic {
     }
 }
 
+fn diag_for_escape(rewrites: usize) -> PassDiagnostic {
+    PassDiagnostic {
+        stage: PipelineStage::Escape,
+        report: PassReport::Escape { rewrites },
+    }
+}
+
 fn diag_for_analyze(analysis: &AnalysisResult) -> PassDiagnostic {
     let total_fns = analysis.fn_analyses.len();
     let no_alloc_fns = analysis
@@ -555,6 +585,7 @@ fn id(n: Int) -> Int
                 PipelineStage::Resolve,
                 PipelineStage::LastUse,
                 PipelineStage::Analyze,
+                PipelineStage::Escape,
             ]
         );
     }
@@ -580,6 +611,7 @@ fn id(n: Int) -> Int
                 run_buffer_build: false,
                 run_last_use: false,
                 run_analyze: false,
+                run_escape: false,
                 on_after_pass: Some(Box::new(|stage, _| fired.push(stage))),
                 ..Default::default()
             },
@@ -785,6 +817,7 @@ fn id(n: Int) -> Int
                 PipelineStage::InterpLower,
                 PipelineStage::BufferBuild,
                 PipelineStage::LastUse, // fires even without Resolve — a no-op pass
+                PipelineStage::Escape,
             ]
         );
     }
@@ -821,6 +854,7 @@ fn factorial(n: Int, acc: Int) -> Int
                 PipelineStage::Resolve,
                 PipelineStage::LastUse,
                 PipelineStage::Analyze,
+                PipelineStage::Escape,
             ]
         );
 
