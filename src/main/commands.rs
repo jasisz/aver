@@ -4364,6 +4364,14 @@ fn cmd_compile_wasm(
 
     #[cfg(feature = "wasm")]
     {
+        // 0.16 wasm-gc probe: parallel backend, type-direct lowering,
+        // native tail calls, no custom runtime. Short-circuits before
+        // the legacy adapter dance.
+        if matches!(target, super::cli::CompileTarget::WasmGc) {
+            cmd_compile_wasm_gc(file, output_dir, project_name, module_root_override);
+            return;
+        }
+
         let (ctx, _module_root) = build_codegen_context(
             file,
             project_name,
@@ -4624,6 +4632,96 @@ fn cmd_compile_wasm(
             }
         }
     }
+}
+
+/// `aver compile FILE --target=wasm-gc` — 0.16 probe backend.
+/// Type-direct lowering, no custom runtime, native tail calls. Phase-1:
+/// only `fn main() -> Int <int_literal>` compiles; everything else
+/// surfaces an `Unimplemented` error pointing at the relevant phase
+/// in the README.
+#[cfg(feature = "wasm")]
+fn cmd_compile_wasm_gc(
+    file: &str,
+    output_dir: &str,
+    project_name: Option<&str>,
+    module_root_override: Option<&str>,
+) {
+    use aver::codegen::wasm_gc;
+
+    let module_root = resolve_module_root(module_root_override);
+    let source = match read_file(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+    let mut items = match parse_file(&source) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+
+    use aver::ir::{PipelineConfig, TypecheckMode};
+    let neutral_policy = aver::ir::NeutralAllocPolicy;
+    let result = aver::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full {
+                base_dir: Some(&module_root),
+            }),
+            alloc_policy: Some(&neutral_policy),
+            ..Default::default()
+        },
+    );
+    if let Some(tc) = &result.typecheck
+        && !tc.errors.is_empty()
+    {
+        eprintln!("{}", super::shared::format_type_errors(&tc.errors).red());
+        process::exit(1);
+    }
+
+    let bytes = match wasm_gc::compile_to_wasm_gc(&items, result.analysis.as_ref()) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("{}", format!("{e}").red());
+            eprintln!(
+                "{}",
+                "see src/codegen/wasm_gc/README.md for the phase plan; use --target=wasm for production WASM today"
+                    .yellow()
+            );
+            process::exit(1);
+        }
+    };
+
+    let out_path = Path::new(output_dir);
+    if let Err(e) = std::fs::create_dir_all(out_path) {
+        eprintln!(
+            "{}",
+            format!("Failed to create output directory: {}", e).red()
+        );
+        process::exit(1);
+    }
+    let wasm_name = project_name.map(|s| s.to_string()).unwrap_or_else(|| {
+        Path::new(file)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("program")
+            .to_string()
+    });
+    let wasm_file = out_path.join(format!("{}.wasm", wasm_name));
+    if let Err(e) = std::fs::write(&wasm_file, &bytes) {
+        eprintln!("{}", format!("Failed to write WASM file: {}", e).red());
+        process::exit(1);
+    }
+    println!(
+        "{} wasm-gc → {} ({} bytes)",
+        "•".cyan(),
+        wasm_file.display().to_string().cyan(),
+        bytes.len()
+    );
 }
 
 /// True if `bytes` declares any import whose module name is exactly

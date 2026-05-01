@@ -16,6 +16,8 @@ pub mod recursion;
 pub mod rust;
 #[cfg(feature = "wasm-compile")]
 pub mod wasm;
+#[cfg(feature = "wasm-compile")]
+pub mod wasm_gc;
 
 use std::collections::{HashMap, HashSet};
 

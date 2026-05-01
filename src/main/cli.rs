@@ -145,11 +145,23 @@ pub(super) enum CompileTarget {
     /// between programs.
     #[value(name = "edge-wasm")]
     EdgeWasm,
+    /// EXPERIMENTAL (0.16 probe). Native WebAssembly GC + tail-call output —
+    /// no custom runtime, no NaN-boxing, no boundary GC framing. Assumes
+    /// a modern wasm engine (Chrome 119+, Firefox 120+, Safari 18.2+,
+    /// wasmtime 25+, Node 24+, Cloudflare Workers). See
+    /// `src/codegen/wasm_gc/README.md` for the design notes. Phase-gated:
+    /// today only `fn main() -> Int <literal>` compiles. Use `--target=wasm`
+    /// for production WASM until the bench numbers say otherwise.
+    #[value(name = "wasm-gc")]
+    WasmGc,
 }
 
 impl CompileTarget {
     pub(super) fn needs_wasm_pipeline(self) -> bool {
-        !matches!(self, CompileTarget::Rust)
+        matches!(
+            self,
+            CompileTarget::Wasm | CompileTarget::EdgeWasm | CompileTarget::WasmGc
+        )
     }
 }
 
