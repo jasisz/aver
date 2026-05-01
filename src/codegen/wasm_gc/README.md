@@ -92,19 +92,32 @@ If Phase 5 closes the perf gap with ≥2x on numeric loops and ≥50% smaller bi
 
 ## Bench numbers (2026-05-01, macOS aarch64, release build)
 
-After phase 3a (Float + Records + single-arm Variants) **with newtype optimization**:
+After phase 3a (Float + Records + Variants + newtype opt) **and phase 3b/1 (multi-arm dispatch)**:
 
 | Scenario          | VM      | wasm-local | wasm-gc | wasm-gc vs legacy |
 |-------------------|---------|------------|---------|-------------------|
-| `fib(15)`         | 113µs   | 36µs       | 6µs     | **6.0x faster** |
-| `countdown(100k)` | 828µs   | 36µs       | 19µs    | **1.9x faster** |
-| `newtype_bare`    | 966µs   | 37µs       | 20µs    | **1.85x faster** |
-| `newtype_record`  | 2.27ms  | 136µs      | 52µs    | **2.6x faster** |
-| `newtype_variant` | 2.24ms  | 175µs      | 52µs    | **3.4x faster** |
+| `fib(15)`         | 136µs   | 42µs       | 4µs     | **10.5x faster** |
+| `countdown(100k)` | 900µs   | 49µs       | 14µs    | **3.5x faster** |
+| `newtype_bare`    | 934µs   | 44µs       | 21µs    | **2.1x faster** |
+| `newtype_record`  | 2.42ms  | 146µs      | 47µs    | **3.1x faster** |
+| `newtype_variant` | 2.26ms  | 196µs      | 47µs    | **4.2x faster** |
+| `match_dispatch`  | 7.62ms  | 338µs      | 1.58ms  | 4.7x SLOWER ⚠️ |
+| `record`          | 3.90ms  | 247µs      | 827µs   | 3.4x SLOWER ⚠️ |
+
+5/7 scenarios — wasm-gc beats legacy by 2.1× to 10.5×. 2/7 — wasm-gc loses to legacy.
 
 Binary size: `fib.wasm` = **110 bytes** (wasm-gc) vs **13,107 bytes** (legacy with runtime). 120x smaller.
 
-**All five tested scenarios — wasm-gc faster than legacy backend.** Geometric mean speedup ~2.7x; lowest individual is 1.85x. Decision criteria from Task #17 (≥2x on numeric, ≥1.5x on average) satisfied without margin-stretching.
+### The two regressions
+
+`match_dispatch` and `record` allocate fresh structs in the hot inner loop — `Shape.Circle(n)` ×30K, `Point(n, 2n)` ×20K per iteration. The legacy backend escapes that cost via NaN-boxing (Floats stay unboxed, Points get dispatched-direct via tag bits or arena reuse). wasm-gc allocates a real engine-managed struct every time; per-alloc overhead × 30K dominates.
+
+This is a real cost of nominal types in alloc-heavy workloads. Two paths forward in 0.16:
+
+- **Escape analysis** — detect "struct allocated and consumed within the same fn frame, no captures, no escape into caller" → scalar replace fields onto the stack. Standard compiler pass; rustc has a less-aggressive form via mem2reg + LLVM's allocation sinking. Phase 3c work.
+- **Engine improvement** — V8 / wasmtime may eventually eliminate short-lived wasm-gc allocations themselves. Not a path we control.
+
+For now the pattern "fresh-record-per-iteration in a tight loop" is a known regression vs legacy. Most real programs don't hit it; bench scenarios specifically stress the case.
 
 ### Newtype optimization
 
