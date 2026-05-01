@@ -40,6 +40,7 @@ pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
     let ctx = codegen::build_context(
         items,
         &tc_result,
+        pipeline_result.analysis.as_ref(),
         HashSet::new(),
         "playground".to_string(),
         vec![],
@@ -93,6 +94,7 @@ pub fn compile_project_to_wasm(
     let ctx = codegen::build_context(
         entry_items,
         &tc_result,
+        pipeline_result.analysis.as_ref(),
         HashSet::new(),
         "playground".to_string(),
         modules,
@@ -133,6 +135,7 @@ fn build_ctx(
     Ok(codegen::build_context(
         items,
         &tc_result,
+        pipeline_result.analysis.as_ref(),
         HashSet::new(),
         "playground".to_string(),
         vec![],
@@ -205,6 +208,7 @@ fn build_project_ctx(
     Ok(codegen::build_context(
         entry_items,
         &tc_result,
+        pipeline_result.analysis.as_ref(),
         HashSet::new(),
         "playground".to_string(),
         modules,
@@ -262,12 +266,15 @@ fn module_depends(items: &[TopLevel]) -> Vec<String> {
 fn loaded_to_module_info(m: LoadedModule, apply_traversal_lowering: bool) -> codegen::ModuleInfo {
     let mut items = m.items;
     // No typecheck — entry-level typecheck has already validated
-    // cross-module refs against `loaded`.
-    crate::ir::pipeline::run(
+    // cross-module refs against `loaded`. The analyze stage runs so the
+    // ModuleInfo we publish carries per-module facts for codegen.
+    let neutral_policy = crate::ir::NeutralAllocPolicy;
+    let pipeline_result = crate::ir::pipeline::run(
         &mut items,
         PipelineConfig {
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
+            alloc_policy: Some(&neutral_policy),
             ..Default::default()
         },
     );
@@ -293,6 +300,7 @@ fn loaded_to_module_info(m: LoadedModule, apply_traversal_lowering: bool) -> cod
         depends,
         type_defs,
         fn_defs,
+        analysis: pipeline_result.analysis,
     }
 }
 

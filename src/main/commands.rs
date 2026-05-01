@@ -3316,8 +3316,17 @@ fn build_codegen_context(
         }
     };
 
-    // Build codegen context
-    let mut ctx = codegen::build_context(items, &tc_result, memo_fns, name, modules);
+    // Build codegen context. `entry_analysis` carries `mutual_tco_members`,
+    // `recursive_fns`, and per-fn `FnAnalysis` from the analyze stage; codegen
+    // unions these with each `module.analysis` to build a global view.
+    let mut ctx = codegen::build_context(
+        items,
+        &tc_result,
+        pipeline_result.analysis.as_ref(),
+        memo_fns,
+        name,
+        modules,
+    );
     ctx.policy = policy;
     ctx.emit_replay_runtime = use_scoped_runtime;
     ctx.runtime_policy_from_env = use_runtime_policy;
@@ -4664,12 +4673,17 @@ fn load_module_recursive(
 
     // Dep modules go through the same pipeline shape as the entry. Typecheck
     // runs at the entry-module level via `build_codegen_context`, so we skip
-    // it here.
-    aver::ir::pipeline::run(
+    // it here. The `analyze` stage runs on the dep module's items so the
+    // ModuleInfo we publish carries per-module mutual_tco_members /
+    // recursive_fns / FnAnalysis facts; codegen builds its global view by
+    // unioning per-module sets (sound under Aver's module DAG invariant).
+    let neutral_policy = aver::ir::NeutralAllocPolicy;
+    let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
             run_interp_lower,
             run_buffer_build,
+            alloc_policy: Some(&neutral_policy),
             ..Default::default()
         },
     );
@@ -4736,6 +4750,7 @@ fn load_module_recursive(
         depends,
         type_defs,
         fn_defs,
+        analysis: pipeline_result.analysis,
     });
 }
 

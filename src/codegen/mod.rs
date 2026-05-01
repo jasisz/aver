@@ -32,6 +32,13 @@ pub struct ModuleInfo {
     pub type_defs: Vec<TypeDef>,
     /// Function definitions from the module (excluding `main`).
     pub fn_defs: Vec<FnDef>,
+    /// IR-level analysis facts produced by the dep module's pipeline run
+    /// (`analyze` stage). `None` for modules loaded via paths that skip
+    /// the analyze stage (none in production today; left optional for
+    /// future ad-hoc loaders). Aver's module DAG invariant makes per-module
+    /// analysis sufficient — see `project_aver_module_dag` memory and
+    /// `src/ir/analyze.rs` for why cross-module SCCs are impossible.
+    pub analysis: Option<crate::ir::AnalysisResult>,
 }
 
 /// Collected context from the Aver program, shared across all backends.
@@ -72,6 +79,12 @@ pub struct CodegenContext {
     /// Functions that are part of a mutual-TCO SCC group (emitted as trampoline + wrappers).
     /// Functions NOT in this set but with TailCalls are emitted as plain self-TCO loops.
     pub mutual_tco_members: HashSet<String>,
+    /// Functions that call themselves directly or transitively. Set-form
+    /// union of `entry_analysis.recursive_fns` plus each module's
+    /// `analysis.recursive_fns`. Used by codegen sites that previously
+    /// called `call_graph::find_recursive_fns` ad-hoc (Lean recursion
+    /// planning, type checker flow, etc.).
+    pub recursive_fns: HashSet<String>,
     /// Buffer-build sink fns (`List.prepend`/`reverse` builders consumed
     /// by `String.join`). The Rust backend emits a `<fn>__buffered`
     /// variant alongside each entry; the WASM backend rewrites bodies
@@ -98,9 +111,18 @@ pub struct ProjectOutput {
 }
 
 /// Build a CodegenContext from parsed + type-checked items.
+///
+/// `entry_analysis` is the `analyze` stage output for `items` (entry
+/// module). When provided, codegen reads `mutual_tco_members`,
+/// `recursive_fns`, and per-fn `FnAnalysis` from it instead of recomputing.
+/// Each `ModuleInfo` in `modules` carries its own per-module analysis;
+/// codegen unions the per-module sets to build a global view (sound
+/// under Aver's module DAG invariant — no cross-module SCCs possible,
+/// see `src/ir/analyze.rs` doc).
 pub fn build_context(
     items: Vec<TopLevel>,
     tc_result: &TypeCheckResult,
+    entry_analysis: Option<&crate::ir::AnalysisResult>,
     memo_fns: HashSet<String>,
     project_name: String,
     modules: Vec<ModuleInfo>,
@@ -129,23 +151,69 @@ pub fn build_context(
 
     let module_prefixes: HashSet<String> = modules.iter().map(|m| m.prefix.clone()).collect();
 
-    // Compute which functions are in mutual-TCO SCC groups (emitted as trampoline + wrappers).
-    let mut mutual_tco_members = HashSet::new();
-    {
-        // Entry module (non-main)
-        let entry_fns: Vec<&FnDef> = fn_defs.iter().filter(|fd| fd.name != "main").collect();
-        for group in crate::call_graph::tailcall_scc_components(&entry_fns) {
-            for fd in &group {
-                mutual_tco_members.insert(fd.name.clone());
-            }
-        }
-        // Dependent modules
-        for module in &modules {
-            let mod_fns: Vec<&FnDef> = module.fn_defs.iter().collect();
-            for group in crate::call_graph::tailcall_scc_components(&mod_fns) {
-                for fd in &group {
+    // Mutual-TCO membership unions per-module sets from the analyze stage
+    // (entry's `entry_analysis` + each dep module's `module.analysis`).
+    // Aver's module DAG invariant guarantees SCCs never span modules, so
+    // a per-module union is the correct global view — see
+    // `project_aver_module_dag` memory and `src/ir/analyze.rs` doc.
+    //
+    // Falls back to ad-hoc `tailcall_scc_components` per module when the
+    // analysis isn't supplied (callers that haven't migrated to the
+    // pipeline). The fallback path will go away once every entry point
+    // runs the canonical pipeline.
+    let mut mutual_tco_members: HashSet<String> = HashSet::new();
+    match entry_analysis {
+        Some(a) => mutual_tco_members.extend(a.mutual_tco_members.iter().cloned()),
+        None => {
+            let entry_fns: Vec<&FnDef> = fn_defs.iter().filter(|fd| fd.name != "main").collect();
+            for group in crate::call_graph::tailcall_scc_components(&entry_fns) {
+                if group.len() < 2 {
+                    continue;
+                }
+                for fd in group {
                     mutual_tco_members.insert(fd.name.clone());
                 }
+            }
+        }
+    }
+    for module in &modules {
+        match module.analysis.as_ref() {
+            Some(a) => mutual_tco_members.extend(a.mutual_tco_members.iter().cloned()),
+            None => {
+                let mod_fns: Vec<&FnDef> = module.fn_defs.iter().collect();
+                for group in crate::call_graph::tailcall_scc_components(&mod_fns) {
+                    if group.len() < 2 {
+                        continue;
+                    }
+                    for fd in group {
+                        mutual_tco_members.insert(fd.name.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    // `recursive_fns` follows the same shape as `mutual_tco_members` —
+    // per-module sets unioned (Aver's module DAG keeps cross-module
+    // recursion from existing). Falls back to ad-hoc `find_recursive_fns`
+    // when a module's analysis is missing.
+    let mut recursive_fns: HashSet<String> = HashSet::new();
+    match entry_analysis {
+        Some(a) => recursive_fns.extend(a.recursive_fns.iter().cloned()),
+        None => {
+            recursive_fns.extend(crate::call_graph::find_recursive_fns(&items));
+        }
+    }
+    for module in &modules {
+        match module.analysis.as_ref() {
+            Some(a) => recursive_fns.extend(a.recursive_fns.iter().cloned()),
+            None => {
+                let mod_items: Vec<TopLevel> = module
+                    .fn_defs
+                    .iter()
+                    .map(|fd| TopLevel::FnDef(fd.clone()))
+                    .collect();
+                recursive_fns.extend(crate::call_graph::find_recursive_fns(&mod_items));
             }
         }
     }
@@ -291,6 +359,7 @@ pub fn build_context(
         emit_self_host_support: false,
         extra_fn_defs: Vec::new(),
         mutual_tco_members,
+        recursive_fns,
         buffer_build_sinks,
         buffer_fusion_sites,
         synthesized_buffered_fns,

@@ -16,6 +16,35 @@
 //! by the caller (`VmAllocPolicy`, `WasmAllocPolicy`, or the dump's
 //! conservative `DumpAllocPolicy`). Policy-independent facts (`body_shape`,
 //! `thin_kind`, `local_count`) are computed unconditionally.
+//!
+//! ## Scope: per-module by design (Aver module DAG invariant)
+//!
+//! `analyze` runs on one module at a time — the entry items, or a single
+//! dep module loaded from disk. It does NOT cross module boundaries to
+//! discover, say, a mutual-TCO SCC that spans two modules. This is correct
+//! by Aver's module-graph invariant, not a limitation:
+//!
+//! - `module M depends [A, B, ...]` — depends is a static list of names,
+//!   no dynamic resolution.
+//! - Module loading (`load_module_recursive`) enforces a DAG via the
+//!   `loaded: HashSet` cycle guard — a re-entered module name returns
+//!   early, so the dep graph is acyclic by construction.
+//! - In a DAG, all calls flow from dependents to dependencies: module A
+//!   calls into module B if A depends on B (transitively); B never calls
+//!   back into A. Mutually-recursive call chains require a cycle in the
+//!   call graph; a cycle requires either (i) a self-call within one
+//!   module, or (ii) a cycle in the module DAG — and the latter is
+//!   forbidden.
+//!
+//! Consequence: every SCC of mutually-recursive functions lives entirely
+//! within a single module. Per-module analysis covers every real case;
+//! "cross-module mutual TCO" is mathematically impossible in Aver.
+//! Backends that want a global `mutual_tco_members` set just union the
+//! per-module sets they get from each module's `AnalysisResult`.
+//!
+//! Same logic for `recursive_fns`, `recursive_call_count`, and the
+//! tail-call SCC computation that drives trampoline emission. None of
+//! these need to see cross-module data.
 
 use std::collections::{HashMap, HashSet};
 

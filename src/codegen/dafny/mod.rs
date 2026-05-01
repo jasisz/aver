@@ -610,7 +610,14 @@ mod tests {
             "source should typecheck: {:?}",
             tc.errors
         );
-        build_context(items, &tc, HashSet::new(), project_name.to_string(), vec![])
+        build_context(
+            items,
+            &tc,
+            None,
+            HashSet::new(),
+            project_name.to_string(),
+            vec![],
+        )
     }
 
     /// Concatenate every emitted `.dfy` source. The unified emitter

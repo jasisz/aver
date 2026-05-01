@@ -402,16 +402,16 @@ fn entry_module_sections(
         }
     }
 
-    // Detect mutual TCO groups among non-main functions.
+    // Detect mutual TCO groups among non-main functions. Set-form membership
+    // is read from `ctx.mutual_tco_members` (populated by the analyze stage's
+    // unioned per-module sets); the index-keyed `groups` form still comes
+    // from `find_mutual_tco_groups` because trampoline emission needs the
+    // structural shape, not just the names.
     let non_main_fns: Vec<&FnDef> = ctx.fn_defs.iter().filter(|fd| fd.name != "main").collect();
     let mutual_groups = toplevel::find_mutual_tco_groups(&non_main_fns);
-    let mut mutual_tco_members: HashSet<String> = HashSet::new();
 
     for (group_id, group_indices) in mutual_groups.iter().enumerate() {
         let group_fns: Vec<&FnDef> = group_indices.iter().map(|&idx| non_main_fns[idx]).collect();
-        for fd in &group_fns {
-            mutual_tco_members.insert(fd.name.clone());
-        }
         sections.push(toplevel::emit_mutual_tco_block(
             group_id + 1,
             &group_fns,
@@ -421,7 +421,7 @@ fn entry_module_sections(
     }
 
     for fd in &ctx.fn_defs {
-        if fd.name == "main" || mutual_tco_members.contains(&fd.name) {
+        if fd.name == "main" || ctx.mutual_tco_members.contains(&fd.name) {
             continue;
         }
         let is_memo = ctx.memo_fns.contains(&fd.name);
@@ -448,16 +448,18 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
         }
     }
 
-    // Detect mutual TCO groups among module functions.
+    // Same shape as the entry path: groups (with indices) come from
+    // `find_mutual_tco_groups`, set-form membership reads from
+    // `module.analysis.mutual_tco_members` when the analyze stage ran.
     let fn_refs: Vec<&FnDef> = module.fn_defs.iter().collect();
     let mutual_groups = toplevel::find_mutual_tco_groups(&fn_refs);
-    let mut mutual_tco_members: HashSet<String> = HashSet::new();
+    let module_mutual: &HashSet<String> = match module.analysis.as_ref() {
+        Some(a) => &a.mutual_tco_members,
+        None => &ctx.mutual_tco_members,
+    };
 
     for (group_id, group_indices) in mutual_groups.iter().enumerate() {
         let group_fns: Vec<&FnDef> = group_indices.iter().map(|&idx| fn_refs[idx]).collect();
-        for fd in &group_fns {
-            mutual_tco_members.insert(fd.name.clone());
-        }
         sections.push(toplevel::emit_mutual_tco_block(
             group_id + 1,
             &group_fns,
@@ -467,7 +469,7 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
     }
 
     for fd in &module.fn_defs {
-        if mutual_tco_members.contains(&fd.name) {
+        if module_mutual.contains(&fd.name) {
             continue;
         }
         let is_memo = ctx.memo_fns.contains(&fd.name);
@@ -569,7 +571,14 @@ mod tests {
             "source should typecheck without errors: {:?}",
             tc.errors
         );
-        build_context(items, &tc, HashSet::new(), project_name.to_string(), vec![])
+        build_context(
+            items,
+            &tc,
+            None,
+            HashSet::new(),
+            project_name.to_string(),
+            vec![],
+        )
     }
 
     fn generated_rust_entry_file(out: &crate::codegen::ProjectOutput) -> &str {
