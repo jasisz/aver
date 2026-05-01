@@ -85,6 +85,11 @@ pub struct CodegenContext {
     /// called `call_graph::find_recursive_fns` ad-hoc (Lean recursion
     /// planning, type checker flow, etc.).
     pub recursive_fns: HashSet<String>,
+    /// Per-fn analysis facts unioned from entry + every dep module's
+    /// `AnalysisResult.fn_analyses`. WASM emitter / VM compiler /
+    /// future inliner read `allocates`, `thin_kind`, `body_shape`,
+    /// `local_count`, etc. from here instead of recomputing.
+    pub fn_analyses: HashMap<String, crate::ir::FnAnalysis>,
     /// Buffer-build sink fns (`List.prepend`/`reverse` builders consumed
     /// by `String.join`). The Rust backend emits a `<fn>__buffered`
     /// variant alongside each entry; the WASM backend rewrites bodies
@@ -189,6 +194,25 @@ pub fn build_context(
                         mutual_tco_members.insert(fd.name.clone());
                     }
                 }
+            }
+        }
+    }
+
+    // Per-fn analysis dictionary — union of entry's `fn_analyses` plus
+    // each dep module's. Codegen reads `allocates`, `thin_kind`, etc.
+    // from here instead of recomputing.
+    let mut fn_analyses: HashMap<String, crate::ir::FnAnalysis> = HashMap::new();
+    if let Some(a) = entry_analysis {
+        for (name, fa) in &a.fn_analyses {
+            fn_analyses.insert(name.clone(), fa.clone());
+        }
+    }
+    for module in &modules {
+        if let Some(a) = module.analysis.as_ref() {
+            for (name, fa) in &a.fn_analyses {
+                fn_analyses
+                    .entry(name.clone())
+                    .or_insert_with(|| fa.clone());
             }
         }
     }
@@ -360,6 +384,7 @@ pub fn build_context(
         extra_fn_defs: Vec::new(),
         mutual_tco_members,
         recursive_fns,
+        fn_analyses,
         buffer_build_sinks,
         buffer_fusion_sites,
         synthesized_buffered_fns,

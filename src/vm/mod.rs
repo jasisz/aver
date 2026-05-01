@@ -12,6 +12,7 @@ pub(crate) use alloc_policy::VmAllocPolicy;
 
 pub use compiler::{
     compile_program, compile_program_with_loaded_modules, compile_program_with_modules,
+    compile_program_with_modules_and_analysis,
 };
 pub use execute::VM;
 pub use opcode::opcode_name;

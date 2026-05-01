@@ -1046,17 +1046,25 @@ pub(super) fn cmd_run_vm(
         process::exit(1);
     }
 
-    // Compile to bytecode
+    // Compile to bytecode. The analysis result from the pipeline carries
+    // per-fn `FnAnalysis.allocates` flags so the VM compiler doesn't
+    // recompute `compute_alloc_info` on the same items. (Vm/Neutral
+    // policies agree today; the plumbing makes the contract explicit.)
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
-    let (code, globals) =
-        match vm::compile_program_with_modules(&items, &mut arena, Some(&module_root), file) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("{}", format!("VM compile error: {}", e).red());
-                process::exit(1);
-            }
-        };
+    let (code, globals) = match vm::compile_program_with_modules_and_analysis(
+        &items,
+        &mut arena,
+        Some(&module_root),
+        file,
+        pipeline_result.analysis.as_ref(),
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{}", format!("VM compile error: {}", e).red());
+            process::exit(1);
+        }
+    };
 
     // Execute
     let mut machine = vm::VM::new(code, globals, arena);

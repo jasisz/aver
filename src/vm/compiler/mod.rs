@@ -31,7 +31,36 @@ pub fn compile_program_with_modules(
     module_root: Option<&str>,
     source_file: &str,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
-    compile_program_inner(items, arena, source_file, ModuleSource::Disk(module_root))
+    compile_program_inner(
+        items,
+        arena,
+        source_file,
+        ModuleSource::Disk(module_root),
+        None,
+    )
+}
+
+/// Variant that reads the per-fn `allocates` flag from the supplied
+/// analysis result instead of recomputing `compute_alloc_info` locally.
+/// Callers that ran the canonical pipeline pass `Some(&pipeline_result.analysis)`;
+/// the simpler entry point above passes `None` and falls back to the
+/// in-place compute. Behavior is identical today (Vm/Wasm/Neutral
+/// `AllocPolicy` impls agree on every name); separating the API lets
+/// the alloc_info computation move to the pipeline once policies diverge.
+pub fn compile_program_with_modules_and_analysis(
+    items: &[TopLevel],
+    arena: &mut Arena,
+    module_root: Option<&str>,
+    source_file: &str,
+    analysis: Option<&crate::ir::AnalysisResult>,
+) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
+    compile_program_inner(
+        items,
+        arena,
+        source_file,
+        ModuleSource::Disk(module_root),
+        analysis,
+    )
 }
 
 /// Compile using dependency modules that were already parsed off-disk
@@ -43,7 +72,13 @@ pub fn compile_program_with_loaded_modules(
     loaded: Vec<crate::source::LoadedModule>,
     source_file: &str,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
-    compile_program_inner(items, arena, source_file, ModuleSource::Loaded(loaded))
+    compile_program_inner(
+        items,
+        arena,
+        source_file,
+        ModuleSource::Loaded(loaded),
+        None,
+    )
 }
 
 enum ModuleSource<'a> {
@@ -56,6 +91,7 @@ fn compile_program_inner(
     arena: &mut Arena,
     source_file: &str,
     module_source: ModuleSource<'_>,
+    analysis: Option<&crate::ir::AnalysisResult>,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
     let mut compiler = ProgramCompiler::new();
     compiler.source_file = source_file.to_string();
@@ -172,11 +208,36 @@ fn compile_program_inner(
         })
         .collect();
     if !user_fn_defs.is_empty() {
-        let policy = super::VmAllocPolicy;
-        let alloc_info = crate::ir::compute_alloc_info(&user_fn_defs, &policy);
+        // Read the per-fn `allocates` flag from the supplied analysis
+        // when available (production path through the canonical
+        // pipeline); fall back to in-place `compute_alloc_info` for
+        // callers that haven't migrated. `VmAllocPolicy` and the
+        // pipeline-default `NeutralAllocPolicy` agree on every name
+        // today, so the two paths produce identical results.
+        let fallback_info = if analysis.is_none() {
+            let policy = super::VmAllocPolicy;
+            Some(crate::ir::compute_alloc_info(&user_fn_defs, &policy))
+        } else {
+            None
+        };
+        let allocates = |name: &str| -> bool {
+            if let Some(a) = analysis
+                && let Some(fa) = a.fn_analyses.get(name)
+                && let Some(b) = fa.allocates
+            {
+                return b;
+            }
+            if let Some(info) = fallback_info.as_ref() {
+                return *info.get(name).unwrap_or(&true);
+            }
+            // Analysis present but no `allocates` field — pipeline ran
+            // without an alloc_policy. Conservative default: assume yes.
+            true
+        };
         for fd in &user_fn_defs {
-            let allocates = *alloc_info.get(&fd.name).unwrap_or(&true);
-            if !allocates && let Some(fn_id) = compiler.code.find(&fd.name) {
+            if !allocates(&fd.name)
+                && let Some(fn_id) = compiler.code.find(&fd.name)
+            {
                 let chunk = &mut compiler.code.functions[fn_id as usize];
                 chunk.no_alloc = true;
                 // No-alloc bodies always satisfy `can_fast_return`'s

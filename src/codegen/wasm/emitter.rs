@@ -139,19 +139,40 @@ pub fn build_wasm_module(
 
     let mutual_tco_groups = build_mutual_tco_groups(ctx, &user_fns);
 
-    // Per-fn heap-allocation classification (shared `src/ir/alloc_info.rs`).
-    // Fns flagged as no-alloc skip GC framing emission below — their bodies
-    // never produce garbage, so the boundary mark save, rt_truncate call,
-    // and TCO watermark check are all dead work.
-    let alloc_policy = super::WasmAllocPolicy;
+    // Per-fn heap-allocation classification. Reads from
+    // `ctx.fn_analyses` (populated by `build_context` from the
+    // analyze stage's per-module `FnAnalysis`) when present; falls
+    // back to a fresh `compute_alloc_info` pass when the analyze stage
+    // ran without an alloc_policy (`fa.allocates == None`). WasmAllocPolicy
+    // and the pipeline-default NeutralAllocPolicy agree on every
+    // builtin/constructor name today, so the two paths produce
+    // identical results.
     let alloc_fn_defs: Vec<&crate::ast::FnDef> = user_fns.iter().map(|e| e.fd).collect();
-    let alloc_info_by_local_name = crate::ir::compute_alloc_info(&alloc_fn_defs, &alloc_policy);
-    // Map from canonical (module-prefixed) name → no-alloc flag, since
-    // the lookup above is keyed by the local fn name.
+    let needs_fallback = user_fns.iter().any(|e| {
+        ctx.fn_analyses
+            .get(&e.fd.name)
+            .and_then(|fa| fa.allocates)
+            .is_none()
+    });
+    let fallback_info: Option<HashMap<String, bool>> = if needs_fallback {
+        let alloc_policy = super::WasmAllocPolicy;
+        Some(crate::ir::compute_alloc_info(&alloc_fn_defs, &alloc_policy))
+    } else {
+        None
+    };
     let no_alloc_by_canonical: HashMap<String, bool> = user_fns
         .iter()
         .map(|e| {
-            let allocates = *alloc_info_by_local_name.get(&e.fd.name).unwrap_or(&true);
+            let allocates = ctx
+                .fn_analyses
+                .get(&e.fd.name)
+                .and_then(|fa| fa.allocates)
+                .or_else(|| {
+                    fallback_info
+                        .as_ref()
+                        .and_then(|m| m.get(&e.fd.name).copied())
+                })
+                .unwrap_or(true);
             (e.canonical_name.clone(), !allocates)
         })
         .collect();
