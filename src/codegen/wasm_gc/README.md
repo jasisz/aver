@@ -108,7 +108,7 @@ After phase 3a + 3b/1 + 3c **and `ir::escape` IR pass with both record-access an
 | `string_interp`   | (tbd)   | 5.17ms     | 6.65s   | 1287x slower ⚠ (wasmtime GC, V8 wins) |
 | `map_build`       | (tbd)   | 940µs      | 695µs   | **1.4x faster** ✨ |
 | `map_lookup`      | (tbd)   | 1.16ms     | 2.20ms  | 1.9x slower ⚠ (wasmtime GC, V8 wins) |
-| `fractal_seahorse`| (tbd)   | (tbd)      | 6.41s   | engine-bound, multi-module compile path ✅ |
+| `fractal_seahorse`| (tbd)   | 34.1ms     | 212.8ms | 6.2x slower ⚠ (wasmtime GC, V8 wins by 3.5x over wasm-local) |
 
 **13/13 wasm-gc compile + run, 2 engine-bound regressions on wasmtime.** Both alloc-heavy patterns (`record`, `match_dispatch`) now go through escape analysis at the IR level — no struct/variant alloc reaches codegen. `vector_ops` lands on native `(array (mut i64))` with bounds-checked `array.set`/`array.get` and zero Option boxing — the legacy backend round-trips every read/write through runtime helpers + AverVector allocation. `Map<K,V>` is monomorphised per instantiation: per-K hash + eq helpers, per-(K,V) empty/set/get/len helpers, open-addressing flat hashtable, 16384-bucket fixed cap (resize is a phase-3c+ extension).
 
@@ -130,7 +130,7 @@ Same source, both backends (`wasm-local` legacy linear-memory + `wasm-gc`), both
 | string_interp     | 5.17ms         | 4.25ms    | 6,654ms ⚠   | **2.86ms** |
 | map_build         | 940µs          | 606µs     | 695µs        | **179µs** |
 | map_lookup        | 1.16ms         | 693µs     | 1.75ms       | **427µs** |
-| fractal_seahorse  | (tbd)          | (tbd)     | 6.41s        | (tbd)     |
+| fractal_seahorse  | 34.1ms         | (tbd)     | 213ms        | **9.8ms** |
 
 (Bold = winner per scenario.)
 
@@ -141,6 +141,7 @@ Findings:
 - **wasmtime + wasm-gc is competitive on pure numeric** (fib, countdown, match_dispatch) — Cranelift's codegen is solid; differences are noise. Penalty appears only on alloc-heavy paths.
 - **`string_interp` wasmtime: 6.65s (vs 2.86ms on V8 — 2300× slower).** Same wasm binary, engine-bound. Wasmtime 44's GC heap path: every `array.new_default(N)` + `array.copy` hits the allocator + write barriers, and the bench accumulates ~30 MB of intermediate strings per iteration. Wasmtime's GC is new (2024) and unoptimised; V8 has had a decade. The compile path is sane and fast — V8 actually beats `wasm-local` on the same workload.
 - **`vector_ops` is structurally 200× wasm-gc on either engine** — the legacy backend round-trips every `Vector.set` / `Vector.get` through runtime helpers + `AverVector` allocation; native `array.set` / `array.get` is the right shape.
+- **`fractal_seahorse` repeats the alloc-heavy story.** wasm-gc·wasmtime: 213 ms (vs 34 ms on legacy wasm-local — 6.2× slower, same engine-bound GC path that costs `string_interp` and `map_lookup`). On V8 it flips to **9.8 ms — 3.5× faster than `wasm-local`·wasmtime and 22× faster than `wasm-gc`·wasmtime on the identical `.wasm`.** The bench renders a real Mandelbrot (200×120 chars, two views, one zoom-deep seahorse) — every iteration allocates ~hundred-thousand cons cells through the `cellRow` run-length-encoder + a few hundred `Vector<String>` slices, plus `Float.toString` 6 times per nav anchor. Aver→wasm-gc lowering gets out of the way; the difference between 213 ms and 9.8 ms is 100% engine.
 - **`map_lookup` was the wasmtime tail-end story.** Naive shape (each `Map.get` boxes `Option<Int>` → ~600k struct allocations × 30 iterations) sat at 2.20ms / 1.9× vs wasm-local. Two fused shapes ship with this backend:
   - `Option.withDefault(Map.get(m, k), default)` → per-(K,V) `get_or_default` helper. Probe loop returns the value (or default) directly. Backs the `withDefault` surface form.
   - `match Map.get(m, k) { Option.Some(v) -> ...; Option.None -> ... }` → per-(K,V) `get_pair` helper with multi-result `(i32 found, V value)` return. Caller pops `value` into the binding slot, branches on `found`. Backs the explicit pattern-match surface form (the bench's actual shape).
