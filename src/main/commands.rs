@@ -3471,13 +3471,14 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
         "interp_lower" => Some(PipelineStage::InterpLower),
         "buffer_build" => Some(PipelineStage::BufferBuild),
         "resolve" => Some(PipelineStage::Resolve),
+        "last_use" => Some(PipelineStage::LastUse),
         "analyze" => Some(PipelineStage::Analyze),
         other => {
             eprintln!(
                 "{}",
                 format!(
                     "unknown --emit-ir-after stage '{}'; expected one of: \
-                     parse, tco, typecheck, interp_lower, buffer_build, resolve, analyze",
+                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze",
                     other
                 )
                 .red()

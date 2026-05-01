@@ -33,6 +33,7 @@ pub enum PipelineStage {
     InterpLower,
     BufferBuild,
     Resolve,
+    LastUse,
     Analyze,
 }
 
@@ -44,6 +45,7 @@ impl PipelineStage {
             Self::InterpLower => "interp_lower",
             Self::BufferBuild => "buffer_build",
             Self::Resolve => "resolve",
+            Self::LastUse => "last_use",
             Self::Analyze => "analyze",
         }
     }
@@ -69,7 +71,15 @@ pub struct PipelineConfig<'a> {
     pub run_interp_lower: bool,
     pub run_buffer_build: bool,
     pub run_resolve: bool,
-    /// Whether to run the IR-level analysis pass after `resolve`. The
+    /// Whether to run the last-use ownership annotation pass after
+    /// `resolve`. Annotates each `Expr::Resolved` slot reference with
+    /// `last_use: bool`; backends use it to MOVE instead of COPY
+    /// (VM `MOVE_LOCAL`, Rust skips `.clone()`, owned-mutate fast paths).
+    /// Independent of `run_resolve`: enabling LastUse without Resolve is
+    /// a no-op (no resolved slots to annotate); skipping LastUse keeps
+    /// every reference pessimistically marked as "not last".
+    pub run_last_use: bool,
+    /// Whether to run the IR-level analysis pass after `last_use`. The
     /// pass is read-only — it populates `PipelineResult.analysis` with
     /// per-fn body shape, thin-kind, locals count, and (when an
     /// `alloc_policy` is configured) policy-parametrized alloc info.
@@ -98,6 +108,7 @@ impl<'a> Default for PipelineConfig<'a> {
             run_interp_lower: true,
             run_buffer_build: true,
             run_resolve: true,
+            run_last_use: true,
             run_analyze: true,
             alloc_policy: None,
             call_ctx: None,
@@ -159,9 +170,18 @@ pub fn buffer_build(items: &mut Vec<TopLevel>) -> (usize, usize) {
     crate::ir::run_buffer_build_pass(items)
 }
 
-/// Resolve locals + annotate last-use information across the program.
+/// Resolve local bindings — maps `Expr::Ident(name)` → `Expr::Resolved { slot, .. }`
+/// per fn. Does not annotate last-use; that's a separate stage.
 pub fn resolve(items: &mut [TopLevel]) {
     crate::resolver::resolve_program(items);
+}
+
+/// Last-use ownership annotation. Walks each fn body backwards, sets
+/// `last_use: true` on every `Expr::Resolved` whose slot is not
+/// referenced again afterwards. Requires `Resolve` to have run; on
+/// pre-resolve IR it's a no-op (no resolved slots to annotate).
+pub fn last_use(items: &mut [TopLevel]) {
+    crate::ir::last_use::annotate_program_last_use(items);
 }
 
 // ── Orchestrator ────────────────────────────────────────────────────
@@ -204,6 +224,11 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
     if cfg.run_resolve {
         resolve(items);
         fire(&mut cfg, PipelineStage::Resolve, items);
+    }
+
+    if cfg.run_last_use {
+        last_use(items);
+        fire(&mut cfg, PipelineStage::LastUse, items);
     }
 
     if cfg.run_analyze {
@@ -283,6 +308,7 @@ fn id(n: Int) -> Int
                 PipelineStage::InterpLower,
                 PipelineStage::BufferBuild,
                 PipelineStage::Resolve,
+                PipelineStage::LastUse,
                 PipelineStage::Analyze,
             ]
         );
@@ -307,6 +333,7 @@ fn id(n: Int) -> Int
                 typecheck: None,
                 run_interp_lower: false,
                 run_buffer_build: false,
+                run_last_use: false,
                 run_analyze: false,
                 on_after_pass: Some(Box::new(|stage, _| fired.push(stage))),
                 ..Default::default()

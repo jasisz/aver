@@ -257,7 +257,15 @@ pub fn expr_to_str(expr: &Spanned<Expr>) -> String {
             let a = args.iter().map(expr_to_str).collect::<Vec<_>>().join(", ");
             format!("<tail-call:{}>({})", target, a)
         }
-        Expr::Resolved { .. } => "<resolved>".to_string(),
+        Expr::Resolved {
+            name, last_use, ..
+        } => {
+            if last_use.0 {
+                format!("<{}:last>", name)
+            } else {
+                format!("<{}>", name)
+            }
+        }
         Expr::Match { subject, arms, .. } => {
             let s = expr_to_str(subject);
             let arms_str: Vec<String> = arms
