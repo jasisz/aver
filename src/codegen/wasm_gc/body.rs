@@ -190,8 +190,7 @@ fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
             // missing it is a validation crash.
             if let Expr::Attr(parent, member) = &callee.node
                 && let Expr::Ident(p) = &parent.node
-                && p == "Option"
-                && member == "withDefault"
+                && ((p == "Option" || p == "Result") && member == "withDefault")
             {
                 return true;
             }
@@ -628,6 +627,52 @@ fn infer_expr_wasm_type(
                     }
                     if dotted == "Map.len" && args.len() == 1 {
                         return Ok(Some(ValType::I64));
+                    }
+                    // Builtins whose return is a registered generic
+                    // type — Result<T,E> / Option<T> instantiations
+                    // collected at TypeRegistry::build time.
+                    let canonical_for_dotted: Option<&str> = match dotted.as_str() {
+                        "Float.fromString" => Some("Result<Float,String>"),
+                        "Int.fromString" => Some("Result<Int,String>"),
+                        "Int.mod" => Some("Result<Int,String>"),
+                        _ => None,
+                    };
+                    if let Some(canonical) = canonical_for_dotted {
+                        return aver_to_wasm(canonical, Some(registry));
+                    }
+                    // Single-instruction native builtins that return
+                    // primitive wasm types — no registry lookup
+                    // needed.
+                    let primitive_return = match dotted.as_str() {
+                        "Float.floor" | "Float.ceil" | "Float.round"
+                        | "Float.abs" | "Float.sqrt" | "Float.min"
+                        | "Float.max" | "Float.pi" | "Float.sin"
+                        | "Float.cos" | "Float.pow" | "Float.toString"
+                        | "Int.toFloat" => Some(ValType::F64),
+                        "Int.abs" | "Int.min" | "Int.max" | "Int.mod"
+                        | "List.len" | "List.length" | "Vector.len"
+                        | "Map.len" | "String.len" | "Char.toCode" => {
+                            Some(ValType::I64)
+                        }
+                        "Bool.and" | "Bool.or" | "Bool.not"
+                        | "String.startsWith" | "String.contains"
+                        | "Map.has" | "List.contains" => Some(ValType::I32),
+                        _ => None,
+                    };
+                    if let Some(v) = primitive_return {
+                        // Float.toString actually returns String —
+                        // override above. Same for the *.toString
+                        // dotted entries handled via String repr.
+                        if matches!(
+                            dotted.as_str(),
+                            "Float.toString" | "Int.toString" | "String.fromInt" | "String.fromFloat"
+                                | "String.toUpper" | "String.toLower" | "String.trim"
+                                | "String.replace" | "String.slice"
+                        ) {
+                            return aver_to_wasm("String", Some(registry));
+                        }
+                        let _ = v;
+                        return Ok(primitive_return);
                     }
                 }
             }
@@ -1224,8 +1269,22 @@ fn sniff_aver_type(
 /// inference. Adding a new builtin: extend both.
 fn builtin_aver_result_type(dotted: &str) -> &'static str {
     match dotted {
-        "Int.toString" => "String",
-        "String.len" => "Int",
+        // Returns String
+        "Int.toString" | "Float.toString" | "String.fromInt" | "String.fromFloat"
+        | "String.toUpper" | "String.toLower" | "String.trim" | "String.replace"
+        | "String.slice" => "String",
+        // Returns Int
+        "String.len" | "List.len" | "List.length" | "Vector.len" | "Map.len"
+        | "Char.toCode" | "Int.abs" | "Int.min" | "Int.max" => "Int",
+        // Returns Float
+        "Float.floor" | "Float.ceil" | "Float.round" | "Float.abs" | "Float.sqrt"
+        | "Float.min" | "Float.max" | "Float.pi" | "Float.sin" | "Float.cos"
+        | "Float.pow" | "Int.toFloat" | "Float.fromInt" => "Float",
+        // Returns Bool
+        "Bool.and" | "Bool.or" | "Bool.not" | "String.startsWith"
+        | "String.contains" | "Map.has" | "List.contains" => "Bool",
+        // Returns Char
+        "Char.fromCode" => "Char",
         _ => "Int",
     }
 }
@@ -2612,6 +2671,134 @@ fn emit_dotted_builtin(
             func.instruction(&Instruction::I64TruncF64S);
             Ok(())
         }
+        // Native single-instruction builtins (Float).
+        "Float.floor" if args.len() == 1 => {
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            func.instruction(&Instruction::F64Floor);
+            Ok(())
+        }
+        "Float.ceil" if args.len() == 1 => {
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            func.instruction(&Instruction::F64Ceil);
+            Ok(())
+        }
+        "Float.round" if args.len() == 1 => {
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            func.instruction(&Instruction::F64Nearest);
+            Ok(())
+        }
+        "Float.abs" if args.len() == 1 => {
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            func.instruction(&Instruction::F64Abs);
+            Ok(())
+        }
+        "Float.sqrt" if args.len() == 1 => {
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            func.instruction(&Instruction::F64Sqrt);
+            Ok(())
+        }
+        "Float.min" if args.len() == 2 => {
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[1].node, slots, ctx)?;
+            func.instruction(&Instruction::F64Min);
+            Ok(())
+        }
+        "Float.max" if args.len() == 2 => {
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[1].node, slots, ctx)?;
+            func.instruction(&Instruction::F64Max);
+            Ok(())
+        }
+        "Float.pi" if args.is_empty() => {
+            func.instruction(&Instruction::F64Const(
+                std::f64::consts::PI.into(),
+            ));
+            Ok(())
+        }
+        // `Int.toFloat` is the same op as `Float.fromInt` — Aver has
+        // both spellings; map both to the same instruction.
+        "Int.toFloat" if args.len() == 1 => {
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            func.instruction(&Instruction::F64ConvertI64S);
+            Ok(())
+        }
+        "Int.abs" if args.len() == 1 => {
+            // Branched: if (x < 0) 0 - x else x. Two evaluations of x;
+            // cheap when x is a Resolved local.
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            func.instruction(&Instruction::I64Const(0));
+            func.instruction(&Instruction::I64LtS);
+            func.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+                ValType::I64,
+            )));
+            func.instruction(&Instruction::I64Const(0));
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            func.instruction(&Instruction::I64Sub);
+            func.instruction(&Instruction::Else);
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            func.instruction(&Instruction::End);
+            Ok(())
+        }
+        "Int.min" if args.len() == 2 => {
+            // Branched: if (a < b) a else b. Two evaluations of each.
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[1].node, slots, ctx)?;
+            func.instruction(&Instruction::I64LtS);
+            func.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+                ValType::I64,
+            )));
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            func.instruction(&Instruction::Else);
+            emit_expr(func, &args[1].node, slots, ctx)?;
+            func.instruction(&Instruction::End);
+            Ok(())
+        }
+        "Int.max" if args.len() == 2 => {
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[1].node, slots, ctx)?;
+            func.instruction(&Instruction::I64GtS);
+            func.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+                ValType::I64,
+            )));
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            func.instruction(&Instruction::Else);
+            emit_expr(func, &args[1].node, slots, ctx)?;
+            func.instruction(&Instruction::End);
+            Ok(())
+        }
+        "Int.mod" if args.len() == 2 => {
+            // Aver `Int.mod` returns `Result<Int, Error>` for div-by-
+            // zero; common surface shape is `Result.withDefault(Int
+            // .mod(a, b), default)` which collapses to the i64.rem_s
+            // result on success or the default on b==0. We emit the
+            // raw rem_s here and let the wrapping Result.withDefault
+            // (or pattern match) handle the error path. Bare Int.mod
+            // not wrapped in withDefault will trap on b==0 — the type
+            // checker accepts that surface form regardless.
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[1].node, slots, ctx)?;
+            func.instruction(&Instruction::I64RemS);
+            Ok(())
+        }
+        // Bool ops: Aver Bool == wasm i32. and/or/not are bitwise
+        // single-instructions on i32.
+        "Bool.and" if args.len() == 2 => {
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[1].node, slots, ctx)?;
+            func.instruction(&Instruction::I32And);
+            Ok(())
+        }
+        "Bool.or" if args.len() == 2 => {
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[1].node, slots, ctx)?;
+            func.instruction(&Instruction::I32Or);
+            Ok(())
+        }
+        "Bool.not" if args.len() == 1 => {
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            func.instruction(&Instruction::I32Eqz);
+            Ok(())
+        }
         // Vector.new(size, fill) -> Vector<T>. Element type T is read
         // off the fill argument. Lowers to native `array.new $vector_T`.
         "Vector.new" => emit_vector_new(func, args, slots, ctx),
@@ -2620,6 +2807,7 @@ fn emit_dotted_builtin(
         // an Option<T>. Anything else needs real Option boxing, which
         // a later phase introduces when it stops being avoidable.
         "Option.withDefault" => emit_option_with_default(func, args, slots, ctx),
+        "Result.withDefault" => emit_result_with_default(func, args, slots, ctx),
         // Map<K, V> — dispatch to the per-instantiation helper. The
         // canonical comes from inferring the type of the map argument
         // (or the surrounding context for Map.empty).
@@ -2855,6 +3043,76 @@ fn emit_option_with_default(
     // arbitrary Option-producing call. The value materialises as a
     // concrete struct; dispatch through tag-based pattern match.
     emit_option_with_default_boxed(func, opt_arg, default_arg, slots, ctx)
+}
+
+/// `Result.withDefault(res, default)` — emits res, reads tag, returns
+/// the Ok payload or the default. No fused shape today (no
+/// surface-level Map.get-equivalent that produces Result; common
+/// pattern is `Result.withDefault(Int.mod(a, b), 0)` which is fused
+/// at the IR level by `LeafOp::IntModOrDefaultLiteral` — that one we
+/// deliberately don't lower here yet because the bench scenarios
+/// hitting it route through pattern match instead).
+fn emit_result_with_default(
+    func: &mut Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    if args.len() != 2 {
+        return Err(WasmGcError::Validation(format!(
+            "Result.withDefault expects 2 args, got {}",
+            args.len()
+        )));
+    }
+    let res_arg = &args[0];
+    let default_arg = &args[1];
+    let res_aver = infer_aver_type(&res_arg.node, ctx)?;
+    let canonical: String = res_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    let res_idx = ctx
+        .registry
+        .result_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Result.withDefault: arg of type `{res_aver}` is not a registered Result<T,E>"
+        )))?;
+    let (t_aver, _) = TypeRegistry::result_te(&canonical).ok_or(
+        WasmGcError::Validation(format!("Result canonical `{canonical}` malformed")),
+    )?;
+    let elem_val = aver_to_wasm(t_aver, Some(ctx.registry))?.ok_or(
+        WasmGcError::Validation(format!(
+            "Result.withDefault: T type `{t_aver}` has no wasm representation"
+        )),
+    )?;
+    let block_ty = wasm_encoder::BlockType::Result(elem_val);
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "Result.withDefault needs a scratch slot but none was reserved".into(),
+    ))?;
+
+    emit_expr(func, &res_arg.node, slots, ctx)?;
+    func.instruction(&Instruction::LocalSet(scratch));
+
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::RefCastNonNull(
+        wasm_encoder::HeapType::Concrete(res_idx),
+    ));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: res_idx,
+        field_index: 0,
+    });
+    func.instruction(&Instruction::I32Const(1));
+    func.instruction(&Instruction::I32Eq);
+    func.instruction(&Instruction::If(block_ty));
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::RefCastNonNull(
+        wasm_encoder::HeapType::Concrete(res_idx),
+    ));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: res_idx,
+        field_index: 1,
+    });
+    func.instruction(&Instruction::Else);
+    emit_expr(func, &default_arg.node, slots, ctx)?;
+    func.instruction(&Instruction::End);
+    Ok(())
 }
 
 /// Generic `Option.withDefault(opt, default)` — emits `opt`, reads

@@ -22,12 +22,16 @@ pub(super) enum EffectName {
     /// `Console.print(String) -> Unit`. Imported as `aver.console_print`
     /// — the host writes the string to its stdout (or equivalent).
     ConsolePrint,
+    /// `Time.unixMs() -> Int`. Imported as `aver.time_unix_ms` — host
+    /// supplies the current unix timestamp in milliseconds.
+    TimeUnixMs,
 }
 
 impl EffectName {
     pub(super) fn from_dotted(s: &str) -> Option<Self> {
         match s {
             "Console.print" => Some(Self::ConsolePrint),
+            "Time.unixMs" => Some(Self::TimeUnixMs),
             _ => None,
         }
     }
@@ -35,6 +39,7 @@ impl EffectName {
     pub(super) fn canonical(self) -> &'static str {
         match self {
             Self::ConsolePrint => "Console.print",
+            Self::TimeUnixMs => "Time.unixMs",
         }
     }
 
@@ -43,6 +48,7 @@ impl EffectName {
     pub(super) fn import_pair(self) -> (&'static str, &'static str) {
         match self {
             Self::ConsolePrint => ("aver", "console_print"),
+            Self::TimeUnixMs => ("aver", "time_unix_ms"),
         }
     }
 
@@ -61,12 +67,14 @@ impl EffectName {
     pub(super) fn params(self, _registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
         match self {
             Self::ConsolePrint => Ok(vec![any_ref_ty()]),
+            Self::TimeUnixMs => Ok(vec![]),
         }
     }
 
     pub(super) fn results(self, _registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
         match self {
             Self::ConsolePrint => Ok(vec![]),
+            Self::TimeUnixMs => Ok(vec![ValType::I64]),
         }
     }
 }

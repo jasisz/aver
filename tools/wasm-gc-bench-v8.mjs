@@ -23,10 +23,12 @@ if (!path) {
 const bytes = fs.readFileSync(path);
 const module = new WebAssembly.Module(bytes);
 const imports = {
-  // Mirror the bench-mode stub for `aver/console_print` from
-  // src/bench/runner.rs — the param is `(ref null any)`, no-op.
+  // Mirror the bench-mode stubs for `aver/*` host imports from
+  // src/bench/runner.rs — `console_print` no-ops, `time_unix_ms`
+  // returns 0n for deterministic runs.
   aver: {
     console_print: (_ref) => {},
+    time_unix_ms: () => 0n,
   },
 };
 const instance = new WebAssembly.Instance(module, imports);

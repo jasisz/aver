@@ -256,6 +256,16 @@ impl TypeRegistry {
                         &mut next_idx,
                     );
                 }
+                // Walk fn body for builtin calls whose Aver return
+                // type is a `Result<T, E>` not otherwise visible in
+                // signatures — e.g. `match Float.fromString(s) { ... }`
+                // where the surrounding fn returns plain `Float`.
+                collect_results_from_builtin_uses(
+                    fd,
+                    &mut result_types,
+                    &mut result_order,
+                    &mut next_idx,
+                );
             }
         }
 
@@ -546,6 +556,91 @@ fn collect_vectors_from_str(
             }
         }
         i += 1;
+    }
+}
+
+/// Walk a fn body for builtin calls whose declared return type is a
+/// `Result<T, E>` not otherwise visible in signatures. Phase-3c
+/// targets the curated set the bench scenarios use; broader auto-
+/// discovery would mean reading `types::checker::builtins` directly.
+fn collect_results_from_builtin_uses(
+    fd: &crate::ast::FnDef,
+    out: &mut HashMap<String, u32>,
+    order: &mut Vec<String>,
+    next_idx: &mut u32,
+) {
+    use crate::ast::{Expr, FnBody, Stmt};
+    fn walk(
+        e: &Expr,
+        out: &mut HashMap<String, u32>,
+        order: &mut Vec<String>,
+        next_idx: &mut u32,
+    ) {
+        let mut intern = |canonical: &str| {
+            if !out.contains_key(canonical) {
+                out.insert(canonical.to_string(), *next_idx);
+                order.push(canonical.to_string());
+                *next_idx += 1;
+            }
+        };
+        match e {
+            Expr::FnCall(callee, args) => {
+                if let Expr::Attr(parent, member) = &callee.node
+                    && let Expr::Ident(p) = &parent.node
+                {
+                    let dotted = format!("{}.{}", p, member);
+                    match dotted.as_str() {
+                        "Float.fromString" => intern("Result<Float,String>"),
+                        "Int.fromString" => intern("Result<Int,String>"),
+                        "Int.mod" => intern("Result<Int,String>"),
+                        _ => {}
+                    }
+                }
+                walk(&callee.node, out, order, next_idx);
+                for a in args {
+                    walk(&a.node, out, order, next_idx);
+                }
+            }
+            Expr::BinOp(_, l, r) => {
+                walk(&l.node, out, order, next_idx);
+                walk(&r.node, out, order, next_idx);
+            }
+            Expr::Match { subject, arms } => {
+                walk(&subject.node, out, order, next_idx);
+                for arm in arms {
+                    walk(&arm.body.node, out, order, next_idx);
+                }
+            }
+            Expr::TailCall(boxed) => {
+                for a in &boxed.args {
+                    walk(&a.node, out, order, next_idx);
+                }
+            }
+            Expr::Attr(obj, _) => walk(&obj.node, out, order, next_idx),
+            Expr::Constructor(_, payload) => {
+                if let Some(p) = payload.as_deref() {
+                    walk(&p.node, out, order, next_idx);
+                }
+            }
+            Expr::RecordCreate { fields, .. } => {
+                for (_, e) in fields {
+                    walk(&e.node, out, order, next_idx);
+                }
+            }
+            Expr::List(items) => {
+                for x in items {
+                    walk(&x.node, out, order, next_idx);
+                }
+            }
+            _ => {}
+        }
+    }
+    let FnBody::Block(stmts) = fd.body.as_ref();
+    for stmt in stmts {
+        let expr = match stmt {
+            Stmt::Binding(_, _, e) | Stmt::Expr(e) => &e.node,
+        };
+        walk(expr, out, order, next_idx);
     }
 }
 

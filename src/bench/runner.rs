@@ -543,6 +543,25 @@ fn run_wasm_gc(manifest: &Manifest) -> Result<BenchReport, RunError> {
                 |_caller, _params, _results| Ok(()),
             )
             .map_err(|e| RunError::Setup(format!("stub aver/console_print: {}", e)))?;
+        // Time.unixMs — bench mode uses a fixed value to keep runs
+        // deterministic; the production host wires this to the real
+        // `Date.now()` / `clock_gettime` equivalent.
+        let time_unix_ms_ty = wasmtime::FuncType::new(
+            engine,
+            std::iter::empty(),
+            std::iter::once(wasmtime::ValType::I64),
+        );
+        linker
+            .func_new(
+                "aver",
+                "time_unix_ms",
+                time_unix_ms_ty,
+                |_caller, _params, results| {
+                    results[0] = wasmtime::Val::I64(0);
+                    Ok(())
+                },
+            )
+            .map_err(|e| RunError::Setup(format!("stub aver/time_unix_ms: {}", e)))?;
         let instance = linker
             .instantiate(&mut store, module)
             .map_err(|e| RunError::Runtime(format!("instantiate: {}", e)))?;
