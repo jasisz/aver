@@ -17,7 +17,7 @@ use std::time::Instant;
 
 use crate::ast::TopLevel;
 use crate::bench::manifest::{BenchTarget, Manifest};
-use crate::bench::report::{BenchReport, IterationStats, ScenarioMetadata};
+use crate::bench::report::{BackendInfo, BenchReport, HostInfo, IterationStats, ScenarioMetadata};
 use crate::ir::{PipelineConfig, PipelineStage, TypecheckMode};
 use crate::nan_value::Arena;
 use crate::source::parse_source;
@@ -509,6 +509,8 @@ fn build_report(
             iterations_count: manifest.iterations,
             warmup_count: manifest.warmup,
         },
+        backend: BackendInfo::for_target(target),
+        host: HostInfo::capture(),
         iterations: stats,
         response_bytes: None,
         expected_match: None,

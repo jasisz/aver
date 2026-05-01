@@ -9,6 +9,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchReport {
     pub scenario: ScenarioMetadata,
+    /// Identifies the build that ran the bench: aver version, build
+    /// profile, target backend, plus optional version strings for
+    /// per-target runtimes (e.g. wasmtime for `wasm-local`).
+    pub backend: BackendInfo,
+    /// OS / architecture / process identity. Same JSON shape across
+    /// targets; downstream tools join on `host.os + host.arch + backend.name`
+    /// to compare like-for-like across runs.
+    pub host: HostInfo,
     pub iterations: IterationStats,
     /// Total stdout byte count of the last iteration. `null` in 0.15.1
     /// (capture infrastructure lands with the runtime allocators in
@@ -25,6 +33,70 @@ pub struct BenchReport {
     /// `aver compile --explain-allocations` work in 0.15.2.
     pub compiler_visible_allocs: Option<usize>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackendInfo {
+    /// Target name as parsed from `--target` (`vm` / `wasm-local` / `rust`).
+    pub name: String,
+    /// Version of the `aver` binary that ran the bench (Cargo package
+    /// version at compile time of this binary).
+    pub aver_version: String,
+    /// `"release"` or `"debug"`, derived from the calling binary's
+    /// build profile (`debug_assertions` cfg).
+    pub build: String,
+    /// wasmtime crate version when the report came from `--target=wasm-local`,
+    /// `null` otherwise.
+    pub wasmtime_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostInfo {
+    /// `"macos"` / `"linux"` / `"windows"` (from `std::env::consts::OS`).
+    pub os: String,
+    /// `"aarch64"` / `"x86_64"` / `"x86"` etc. (from `std::env::consts::ARCH`).
+    pub arch: String,
+    /// Logical CPU count from `std::thread::available_parallelism`.
+    pub cpus: usize,
+}
+
+impl BackendInfo {
+    pub fn for_target(target: crate::bench::manifest::BenchTarget) -> Self {
+        let build = if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        };
+        let wasmtime_version = match target {
+            crate::bench::manifest::BenchTarget::WasmLocal => Some(WASMTIME_VERSION.to_string()),
+            _ => None,
+        };
+        Self {
+            name: target.name().to_string(),
+            aver_version: env!("CARGO_PKG_VERSION").to_string(),
+            build: build.to_string(),
+            wasmtime_version,
+        }
+    }
+}
+
+impl HostInfo {
+    pub fn capture() -> Self {
+        let cpus = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        Self {
+            os: std::env::consts::OS.to_string(),
+            arch: std::env::consts::ARCH.to_string(),
+            cpus,
+        }
+    }
+}
+
+/// Wasmtime version string compiled into the bench reports. Bumped
+/// alongside the `wasmtime` dependency in `Cargo.toml`; downstream
+/// tools that compare bench numbers across runs use it to detect
+/// runtime upgrades that might explain a delta.
+const WASMTIME_VERSION: &str = "29";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScenarioMetadata {
@@ -63,9 +135,17 @@ pub fn format_human(report: &BenchReport) -> String {
 
     let mut out = String::new();
     let s = &report.scenario;
+    let b = &report.backend;
+    let h = &report.host;
     let it = &report.iterations;
     writeln!(out, "{} [{}]", s.name, s.target).ok();
     writeln!(out, "  entry:        {}", s.entry).ok();
+    let mut backend_line = format!("aver {} ({})", b.aver_version, b.build);
+    if let Some(wt) = &b.wasmtime_version {
+        backend_line.push_str(&format!(", wasmtime {}", wt));
+    }
+    writeln!(out, "  backend:      {}", backend_line).ok();
+    writeln!(out, "  host:         {}/{} ({} cpus)", h.os, h.arch, h.cpus).ok();
     writeln!(
         out,
         "  iterations:   {} (warmup {})",
