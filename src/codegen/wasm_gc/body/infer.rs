@@ -440,6 +440,22 @@ pub(super) fn struct_name_of_unboxed(
             return Ok(Some(ty));
         }
     }
+    // Chained Attr (`a.b.c`): the outer Attr's `obj` is itself an
+    // Attr. Walk the chain — recover the innermost record name from
+    // the leaf `Resolved`, then walk each Attr step forward looking
+    // up the declared field type and treating it as the next record
+    // name. Bottoms out at a struct-typed field (so `state.snake.head`
+    // works: state: GameState → snake: Snake → head: Point and Point
+    // is the record we want for the outer `.x` lookup).
+    if let Expr::Attr(inner_obj, inner_field) = expr {
+        let inner_record = struct_name_of_unboxed(&inner_obj.node, ctx)?;
+        if let Some(rec) = inner_record
+            && let Some(field_ty) = ctx.registry.record_field_type(&rec, inner_field)
+            && ctx.registry.records.contains_key(field_ty)
+        {
+            return Ok(Some(field_ty.to_string()));
+        }
+    }
     Ok(None)
 }
 
@@ -735,6 +751,15 @@ pub(super) fn sniff_with_prev(
                         "String.len" => return Some("Int".into()),
                         _ => {
                             if let Some(ret) = dotted_return_type(&dotted) {
+                                return Some(ret.into());
+                            }
+                            // Effect calls fall through here (e.g.
+                            // `Terminal.readKey() -> Option<String>`,
+                            // `Random.int -> Int`). Without this the
+                            // surrounding `match` can't recover an
+                            // Option<T> subject and bindings fail to
+                            // resolve their inner type.
+                            if let Some(ret) = effect_aver_return_type(&dotted) {
                                 return Some(ret.into());
                             }
                         }

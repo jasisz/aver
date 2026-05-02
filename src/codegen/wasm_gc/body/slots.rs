@@ -678,7 +678,50 @@ pub(super) fn infer_expr_wasm_type(
             .first()
             .map(|a| infer_expr_wasm_type(&a.body.node, registry, fd, fn_map))
             .unwrap_or(Ok(Some(ValType::I64))),
+        // Field access (record.field). Recover the obj's record name —
+        // either bare `Resolved` whose param type *is* a record, or a
+        // chained `Attr` walked recursively — then look up the field's
+        // declared Aver type and lower it to wasm. Without this, e.g.
+        // `match state.snake { [h, ..t] -> ... }` infers the subject
+        // as the default `i64`, the Cons-pattern slot allocation skips
+        // because `ValType::Ref(_)` doesn't match, and the emitted
+        // body references locals that were never declared.
+        Expr::Attr(obj, field) => {
+            if let Some(obj_aver) = attr_obj_aver_type(&obj.node, registry, fd)
+                && let Some(field_ty) = registry.record_field_type(&obj_aver, field)
+            {
+                return aver_to_wasm(field_ty, Some(registry));
+            }
+            Ok(Some(ValType::I64))
+        }
         _ => Ok(Some(ValType::I64)),
+    }
+}
+
+/// Recover the Aver record name for an Attr's object expression, used
+/// by `infer_expr_wasm_type`'s Attr arm. Mirrors the chained-Attr
+/// resolution in `infer::struct_name_of_unboxed` — a bare `Resolved`
+/// whose param type is a record returns that name; chained
+/// `Attr(inner, inner_field)` walks recursively and looks up the
+/// nested record by field type.
+fn attr_obj_aver_type(expr: &Expr, registry: &TypeRegistry, fd: &FnDef) -> Option<String> {
+    match expr {
+        Expr::Resolved { name, .. } => fd
+            .params
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, t)| t.clone())
+            .filter(|t| registry.records.contains_key(t)),
+        Expr::Attr(inner, inner_field) => {
+            let inner_rec = attr_obj_aver_type(&inner.node, registry, fd)?;
+            let field_ty = registry.record_field_type(&inner_rec, inner_field)?;
+            if registry.records.contains_key(field_ty) {
+                Some(field_ty.to_string())
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 

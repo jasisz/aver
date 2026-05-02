@@ -62,6 +62,12 @@ enum WasmGcMainKind {
     Int,
     Float,
     Unit,
+    /// Ref-typed return (e.g. `main: () -> String` lowering to a
+    /// `(ref null $string)` carrier). `get_typed_func` can't express
+    /// that signature without naming the concrete type, so we fall
+    /// back to the dynamic `instance.get_func` API and ignore the
+    /// returned ref — the bench measures execution time, not value.
+    Ref(usize),
 }
 
 fn build_wasm_gc_harness(wasm_path: &std::path::Path) -> WasmGcHarness {
@@ -97,7 +103,21 @@ fn build_wasm_gc_harness(wasm_path: &std::path::Path) -> WasmGcHarness {
             .is_ok()
         {
             WasmGcMainKind::Float
+        } else if instance
+            .get_typed_func::<(), ()>(&mut store, "main")
+            .is_ok()
+        {
+            WasmGcMainKind::Unit
+        } else if let Some(f) = instance.get_func(&mut store, "main") {
+            // Ref-typed `main` — count the result arity and dispatch
+            // through the dynamic `Val`-based API per iter (typed
+            // funcs can't express `(ref null $UserType)` without
+            // baking the concrete type in here).
+            WasmGcMainKind::Ref(f.ty(&store).results().len())
         } else {
+            // Some scenarios export only `_start` (no top-level main
+            // — the wrapper drops main's result on the way out). Use
+            // it as the entry point.
             WasmGcMainKind::Unit
         }
     };
@@ -174,6 +194,14 @@ fn run_wasm_gc_iter(harness: &WasmGcHarness) {
                 .get_typed_func::<(), ()>(&mut store, "main")
                 .expect("main: () -> ()");
             f.call(&mut store, ()).expect("wasm-gc main trap");
+        }
+        WasmGcMainKind::Ref(n_results) => {
+            let f = instance
+                .get_func(&mut store, "main")
+                .expect("main export missing");
+            let mut out: Vec<Val> = (0..n_results).map(|_| Val::AnyRef(None)).collect();
+            f.call(&mut store, &[], &mut out)
+                .expect("wasm-gc main trap");
         }
     }
 }

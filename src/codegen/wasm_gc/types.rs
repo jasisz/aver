@@ -1498,6 +1498,38 @@ fn expr_uses_string(expr: &crate::ast::Expr) -> bool {
                             | "Int.fromString"
                             | "Float.fromString"
                             | "Byte.fromHex"
+                            // Effects that produce or consume String at
+                            // their boundary. The string slot has to be
+                            // allocated whenever any of these is called
+                            // — without that, the import signature
+                            // can't even be emitted (`(ref null
+                            // $string)` references an undeclared type).
+                            // Mirror of `EffectName::*` whose typed
+                            // signature in `effects.rs` uses
+                            // `string_ref_ty`. Keep in sync.
+                            | "Console.print"
+                            | "Console.error"
+                            | "Console.warn"
+                            | "Console.readLine"
+                            | "Args.get"
+                            | "Args._get"
+                            | "Env.get"
+                            | "Env.set"
+                            | "Time.now"
+                            | "Request.method"
+                            | "Request.url"
+                            | "Request.path"
+                            | "Request.query"
+                            | "Request.body"
+                            | "Request.headersLoad"
+                            | "Request.headers"
+                            | "Response.text"
+                            | "Response.setHeader"
+                            | "Http.send"
+                            | "Http.addRequestHeader"
+                            | "Terminal.print"
+                            | "Terminal.setColor"
+                            | "Terminal.readKey"
                     ) {
                         return true;
                     }

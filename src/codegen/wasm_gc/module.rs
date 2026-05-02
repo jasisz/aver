@@ -1009,6 +1009,12 @@ fn discover_builtins_in_expr(
                 discover_builtins_in_expr(&e.node, builtins, effects);
             }
         }
+        Expr::RecordUpdate { base, updates, .. } => {
+            discover_builtins_in_expr(&base.node, builtins, effects);
+            for (_, e) in updates {
+                discover_builtins_in_expr(&e.node, builtins, effects);
+            }
+        }
         // `InterpolatedStr` lowers to `array.new_fixed` + the variadic
         // concat helper. Register it here so the helper's wasm fn
         // index is allocated by the time emission runs. Each Parsed

@@ -347,19 +347,12 @@ pub(super) fn emit_dotted_builtin(
             func.instruction(&Instruction::Call(ops.join));
             Ok(())
         }
-        other => Err(WasmGcError::Unimplemented(match other {
-            "Int.toString" => "phase 3c — Int.toString (needs String repr)",
-            "Float.toString" => "phase 3c — Float.toString (needs String repr)",
-            "String.length" => "phase 3c — String.length",
-            "String.join" => "phase 3c — String.join",
-            "List.prepend" => "phase 3c — List.prepend (needs List repr)",
-            "List.reverse" => "phase 3c — List.reverse",
-            "List.length" => "phase 3c — List.length",
-            "Vector.set" => "phase 3c — Vector.set (only fused withDefault shape today)",
-            "Vector.get" => "phase 3c — Vector.get (only fused withDefault shape today)",
-            "Console.print" => "phase 3c — Console.print (effect lowering)",
-            _ => "phase 3c — unknown builtin or method call",
-        })),
+        other => Err(WasmGcError::Validation(format!(
+            "wasm-gc: builtin or method call `{other}` is not yet implemented \
+             (no helper registered, no effect import, no inline lowering). \
+             If this looks like it should work, file at \
+             https://github.com/jasisz/aver/issues with the source program."
+        ))),
     }
 }
 
