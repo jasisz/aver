@@ -1,0 +1,721 @@
+#![cfg(feature = "wasm")]
+
+//! Compile-and-run smoke tests for the wasm-gc backend. Each test
+//! compiles a small Aver program through the same pipeline shape as
+//! `aver compile --target=wasm-gc` (typecheck=Full, neutral alloc
+//! policy, interp_lower / buffer_build OFF), drives the produced
+//! module under wasmtime with the GC + tail-call config, and asserts
+//! on the `Int` returned from `main`.
+//!
+//! Coverage targets the parity matrix added in 0.16: `List<T>`,
+//! `Map<K, V>` for K ∈ {String, Int, user record, user sum}, `Vector<T>`,
+//! `Tuple<A, B>`, `Option<T>`, `Result<T, E>`, nested compounds, and
+//! the `String` builtin surface. Compound types are surfaced through
+//! helper-fn signatures so the wasm-gc backend's discovery pass picks
+//! them up — pure body-level literals (`[1, 2, 3]`) never expose
+//! `List<Int>` to the registry on their own.
+
+use aver::codegen::wasm_gc::compile_to_wasm_gc;
+use aver::ir::{PipelineConfig, TypecheckMode, pipeline};
+use aver::source::parse_source;
+
+fn compile_bytes(source: &str) -> Vec<u8> {
+    let mut items = parse_source(source).unwrap_or_else(|e| {
+        panic!("parse failed: {e}\n--- source ---\n{source}");
+    });
+    let neutral_policy = aver::ir::NeutralAllocPolicy;
+    let result = pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            alloc_policy: Some(&neutral_policy),
+            run_interp_lower: false,
+            run_buffer_build: false,
+            ..Default::default()
+        },
+    );
+    if let Some(tc) = &result.typecheck
+        && !tc.errors.is_empty()
+    {
+        panic!(
+            "typecheck failed: {:?}\n--- source ---\n{source}",
+            tc.errors
+        );
+    }
+    compile_to_wasm_gc(&items, result.analysis.as_ref()).unwrap_or_else(|e| {
+        panic!("wasm-gc compile failed: {e:?}\n--- source ---\n{source}");
+    })
+}
+
+fn run_int(source: &str) -> i64 {
+    let bytes = compile_bytes(source);
+    let mut config = wasmtime::Config::new();
+    config.wasm_gc(true);
+    config.wasm_tail_call(true);
+    config.wasm_function_references(true);
+    config.wasm_reference_types(true);
+    config.wasm_multi_value(true);
+    config.wasm_bulk_memory(true);
+    config.cranelift_opt_level(wasmtime::OptLevel::Speed);
+    config.max_wasm_stack(8 * 1024 * 1024);
+    let engine = wasmtime::Engine::new(&config).expect("wasmtime engine");
+    let module = wasmtime::Module::new(&engine, &bytes).unwrap_or_else(|e| {
+        panic!("wasmtime rejected wasm-gc bytes: {e}");
+    });
+    let mut store = wasmtime::Store::new(&engine, ());
+    let mut linker = wasmtime::Linker::new(&engine);
+    stub_imports(&module, &engine, &mut linker);
+    let instance = linker
+        .instantiate(&mut store, &module)
+        .unwrap_or_else(|e| panic!("instantiate failed: {e}"));
+    let main = instance
+        .get_typed_func::<(), i64>(&mut store, "main")
+        .unwrap_or_else(|e| panic!("main: () -> Int export missing: {e}"));
+    main.call(&mut store, ())
+        .unwrap_or_else(|e| panic!("main trapped: {e}"))
+}
+
+/// Walk the module's import section and register a default-value stub
+/// for each `(module, name)` pair under its declared signature. Keeps
+/// tests immune to unused builtin helpers that pull in `aver/console_*`
+/// or `aver/time_*` even when the test program never calls them.
+fn stub_imports(
+    module: &wasmtime::Module,
+    engine: &wasmtime::Engine,
+    linker: &mut wasmtime::Linker<()>,
+) {
+    use wasmtime::ExternType;
+    for import in module.imports() {
+        let ExternType::Func(ft) = import.ty() else {
+            continue;
+        };
+        let result_tys: Vec<wasmtime::ValType> = ft.results().collect();
+        let func_ty = wasmtime::FuncType::new(engine, ft.params(), ft.results());
+        let module_name = import.module().to_string();
+        let field_name = import.name().to_string();
+        let _ = linker.func_new(
+            &module_name,
+            &field_name,
+            func_ty,
+            move |_caller, _params, results| {
+                for (slot, ty) in results.iter_mut().zip(result_tys.iter()) {
+                    *slot = default_val(ty);
+                }
+                Ok(())
+            },
+        );
+    }
+}
+
+fn default_val(ty: &wasmtime::ValType) -> wasmtime::Val {
+    use wasmtime::{Val, ValType};
+    match ty {
+        ValType::I32 => Val::I32(0),
+        ValType::I64 => Val::I64(0),
+        ValType::F32 => Val::F32(0),
+        ValType::F64 => Val::F64(0),
+        ValType::V128 => Val::V128(0u128.into()),
+        ValType::Ref(_) => Val::AnyRef(None),
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────
+// List<T>
+// ────────────────────────────────────────────────────────────────────
+
+#[test]
+fn list_int_len() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "list len"
+    depends []
+
+fn build() -> List<Int>
+    [1, 2, 3, 4, 5]
+
+fn main() -> Int
+    List.len(build())
+"#
+        ),
+        5
+    );
+}
+
+#[test]
+fn list_int_reverse_first() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "list reverse head"
+    depends []
+
+fn build() -> List<Int>
+    [1, 2, 3]
+
+fn head(xs: List<Int>) -> Int
+    match xs
+        [h, ..t] -> h
+        _        -> -1
+
+fn main() -> Int
+    head(List.reverse(build()))
+"#
+        ),
+        3
+    );
+}
+
+/// Currently fails: `wasm-gc compile failed: Unimplemented("phase 3b
+/// — exotic callee shape (chained Attr, lambda)")`. Aver source is
+/// shape-legal under `--target wasm`. The wasm-gc backend rejects
+/// `List.concat(lhs(), rhs())` (a builtin Attr callee whose first arg
+/// is itself a fn call returning the list). Keep the test in tree as
+/// the regression target; un-ignore once the chained-Attr emit path
+/// in `body.rs` lands. See PR #14 review for the full inventory.
+#[ignore = "wasm-gc backend gap: builtin Attr callee with chained-call first arg"]
+#[test]
+fn list_int_concat_len() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "list concat len"
+    depends []
+
+fn lhs() -> List<Int>
+    [1, 2]
+
+fn rhs() -> List<Int>
+    [3, 4, 5]
+
+fn joined() -> List<Int>
+    List.concat(lhs(), rhs())
+
+fn main() -> Int
+    List.len(joined())
+"#
+        ),
+        5
+    );
+}
+
+#[test]
+fn list_int_contains_true() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "list contains true"
+    depends []
+
+fn build() -> List<Int>
+    [1, 2, 3]
+
+fn main() -> Int
+    match List.contains(build(), 2)
+        true  -> 1
+        false -> 0
+"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn list_string_contains_false() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "list string contains false"
+    depends []
+
+fn build() -> List<String>
+    ["alpha", "beta"]
+
+fn main() -> Int
+    match List.contains(build(), "gamma")
+        true  -> 1
+        false -> 0
+"#
+        ),
+        0
+    );
+}
+
+/// Currently fails with the same chained-Attr `Unimplemented` as
+/// `list_int_concat_len`. `List.take(dropped(), 3)` and
+/// `List.drop(build(), 1)` both hit it. Tracked in PR #14 review.
+#[ignore = "wasm-gc backend gap: builtin Attr callee with chained-call first arg"]
+#[test]
+fn list_int_take_drop() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "list take drop"
+    depends []
+
+fn build() -> List<Int>
+    [1, 2, 3, 4, 5, 6]
+
+fn dropped() -> List<Int>
+    List.drop(build(), 1)
+
+fn taken() -> List<Int>
+    List.take(dropped(), 3)
+
+fn main() -> Int
+    List.len(taken())
+"#
+        ),
+        3
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Map<K, V>
+// ────────────────────────────────────────────────────────────────────
+
+#[test]
+fn map_string_int_get_after_set() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "map<string,int> get"
+    depends []
+
+fn build() -> Map<String, Int>
+    Map.set(Map.empty(), "k", 42)
+
+fn main() -> Int
+    Option.withDefault(Map.get(build(), "k"), -1)
+"#
+        ),
+        42
+    );
+}
+
+#[test]
+fn map_string_int_overwrite_keeps_last() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "map overwrite same key"
+    depends []
+
+fn build() -> Map<String, Int>
+    Map.set(Map.set(Map.empty(), "k", 1), "k", 99)
+
+fn main() -> Int
+    Option.withDefault(Map.get(build(), "k"), -1)
+"#
+        ),
+        99
+    );
+}
+
+#[test]
+fn map_int_int_roundtrip() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "map<int,int> roundtrip"
+    depends []
+
+fn build() -> Map<Int, Int>
+    Map.set(Map.set(Map.empty(), 7, 70), 13, 130)
+
+fn main() -> Int
+    Option.withDefault(Map.get(build(), 13), -1)
+"#
+        ),
+        130
+    );
+}
+
+#[test]
+fn map_has_returns_one_for_present_key() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "map has present"
+    depends []
+
+fn build() -> Map<String, Int>
+    Map.set(Map.empty(), "k", 1)
+
+fn main() -> Int
+    match Map.has(build(), "k")
+        true  -> 1
+        false -> 0
+"#
+        ),
+        1
+    );
+}
+
+/// Currently fails: `Map.remove(seeded(), "k")` triggers the same
+/// chained-Attr `Unimplemented` as the List.concat / List.take cases.
+/// The Map<String,Int> shape itself works (other map tests pass) — the
+/// gap is specifically `Map.remove` with a fn-call first arg.
+#[ignore = "wasm-gc backend gap: builtin Attr callee with chained-call first arg"]
+#[test]
+fn map_remove_then_get_returns_default() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "map remove then default"
+    depends []
+
+fn seeded() -> Map<String, Int>
+    Map.set(Map.empty(), "k", 7)
+
+fn build() -> Map<String, Int>
+    Map.remove(seeded(), "k")
+
+fn main() -> Int
+    Option.withDefault(Map.get(build(), "k"), -1)
+"#
+        ),
+        -1
+    );
+}
+
+#[test]
+fn map_keys_count() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "map keys len"
+    depends []
+
+fn build() -> Map<String, Int>
+    Map.set(Map.set(Map.set(Map.empty(), "a", 1), "b", 2), "c", 3)
+
+fn main() -> Int
+    List.len(Map.keys(build()))
+"#
+        ),
+        3
+    );
+}
+
+#[test]
+fn map_string_list_int_nested_value_len() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "map<string, list<int>>"
+    depends []
+
+fn nums() -> List<Int>
+    [10, 20, 30, 40]
+
+fn build() -> Map<String, List<Int>>
+    Map.set(Map.empty(), "k", nums())
+
+fn fallback() -> List<Int>
+    []
+
+fn main() -> Int
+    List.len(Option.withDefault(Map.get(build(), "k"), fallback()))
+"#
+        ),
+        4
+    );
+}
+
+#[test]
+fn map_record_key_get() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "map<record, int>"
+    depends []
+
+record Point
+    x: Int
+    y: Int
+
+fn key() -> Point
+    Point(x = 1, y = 2)
+
+fn build() -> Map<Point, Int>
+    Map.set(Map.empty(), key(), 99)
+
+fn main() -> Int
+    Option.withDefault(Map.get(build(), key()), -1)
+"#
+        ),
+        99
+    );
+}
+
+/// Currently fails: `Tag.Red` (Attr access on a user-defined sum-type
+/// name) emits `Unimplemented("phase 3b — Attr on non-Resolved obj
+/// (chained access)")`. Built-in sum types (Option.Some, Result.Ok)
+/// work because the parser treats them as known constructors; user
+/// sums need the same Attr→Constructor lowering. PR #14 review item.
+#[ignore = "wasm-gc backend gap: Attr access on user-defined sum type name"]
+#[test]
+fn map_sum_key_get() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "map<sum, int>"
+    depends []
+
+type Tag
+    Red
+    Green
+    Blue
+
+fn redKey() -> Tag
+    Tag.Red
+
+fn greenKey() -> Tag
+    Tag.Green
+
+fn blueKey() -> Tag
+    Tag.Blue
+
+fn build() -> Map<Tag, Int>
+    m1 = Map.set(Map.empty(), redKey(), 1)
+    m2 = Map.set(m1, greenKey(), 2)
+    Map.set(m2, blueKey(), 3)
+
+fn main() -> Int
+    Option.withDefault(Map.get(build(), greenKey()), -1)
+"#
+        ),
+        2
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Vector<T>
+// ────────────────────────────────────────────────────────────────────
+
+#[test]
+fn vector_get_after_set() {
+    // Mirrors `bench/scenarios/vector_ops.av` shape: tail-recursive
+    // fill writes i*i at position i. After fill the cell at index 2
+    // holds 4 (= 2*2). Verifies the owned-mutate fast path through
+    // a TCO loop, the same shape the bench has been runtime-validated
+    // against on every wasm-gc commit.
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "vector get/set"
+    depends []
+
+fn fill(v: Vector<Int>, n: Int, i: Int) -> Vector<Int>
+    match i == n
+        true  -> v
+        false -> fill(Option.withDefault(Vector.set(v, i, i * i), v), n, i + 1)
+
+fn main() -> Int
+    v = fill(Vector.new(3, 0), 3, 0)
+    Option.withDefault(Vector.get(v, 2), -1)
+"#
+        ),
+        4
+    );
+}
+
+#[test]
+fn vector_to_list_len_matches() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "vector toList"
+    depends []
+
+fn build() -> Vector<Int>
+    Vector.fromList([1, 2, 3, 4])
+
+fn main() -> Int
+    List.len(Vector.toList(build()))
+"#
+        ),
+        4
+    );
+}
+
+#[test]
+fn vector_len_is_size() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "vector len"
+    depends []
+
+fn build() -> Vector<Int>
+    Vector.fromList([1, 2, 3, 4, 5, 6, 7])
+
+fn main() -> Int
+    Vector.len(build())
+"#
+        ),
+        7
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Tuple<A, B>
+// ────────────────────────────────────────────────────────────────────
+
+#[test]
+fn tuple_destructure_sum() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "tuple destructure"
+    depends []
+
+fn pair() -> (Int, Int)
+    (3, 4)
+
+fn main() -> Int
+    match pair()
+        (a, b) -> a + b
+"#
+        ),
+        7
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Option / Result
+// ────────────────────────────────────────────────────────────────────
+
+#[test]
+fn option_with_default_some() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "Option.withDefault Some"
+    depends []
+
+fn produce() -> Option<Int>
+    Option.Some(7)
+
+fn main() -> Int
+    Option.withDefault(produce(), 0)
+"#
+        ),
+        7
+    );
+}
+
+#[test]
+fn option_with_default_none() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "Option.withDefault None"
+    depends []
+
+fn produce() -> Option<Int>
+    Option.None
+
+fn main() -> Int
+    Option.withDefault(produce(), 42)
+"#
+        ),
+        42
+    );
+}
+
+#[test]
+fn result_with_default_ok() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "Result.withDefault Ok"
+    depends []
+
+fn produce() -> Result<Int, String>
+    Result.Ok(5)
+
+fn main() -> Int
+    Result.withDefault(produce(), 0)
+"#
+        ),
+        5
+    );
+}
+
+#[test]
+fn result_with_default_err() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "Result.withDefault Err"
+    depends []
+
+fn produce() -> Result<Int, String>
+    Result.Err("boom")
+
+fn main() -> Int
+    Result.withDefault(produce(), 99)
+"#
+        ),
+        99
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// String surface (numeric reductions only — return Int)
+// ────────────────────────────────────────────────────────────────────
+
+#[test]
+fn string_len_byte_count() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "String.len"
+    depends []
+
+fn main() -> Int
+    String.len("hello")
+"#
+        ),
+        5
+    );
+}
+
+#[test]
+fn string_starts_with_true() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "String.startsWith"
+    depends []
+
+fn main() -> Int
+    match String.startsWith("hello world", "hello")
+        true  -> 1
+        false -> 0
+"#
+        ),
+        1
+    );
+}
+
+#[test]
+fn string_split_join_roundtrip_len() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "String.split + List.len"
+    depends []
+
+fn pieces() -> List<String>
+    String.split("a,b,c,d", ",")
+
+fn main() -> Int
+    List.len(pieces())
+"#
+        ),
+        4
+    );
+}

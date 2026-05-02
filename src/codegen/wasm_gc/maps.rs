@@ -611,7 +611,12 @@ fn emit_hash_primitive(k_aver: &str) -> Result<Function, WasmGcError> {
         "Bool" => {
             // Already i32 — no-op (just LocalGet then End)
         }
-        _ => unreachable!("emit_hash_primitive: K = `{k_aver}` not primitive"),
+        _ => panic!(
+            "internal compiler error: emit_hash_primitive called with \
+             non-primitive K = `{k_aver}`; caller must dispatch to \
+             emit_hash_record / emit_hash_sum / __wasmgc_string_hash for \
+             non-primitive K. Please file at https://github.com/jasisz/aver/issues"
+        ),
     }
     f.instruction(&Instruction::End);
     Ok(f)
@@ -627,7 +632,12 @@ fn emit_eq_primitive(k_aver: &str) -> Result<Function, WasmGcError> {
         "Int" => f.instruction(&Instruction::I64Eq),
         "Float" => f.instruction(&Instruction::F64Eq),
         "Bool" => f.instruction(&Instruction::I32Eq),
-        _ => unreachable!("emit_eq_primitive: K = `{k_aver}` not primitive"),
+        _ => panic!(
+            "internal compiler error: emit_eq_primitive called with \
+             non-primitive K = `{k_aver}`; caller must dispatch to \
+             emit_eq_record / emit_eq_sum / __wasmgc_string_eq for \
+             non-primitive K. Please file at https://github.com/jasisz/aver/issues"
+        ),
     };
     f.instruction(&Instruction::End);
     Ok(f)

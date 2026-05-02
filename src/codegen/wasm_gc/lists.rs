@@ -1569,7 +1569,12 @@ fn emit_list_contains(
                     ))?;
                     f.instruction(&Instruction::Call(eq_fn))
                 }
-                ListEqKind::RecordEq(_) | ListEqKind::SumEq(_) => unreachable!(),
+                ListEqKind::RecordEq(_) | ListEqKind::SumEq(_) => panic!(
+                    "internal compiler error: List.contains emit reached \
+                     RecordEq/SumEq path; should be filtered upstream by \
+                     `list_eq_kind` returning None for record/sum elements. \
+                     Please file at https://github.com/jasisz/aver/issues"
+                ),
             };
         }
     }
@@ -1970,7 +1975,11 @@ fn emit_list_eq(
         ListEqKind::RecordEq(_) | ListEqKind::SumEq(_) => {
             // Same `all_simple` constraint as contains — these
             // variants don't reach this emit path.
-            unreachable!("emit_list_eq: record/sum element should be filtered upstream")
+            panic!(
+                "internal compiler error: emit_list_eq reached RecordEq/SumEq; \
+                 list_eq_kind must return None for record/sum elements. \
+                 Please file at https://github.com/jasisz/aver/issues"
+            )
         }
     };
     // if heads differ → 0
@@ -2055,7 +2064,12 @@ fn emit_list_hash(
             // for non-cryptographic mix.
             f.instruction(&Instruction::ArrayLen);
         }
-        _ => unreachable!("list hash: kind filtered upstream"),
+        other => panic!(
+            "internal compiler error: list hash emit reached unsupported \
+             element type `{other}`; upstream `list_eq_kind` must restrict \
+             list-hash emission to {{Int, Bool, Float, String}}. \
+             Please file at https://github.com/jasisz/aver/issues"
+        ),
     }
     let _ = kind;
     f.instruction(&Instruction::I32Add);
@@ -2123,7 +2137,12 @@ fn emit_vec_eq(
             ))?;
             f.instruction(&Instruction::Call(eq_fn))
         }
-        _ => unreachable!("Vector eq: kind filtered upstream"),
+        kind => panic!(
+            "internal compiler error: Vector eq emit reached unsupported \
+             kind {kind:?}; upstream `list_eq_kind` must filter Vector eq \
+             to scalar / String elements. \
+             Please file at https://github.com/jasisz/aver/issues"
+        ),
     };
     f.instruction(&Instruction::I32Eqz);
     f.instruction(&Instruction::If(BlockType::Empty));
@@ -2188,7 +2207,12 @@ fn emit_vec_hash(
         "String" => {
             f.instruction(&Instruction::ArrayLen);
         }
-        _ => unreachable!("Vector hash: kind filtered upstream"),
+        other => panic!(
+            "internal compiler error: Vector hash emit reached unsupported \
+             element type `{other}`; upstream `list_eq_kind` must restrict \
+             Vector-hash emission to {{Int, Bool, Float, String}}. \
+             Please file at https://github.com/jasisz/aver/issues"
+        ),
     }
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalSet(1));

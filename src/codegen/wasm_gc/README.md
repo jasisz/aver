@@ -1,4 +1,4 @@
-# `wasm_gc` codegen backend (default in 0.16, codename "Concede")
+# `wasm_gc` codegen backend (recommended WASM target in 0.16, codename "Concede")
 
 Parallel WASM backend that targets the **WebAssembly GC + tail-call** proposals natively, instead of layering a custom runtime on top of MVP WASM. Lives alongside `src/codegen/wasm/`; both compile from the same IR. After the cross-engine bench (see below) the call is in: **`--target wasm-gc` ships as the recommended target from 0.16 onward**, `--target wasm` survives as the optional fallback for pre-2024 hosts (wasmtime CLI < 25, Node < 22, environments that don't speak the GC + tail-call proposals).
 

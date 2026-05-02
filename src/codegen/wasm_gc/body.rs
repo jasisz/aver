@@ -3795,7 +3795,12 @@ fn emit_map_kv_call(
         "set" => 3,
         "get" | "has" | "remove" => 2,
         "len" | "keys" | "values" | "entries" => 1,
-        _ => unreachable!("emit_map_kv_call: unknown method `{method}`"),
+        _ => panic!(
+            "internal compiler error: emit_map_kv_call invoked for unknown \
+             Map method `{method}`; dispatch in emit_dotted_builtin must only \
+             route the listed Map methods here. \
+             Please file at https://github.com/jasisz/aver/issues"
+        ),
     };
     if args.len() != arity {
         return Err(WasmGcError::Validation(format!(
@@ -3831,7 +3836,12 @@ fn emit_map_kv_call(
         "values" => helpers.values,
         "remove" => helpers.remove,
         "entries" => helpers.entries,
-        _ => unreachable!(),
+        _ => panic!(
+            "internal compiler error: emit_map_kv_call passed arity check \
+             but failed helpers dispatch for method `{method}`; the two \
+             match arms in this function must cover the same set. \
+             Please file at https://github.com/jasisz/aver/issues"
+        ),
     };
     for arg in args {
         emit_expr(func, &arg.node, slots, ctx)?;
