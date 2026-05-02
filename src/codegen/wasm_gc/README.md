@@ -211,6 +211,43 @@ Concretely, the things one might still try cost more than they would buy on this
 
 Bottom line: the legacy `--target wasm` backend really has said its last word on this workload. Further speedups would have to come from algorithmic changes (SIMD, parallel rows, a coarser dither) — not from the codegen.
 
+### Stdlib parity vs `--target wasm`
+
+Audited 2026-05-02 against `src/codegen/wasm/abi.rs` + `src/types/checker/builtins.rs`. The wasm-gc backend covers the surface every active bench scenario hits — what's missing is reach for new programs, not correctness for the existing ones.
+
+**Effects parity (after etap 1):**
+
+| Namespace      | wasm-gc | Notes |
+|----------------|---------|-------|
+| Console.*      | ✅ print/error/warn/readLine | full |
+| Time.*         | ✅ unixMs/sleep/now | full |
+| Args.*         | ✅ _len/_get | full |
+| Random.*       | ✅ int/float | full |
+| Float math     | ✅ sin/cos/atan2/pow (host imports — wasm has no native libm) | full |
+| Request/Response/Http/Env | ✅ all 13 fetch-bridge effects | full |
+| Terminal.*     | ❌ — | TODO etap 2: 11 effects + `Terminal.Size` builtin record |
+| Print/Format.value | ❌ deliberately | wasm-gc lowers interpolations natively via `__wasmgc_concat_n` + `Int.toString`; debug helpers not needed |
+| Disk.*, Tcp.*, HttpServer.listen* | ❌ deliberately | per-deployment policy domain (host's job per `docs/wasm.md`) |
+
+**Pure builtins parity:**
+
+| Namespace | Coverage in wasm-gc |
+|-----------|---------------------|
+| Bool      | and/or/not ✅ |
+| Int       | toString/toFloat/abs/min/max/mod ✅, fromString ✅ |
+| Float     | toString/floor/ceil/round/abs/sqrt/min/max/pi/fromInt ✅, fromString ✅ |
+| String    | len/length/byteLength/startsWith/contains/slice/toUpper/toLower/trim/split/join/fromInt/fromFloat ✅; **missing**: `charAt`, `chars`, `endsWith`, `fromBool`, `replace` (etap 3b) |
+| Char      | toCode ✅; **missing**: `fromCode` (needs Option<String> registered eagerly — etap 3b) |
+| Option    | Some/None/withDefault/toResult ✅ |
+| Result    | Ok/Err/withDefault ✅ |
+| List      | prepend/empty/len/length/reverse + per-(L,V) `Vector.fromList` ✅; **missing per-instantiation**: `concat`, `contains`, `drop`, `take`, `zip` (etap 4a) |
+| Map       | empty/set/get/len + fused `Option.withDefault(Map.get(...))` / `match Map.get(...)` shapes ✅; **missing per-instantiation**: `has`, `keys`, `values`, `entries`, `remove`, `fromList` (etap 4b) |
+| Vector    | new/get (boxed)/len + `fromList` per-(L,V) ✅; **missing**: `set` (boxed), `toList` per-(V,L) (etap 4c) |
+| Byte      | ❌ `fromHex`, `toHex` (etap 3c — small) |
+| BranchPath, Tcp.Connection | ❌ surface-level builtin records, low priority |
+
+Zero bench scenario in `bench/scenarios/*.av` calls anything in the "missing" rows. Adding them is per-helper plumbing, not blocking work.
+
 ### Tail-call A/B
 
 `AVER_WASM_GC_NO_TAIL_CALL=1` swaps `return_call` for plain `call` so the proposal's contribution is measurable in isolation:
