@@ -236,7 +236,7 @@ Audited 2026-05-02 against `src/codegen/wasm/abi.rs` + `src/types/checker/builti
 | Bool      | and/or/not ✅ |
 | Int       | toString/toFloat/abs/min/max/mod ✅, fromString ✅ |
 | Float     | toString/floor/ceil/round/abs/sqrt/min/max/pi/fromInt ✅, fromString ✅ |
-| String    | len/length/byteLength/startsWith/contains/slice/toUpper/toLower/trim/split/join/fromInt/fromFloat ✅; **missing**: `charAt`, `chars`, `endsWith`, `fromBool`, `replace` (etap 3b) |
+| String    | len/length/byteLength/startsWith/endsWith/contains/slice/toUpper/toLower/trim/split/join/fromInt/fromFloat/fromBool ✅; **missing**: `charAt` (needs Option<String> registered eagerly — same blocker as `Char.fromCode`), `chars` (needs List<String> registered eagerly), `replace` (etap 3b/3c) |
 | Char      | toCode ✅; **missing**: `fromCode` (needs Option<String> registered eagerly — etap 3b) |
 | Option    | Some/None/withDefault/toResult ✅ |
 | Result    | Ok/Err/withDefault ✅ |

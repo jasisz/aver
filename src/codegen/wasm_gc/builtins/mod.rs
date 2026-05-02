@@ -102,6 +102,8 @@ pub(super) enum BuiltinName {
     /// (not addressable from Aver source); registry registers it
     /// explicitly when discovery finds a String-subject match.
     StringEq,
+    StringEndsWith,
+    StringFromBool,
 }
 
 impl BuiltinName {
@@ -118,6 +120,8 @@ impl BuiltinName {
             "Int.fromString" => Some(Self::IntFromString),
             "Float.fromString" => Some(Self::FloatFromString),
             "Float.toString" => Some(Self::FloatToString),
+            "String.endsWith" => Some(Self::StringEndsWith),
+            "String.fromBool" => Some(Self::StringFromBool),
             _ => None,
         }
     }
@@ -149,6 +153,8 @@ impl BuiltinName {
             Self::FloatFromString => "Float.fromString",
             Self::FloatToString => "Float.toString",
             Self::StringEq => "__wasmgc_string_eq",
+            Self::StringEndsWith => "String.endsWith",
+            Self::StringFromBool => "String.fromBool",
         }
     }
 
@@ -172,6 +178,8 @@ impl BuiltinName {
             Self::FloatFromString => Ok(vec![string_ref_ty(registry)?]),
             Self::FloatToString => Ok(vec![ValType::F64]),
             Self::StringEq => Ok(vec![string_ref_ty(registry)?, string_ref_ty(registry)?]),
+            Self::StringEndsWith => Ok(vec![string_ref_ty(registry)?, string_ref_ty(registry)?]),
+            Self::StringFromBool => Ok(vec![ValType::I32]),
         }
     }
 
@@ -189,6 +197,8 @@ impl BuiltinName {
             Self::IntFromString => Ok(vec![result_ref_ty(registry, "Result<Int,String>")?]),
             Self::FloatFromString => Ok(vec![result_ref_ty(registry, "Result<Float,String>")?]),
             Self::StringEq => Ok(vec![ValType::I32]),
+            Self::StringFromBool => Ok(vec![string_ref_ty(registry)?]),
+            Self::StringEndsWith => Ok(vec![ValType::I32]),
         }
     }
 
@@ -210,6 +220,8 @@ impl BuiltinName {
             Self::FloatFromString => emit_float_from_string(registry),
             Self::FloatToString => emit_float_to_string(registry),
             Self::StringEq => emit_string_eq(registry),
+            Self::StringEndsWith => emit_string_ends_with(registry),
+            Self::StringFromBool => emit_string_from_bool(registry),
         }
     }
 }
@@ -1795,6 +1807,116 @@ fn emit_string_eq(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
                 br $cmp))
 
             i32.const 1)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `String.endsWith(s, suffix) -> Bool`. Byte-wise compare of the
+/// trailing `len(suffix)` bytes of `s` against `suffix`.
+fn emit_string_ends_with(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let (_, preamble) = string_module_preamble(registry)?;
+    let wat = format!(
+        r#"
+        (module
+          {preamble}
+          (func (export "helper")
+                (param $s (ref null $string))
+                (param $suffix (ref null $string))
+                (result i32)
+            (local $slen i32)
+            (local $sufflen i32)
+            (local $offset i32)
+            (local $i i32)
+
+            local.get $s array.len local.set $slen
+            local.get $suffix array.len local.set $sufflen
+
+            ;; suffix longer than s → false
+            local.get $sufflen
+            local.get $slen
+            i32.gt_u
+            (if (then i32.const 0 return))
+
+            ;; offset = slen - sufflen
+            local.get $slen
+            local.get $sufflen
+            i32.sub
+            local.set $offset
+
+            i32.const 0 local.set $i
+            (block $done
+              (loop $cmp
+                local.get $i
+                local.get $sufflen
+                i32.ge_u
+                br_if $done
+
+                local.get $s
+                local.get $offset
+                local.get $i
+                i32.add
+                array.get_u $string
+
+                local.get $suffix
+                local.get $i
+                array.get_u $string
+
+                i32.ne
+                (if (then i32.const 0 return))
+
+                local.get $i
+                i32.const 1
+                i32.add
+                local.set $i
+                br $cmp))
+            i32.const 1)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `String.fromBool(b) -> String`. Branches on the i32 Bool input
+/// and returns one of two 5/4-byte string literals built inline via
+/// per-byte `array.set`. No data-segment dependency — the literals
+/// are baked into the helper body so registering `String.fromBool`
+/// doesn't require pre-interning anything.
+fn emit_string_from_bool(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let (_, preamble) = string_module_preamble(registry)?;
+    let wat = format!(
+        r#"
+        (module
+          {preamble}
+          (func (export "helper")
+                (param $b i32)
+                (result (ref null $string))
+            (local $out (ref null $string))
+
+            local.get $b
+            (if (result (ref null $string))
+              (then
+                ;; "true"
+                i32.const 4
+                array.new_default $string
+                local.set $out
+                local.get $out i32.const 0 i32.const 116 array.set $string
+                local.get $out i32.const 1 i32.const 114 array.set $string
+                local.get $out i32.const 2 i32.const 117 array.set $string
+                local.get $out i32.const 3 i32.const 101 array.set $string
+                local.get $out)
+              (else
+                ;; "false"
+                i32.const 5
+                array.new_default $string
+                local.set $out
+                local.get $out i32.const 0 i32.const 102 array.set $string
+                local.get $out i32.const 1 i32.const 97  array.set $string
+                local.get $out i32.const 2 i32.const 108 array.set $string
+                local.get $out i32.const 3 i32.const 115 array.set $string
+                local.get $out i32.const 4 i32.const 101 array.set $string
+                local.get $out)))
         )
     "#
     );

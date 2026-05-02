@@ -1596,8 +1596,8 @@ fn dotted_return_type(dotted: &str) -> Option<&'static str> {
     Some(match dotted {
         // String results
         "Int.toString" | "Float.toString" | "String.fromInt" | "String.fromFloat"
-        | "String.toUpper" | "String.toLower" | "String.trim" | "String.replace"
-        | "String.slice" | "String.join" => "String",
+        | "String.fromBool" | "String.toUpper" | "String.toLower" | "String.trim"
+        | "String.replace" | "String.slice" | "String.join" => "String",
         // Int results — `Float.floor/ceil/round` return Int per
         // Aver stdlib semantics (legacy backend matches).
         "String.len" | "String.length" | "String.byteLength" | "List.len" | "List.length"
@@ -1609,7 +1609,7 @@ fn dotted_return_type(dotted: &str) -> Option<&'static str> {
         | "Float.pow" | "Int.toFloat" | "Float.fromInt" => "Float",
         // Bool results
         "Bool.and" | "Bool.or" | "Bool.not" | "String.startsWith"
-        | "String.contains" | "Map.has" | "List.contains" => "Bool",
+        | "String.endsWith" | "String.contains" | "Map.has" | "List.contains" => "Bool",
         // Char results
         "Char.fromCode" => "Char",
         // Result-typed parsers
@@ -1629,8 +1629,8 @@ fn builtin_aver_result_type(dotted: &str) -> &'static str {
     match dotted {
         // Returns String
         "Int.toString" | "Float.toString" | "String.fromInt" | "String.fromFloat"
-        | "String.toUpper" | "String.toLower" | "String.trim" | "String.replace"
-        | "String.slice" | "String.join" => "String",
+        | "String.fromBool" | "String.toUpper" | "String.toLower" | "String.trim"
+        | "String.replace" | "String.slice" | "String.join" => "String",
         // Returns Int — `Float.floor / ceil / round` are Aver-Int per
         // stdlib semantics.
         "String.len" | "String.length" | "String.byteLength" | "List.len" | "List.length"
@@ -1642,7 +1642,7 @@ fn builtin_aver_result_type(dotted: &str) -> &'static str {
         | "Float.pow" | "Int.toFloat" | "Float.fromInt" => "Float",
         // Returns Bool
         "Bool.and" | "Bool.or" | "Bool.not" | "String.startsWith"
-        | "String.contains" | "Map.has" | "List.contains" => "Bool",
+        | "String.endsWith" | "String.contains" | "Map.has" | "List.contains" => "Bool",
         // Returns Char
         "Char.fromCode" => "Char",
         // Result-typed parsers
