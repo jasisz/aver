@@ -78,6 +78,11 @@ pub(super) struct VectorFromListOps {
     /// reverse. Slotted alongside `from_list` so any pair of
     /// `(List<T>, Vector<T>)` registers both helpers together.
     pub(super) to_list: u32,
+    /// `eq : (Vector<T>, Vector<T>) -> i32`. Length-match + per-T
+    /// element eq. None when T isn't `list_eq_kind`-able.
+    pub(super) eq: Option<u32>,
+    /// `hash : (Vector<T>) -> i32`. DJB2 fold over array elements.
+    pub(super) hash: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -102,7 +107,7 @@ pub(super) struct ListHelperRegistry {
     vfl_ops: HashMap<String, VectorFromListOps>,
     vfl_order: Vec<String>,
     /// Per-pair: `(from_list_type_idx, to_list_type_idx)`.
-    vfl_type_indices: HashMap<String, (u32, u32)>,
+    vfl_type_indices: HashMap<String, (u32, u32, Option<u32>, Option<u32>)>,
 
     /// `Tuple<A,B>` canonical → `List.zip` fn idx. Registered when
     /// the program has `List<A>`, `List<B>`, and `List<Tuple<A,B>>`
@@ -263,15 +268,33 @@ impl ListHelperRegistry {
             *next_wasm_fn_idx += 1;
             let to_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
+            // Vector<T> eq + hash conditionally — same eq-able-T
+            // rule the list helpers use.
+            let eq_kind_ok = list_eq_kind(elem.trim(), registry).is_some();
+            let (vec_eq_ty, vec_hash_ty, vec_eq_fn, vec_hash_fn) = if eq_kind_ok {
+                let eq_ty = *next_type_idx;
+                *next_type_idx += 1;
+                let hash_ty = *next_type_idx;
+                *next_type_idx += 1;
+                let eq_fn = *next_wasm_fn_idx;
+                *next_wasm_fn_idx += 1;
+                let hash_fn = *next_wasm_fn_idx;
+                *next_wasm_fn_idx += 1;
+                (Some(eq_ty), Some(hash_ty), Some(eq_fn), Some(hash_fn))
+            } else {
+                (None, None, None, None)
+            };
             self.vfl_ops.insert(
                 canonical.clone(),
                 VectorFromListOps {
                     from_list: from_fn,
                     to_list: to_fn,
+                    eq: vec_eq_fn,
+                    hash: vec_hash_fn,
                 },
             );
             self.vfl_type_indices
-                .insert(canonical.clone(), (from_ty, to_ty));
+                .insert(canonical.clone(), (from_ty, to_ty, vec_eq_ty, vec_hash_ty));
             self.vfl_order.push(canonical.clone());
         }
 
@@ -411,6 +434,13 @@ impl ListHelperRegistry {
             types.ty().function([list_ref], [vec_ref]);
             // to_list : (Vector<T>) -> List<T>
             types.ty().function([vec_ref], [list_ref]);
+            let elem = TypeRegistry::list_element_type(canonical).unwrap();
+            if list_eq_kind(elem.trim(), registry).is_some() {
+                // eq : (Vector<T>, Vector<T>) -> i32
+                types.ty().function([vec_ref, vec_ref], [ValType::I32]);
+                // hash : (Vector<T>) -> i32
+                types.ty().function([vec_ref], [ValType::I32]);
+            }
         }
         // List.zip per-(A,B): `(List<A>, List<B>) -> List<Tuple<A,B>>`.
         for tup_canonical in &self.zip_order {
@@ -496,9 +526,15 @@ impl ListHelperRegistry {
             }
         }
         for canonical in &self.vfl_order {
-            let (from_t, to_t) = self.vfl_type_indices[canonical];
+            let (from_t, to_t, eq_t, hash_t) = self.vfl_type_indices[canonical];
             funcs.function(from_t);
             funcs.function(to_t);
+            if let Some(t) = eq_t {
+                funcs.function(t);
+            }
+            if let Some(t) = hash_t {
+                funcs.function(t);
+            }
         }
         for tup_canonical in &self.zip_order {
             funcs.function(self.zip_type_indices[tup_canonical]);
@@ -554,6 +590,13 @@ impl ListHelperRegistry {
         for canonical in &self.vfl_order {
             codes.function(&emit_vec_from_list(canonical, registry)?);
             codes.function(&emit_vec_to_list(canonical, registry)?);
+            let ops = self.vfl_ops[canonical];
+            if ops.eq.is_some() {
+                let elem = TypeRegistry::list_element_type(canonical).unwrap();
+                let kind = list_eq_kind(elem.trim(), registry).unwrap();
+                codes.function(&emit_vec_eq(canonical, registry, kind.clone(), string_eq_fn_idx)?);
+                codes.function(&emit_vec_hash(canonical, registry, kind, string_eq_fn_idx)?);
+            }
         }
         for tup_canonical in &self.zip_order {
             // Zip needs the per-`List<Tuple<A,B>>` reverse fn idx —
@@ -2056,6 +2099,135 @@ fn emit_list_hash(
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `eq : (Vector<T>, Vector<T>) -> i32`. Length check + element-
+/// wise eq via per-T instruction. Same `T must be eq-able` rule as
+/// list_eq.
+fn emit_vec_eq(
+    canonical: &str,
+    registry: &TypeRegistry,
+    kind: ListEqKind,
+    string_eq_fn_idx: Option<u32>,
+) -> Result<Function, WasmGcError> {
+    let (vec_idx, _) = vec_idx_of_pair(canonical, registry)?;
+    // params: 0=va, 1=vb. locals: 2=len, 3=i.
+    let mut f = Function::new([(1, ValType::I32), (1, ValType::I32)]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::ArrayGet(vec_idx));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::ArrayGet(vec_idx));
+    match &kind {
+        ListEqKind::I64 => f.instruction(&Instruction::I64Eq),
+        ListEqKind::F64 => f.instruction(&Instruction::F64Eq),
+        ListEqKind::I32 => f.instruction(&Instruction::I32Eq),
+        ListEqKind::StringEq => {
+            let eq_fn = string_eq_fn_idx.ok_or(WasmGcError::Validation(
+                "Vector eq over String needs __wasmgc_string_eq".into(),
+            ))?;
+            f.instruction(&Instruction::Call(eq_fn))
+        }
+        _ => unreachable!("Vector eq: kind filtered upstream"),
+    };
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `hash : (Vector<T>) -> i32`. DJB2 fold over array elements.
+fn emit_vec_hash(
+    canonical: &str,
+    registry: &TypeRegistry,
+    kind: ListEqKind,
+    _string_eq_fn_idx: Option<u32>,
+) -> Result<Function, WasmGcError> {
+    let (vec_idx, _) = vec_idx_of_pair(canonical, registry)?;
+    let _ = kind;
+    let elem = TypeRegistry::list_element_type(canonical).unwrap();
+    // params: 0=v. locals: 1=h, 2=len, 3=i.
+    let mut f = Function::new([(1, ValType::I32), (1, ValType::I32), (1, ValType::I32)]);
+    f.instruction(&Instruction::I32Const(5381));
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+    // h = h * 33 + elem_hash(v[i])
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32Const(5));
+    f.instruction(&Instruction::I32Shl);
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::ArrayGet(vec_idx));
+    match elem.trim() {
+        "Int" => {
+            f.instruction(&Instruction::I32WrapI64);
+        }
+        "Bool" => {}
+        "Float" => {
+            f.instruction(&Instruction::I64ReinterpretF64);
+            f.instruction(&Instruction::I32WrapI64);
+        }
+        "String" => {
+            f.instruction(&Instruction::ArrayLen);
+        }
+        _ => unreachable!("Vector hash: kind filtered upstream"),
+    }
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::End);
     Ok(f)
 }

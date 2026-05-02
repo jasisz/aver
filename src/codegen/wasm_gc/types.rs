@@ -269,6 +269,19 @@ impl TypeRegistry {
                 );
             }
         }
+        // Record field walks — `record { nums: Vector<Int> }` only
+        // shows up in the record's field list, not in any fn
+        // signature. Mirror the lists / options record-field walk.
+        for (_, fields) in record_fields.iter() {
+            for (_, ty) in fields {
+                collect_vectors_from_str(
+                    ty,
+                    &mut vector_types,
+                    &mut vector_order,
+                    &mut next_idx,
+                );
+            }
+        }
 
         // `Result<T, E>` and `List<T>` instantiations land BEFORE
         // options/maps so that `Option<List<String>>` /

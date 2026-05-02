@@ -1384,25 +1384,27 @@ fn emit_hash_record(
                 // `all_key_helpers` — records were force-registered
                 // as pseudo-K in `assign_slots`; list canonicals were
                 // injected by `emit_helper_bodies` from list_helpers.
-                let lookup_key = if other.starts_with("List<") {
+                let lookup_key = if other.starts_with("List<")
+                    || other.starts_with("Vector<")
+                {
                     super::types::normalize_compound(other).to_string()
                 } else {
                     other.to_string()
                 };
-                if registry.record_type_idx(other).is_some()
-                    || other.starts_with("List<")
-                {
+                let is_compound =
+                    other.starts_with("List<") || other.starts_with("Vector<");
+                if registry.record_type_idx(other).is_some() || is_compound {
                     let inner = all_key_helpers.get(&lookup_key).ok_or(
                         WasmGcError::Validation(format!(
                             "hash_record: field `{other}` has no key helpers \
-                             (record / list T may need force-registration)"
+                             (record / list / vector T may need force-registration)"
                         )),
                     )?;
                     f.instruction(&Instruction::Call(inner.hash));
                 } else {
                     return Err(WasmGcError::Unimplemented(
                         "phase 3c — record-key field type not in \
-                         {Int, Float, Bool, String, nested record, List<T>}",
+                         {Int, Float, Bool, String, nested record, List<T>, Vector<T>}",
                     ));
                 }
             }
@@ -1457,14 +1459,16 @@ fn emit_eq_record(
                 f.instruction(&Instruction::Call(helpers.eq))
             }
             other => {
-                let lookup_key = if other.starts_with("List<") {
+                let lookup_key = if other.starts_with("List<")
+                    || other.starts_with("Vector<")
+                {
                     super::types::normalize_compound(other).to_string()
                 } else {
                     other.to_string()
                 };
-                if registry.record_type_idx(other).is_some()
-                    || other.starts_with("List<")
-                {
+                let is_compound =
+                    other.starts_with("List<") || other.starts_with("Vector<");
+                if registry.record_type_idx(other).is_some() || is_compound {
                     let inner = all_key_helpers.get(&lookup_key).ok_or(
                         WasmGcError::Validation(format!(
                             "eq_record: field `{other}` has no key helpers"
@@ -1474,7 +1478,7 @@ fn emit_eq_record(
                 } else {
                     return Err(WasmGcError::Unimplemented(
                         "phase 3c — record-key field type not in \
-                         {Int, Float, Bool, String, nested record, List<T>}",
+                         {Int, Float, Bool, String, nested record, List<T>, Vector<T>}",
                     ));
                 }
             }

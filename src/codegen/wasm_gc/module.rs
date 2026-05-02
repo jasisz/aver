@@ -476,17 +476,32 @@ pub(super) fn emit_module(
     // Map helper bodies (hash, eq, empty, set, get, len per
     // instantiation) — emitted last so their wasm fn indices line up
     // with what `MapHelperRegistry::assign_slots` recorded.
-    // Snapshot list eq/hash fn idxes so map record-key helpers can
-    // dispatch List<T> field types without a cross-module lookup.
-    let mut list_eq_hash_lookup: HashMap<String, (u32, u32)> = HashMap::new();
+    // Snapshot list / vector eq+hash fn idxes so map record-key
+    // helpers can dispatch `List<T>` / `Vector<T>` field types
+    // without cross-module lookups.
+    let mut compound_eq_hash_lookup: HashMap<String, (u32, u32)> = HashMap::new();
     for canonical in &registry.list_order {
         if let Some(o) = list_helpers.list_ops_for(canonical)
             && let (Some(eq_fn), Some(hash_fn)) = (o.eq, o.hash)
         {
-            list_eq_hash_lookup.insert(canonical.clone(), (eq_fn, hash_fn));
+            compound_eq_hash_lookup.insert(canonical.clone(), (eq_fn, hash_fn));
         }
     }
-    map_helpers.emit_helper_bodies(&mut codes, &registry, &list_eq_hash_lookup)?;
+    for canonical in &registry.list_order {
+        // vfl_ops keyed by list canonical, but the `Vector<T>`
+        // canonical is the right pseudo-K name for record-field
+        // dispatch — translate.
+        if let Some(elem) = TypeRegistry::list_element_type(canonical)
+            && let Some(o) = list_helpers.vfl_ops_for(canonical)
+            && let (Some(eq_fn), Some(hash_fn)) = (o.eq, o.hash)
+        {
+            compound_eq_hash_lookup.insert(
+                format!("Vector<{}>", elem.trim()),
+                (eq_fn, hash_fn),
+            );
+        }
+    }
+    map_helpers.emit_helper_bodies(&mut codes, &registry, &compound_eq_hash_lookup)?;
 
     // List / Vector.fromList / String.split-join helper bodies.
     let string_eq_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::StringEq);
