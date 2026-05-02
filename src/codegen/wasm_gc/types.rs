@@ -135,13 +135,6 @@ pub(super) struct MapSlots {
 }
 
 impl TypeRegistry {
-    /// Walk top-level items and reserve a type index for every record /
-    /// variant. The returned registry has every name pre-assigned so
-    /// later passes (fn signature emit, body emit) can reference them
-    /// without ordering tricks.
-    pub(super) fn build(items: &[TopLevel]) -> Self {
-        Self::build_with_handler(items, false)
-    }
 
     /// Build the registry with a `--handler` shape — pre-register
     /// HttpRequest/HttpResponse refs in case the handler fn is the
@@ -199,8 +192,7 @@ impl TypeRegistry {
             // HttpRequest from host effects and reads HttpResponse
             // back, both of which are codegen-only references.
             let force = handler_active
-                && (record.aver_name == "HttpRequest"
-                    || record.aver_name == "HttpResponse");
+                && (record.aver_name == "HttpRequest" || record.aver_name == "HttpResponse");
             if !force && !items_reference_name(items, record.aver_name) {
                 continue;
             }
@@ -274,12 +266,7 @@ impl TypeRegistry {
         // signature. Mirror the lists / options record-field walk.
         for (_, fields) in record_fields.iter() {
             for (_, ty) in fields {
-                collect_vectors_from_str(
-                    ty,
-                    &mut vector_types,
-                    &mut vector_order,
-                    &mut next_idx,
-                );
+                collect_vectors_from_str(ty, &mut vector_types, &mut vector_order, &mut next_idx);
             }
         }
 
@@ -327,33 +314,18 @@ impl TypeRegistry {
                     &mut next_idx,
                 );
                 for (_, ty) in &fd.params {
-                    collect_lists_from_str(
-                        ty,
-                        &mut list_types,
-                        &mut list_order,
-                        &mut next_idx,
-                    );
+                    collect_lists_from_str(ty, &mut list_types, &mut list_order, &mut next_idx);
                 }
                 // Body annotations — `nested: List<List<Int>> = [a, b]`
                 // adds `List<List<Int>>` even when no fn signature
                 // mentions it. Mirrors the same body-walk options
                 // and vectors already do.
-                collect_lists_from_fn_body(
-                    fd,
-                    &mut list_types,
-                    &mut list_order,
-                    &mut next_idx,
-                );
+                collect_lists_from_fn_body(fd, &mut list_types, &mut list_order, &mut next_idx);
             }
         }
         for (_, fields) in record_fields.iter() {
             for (_, ty) in fields {
-                collect_lists_from_str(
-                    ty,
-                    &mut list_types,
-                    &mut list_order,
-                    &mut next_idx,
-                );
+                collect_lists_from_str(ty, &mut list_types, &mut list_order, &mut next_idx);
             }
         }
         if handler_active && !list_types.contains_key("List<String>") {
@@ -432,8 +404,7 @@ impl TypeRegistry {
         {
             pending_maps_for_options.push("Map<String,List<String>>".to_string());
         }
-        let mut seen_map_v: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut seen_map_v: std::collections::HashSet<String> = std::collections::HashSet::new();
         for canonical in &pending_maps_for_options {
             if let Some((_, v)) = parse_map_kv(canonical)
                 && seen_map_v.insert(v.to_string())
@@ -559,12 +530,7 @@ impl TypeRegistry {
                     &mut next_idx,
                 );
                 for (_, ty) in &fd.params {
-                    collect_tuples_from_str(
-                        ty,
-                        &mut tuple_types,
-                        &mut tuple_order,
-                        &mut next_idx,
-                    );
+                    collect_tuples_from_str(ty, &mut tuple_types, &mut tuple_order, &mut next_idx);
                 }
             }
         }
@@ -702,7 +668,10 @@ impl TypeRegistry {
 
     /// Split `Result<T, E>` into (T, E) borrowed slices.
     pub(super) fn result_te(canonical: &str) -> Option<(&str, &str)> {
-        let inner = canonical.trim().strip_prefix("Result<")?.strip_suffix('>')?;
+        let inner = canonical
+            .trim()
+            .strip_prefix("Result<")?
+            .strip_suffix('>')?;
         let bytes = inner.as_bytes();
         let mut depth: i32 = 0;
         for (idx, b) in bytes.iter().enumerate() {
@@ -747,7 +716,10 @@ impl TypeRegistry {
     /// Aver-surface `(A, B)` form.
     pub(super) fn tuple_ab(canonical: &str) -> Option<(&str, &str)> {
         let trimmed = canonical.trim();
-        let inner = if let Some(i) = trimmed.strip_prefix("Tuple<").and_then(|s| s.strip_suffix('>')) {
+        let inner = if let Some(i) = trimmed
+            .strip_prefix("Tuple<")
+            .and_then(|s| s.strip_suffix('>'))
+        {
             i
         } else if trimmed.starts_with('(') && trimmed.ends_with(')') {
             &trimmed[1..trimmed.len() - 1]
@@ -861,12 +833,6 @@ impl TypeRegistry {
         None
     }
 
-    /// Same predicate but addressed by variant constructor name (so
-    /// emit sites can ask "is this constructor a newtype wrapper?").
-    pub(super) fn variant_is_newtype(&self, variant_name: &str) -> Option<&str> {
-        let info = self.variants.get(variant_name)?;
-        self.newtype_underlying(&info.parent)
-    }
 }
 
 fn is_primitive(ty: &str) -> bool {
@@ -936,12 +902,7 @@ fn collect_results_from_builtin_uses(
     next_idx: &mut u32,
 ) {
     use crate::ast::{Expr, FnBody, Stmt};
-    fn walk(
-        e: &Expr,
-        out: &mut HashMap<String, u32>,
-        order: &mut Vec<String>,
-        next_idx: &mut u32,
-    ) {
+    fn walk(e: &Expr, out: &mut HashMap<String, u32>, order: &mut Vec<String>, next_idx: &mut u32) {
         let mut intern = |canonical: &str| {
             if !out.contains_key(canonical) {
                 out.insert(canonical.to_string(), *next_idx);
@@ -1075,10 +1036,8 @@ fn collect_tuples_from_str(
                 let inner = &trimmed[i + 1..j - 1];
                 collect_tuples_from_str(inner, out, order, next_idx);
                 // Build canonical `Tuple<A,B,...>` form
-                let canonical_inner: String = inner
-                    .chars()
-                    .filter(|c| !c.is_whitespace())
-                    .collect();
+                let canonical_inner: String =
+                    inner.chars().filter(|c| !c.is_whitespace()).collect();
                 let canonical = format!("Tuple<{canonical_inner}>");
                 if !out.contains_key(&canonical) {
                     out.insert(canonical.clone(), *next_idx);
@@ -1469,7 +1428,7 @@ pub(super) fn parse_map_kv(canonical: &str) -> Option<(&str, &str)> {
 /// Used by `TypeRegistry::build` to decide whether to allocate the
 /// `(array i8)` slot.
 fn fn_body_produces_string(fd: &crate::ast::FnDef) -> bool {
-    use crate::ast::{Expr, FnBody, Stmt};
+    use crate::ast::{FnBody, Stmt};
     let FnBody::Block(stmts) = fd.body.as_ref();
     stmts.iter().any(|s| match s {
         Stmt::Binding(_, _, e) | Stmt::Expr(e) => expr_uses_string(&e.node),
@@ -1706,7 +1665,8 @@ pub(super) fn aver_to_wasm(
     // `vector_types` map is keyed on whitespace-stripped canonical
     // form so `Vector<Int>` and `Vector< Int >` collide on the same
     // slot.
-    if trimmed.starts_with("Vector<") && trimmed.ends_with('>')
+    if trimmed.starts_with("Vector<")
+        && trimmed.ends_with('>')
         && let Some(reg) = registry
     {
         let canonical: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
@@ -1718,7 +1678,8 @@ pub(super) fn aver_to_wasm(
         }
     }
     // `Option<T>` resolves to `(ref null $option_T)`.
-    if trimmed.starts_with("Option<") && trimmed.ends_with('>')
+    if trimmed.starts_with("Option<")
+        && trimmed.ends_with('>')
         && let Some(reg) = registry
     {
         let canonical: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
@@ -1731,7 +1692,8 @@ pub(super) fn aver_to_wasm(
     }
     // `List<T>` — recursive Cons cell `(struct (T) (ref null $list_T))`.
     // Empty list = null ref.
-    if trimmed.starts_with("List<") && trimmed.ends_with('>')
+    if trimmed.starts_with("List<")
+        && trimmed.ends_with('>')
         && let Some(reg) = registry
     {
         let canonical = normalize_compound(trimmed);
@@ -1743,7 +1705,8 @@ pub(super) fn aver_to_wasm(
         }
     }
     // `Result<T, E>` — `(struct (mut i32 tag) (mut T ok) (mut E err))`.
-    if trimmed.starts_with("Result<") && trimmed.ends_with('>')
+    if trimmed.starts_with("Result<")
+        && trimmed.ends_with('>')
         && let Some(reg) = registry
     {
         let canonical: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
@@ -1757,7 +1720,8 @@ pub(super) fn aver_to_wasm(
     // `Map<K, V>` — monomorphised per instantiation. The registry
     // discovers each unique `Map<K, V>` in fn signatures and
     // allocates a slot triple (keys array, values array, struct).
-    if trimmed.starts_with("Map<") && trimmed.ends_with('>')
+    if trimmed.starts_with("Map<")
+        && trimmed.ends_with('>')
         && let Some(reg) = registry
     {
         let canonical: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
@@ -1769,7 +1733,8 @@ pub(super) fn aver_to_wasm(
         }
     }
     // `Tuple<A, B>` — `(struct (mut A) (mut B))`.
-    if trimmed.starts_with("Tuple<") && trimmed.ends_with('>')
+    if trimmed.starts_with("Tuple<")
+        && trimmed.ends_with('>')
         && let Some(reg) = registry
     {
         let canonical: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
@@ -1782,7 +1747,8 @@ pub(super) fn aver_to_wasm(
     }
     // `(A, B)` surface form for Tuple. Normalize to `Tuple<A,B>`
     // canonical for the registry lookup.
-    if trimmed.starts_with('(') && trimmed.ends_with(')')
+    if trimmed.starts_with('(')
+        && trimmed.ends_with(')')
         && let Some(reg) = registry
     {
         let inner = &trimmed[1..trimmed.len() - 1];
@@ -1798,10 +1764,7 @@ pub(super) fn aver_to_wasm(
             }
         }
         if has_top_comma {
-            let canonical_inner: String = inner
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect();
+            let canonical_inner: String = inner.chars().filter(|c| !c.is_whitespace()).collect();
             let canonical = format!("Tuple<{canonical_inner}>");
             if let Some(idx) = reg.tuple_type_idx(&canonical) {
                 return Ok(Some(ValType::Ref(RefType {
@@ -1882,7 +1845,6 @@ pub(super) fn record_struct_type(
     })
 }
 
-
 /// Aver type-string for a `BuiltinType` — Map and List forms use the
 /// canonical spelling the registry`s discovery pass already
 /// understands.
@@ -1908,9 +1870,10 @@ fn items_reference_name(items: &[crate::ast::TopLevel], name: &str) -> bool {
         TopLevel::FnDef(fd) => {
             fd.return_type.contains(name)
                 || fd.params.iter().any(|(_, t)| t.contains(name))
-                || fd.effects.iter().any(|e| {
-                    effect_implies_builtin_record(e.node.as_str(), name)
-                })
+                || fd
+                    .effects
+                    .iter()
+                    .any(|e| effect_implies_builtin_record(e.node.as_str(), name))
         }
         _ => false,
     })
@@ -1935,7 +1898,6 @@ fn effect_implies_builtin_record(effect: &str, record_name: &str) -> bool {
     };
     needed == record_name
 }
-
 
 /// Walk fn body for binding annotations carrying a `List<...>` type
 /// the fn signatures don't already spell out. `nested: List<List<Int>>

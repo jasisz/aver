@@ -177,18 +177,16 @@ fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
             {
                 return true;
             }
-            if arms
-                .iter()
-                .any(|a| matches!(&a.pattern, Pattern::Tuple(_)))
-            {
+            if arms.iter().any(|a| matches!(&a.pattern, Pattern::Tuple(_))) {
                 return true;
             }
             // String-subject match (`match s { "literal" -> ... }`)
             // stashes the subject ref in scratch and tests it against
             // each literal — needs a scratch slot.
-            if arms.iter().any(|a| {
-                matches!(&a.pattern, Pattern::Literal(Literal::Str(_)))
-            }) {
+            if arms
+                .iter()
+                .any(|a| matches!(&a.pattern, Pattern::Literal(Literal::Str(_))))
+            {
                 return true;
             }
             // Arm needs a scratch when it's a multi-arm Constructor
@@ -251,12 +249,9 @@ fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
         // running tail during the right-fold; empty literal lowers to
         // a single ref.null and doesn't need it.
         Expr::List(items) if !items.is_empty() => true,
-        Expr::List(items) => items
-            .iter()
-            .any(|e| expr_needs_scratch(&e.node, registry)),
+        Expr::List(items) => items.iter().any(|e| expr_needs_scratch(&e.node, registry)),
         Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
-            expr_needs_scratch(&k.node, registry)
-                || expr_needs_scratch(&v.node, registry)
+            expr_needs_scratch(&k.node, registry) || expr_needs_scratch(&v.node, registry)
         }),
         _ => false,
     }
@@ -316,16 +311,8 @@ fn subject_result_te(
     ))
 }
 
-fn subject_option_inner_type(
-    subject: &Expr,
-    registry: &TypeRegistry,
-    fd: &FnDef,
-    fn_map: &FnMap,
-) -> Option<String> {
-    subject_option_inner_type_with_prev(subject, registry, fd, fn_map, &HashMap::new())
-}
-
-/// Variant that consults a pre-built binding-type map. Slot pre-pass
+/// Resolves the `T` of an `Option<T>` subject from its (possibly
+/// nested) Aver-type form. Slot pre-pass
 /// uses this so `match Map.get(headers, ...)` over a binding correctly
 /// resolves to `Option<List<String>>` (sniff_with_prev sees `headers`
 /// is `Map<String, List<String>>`); the bare `infer_expr_wasm_type`
@@ -388,7 +375,11 @@ fn collect_expr_binding_slots(
             let is_option = arms.iter().any(arm_is_option_pattern);
             if is_option {
                 let inner = subject_option_inner_type_with_prev(
-                    &subject.node, registry, fd, fn_map, binding_types,
+                    &subject.node,
+                    registry,
+                    fd,
+                    fn_map,
+                    binding_types,
                 );
                 for arm in arms {
                     if let Pattern::Constructor(_, bindings) = &arm.pattern
@@ -400,14 +391,22 @@ fn collect_expr_binding_slots(
                             }
                             let inner_ty = inner.as_deref().ok_or(WasmGcError::Validation(
                                 "Option.Some binding without resolvable inner type — \
-                                 subject's Aver type must reduce to Option<T>".into(),
+                                 subject's Aver type must reduce to Option<T>"
+                                    .into(),
                             ))?;
                             if let Some(v) = aver_to_wasm(inner_ty, Some(registry))? {
                                 out.push(v);
                             }
                         }
                     }
-                    collect_expr_binding_slots(&arm.body.node, out, registry, fd, fn_map, binding_types)?;
+                    collect_expr_binding_slots(
+                        &arm.body.node,
+                        out,
+                        registry,
+                        fd,
+                        fn_map,
+                        binding_types,
+                    )?;
                 }
                 return Ok(());
             }
@@ -416,8 +415,7 @@ fn collect_expr_binding_slots(
             // type via reverse-lookup in result_order.
             let is_result = arms.iter().any(arm_is_result_pattern);
             if is_result {
-                let (t_aver, e_aver) =
-                    subject_result_te(&subject.node, registry, fd, fn_map)?;
+                let (t_aver, e_aver) = subject_result_te(&subject.node, registry, fd, fn_map)?;
                 for arm in arms {
                     if let Pattern::Constructor(name, bindings) = &arm.pattern
                         && arm_is_result_pattern(arm)
@@ -433,7 +431,14 @@ fn collect_expr_binding_slots(
                             }
                         }
                     }
-                    collect_expr_binding_slots(&arm.body.node, out, registry, fd, fn_map, binding_types)?;
+                    collect_expr_binding_slots(
+                        &arm.body.node,
+                        out,
+                        registry,
+                        fd,
+                        fn_map,
+                        binding_types,
+                    )?;
                 }
                 return Ok(());
             }
@@ -462,8 +467,7 @@ fn collect_expr_binding_slots(
                 if let Pattern::Tuple(items) = &arm.pattern
                     && items.len() == 2
                 {
-                    let subject_ty =
-                        infer_expr_wasm_type(&subject.node, registry, fd, fn_map)?;
+                    let subject_ty = infer_expr_wasm_type(&subject.node, registry, fd, fn_map)?;
                     if let Some(ValType::Ref(rt)) = subject_ty
                         && let wasm_encoder::HeapType::Concrete(idx) = rt.heap_type
                     {
@@ -494,8 +498,7 @@ fn collect_expr_binding_slots(
                     // $list_T). Both come from the subject's
                     // `List<T>` instantiation; recover by inferring
                     // the wasm type of the subject.
-                    let subject_ty =
-                        infer_expr_wasm_type(&subject.node, registry, fd, fn_map)?;
+                    let subject_ty = infer_expr_wasm_type(&subject.node, registry, fd, fn_map)?;
                     if let Some(ValType::Ref(rt)) = subject_ty
                         && let wasm_encoder::HeapType::Concrete(idx) = rt.heap_type
                     {
@@ -521,7 +524,14 @@ fn collect_expr_binding_slots(
                         }
                     }
                 }
-                collect_expr_binding_slots(&arm.body.node, out, registry, fd, fn_map, binding_types)?;
+                collect_expr_binding_slots(
+                    &arm.body.node,
+                    out,
+                    registry,
+                    fd,
+                    fn_map,
+                    binding_types,
+                )?;
             }
         }
         Expr::BinOp(_, l, r) => {
@@ -539,7 +549,9 @@ fn collect_expr_binding_slots(
                 collect_expr_binding_slots(&arg.node, out, registry, fd, fn_map, binding_types)?;
             }
         }
-        Expr::Attr(obj, _) => collect_expr_binding_slots(&obj.node, out, registry, fd, fn_map, binding_types)?,
+        Expr::Attr(obj, _) => {
+            collect_expr_binding_slots(&obj.node, out, registry, fd, fn_map, binding_types)?
+        }
         Expr::Constructor(_, payload) => {
             if let Some(p) = payload.as_deref() {
                 collect_expr_binding_slots(&p.node, out, registry, fd, fn_map, binding_types)?;
@@ -638,17 +650,13 @@ fn infer_expr_wasm_type(
                         // registry slots that this fn's signature could
                         // produce. The fill arg's primitive yields the
                         // element type string.
-                        let elem_aver = match infer_expr_wasm_type(
-                            &args[1].node,
-                            registry,
-                            fd,
-                            fn_map,
-                        )? {
-                            Some(ValType::I64) => "Int",
-                            Some(ValType::F64) => "Float",
-                            Some(ValType::I32) => "Bool",
-                            _ => "Int",
-                        };
+                        let elem_aver =
+                            match infer_expr_wasm_type(&args[1].node, registry, fd, fn_map)? {
+                                Some(ValType::I64) => "Int",
+                                Some(ValType::F64) => "Float",
+                                Some(ValType::I32) => "Bool",
+                                _ => "Int",
+                            };
                         let canonical = format!("Vector<{elem_aver}>");
                         return aver_to_wasm(&canonical, Some(registry));
                     }
@@ -679,18 +687,14 @@ fn infer_expr_wasm_type(
                     }
                     if dotted == "Option.Some" && args.len() == 1 {
                         // Resolve via inferred inner type → `Option<T>`.
-                        let inner_val =
-                            infer_expr_wasm_type(&args[0].node, registry, fd, fn_map)?;
+                        let inner_val = infer_expr_wasm_type(&args[0].node, registry, fd, fn_map)?;
                         let inner_aver = match inner_val {
                             Some(ValType::I64) => "Int",
                             Some(ValType::F64) => "Float",
                             Some(ValType::I32) => "Bool",
                             _ => "Int",
                         };
-                        return aver_to_wasm(
-                            &format!("Option<{inner_aver}>"),
-                            Some(registry),
-                        );
+                        return aver_to_wasm(&format!("Option<{inner_aver}>"), Some(registry));
                     }
                     if dotted == "Option.None" {
                         return aver_to_wasm(&fd.return_type, Some(registry));
@@ -738,19 +742,16 @@ fn infer_expr_wasm_type(
                     // primitive wasm types — no registry lookup
                     // needed.
                     let primitive_return = match dotted.as_str() {
-                        "Float.floor" | "Float.ceil" | "Float.round"
-                        | "Float.abs" | "Float.sqrt" | "Float.min"
-                        | "Float.max" | "Float.pi" | "Float.sin"
-                        | "Float.cos" | "Float.pow" | "Float.toString"
-                        | "Int.toFloat" => Some(ValType::F64),
-                        "Int.abs" | "Int.min" | "Int.max" | "Int.mod"
-                        | "List.len" | "List.length" | "Vector.len"
-                        | "Map.len" | "String.len" | "Char.toCode" => {
-                            Some(ValType::I64)
+                        "Float.floor" | "Float.ceil" | "Float.round" | "Float.abs"
+                        | "Float.sqrt" | "Float.min" | "Float.max" | "Float.pi" | "Float.sin"
+                        | "Float.cos" | "Float.pow" | "Float.toString" | "Int.toFloat" => {
+                            Some(ValType::F64)
                         }
-                        "Bool.and" | "Bool.or" | "Bool.not"
-                        | "String.startsWith" | "String.contains"
-                        | "Map.has" | "List.contains" => Some(ValType::I32),
+                        "Int.abs" | "Int.min" | "Int.max" | "Int.mod" | "List.len"
+                        | "List.length" | "Vector.len" | "Map.len" | "String.len"
+                        | "Char.toCode" => Some(ValType::I64),
+                        "Bool.and" | "Bool.or" | "Bool.not" | "String.startsWith"
+                        | "String.contains" | "Map.has" | "List.contains" => Some(ValType::I32),
                         _ => None,
                     };
                     if let Some(v) = primitive_return {
@@ -759,9 +760,15 @@ fn infer_expr_wasm_type(
                         // dotted entries handled via String repr.
                         if matches!(
                             dotted.as_str(),
-                            "Float.toString" | "Int.toString" | "String.fromInt" | "String.fromFloat"
-                                | "String.toUpper" | "String.toLower" | "String.trim"
-                                | "String.replace" | "String.slice"
+                            "Float.toString"
+                                | "Int.toString"
+                                | "String.fromInt"
+                                | "String.fromFloat"
+                                | "String.toUpper"
+                                | "String.toLower"
+                                | "String.trim"
+                                | "String.replace"
+                                | "String.slice"
                         ) {
                             return aver_to_wasm("String", Some(registry));
                         }
@@ -1042,7 +1049,6 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
         Expr::Literal(Literal::Bool(_)) => Ok("Bool".into()),
         Expr::Literal(Literal::Unit) => Ok("Unit".into()),
         Expr::Literal(Literal::Str(_)) => Ok("String".into()),
-        Expr::Literal(_) => Ok("Int".into()),
         Expr::InterpolatedStr(_) => Ok("String".into()),
         Expr::Resolved { name, .. } => {
             // Look up the param/binding type. Falls back to "Int" only
@@ -1080,9 +1086,7 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
                         return Ok(builtin_aver_result_type(&dotted).into());
                     }
                     if ctx.fn_map.effects.contains_key(&dotted) {
-                        return Ok(effect_aver_return_type(&dotted)
-                            .unwrap_or("Unit")
-                            .into());
+                        return Ok(effect_aver_return_type(&dotted).unwrap_or("Unit").into());
                     }
                     if dotted == "Float.fromInt" {
                         return Ok("Float".into());
@@ -1105,8 +1109,7 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
                         // shape collapses earlier in `emit_option_with_default`,
                         // so this only fires for non-fused calls.
                         let v = infer_aver_type(&args[0].node, ctx)?;
-                        let canonical: String =
-                            v.chars().filter(|c| !c.is_whitespace()).collect();
+                        let canonical: String = v.chars().filter(|c| !c.is_whitespace()).collect();
                         if super::types::TypeRegistry::vector_element_type(&canonical).is_some() {
                             return Ok(format!("Option<{canonical}>"));
                         }
@@ -1114,8 +1117,7 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
                     }
                     if dotted == "Vector.toList" && args.len() == 1 {
                         let v = infer_aver_type(&args[0].node, ctx)?;
-                        let canonical: String =
-                            v.chars().filter(|c| !c.is_whitespace()).collect();
+                        let canonical: String = v.chars().filter(|c| !c.is_whitespace()).collect();
                         if let Some(elem) =
                             super::types::TypeRegistry::vector_element_type(&canonical)
                         {
@@ -1136,8 +1138,7 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
                     }
                     if (dotted == "Map.keys" || dotted == "Map.values") && args.len() == 1 {
                         let m = infer_aver_type(&args[0].node, ctx)?;
-                        let canonical: String =
-                            m.chars().filter(|c| !c.is_whitespace()).collect();
+                        let canonical: String = m.chars().filter(|c| !c.is_whitespace()).collect();
                         if let Some((k, v)) = super::types::parse_map_kv(&canonical) {
                             let elem = if dotted == "Map.keys" { k } else { v };
                             return Ok(format!("List<{elem}>"));
@@ -1146,8 +1147,7 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
                     }
                     if dotted == "Map.entries" && args.len() == 1 {
                         let m = infer_aver_type(&args[0].node, ctx)?;
-                        let canonical: String =
-                            m.chars().filter(|c| !c.is_whitespace()).collect();
+                        let canonical: String = m.chars().filter(|c| !c.is_whitespace()).collect();
                         if let Some((k, v)) = super::types::parse_map_kv(&canonical) {
                             return Ok(format!("List<Tuple<{k},{v}>>"));
                         }
@@ -1155,8 +1155,7 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
                     }
                     if dotted == "Map.fromList" && args.len() == 1 {
                         let l = infer_aver_type(&args[0].node, ctx)?;
-                        let canonical: String =
-                            l.chars().filter(|c| !c.is_whitespace()).collect();
+                        let canonical: String = l.chars().filter(|c| !c.is_whitespace()).collect();
                         if let Some(elem) = TypeRegistry::list_element_type(&canonical)
                             && let Some((k, v)) = TypeRegistry::tuple_ab(elem)
                         {
@@ -1169,8 +1168,7 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
                     }
                     if dotted == "Vector.get" && args.len() == 2 {
                         let vec_ty = infer_aver_type(&args[0].node, ctx)?;
-                        if let Some(elem) =
-                            super::types::TypeRegistry::vector_element_type(&vec_ty)
+                        if let Some(elem) = super::types::TypeRegistry::vector_element_type(&vec_ty)
                         {
                             return Ok(format!("Option<{}>", elem.trim()));
                         }
@@ -1200,8 +1198,7 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
                         // Find a registered Result with matching T,
                         // fall back to ctx.return_type.
                         if let Some(c) = ctx.registry.result_order.iter().find(|c| {
-                            TypeRegistry::result_te(c)
-                                .is_some_and(|(t2, _)| t2 == t.trim())
+                            TypeRegistry::result_te(c).is_some_and(|(t2, _)| t2 == t.trim())
                         }) {
                             return Ok(c.clone());
                         }
@@ -1210,8 +1207,7 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
                     if dotted == "Result.Err" && args.len() == 1 {
                         let e = infer_aver_type(&args[0].node, ctx)?;
                         if let Some(c) = ctx.registry.result_order.iter().find(|c| {
-                            TypeRegistry::result_te(c)
-                                .is_some_and(|(_, e2)| e2 == e.trim())
+                            TypeRegistry::result_te(c).is_some_and(|(_, e2)| e2 == e.trim())
                         }) {
                             return Ok(c.clone());
                         }
@@ -1255,9 +1251,7 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
                     }
                     if dotted == "Map.get" && args.len() == 2 {
                         let map_ty = infer_aver_type(&args[0].node, ctx)?;
-                        if let Some((_, v)) =
-                            super::types::parse_map_kv(&map_ty.replace(' ', ""))
-                        {
+                        if let Some((_, v)) = super::types::parse_map_kv(&map_ty.replace(' ', "")) {
                             return Ok(format!("Option<{v}>"));
                         }
                         return Ok("Option<Int>".into());
@@ -1318,11 +1312,10 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
             // type of `obj`, look up the field's declared type.
             // Otherwise fall back to "Int" (most bench scenarios with
             // Attr access do unwrap a numeric field).
-            if let Ok(Some(record_name)) = struct_name_of_unboxed(&obj.node, ctx) {
-                if let Some(ty) = ctx.registry.record_field_type(&record_name, field) {
+            if let Ok(Some(record_name)) = struct_name_of_unboxed(&obj.node, ctx)
+                && let Some(ty) = ctx.registry.record_field_type(&record_name, field) {
                     return Ok(ty.into());
                 }
-            }
             Ok("Int".into())
         }
         Expr::Constructor(name, _) => {
@@ -1366,11 +1359,10 @@ fn struct_name_of_unboxed(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<Option<Strin
         // Otherwise: look up the variable's declared type via the
         // resolution-driven param map (we don't have a binding-type
         // map yet, so this only works for params).
-        if let Some(ty) = lookup_var_type(name, ctx) {
-            if ctx.registry.records.contains_key(&ty) {
+        if let Some(ty) = lookup_var_type(name, ctx)
+            && ctx.registry.records.contains_key(&ty) {
                 return Ok(Some(ty));
             }
-        }
     }
     Ok(None)
 }
@@ -1399,9 +1391,7 @@ fn collect_binding_types(
     let mut out: HashMap<String, String> = HashMap::new();
     for stmt in stmts {
         if let Stmt::Binding(name, annot, expr) = stmt {
-            let ty = annot
-                .as_ref()
-                .map(|a| a.clone())
+            let ty = annot.clone()
                 .or_else(|| sniff_aver_type_ext(&expr.node, fd, fn_map, registry, &out));
             if let Some(t) = ty {
                 out.insert(name.clone(), t);
@@ -1547,8 +1537,7 @@ fn collect_match_pattern_types(
                         }
                         // User variants — recover field types.
                         if let Some(info) = registry.variant(bare) {
-                            for (binding_name, field_ty) in
-                                bindings.iter().zip(info.fields.iter())
+                            for (binding_name, field_ty) in bindings.iter().zip(info.fields.iter())
                             {
                                 if binding_name != "_" {
                                     out.insert(binding_name.clone(), field_ty.clone());
@@ -1563,18 +1552,6 @@ fn collect_match_pattern_types(
         Expr::InterpolatedStr(_) => {}
         _ => {}
     }
-}
-
-/// Best-effort Aver type for an RHS expression — same shape as
-/// `infer_aver_type`, but operates without the full `EmitCtx` so it
-/// can run during pre-pass binding discovery.
-fn sniff_aver_type(
-    expr: &Expr,
-    fd: &FnDef,
-    fn_map: &FnMap,
-    registry: &TypeRegistry,
-) -> Option<String> {
-    sniff_with_prev(expr, fd, fn_map, registry, &HashMap::new())
 }
 
 fn sniff_with_prev(
@@ -1765,14 +1742,11 @@ fn sniff_with_prev(
             None
         }
         Expr::RecordCreate { type_name, .. } => Some(type_name.clone()),
-        Expr::Constructor(name, _) => {
-            registry.variant(name).map(|info| info.parent.clone())
-        }
+        Expr::Constructor(name, _) => registry.variant(name).map(|info| info.parent.clone()),
         Expr::InterpolatedStr(_) => Some("String".into()),
         _ => None,
     }
 }
-
 
 /// Aver return type string for an effect dotted name (`Time.unixMs`
 /// → `"Int"`, `Request.method` → `"String"`, etc.). `None` means
@@ -1781,21 +1755,9 @@ fn sniff_with_prev(
 fn effect_aver_return_type(dotted: &str) -> Option<&'static str> {
     Some(match dotted {
         "Time.unixMs" | "Random.int" | "Args._len" | "Args.len" => "Int",
-        "Random.float"
-        | "Float.sin"
-        | "Float.cos"
-        | "Float.atan2"
-        | "Float.pow" => "Float",
-        "Request.method"
-        | "Request.url"
-        | "Request.path"
-        | "Request.query"
-        | "Request.body"
-        | "Request.country"
-        | "Console.readLine"
-        | "Args._get"
-        | "Args.get"
-        | "Time.now"
+        "Random.float" | "Float.sin" | "Float.cos" | "Float.atan2" | "Float.pow" => "Float",
+        "Request.method" | "Request.url" | "Request.path" | "Request.query" | "Request.body"
+        | "Request.country" | "Console.readLine" | "Args._get" | "Args.get" | "Time.now"
         | "Env.get" => "String",
         "Request.headersLoad" | "Request.headers" => "Map<String,List<String>>",
         "Terminal.readKey" => "Option<String>",
@@ -1820,15 +1782,14 @@ fn dotted_return_type(dotted: &str) -> Option<&'static str> {
         // Int results — `Float.floor/ceil/round` return Int per
         // Aver stdlib semantics (legacy backend matches).
         "String.len" | "String.length" | "String.byteLength" | "List.len" | "List.length"
-        | "Vector.len" | "Map.len" | "Char.toCode" | "Int.abs" | "Int.min"
-        | "Int.max" | "Float.floor" | "Float.ceil" | "Float.round" => "Int",
+        | "Vector.len" | "Map.len" | "Char.toCode" | "Int.abs" | "Int.min" | "Int.max"
+        | "Float.floor" | "Float.ceil" | "Float.round" => "Int",
         // Float results
-        "Float.abs" | "Float.sqrt"
-        | "Float.min" | "Float.max" | "Float.pi" | "Float.sin" | "Float.cos"
-        | "Float.pow" | "Int.toFloat" | "Float.fromInt" => "Float",
+        "Float.abs" | "Float.sqrt" | "Float.min" | "Float.max" | "Float.pi" | "Float.sin"
+        | "Float.cos" | "Float.pow" | "Int.toFloat" | "Float.fromInt" => "Float",
         // Bool results
-        "Bool.and" | "Bool.or" | "Bool.not" | "String.startsWith"
-        | "String.endsWith" | "String.contains" | "Map.has" | "List.contains" => "Bool",
+        "Bool.and" | "Bool.or" | "Bool.not" | "String.startsWith" | "String.endsWith"
+        | "String.contains" | "Map.has" | "List.contains" => "Bool",
         // Char results
         // Note: `Char.fromCode` actually returns `Option<String>`
         // (Aver Char = 1-byte String), handled below.
@@ -1868,15 +1829,14 @@ fn builtin_aver_result_type(dotted: &str) -> &'static str {
         // Returns Int — `Float.floor / ceil / round` are Aver-Int per
         // stdlib semantics.
         "String.len" | "String.length" | "String.byteLength" | "List.len" | "List.length"
-        | "Vector.len" | "Map.len" | "Char.toCode" | "Int.abs" | "Int.min"
-        | "Int.max" | "Float.floor" | "Float.ceil" | "Float.round" => "Int",
+        | "Vector.len" | "Map.len" | "Char.toCode" | "Int.abs" | "Int.min" | "Int.max"
+        | "Float.floor" | "Float.ceil" | "Float.round" => "Int",
         // Returns Float
-        "Float.abs" | "Float.sqrt"
-        | "Float.min" | "Float.max" | "Float.pi" | "Float.sin" | "Float.cos"
-        | "Float.pow" | "Int.toFloat" | "Float.fromInt" => "Float",
+        "Float.abs" | "Float.sqrt" | "Float.min" | "Float.max" | "Float.pi" | "Float.sin"
+        | "Float.cos" | "Float.pow" | "Int.toFloat" | "Float.fromInt" => "Float",
         // Returns Bool
-        "Bool.and" | "Bool.or" | "Bool.not" | "String.startsWith"
-        | "String.endsWith" | "String.contains" | "Map.has" | "List.contains" => "Bool",
+        "Bool.and" | "Bool.or" | "Bool.not" | "String.startsWith" | "String.endsWith"
+        | "String.contains" | "Map.has" | "List.contains" => "Bool",
         // List-T-preserving — return type matches arg[0] (List<T>).
         // `infer_aver_type` reaches into the call args itself for
         // these, so `builtin_aver_result_type` only sees them as a
@@ -1918,7 +1878,7 @@ fn emit_default_value(
             Ok(())
         }
         "Float" => {
-            func.instruction(&Instruction::F64Const(0.0.into()));
+            func.instruction(&Instruction::F64Const(0.0));
             Ok(())
         }
         "Bool" => {
@@ -1980,15 +1940,16 @@ fn emit_option_constructor(
     } else {
         format!("Option<{}>", t_aver)
     };
-    let opt_idx = ctx.registry.option_type_idx(&canonical).ok_or(
-        WasmGcError::Validation(format!(
+    let opt_idx = ctx
+        .registry
+        .option_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
             "Option constructor: instantiation `{canonical}` was not registered. \
              Discovery should have walked fn signatures + bodies."
-        )),
-    )?;
-    let inner_ty = TypeRegistry::option_element_type(&canonical).ok_or(
-        WasmGcError::Validation(format!("Option canonical `{canonical}` has no element type")),
-    )?;
+        )))?;
+    let inner_ty = TypeRegistry::option_element_type(&canonical).ok_or(WasmGcError::Validation(
+        format!("Option canonical `{canonical}` has no element type"),
+    ))?;
 
     match payload {
         Some(p) => {
@@ -2017,7 +1978,7 @@ fn emit_expr(
             func.instruction(&Instruction::I64Const(*n));
         }
         Expr::Literal(Literal::Float(f)) => {
-            func.instruction(&Instruction::F64Const((*f).into()));
+            func.instruction(&Instruction::F64Const(*f));
         }
         Expr::Literal(Literal::Bool(b)) => {
             func.instruction(&Instruction::I32Const(if *b { 1 } else { 0 }));
@@ -2027,11 +1988,12 @@ fn emit_expr(
             // String literal → passive data segment; emit
             // `array.new_data $string $seg` with offset=0, size=len.
             let bytes = s.as_bytes();
-            let seg_idx = ctx.registry.string_literal_segment(bytes).ok_or(
-                WasmGcError::Validation(format!(
-                    "String literal `{s:?}` was not registered in the data segment table"
-                )),
-            )?;
+            let seg_idx =
+                ctx.registry
+                    .string_literal_segment(bytes)
+                    .ok_or(WasmGcError::Validation(format!(
+                        "String literal `{s:?}` was not registered in the data segment table"
+                    )))?;
             let string_type_idx =
                 ctx.registry
                     .string_array_type_idx
@@ -2044,11 +2006,6 @@ fn emit_expr(
                 array_type_index: string_type_idx,
                 array_data_index: seg_idx,
             });
-        }
-        Expr::Literal(_) => {
-            return Err(WasmGcError::Unimplemented(
-                "phase 3 — Char / other literals",
-            ));
         }
         Expr::InterpolatedStr(parts) => {
             emit_interpolated_str(func, parts, slots, ctx)?;
@@ -2123,13 +2080,9 @@ fn emit_expr(
                         "Some" if args.len() == 1 => {
                             emit_option_constructor(func, Some(&args[0]), None, slots, ctx)
                         }
-                        "None" => emit_option_constructor(
-                            func,
-                            None,
-                            Some(ctx.return_type),
-                            slots,
-                            ctx,
-                        ),
+                        "None" => {
+                            emit_option_constructor(func, None, Some(ctx.return_type), slots, ctx)
+                        }
                         _ => Err(WasmGcError::Validation(format!(
                             "Option.{member} with {} args is not a valid constructor",
                             args.len()
@@ -2140,13 +2093,7 @@ fn emit_expr(
                     && p == "Result"
                     && (member == "Ok" || member == "Err")
                 {
-                    return emit_result_constructor(
-                        func,
-                        member,
-                        args.first(),
-                        slots,
-                        ctx,
-                    );
+                    return emit_result_constructor(func, member, args.first(), slots, ctx);
                 }
                 // `List.prepend(head, tail)` — direct Cons cell.
                 if let Expr::Ident(p) = &parent.node
@@ -2338,9 +2285,9 @@ fn struct_name_of(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<String>, WasmGcError> {
-    if let Expr::Resolved { slot, .. } = expr {
-        if let Some(ValType::Ref(rt)) = slots.by_slot.get(*slot as usize) {
-            if let wasm_encoder::HeapType::Concrete(idx) = rt.heap_type {
+    if let Expr::Resolved { slot, .. } = expr
+        && let Some(ValType::Ref(rt)) = slots.by_slot.get(*slot as usize)
+            && let wasm_encoder::HeapType::Concrete(idx) = rt.heap_type {
                 // Reverse-lookup the registry by type idx.
                 for (name, recorded_idx) in &ctx.registry.records {
                     if *recorded_idx == idx {
@@ -2348,8 +2295,6 @@ fn struct_name_of(
                     }
                 }
             }
-        }
-    }
     Ok(None)
 }
 
@@ -2404,9 +2349,9 @@ fn emit_result_constructor(
         .registry
         .result_type_idx(&canonical)
         .expect("just-resolved canonical");
-    let (t_aver, e_aver) = TypeRegistry::result_te(&canonical).ok_or(
-        WasmGcError::Validation(format!("Result canonical `{canonical}` malformed")),
-    )?;
+    let (t_aver, e_aver) = TypeRegistry::result_te(&canonical).ok_or(WasmGcError::Validation(
+        format!("Result canonical `{canonical}` malformed"),
+    ))?;
 
     if variant == "Ok" {
         func.instruction(&Instruction::I32Const(1));
@@ -3548,9 +3493,7 @@ fn emit_dotted_builtin(
             Ok(())
         }
         "Float.pi" if args.is_empty() => {
-            func.instruction(&Instruction::F64Const(
-                std::f64::consts::PI.into(),
-            ));
+            func.instruction(&Instruction::F64Const(std::f64::consts::PI));
             Ok(())
         }
         // `Int.toFloat` is the same op as `Float.fromInt` — Aver has
@@ -3643,11 +3586,13 @@ fn emit_dotted_builtin(
         // Float.toString lands.
         "String.fromInt" if args.len() == 1 => {
             let to_string_idx =
-                ctx.fn_map.builtins.get("Int.toString").copied().ok_or(
-                    WasmGcError::Validation(
+                ctx.fn_map
+                    .builtins
+                    .get("Int.toString")
+                    .copied()
+                    .ok_or(WasmGcError::Validation(
                         "String.fromInt requires Int.toString builtin".into(),
-                    ),
-                )?;
+                    ))?;
             emit_expr(func, &args[0].node, slots, ctx)?;
             func.instruction(&Instruction::Call(to_string_idx));
             Ok(())
@@ -3664,11 +3609,14 @@ fn emit_dotted_builtin(
         // matched behaviour). Map String.length here to keep both
         // surface spellings viable without a second helper.
         "String.length" | "String.byteLength" if args.len() == 1 => {
-            let len_idx = ctx.fn_map.builtins.get("String.len").copied().ok_or(
-                WasmGcError::Validation(
-                    "String.length / byteLength require the String.len builtin".into(),
-                ),
-            )?;
+            let len_idx =
+                ctx.fn_map
+                    .builtins
+                    .get("String.len")
+                    .copied()
+                    .ok_or(WasmGcError::Validation(
+                        "String.length / byteLength require the String.len builtin".into(),
+                    ))?;
             emit_expr(func, &args[0].node, slots, ctx)?;
             func.instruction(&Instruction::Call(len_idx));
             Ok(())
@@ -3726,9 +3674,7 @@ fn emit_dotted_builtin(
         "Map.empty" => emit_map_empty_call(func, args, slots, ctx),
         "Map.set" | "Map.get" | "Map.len" | "Map.has" | "Map.keys" | "Map.values"
         | "Map.remove" | "Map.entries" => emit_map_kv_call(func, method, args, slots, ctx),
-        "Map.fromList" if args.len() == 1 => {
-            emit_map_from_list_call(func, &args[0], slots, ctx)
-        }
+        "Map.fromList" if args.len() == 1 => emit_map_from_list_call(func, &args[0], slots, ctx),
         // List<T> — per-instantiation helpers via `lists::ListOps`.
         "List.reverse" if args.len() == 1 => {
             emit_list_op_call(func, &args[0], "reverse", slots, ctx)
@@ -3748,16 +3694,10 @@ fn emit_dotted_builtin(
         "List.contains" if args.len() == 2 => {
             emit_list_op_call_2(func, &args[0], &args[1], "contains", slots, ctx)
         }
-        "List.zip" if args.len() == 2 => {
-            emit_list_zip_call(func, &args[0], &args[1], slots, ctx)
-        }
+        "List.zip" if args.len() == 2 => emit_list_zip_call(func, &args[0], &args[1], slots, ctx),
         // Vector.fromList(list: List<T>) -> Vector<T>
-        "Vector.fromList" if args.len() == 1 => {
-            emit_vec_from_list_call(func, &args[0], slots, ctx)
-        }
-        "Vector.toList" if args.len() == 1 => {
-            emit_vec_to_list_call(func, &args[0], slots, ctx)
-        }
+        "Vector.fromList" if args.len() == 1 => emit_vec_from_list_call(func, &args[0], slots, ctx),
+        "Vector.toList" if args.len() == 1 => emit_vec_to_list_call(func, &args[0], slots, ctx),
         // String.split / String.join — singleton (T=String).
         "String.split" if args.len() == 2 => {
             let ops = ctx.fn_map.string_split_ops.ok_or(WasmGcError::Validation(
@@ -4091,14 +4031,12 @@ fn emit_result_with_default(
         .ok_or(WasmGcError::Validation(format!(
             "Result.withDefault: arg of type `{res_aver}` is not a registered Result<T,E>"
         )))?;
-    let (t_aver, _) = TypeRegistry::result_te(&canonical).ok_or(
-        WasmGcError::Validation(format!("Result canonical `{canonical}` malformed")),
-    )?;
-    let elem_val = aver_to_wasm(t_aver, Some(ctx.registry))?.ok_or(
-        WasmGcError::Validation(format!(
-            "Result.withDefault: T type `{t_aver}` has no wasm representation"
-        )),
-    )?;
+    let (t_aver, _) = TypeRegistry::result_te(&canonical).ok_or(WasmGcError::Validation(
+        format!("Result canonical `{canonical}` malformed"),
+    ))?;
+    let elem_val = aver_to_wasm(t_aver, Some(ctx.registry))?.ok_or(WasmGcError::Validation(
+        format!("Result.withDefault: T type `{t_aver}` has no wasm representation"),
+    ))?;
     let block_ty = wasm_encoder::BlockType::Result(elem_val);
     let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
         "Result.withDefault needs a scratch slot but none was reserved".into(),
@@ -4149,20 +4087,18 @@ fn emit_option_to_result(
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     let opt_aver = infer_aver_type(&opt_arg.node, ctx)?;
-    let opt_canonical: String =
-        opt_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    let opt_canonical: String = opt_aver.chars().filter(|c| !c.is_whitespace()).collect();
     let opt_idx = ctx
         .registry
         .option_type_idx(&opt_canonical)
         .ok_or(WasmGcError::Validation(format!(
             "Option.toResult: opt arg of type `{opt_aver}` is not a registered Option<T>"
         )))?;
-    let t_aver =
-        super::types::TypeRegistry::option_element_type(&opt_canonical).ok_or(
-            WasmGcError::Validation(format!(
-                "Option.toResult: cannot parse element type from `{opt_canonical}`"
-            )),
-        )?;
+    let t_aver = super::types::TypeRegistry::option_element_type(&opt_canonical).ok_or(
+        WasmGcError::Validation(format!(
+            "Option.toResult: cannot parse element type from `{opt_canonical}`"
+        )),
+    )?;
     let e_aver = infer_aver_type(&err_arg.node, ctx)?;
     let result_canonical: String = format!("Result<{},{}>", t_aver.trim(), e_aver.trim())
         .chars()
@@ -4241,11 +4177,9 @@ fn emit_option_with_default_boxed(
             "Option.withDefault: cannot parse element type from `{canonical}`"
         )),
     )?;
-    let elem_val = aver_to_wasm(element, Some(ctx.registry))?.ok_or(
-        WasmGcError::Validation(format!(
-            "Option.withDefault: element type `{element}` has no wasm representation"
-        )),
-    )?;
+    let elem_val = aver_to_wasm(element, Some(ctx.registry))?.ok_or(WasmGcError::Validation(
+        format!("Option.withDefault: element type `{element}` has no wasm representation"),
+    ))?;
     let block_ty = wasm_encoder::BlockType::Result(elem_val);
 
     // Stash opt in scratch, peek at tag.
@@ -4405,11 +4339,12 @@ fn emit_interpolated_str(
         match part {
             StrPart::Literal(s) => {
                 let bytes = s.as_bytes();
-                let seg_idx = ctx.registry.string_literal_segment(bytes).ok_or(
-                    WasmGcError::Validation(format!(
-                        "Interpolation literal `{s:?}` not in segment table"
-                    )),
-                )?;
+                let seg_idx =
+                    ctx.registry
+                        .string_literal_segment(bytes)
+                        .ok_or(WasmGcError::Validation(format!(
+                            "Interpolation literal `{s:?}` not in segment table"
+                        )))?;
                 func.instruction(&Instruction::I32Const(0));
                 func.instruction(&Instruction::I32Const(bytes.len() as i32));
                 func.instruction(&Instruction::ArrayNewData {
@@ -4423,11 +4358,12 @@ fn emit_interpolated_str(
                 match aver_ty.trim() {
                     "String" => { /* identity */ }
                     "Int" => {
-                        let to_string_idx = ctx.fn_map.builtins.get("Int.toString").copied().ok_or(
-                            WasmGcError::Validation(
-                                "interpolation of Int requires Int.toString builtin".into(),
-                            ),
-                        )?;
+                        let to_string_idx =
+                            ctx.fn_map.builtins.get("Int.toString").copied().ok_or(
+                                WasmGcError::Validation(
+                                    "interpolation of Int requires Int.toString builtin".into(),
+                                ),
+                            )?;
                         func.instruction(&Instruction::Call(to_string_idx));
                     }
                     other => {
@@ -4588,13 +4524,10 @@ fn emit_map_from_list_call(
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     let list_aver = infer_aver_type(&list_arg.node, ctx)?;
-    let list_canonical: String =
-        list_aver.chars().filter(|c| !c.is_whitespace()).collect();
-    let elem = TypeRegistry::list_element_type(&list_canonical).ok_or(
-        WasmGcError::Validation(format!(
-            "Map.fromList: input `{list_aver}` is not a List<Tuple<K,V>>"
-        )),
-    )?;
+    let list_canonical: String = list_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    let elem = TypeRegistry::list_element_type(&list_canonical).ok_or(WasmGcError::Validation(
+        format!("Map.fromList: input `{list_aver}` is not a List<Tuple<K,V>>"),
+    ))?;
     let (k, v) = TypeRegistry::tuple_ab(elem).ok_or(WasmGcError::Validation(format!(
         "Map.fromList: list element `{elem}` is not a Tuple<K, V>"
     )))?;
@@ -4623,12 +4556,12 @@ fn emit_list_zip_call(
 ) -> Result<(), WasmGcError> {
     let la_aver = infer_aver_type(&la.node, ctx)?;
     let lb_aver = infer_aver_type(&lb.node, ctx)?;
-    let a = TypeRegistry::list_element_type(&la_aver).ok_or(WasmGcError::Validation(
-        format!("List.zip: first arg type `{la_aver}` is not a List<T>"),
-    ))?;
-    let b = TypeRegistry::list_element_type(&lb_aver).ok_or(WasmGcError::Validation(
-        format!("List.zip: second arg type `{lb_aver}` is not a List<T>"),
-    ))?;
+    let a = TypeRegistry::list_element_type(&la_aver).ok_or(WasmGcError::Validation(format!(
+        "List.zip: first arg type `{la_aver}` is not a List<T>"
+    )))?;
+    let b = TypeRegistry::list_element_type(&lb_aver).ok_or(WasmGcError::Validation(format!(
+        "List.zip: second arg type `{lb_aver}` is not a List<T>"
+    )))?;
     let tup_canonical = format!("Tuple<{},{}>", a.trim(), b.trim());
     let zip_fn = ctx
         .fn_map
@@ -4826,7 +4759,9 @@ fn emit_vector_set_boxed(
     func.instruction(&Instruction::Else);
     // OOB: tag=0, value=null vec ref
     func.instruction(&Instruction::I32Const(0));
-    func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(vec_idx)));
+    func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        vec_idx,
+    )));
     func.instruction(&Instruction::StructNew(opt_idx));
     func.instruction(&Instruction::End);
     Ok(())

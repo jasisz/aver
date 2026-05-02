@@ -147,18 +147,6 @@ impl BuiltinName {
         }
     }
 
-    /// Builtins whose surface name is internal to the wasm-gc backend
-    /// (not addressable from Aver source). These get registered
-    /// explicitly when the codegen emit path needs them — currently
-    /// `Expr::InterpolatedStr` registers `StringConcatN`.
-    pub(super) fn internal_canonical(self) -> &'static str {
-        match self {
-            Self::StringConcatN => "__wasmgc_concat_n",
-            Self::StringEq => "__wasmgc_string_eq",
-            _ => self.canonical(),
-        }
-    }
-
     pub(super) fn canonical(self) -> &'static str {
         match self {
             Self::IntToString => "Int.toString",
@@ -193,11 +181,7 @@ impl BuiltinName {
             Self::StringStartsWith | Self::StringContains => {
                 Ok(vec![string_ref_ty(registry)?, string_ref_ty(registry)?])
             }
-            Self::StringSlice => Ok(vec![
-                string_ref_ty(registry)?,
-                ValType::I64,
-                ValType::I64,
-            ]),
+            Self::StringSlice => Ok(vec![string_ref_ty(registry)?, ValType::I64, ValType::I64]),
             Self::StringToUpper | Self::StringToLower | Self::StringTrim => {
                 Ok(vec![string_ref_ty(registry)?])
             }
@@ -346,10 +330,7 @@ fn string_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
 /// `(ref null $option_T)` — Option instantiation reference. Canonical
 /// is spaceless (e.g. `Option<String>`). Used by `String.charAt` and
 /// `Char.fromCode` which both return `Option<String>`.
-fn option_ref_ty(
-    registry: &TypeRegistry,
-    canonical: &str,
-) -> Result<ValType, WasmGcError> {
+fn option_ref_ty(registry: &TypeRegistry, canonical: &str) -> Result<ValType, WasmGcError> {
     let idx = registry
         .option_type_idx(canonical)
         .ok_or(WasmGcError::Validation(format!(
@@ -362,10 +343,7 @@ fn option_ref_ty(
 }
 
 /// `(ref null $list_T)` — List instantiation reference.
-fn list_ref_ty(
-    registry: &TypeRegistry,
-    canonical: &str,
-) -> Result<ValType, WasmGcError> {
+fn list_ref_ty(registry: &TypeRegistry, canonical: &str) -> Result<ValType, WasmGcError> {
     let idx = registry
         .list_type_idx(canonical)
         .ok_or(WasmGcError::Validation(format!(
@@ -379,10 +357,7 @@ fn list_ref_ty(
 
 /// `(ref null $result_T_E)` — Result instantiation reference. The
 /// canonical comes spaceless (e.g. `Result<Int,String>`).
-fn result_ref_ty(
-    registry: &TypeRegistry,
-    canonical: &str,
-) -> Result<ValType, WasmGcError> {
+fn result_ref_ty(registry: &TypeRegistry, canonical: &str) -> Result<ValType, WasmGcError> {
     let idx = registry
         .result_type_idx(canonical)
         .ok_or(WasmGcError::Validation(format!(
@@ -755,12 +730,11 @@ fn string_and_result_preamble(
         .ok_or(WasmGcError::Validation(
             "helper requires String slot to be allocated".into(),
         ))?;
-    let result_idx =
-        registry
-            .result_type_idx(canonical)
-            .ok_or(WasmGcError::Validation(format!(
-                "helper requires `{canonical}` slot to be allocated"
-            )))?;
+    let result_idx = registry
+        .result_type_idx(canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "helper requires `{canonical}` slot to be allocated"
+        )))?;
     if result_idx <= string_idx {
         return Err(WasmGcError::Validation(format!(
             "helper expects result idx {result_idx} > string idx {string_idx}"
@@ -1007,10 +981,7 @@ fn emit_string_slice(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
 
 /// `String.toUpper` / `String.toLower`. ASCII-only. `to_upper=true`
 /// shifts `'a'..'z'` down by 32; otherwise shifts `'A'..'Z'` up.
-fn emit_string_case(
-    registry: &TypeRegistry,
-    to_upper: bool,
-) -> Result<Function, WasmGcError> {
+fn emit_string_case(registry: &TypeRegistry, to_upper: bool) -> Result<Function, WasmGcError> {
     let (_, preamble) = string_module_preamble(registry)?;
     let (lo, hi, delta) = if to_upper {
         ("0x61", "0x7A", "i32.const 32 i32.sub")
@@ -1181,12 +1152,8 @@ fn emit_string_trim(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
 /// Result struct field layout: `(mut i32 tag) (mut i64 ok) (mut $string err)`,
 /// tag 1 = Ok, 0 = Err.
 fn emit_int_from_string(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
-    let preamble = string_and_result_preamble(
-        registry,
-        "Result<Int,String>",
-        "i64",
-        "(ref null $string)",
-    )?;
+    let preamble =
+        string_and_result_preamble(registry, "Result<Int,String>", "i64", "(ref null $string)")?;
     let wat = format!(
         r#"
         (module
@@ -2013,9 +1980,11 @@ fn emit_string_from_bool(registry: &TypeRegistry) -> Result<Function, WasmGcErro
 /// (instead of WAT compile) since the helper needs to materialise
 /// an `Option<String>` struct, which needs a known type idx.
 fn emit_string_char_at(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
-    let s_idx = registry.string_array_type_idx.ok_or(WasmGcError::Validation(
-        "String.charAt: String slot not registered".into(),
-    ))?;
+    let s_idx = registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "String.charAt: String slot not registered".into(),
+        ))?;
     let opt_idx = registry
         .option_type_idx("Option<String>")
         .ok_or(WasmGcError::Validation(
@@ -2064,7 +2033,9 @@ fn emit_string_char_at(registry: &TypeRegistry) -> Result<Function, WasmGcError>
     f.instruction(&Instruction::Else);
     // OOB: tag=0, value=null
     f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        s_idx,
+    )));
     f.instruction(&Instruction::StructNew(opt_idx));
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
@@ -2076,9 +2047,11 @@ fn emit_string_char_at(registry: &TypeRegistry) -> Result<Function, WasmGcError>
 /// returns Option.None (Aver `Char` is a 1-byte ASCII string in
 /// wasm-gc, same as legacy backend's representation).
 fn emit_char_from_code(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
-    let s_idx = registry.string_array_type_idx.ok_or(WasmGcError::Validation(
-        "Char.fromCode: String slot not registered".into(),
-    ))?;
+    let s_idx = registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "Char.fromCode: String slot not registered".into(),
+        ))?;
     let opt_idx = registry
         .option_type_idx("Option<String>")
         .ok_or(WasmGcError::Validation(
@@ -2118,7 +2091,9 @@ fn emit_char_from_code(registry: &TypeRegistry) -> Result<Function, WasmGcError>
     f.instruction(&Instruction::StructNew(opt_idx));
     f.instruction(&Instruction::Else);
     f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        s_idx,
+    )));
     f.instruction(&Instruction::StructNew(opt_idx));
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
@@ -2130,9 +2105,11 @@ fn emit_char_from_code(registry: &TypeRegistry) -> Result<Function, WasmGcError>
 /// character is its own 1-byte string allocation — N allocations
 /// for an N-byte input. Same shape the legacy backend uses.
 fn emit_string_chars(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
-    let s_idx = registry.string_array_type_idx.ok_or(WasmGcError::Validation(
-        "String.chars: String slot not registered".into(),
-    ))?;
+    let s_idx = registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "String.chars: String slot not registered".into(),
+        ))?;
     let list_idx = registry
         .list_type_idx("List<String>")
         .ok_or(WasmGcError::Validation(
@@ -2147,13 +2124,11 @@ fn emit_string_chars(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
         heap_type: wasm_encoder::HeapType::Concrete(list_idx),
     });
     // params: 0=s. locals: 1=acc, 2=i, 3=cell.
-    let mut f = Function::new([
-        (1, list_ref),
-        (1, ValType::I32),
-        (1, string_ref),
-    ]);
+    let mut f = Function::new([(1, list_ref), (1, ValType::I32), (1, string_ref)]);
     // acc = null
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(list_idx)));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        list_idx,
+    )));
     f.instruction(&Instruction::LocalSet(1));
     // i = s.len - 1
     f.instruction(&Instruction::LocalGet(0));
@@ -2202,12 +2177,8 @@ fn emit_string_chars(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
 /// `Result.Ok(byte)` on success or `Result.Err(s)` on any parse
 /// failure (length != 2 or any non-hex byte).
 fn emit_byte_from_hex(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
-    let preamble = string_and_result_preamble(
-        registry,
-        "Result<Int,String>",
-        "i64",
-        "(ref null $string)",
-    )?;
+    let preamble =
+        string_and_result_preamble(registry, "Result<Int,String>", "i64", "(ref null $string)")?;
     let wat = format!(
         r#"
         (module

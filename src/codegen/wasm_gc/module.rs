@@ -89,8 +89,7 @@ pub(super) fn emit_module(
     // String field — `List.contains` over such a list does inline
     // field-by-field eq and reaches `__wasmgc_string_eq`.
     for canonical in &registry.list_order {
-        if let Some(elem) =
-            super::types::TypeRegistry::list_element_type(canonical)
+        if let Some(elem) = super::types::TypeRegistry::list_element_type(canonical)
             && let Some(fields) = registry.record_fields.get(elem.trim())
             && fields.iter().any(|(_, t)| t.trim() == "String")
         {
@@ -495,10 +494,7 @@ pub(super) fn emit_module(
             && let Some(o) = list_helpers.vfl_ops_for(canonical)
             && let (Some(eq_fn), Some(hash_fn)) = (o.eq, o.hash)
         {
-            compound_eq_hash_lookup.insert(
-                format!("Vector<{}>", elem.trim()),
-                (eq_fn, hash_fn),
-            );
+            compound_eq_hash_lookup.insert(format!("Vector<{}>", elem.trim()), (eq_fn, hash_fn));
         }
     }
     map_helpers.emit_helper_bodies(&mut codes, &registry, &compound_eq_hash_lookup)?;
@@ -559,9 +555,7 @@ fn emit_user_types(
     // insertion order exactly the way they did before the rec group;
     // the difference is that members can refer to peers at higher
     // indices without crossing a group boundary.
-    use wasm_encoder::{
-        ArrayType, CompositeInnerType, CompositeType, StructType, SubType,
-    };
+    use wasm_encoder::{ArrayType, CompositeInnerType, CompositeType, StructType, SubType};
     // Each entry pairs a registry-recorded type idx with the subtype
     // shape. Sorting by idx at the end guarantees the rec-group emit
     // position matches what `vector_type_idx` / `list_type_idx` /
@@ -600,7 +594,7 @@ fn emit_user_types(
                     .ok_or(WasmGcError::Validation(format!(
                         "record `{name}` not registered"
                     )))?;
-                entries.push((idx, mk_struct(st.fields.iter().copied().collect())));
+                entries.push((idx, mk_struct(st.fields.to_vec())));
             }
             TopLevel::TypeDef(TypeDef::Sum { variants, .. }) => {
                 for v in variants {
@@ -617,9 +611,13 @@ fn emit_user_types(
                             mutable: false,
                         });
                     }
-                    let info = registry.variant(&v.name).ok_or(WasmGcError::Validation(
-                        format!("variant `{}` not registered", v.name),
-                    ))?;
+                    let info =
+                        registry
+                            .variant(&v.name)
+                            .ok_or(WasmGcError::Validation(format!(
+                                "variant `{}` not registered",
+                                v.name
+                            )))?;
                     entries.push((info.type_idx, mk_struct(fields)));
                 }
             }
@@ -640,19 +638,19 @@ fn emit_user_types(
 
     // Vector<T> instantiations.
     for canonical in &registry.vector_order {
-        let element = TypeRegistry::vector_element_type(canonical).ok_or(
-            WasmGcError::Validation(format!(
-                "registered vector `{canonical}` has no parsable element type"
-            )),
-        )?;
-        let elem_val = super::types::aver_to_wasm(element, Some(registry))?.ok_or(
-            WasmGcError::Validation(format!(
-                "Vector element type `{element}` has no wasm representation"
-            )),
-        )?;
-        let idx = registry.vector_type_idx(canonical).ok_or(WasmGcError::Validation(
-            format!("vector `{canonical}` not registered"),
-        ))?;
+        let element =
+            TypeRegistry::vector_element_type(canonical).ok_or(WasmGcError::Validation(
+                format!("registered vector `{canonical}` has no parsable element type"),
+            ))?;
+        let elem_val =
+            super::types::aver_to_wasm(element, Some(registry))?.ok_or(WasmGcError::Validation(
+                format!("Vector element type `{element}` has no wasm representation"),
+            ))?;
+        let idx = registry
+            .vector_type_idx(canonical)
+            .ok_or(WasmGcError::Validation(format!(
+                "vector `{canonical}` not registered"
+            )))?;
         entries.push((
             idx,
             mk_array(wasm_encoder::FieldType {
@@ -664,24 +662,23 @@ fn emit_user_types(
 
     // `Result<T, E>` — `(struct (mut i32 tag) (mut T ok) (mut E err))`.
     for canonical in &registry.result_order {
-        let (t_aver, e_aver) = TypeRegistry::result_te(canonical).ok_or(
-            WasmGcError::Validation(format!(
+        let (t_aver, e_aver) =
+            TypeRegistry::result_te(canonical).ok_or(WasmGcError::Validation(format!(
                 "registered result `{canonical}` has no parsable T, E"
-            )),
-        )?;
-        let t_val = super::types::aver_to_wasm(t_aver, Some(registry))?.ok_or(
-            WasmGcError::Validation(format!(
-                "Result T type `{t_aver}` has no wasm representation"
-            )),
-        )?;
-        let e_val = super::types::aver_to_wasm(e_aver, Some(registry))?.ok_or(
-            WasmGcError::Validation(format!(
-                "Result E type `{e_aver}` has no wasm representation"
-            )),
-        )?;
-        let idx = registry.result_type_idx(canonical).ok_or(WasmGcError::Validation(
-            format!("result `{canonical}` not registered"),
-        ))?;
+            )))?;
+        let t_val =
+            super::types::aver_to_wasm(t_aver, Some(registry))?.ok_or(WasmGcError::Validation(
+                format!("Result T type `{t_aver}` has no wasm representation"),
+            ))?;
+        let e_val =
+            super::types::aver_to_wasm(e_aver, Some(registry))?.ok_or(WasmGcError::Validation(
+                format!("Result E type `{e_aver}` has no wasm representation"),
+            ))?;
+        let idx = registry
+            .result_type_idx(canonical)
+            .ok_or(WasmGcError::Validation(format!(
+                "result `{canonical}` not registered"
+            )))?;
         entries.push((
             idx,
             mk_struct(vec![
@@ -703,16 +700,13 @@ fn emit_user_types(
 
     // `List<T>` — recursive Cons cell.
     for canonical in &registry.list_order {
-        let element = TypeRegistry::list_element_type(canonical).ok_or(
-            WasmGcError::Validation(format!(
-                "registered list `{canonical}` has no parsable element type"
-            )),
-        )?;
-        let elem_val = super::types::aver_to_wasm(element, Some(registry))?.ok_or(
-            WasmGcError::Validation(format!(
-                "List element type `{element}` has no wasm representation"
-            )),
-        )?;
+        let element = TypeRegistry::list_element_type(canonical).ok_or(WasmGcError::Validation(
+            format!("registered list `{canonical}` has no parsable element type"),
+        ))?;
+        let elem_val =
+            super::types::aver_to_wasm(element, Some(registry))?.ok_or(WasmGcError::Validation(
+                format!("List element type `{element}` has no wasm representation"),
+            ))?;
         let own_idx = registry
             .list_type_idx(canonical)
             .expect("just-registered list slot");
@@ -737,19 +731,19 @@ fn emit_user_types(
 
     // Option<T> — `(struct (mut i32 tag) (mut T value))`.
     for canonical in &registry.option_order {
-        let element = TypeRegistry::option_element_type(canonical).ok_or(
-            WasmGcError::Validation(format!(
-                "registered option `{canonical}` has no parsable element type"
-            )),
-        )?;
-        let elem_val = super::types::aver_to_wasm(element, Some(registry))?.ok_or(
-            WasmGcError::Validation(format!(
-                "Option element type `{element}` has no wasm representation"
-            )),
-        )?;
-        let idx = registry.option_type_idx(canonical).ok_or(WasmGcError::Validation(
-            format!("option `{canonical}` not registered"),
-        ))?;
+        let element =
+            TypeRegistry::option_element_type(canonical).ok_or(WasmGcError::Validation(
+                format!("registered option `{canonical}` has no parsable element type"),
+            ))?;
+        let elem_val =
+            super::types::aver_to_wasm(element, Some(registry))?.ok_or(WasmGcError::Validation(
+                format!("Option element type `{element}` has no wasm representation"),
+            ))?;
+        let idx = registry
+            .option_type_idx(canonical)
+            .ok_or(WasmGcError::Validation(format!(
+                "option `{canonical}` not registered"
+            )))?;
         entries.push((
             idx,
             mk_struct(vec![
@@ -769,31 +763,24 @@ fn emit_user_types(
     // (keys array, values array, map struct).
     for canonical in &registry.map_order {
         let (k_aver, v_aver) = super::types::parse_map_kv(canonical).ok_or(
-            WasmGcError::Validation(format!(
-                "registered map `{canonical}` has no parsable K, V"
-            )),
+            WasmGcError::Validation(format!("registered map `{canonical}` has no parsable K, V")),
         )?;
-        let v_val = super::types::aver_to_wasm(v_aver, Some(registry))?.ok_or(
-            WasmGcError::Validation(format!(
-                "Map value type `{v_aver}` has no wasm representation"
-            )),
-        )?;
+        let v_val =
+            super::types::aver_to_wasm(v_aver, Some(registry))?.ok_or(WasmGcError::Validation(
+                format!("Map value type `{v_aver}` has no wasm representation"),
+            ))?;
         // Keys array element: for primitive K, a `(ref null
         // $primitive_key_box_K)` so the empty-slot marker stays
         // uniform; for ref K (String / record), the K's own ref.
-        let key_storage_val = if let Some(box_idx) =
-            registry.primitive_key_box_idx(k_aver)
-        {
+        let key_storage_val = if let Some(box_idx) = registry.primitive_key_box_idx(k_aver) {
             ValType::Ref(wasm_encoder::RefType {
                 nullable: true,
                 heap_type: wasm_encoder::HeapType::Concrete(box_idx),
             })
         } else {
-            super::types::aver_to_wasm(k_aver, Some(registry))?.ok_or(
-                WasmGcError::Validation(format!(
-                    "Map key type `{k_aver}` has no wasm representation"
-                )),
-            )?
+            super::types::aver_to_wasm(k_aver, Some(registry))?.ok_or(WasmGcError::Validation(
+                format!("Map key type `{k_aver}` has no wasm representation"),
+            ))?
         };
         let slots = registry
             .map_slots(canonical)
@@ -848,11 +835,10 @@ fn emit_user_types(
     // the open-addressing layout's `keys[i] == null` empty marker
     // uniform across all K kinds (raw i64/f64/i32 has no null).
     for k_aver in &registry.primitive_key_box_order {
-        let k_val = super::types::aver_to_wasm(k_aver, Some(registry))?.ok_or(
-            WasmGcError::Validation(format!(
-                "primitive key box: K=`{k_aver}` has no wasm representation"
-            )),
-        )?;
+        let k_val =
+            super::types::aver_to_wasm(k_aver, Some(registry))?.ok_or(WasmGcError::Validation(
+                format!("primitive key box: K=`{k_aver}` has no wasm representation"),
+            ))?;
         let idx = registry
             .primitive_key_box_idx(k_aver)
             .ok_or(WasmGcError::Validation(format!(
@@ -870,24 +856,22 @@ fn emit_user_types(
     // `Tuple<A, B>` — `(struct (mut A) (mut B))`. Used by Map.entries
     // (returns List<Tuple<K, V>>), Map.fromList, List.zip.
     for canonical in &registry.tuple_order {
-        let (a_aver, b_aver) = TypeRegistry::tuple_ab(canonical).ok_or(
-            WasmGcError::Validation(format!(
-                "registered tuple `{canonical}` has no parsable A, B"
-            )),
-        )?;
-        let a_val = super::types::aver_to_wasm(a_aver, Some(registry))?.ok_or(
-            WasmGcError::Validation(format!(
-                "Tuple A type `{a_aver}` has no wasm representation"
-            )),
-        )?;
-        let b_val = super::types::aver_to_wasm(b_aver, Some(registry))?.ok_or(
-            WasmGcError::Validation(format!(
-                "Tuple B type `{b_aver}` has no wasm representation"
-            )),
-        )?;
-        let idx = registry.tuple_type_idx(canonical).ok_or(WasmGcError::Validation(
-            format!("tuple `{canonical}` not registered"),
+        let (a_aver, b_aver) = TypeRegistry::tuple_ab(canonical).ok_or(WasmGcError::Validation(
+            format!("registered tuple `{canonical}` has no parsable A, B"),
         ))?;
+        let a_val =
+            super::types::aver_to_wasm(a_aver, Some(registry))?.ok_or(WasmGcError::Validation(
+                format!("Tuple A type `{a_aver}` has no wasm representation"),
+            ))?;
+        let b_val =
+            super::types::aver_to_wasm(b_aver, Some(registry))?.ok_or(WasmGcError::Validation(
+                format!("Tuple B type `{b_aver}` has no wasm representation"),
+            ))?;
+        let idx = registry
+            .tuple_type_idx(canonical)
+            .ok_or(WasmGcError::Validation(format!(
+                "tuple `{canonical}` not registered"
+            )))?;
         entries.push((
             idx,
             mk_struct(vec![
@@ -920,7 +904,7 @@ fn emit_user_types(
                 "builtin record `{}` not registered",
                 record.aver_name
             )))?;
-        entries.push((idx, mk_struct(st.fields.iter().copied().collect())));
+        entries.push((idx, mk_struct(st.fields.to_vec())));
     }
 
     // Sort entries by registry-recorded type idx so the rec-group
@@ -1073,7 +1057,9 @@ fn items_use_string_split_join(items: &[TopLevel]) -> bool {
             Expr::TailCall(boxed) => boxed.args.iter().any(|a| walk(&a.node)),
             Expr::Attr(obj, _) => walk(&obj.node),
             Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| walk(&e.node)),
-            Expr::Constructor(_, payload) => payload.as_deref().map(|p| walk(&p.node)).unwrap_or(false),
+            Expr::Constructor(_, payload) => {
+                payload.as_deref().map(|p| walk(&p.node)).unwrap_or(false)
+            }
             Expr::List(items) => items.iter().any(|x| walk(&x.node)),
             Expr::InterpolatedStr(_) => false,
             _ => false,
@@ -1111,15 +1097,11 @@ fn expr_to_dotted_head(expr: &Expr) -> Option<&str> {
     }
 }
 
-/// Validate emitted bytes with `wasmparser` configured for the wasm-gc
-/// + tail-call feature set we target.
 /// `__rt_list_string_cons(head, tail) -> list`. Lets the JS host
 /// build a `(ref null $list_String)` from outside without going
 /// through user code; used by the host bridge that satisfies
 /// `request_headers_load`.
-fn emit_list_string_cons(
-    registry: &TypeRegistry,
-) -> Result<wasm_encoder::Function, WasmGcError> {
+fn emit_list_string_cons(registry: &TypeRegistry) -> Result<wasm_encoder::Function, WasmGcError> {
     let list_idx = registry
         .list_type_idx("List<String>")
         .ok_or(WasmGcError::Validation(
@@ -1180,56 +1162,74 @@ fn emit_handler_wrapper(
         .ok_or(WasmGcError::Validation(
             "aver_http_handle wrapper requires HttpResponse record slot".into(),
         ))?;
-    let map_slots = registry
-        .map_slots("Map<String,List<String>>")
-        .ok_or(WasmGcError::Validation(
-            "aver_http_handle wrapper requires `Map<String, List<String>>` slot".into(),
-        ))?;
+    let map_slots =
+        registry
+            .map_slots("Map<String,List<String>>")
+            .ok_or(WasmGcError::Validation(
+                "aver_http_handle wrapper requires `Map<String, List<String>>` slot".into(),
+            ))?;
     let list_idx = registry
         .list_type_idx("List<String>")
         .ok_or(WasmGcError::Validation(
             "aver_http_handle wrapper requires `List<String>` slot".into(),
         ))?;
 
-    let request_method_fn = fn_map
-        .effects
-        .get("Request.method")
-        .copied()
-        .ok_or(WasmGcError::Validation("Request.method effect not registered".into()))?;
-    let request_url_fn = fn_map
-        .effects
-        .get("Request.url")
-        .copied()
-        .ok_or(WasmGcError::Validation("Request.url effect not registered".into()))?;
-    let request_query_fn = fn_map
-        .effects
-        .get("Request.query")
-        .copied()
-        .ok_or(WasmGcError::Validation("Request.query effect not registered".into()))?;
-    let request_body_fn = fn_map
-        .effects
-        .get("Request.body")
-        .copied()
-        .ok_or(WasmGcError::Validation("Request.body effect not registered".into()))?;
-    let request_headers_load_fn = fn_map
-        .effects
-        .get("Request.headersLoad")
-        .copied()
-        .ok_or(WasmGcError::Validation(
-            "Request.headersLoad effect not registered".into(),
-        ))?;
-    let response_text_fn = fn_map
-        .effects
-        .get("Response.text")
-        .copied()
-        .ok_or(WasmGcError::Validation("Response.text effect not registered".into()))?;
-    let response_set_header_fn = fn_map
-        .effects
-        .get("Response.setHeader")
-        .copied()
-        .ok_or(WasmGcError::Validation(
-            "Response.setHeader effect not registered".into(),
-        ))?;
+    let request_method_fn =
+        fn_map
+            .effects
+            .get("Request.method")
+            .copied()
+            .ok_or(WasmGcError::Validation(
+                "Request.method effect not registered".into(),
+            ))?;
+    let request_url_fn =
+        fn_map
+            .effects
+            .get("Request.url")
+            .copied()
+            .ok_or(WasmGcError::Validation(
+                "Request.url effect not registered".into(),
+            ))?;
+    let request_query_fn =
+        fn_map
+            .effects
+            .get("Request.query")
+            .copied()
+            .ok_or(WasmGcError::Validation(
+                "Request.query effect not registered".into(),
+            ))?;
+    let request_body_fn =
+        fn_map
+            .effects
+            .get("Request.body")
+            .copied()
+            .ok_or(WasmGcError::Validation(
+                "Request.body effect not registered".into(),
+            ))?;
+    let request_headers_load_fn =
+        fn_map
+            .effects
+            .get("Request.headersLoad")
+            .copied()
+            .ok_or(WasmGcError::Validation(
+                "Request.headersLoad effect not registered".into(),
+            ))?;
+    let response_text_fn =
+        fn_map
+            .effects
+            .get("Response.text")
+            .copied()
+            .ok_or(WasmGcError::Validation(
+                "Response.text effect not registered".into(),
+            ))?;
+    let response_set_header_fn =
+        fn_map
+            .effects
+            .get("Response.setHeader")
+            .copied()
+            .ok_or(WasmGcError::Validation(
+                "Response.setHeader effect not registered".into(),
+            ))?;
 
     let s_ref = ValType::Ref(RefType {
         nullable: true,
@@ -1498,10 +1498,7 @@ fn emit_bridge_types(
     })
 }
 
-fn emit_bridge_bodies(
-    codes: &mut CodeSection,
-    registry: &TypeRegistry,
-) -> Result<(), WasmGcError> {
+fn emit_bridge_bodies(codes: &mut CodeSection, registry: &TypeRegistry) -> Result<(), WasmGcError> {
     let s_idx = registry
         .string_array_type_idx
         .expect("bridge bodies emitted only when string slot exists");

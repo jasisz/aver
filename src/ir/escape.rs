@@ -75,7 +75,6 @@ enum InlineCandidate {
     /// the pattern bindings substituted. Each arm's binding slots
     /// resolve via the resolver's `local_slots` map of `f`.
     VariantMatch {
-        param_slot: u16,
         /// One entry per arm. Arm pattern dotted name → (binding slots,
         /// arm body). Wildcard arms aren't included; if the dispatch
         /// doesn't find a match the call falls through to runtime
@@ -189,10 +188,7 @@ fn classify_fn(fd: &FnDef) -> Option<InlineCandidate> {
             arms_by_constructor.insert(name.clone(), (binding_slots, (*arm.body).clone()));
         }
         if !arms_by_constructor.is_empty() {
-            return Some(InlineCandidate::VariantMatch {
-                param_slot,
-                arms_by_constructor,
-            });
+            return Some(InlineCandidate::VariantMatch { arms_by_constructor });
         }
     }
 

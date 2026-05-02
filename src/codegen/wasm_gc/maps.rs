@@ -31,9 +31,7 @@
 
 use std::collections::HashMap;
 
-use wasm_encoder::{
-    BlockType, CodeSection, Function, HeapType, Instruction, RefType, ValType,
-};
+use wasm_encoder::{BlockType, CodeSection, Function, HeapType, Instruction, RefType, ValType};
 
 use super::WasmGcError;
 use super::types::{MapSlots, TypeRegistry};
@@ -105,8 +103,8 @@ pub(super) struct MapHelperRegistry {
     /// get_pair, keys, values, remove, entries, from_list. Order
     /// matches `assign_slots` / `emit_function_section` /
     /// `emit_helper_bodies` exactly.
-    kv_type_indices:
-        HashMap<String, (u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32)>,
+    #[allow(clippy::type_complexity)]
+    kv_type_indices: HashMap<String, (u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32)>,
 }
 
 impl MapHelperRegistry {
@@ -128,14 +126,12 @@ impl MapHelperRegistry {
         // same module even when no `Map<String, V>` is reachable
         // from the surface code.
         let mut k_names: Vec<String> = Vec::new();
-        let mut k_seen: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut k_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         for canonical in map_canonicals {
-            let (k_aver, _) = super::types::parse_map_kv(canonical).ok_or(
-                WasmGcError::Validation(format!(
+            let (k_aver, _) =
+                super::types::parse_map_kv(canonical).ok_or(WasmGcError::Validation(format!(
                     "MapHelperRegistry: cannot parse K, V from `{canonical}`"
-                )),
-            )?;
+                )))?;
             // If K is a record / sum whose fields include `String`,
             // ensure String hash/eq is registered first.
             let mut needs_string = false;
@@ -180,11 +176,7 @@ impl MapHelperRegistry {
                     field_types.push(t.trim().to_string());
                 }
             }
-            for variant in registry
-                .variants
-                .values()
-                .filter(|v| v.parent == parent)
-            {
+            for variant in registry.variants.values().filter(|v| v.parent == parent) {
                 for t in &variant.fields {
                     field_types.push(t.trim().to_string());
                 }
@@ -199,8 +191,7 @@ impl MapHelperRegistry {
                     // force-register String.
                     let mut nested_needs_string = false;
                     if let Some(fs) = registry.record_fields.get(&ft) {
-                        nested_needs_string |=
-                            fs.iter().any(|(_, t)| t.trim() == "String");
+                        nested_needs_string |= fs.iter().any(|(_, t)| t.trim() == "String");
                     }
                     if is_sum {
                         nested_needs_string |= registry
@@ -229,12 +220,13 @@ impl MapHelperRegistry {
                 *next_wasm_fn_idx += 1;
                 self.key.insert(
                     k_aver.clone(),
-                    KeyHelpers { hash: hash_fn, eq: eq_fn },
+                    KeyHelpers {
+                        hash: hash_fn,
+                        eq: eq_fn,
+                    },
                 );
-                self.key_type_indices.insert(
-                    k_aver.clone(),
-                    (hash_type_idx, eq_type_idx),
-                );
+                self.key_type_indices
+                    .insert(k_aver.clone(), (hash_type_idx, eq_type_idx));
                 self.key_order.push(k_aver.clone());
             }
         }
@@ -374,9 +366,11 @@ impl MapHelperRegistry {
             types.ty().function([k_val, k_val], [ValType::I32]);
         }
         for canonical in &self.kv_order {
-            let slots = registry.map_slots(canonical).ok_or(WasmGcError::Validation(
-                format!("Map slots missing for `{canonical}`"),
-            ))?;
+            let slots = registry
+                .map_slots(canonical)
+                .ok_or(WasmGcError::Validation(format!(
+                    "Map slots missing for `{canonical}`"
+                )))?;
             let map_ref = ValType::Ref(RefType {
                 nullable: true,
                 heap_type: HeapType::Concrete(slots.map),
@@ -411,28 +405,20 @@ impl MapHelperRegistry {
             // get_or_default : (Map, K, V) -> V
             types.ty().function([map_ref, k_val, v_val], [v_val]);
             // get_pair : (Map, K) -> (i32 found, V value) — multi-result
-            types
-                .ty()
-                .function([map_ref, k_val], [ValType::I32, v_val]);
+            types.ty().function([map_ref, k_val], [ValType::I32, v_val]);
             // keys : (Map) -> List<K>
-            let list_k_idx =
-                registry
-                    .list_type_idx(&format!("List<{k_aver}>"))
-                    .ok_or(WasmGcError::Validation(format!(
-                        "Map.keys: List<{k_aver}> not registered"
-                    )))?;
+            let list_k_idx = registry.list_type_idx(&format!("List<{k_aver}>")).ok_or(
+                WasmGcError::Validation(format!("Map.keys: List<{k_aver}> not registered")),
+            )?;
             let list_k_ref = ValType::Ref(RefType {
                 nullable: true,
                 heap_type: HeapType::Concrete(list_k_idx),
             });
             types.ty().function([map_ref], [list_k_ref]);
             // values : (Map) -> List<V>
-            let list_v_idx =
-                registry
-                    .list_type_idx(&format!("List<{v_aver}>"))
-                    .ok_or(WasmGcError::Validation(format!(
-                        "Map.values: List<{v_aver}> not registered"
-                    )))?;
+            let list_v_idx = registry.list_type_idx(&format!("List<{v_aver}>")).ok_or(
+                WasmGcError::Validation(format!("Map.values: List<{v_aver}> not registered")),
+            )?;
             let list_v_ref = ValType::Ref(RefType {
                 nullable: true,
                 heap_type: HeapType::Concrete(list_v_idx),
@@ -442,11 +428,12 @@ impl MapHelperRegistry {
             types.ty().function([map_ref, k_val], [map_ref]);
             // entries : (Map) -> List<Tuple<K, V>>
             let tup_canonical = format!("Tuple<{k_aver},{v_aver}>");
-            let tup_idx = registry
-                .tuple_type_idx(&tup_canonical)
-                .ok_or(WasmGcError::Validation(format!(
-                    "Map.entries: `{tup_canonical}` not registered"
-                )))?;
+            let tup_idx =
+                registry
+                    .tuple_type_idx(&tup_canonical)
+                    .ok_or(WasmGcError::Validation(format!(
+                        "Map.entries: `{tup_canonical}` not registered"
+                    )))?;
             let lt_idx = registry
                 .list_type_idx(&format!("List<{tup_canonical}>"))
                 .ok_or(WasmGcError::Validation(format!(
@@ -456,7 +443,7 @@ impl MapHelperRegistry {
                 nullable: true,
                 heap_type: HeapType::Concrete(lt_idx),
             });
-            types.ty().function([map_ref], [lt_ref.clone()]);
+            types.ty().function([map_ref], [lt_ref]);
             // from_list : (List<Tuple<K, V>>) -> Map
             types.ty().function([lt_ref], [map_ref]);
             let _ = opt_ref;
@@ -467,18 +454,14 @@ impl MapHelperRegistry {
 
     /// Emit one `funcs.function(<type_idx>)` entry per registered
     /// helper, in the same order as `emit_helper_types`.
-    pub(super) fn emit_function_section(
-        &self,
-        funcs: &mut wasm_encoder::FunctionSection,
-    ) {
+    pub(super) fn emit_function_section(&self, funcs: &mut wasm_encoder::FunctionSection) {
         for k in &self.key_order {
             let (h, e) = self.key_type_indices[k];
             funcs.function(h);
             funcs.function(e);
         }
         for canonical in &self.kv_order {
-            let (em, st, gt, ln, god, pair, ks, vs, rm, en, fl) =
-                self.kv_type_indices[canonical];
+            let (em, st, gt, ln, god, pair, ks, vs, rm, en, fl) = self.kv_type_indices[canonical];
             funcs.function(em);
             funcs.function(st);
             funcs.function(gt);
@@ -507,11 +490,8 @@ impl MapHelperRegistry {
         // virtual entries for `List<T>` field types so hash/eq
         // dispatch can call into list_helpers without a
         // separate cross-module lookup.
-        let mut all_key_helpers: HashMap<String, KeyHelpers> = self
-            .key
-            .iter()
-            .map(|(k, h)| (k.clone(), *h))
-            .collect();
+        let mut all_key_helpers: HashMap<String, KeyHelpers> =
+            self.key.iter().map(|(k, h)| (k.clone(), *h)).collect();
         for (list_canonical, &(eq_fn, hash_fn)) in list_eq_hash {
             all_key_helpers.insert(
                 list_canonical.clone(),
@@ -657,32 +637,23 @@ fn emit_eq_primitive(k_aver: &str) -> Result<Function, WasmGcError> {
 /// stores boxed refs (`(ref null $primitive_key_box_K)`) so the
 /// open-addressing `keys[i] == null` empty marker stays uniform;
 /// ref K (String / record) stores its own ref directly.
-fn key_storage_val_type(
-    k_aver: &str,
-    registry: &TypeRegistry,
-) -> Result<ValType, WasmGcError> {
+fn key_storage_val_type(k_aver: &str, registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
     if let Some(box_idx) = registry.primitive_key_box_idx(k_aver) {
         Ok(ValType::Ref(RefType {
             nullable: true,
             heap_type: HeapType::Concrete(box_idx),
         }))
     } else {
-        super::types::aver_to_wasm(k_aver, Some(registry))?.ok_or(
-            WasmGcError::Validation(format!(
-                "Map key type `{k_aver}` has no wasm representation"
-            )),
-        )
+        super::types::aver_to_wasm(k_aver, Some(registry))?.ok_or(WasmGcError::Validation(format!(
+            "Map key type `{k_aver}` has no wasm representation"
+        )))
     }
 }
 
 /// Append the instructions that turn a stored-key value (top of
 /// stack) into the raw K_val that `hash` / `eq` expect. For primitive
 /// K: `struct.get $box 0` to unbox; for ref K: no-op.
-fn emit_unbox_key(
-    f: &mut Function,
-    k_aver: &str,
-    registry: &TypeRegistry,
-) {
+fn emit_unbox_key(f: &mut Function, k_aver: &str, registry: &TypeRegistry) {
     if let Some(box_idx) = registry.primitive_key_box_idx(k_aver) {
         f.instruction(&Instruction::StructGet {
             struct_type_index: box_idx,
@@ -694,11 +665,7 @@ fn emit_unbox_key(
 /// Append the instructions that turn a raw K_val (top of stack) into
 /// a stored-key value ready for `array.set`. For primitive K:
 /// `struct.new $box`; for ref K: no-op.
-fn emit_box_key(
-    f: &mut Function,
-    k_aver: &str,
-    registry: &TypeRegistry,
-) {
+fn emit_box_key(f: &mut Function, k_aver: &str, registry: &TypeRegistry) {
     if let Some(box_idx) = registry.primitive_key_box_idx(k_aver) {
         f.instruction(&Instruction::StructNew(box_idx));
     }
@@ -992,11 +959,11 @@ fn emit_map_get(
     let k_val = super::types::aver_to_wasm(k_aver, Some(registry))?.unwrap();
     let v_val = super::types::aver_to_wasm(v_aver, Some(registry))?.unwrap();
     let opt_canonical = format!("Option<{v_aver}>");
-    let opt_idx = registry.option_type_idx(&opt_canonical).ok_or(
-        WasmGcError::Validation(format!(
+    let opt_idx = registry
+        .option_type_idx(&opt_canonical)
+        .ok_or(WasmGcError::Validation(format!(
             "Map.get: Option<{v_aver}> not registered"
-        )),
-    )?;
+        )))?;
 
     let mut f = Function::new([
         (1, ValType::I32), // 2: cap
@@ -1341,10 +1308,10 @@ fn emit_default_value_for(f: &mut Function, ty: ValType) {
             f.instruction(&Instruction::I64Const(0));
         }
         ValType::F32 => {
-            f.instruction(&Instruction::F32Const(0.0.into()));
+            f.instruction(&Instruction::F32Const(0.0));
         }
         ValType::F64 => {
-            f.instruction(&Instruction::F64Const(0.0.into()));
+            f.instruction(&Instruction::F64Const(0.0));
         }
         ValType::Ref(rt) => {
             f.instruction(&Instruction::RefNull(rt.heap_type));
@@ -1371,9 +1338,11 @@ fn emit_hash_record(
     string_key_helpers: Option<KeyHelpers>,
     all_key_helpers: &HashMap<String, KeyHelpers>,
 ) -> Result<Function, WasmGcError> {
-    let record_idx = registry.record_type_idx(record_name).ok_or(
-        WasmGcError::Validation(format!("hash_record: `{record_name}` not registered")),
-    )?;
+    let record_idx = registry
+        .record_type_idx(record_name)
+        .ok_or(WasmGcError::Validation(format!(
+            "hash_record: `{record_name}` not registered"
+        )))?;
     let fields = registry
         .record_fields
         .get(record_name)
@@ -1413,8 +1382,7 @@ fn emit_hash_record(
             }
             "String" => {
                 let helpers = string_key_helpers.ok_or(WasmGcError::Validation(
-                    "hash_record: String field needs String key helpers"
-                        .into(),
+                    "hash_record: String field needs String key helpers".into(),
                 ))?;
                 f.instruction(&Instruction::Call(helpers.hash));
             }
@@ -1423,27 +1391,20 @@ fn emit_hash_record(
                 // `all_key_helpers` — records were force-registered
                 // as pseudo-K in `assign_slots`; list canonicals were
                 // injected by `emit_helper_bodies` from list_helpers.
-                let lookup_key = if other.starts_with("List<")
-                    || other.starts_with("Vector<")
-                {
+                let lookup_key = if other.starts_with("List<") || other.starts_with("Vector<") {
                     super::types::normalize_compound(other).to_string()
                 } else {
                     other.to_string()
                 };
-                let is_compound =
-                    other.starts_with("List<") || other.starts_with("Vector<");
-                let is_sum =
-                    registry.variants.values().any(|v| v.parent == other);
-                if registry.record_type_idx(other).is_some()
-                    || is_compound
-                    || is_sum
-                {
-                    let inner = all_key_helpers.get(&lookup_key).ok_or(
-                        WasmGcError::Validation(format!(
+                let is_compound = other.starts_with("List<") || other.starts_with("Vector<");
+                let is_sum = registry.variants.values().any(|v| v.parent == other);
+                if registry.record_type_idx(other).is_some() || is_compound || is_sum {
+                    let inner = all_key_helpers
+                        .get(&lookup_key)
+                        .ok_or(WasmGcError::Validation(format!(
                             "hash_record: field `{other}` has no key helpers \
                              (record / list / vector / sum T may need force-registration)"
-                        )),
-                    )?;
+                        )))?;
                     f.instruction(&Instruction::Call(inner.hash));
                 } else {
                     return Err(WasmGcError::Unimplemented(
@@ -1470,9 +1431,11 @@ fn emit_eq_record(
     string_key_helpers: Option<KeyHelpers>,
     all_key_helpers: &HashMap<String, KeyHelpers>,
 ) -> Result<Function, WasmGcError> {
-    let record_idx = registry.record_type_idx(record_name).ok_or(
-        WasmGcError::Validation(format!("eq_record: `{record_name}` not registered")),
-    )?;
+    let record_idx = registry
+        .record_type_idx(record_name)
+        .ok_or(WasmGcError::Validation(format!(
+            "eq_record: `{record_name}` not registered"
+        )))?;
     let fields = registry
         .record_fields
         .get(record_name)
@@ -1497,32 +1460,24 @@ fn emit_eq_record(
             "Float" => f.instruction(&Instruction::F64Eq),
             "String" => {
                 let helpers = string_key_helpers.ok_or(WasmGcError::Validation(
-                    "eq_record: String field needs String key helpers"
-                        .into(),
+                    "eq_record: String field needs String key helpers".into(),
                 ))?;
                 f.instruction(&Instruction::Call(helpers.eq))
             }
             other => {
-                let lookup_key = if other.starts_with("List<")
-                    || other.starts_with("Vector<")
-                {
+                let lookup_key = if other.starts_with("List<") || other.starts_with("Vector<") {
                     super::types::normalize_compound(other).to_string()
                 } else {
                     other.to_string()
                 };
-                let is_compound =
-                    other.starts_with("List<") || other.starts_with("Vector<");
-                let is_sum =
-                    registry.variants.values().any(|v| v.parent == other);
-                if registry.record_type_idx(other).is_some()
-                    || is_compound
-                    || is_sum
-                {
-                    let inner = all_key_helpers.get(&lookup_key).ok_or(
-                        WasmGcError::Validation(format!(
+                let is_compound = other.starts_with("List<") || other.starts_with("Vector<");
+                let is_sum = registry.variants.values().any(|v| v.parent == other);
+                if registry.record_type_idx(other).is_some() || is_compound || is_sum {
+                    let inner = all_key_helpers
+                        .get(&lookup_key)
+                        .ok_or(WasmGcError::Validation(format!(
                             "eq_record: field `{other}` has no key helpers"
-                        )),
-                    )?;
+                        )))?;
                     f.instruction(&Instruction::Call(inner.eq))
                 } else {
                     return Err(WasmGcError::Unimplemented(
@@ -1561,10 +1516,7 @@ fn emit_map_keys(canonical: &str, registry: &TypeRegistry) -> Result<Function, W
 
 /// `values(m) -> List<V>`. Same shape as `keys` but pulls from
 /// `m.values` whenever the corresponding `m.keys[i]` is non-null.
-fn emit_map_values(
-    canonical: &str,
-    registry: &TypeRegistry,
-) -> Result<Function, WasmGcError> {
+fn emit_map_values(canonical: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
     let (_, v_aver) = super::types::parse_map_kv(canonical).unwrap();
     let list_canonical = format!("List<{v_aver}>");
@@ -1596,9 +1548,9 @@ fn emit_map_walk_keys_to_list(
     });
     // params: 0=map. locals: 1=keys, 2=i, 3=acc.
     let mut f = Function::new([
-        (1, keys_ref.clone()),
+        (1, keys_ref),
         (1, ValType::I32),
-        (1, list_ref.clone()),
+        (1, list_ref),
     ]);
     // keys = map.keys
     f.instruction(&Instruction::LocalGet(0));
@@ -1747,7 +1699,7 @@ fn emit_map_remove(
 ) -> Result<Function, WasmGcError> {
     let slots = slots_for(canonical, registry)?;
     let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
-    let k_val = super::types::aver_to_wasm(k_aver, Some(registry))?.unwrap();
+    let _k_val = super::types::aver_to_wasm(k_aver, Some(registry))?.unwrap();
     let v_val = super::types::aver_to_wasm(v_aver, Some(registry))?.unwrap();
     let _ = v_val; // values array uses its own slot type
     // params: 0=map, 1=k.
@@ -1923,7 +1875,9 @@ fn emit_map_remove(
     // record slot for K=record.
     let null_heap_idx = registry
         .primitive_key_box_idx(k_aver)
-        .or(registry.string_array_type_idx.filter(|_| k_aver == "String"))
+        .or(registry
+            .string_array_type_idx
+            .filter(|_| k_aver == "String"))
         .or_else(|| registry.record_type_idx(k_aver))
         .unwrap_or(0);
     f.instruction(&Instruction::LocalGet(4));
@@ -1959,13 +1913,17 @@ fn emit_map_entries(canonical: &str, registry: &TypeRegistry) -> Result<Function
     let slots = slots_for(canonical, registry)?;
     let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
     let tup_canonical = format!("Tuple<{k_aver},{v_aver}>");
-    let tup_idx = registry.tuple_type_idx(&tup_canonical).ok_or(
-        WasmGcError::Validation(format!("Map.entries: `{tup_canonical}` not registered")),
-    )?;
+    let tup_idx = registry
+        .tuple_type_idx(&tup_canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Map.entries: `{tup_canonical}` not registered"
+        )))?;
     let lt_canonical = format!("List<{tup_canonical}>");
-    let lt_idx = registry.list_type_idx(&lt_canonical).ok_or(
-        WasmGcError::Validation(format!("Map.entries: `{lt_canonical}` not registered")),
-    )?;
+    let lt_idx = registry
+        .list_type_idx(&lt_canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Map.entries: `{lt_canonical}` not registered"
+        )))?;
     let keys_ref = ValType::Ref(RefType {
         nullable: true,
         heap_type: HeapType::Concrete(slots.keys_array),
@@ -2058,13 +2016,17 @@ fn emit_map_from_list(
     let slots = slots_for(canonical, registry)?;
     let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
     let tup_canonical = format!("Tuple<{k_aver},{v_aver}>");
-    let tup_idx = registry.tuple_type_idx(&tup_canonical).ok_or(
-        WasmGcError::Validation(format!("Map.fromList: `{tup_canonical}` not registered")),
-    )?;
+    let tup_idx = registry
+        .tuple_type_idx(&tup_canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Map.fromList: `{tup_canonical}` not registered"
+        )))?;
     let lt_canonical = format!("List<{tup_canonical}>");
-    let lt_idx = registry.list_type_idx(&lt_canonical).ok_or(
-        WasmGcError::Validation(format!("Map.fromList: `{lt_canonical}` not registered")),
-    )?;
+    let lt_idx = registry
+        .list_type_idx(&lt_canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Map.fromList: `{lt_canonical}` not registered"
+        )))?;
     let map_ref = ValType::Ref(RefType {
         nullable: true,
         heap_type: HeapType::Concrete(slots.map),

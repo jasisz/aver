@@ -23,9 +23,7 @@
 
 use std::collections::HashMap;
 
-use wasm_encoder::{
-    BlockType, CodeSection, Function, HeapType, Instruction, RefType, ValType,
-};
+use wasm_encoder::{BlockType, CodeSection, Function, HeapType, Instruction, RefType, ValType};
 
 use super::WasmGcError;
 use super::types::TypeRegistry;
@@ -122,6 +120,7 @@ pub(super) struct ListHelperRegistry {
 }
 
 impl ListHelperRegistry {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn assign_slots(
         &mut self,
         list_canonicals: &[String],
@@ -151,11 +150,10 @@ impl ListHelperRegistry {
             *next_type_idx += 1;
             let cons_type = *next_type_idx;
             *next_type_idx += 1;
-            let elem = TypeRegistry::list_element_type(canonical).ok_or(
-                WasmGcError::Validation(format!(
-                    "list canonical `{canonical}` has no parsable element type"
-                )),
-            )?;
+            let elem =
+                TypeRegistry::list_element_type(canonical).ok_or(WasmGcError::Validation(
+                    format!("list canonical `{canonical}` has no parsable element type"),
+                ))?;
             let contains_eq = list_eq_kind(elem.trim(), registry);
             let contains_type = if contains_eq.is_some() {
                 let t = *next_type_idx;
@@ -255,11 +253,10 @@ impl ListHelperRegistry {
         // Per-(`List<T>`, `Vector<T>`) pair: from_list. Only when both
         // sides are registered.
         for canonical in list_canonicals {
-            let elem = TypeRegistry::list_element_type(canonical).ok_or(
-                WasmGcError::Validation(format!(
-                    "list canonical `{canonical}` has no parsable element type"
-                )),
-            )?;
+            let elem =
+                TypeRegistry::list_element_type(canonical).ok_or(WasmGcError::Validation(
+                    format!("list canonical `{canonical}` has no parsable element type"),
+                ))?;
             let vec_canonical = format!("Vector<{}>", elem.trim());
             if !vector_canonicals.iter().any(|v| v == &vec_canonical) {
                 continue;
@@ -401,10 +398,11 @@ impl ListHelperRegistry {
             // idx and type idx tracks were both bumped in this exact
             // sequence.
             let elem = TypeRegistry::list_element_type(canonical).unwrap();
-            let elem_val = super::types::aver_to_wasm(elem.trim(), Some(registry))?
-                .ok_or(WasmGcError::Validation(format!(
+            let elem_val = super::types::aver_to_wasm(elem.trim(), Some(registry))?.ok_or(
+                WasmGcError::Validation(format!(
                     "list element type `{elem}` has no wasm representation"
-                )))?;
+                )),
+            )?;
             // cons : (T, List<T>) -> List<T> — single struct.new.
             // Emit always (every literal needs it; bodies and call sites
             // benefit from one shared helper instead of inline scratch).
@@ -434,11 +432,12 @@ impl ListHelperRegistry {
                 )))?;
             let elem = TypeRegistry::list_element_type(canonical).unwrap();
             let vec_canonical = format!("Vector<{}>", elem.trim());
-            let vec_idx = registry
-                .vector_type_idx(&vec_canonical)
-                .ok_or(WasmGcError::Validation(format!(
-                    "vector `{vec_canonical}` not registered for from_list"
-                )))?;
+            let vec_idx =
+                registry
+                    .vector_type_idx(&vec_canonical)
+                    .ok_or(WasmGcError::Validation(format!(
+                        "vector `{vec_canonical}` not registered for from_list"
+                    )))?;
             let list_ref = ValType::Ref(RefType {
                 nullable: true,
                 heap_type: HeapType::Concrete(list_idx),
@@ -495,14 +494,17 @@ impl ListHelperRegistry {
             types.ty().function([la_ref, lb_ref], [lt_ref]);
         }
         if self.string_split.is_some() {
-            let s_idx = registry.string_array_type_idx.ok_or(WasmGcError::Validation(
-                "string slot not registered for String.split/join helpers".into(),
-            ))?;
-            let list_str_idx = registry
-                .list_type_idx("List<String>")
+            let s_idx = registry
+                .string_array_type_idx
                 .ok_or(WasmGcError::Validation(
-                    "List<String> not registered for String.split/join helpers".into(),
+                    "string slot not registered for String.split/join helpers".into(),
                 ))?;
+            let list_str_idx =
+                registry
+                    .list_type_idx("List<String>")
+                    .ok_or(WasmGcError::Validation(
+                        "List<String> not registered for String.split/join helpers".into(),
+                    ))?;
             let s_ref = ValType::Ref(RefType {
                 nullable: true,
                 heap_type: HeapType::Concrete(s_idx),
@@ -519,10 +521,7 @@ impl ListHelperRegistry {
         Ok(())
     }
 
-    pub(super) fn emit_function_section(
-        &self,
-        funcs: &mut wasm_encoder::FunctionSection,
-    ) {
+    pub(super) fn emit_function_section(&self, funcs: &mut wasm_encoder::FunctionSection) {
         for canonical in &self.list_order {
             let idx = self.list_type_indices[canonical];
             // Order MUST match `assign_slots`: len, reverse, concat,
@@ -616,7 +615,12 @@ impl ListHelperRegistry {
             if ops.eq.is_some() {
                 let elem = TypeRegistry::list_element_type(canonical).unwrap();
                 let kind = list_eq_kind(elem.trim(), registry).unwrap();
-                codes.function(&emit_vec_eq(canonical, registry, kind.clone(), string_eq_fn_idx)?);
+                codes.function(&emit_vec_eq(
+                    canonical,
+                    registry,
+                    kind.clone(),
+                    string_eq_fn_idx,
+                )?);
                 codes.function(&emit_vec_hash(canonical, registry, kind, string_eq_fn_idx)?);
             }
         }
@@ -624,25 +628,23 @@ impl ListHelperRegistry {
             // Zip needs the per-`List<Tuple<A,B>>` reverse fn idx —
             // the body builds LIFO and reverses at the end.
             let lt_canonical = format!("List<{tup_canonical}>");
-            let reverse_fn = self
-                .list_ops_for(&lt_canonical)
-                .map(|o| o.reverse)
-                .ok_or(WasmGcError::Validation(format!(
+            let reverse_fn = self.list_ops_for(&lt_canonical).map(|o| o.reverse).ok_or(
+                WasmGcError::Validation(format!(
                     "List.zip: reverse fn for `{lt_canonical}` not registered"
-                )))?;
+                )),
+            )?;
             codes.function(&emit_list_zip(tup_canonical, registry, reverse_fn)?);
         }
         if self.string_split.is_some() {
             // string_split needs to call List<String>.reverse to flip
             // the LIFO accumulator into source order.
-            let reverse_fn_idx = self
-                .list_ops_for("List<String>")
-                .map(|o| o.reverse)
-                .ok_or(WasmGcError::Validation(
+            let reverse_fn_idx = self.list_ops_for("List<String>").map(|o| o.reverse).ok_or(
+                WasmGcError::Validation(
                     "string_split helper needs List<String>.reverse — \
                      register List<String> via list_canonicals first"
                         .into(),
-                ))?;
+                ),
+            )?;
             codes.function(&emit_string_split(registry, reverse_fn_idx)?);
             codes.function(&emit_string_join(registry)?);
         }
@@ -705,9 +707,9 @@ fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
                 // and called by fn idx); they just don't get a
                 // List.contains slot.
                 let fields = registry.record_fields.get(other)?;
-                let all_simple = fields.iter().all(|(_, t)| {
-                    matches!(t.trim(), "Int" | "Float" | "Bool" | "String")
-                });
+                let all_simple = fields
+                    .iter()
+                    .all(|(_, t)| matches!(t.trim(), "Int" | "Float" | "Bool" | "String"));
                 if all_simple {
                     Some(ListEqKind::RecordEq(other.to_string()))
                 } else {
@@ -719,9 +721,9 @@ fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
                     .values()
                     .filter(|v| v.parent == other)
                     .all(|v| {
-                        v.fields.iter().all(|t| {
-                            matches!(t.trim(), "Int" | "Float" | "Bool" | "String")
-                        })
+                        v.fields
+                            .iter()
+                            .all(|t| matches!(t.trim(), "Int" | "Float" | "Bool" | "String"))
                     });
                 if all_simple {
                     Some(ListEqKind::SumEq(other.to_string()))
@@ -754,19 +756,15 @@ fn vec_idx_of_pair(
         .ok_or(WasmGcError::Validation(format!(
             "vector `{vec_canonical}` not registered"
         )))?;
-    let elem_val = super::types::aver_to_wasm(elem.trim(), Some(registry))?.ok_or(
-        WasmGcError::Validation(format!(
-            "list element type `{elem}` has no wasm representation"
-        )),
-    )?;
+    let elem_val =
+        super::types::aver_to_wasm(elem.trim(), Some(registry))?.ok_or(WasmGcError::Validation(
+            format!("list element type `{elem}` has no wasm representation"),
+        ))?;
     Ok((vec_idx, elem_val))
 }
 
 /// `len : (List<T>) -> i64`.
-fn emit_list_len(
-    canonical: &str,
-    registry: &TypeRegistry,
-) -> Result<Function, WasmGcError> {
+fn emit_list_len(canonical: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let list_idx = list_idx_of(canonical, registry)?;
     let list_ref = ValType::Ref(RefType {
         nullable: true,
@@ -804,21 +802,17 @@ fn emit_list_len(
 }
 
 /// `reverse : (List<T>) -> List<T>`.
-fn emit_list_reverse(
-    canonical: &str,
-    registry: &TypeRegistry,
-) -> Result<Function, WasmGcError> {
+fn emit_list_reverse(canonical: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let list_idx = list_idx_of(canonical, registry)?;
     let list_ref = ValType::Ref(RefType {
         nullable: true,
         heap_type: HeapType::Concrete(list_idx),
     });
     let elem = TypeRegistry::list_element_type(canonical).unwrap();
-    let elem_val = super::types::aver_to_wasm(elem.trim(), Some(registry))?.ok_or(
-        WasmGcError::Validation(format!(
-            "list element type `{elem}` has no wasm representation"
-        )),
-    )?;
+    let elem_val =
+        super::types::aver_to_wasm(elem.trim(), Some(registry))?.ok_or(WasmGcError::Validation(
+            format!("list element type `{elem}` has no wasm representation"),
+        ))?;
     // params: 0=in. locals: 1=cur, 2=acc, 3=val
     let mut f = Function::new([(1, list_ref), (1, list_ref), (1, elem_val)]);
     f.instruction(&Instruction::LocalGet(0));
@@ -858,10 +852,7 @@ fn emit_list_reverse(
 
 /// `from_list : (List<T>) -> Vector<T>`. Two-pass: count, allocate,
 /// fill.
-fn emit_vec_from_list(
-    canonical: &str,
-    registry: &TypeRegistry,
-) -> Result<Function, WasmGcError> {
+fn emit_vec_from_list(canonical: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let list_idx = list_idx_of(canonical, registry)?;
     let (vec_idx, _elem_val) = vec_idx_of_pair(canonical, registry)?;
     let list_ref = ValType::Ref(RefType {
@@ -952,9 +943,9 @@ fn emit_string_split(
     registry: &TypeRegistry,
     reverse_fn_idx: u32,
 ) -> Result<Function, WasmGcError> {
-    let s_idx = registry.string_array_type_idx.ok_or(WasmGcError::Validation(
-        "string slot not registered".into(),
-    ))?;
+    let s_idx = registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation("string slot not registered".into()))?;
     let list_idx = registry
         .list_type_idx("List<String>")
         .ok_or(WasmGcError::Validation(
@@ -1174,9 +1165,9 @@ fn emit_string_split(
 /// `string_join : (List<String>, String) -> String`. Two-pass: sum
 /// total length, allocate, copy each element + sep into place.
 fn emit_string_join(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
-    let s_idx = registry.string_array_type_idx.ok_or(WasmGcError::Validation(
-        "string slot not registered".into(),
-    ))?;
+    let s_idx = registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation("string slot not registered".into()))?;
     let list_idx = registry
         .list_type_idx("List<String>")
         .ok_or(WasmGcError::Validation(
@@ -1350,10 +1341,7 @@ fn emit_list_concat(
         heap_type: HeapType::Concrete(list_idx),
     });
     // params: 0=a, 1=b. locals: 2=cur, 3=acc.
-    let mut f = Function::new([
-        (1, list_ref),
-        (1, list_ref),
-    ]);
+    let mut f = Function::new([(1, list_ref), (1, list_ref)]);
     // cur = reverse(a)
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::Call(reverse_fn));
@@ -1403,11 +1391,7 @@ fn emit_list_take(
         heap_type: HeapType::Concrete(list_idx),
     });
     // params: 0=in, 1=n. locals: 2=cur, 3=acc, 4=i.
-    let mut f = Function::new([
-        (1, list_ref),
-        (1, list_ref),
-        (1, ValType::I64),
-    ]);
+    let mut f = Function::new([(1, list_ref), (1, list_ref), (1, ValType::I64)]);
     // cur = in
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalSet(2));
@@ -1458,20 +1442,14 @@ fn emit_list_take(
 /// `drop : (List<T>, Int) -> List<T>`. Walks the cons chain `n`
 /// times, returns the remaining tail (shared structurally with the
 /// input). `n <= 0` returns the input unchanged.
-fn emit_list_drop(
-    canonical: &str,
-    registry: &TypeRegistry,
-) -> Result<Function, WasmGcError> {
+fn emit_list_drop(canonical: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let list_idx = list_idx_of(canonical, registry)?;
     let list_ref = ValType::Ref(RefType {
         nullable: true,
         heap_type: HeapType::Concrete(list_idx),
     });
     // params: 0=in, 1=n. locals: 2=cur, 3=i.
-    let mut f = Function::new([
-        (1, list_ref),
-        (1, ValType::I64),
-    ]);
+    let mut f = Function::new([(1, list_ref), (1, ValType::I64)]);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalSet(2));
     f.instruction(&Instruction::I64Const(0));
@@ -1521,10 +1499,10 @@ fn emit_list_contains(
         heap_type: HeapType::Concrete(list_idx),
     });
     let elem = TypeRegistry::list_element_type(canonical).unwrap();
-    let elem_val = super::types::aver_to_wasm(elem.trim(), Some(registry))?
-        .ok_or(WasmGcError::Validation(format!(
-            "list element type `{elem}` has no wasm representation"
-        )))?;
+    let elem_val =
+        super::types::aver_to_wasm(elem.trim(), Some(registry))?.ok_or(WasmGcError::Validation(
+            format!("list element type `{elem}` has no wasm representation"),
+        ))?;
     // params: 0=in, 1=needle. local 2 = cur. RecordEq adds two
     // extra scratch locals (3 = head, 4 = needle copy) since field-
     // by-field eq needs `struct.get` against both refs multiple
@@ -1559,14 +1537,7 @@ fn emit_list_contains(
             f.instruction(&Instruction::LocalSet(3));
             f.instruction(&Instruction::LocalGet(1));
             f.instruction(&Instruction::LocalSet(4));
-            emit_record_eq_inline(
-                &mut f,
-                record_name,
-                registry,
-                3,
-                4,
-                string_eq_fn_idx,
-            )?;
+            emit_record_eq_inline(&mut f, record_name, registry, 3, 4, string_eq_fn_idx)?;
         }
         ListEqKind::SumEq(parent_name) => {
             // Same scratch dance as RecordEq — both ref.test and
@@ -1579,14 +1550,7 @@ fn emit_list_contains(
             f.instruction(&Instruction::LocalSet(3));
             f.instruction(&Instruction::LocalGet(1));
             f.instruction(&Instruction::LocalSet(4));
-            emit_sum_eq_inline(
-                &mut f,
-                parent_name,
-                registry,
-                3,
-                4,
-                string_eq_fn_idx,
-            )?;
+            emit_sum_eq_inline(&mut f, parent_name, registry, 3, 4, string_eq_fn_idx)?;
         }
         _ => {
             f.instruction(&Instruction::LocalGet(2));
@@ -1601,8 +1565,7 @@ fn emit_list_contains(
                 ListEqKind::I32 => f.instruction(&Instruction::I32Eq),
                 ListEqKind::StringEq => {
                     let eq_fn = string_eq_fn_idx.ok_or(WasmGcError::Validation(
-                        "List.contains over String/Char needs __wasmgc_string_eq registered"
-                            .into(),
+                        "List.contains over String/Char needs __wasmgc_string_eq registered".into(),
                     ))?;
                     f.instruction(&Instruction::Call(eq_fn))
                 }
@@ -1644,11 +1607,11 @@ fn emit_record_eq_inline(
     needle_local: u32,
     string_eq_fn_idx: Option<u32>,
 ) -> Result<(), WasmGcError> {
-    let record_idx = registry.record_type_idx(record_name).ok_or(
-        WasmGcError::Validation(format!(
+    let record_idx = registry
+        .record_type_idx(record_name)
+        .ok_or(WasmGcError::Validation(format!(
             "List.contains: record `{record_name}` not registered"
-        )),
-    )?;
+        )))?;
     let fields = registry
         .record_fields
         .get(record_name)
@@ -1803,10 +1766,7 @@ fn emit_sum_eq_inline(
 /// scratch local (which used to clash with the outer literal's own
 /// accumulator and with multi-arm match scratch — same slot, three
 /// fighting writers).
-fn emit_list_cons(
-    canonical: &str,
-    registry: &TypeRegistry,
-) -> Result<Function, WasmGcError> {
+fn emit_list_cons(canonical: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let list_idx = list_idx_of(canonical, registry)?;
     let mut f = Function::new([]);
     f.instruction(&Instruction::LocalGet(0));
@@ -1820,10 +1780,7 @@ fn emit_list_cons(
 /// prepending each element onto a cons-list accumulator. Single
 /// pass, O(len). Per-(`Vector<T>`, `List<T>`) pair — `T` reads off
 /// the registered list canonical.
-fn emit_vec_to_list(
-    canonical: &str,
-    registry: &TypeRegistry,
-) -> Result<Function, WasmGcError> {
+fn emit_vec_to_list(canonical: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let list_idx = list_idx_of(canonical, registry)?;
     let (vec_idx, _) = vec_idx_of_pair(canonical, registry)?;
     let list_ref = ValType::Ref(RefType {
@@ -1831,10 +1788,7 @@ fn emit_vec_to_list(
         heap_type: HeapType::Concrete(list_idx),
     });
     // params: 0=vec. locals: 1=acc, 2=i.
-    let mut f = Function::new([
-        (1, list_ref),
-        (1, ValType::I32),
-    ]);
+    let mut f = Function::new([(1, list_ref), (1, ValType::I32)]);
     // acc = null
     f.instruction(&Instruction::RefNull(HeapType::Concrete(list_idx)));
     f.instruction(&Instruction::LocalSet(1));
@@ -1905,11 +1859,7 @@ fn emit_list_zip(
         heap_type: HeapType::Concrete(lt_idx),
     });
     // params: 0=la, 1=lb. locals: 2=cur_a, 3=cur_b, 4=acc.
-    let mut f = Function::new([
-        (1, la_ref.clone()),
-        (1, lb_ref.clone()),
-        (1, lt_ref),
-    ]);
+    let mut f = Function::new([(1, la_ref), (1, lb_ref), (1, lt_ref)]);
     // cur_a = la; cur_b = lb; acc = null
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalSet(2));

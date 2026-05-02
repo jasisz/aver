@@ -4388,7 +4388,7 @@ fn cmd_compile_wasm(
                 output_dir,
                 project_name,
                 module_root_override,
-                handler.as_deref(),
+                handler,
             );
             return;
         }
@@ -4722,7 +4722,12 @@ fn cmd_compile_wasm_gc(
     // `call $fn` after rewriting `Attr(Ident("Fractal"), "render")`
     // call sites to `Ident("Fractal_render")`. Component Model is a
     // future separate mode (see `project_wasm_gc_multimodule.md`).
-    let dep_modules = load_compile_deps(&items, &module_root, false /* run_interp_lower */, false /* run_buffer_build */);
+    let dep_modules = load_compile_deps(
+        &items,
+        &module_root,
+        false, /* run_interp_lower */
+        false, /* run_buffer_build */
+    );
     flatten_multimodule(&mut items, &dep_modules);
 
     let bytes = match wasm_gc::compile_to_wasm_gc_with_handler(
@@ -5451,7 +5456,12 @@ fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[ModuleInfo]) {
                 if let Some(rep) = new_callee {
                     callee.node = rep;
                 }
-                rewrite_expr(&mut callee.node, prefixes, same_module_prefix, same_module_fns);
+                rewrite_expr(
+                    &mut callee.node,
+                    prefixes,
+                    same_module_prefix,
+                    same_module_fns,
+                );
                 for a in args.iter_mut() {
                     rewrite_expr(&mut a.node, prefixes, same_module_prefix, same_module_fns);
                 }
@@ -5471,9 +5481,19 @@ fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[ModuleInfo]) {
                 rewrite_expr(&mut r.node, prefixes, same_module_prefix, same_module_fns);
             }
             Expr::Match { subject, arms } => {
-                rewrite_expr(&mut subject.node, prefixes, same_module_prefix, same_module_fns);
+                rewrite_expr(
+                    &mut subject.node,
+                    prefixes,
+                    same_module_prefix,
+                    same_module_fns,
+                );
                 for arm in arms.iter_mut() {
-                    rewrite_expr(&mut arm.body.node, prefixes, same_module_prefix, same_module_fns);
+                    rewrite_expr(
+                        &mut arm.body.node,
+                        prefixes,
+                        same_module_prefix,
+                        same_module_fns,
+                    );
                 }
             }
             Expr::Attr(obj, _) => {
@@ -5490,7 +5510,12 @@ fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[ModuleInfo]) {
                 }
             }
             Expr::RecordUpdate { base, updates, .. } => {
-                rewrite_expr(&mut base.node, prefixes, same_module_prefix, same_module_fns);
+                rewrite_expr(
+                    &mut base.node,
+                    prefixes,
+                    same_module_prefix,
+                    same_module_fns,
+                );
                 for (_, e) in updates.iter_mut() {
                     rewrite_expr(&mut e.node, prefixes, same_module_prefix, same_module_fns);
                 }
@@ -5507,13 +5532,23 @@ fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[ModuleInfo]) {
                 }
             }
             Expr::ErrorProp(inner) => {
-                rewrite_expr(&mut inner.node, prefixes, same_module_prefix, same_module_fns);
+                rewrite_expr(
+                    &mut inner.node,
+                    prefixes,
+                    same_module_prefix,
+                    same_module_fns,
+                );
             }
             Expr::InterpolatedStr(parts) => {
                 use aver::ast::StrPart;
                 for part in parts.iter_mut() {
                     if let StrPart::Parsed(inner) = part {
-                        rewrite_expr(&mut inner.node, prefixes, same_module_prefix, same_module_fns);
+                        rewrite_expr(
+                            &mut inner.node,
+                            prefixes,
+                            same_module_prefix,
+                            same_module_fns,
+                        );
                     }
                 }
             }
@@ -5522,7 +5557,7 @@ fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[ModuleInfo]) {
     }
 
     fn rewrite_stmts(
-        stmts: &mut Vec<Stmt>,
+        stmts: &mut [Stmt],
         prefixes: &std::collections::HashSet<String>,
         same_module_prefix: Option<&str>,
         same_module_fns: &std::collections::HashSet<String>,

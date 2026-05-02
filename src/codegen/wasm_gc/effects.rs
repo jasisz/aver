@@ -272,11 +272,9 @@ impl EffectName {
     /// idx. The headers Map crossing uses the registered concrete
     /// `Map<String, List<String>>` ref so the host bridge has a
     /// type-safe handle.
-    pub(super) fn params(self, registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
+    pub(super) fn params(self, _registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
         match self {
-            Self::ConsolePrint | Self::ConsoleError | Self::ConsoleWarn => {
-                Ok(vec![any_ref_ty()])
-            }
+            Self::ConsolePrint | Self::ConsoleError | Self::ConsoleWarn => Ok(vec![any_ref_ty()]),
             Self::TimeUnixMs => Ok(vec![]),
             Self::RequestMethod
             | Self::RequestUrl
@@ -286,19 +284,11 @@ impl EffectName {
             | Self::HttpClearRequestHeaders => Ok(vec![]),
             Self::ResponseText => Ok(vec![ValType::I64, any_ref_ty()]),
             Self::ResponseSetHeader => Ok(vec![any_ref_ty(), any_ref_ty()]),
-            Self::HttpSend => Ok(vec![
-                any_ref_ty(),
-                any_ref_ty(),
-                any_ref_ty(),
-                any_ref_ty(),
-            ]),
+            Self::HttpSend => Ok(vec![any_ref_ty(), any_ref_ty(), any_ref_ty(), any_ref_ty()]),
             Self::HttpAddRequestHeader => Ok(vec![any_ref_ty(), any_ref_ty()]),
             Self::EnvGet => Ok(vec![any_ref_ty()]),
             Self::EnvSet => Ok(vec![any_ref_ty(), any_ref_ty()]),
-            Self::ConsoleReadLine
-            | Self::ArgsLen
-            | Self::RandomFloat
-            | Self::TimeNow => Ok(vec![]),
+            Self::ConsoleReadLine | Self::ArgsLen | Self::RandomFloat | Self::TimeNow => Ok(vec![]),
             Self::ArgsGet | Self::TimeSleep => Ok(vec![ValType::I64]),
             Self::RandomInt => Ok(vec![ValType::I64, ValType::I64]),
             Self::FloatSin | Self::FloatCos => Ok(vec![ValType::F64]),
@@ -363,24 +353,26 @@ impl EffectName {
                 // `Option<String>` ref — eager-registered when any
                 // call site reaches for `String.charAt` / `Char.fromCode`,
                 // or now also when `Terminal.readKey` shows up.
-                let opt_idx = registry
-                    .option_type_idx("Option<String>")
-                    .ok_or(WasmGcError::Validation(
-                        "Terminal.readKey: Option<String> slot not registered".into(),
-                    ))?;
+                let opt_idx =
+                    registry
+                        .option_type_idx("Option<String>")
+                        .ok_or(WasmGcError::Validation(
+                            "Terminal.readKey: Option<String> slot not registered".into(),
+                        ))?;
                 Ok(vec![ValType::Ref(wasm_encoder::RefType {
                     nullable: true,
                     heap_type: wasm_encoder::HeapType::Concrete(opt_idx),
                 })])
             }
             Self::TerminalSize => {
-                let idx = registry
-                    .record_type_idx("Terminal.Size")
-                    .ok_or(WasmGcError::Validation(
-                        "Terminal.size: Terminal.Size record slot not registered \
+                let idx =
+                    registry
+                        .record_type_idx("Terminal.Size")
+                        .ok_or(WasmGcError::Validation(
+                            "Terminal.size: Terminal.Size record slot not registered \
                          (did you call Terminal.size in user code?)"
-                            .into(),
-                    ))?;
+                                .into(),
+                        ))?;
                 Ok(vec![ValType::Ref(wasm_encoder::RefType {
                     nullable: true,
                     heap_type: wasm_encoder::HeapType::Concrete(idx),
@@ -390,14 +382,11 @@ impl EffectName {
     }
 }
 
-fn map_string_list_string_ref_ty(
-    registry: &TypeRegistry,
-) -> Result<ValType, WasmGcError> {
+fn map_string_list_string_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
     let slots = registry
         .map_slots("Map<String,List<String>>")
         .ok_or(WasmGcError::Validation(
-            "fetch effect requires `Map<String, List<String>>` slot but none was registered"
-                .into(),
+            "fetch effect requires `Map<String, List<String>>` slot but none was registered".into(),
         ))?;
     Ok(ValType::Ref(wasm_encoder::RefType {
         nullable: true,

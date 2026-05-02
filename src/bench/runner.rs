@@ -609,9 +609,7 @@ fn run_wasm_gc(manifest: &Manifest) -> Result<BenchReport, RunError> {
                 .map_err(|e| RunError::Runtime(format!("invoke main: {}", e)))?;
             return Ok(String::from("[ref]"));
         }
-        Err(RunError::Runtime(
-            "main export must be a function".into(),
-        ))
+        Err(RunError::Runtime("main export must be a function".into()))
     };
 
     let mut samples: Vec<f64> = Vec::with_capacity(manifest.iterations);
