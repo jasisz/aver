@@ -104,7 +104,7 @@ pub(super) fn emit_module(
         ));
     }
     // `main` is optional — modules that act as a Worker handler
-    // (e.g. `tools/edge-gc/handler.av`) export `handler` instead and
+    // (e.g. `tools/edge/handler.av`) export `handler` instead and
     // never run `_start`. When absent, `_start` is emitted as a no-op
     // so the module shape stays valid.
     let main_idx: Option<usize> = fn_defs.iter().position(|fd| fd.name == "main");
@@ -1428,7 +1428,7 @@ fn emit_handler_wrapper(
 /// bridge exports plus the linear-memory transport buffer.
 ///
 /// Why this exists: a JS host (e.g. Cloudflare Workers via
-/// `tools/edge-gc/`) can't directly allocate or read engine-managed
+/// `tools/edge/`) can't directly allocate or read engine-managed
 /// `(array i8)` refs without JS String Builtins (stage-4 standard,
 /// not yet enabled on every host). Per-byte exports (one JS↔wasm
 /// boundary crossing per byte) would dominate the workload — ~100 ns

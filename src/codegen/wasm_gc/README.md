@@ -21,14 +21,7 @@ The reason wasm-gc doesn't ship the sidecar mode yet: most of the helpers are **
 
 Practical proposal: leave `--target wasm-gc` inline-only for now (matches the dominant deploy story), and design `--target edge-wasm-gc` against a fixed monomorphic menu later when there's a concrete consumer (the playground, probably). Memory entry `project_wasm_gc_multimodule.md` captures the related Component Model question.
 
-**Why we don't do "wasm-gc with legacy ABI" as a third mode.** It's tempting: emit `Request.method()` etc. with the legacy `(i32 ptr, i32 len)` signatures so the existing `tools/edge/dist/worker.js` (~490 lines, debugged, JSPI-aware) runs both backends unchanged. The reasons against:
-
-- Per-call LM round-trip per String I/O — every `Request.*` / `Response.*` crossing has to write/read an OBJ_STRING (8-byte header + bytes) into a transport buffer, plus an `array.new_default $string` + per-byte loop to land it in the wasm-gc carrier. Cost is small absolute (~µs), but it taxes every call on a path the native ABI does in one ref-pass.
-- The compiler grows a dual emit path for every effect — every new effect lands twice, every per-instantiation helper needs both shapes. Maintenance debt scales with the surface, not with the deploy story.
-- The "drop-in worker.js" gain is illusory anyway. Even with matching `(ptr, len)` signatures, the host has to know how strings are represented inside the wasm module. wasm-gc strings are `(array i8)`; legacy strings are OBJ_STRING with an 8-byte header. The host code that builds / reads them diverges either way.
-- Cheaper to write `tools/edge-gc/worker.js` once (~120 lines, demonstrated working) than to carry dual-ABI emit forever.
-
-So the migration story stays: pick a target, use the matching worker.js. Legacy stays for pre-2024 hosts unchanged; modern targets get `wasm-gc` + `tools/edge-gc/worker.js`. No third mode.
+**One worker.js per target.** `tools/edge/worker.js` (~120 lines) hosts the wasm-gc backend's fetch bridge: GC + tail-call config, `(ref null any)` import shapes, the `__rt_string_*` LM round-trip helpers the host needs to deliver `query: String` and read back the rendered body. A legacy-ABI dual-emit mode would let one worker.js drive both backends, but the gain is illusory — host code still has to know whether strings are `(array i8)` or OBJ_STRING with an 8-byte header — and the maintenance cost (every effect landing twice, every per-instantiation helper carrying both shapes) scales with the surface area. Pick a target, use the matching worker.js; pre-2024 hosts stay on `--target wasm` with their own bridge.
 
 **Where the sidecar story actually pays off: wasip2.** Component Model gives cross-component types and a real linking story instead of MVP wasm's "two modules, hope the imports line up" shape. A wasip2 component can declare `interface aver-runtime { resource map<...>; ... }` and let the host instantiate the helper module once, hand its functions to every guest component on demand. The per-instantiation problem softens because the Component Model lets a guest component say "instantiate `aver-runtime` with K=String, V=Int" and the runtime component does the monomorphisation locally. That's the model where shared runtime starts to make sense again — not MVP wasm sidecars where every type signature has to be globally agreed up front. `project_015_traversal.md` already has wasip2 on the parallel track; pairing it with `--target edge-wasm-gc` would land both stories together.
 
@@ -181,35 +174,9 @@ The compile path itself is correct and competitive: `Expr::InterpolatedStr` lowe
 
 **For realistic numbers under wasm-gc, use a browser-class engine.** A V8 bench harness lives at `tools/wasm-gc-bench-v8.mjs`. Requires Node 22+ for stable wasm-gc support — Node 20's V8 rejects packed `i8` array types.
 
-### Edge handler bench: `tools/edge/app.av` end-to-end on V8
+### Edge handler bench: `tools/edge/bench.av` end-to-end on V8
 
-The same `app.av` (~120 lines, full router with `/`, `/api`, `/fractal`, `/llms.txt`, 404 fallback) compiles for both backends and produces identical (status, content-type, body) per route. Numbers below are for `GET /fractal?cx=-0.7463&cy=0.1102&w=0.012` (the seahorse zoom — 200×120 grid, 600 iter cap, ~kilo-cons-cells per render) under Node 25.2.1, 30-iter harness, full fetch handler path (request fields decoded, routing, render, response headers materialised):
-
-| Stack                                | mean (raw) | mean (`wasm-opt -O3`) | wasm size raw → -O3 | body size |
-|--------------------------------------|-----------:|----------------------:|--------------------:|----------:|
-| wasm-local + `--bridge fetch`        | 33.2 ms    | 32.2 ms (−3 %)        | 34.0 → 31.0 KB      | 240 KB    |
-| wasm-gc + `--handler X` synth wrapper| **32.5 ms**| 31.8 ms (−2 %)        | **22.0 → 19.8 KB**  | 240 KB    |
-
-### Pushing the legacy backend further (negative result)
-
-Sweep over `wasm-opt` + Aver-side knobs to see if `--target wasm` had headroom on the seahorse:
-
-| Pipeline                                                     | mean    | wasm size |
-|--------------------------------------------------------------|--------:|----------:|
-| raw legacy emit                                              | 33.9 ms | 34.0 KB   |
-| `wasm-opt -O3 --converge` (current `--optimize speed`)       | 32.2 ms | 30.8 KB   |
-| `wasm-opt -O4 --converge`                                    | 32.0 ms | 30.6 KB   |
-| `-O3 --inlining-optimizing --flatten --simplify-locals-nostructure` | 32.0 ms | 32.2 KB   |
-
-Best case ~5.6 % off raw. The reason is structural: the seahorse render is bound by the `mandelStep` / `mandelIter` mutual recursion, which is `is_no_alloc` per the codegen heuristic — it already gets boundary-framing elision today (`emit_user_fn` skips `rt_save_heap_ptr` / `rt_truncate` when the body never touches the heap). The trampoline its tail-calls go through is a `loop + call_indirect` shape that Cranelift / V8 turn into the same code path `return_call` would produce — no peephole left there either.
-
-Concretely, the things one might still try cost more than they would buy on this workload:
-
-- **Native `return_call` in the legacy emit** instead of the manual trampoline — V8 handles either form identically when the callee is direct + sibling (which `mandelStep`/`mandelIter` are). The trampoline only adds cost in workloads that aren't already `is_no_alloc`, and those workloads aren't here.
-- **Eliding more memory ops** — runtime helpers (`rt_alloc`, `rt_str_*`) are already DCE'd out of `mandelStep` because it doesn't reach them. The fractal loop is pure f64 arithmetic + a few `i64.const` / `f64.convert_i64_s`. There's no extra `i32.load` / `i32.store` to remove.
-- **More aggressive Aver-side IR lowering** — `ir::escape` already strips the `Point` / `Shape` allocations that turned `match_dispatch` and `record` 5× faster. Mandelbrot doesn't allocate per pixel beyond the cons cell `runHtml` builds, and that's emitted by both backends identically.
-
-Bottom line: the legacy `--target wasm` backend really has said its last word on this workload. Further speedups would have to come from algorithmic changes (SIMD, parallel rows, a coarser dither) — not from the codegen.
+`bench.av` runs the seahorse zoom (`200×120` grid, 220-iter cap, ~kilo-cons-cells per render) through the same `Fractal.render` module the deployed worker calls. wasm-gc + `--handler X` synth wrapper lands at ~32 ms, ~22 KB raw / ~19.8 KB after `wasm-opt -Oz`, 240 KB body. Last measured legacy `--target wasm` number on the comparable `app.av` (now removed — the legacy router demo) was 33.2 ms / 34.0 → 31.0 KB; the gap is small absolute on this workload because the seahorse render is bound by the `mandelStep` / `mandelIter` mutual recursion, which the legacy codegen already elides boundary framing on (`is_no_alloc` heuristic), so most of the wasm-gc win comes from binary size, not steady-state speed. Allocation-heavy workloads (`fib`, `vector_ops`, `record`, `match_dispatch`) show the larger wins reported up top.
 
 ### Stdlib parity vs `--target wasm`
 

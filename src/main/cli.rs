@@ -155,7 +155,7 @@ pub(super) enum CompileTarget {
     /// no NaN-boxing, no boundary GC framing. The recommended target
     /// from 0.16 onward. Pairs with `--handler X` to synthesise a
     /// JS-callable `aver_http_handle` wrapper for fetch-bridge
-    /// deployments (see `tools/edge-gc/`). Requires Chrome 119+ /
+    /// deployments (see `tools/edge/`). Requires Chrome 119+ /
     /// Firefox 120+ / Safari 18.2+ / wasmtime 25+ / Node 22+ /
     /// Cloudflare Workers. See `src/codegen/wasm_gc/README.md` for
     /// the design notes and the cross-engine bench matrix.
