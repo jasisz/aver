@@ -954,6 +954,12 @@ fn collect_results_from_builtin_uses(
                     walk(&e.node, out, order, next_idx);
                 }
             }
+            Expr::RecordUpdate { base, updates, .. } => {
+                walk(&base.node, out, order, next_idx);
+                for (_, e) in updates {
+                    walk(&e.node, out, order, next_idx);
+                }
+            }
             Expr::List(items) => {
                 for x in items {
                     walk(&x.node, out, order, next_idx);
@@ -1270,6 +1276,12 @@ fn collect_options_from_expr(
                 collect_options_from_expr(&e.node, out, order, next_idx);
             }
         }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_options_from_expr(&base.node, out, order, next_idx);
+            for (_, e) in updates {
+                collect_options_from_expr(&e.node, out, order, next_idx);
+            }
+        }
         Expr::Constructor(_, payload) => {
             if let Some(p) = payload.as_deref() {
                 collect_options_from_expr(&p.node, out, order, next_idx);
@@ -1336,6 +1348,12 @@ fn collect_vectors_from_expr(
         Expr::Attr(obj, _) => collect_vectors_from_expr(&obj.node, out, order, next_idx),
         Expr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
+                collect_vectors_from_expr(&e.node, out, order, next_idx);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_vectors_from_expr(&base.node, out, order, next_idx);
+            for (_, e) in updates {
                 collect_vectors_from_expr(&e.node, out, order, next_idx);
             }
         }
@@ -1497,6 +1515,9 @@ fn expr_uses_string(expr: &crate::ast::Expr) -> bool {
             .as_deref()
             .is_some_and(|p| expr_uses_string(&p.node)),
         Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| expr_uses_string(&e.node)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_uses_string(&base.node) || updates.iter().any(|(_, e)| expr_uses_string(&e.node))
+        }
         Expr::Literal(crate::ast::Literal::Str(_)) => true,
         Expr::InterpolatedStr(_) => true,
         _ => false,
@@ -1580,6 +1601,12 @@ fn collect_string_literals_in_expr(
         }
         Expr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
+                collect_string_literals_in_expr(&e.node, out, idx);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_string_literals_in_expr(&base.node, out, idx);
+            for (_, e) in updates {
                 collect_string_literals_in_expr(&e.node, out, idx);
             }
         }
@@ -1976,6 +2003,12 @@ fn collect_lists_from_expr(
         Expr::Attr(obj, _) => collect_lists_from_expr(&obj.node, out, order, next_idx),
         Expr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
+                collect_lists_from_expr(&e.node, out, order, next_idx);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_lists_from_expr(&base.node, out, order, next_idx);
+            for (_, e) in updates {
                 collect_lists_from_expr(&e.node, out, order, next_idx);
             }
         }

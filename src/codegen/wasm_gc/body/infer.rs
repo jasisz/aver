@@ -367,7 +367,9 @@ pub(super) fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, 
         // back to the caller's frame); for inference purposes we report
         // the enclosing fn's return type.
         Expr::TailCall(_) => Ok(ctx.return_type.to_string()),
-        Expr::RecordCreate { type_name, .. } => Ok(type_name.clone()),
+        Expr::RecordCreate { type_name, .. } | Expr::RecordUpdate { type_name, .. } => {
+            Ok(type_name.clone())
+        }
         Expr::Attr(obj, field) => {
             // Bare `Option.None` reference — same shape as a bare attr
             // but resolves to `Option<T>` of the enclosing return type.
@@ -490,6 +492,12 @@ pub(super) fn collect_match_pattern_types(
         }
         Expr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
+                collect_match_pattern_types(&e.node, fd, fn_map, registry, out);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_match_pattern_types(&base.node, fd, fn_map, registry, out);
+            for (_, e) in updates {
                 collect_match_pattern_types(&e.node, fd, fn_map, registry, out);
             }
         }
@@ -777,7 +785,9 @@ pub(super) fn sniff_with_prev(
             }
             None
         }
-        Expr::RecordCreate { type_name, .. } => Some(type_name.clone()),
+        Expr::RecordCreate { type_name, .. } | Expr::RecordUpdate { type_name, .. } => {
+            Some(type_name.clone())
+        }
         Expr::Constructor(name, _) => registry.variant(name).map(|info| info.parent.clone()),
         Expr::InterpolatedStr(_) => Some("String".into()),
         _ => None,

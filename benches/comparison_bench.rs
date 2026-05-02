@@ -1,7 +1,8 @@
 #![allow(clippy::approx_constant)]
 //! Benchmark comparing execution modes on the same programs:
-//!   VM (bytecode), codegen (native Rust), WASM,
-//!   self-hosted (`aver run --self-host`).
+//!   VM (bytecode), codegen (native Rust), WASM (legacy linear-memory),
+//!   WASM-GC (native WebAssembly GC + tail-call), self-hosted
+//!   (`aver run --self-host`).
 //!
 //! Codegen runs as an external compiled binary. Self-hosted runs through the real CLI path,
 //! which builds and reuses the cached Aver-in-Aver binary behind `aver run --self-host`.
@@ -20,7 +21,7 @@ use aver::resolver;
 use aver::source::parse_source;
 use aver::tco;
 use aver::vm;
-use wasmtime::{Caller, Engine, Linker, Module, Store};
+use wasmtime::{Caller, Config, Engine, FuncType, Linker, Module, Store, Val, ValType};
 
 /// In-process embedded wasmtime harness — pre-built once per program,
 /// reused across every Criterion iteration. Eliminates the
@@ -40,6 +41,141 @@ fn build_wasm_harness(wasm_path: &std::path::Path) -> WasmHarness {
     let engine = Engine::default();
     let module = Module::new(&engine, &bytes).expect("wasmtime compile module");
     WasmHarness { engine, module }
+}
+
+/// In-process embedded wasmtime harness for the wasm-gc backend —
+/// mirrors `WasmHarness` shape but configures the engine with GC +
+/// tail-call proposals on (matches `aver compile --target=wasm-gc`'s
+/// runtime expectations). Module compiled once, fresh Store +
+/// Instance per Criterion iter.
+struct WasmGcHarness {
+    engine: Engine,
+    module: Module,
+    /// What `main` returns — picked at harness build time so the
+    /// per-iter call uses the matching `get_typed_func` signature
+    /// (avoids three speculative lookups per iteration).
+    main_kind: WasmGcMainKind,
+}
+
+#[derive(Clone, Copy)]
+enum WasmGcMainKind {
+    Int,
+    Float,
+    Unit,
+}
+
+fn build_wasm_gc_harness(wasm_path: &std::path::Path) -> WasmGcHarness {
+    let bytes = std::fs::read(wasm_path).expect("read pre-compiled wasm-gc bytes");
+    let mut config = Config::new();
+    config.wasm_gc(true);
+    config.wasm_tail_call(true);
+    config.wasm_function_references(true);
+    config.wasm_reference_types(true);
+    config.wasm_multi_value(true);
+    config.wasm_bulk_memory(true);
+    config.cranelift_opt_level(wasmtime::OptLevel::Speed);
+    config.max_wasm_stack(8 * 1024 * 1024);
+    let engine = Engine::new(&config).expect("wasmtime gc engine");
+    let module = Module::new(&engine, &bytes).expect("wasmtime gc compile module");
+    // Probe `main`'s declared return type once. `_start` always exists
+    // (it calls main and drops the result), but the typed-func per-iter
+    // path is faster and we need to pick the right return type.
+    let main_kind = {
+        let mut store = Store::new(&engine, ());
+        let mut linker = Linker::new(&engine);
+        stub_wasm_gc_imports(&mut linker, &engine, &module);
+        let instance = linker
+            .instantiate(&mut store, &module)
+            .expect("instantiate to probe main signature");
+        if instance
+            .get_typed_func::<(), i64>(&mut store, "main")
+            .is_ok()
+        {
+            WasmGcMainKind::Int
+        } else if instance
+            .get_typed_func::<(), f64>(&mut store, "main")
+            .is_ok()
+        {
+            WasmGcMainKind::Float
+        } else {
+            WasmGcMainKind::Unit
+        }
+    };
+    WasmGcHarness {
+        engine,
+        module,
+        main_kind,
+    }
+}
+
+/// Walk the module's import section and register a default-value stub
+/// for each `(module, name)` pair. Bench programs never call host
+/// effects, but the wasm-gc backend declares `aver/console_*` and
+/// `aver/time_*` imports unconditionally for any program that
+/// type-checks against an effect surface — the linker has to satisfy
+/// them before instantiate.
+fn stub_wasm_gc_imports(linker: &mut Linker<()>, engine: &Engine, module: &Module) {
+    use wasmtime::ExternType;
+    for import in module.imports() {
+        let ExternType::Func(ft) = import.ty() else {
+            continue;
+        };
+        let result_tys: Vec<ValType> = ft.results().collect();
+        let func_ty = FuncType::new(engine, ft.params(), ft.results());
+        let module_name = import.module().to_string();
+        let field_name = import.name().to_string();
+        let _ = linker.func_new(
+            &module_name,
+            &field_name,
+            func_ty,
+            move |_caller, _params, results| {
+                for (slot, ty) in results.iter_mut().zip(result_tys.iter()) {
+                    *slot = wasm_gc_default_val(ty);
+                }
+                Ok(())
+            },
+        );
+    }
+}
+
+fn wasm_gc_default_val(ty: &ValType) -> Val {
+    match ty {
+        ValType::I32 => Val::I32(0),
+        ValType::I64 => Val::I64(0),
+        ValType::F32 => Val::F32(0),
+        ValType::F64 => Val::F64(0),
+        ValType::V128 => Val::V128(0u128.into()),
+        ValType::Ref(_) => Val::AnyRef(None),
+    }
+}
+
+fn run_wasm_gc_iter(harness: &WasmGcHarness) {
+    let mut store = Store::new(&harness.engine, ());
+    let mut linker = Linker::new(&harness.engine);
+    stub_wasm_gc_imports(&mut linker, &harness.engine, &harness.module);
+    let instance = linker
+        .instantiate(&mut store, &harness.module)
+        .expect("instantiate wasm-gc module");
+    match harness.main_kind {
+        WasmGcMainKind::Int => {
+            let f = instance
+                .get_typed_func::<(), i64>(&mut store, "main")
+                .expect("main: () -> i64");
+            f.call(&mut store, ()).expect("wasm-gc main trap");
+        }
+        WasmGcMainKind::Float => {
+            let f = instance
+                .get_typed_func::<(), f64>(&mut store, "main")
+                .expect("main: () -> f64");
+            f.call(&mut store, ()).expect("wasm-gc main trap");
+        }
+        WasmGcMainKind::Unit => {
+            let f = instance
+                .get_typed_func::<(), ()>(&mut store, "main")
+                .expect("main: () -> ()");
+            f.call(&mut store, ()).expect("wasm-gc main trap");
+        }
+    }
 }
 
 fn run_wasm_iter(harness: &WasmHarness) {
@@ -78,7 +214,7 @@ fn run_vm(source: &str) {
     tco::transform_program(&mut items);
     resolver::resolve_program(&mut items);
     let mut arena = Arena::new();
-    let (code, globals) = vm::compile_program(&items, &mut arena).expect("compile error");
+    let (code, globals) = vm::compile_program(&items, &mut arena, None).expect("compile error");
     let mut machine = vm::VM::new(code, globals, arena);
     let _ = machine.run().expect("VM error");
 }
@@ -171,6 +307,37 @@ fn compile_to_wasm(source: &str, name: &str) -> std::path::PathBuf {
     stable
 }
 
+/// Pre-compile an Aver source through `--target wasm-gc`. Same shape
+/// as `compile_to_wasm` but no `--bridge` (the wasm-gc backend has its
+/// own native ABI; effects come in as `aver/*` imports). Output is a
+/// stable `.wasm` ready for the in-process wasmtime harness.
+fn compile_to_wasm_gc(source: &str, name: &str) -> std::path::PathBuf {
+    let dir = tempfile::tempdir().expect("create wasm-gc bench temp dir");
+    let src_path = dir.path().join("main.av");
+    std::fs::write(&src_path, source).expect("write source");
+
+    let out_dir = dir.path().join("out");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let status = Command::new(aver_bin)
+        .arg("compile")
+        .arg(&src_path)
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--name")
+        .arg(name)
+        .arg("-o")
+        .arg(&out_dir)
+        .status()
+        .expect("aver compile --target wasm-gc");
+    assert!(status.success(), "aver compile --target wasm-gc failed");
+
+    let built = out_dir.join(format!("{}.wasm", name));
+    let stable = std::env::temp_dir().join(format!("aver_bench_gc_{}.wasm", name));
+    std::fs::copy(&built, &stable).expect("copy wasm-gc artifact");
+    stable
+}
+
 fn write_temp_source(root: &std::path::Path, name: &str, source: &str) -> std::path::PathBuf {
     let path = root.join(format!("{}.av", name));
     let mut f = std::fs::File::create(&path).expect("create temp source file");
@@ -205,6 +372,7 @@ const NEWTYPE_VARIANT_SRC: &str = include_str!("../bench/scenarios/newtype_varia
 struct BenchArtifacts<'a> {
     native_bin: &'a std::path::Path,
     wasm_harness: &'a WasmHarness,
+    wasm_gc_harness: &'a WasmGcHarness,
     aver_bin: &'a str,
     module_root: &'a std::path::Path,
     source_file: &'a std::path::Path,
@@ -226,6 +394,14 @@ fn bench_all_modes(
         // in-process; eliminates spawn cost and aver-compile cost,
         // measures the actual run.
         b.iter(|| run_wasm_iter(artifacts.wasm_harness));
+    });
+    group.bench_function(BenchmarkId::new("wasm-gc", label), |b| {
+        // Same in-process pattern as `wasm`, but the engine is
+        // configured with the GC + tail-call proposals on and the
+        // harness invokes `main` as a typed function (the wasm-gc
+        // backend exports user fns directly under their Aver name).
+        // Stubs `aver/*` host imports so pure-compute scenarios link.
+        b.iter(|| run_wasm_gc_iter(artifacts.wasm_gc_harness));
     });
     group.bench_function(BenchmarkId::new("codegen", label), |b| {
         b.iter(|| run_external(artifacts.native_bin.to_str().unwrap(), &[]));
@@ -296,6 +472,21 @@ fn comparison_benches(c: &mut Criterion) {
     let wasm_harnesses: Vec<WasmHarness> =
         wasm_files.iter().map(|p| build_wasm_harness(p)).collect();
 
+    // Same idea for the wasm-gc backend — separate file path + engine
+    // config so the two harnesses live side by side and don't poison
+    // each other's caches.
+    let wasm_gc_files: Vec<std::path::PathBuf> = tests
+        .iter()
+        .map(|(label, name, src)| {
+            eprintln!("Compiling {} to wasm-gc...", label);
+            compile_to_wasm_gc(src, name)
+        })
+        .collect();
+    let wasm_gc_harnesses: Vec<WasmGcHarness> = wasm_gc_files
+        .iter()
+        .map(|p| build_wasm_gc_harness(p))
+        .collect();
+
     // Write source files for the real `aver run --self-host` path under one shared module root
     let self_host_root = tempfile::tempdir().expect("create self-host bench root");
     let source_files: Vec<std::path::PathBuf> = tests
@@ -322,6 +513,7 @@ fn comparison_benches(c: &mut Criterion) {
         let artifacts = BenchArtifacts {
             native_bin: &natives[i],
             wasm_harness: &wasm_harnesses[i],
+            wasm_gc_harness: &wasm_gc_harnesses[i],
             aver_bin,
             module_root: self_host_root.path(),
             source_file: &source_files[i],

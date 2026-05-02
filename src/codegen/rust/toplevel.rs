@@ -1032,6 +1032,22 @@ fn expr_is_hoistable_invariant(
         return false;
     }
 
+    // Buffer-build sinks return an owned `aver_rt::Buffer` (≈ String).
+    // Hoisting `__buf_new(N)` outside the loop is wrong: every loop
+    // iteration *consumes* the buffer (it gets moved into a `__b`
+    // local that grows with `push_str` and is then converted to
+    // `AverStr`). After iter 0 the hoisted local has been moved
+    // away, so iter 1 dereferences a moved value and rustc rejects
+    // it. Cloning per-iter would defeat the hoist anyway. Same logic
+    // applies to other mutable-owned buffer constructors should they
+    // appear; `__buf_new` is the one we synthesise today.
+    if let Expr::FnCall(callee, _) = expr
+        && let Some(name) = crate::ir::expr_to_dotted_name(&callee.node)
+        && name == "__buf_new"
+    {
+        return false;
+    }
+
     match classify_body_expr_plan_for_rust(expr, ctx, ectx) {
         BodyExprPlan::Leaf(
             LeafOp::StaticRef(_) | LeafOp::NoneValue | LeafOp::VariantConstructor { .. },

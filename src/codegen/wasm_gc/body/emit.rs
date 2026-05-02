@@ -306,6 +306,11 @@ pub(super) fn emit_expr(
         Expr::RecordCreate { type_name, fields } => {
             emit_record_create(func, type_name, fields, slots, ctx)?
         }
+        Expr::RecordUpdate {
+            type_name,
+            base,
+            updates,
+        } => emit_record_update(func, type_name, base, updates, slots, ctx)?,
         Expr::Attr(obj, field) => {
             // `Option.None` lands here as a bare attribute reference
             // (parser doesn't synthesise a FnCall for nullary
@@ -391,6 +396,62 @@ pub(super) fn emit_record_create(
                     "record `{type_name}` missing field `{decl_name}`"
                 )))?;
         emit_expr(func, &provided.1.node, slots, ctx)?;
+    }
+    func.instruction(&Instruction::StructNew(type_idx));
+    Ok(())
+}
+
+/// Lower `RecordUpdate { type_name, base, updates }` to a fresh
+/// `struct.new $type_idx`. Each declared field is either taken from
+/// `updates` (the user-supplied override) or copied from `base` via
+/// `struct.get $type_idx $field_idx`. The `base` expression is
+/// re-emitted once per non-updated field; for the common case where
+/// `base` is a `Resolved` local (most update sites in the games look
+/// like `state.update(dx = 0, dy = -1)` with `state` being a fn
+/// param), re-emit is a single `local.get` and effectively free. A
+/// scratch local would be more efficient when `base` is itself a
+/// complex computation, but Function locals are reserved up front in
+/// `SlotTable::build_for_fn` and the scratch slot allocator only
+/// handles the multi-arm-match case today — extending it to record-
+/// update sites is a follow-up.
+pub(super) fn emit_record_update(
+    func: &mut Function,
+    type_name: &str,
+    base: &Spanned<Expr>,
+    updates: &[(String, Spanned<Expr>)],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let type_idx = ctx
+        .registry
+        .record_type_idx(type_name)
+        .ok_or(WasmGcError::Validation(format!(
+            "unknown record type `{type_name}`"
+        )))?;
+    let decl_fields = ctx
+        .registry
+        .record_fields
+        .get(type_name)
+        .ok_or(WasmGcError::Validation(format!(
+            "record `{type_name}` missing field list"
+        )))?
+        .clone();
+    for (decl_name, _) in &decl_fields {
+        if let Some((_, override_expr)) = updates.iter().find(|(n, _)| n == decl_name) {
+            emit_expr(func, &override_expr.node, slots, ctx)?;
+        } else {
+            let field_idx = ctx
+                .registry
+                .record_field_index(type_name, decl_name)
+                .ok_or(WasmGcError::Validation(format!(
+                    "record `{type_name}` has no field `{decl_name}` to copy from base"
+                )))?;
+            emit_expr(func, &base.node, slots, ctx)?;
+            func.instruction(&Instruction::StructGet {
+                struct_type_index: type_idx,
+                field_index: field_idx,
+            });
+        }
     }
     func.instruction(&Instruction::StructNew(type_idx));
     Ok(())
