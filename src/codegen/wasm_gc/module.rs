@@ -506,32 +506,50 @@ fn emit_user_types(
     items: &[TopLevel],
     registry: &TypeRegistry,
 ) -> Result<(), WasmGcError> {
-    // String comes first in the type section ONLY if the registry
-    // allocated a slot AND the slot index says it should be at the
-    // start. Actually `TypeRegistry::build` allocates the string slot
-    // AFTER all records/variants — so emit user types in registry
-    // declaration order; string sits at `user_type_count - 1`.
-    // Walk records/variants first, then append the string array.
-    // NOTE: even when a record / variant is a newtype (erased at the
-    // wasm level), we still emit its struct type slot to keep the
-    // type-index assignments stable with `TypeRegistry::build`. The
-    // emit code paths skip `struct.new` / `struct.get` for newtype
-    // names, so the slot is dead — `wasm-opt -Oz` strips it during
-    // post-processing. Cost today is a few bytes of unused type
-    // section per newtype.
+    // ALL user types — records, variants, string array, vectors,
+    // results, lists, options, maps, builtin records — go into a
+    // single explicit rec group. Inside a rec group wasm-gc allows
+    // forward references between members, which lifts the strict
+    // bottom-up ordering constraint that otherwise made
+    // `Vector<List<Int>>` / `List<Map<K, V>>` / any cross-collection
+    // nesting impossible to express. Type indices follow registry
+    // insertion order exactly the way they did before the rec group;
+    // the difference is that members can refer to peers at higher
+    // indices without crossing a group boundary.
+    use wasm_encoder::{
+        ArrayType, CompositeInnerType, CompositeType, StructType, SubType,
+    };
+    let mut subtypes: Vec<SubType> = Vec::new();
+    let mk_struct = |fields: Vec<wasm_encoder::FieldType>| SubType {
+        is_final: true,
+        supertype_idx: None,
+        composite_type: CompositeType {
+            inner: CompositeInnerType::Struct(StructType {
+                fields: fields.into_boxed_slice(),
+            }),
+            shared: false,
+        },
+    };
+    let mk_array = |elem: wasm_encoder::FieldType| SubType {
+        is_final: true,
+        supertype_idx: None,
+        composite_type: CompositeType {
+            inner: CompositeInnerType::Array(ArrayType(elem)),
+            shared: false,
+        },
+    };
+    // Records / variants — same registry order as before. Newtype
+    // slots stay even though the emit paths skip them (preserves
+    // type-idx invariants with `TypeRegistry::build`).
     for item in items {
         match item {
             TopLevel::TypeDef(TypeDef::Product {
                 name: _, fields, ..
             }) => {
                 let st = record_struct_type(fields, registry)?;
-                types.ty().struct_(st.fields.iter().copied());
+                subtypes.push(mk_struct(st.fields.iter().copied().collect()));
             }
             TopLevel::TypeDef(TypeDef::Sum { variants, .. }) => {
-                // Each variant constructor → its own struct type.
-                // Phase 3a: no shared subtype hierarchy; each variant
-                // stands alone, parent type is encoded as `(ref null eq)`
-                // in user-facing slots.
                 for v in variants {
                     let mut fields = Vec::new();
                     for ty in &v.fields {
@@ -546,23 +564,19 @@ fn emit_user_types(
                             mutable: false,
                         });
                     }
-                    types.ty().struct_(fields);
+                    subtypes.push(mk_struct(fields));
                 }
             }
             _ => {}
         }
     }
 
-    // String type: `(array (mut i8))`. Emitted before any `Vector<T>`
-    // slot so a `Vector<String>` array element can reference `$string`
-    // by an already-assigned smaller index. Mutable=true at the wasm
-    // type level so helpers (Int.toString etc.) can `array.set` to
-    // fill a freshly-allocated array; Aver-side immutability is a
-    // surface-language guarantee — no user-level op exposes mutation.
+    // String — `(array (mut i8))`.
     if registry.string_array_type_idx.is_some() {
-        types
-            .ty()
-            .array(&wasm_encoder::StorageType::I8, true /* mutable */);
+        subtypes.push(mk_array(wasm_encoder::FieldType {
+            element_type: wasm_encoder::StorageType::I8,
+            mutable: true,
+        }));
     }
 
     // Vector<T> instantiations — emit one `(array (mut T))` per
@@ -582,13 +596,13 @@ fn emit_user_types(
                 "Vector element type `{element}` has no wasm representation"
             )),
         )?;
-        types
-            .ty()
-            .array(&wasm_encoder::StorageType::Val(elem_val), true);
+        subtypes.push(mk_array(wasm_encoder::FieldType {
+            element_type: wasm_encoder::StorageType::Val(elem_val),
+            mutable: true,
+        }));
     }
 
-    // `Result<T, E>` — emit BEFORE Option / List / Map so any of
-    // them can reference Result by an already-assigned lower idx.
+    // `Result<T, E>` — `(struct (mut i32 tag) (mut T ok) (mut E err))`.
     for canonical in &registry.result_order {
         let (t_aver, e_aver) = TypeRegistry::result_te(canonical).ok_or(
             WasmGcError::Validation(format!(
@@ -605,7 +619,7 @@ fn emit_user_types(
                 "Result E type `{e_aver}` has no wasm representation"
             )),
         )?;
-        types.ty().struct_([
+        subtypes.push(mk_struct(vec![
             wasm_encoder::FieldType {
                 element_type: wasm_encoder::StorageType::Val(ValType::I32),
                 mutable: true,
@@ -618,12 +632,14 @@ fn emit_user_types(
                 element_type: wasm_encoder::StorageType::Val(e_val),
                 mutable: true,
             },
-        ]);
+        ]));
     }
 
-    // `List<T>` — recursive Cons cell. Self-reference works because
-    // wasm-gc treats each top-level struct as its own implicit rec
-    // group (the type's own idx is in scope inside its body).
+    // `List<T>` — recursive Cons cell. Self-reference works inside
+    // the rec group same way it used to via the per-struct implicit
+    // group; cross-collection refs (`List<Map<K, V>>`,
+    // `Vector<List<T>>`) now also work because everything shares
+    // the same explicit rec group.
     for canonical in &registry.list_order {
         let element = TypeRegistry::list_element_type(canonical).ok_or(
             WasmGcError::Validation(format!(
@@ -642,7 +658,7 @@ fn emit_user_types(
             nullable: true,
             heap_type: wasm_encoder::HeapType::Concrete(own_idx),
         });
-        types.ty().struct_([
+        subtypes.push(mk_struct(vec![
             wasm_encoder::FieldType {
                 element_type: wasm_encoder::StorageType::Val(elem_val),
                 mutable: false,
@@ -651,15 +667,10 @@ fn emit_user_types(
                 element_type: wasm_encoder::StorageType::Val(tail_ref),
                 mutable: false,
             },
-        ]);
+        ]));
     }
 
-    // Option<T> instantiations — `(struct (mut i32 tag) (mut T value))`.
-    // Emitted AFTER Result/List so `Option<List<T>>` /
-    // `Option<Result<T,E>>` can reference the inner type by an
-    // already-assigned lower idx (wasm-gc forward refs outside a rec
-    // group are illegal). Both fields mutable for symmetry with
-    // constructors emitting `struct.new` directly.
+    // Option<T> — `(struct (mut i32 tag) (mut T value))`.
     for canonical in &registry.option_order {
         let element = TypeRegistry::option_element_type(canonical).ok_or(
             WasmGcError::Validation(format!(
@@ -671,7 +682,7 @@ fn emit_user_types(
                 "Option element type `{element}` has no wasm representation"
             )),
         )?;
-        types.ty().struct_([
+        subtypes.push(mk_struct(vec![
             wasm_encoder::FieldType {
                 element_type: wasm_encoder::StorageType::Val(ValType::I32),
                 mutable: true,
@@ -680,13 +691,11 @@ fn emit_user_types(
                 element_type: wasm_encoder::StorageType::Val(elem_val),
                 mutable: true,
             },
-        ]);
+        ]));
     }
 
-    // `Map<K, V>` — three wasm types per registered instantiation,
-    // emitted in registry insertion order (keys array, values array,
-    // map struct) so the struct's nested ref fields reference the
-    // arrays by an already-assigned lower idx.
+    // `Map<K, V>` — three wasm types per registered instantiation
+    // (keys array, values array, map struct).
     for canonical in &registry.map_order {
         let (k_aver, v_aver) = super::types::parse_map_kv(canonical).ok_or(
             WasmGcError::Validation(format!(
@@ -703,12 +712,14 @@ fn emit_user_types(
                 "Map value type `{v_aver}` has no wasm representation"
             )),
         )?;
-        types
-            .ty()
-            .array(&wasm_encoder::StorageType::Val(k_val), true);
-        types
-            .ty()
-            .array(&wasm_encoder::StorageType::Val(v_val), true);
+        subtypes.push(mk_array(wasm_encoder::FieldType {
+            element_type: wasm_encoder::StorageType::Val(k_val),
+            mutable: true,
+        }));
+        subtypes.push(mk_array(wasm_encoder::FieldType {
+            element_type: wasm_encoder::StorageType::Val(v_val),
+            mutable: true,
+        }));
         let slots = registry
             .map_slots(canonical)
             .expect("just-registered map slots");
@@ -720,7 +731,7 @@ fn emit_user_types(
             nullable: true,
             heap_type: wasm_encoder::HeapType::Concrete(slots.values_array),
         });
-        types.ty().struct_([
+        subtypes.push(mk_struct(vec![
             wasm_encoder::FieldType {
                 element_type: wasm_encoder::StorageType::Val(ValType::I32),
                 mutable: true,
@@ -737,14 +748,13 @@ fn emit_user_types(
                 element_type: wasm_encoder::StorageType::Val(values_ref),
                 mutable: true,
             },
-        ]);
+        ]));
     }
 
     // Built-in records (HttpRequest / HttpResponse / Tcp.Connection /
-    // Terminal.Size) emit at the END of the type section so their
-    // struct fields can reference String / List<T> / Map<K,V> by
-    // already-assigned lower indices. `TypeRegistry::build` defers
-    // their slot assignment to the same point.
+    // Terminal.Size) sit at the tail of the rec group — their fields
+    // reference String / List<T> / Map<K,V> which are members of the
+    // same group, so the rec wrapping makes the dependencies legal.
     for record in crate::codegen::builtin_records::BUILTIN_RECORDS {
         if !registry.records.contains_key(record.aver_name) {
             continue;
@@ -754,9 +764,13 @@ fn emit_user_types(
             .get(record.aver_name)
             .expect("builtin record registered without fields");
         let st = super::types::record_struct_type(fields, registry)?;
-        types.ty().struct_(st.fields.iter().copied());
+        subtypes.push(mk_struct(st.fields.iter().copied().collect()));
     }
 
+    // The rec group counts as ONE type-section entry (single 0x4e
+    // prefix + N subtypes), so route through `ty()` which advances
+    // `num_added` by 1 for the whole group.
+    types.ty().rec(subtypes);
     Ok(())
 }
 
