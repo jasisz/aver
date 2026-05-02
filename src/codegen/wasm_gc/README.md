@@ -240,8 +240,9 @@ Audited 2026-05-02 against `src/codegen/wasm/abi.rs` + `src/types/checker/builti
 | Char      | toCode/fromCode ✅ |
 | Option    | Some/None/withDefault/toResult ✅ |
 | Result    | Ok/Err/withDefault ✅ |
-| List      | prepend/empty/len/length/reverse/concat/take/drop ✅, contains ✅ for T ∈ {Int, Float, Bool, String, Char} + per-(L,V) `Vector.fromList` ✅; **missing per-instantiation**: `contains` for record/sum T (needs typed-eq dispatch beyond i64/f64/i32/string_eq), `zip` (needs Tuple<A,B> support) |
-| Map       | empty/set/get/len/has/keys/values/remove + fused `Option.withDefault(Map.get(...))` / `match Map.get(...)` shapes ✅. K = `String` ✅ or any user-defined record (field-by-field hash + eq, fields ∈ {Int, Float, Bool, String}) ✅. **missing**: K = primitive (Int/Float/Bool need a different empty-marker than `keys[i] == null`); record-key fields outside {Int, Float, Bool, String} (Char, nested records, lists, vectors); `entries`, `fromList` (both need Tuple<K,V>) |
+| List      | prepend/empty/len/length/reverse/concat/take/drop/zip ✅, contains ✅ for T ∈ {Int, Float, Bool, String, Char} + per-(L,V) `Vector.fromList` ✅; **missing per-instantiation**: `contains` for record/sum T (needs typed-eq dispatch beyond i64/f64/i32/string_eq) |
+| Map       | empty/set/get/len/has/keys/values/remove/entries/fromList + fused `Option.withDefault(Map.get(...))` / `match Map.get(...)` shapes ✅. K = `String` ✅ or any user-defined record (field-by-field hash + eq, fields ∈ {Int, Float, Bool, String}) ✅. **missing**: K = primitive (Int/Float/Bool need a different empty-marker than `keys[i] == null`); record-key fields outside {Int, Float, Bool, String} (Char, nested records, lists, vectors) |
+| Tuple     | `(A, B)` literal + match destructure ✅, per-(A,B) instantiation in the type registry, used as a building block for `List.zip` / `Map.entries` / `Map.fromList`. Tuple types accept both Aver-surface `(A, B)` and internal canonical `Tuple<A,B>` interchangeably |
 | Vector    | new/get (boxed)/set (boxed)/len/toList ✅ + `fromList` per-(L,V) ✅ |
 | Byte      | fromHex/toHex ✅ |
 | BranchPath, Tcp.Connection | ❌ surface-level builtin records, low priority |

@@ -82,6 +82,11 @@ pub(super) struct TypeRegistry {
     /// need to be emitted.
     pub(super) map_types: HashMap<String, MapSlots>,
     pub(super) map_order: Vec<String>,
+    /// Per-instantiation `Tuple<A, B>` slot. Each lowers to a
+    /// `(struct (mut A) (mut B))`. Used by `Map.entries` (returns
+    /// `List<Tuple<K, V>>`), `Map.fromList`, and `List.zip`.
+    pub(super) tuple_types: HashMap<String, u32>,
+    pub(super) tuple_order: Vec<String>,
     /// Total number of user-type slots reserved in the type section.
     /// Function types start AFTER these.
     pub(super) user_type_count: u32,
@@ -499,6 +504,60 @@ impl TypeRegistry {
             }
         }
 
+        // `Tuple<A, B>` discovery — fn signatures + record fields +
+        // body annotations. Discovery walks the same shape as
+        // results/options.
+        let mut tuple_types: HashMap<String, u32> = HashMap::new();
+        let mut tuple_order: Vec<String> = Vec::new();
+        for item in items {
+            if let TopLevel::FnDef(fd) = item {
+                collect_tuples_from_str(
+                    &fd.return_type,
+                    &mut tuple_types,
+                    &mut tuple_order,
+                    &mut next_idx,
+                );
+                for (_, ty) in &fd.params {
+                    collect_tuples_from_str(
+                        ty,
+                        &mut tuple_types,
+                        &mut tuple_order,
+                        &mut next_idx,
+                    );
+                }
+            }
+        }
+        // Eagerly register `Tuple<K, V>` for every `Map<K, V>` —
+        // `Map.entries` returns `List<Tuple<K, V>>` and `Map.fromList`
+        // takes one. Plus the matching `List<Tuple<K, V>>`.
+        for canonical in map_order.iter() {
+            if let Some((k, v)) = parse_map_kv(canonical) {
+                let tup = format!("Tuple<{},{}>", k.trim(), v.trim());
+                if !tuple_types.contains_key(&tup) {
+                    tuple_types.insert(tup.clone(), next_idx);
+                    tuple_order.push(tup.clone());
+                    next_idx += 1;
+                }
+                let lst = format!("List<{tup}>");
+                if !list_types.contains_key(&lst) {
+                    list_types.insert(lst.clone(), next_idx);
+                    list_order.push(lst);
+                    next_idx += 1;
+                }
+            }
+        }
+        // Eagerly register `List<Tuple<A, B>>` for every `Tuple<A, B>`
+        // — `List.zip` returns it and `Map.fromList` takes it. Some
+        // tuples come straight from fn signatures; this catches both.
+        for canonical in tuple_order.clone().iter() {
+            let lst = format!("List<{canonical}>");
+            if !list_types.contains_key(&lst) {
+                list_types.insert(lst.clone(), next_idx);
+                list_order.push(lst);
+                next_idx += 1;
+            }
+        }
+
         // Eagerly register `List<T>` and `Option<Vector<T>>` for
         // every `Vector<T>` — `Vector.toList` returns the list and
         // `Vector.set` (boxed shape) returns the option. Both
@@ -573,6 +632,8 @@ impl TypeRegistry {
             result_order,
             map_types,
             map_order,
+            tuple_types,
+            tuple_order,
             user_type_count: next_idx,
             string_array_type_idx,
             string_literals,
@@ -582,7 +643,8 @@ impl TypeRegistry {
     }
 
     pub(super) fn list_type_idx(&self, canonical: &str) -> Option<u32> {
-        self.list_types.get(canonical).copied()
+        let normalized = normalize_compound(canonical);
+        self.list_types.get(&normalized).copied()
     }
 
     pub(super) fn list_element_type(canonical: &str) -> Option<&str> {
@@ -615,6 +677,42 @@ impl TypeRegistry {
 
     pub(super) fn map_slots(&self, canonical: &str) -> Option<MapSlots> {
         self.map_types.get(canonical).copied()
+    }
+
+    pub(super) fn tuple_type_idx(&self, canonical: &str) -> Option<u32> {
+        // Accept both `Tuple<A,B>` (internal canonical) and `(A, B)`
+        // (Aver surface syntax). Normalize the latter, strip
+        // whitespace, then look up.
+        let normalized = normalize_tuple_canonical(canonical);
+        self.tuple_types.get(normalized.as_ref()).copied()
+    }
+
+    /// Split `Tuple<A, B>` (or `(A, B)`) into (A, B). Same depth-
+    /// aware comma scan as `result_te` / `parse_map_kv`. Returns
+    /// owned strings since the canonical may be normalized from
+    /// Aver-surface `(A, B)` form.
+    pub(super) fn tuple_ab(canonical: &str) -> Option<(&str, &str)> {
+        let trimmed = canonical.trim();
+        let inner = if let Some(i) = trimmed.strip_prefix("Tuple<").and_then(|s| s.strip_suffix('>')) {
+            i
+        } else if trimmed.starts_with('(') && trimmed.ends_with(')') {
+            &trimmed[1..trimmed.len() - 1]
+        } else {
+            return None;
+        };
+        let bytes = inner.as_bytes();
+        let mut depth: i32 = 0;
+        for (idx, b) in bytes.iter().enumerate() {
+            match b {
+                b'(' | b'<' => depth += 1,
+                b')' | b'>' => depth -= 1,
+                b',' if depth == 0 => {
+                    return Some((inner[..idx].trim(), inner[idx + 1..].trim()));
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     pub(super) fn option_type_idx(&self, canonical: &str) -> Option<u32> {
@@ -860,6 +958,87 @@ fn collect_results_from_builtin_uses(
     }
 }
 
+/// `Tuple<A, B>` discovery — scans both `Tuple<...>` (canonical we
+/// emit internally) and `(A, B)` (the surface Aver syntax that the
+/// type checker renders Type::Tuple as). Both forms register under
+/// the same `Tuple<A,B>` whitespace-free canonical so downstream
+/// lookups work uniformly.
+fn collect_tuples_from_str(
+    type_str: &str,
+    out: &mut HashMap<String, u32>,
+    order: &mut Vec<String>,
+    next_idx: &mut u32,
+) {
+    let trimmed = type_str.trim();
+    let bytes = trimmed.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        // `Tuple<...>` form
+        if i + 6 <= bytes.len() && &bytes[i..i + 6] == b"Tuple<" {
+            let mut depth: i32 = 1;
+            let mut j = i + 6;
+            while j < bytes.len() && depth > 0 {
+                match bytes[j] {
+                    b'<' => depth += 1,
+                    b'>' => depth -= 1,
+                    _ => {}
+                }
+                j += 1;
+            }
+            if depth == 0 {
+                let inner = &trimmed[i + 6..j - 1];
+                collect_tuples_from_str(inner, out, order, next_idx);
+                let canonical: String = trimmed[i..j]
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                if !out.contains_key(&canonical) {
+                    out.insert(canonical.clone(), *next_idx);
+                    order.push(canonical);
+                    *next_idx += 1;
+                }
+                i = j;
+                continue;
+            }
+        }
+        // `(A, B)` surface form. Parens-balanced, exactly one
+        // top-level comma → tuple. Skips fn-call args and grouping
+        // parens (those don't carry a comma at the top level here).
+        if bytes[i] == b'(' {
+            let mut depth: i32 = 1;
+            let mut j = i + 1;
+            let mut top_commas = 0;
+            while j < bytes.len() && depth > 0 {
+                match bytes[j] {
+                    b'(' | b'<' => depth += 1,
+                    b')' | b'>' => depth -= 1,
+                    b',' if depth == 1 => top_commas += 1,
+                    _ => {}
+                }
+                j += 1;
+            }
+            if depth == 0 && top_commas >= 1 {
+                let inner = &trimmed[i + 1..j - 1];
+                collect_tuples_from_str(inner, out, order, next_idx);
+                // Build canonical `Tuple<A,B,...>` form
+                let canonical_inner: String = inner
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                let canonical = format!("Tuple<{canonical_inner}>");
+                if !out.contains_key(&canonical) {
+                    out.insert(canonical.clone(), *next_idx);
+                    order.push(canonical);
+                    *next_idx += 1;
+                }
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
 /// `Result<T, E>` discovery — handles nested commas via depth tracking.
 fn collect_results_from_str(
     type_str: &str,
@@ -905,15 +1084,20 @@ fn collect_results_from_str(
     }
 }
 
-/// `List<...>` discovery.
+/// `List<...>` discovery. Normalises paren-tuple `(A, B)` to
+/// `Tuple<A,B>` first so a `List<(A, B)>` from a fn signature and
+/// a `List<Tuple<A,B>>` from eager registration land on the same
+/// canonical (otherwise the type section ends up with two duplicate
+/// list slots whose elements are structurally equal but whose ref
+/// indices diverge).
 fn collect_lists_from_str(
     type_str: &str,
     out: &mut HashMap<String, u32>,
     order: &mut Vec<String>,
     next_idx: &mut u32,
 ) {
-    let trimmed = type_str.trim();
-    let bytes = trimmed.as_bytes();
+    let normalized = normalize_compound(type_str);
+    let bytes = normalized.as_bytes();
     let mut i = 0;
     while i + 5 <= bytes.len() {
         if &bytes[i..i + 5] == b"List<" {
@@ -928,19 +1112,9 @@ fn collect_lists_from_str(
                 j += 1;
             }
             if depth == 0 {
-                // DFS post-order: recurse into the element BEFORE
-                // registering the outer list. This guarantees that
-                // `List<List<Int>>` finds `List<Int>` already in
-                // `list_order` (and therefore at a lower wasm type
-                // idx) when its struct field references it. Without
-                // this ordering the outer list emits a forward-ref
-                // and validators reject the module.
-                let element = &trimmed[i + 5..j - 1];
+                let element = &normalized[i + 5..j - 1];
                 collect_lists_from_str(element, out, order, next_idx);
-                let canonical: String = trimmed[i..j]
-                    .chars()
-                    .filter(|c| !c.is_whitespace())
-                    .collect();
+                let canonical = normalized[i..j].to_string();
                 if !out.contains_key(&canonical) {
                     out.insert(canonical.clone(), *next_idx);
                     order.push(canonical.clone());
@@ -1497,7 +1671,7 @@ pub(super) fn aver_to_wasm(
     if trimmed.starts_with("List<") && trimmed.ends_with('>')
         && let Some(reg) = registry
     {
-        let canonical: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+        let canonical = normalize_compound(trimmed);
         if let Some(idx) = reg.list_type_idx(&canonical) {
             return Ok(Some(ValType::Ref(RefType {
                 nullable: true,
@@ -1529,6 +1703,49 @@ pub(super) fn aver_to_wasm(
                 nullable: true,
                 heap_type: HeapType::Concrete(slots.map),
             })));
+        }
+    }
+    // `Tuple<A, B>` — `(struct (mut A) (mut B))`.
+    if trimmed.starts_with("Tuple<") && trimmed.ends_with('>')
+        && let Some(reg) = registry
+    {
+        let canonical: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+        if let Some(idx) = reg.tuple_type_idx(&canonical) {
+            return Ok(Some(ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(idx),
+            })));
+        }
+    }
+    // `(A, B)` surface form for Tuple. Normalize to `Tuple<A,B>`
+    // canonical for the registry lookup.
+    if trimmed.starts_with('(') && trimmed.ends_with(')')
+        && let Some(reg) = registry
+    {
+        let inner = &trimmed[1..trimmed.len() - 1];
+        // Quick check: must contain at least one top-level comma.
+        let mut depth: i32 = 0;
+        let mut has_top_comma = false;
+        for b in inner.as_bytes() {
+            match b {
+                b'(' | b'<' => depth += 1,
+                b')' | b'>' => depth -= 1,
+                b',' if depth == 0 => has_top_comma = true,
+                _ => {}
+            }
+        }
+        if has_top_comma {
+            let canonical_inner: String = inner
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            let canonical = format!("Tuple<{canonical_inner}>");
+            if let Some(idx) = reg.tuple_type_idx(&canonical) {
+                return Ok(Some(ValType::Ref(RefType {
+                    nullable: true,
+                    heap_type: HeapType::Concrete(idx),
+                })));
+            }
         }
     }
     // Compound types not yet lowered.
@@ -1728,4 +1945,60 @@ fn collect_lists_from_expr(
         }
         _ => {}
     }
+}
+
+/// Convert a Tuple type string in any Aver form to the internal
+/// canonical `Tuple<A,B>` (whitespace-stripped). Accepts `(A, B)`
+/// (surface syntax that the type checker emits) or already-canonical
+/// `Tuple<A,B>`.
+fn normalize_tuple_canonical(s: &str) -> std::borrow::Cow<'_, str> {
+    let normalized = normalize_compound(s);
+    if normalized == s {
+        std::borrow::Cow::Borrowed(s)
+    } else {
+        std::borrow::Cow::Owned(normalized)
+    }
+}
+
+/// Recursively rewrite all `(A, B)` substrings inside a type string
+/// to `Tuple<A,B>` and strip whitespace. Idempotent on already-
+/// canonical `Tuple<...>`. Used wherever a stable canonical form
+/// must be derived: discovery, registry lookup, eager registration.
+pub(super) fn normalize_compound(s: &str) -> String {
+    let stripped: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+    rewrite_paren_tuples(&stripped)
+}
+
+fn rewrite_paren_tuples(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'(' {
+            let mut depth: i32 = 1;
+            let mut j = i + 1;
+            let mut top_commas = 0;
+            while j < bytes.len() && depth > 0 {
+                match bytes[j] {
+                    b'(' | b'<' => depth += 1,
+                    b')' | b'>' => depth -= 1,
+                    b',' if depth == 1 => top_commas += 1,
+                    _ => {}
+                }
+                j += 1;
+            }
+            if depth == 0 && top_commas >= 1 {
+                let inner = &s[i + 1..j - 1];
+                let inner_normalized = rewrite_paren_tuples(inner);
+                out.push_str("Tuple<");
+                out.push_str(&inner_normalized);
+                out.push('>');
+                i = j;
+                continue;
+            }
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
 }

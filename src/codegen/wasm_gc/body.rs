@@ -47,6 +47,10 @@ pub(super) struct FnMap {
     /// Per-`List<T>` `Vector.fromList` helper (paired with the
     /// matching `Vector<T>` registered in the type registry).
     pub(super) vfl_ops: HashMap<String, super::lists::VectorFromListOps>,
+    /// Per-`Tuple<A,B>` `List.zip` helper. Registered when the
+    /// surface code calls `List.zip` and all three lists exist
+    /// in the registry.
+    pub(super) zip_ops: HashMap<String, u32>,
     /// Singleton `String.split` / `String.join` helpers (T=String).
     /// Registered when the surface code calls either.
     pub(super) string_split_ops: Option<super::lists::StringSplitOps>,
@@ -170,6 +174,12 @@ fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
             if arms
                 .iter()
                 .any(|a| matches!(&a.pattern, Pattern::EmptyList | Pattern::Cons(_, _)))
+            {
+                return true;
+            }
+            if arms
+                .iter()
+                .any(|a| matches!(&a.pattern, Pattern::Tuple(_)))
             {
                 return true;
             }
@@ -443,6 +453,36 @@ fn collect_expr_binding_slots(
                                     aver_to_wasm(field_ty, Some(registry))?
                                 };
                                 if let Some(v) = target_ty {
+                                    out.push(v);
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Pattern::Tuple(items) = &arm.pattern
+                    && items.len() == 2
+                {
+                    let subject_ty =
+                        infer_expr_wasm_type(&subject.node, registry, fd, fn_map)?;
+                    if let Some(ValType::Ref(rt)) = subject_ty
+                        && let wasm_encoder::HeapType::Concrete(idx) = rt.heap_type
+                    {
+                        let mut tup_canonical: Option<&str> = None;
+                        for canonical in &registry.tuple_order {
+                            if registry.tuple_types.get(canonical).copied() == Some(idx) {
+                                tup_canonical = Some(canonical.as_str());
+                                break;
+                            }
+                        }
+                        if let Some(canonical) = tup_canonical
+                            && let Some((a, b)) = TypeRegistry::tuple_ab(canonical)
+                        {
+                            for (pat, ty) in items.iter().zip([a, b]) {
+                                if let Pattern::Ident(name) = pat
+                                    && name != "_"
+                                    && let Some(v) = aver_to_wasm(ty, Some(registry))?
+                                {
+                                    let _ = name;
                                     out.push(v);
                                 }
                             }
@@ -1083,6 +1123,17 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
                         }
                         return Ok("List<Int>".into());
                     }
+                    if dotted == "List.zip" && args.len() == 2 {
+                        let la = infer_aver_type(&args[0].node, ctx)?;
+                        let lb = infer_aver_type(&args[1].node, ctx)?;
+                        let a = super::types::TypeRegistry::list_element_type(&la)
+                            .map(str::trim)
+                            .unwrap_or("Int");
+                        let b = super::types::TypeRegistry::list_element_type(&lb)
+                            .map(str::trim)
+                            .unwrap_or("Int");
+                        return Ok(format!("List<Tuple<{a},{b}>>"));
+                    }
                     if (dotted == "Map.keys" || dotted == "Map.values") && args.len() == 1 {
                         let m = infer_aver_type(&args[0].node, ctx)?;
                         let canonical: String =
@@ -1092,6 +1143,26 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
                             return Ok(format!("List<{elem}>"));
                         }
                         return Ok("List<Int>".into());
+                    }
+                    if dotted == "Map.entries" && args.len() == 1 {
+                        let m = infer_aver_type(&args[0].node, ctx)?;
+                        let canonical: String =
+                            m.chars().filter(|c| !c.is_whitespace()).collect();
+                        if let Some((k, v)) = super::types::parse_map_kv(&canonical) {
+                            return Ok(format!("List<Tuple<{k},{v}>>"));
+                        }
+                        return Ok("List<Tuple<Int,Int>>".into());
+                    }
+                    if dotted == "Map.fromList" && args.len() == 1 {
+                        let l = infer_aver_type(&args[0].node, ctx)?;
+                        let canonical: String =
+                            l.chars().filter(|c| !c.is_whitespace()).collect();
+                        if let Some(elem) = TypeRegistry::list_element_type(&canonical)
+                            && let Some((k, v)) = TypeRegistry::tuple_ab(elem)
+                        {
+                            return Ok(format!("Map<{k},{v}>"));
+                        }
+                        return Ok("Map<String,Int>".into());
                     }
                     if dotted == "Map.has" && args.len() == 2 {
                         return Ok("Bool".into());
@@ -1271,6 +1342,11 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
                 Ok(ctx.return_type.to_string())
             }
         }
+        Expr::Tuple(items) if items.len() == 2 => {
+            let a = infer_aver_type(&items[0].node, ctx)?;
+            let b = infer_aver_type(&items[1].node, ctx)?;
+            Ok(format!("Tuple<{a},{b}>"))
+        }
         other => Err(WasmGcError::Validation(format!(
             "infer_aver_type: unsupported expression shape: {other:?}"
         ))),
@@ -1422,6 +1498,25 @@ fn collect_match_pattern_types(
                     collect_match_pattern_types(&arm.body.node, fd, fn_map, registry, out);
                     continue;
                 }
+                if let Pattern::Tuple(items) = &arm.pattern {
+                    if items.len() == 2
+                        && let Some(ref subj) = subject_ty
+                    {
+                        let canonical: String =
+                            subj.chars().filter(|c| !c.is_whitespace()).collect();
+                        if let Some((a, b)) = TypeRegistry::tuple_ab(&canonical) {
+                            for (pat, ty) in items.iter().zip([a, b]) {
+                                if let Pattern::Ident(name) = pat
+                                    && name != "_"
+                                {
+                                    out.insert(name.clone(), ty.to_string());
+                                }
+                            }
+                        }
+                    }
+                    collect_match_pattern_types(&arm.body.node, fd, fn_map, registry, out);
+                    continue;
+                }
                 if let Pattern::Constructor(name, bindings) = &arm.pattern {
                     let bare = name.rsplit('.').next().unwrap_or(name);
                     if let Some(ref subj) = subject_ty {
@@ -1563,6 +1658,33 @@ fn sniff_with_prev(
                         "List.concat" | "List.take" | "List.drop" if !args.is_empty() => {
                             return sniff_with_prev(&args[0].node, fd, fn_map, registry, prev);
                         }
+                        "List.zip" if args.len() == 2 => {
+                            let la = sniff_with_prev(&args[0].node, fd, fn_map, registry, prev)?;
+                            let lb = sniff_with_prev(&args[1].node, fd, fn_map, registry, prev)?;
+                            let a = TypeRegistry::list_element_type(&la)?.trim();
+                            let b = TypeRegistry::list_element_type(&lb)?.trim();
+                            return Some(format!("List<Tuple<{a},{b}>>"));
+                        }
+                        "Map.entries" if args.len() == 1 => {
+                            let m = sniff_with_prev(&args[0].node, fd, fn_map, registry, prev)?;
+                            let canonical: String =
+                                m.chars().filter(|c| !c.is_whitespace()).collect();
+                            if let Some((k, v)) = super::types::parse_map_kv(&canonical) {
+                                return Some(format!("List<Tuple<{k},{v}>>"));
+                            }
+                            return None;
+                        }
+                        "Map.fromList" if args.len() == 1 => {
+                            let l = sniff_with_prev(&args[0].node, fd, fn_map, registry, prev)?;
+                            let canonical: String =
+                                l.chars().filter(|c| !c.is_whitespace()).collect();
+                            if let Some(elem) = TypeRegistry::list_element_type(&canonical)
+                                && let Some((k, v)) = TypeRegistry::tuple_ab(elem)
+                            {
+                                return Some(format!("Map<{k},{v}>"));
+                            }
+                            return None;
+                        }
                         "Vector.fromList" if args.len() == 1 => {
                             let l = sniff_with_prev(&args[0].node, fd, fn_map, registry, prev)?;
                             if let Some(elem) = TypeRegistry::list_element_type(&l) {
@@ -1617,6 +1739,11 @@ fn sniff_with_prev(
                 .first()
                 .and_then(|x| sniff_with_prev(&x.node, fd, fn_map, registry, prev))?;
             Some(format!("List<{elem}>"))
+        }
+        Expr::Tuple(items) if items.len() == 2 => {
+            let a = sniff_with_prev(&items[0].node, fd, fn_map, registry, prev)?;
+            let b = sniff_with_prev(&items[1].node, fd, fn_map, registry, prev)?;
+            Some(format!("Tuple<{a},{b}>"))
         }
         Expr::Match { arms, .. } => arms
             .first()
@@ -1931,6 +2058,9 @@ fn emit_expr(
         }
         Expr::MapLiteral(entries) => {
             emit_map_literal(func, entries, slots, ctx)?;
+        }
+        Expr::Tuple(items) => {
+            emit_tuple_literal(func, items, slots, ctx)?;
         }
         Expr::Ident(_) => {
             return Err(WasmGcError::Unimplemented(
@@ -2342,6 +2472,40 @@ fn emit_list_empty(func: &mut Function, ctx: &EmitCtx<'_>) -> Result<(), WasmGcE
 /// Each `set` consumes the previous map ref, K, V from the stack and
 /// returns the updated map ref — so a sequence of set calls leaves
 /// the final map on top of the stack with no scratch slot needed.
+/// `(a, b)` tuple literal. Lowers to `struct.new $tuple_AB`. Element
+/// types come from the items' inferred types; the resulting canonical
+/// must already be registered (eager paths cover the common cases:
+/// every Map<K,V> registers Tuple<K,V>; user fn signatures register
+/// the rest).
+fn emit_tuple_literal(
+    func: &mut Function,
+    items: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    if items.len() != 2 {
+        return Err(WasmGcError::Unimplemented(
+            "phase 5 — tuples with arity != 2 (only Tuple<A, B> supported)",
+        ));
+    }
+    let a_ty = infer_aver_type(&items[0].node, ctx)?;
+    let b_ty = infer_aver_type(&items[1].node, ctx)?;
+    let canonical = format!("Tuple<{a_ty},{b_ty}>")
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>();
+    let tuple_idx = ctx
+        .registry
+        .tuple_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Tuple literal: `{canonical}` slot not registered"
+        )))?;
+    emit_expr(func, &items[0].node, slots, ctx)?;
+    emit_expr(func, &items[1].node, slots, ctx)?;
+    func.instruction(&Instruction::StructNew(tuple_idx));
+    Ok(())
+}
+
 fn emit_map_literal(
     func: &mut Function,
     entries: &[(Spanned<Expr>, Spanned<Expr>)],
@@ -2455,6 +2619,50 @@ fn emit_list_literal(
     for _ in 0..items.len() {
         func.instruction(&Instruction::Call(cons_fn));
     }
+    Ok(())
+}
+
+/// `match pair { (a, b) -> body }` — single-arm tuple destructure.
+/// Subject is `(ref null $tuple_AB)`; struct.get each field into the
+/// corresponding ident binding. `_` skips the bind.
+fn emit_tuple_match(
+    func: &mut Function,
+    subject: &Spanned<Expr>,
+    pat_items: &[Pattern],
+    body: &Spanned<Expr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let subj_ty = infer_aver_type(&subject.node, ctx)?;
+    let canonical: String = subj_ty.chars().filter(|c| !c.is_whitespace()).collect();
+    let tuple_idx = ctx
+        .registry
+        .tuple_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Tuple match: subject type `{subj_ty}` is not a registered Tuple<A,B>"
+        )))?;
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "Tuple match needs a subject scratch slot but none was reserved".into(),
+    ))?;
+    emit_expr(func, &subject.node, slots, ctx)?;
+    func.instruction(&Instruction::LocalSet(scratch));
+    for (field_idx, pat) in pat_items.iter().enumerate() {
+        if let Pattern::Ident(name) = pat
+            && name != "_"
+            && let Some(binding_slot) = ctx.self_local_slot(name)
+        {
+            func.instruction(&Instruction::LocalGet(scratch));
+            func.instruction(&Instruction::RefCastNonNull(
+                wasm_encoder::HeapType::Concrete(tuple_idx),
+            ));
+            func.instruction(&Instruction::StructGet {
+                struct_type_index: tuple_idx,
+                field_index: field_idx as u32,
+            });
+            func.instruction(&Instruction::LocalSet(binding_slot));
+        }
+    }
+    emit_expr(func, &body.node, slots, ctx)?;
     Ok(())
 }
 
@@ -3517,7 +3725,10 @@ fn emit_dotted_builtin(
         // (or the surrounding context for Map.empty).
         "Map.empty" => emit_map_empty_call(func, args, slots, ctx),
         "Map.set" | "Map.get" | "Map.len" | "Map.has" | "Map.keys" | "Map.values"
-        | "Map.remove" => emit_map_kv_call(func, method, args, slots, ctx),
+        | "Map.remove" | "Map.entries" => emit_map_kv_call(func, method, args, slots, ctx),
+        "Map.fromList" if args.len() == 1 => {
+            emit_map_from_list_call(func, &args[0], slots, ctx)
+        }
         // List<T> — per-instantiation helpers via `lists::ListOps`.
         "List.reverse" if args.len() == 1 => {
             emit_list_op_call(func, &args[0], "reverse", slots, ctx)
@@ -3536,6 +3747,9 @@ fn emit_dotted_builtin(
         }
         "List.contains" if args.len() == 2 => {
             emit_list_op_call_2(func, &args[0], &args[1], "contains", slots, ctx)
+        }
+        "List.zip" if args.len() == 2 => {
+            emit_list_zip_call(func, &args[0], &args[1], slots, ctx)
         }
         // Vector.fromList(list: List<T>) -> Vector<T>
         "Vector.fromList" if args.len() == 1 => {
@@ -3627,7 +3841,7 @@ fn emit_map_kv_call(
     let arity = match method {
         "set" => 3,
         "get" | "has" | "remove" => 2,
-        "len" | "keys" | "values" => 1,
+        "len" | "keys" | "values" | "entries" => 1,
         _ => unreachable!("emit_map_kv_call: unknown method `{method}`"),
     };
     if args.len() != arity {
@@ -3663,6 +3877,7 @@ fn emit_map_kv_call(
         "keys" => helpers.keys,
         "values" => helpers.values,
         "remove" => helpers.remove,
+        "entries" => helpers.entries,
         _ => unreachable!(),
     };
     for arg in args {
@@ -4290,7 +4505,7 @@ fn emit_list_op_call(
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     let list_aver = infer_aver_type(&list_arg.node, ctx)?;
-    let canonical: String = list_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    let canonical = super::types::normalize_compound(&list_aver);
     let ops = ctx
         .fn_map
         .list_ops
@@ -4326,7 +4541,7 @@ fn emit_list_op_call_2(
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     let list_aver = infer_aver_type(&list_arg.node, ctx)?;
-    let canonical: String = list_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    let canonical = super::types::normalize_compound(&list_aver);
     let ops = ctx
         .fn_map
         .list_ops
@@ -4354,6 +4569,72 @@ fn emit_list_op_call_2(
     Ok(())
 }
 
+/// `Map.fromList(l) -> Map<K, V>` — dispatch to the per-(K, V)
+/// from_list helper. The Map<K, V> canonical comes from the input
+/// list's element type (must be `Tuple<K, V>`).
+fn emit_map_from_list_call(
+    func: &mut Function,
+    list_arg: &Spanned<Expr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let list_aver = infer_aver_type(&list_arg.node, ctx)?;
+    let list_canonical: String =
+        list_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    let elem = TypeRegistry::list_element_type(&list_canonical).ok_or(
+        WasmGcError::Validation(format!(
+            "Map.fromList: input `{list_aver}` is not a List<Tuple<K,V>>"
+        )),
+    )?;
+    let (k, v) = TypeRegistry::tuple_ab(elem).ok_or(WasmGcError::Validation(format!(
+        "Map.fromList: list element `{elem}` is not a Tuple<K, V>"
+    )))?;
+    let map_canonical = format!("Map<{},{}>", k.trim(), v.trim());
+    let helpers = ctx
+        .fn_map
+        .map_helpers
+        .get(&map_canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Map.fromList: helpers for `{map_canonical}` not registered"
+        )))?;
+    emit_expr(func, &list_arg.node, slots, ctx)?;
+    func.instruction(&Instruction::Call(helpers.from_list));
+    Ok(())
+}
+
+/// `List.zip(la, lb) -> List<Tuple<A, B>>` — dispatch to the
+/// per-`Tuple<A,B>` zip helper. Recover A/B from the input lists'
+/// element types.
+fn emit_list_zip_call(
+    func: &mut Function,
+    la: &Spanned<Expr>,
+    lb: &Spanned<Expr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let la_aver = infer_aver_type(&la.node, ctx)?;
+    let lb_aver = infer_aver_type(&lb.node, ctx)?;
+    let a = TypeRegistry::list_element_type(&la_aver).ok_or(WasmGcError::Validation(
+        format!("List.zip: first arg type `{la_aver}` is not a List<T>"),
+    ))?;
+    let b = TypeRegistry::list_element_type(&lb_aver).ok_or(WasmGcError::Validation(
+        format!("List.zip: second arg type `{lb_aver}` is not a List<T>"),
+    ))?;
+    let tup_canonical = format!("Tuple<{},{}>", a.trim(), b.trim());
+    let zip_fn = ctx
+        .fn_map
+        .zip_ops
+        .get(&tup_canonical)
+        .copied()
+        .ok_or(WasmGcError::Validation(format!(
+            "List.zip: helper for `{tup_canonical}` wasn't registered"
+        )))?;
+    emit_expr(func, &la.node, slots, ctx)?;
+    emit_expr(func, &lb.node, slots, ctx)?;
+    func.instruction(&Instruction::Call(zip_fn));
+    Ok(())
+}
+
 /// `Vector.fromList(list)` — dispatch to the `from_list` helper
 /// registered for the matching `List<T>` canonical.
 fn emit_vec_from_list_call(
@@ -4363,7 +4644,7 @@ fn emit_vec_from_list_call(
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     let list_aver = infer_aver_type(&list_arg.node, ctx)?;
-    let canonical: String = list_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    let canonical = super::types::normalize_compound(&list_aver);
     let ops = ctx
         .fn_map
         .vfl_ops
@@ -4740,6 +5021,15 @@ fn emit_match(
             );
         }
         return emit_option_match(func, subject, arms, block_ty, slots, ctx);
+    }
+
+    // Tuple match — single arm `(a, b) -> ...`. Subject is a
+    // `(ref null $tuple_AB)`; struct.get its two fields into bindings.
+    if arms.len() == 1
+        && let Pattern::Tuple(items) = &arms[0].pattern
+        && items.len() == 2
+    {
+        return emit_tuple_match(func, subject, items, &arms[0].body, slots, ctx);
     }
 
     // Single-arm Constructor pattern — `match obj { Foo.Bar(n) -> body }`.

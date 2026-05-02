@@ -94,6 +94,13 @@ pub(super) struct ListHelperRegistry {
     /// Per-pair: `(from_list_type_idx, to_list_type_idx)`.
     vfl_type_indices: HashMap<String, (u32, u32)>,
 
+    /// `Tuple<A,B>` canonical → `List.zip` fn idx. Registered when
+    /// the program has `List<A>`, `List<B>`, and `List<Tuple<A,B>>`
+    /// all reachable.
+    zip_ops: HashMap<String, u32>,
+    zip_order: Vec<String>,
+    zip_type_indices: HashMap<String, u32>,
+
     string_split: Option<StringSplitOps>,
     /// (split_type_idx, join_type_idx)
     string_split_type_indices: Option<(u32, u32)>,
@@ -104,6 +111,7 @@ impl ListHelperRegistry {
         &mut self,
         list_canonicals: &[String],
         vector_canonicals: &[String],
+        tuple_canonicals: &[String],
         register_string_split_join: bool,
         next_wasm_fn_idx: &mut u32,
         next_type_idx: &mut u32,
@@ -221,6 +229,36 @@ impl ListHelperRegistry {
             self.vfl_order.push(canonical.clone());
         }
 
+        // `List.zip(la, lb) -> List<Tuple<A, B>>` — per-Tuple<A,B>
+        // helper. Registered when all three lists exist in the
+        // registry. The zip body needs `List<Tuple<A,B>>.reverse`
+        // which we already emit as part of the per-list helpers.
+        for tup_canonical in tuple_canonicals {
+            let (a, b) = match super::types::TypeRegistry::tuple_ab(tup_canonical) {
+                Some(x) => x,
+                None => continue,
+            };
+            let la = format!("List<{}>", a.trim());
+            let lb = format!("List<{}>", b.trim());
+            let lt = format!("List<{tup_canonical}>");
+            if !list_canonicals.iter().any(|c| c == &la)
+                || !list_canonicals.iter().any(|c| c == &lb)
+                || !list_canonicals.iter().any(|c| c == &lt)
+            {
+                continue;
+            }
+            if self.zip_ops.contains_key(tup_canonical) {
+                continue;
+            }
+            let ty = *next_type_idx;
+            *next_type_idx += 1;
+            let fnx = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
+            self.zip_ops.insert(tup_canonical.clone(), fnx);
+            self.zip_type_indices.insert(tup_canonical.clone(), ty);
+            self.zip_order.push(tup_canonical.clone());
+        }
+
         if register_string_split_join && self.string_split.is_none() {
             let split_type = *next_type_idx;
             *next_type_idx += 1;
@@ -245,6 +283,10 @@ impl ListHelperRegistry {
 
     pub(super) fn vfl_ops_for(&self, list_canonical: &str) -> Option<VectorFromListOps> {
         self.vfl_ops.get(list_canonical).copied()
+    }
+
+    pub(super) fn zip_op_for(&self, tuple_canonical: &str) -> Option<u32> {
+        self.zip_ops.get(tuple_canonical).copied()
     }
 
     pub(super) fn string_split_ops(&self) -> Option<StringSplitOps> {
@@ -320,6 +362,38 @@ impl ListHelperRegistry {
             // to_list : (Vector<T>) -> List<T>
             types.ty().function([vec_ref], [list_ref]);
         }
+        // List.zip per-(A,B): `(List<A>, List<B>) -> List<Tuple<A,B>>`.
+        for tup_canonical in &self.zip_order {
+            let (a, b) = super::types::TypeRegistry::tuple_ab(tup_canonical).unwrap();
+            let la_idx = registry
+                .list_type_idx(&format!("List<{}>", a.trim()))
+                .ok_or(WasmGcError::Validation(format!(
+                    "List.zip: List<{a}> not registered"
+                )))?;
+            let lb_idx = registry
+                .list_type_idx(&format!("List<{}>", b.trim()))
+                .ok_or(WasmGcError::Validation(format!(
+                    "List.zip: List<{b}> not registered"
+                )))?;
+            let lt_idx = registry
+                .list_type_idx(&format!("List<{tup_canonical}>"))
+                .ok_or(WasmGcError::Validation(format!(
+                    "List.zip: List<{tup_canonical}> not registered"
+                )))?;
+            let la_ref = ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(la_idx),
+            });
+            let lb_ref = ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(lb_idx),
+            });
+            let lt_ref = ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(lt_idx),
+            });
+            types.ty().function([la_ref, lb_ref], [lt_ref]);
+        }
         if self.string_split.is_some() {
             let s_idx = registry.string_array_type_idx.ok_or(WasmGcError::Validation(
                 "string slot not registered for String.split/join helpers".into(),
@@ -370,6 +444,9 @@ impl ListHelperRegistry {
             funcs.function(from_t);
             funcs.function(to_t);
         }
+        for tup_canonical in &self.zip_order {
+            funcs.function(self.zip_type_indices[tup_canonical]);
+        }
         if let Some((split_t, join_t)) = self.string_split_type_indices {
             funcs.function(split_t);
             funcs.function(join_t);
@@ -402,6 +479,18 @@ impl ListHelperRegistry {
         for canonical in &self.vfl_order {
             codes.function(&emit_vec_from_list(canonical, registry)?);
             codes.function(&emit_vec_to_list(canonical, registry)?);
+        }
+        for tup_canonical in &self.zip_order {
+            // Zip needs the per-`List<Tuple<A,B>>` reverse fn idx —
+            // the body builds LIFO and reverses at the end.
+            let lt_canonical = format!("List<{tup_canonical}>");
+            let reverse_fn = self
+                .list_ops_for(&lt_canonical)
+                .map(|o| o.reverse)
+                .ok_or(WasmGcError::Validation(format!(
+                    "List.zip: reverse fn for `{lt_canonical}` not registered"
+                )))?;
+            codes.function(&emit_list_zip(tup_canonical, registry, reverse_fn)?);
         }
         if self.string_split.is_some() {
             // string_split needs to call List<String>.reverse to flip
@@ -1357,6 +1446,100 @@ fn emit_vec_to_list(
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `List.zip(la, lb) -> List<Tuple<A, B>>`. Walks both input lists
+/// in parallel; per pair of cons cells, builds a `Tuple<A,B>` via
+/// `struct.new` and prepends onto a LIFO accumulator. Stops when
+/// either list ends. Final pass: call the per-`List<Tuple<A,B>>`
+/// reverse to flip into source order.
+fn emit_list_zip(
+    tup_canonical: &str,
+    registry: &TypeRegistry,
+    reverse_fn: u32,
+) -> Result<Function, WasmGcError> {
+    let (a, b) = super::types::TypeRegistry::tuple_ab(tup_canonical).unwrap();
+    let la_idx = registry
+        .list_type_idx(&format!("List<{}>", a.trim()))
+        .unwrap();
+    let lb_idx = registry
+        .list_type_idx(&format!("List<{}>", b.trim()))
+        .unwrap();
+    let lt_idx = registry
+        .list_type_idx(&format!("List<{tup_canonical}>"))
+        .unwrap();
+    let tuple_idx = registry.tuple_type_idx(tup_canonical).unwrap();
+    let la_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(la_idx),
+    });
+    let lb_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(lb_idx),
+    });
+    let lt_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(lt_idx),
+    });
+    // params: 0=la, 1=lb. locals: 2=cur_a, 3=cur_b, 4=acc.
+    let mut f = Function::new([
+        (1, la_ref.clone()),
+        (1, lb_ref.clone()),
+        (1, lt_ref),
+    ]);
+    // cur_a = la; cur_b = lb; acc = null
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(lt_idx)));
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    // if cur_a is null or cur_b is null → break
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::BrIf(1));
+    // tuple = struct.new $tuple(cur_a.head, cur_b.head)
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: la_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: lb_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::StructNew(tuple_idx));
+    // acc = struct.new $list_tuple(tuple, acc)
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::StructNew(lt_idx));
+    f.instruction(&Instruction::LocalSet(4));
+    // cur_a = cur_a.tail; cur_b = cur_b.tail
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: la_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: lb_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    // reverse(acc)
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::Call(reverse_fn));
     f.instruction(&Instruction::End);
     Ok(f)
 }

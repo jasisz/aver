@@ -81,6 +81,12 @@ pub(super) struct MapKVHelpers {
     /// and returns the same handle (Aver semantics: same shape as
     /// `set`, the returned ref is structurally equal).
     pub(super) remove: u32,
+    /// `entries(m) -> List<Tuple<K, V>>`. Right-to-left walk; per
+    /// occupied slot builds a Tuple and prepends onto a cons list.
+    pub(super) entries: u32,
+    /// `from_list(l) -> Map<K, V>`. Walks `l`, struct.get's the
+    /// (K, V) from each tuple, calls the per-(K, V) `set` helper.
+    pub(super) from_list: u32,
 }
 
 #[derive(Default)]
@@ -95,10 +101,12 @@ pub(super) struct MapHelperRegistry {
     /// Per-helper wasm type indices (parallel to fn indices). Stored
     /// here so the type section emit can look them up.
     key_type_indices: HashMap<String, (u32, u32)>, // (hash type idx, eq type idx)
-    /// Nine slots per (K, V): empty, set, get, len, get_or_default,
-    /// get_pair, keys, values, remove. Order matches `assign_slots`
-    /// / `emit_function_section` / `emit_helper_bodies` exactly.
-    kv_type_indices: HashMap<String, (u32, u32, u32, u32, u32, u32, u32, u32, u32)>,
+    /// Eleven slots per (K, V): empty, set, get, len, get_or_default,
+    /// get_pair, keys, values, remove, entries, from_list. Order
+    /// matches `assign_slots` / `emit_function_section` /
+    /// `emit_helper_bodies` exactly.
+    kv_type_indices:
+        HashMap<String, (u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32)>,
 }
 
 impl MapHelperRegistry {
@@ -194,6 +202,10 @@ impl MapHelperRegistry {
             *next_type_idx += 1;
             let remove_type_idx = *next_type_idx;
             *next_type_idx += 1;
+            let entries_type_idx = *next_type_idx;
+            *next_type_idx += 1;
+            let from_list_type_idx = *next_type_idx;
+            *next_type_idx += 1;
             let empty_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
             let set_fn = *next_wasm_fn_idx;
@@ -211,6 +223,10 @@ impl MapHelperRegistry {
             let values_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
             let remove_fn = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
+            let entries_fn = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
+            let from_list_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
 
             // K must be String or a user-defined record. Records use
@@ -239,6 +255,8 @@ impl MapHelperRegistry {
                     keys: keys_fn,
                     values: values_fn,
                     remove: remove_fn,
+                    entries: entries_fn,
+                    from_list: from_list_fn,
                 },
             );
             self.kv_type_indices.insert(
@@ -253,6 +271,8 @@ impl MapHelperRegistry {
                     keys_type_idx,
                     values_type_idx,
                     remove_type_idx,
+                    entries_type_idx,
+                    from_list_type_idx,
                 ),
             );
             self.kv_order.push(canonical.clone());
@@ -352,7 +372,27 @@ impl MapHelperRegistry {
             types.ty().function([map_ref], [list_v_ref]);
             // remove : (Map, K) -> Map
             types.ty().function([map_ref, k_val], [map_ref]);
-            let _ = opt_ref; // (consumed by `get`)
+            // entries : (Map) -> List<Tuple<K, V>>
+            let tup_canonical = format!("Tuple<{k_aver},{v_aver}>");
+            let tup_idx = registry
+                .tuple_type_idx(&tup_canonical)
+                .ok_or(WasmGcError::Validation(format!(
+                    "Map.entries: `{tup_canonical}` not registered"
+                )))?;
+            let lt_idx = registry
+                .list_type_idx(&format!("List<{tup_canonical}>"))
+                .ok_or(WasmGcError::Validation(format!(
+                    "Map.entries: `List<{tup_canonical}>` not registered"
+                )))?;
+            let lt_ref = ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(lt_idx),
+            });
+            types.ty().function([map_ref], [lt_ref.clone()]);
+            // from_list : (List<Tuple<K, V>>) -> Map
+            types.ty().function([lt_ref], [map_ref]);
+            let _ = opt_ref;
+            let _ = tup_idx;
         }
         Ok(())
     }
@@ -369,7 +409,7 @@ impl MapHelperRegistry {
             funcs.function(e);
         }
         for canonical in &self.kv_order {
-            let (em, st, gt, ln, god, pair, ks, vs, rm) =
+            let (em, st, gt, ln, god, pair, ks, vs, rm, en, fl) =
                 self.kv_type_indices[canonical];
             funcs.function(em);
             funcs.function(st);
@@ -380,6 +420,8 @@ impl MapHelperRegistry {
             funcs.function(ks);
             funcs.function(vs);
             funcs.function(rm);
+            funcs.function(en);
+            funcs.function(fl);
         }
     }
 
@@ -413,6 +455,9 @@ impl MapHelperRegistry {
             codes.function(&emit_map_keys(canonical, registry)?);
             codes.function(&emit_map_values(canonical, registry)?);
             codes.function(&emit_map_remove(canonical, registry, key_h)?);
+            let helpers = self.kv[canonical];
+            codes.function(&emit_map_entries(canonical, registry)?);
+            codes.function(&emit_map_from_list(canonical, registry, helpers.set)?);
         }
         Ok(())
     }
@@ -1635,6 +1680,191 @@ fn emit_map_remove(
 
     // return map
     f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `entries(m) -> List<Tuple<K, V>>`. Walk keys/values arrays
+/// right-to-left; for each occupied slot (`keys[i] != null`) build
+/// a `struct.new $tuple(k, v)` and prepend onto a cons-list
+/// accumulator.
+fn emit_map_entries(canonical: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let slots = slots_for(canonical, registry)?;
+    let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
+    let tup_canonical = format!("Tuple<{k_aver},{v_aver}>");
+    let tup_idx = registry.tuple_type_idx(&tup_canonical).ok_or(
+        WasmGcError::Validation(format!("Map.entries: `{tup_canonical}` not registered")),
+    )?;
+    let lt_canonical = format!("List<{tup_canonical}>");
+    let lt_idx = registry.list_type_idx(&lt_canonical).ok_or(
+        WasmGcError::Validation(format!("Map.entries: `{lt_canonical}` not registered")),
+    )?;
+    let keys_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(slots.keys_array),
+    });
+    let values_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(slots.values_array),
+    });
+    let lt_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(lt_idx),
+    });
+    // params: 0=map. locals: 1=keys, 2=values, 3=i, 4=acc.
+    let mut f = Function::new([
+        (1, keys_ref),
+        (1, values_ref),
+        (1, ValType::I32),
+        (1, lt_ref),
+    ]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 2,
+    });
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 3,
+    });
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(lt_idx)));
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32LtS);
+    f.instruction(&Instruction::BrIf(1));
+    // if keys[i] != null: tup = struct.new $tuple(keys[i], values[i]); acc = cons(tup, acc)
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::ArrayGet(slots.keys_array));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::ArrayGet(slots.keys_array));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::ArrayGet(slots.values_array));
+    f.instruction(&Instruction::StructNew(tup_idx));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::StructNew(lt_idx));
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `from_list(l) -> Map<K, V>`. Walks `l` from head to tail,
+/// struct.get's the (K, V) from each tuple, calls the per-(K, V)
+/// `set` helper to insert. Allocates a fresh empty map (via the
+/// per-(K, V) `empty` shape inlined: cap = INITIAL_CAP, fresh keys
+/// and values arrays) and returns it.
+fn emit_map_from_list(
+    canonical: &str,
+    registry: &TypeRegistry,
+    set_fn: u32,
+) -> Result<Function, WasmGcError> {
+    let slots = slots_for(canonical, registry)?;
+    let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
+    let tup_canonical = format!("Tuple<{k_aver},{v_aver}>");
+    let tup_idx = registry.tuple_type_idx(&tup_canonical).ok_or(
+        WasmGcError::Validation(format!("Map.fromList: `{tup_canonical}` not registered")),
+    )?;
+    let lt_canonical = format!("List<{tup_canonical}>");
+    let lt_idx = registry.list_type_idx(&lt_canonical).ok_or(
+        WasmGcError::Validation(format!("Map.fromList: `{lt_canonical}` not registered")),
+    )?;
+    let map_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(slots.map),
+    });
+    let lt_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(lt_idx),
+    });
+    // params: 0=l. locals: 1=cur, 2=map, 3=tup.
+    let mut f = Function::new([
+        (1, lt_ref),
+        (1, map_ref),
+        (
+            1,
+            ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(tup_idx),
+            }),
+        ),
+    ]);
+    // map = inline empty allocation (matches emit_map_empty)
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(INITIAL_CAP));
+    f.instruction(&Instruction::I32Const(INITIAL_CAP));
+    f.instruction(&Instruction::ArrayNewDefault(slots.keys_array));
+    f.instruction(&Instruction::I32Const(INITIAL_CAP));
+    f.instruction(&Instruction::ArrayNewDefault(slots.values_array));
+    f.instruction(&Instruction::StructNew(slots.map));
+    f.instruction(&Instruction::LocalSet(2));
+    // cur = l
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::BrIf(1));
+    // tup = cur.head
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: lt_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::LocalSet(3));
+    // map = set(map, tup.0, tup.1)
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: tup_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: tup_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::Call(set_fn));
+    f.instruction(&Instruction::LocalSet(2));
+    // cur = cur.tail
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: lt_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::End);
     Ok(f)
 }

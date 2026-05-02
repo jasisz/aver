@@ -164,6 +164,7 @@ pub(super) fn emit_module(
     list_helpers.assign_slots(
         &registry.list_order,
         &registry.vector_order,
+        &registry.tuple_order,
         needs_split_join,
         &mut next_builtin_fn_idx,
         &mut next_type_idx,
@@ -363,6 +364,12 @@ pub(super) fn emit_module(
             vfl_ops_lookup.insert(canonical.clone(), o);
         }
     }
+    let mut zip_ops_lookup: HashMap<String, u32> = HashMap::new();
+    for tup_canonical in &registry.tuple_order {
+        if let Some(idx) = list_helpers.zip_op_for(tup_canonical) {
+            zip_ops_lookup.insert(tup_canonical.clone(), idx);
+        }
+    }
     let string_split_ops = list_helpers.string_split_ops();
     let fn_map = FnMap {
         by_name,
@@ -371,6 +378,7 @@ pub(super) fn emit_module(
         map_helpers: map_helpers_lookup,
         list_ops: list_ops_lookup,
         vfl_ops: vfl_ops_lookup,
+        zip_ops: zip_ops_lookup,
         string_split_ops,
     };
 
@@ -782,6 +790,42 @@ fn emit_user_types(
                 },
                 wasm_encoder::FieldType {
                     element_type: wasm_encoder::StorageType::Val(values_ref),
+                    mutable: true,
+                },
+            ]),
+        ));
+    }
+
+    // `Tuple<A, B>` — `(struct (mut A) (mut B))`. Used by Map.entries
+    // (returns List<Tuple<K, V>>), Map.fromList, List.zip.
+    for canonical in &registry.tuple_order {
+        let (a_aver, b_aver) = TypeRegistry::tuple_ab(canonical).ok_or(
+            WasmGcError::Validation(format!(
+                "registered tuple `{canonical}` has no parsable A, B"
+            )),
+        )?;
+        let a_val = super::types::aver_to_wasm(a_aver, Some(registry))?.ok_or(
+            WasmGcError::Validation(format!(
+                "Tuple A type `{a_aver}` has no wasm representation"
+            )),
+        )?;
+        let b_val = super::types::aver_to_wasm(b_aver, Some(registry))?.ok_or(
+            WasmGcError::Validation(format!(
+                "Tuple B type `{b_aver}` has no wasm representation"
+            )),
+        )?;
+        let idx = registry.tuple_type_idx(canonical).ok_or(WasmGcError::Validation(
+            format!("tuple `{canonical}` not registered"),
+        ))?;
+        entries.push((
+            idx,
+            mk_struct(vec![
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(a_val),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(b_val),
                     mutable: true,
                 },
             ]),
