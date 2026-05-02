@@ -1371,6 +1371,22 @@ fn collect_match_pattern_types(
             // the right element type.
             let subject_ty = sniff_with_prev(&subject.node, fd, fn_map, registry, out);
             for arm in arms {
+                if let Pattern::Cons(head, tail) = &arm.pattern {
+                    if let Some(ref subj) = subject_ty {
+                        let canonical: String =
+                            subj.chars().filter(|c| !c.is_whitespace()).collect();
+                        if let Some(elem) = TypeRegistry::list_element_type(&canonical) {
+                            if head != "_" {
+                                out.insert(head.clone(), elem.trim().to_string());
+                            }
+                            if tail != "_" {
+                                out.insert(tail.clone(), canonical.clone());
+                            }
+                        }
+                    }
+                    collect_match_pattern_types(&arm.body.node, fd, fn_map, registry, out);
+                    continue;
+                }
                 if let Pattern::Constructor(name, bindings) = &arm.pattern {
                     let bare = name.rsplit('.').next().unwrap_or(name);
                     if let Some(ref subj) = subject_ty {
@@ -2306,76 +2322,36 @@ fn emit_list_literal(
         .ok_or(WasmGcError::Validation(format!(
             "List literal: cannot resolve list instantiation (got `{canonical}`)"
         )))?;
-    // Emit innermost first: `null`, then for each element from right
-    // to left, `head; struct.new $list_T` with the previous tail.
-    func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        list_idx,
-    )));
-    for item in items.iter().rev() {
-        // Stack: [..., tail]; we want [head, tail] for struct.new.
-        // But emit_expr pushes head on top, leaving [tail, head].
-        // Use a synthetic local? Simpler: re-order via a dance.
-        // Actually struct.new pops fields in declaration order
-        // (field 0 head, field 1 tail), so we need [head, tail] on
-        // stack with head at lower position. Currently stack has
-        // [tail]; we push head with emit_expr which leaves
-        // [tail, head]. struct.new pops (head, tail) — that's
-        // (top, below) = (head, tail). Correct: declaration order
-        // popped from top → head first.
-        // Verify: spec says fields are pushed in declaration order
-        // (field 0 first), so caller pushes [field_0, field_1, ...]
-        // bottom-to-top. struct.new pops them top-to-bottom which
-        // gives field_N, ..., field_0. So we need [head, tail] on
-        // stack with head pushed first (bottom). Currently bottom
-        // is tail (we pushed it first). Wrong order.
-        //
-        // Re-emit in the right order: push head, push tail,
-        // struct.new. Loop from rightmost element folding tail.
-        let _ = item;
-    }
-    // Re-implement the fold cleanly: build by left-fold from right
-    // since we need the outer-most tail first.
-    // Reset: we already pushed null; now use a buffered Function to
-    // re-emit. Simpler: rewrite via a plain right-fold with locals.
-    // wasm doesn't expose stack swap, so use a synthetic local for
-    // the running tail.
-    // The idiomatic shape:
-    //   tail_local = null
-    //   for item in items.rev():
-    //     emit head
-    //     local.get tail_local
-    //     struct.new $list
-    //     local.set tail_local
-    //   local.get tail_local
-    // But we can't allocate a fresh local mid-emit. Use the existing
-    // subject_scratch (eq ref) — it's general enough to hold a list
-    // ref via subtyping (every list ref is a struct ref, subtype of
-    // eq). Cast on read.
-    if !items.is_empty() {
-        let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
-            "List literal with elements needs a scratch slot but none was reserved".into(),
-        ))?;
-        // Pop the null we pushed eagerly; restart with proper fold.
-        func.instruction(&Instruction::Drop);
-        // Initialise scratch with null tail.
+    if items.is_empty() {
         func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
             list_idx,
         )));
-        func.instruction(&Instruction::LocalSet(scratch));
-        for item in items.iter().rev() {
-            emit_expr(func, &item.node, slots, ctx)?;
-            // load current tail; nullable cast (null is valid empty list)
-            func.instruction(&Instruction::LocalGet(scratch));
-            func.instruction(&Instruction::RefCastNullable(
-                wasm_encoder::HeapType::Concrete(list_idx),
-            ));
-            func.instruction(&Instruction::StructNew(list_idx));
-            func.instruction(&Instruction::LocalSet(scratch));
-        }
-        func.instruction(&Instruction::LocalGet(scratch));
-        func.instruction(&Instruction::RefCastNullable(
-            wasm_encoder::HeapType::Concrete(list_idx),
-        ));
+        return Ok(());
+    }
+    // Call-helper build: emit items left-to-right, then null, then
+    // N×`call $cons_T`. `cons_T : (T, list_T) -> list_T` pops the
+    // top two stack values per call, so the rightmost element pairs
+    // with `null` first (yielding `[last]`), each next-leftward
+    // element pairs with the running tail. No scratch local needed —
+    // critical for nested literals (`[[1,2,3], [4,5]]`) where a
+    // shared scratch slot would race between the outer and inner
+    // accumulators.
+    let cons_fn = ctx
+        .fn_map
+        .list_ops
+        .get(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "List literal: cons helper for `{canonical}` not registered"
+        )))?
+        .cons;
+    for item in items {
+        emit_expr(func, &item.node, slots, ctx)?;
+    }
+    func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        list_idx,
+    )));
+    for _ in 0..items.len() {
+        func.instruction(&Instruction::Call(cons_fn));
     }
     Ok(())
 }

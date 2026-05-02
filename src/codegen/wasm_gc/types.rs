@@ -302,6 +302,16 @@ impl TypeRegistry {
                         &mut next_idx,
                     );
                 }
+                // Body annotations — `nested: List<List<Int>> = [a, b]`
+                // adds `List<List<Int>>` even when no fn signature
+                // mentions it. Mirrors the same body-walk options
+                // and vectors already do.
+                collect_lists_from_fn_body(
+                    fd,
+                    &mut list_types,
+                    &mut list_order,
+                    &mut next_idx,
+                );
             }
         }
         for (_, fields) in record_fields.iter() {
@@ -667,6 +677,12 @@ fn collect_vectors_from_str(
                 j += 1;
             }
             if depth == 0 {
+                // DFS post-order — nested Vectors register before
+                // the outer needs them as an element type. Without
+                // this, `Vector<Vector<Int>>` would emit a forward
+                // reference to `$vector_int` and validators reject.
+                let element = &trimmed[i + 7..j - 1];
+                collect_vectors_from_str(element, out, order, next_idx);
                 let canonical: String = trimmed[i..j]
                     .chars()
                     .filter(|c| !c.is_whitespace())
@@ -676,11 +692,6 @@ fn collect_vectors_from_str(
                     order.push(canonical.clone());
                     *next_idx += 1;
                 }
-                // Recurse into the element substring (between `Vector<`
-                // and the matching `>`) so nested Vectors register
-                // before they're referenced as element types.
-                let element = &trimmed[i + 7..j - 1];
-                collect_vectors_from_str(element, out, order, next_idx);
                 i = j;
                 continue;
             }
@@ -797,6 +808,11 @@ fn collect_results_from_str(
                 j += 1;
             }
             if depth == 0 {
+                // DFS post-order — nested Results land in `result_order`
+                // before the outer references them as T or E. Same
+                // forward-ref guard as in the other collectors.
+                let inner = &trimmed[i + 7..j - 1];
+                collect_results_from_str(inner, out, order, next_idx);
                 let canonical: String = trimmed[i..j]
                     .chars()
                     .filter(|c| !c.is_whitespace())
@@ -806,8 +822,6 @@ fn collect_results_from_str(
                     order.push(canonical.clone());
                     *next_idx += 1;
                 }
-                let inner = &trimmed[i + 7..j - 1];
-                collect_results_from_str(inner, out, order, next_idx);
                 i = j;
                 continue;
             }
@@ -839,6 +853,15 @@ fn collect_lists_from_str(
                 j += 1;
             }
             if depth == 0 {
+                // DFS post-order: recurse into the element BEFORE
+                // registering the outer list. This guarantees that
+                // `List<List<Int>>` finds `List<Int>` already in
+                // `list_order` (and therefore at a lower wasm type
+                // idx) when its struct field references it. Without
+                // this ordering the outer list emits a forward-ref
+                // and validators reject the module.
+                let element = &trimmed[i + 5..j - 1];
+                collect_lists_from_str(element, out, order, next_idx);
                 let canonical: String = trimmed[i..j]
                     .chars()
                     .filter(|c| !c.is_whitespace())
@@ -848,8 +871,6 @@ fn collect_lists_from_str(
                     order.push(canonical.clone());
                     *next_idx += 1;
                 }
-                let element = &trimmed[i + 5..j - 1];
-                collect_lists_from_str(element, out, order, next_idx);
                 i = j;
                 continue;
             }
@@ -881,6 +902,13 @@ fn collect_options_from_str(
                 j += 1;
             }
             if depth == 0 {
+                // DFS post-order — same rationale as in
+                // `collect_lists_from_str`. `Option<Option<T>>`
+                // (rare but legal) needs the inner Option already
+                // present in `option_order` before the outer's
+                // struct field references it.
+                let element = &trimmed[i + 7..j - 1];
+                collect_options_from_str(element, out, order, next_idx);
                 let canonical: String = trimmed[i..j]
                     .chars()
                     .filter(|c| !c.is_whitespace())
@@ -890,8 +918,6 @@ fn collect_options_from_str(
                     order.push(canonical.clone());
                     *next_idx += 1;
                 }
-                let element = &trimmed[i + 7..j - 1];
-                collect_options_from_str(element, out, order, next_idx);
                 i = j;
                 continue;
             }
@@ -1072,14 +1098,16 @@ fn collect_maps_from_str(type_str: &str, out: &mut Vec<String>) {
                 j += 1;
             }
             if depth == 0 {
+                // DFS post-order — same forward-ref guard as the
+                // other compound-type collectors. Nested Maps land
+                // before the outer references them as K or V.
+                let inner = &trimmed[i + 4..j - 1];
+                collect_maps_from_str(inner, out);
                 let canonical: String = trimmed[i..j]
                     .chars()
                     .filter(|c| !c.is_whitespace())
                     .collect();
                 out.push(canonical);
-                // Recurse into the K, V substring.
-                let inner = &trimmed[i + 4..j - 1];
-                collect_maps_from_str(inner, out);
                 i = j;
                 continue;
             }
@@ -1505,3 +1533,23 @@ fn items_reference_name(items: &[crate::ast::TopLevel], name: &str) -> bool {
     })
 }
 
+
+/// Walk fn body for binding annotations carrying a `List<...>` type
+/// the fn signatures don't already spell out. `nested: List<List<Int>>
+/// = [...]` is the canonical case — the outer `List<List<Int>>` only
+/// ever appears in the binding annotation. Mirrors `collect_options
+/// _from_fn_body` and `collect_vectors_from_fn_body`.
+fn collect_lists_from_fn_body(
+    fd: &crate::ast::FnDef,
+    out: &mut HashMap<String, u32>,
+    order: &mut Vec<String>,
+    next_idx: &mut u32,
+) {
+    use crate::ast::{FnBody, Stmt};
+    let FnBody::Block(stmts) = fd.body.as_ref();
+    for stmt in stmts {
+        if let Stmt::Binding(_, Some(annot), _) = stmt {
+            collect_lists_from_str(annot, out, order, next_idx);
+        }
+    }
+}

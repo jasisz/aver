@@ -41,6 +41,12 @@ pub(super) struct ListOps {
     /// natively (records, sums, nested generics) — call sites surface a
     /// clear error in that case rather than silently emit garbage.
     pub(super) contains: Option<u32>,
+    /// `cons : (T, list_T) -> list_T` — the canonical "prepend new
+    /// head onto an existing tail" primitive. Surfaces as a fn call
+    /// from `emit_list_literal` so nested list literals don't need
+    /// any scratch local (which would race with the outer literal's
+    /// own accumulator). Body is a single `struct.new $list_T`.
+    pub(super) cons: u32,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -51,6 +57,7 @@ pub(super) struct ListTypeIdx {
     pub(super) take: u32,
     pub(super) drop: u32,
     pub(super) contains: Option<u32>,
+    pub(super) cons: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -111,6 +118,8 @@ impl ListHelperRegistry {
             *next_type_idx += 1;
             let drop_type = *next_type_idx;
             *next_type_idx += 1;
+            let cons_type = *next_type_idx;
+            *next_type_idx += 1;
             let elem = TypeRegistry::list_element_type(canonical).ok_or(
                 WasmGcError::Validation(format!(
                     "list canonical `{canonical}` has no parsable element type"
@@ -134,6 +143,8 @@ impl ListHelperRegistry {
             *next_wasm_fn_idx += 1;
             let drop_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
+            let cons_fn = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
             let contains_fn = if contains_type.is_some() {
                 let f = *next_wasm_fn_idx;
                 *next_wasm_fn_idx += 1;
@@ -150,6 +161,7 @@ impl ListHelperRegistry {
                     take: take_fn,
                     drop: drop_fn,
                     contains: contains_fn,
+                    cons: cons_fn,
                 },
             );
             self.list_type_indices.insert(
@@ -161,6 +173,7 @@ impl ListHelperRegistry {
                     take: take_type,
                     drop: drop_type,
                     contains: contains_type,
+                    cons: cons_type,
                 },
             );
             self.list_order.push(canonical.clone());
@@ -244,15 +257,23 @@ impl ListHelperRegistry {
             types.ty().function([list_ref, ValType::I64], [list_ref]);
             // drop : (List<T>, Int) -> List<T>
             types.ty().function([list_ref, ValType::I64], [list_ref]);
+            // Order MUST match `assign_slots`: len, reverse, concat,
+            // take, drop, cons, then contains (conditional). The fn
+            // idx and type idx tracks were both bumped in this exact
+            // sequence.
+            let elem = TypeRegistry::list_element_type(canonical).unwrap();
+            let elem_val = super::types::aver_to_wasm(elem.trim(), Some(registry))?
+                .ok_or(WasmGcError::Validation(format!(
+                    "list element type `{elem}` has no wasm representation"
+                )))?;
+            // cons : (T, List<T>) -> List<T> — single struct.new.
+            // Emit always (every literal needs it; bodies and call sites
+            // benefit from one shared helper instead of inline scratch).
+            types.ty().function([elem_val, list_ref], [list_ref]);
             // contains : (List<T>, T) -> Bool — element value type comes
             // from the registry's `aver_to_wasm` for T. Skipped when T
             // isn't natively eq-able (records, sums, nested generics).
-            let elem = TypeRegistry::list_element_type(canonical).unwrap();
             if list_eq_kind(elem.trim()).is_some() {
-                let elem_val = super::types::aver_to_wasm(elem.trim(), Some(registry))?
-                    .ok_or(WasmGcError::Validation(format!(
-                        "list element type `{elem}` has no wasm representation"
-                    )))?;
                 types.ty().function([list_ref, elem_val], [ValType::I32]);
             }
         }
@@ -310,11 +331,16 @@ impl ListHelperRegistry {
     ) {
         for canonical in &self.list_order {
             let idx = self.list_type_indices[canonical];
+            // Order MUST match `assign_slots`: len, reverse, concat,
+            // take, drop, cons (always), then contains (when slot
+            // exists). The fn idx and type idx tracks were both bumped
+            // in this exact sequence.
             funcs.function(idx.len);
             funcs.function(idx.reverse);
             funcs.function(idx.concat);
             funcs.function(idx.take);
             funcs.function(idx.drop);
+            funcs.function(idx.cons);
             if let Some(t) = idx.contains {
                 funcs.function(t);
             }
@@ -336,12 +362,16 @@ impl ListHelperRegistry {
         string_eq_fn_idx: Option<u32>,
     ) -> Result<(), WasmGcError> {
         for canonical in &self.list_order {
+            // Order MUST match `assign_slots` and
+            // `emit_function_section`: len, reverse, concat, take,
+            // drop, cons, then contains (when present).
             codes.function(&emit_list_len(canonical, registry)?);
             codes.function(&emit_list_reverse(canonical, registry)?);
             let ops = self.list_ops[canonical];
             codes.function(&emit_list_concat(canonical, registry, ops.reverse)?);
             codes.function(&emit_list_take(canonical, registry, ops.reverse)?);
             codes.function(&emit_list_drop(canonical, registry)?);
+            codes.function(&emit_list_cons(canonical, registry)?);
             if ops.contains.is_some() {
                 let elem = TypeRegistry::list_element_type(canonical).unwrap();
                 let kind = list_eq_kind(elem.trim()).unwrap();
@@ -1232,6 +1262,24 @@ fn emit_list_contains(
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `cons : (T, List<T>) -> List<T>`. One `struct.new $list_T`. Used
+/// by `emit_list_literal` so nested literals don't need a per-call
+/// scratch local (which used to clash with the outer literal's own
+/// accumulator and with multi-arm match scratch — same slot, three
+/// fighting writers).
+fn emit_list_cons(
+    canonical: &str,
+    registry: &TypeRegistry,
+) -> Result<Function, WasmGcError> {
+    let list_idx = list_idx_of(canonical, registry)?;
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::End);
     Ok(f)
 }
