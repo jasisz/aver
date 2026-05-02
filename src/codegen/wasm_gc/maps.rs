@@ -1547,11 +1547,7 @@ fn emit_map_walk_keys_to_list(
         heap_type: HeapType::Concrete(list_idx),
     });
     // params: 0=map. locals: 1=keys, 2=i, 3=acc.
-    let mut f = Function::new([
-        (1, keys_ref),
-        (1, ValType::I32),
-        (1, list_ref),
-    ]);
+    let mut f = Function::new([(1, keys_ref), (1, ValType::I32), (1, list_ref)]);
     // keys = map.keys
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {

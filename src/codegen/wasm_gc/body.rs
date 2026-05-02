@@ -1313,9 +1313,10 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
             // Otherwise fall back to "Int" (most bench scenarios with
             // Attr access do unwrap a numeric field).
             if let Ok(Some(record_name)) = struct_name_of_unboxed(&obj.node, ctx)
-                && let Some(ty) = ctx.registry.record_field_type(&record_name, field) {
-                    return Ok(ty.into());
-                }
+                && let Some(ty) = ctx.registry.record_field_type(&record_name, field)
+            {
+                return Ok(ty.into());
+            }
             Ok("Int".into())
         }
         Expr::Constructor(name, _) => {
@@ -1360,9 +1361,10 @@ fn struct_name_of_unboxed(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<Option<Strin
         // resolution-driven param map (we don't have a binding-type
         // map yet, so this only works for params).
         if let Some(ty) = lookup_var_type(name, ctx)
-            && ctx.registry.records.contains_key(&ty) {
-                return Ok(Some(ty));
-            }
+            && ctx.registry.records.contains_key(&ty)
+        {
+            return Ok(Some(ty));
+        }
     }
     Ok(None)
 }
@@ -1391,7 +1393,8 @@ fn collect_binding_types(
     let mut out: HashMap<String, String> = HashMap::new();
     for stmt in stmts {
         if let Stmt::Binding(name, annot, expr) = stmt {
-            let ty = annot.clone()
+            let ty = annot
+                .clone()
                 .or_else(|| sniff_aver_type_ext(&expr.node, fd, fn_map, registry, &out));
             if let Some(t) = ty {
                 out.insert(name.clone(), t);
@@ -2287,14 +2290,15 @@ fn struct_name_of(
 ) -> Result<Option<String>, WasmGcError> {
     if let Expr::Resolved { slot, .. } = expr
         && let Some(ValType::Ref(rt)) = slots.by_slot.get(*slot as usize)
-            && let wasm_encoder::HeapType::Concrete(idx) = rt.heap_type {
-                // Reverse-lookup the registry by type idx.
-                for (name, recorded_idx) in &ctx.registry.records {
-                    if *recorded_idx == idx {
-                        return Ok(Some(name.clone()));
-                    }
-                }
+        && let wasm_encoder::HeapType::Concrete(idx) = rt.heap_type
+    {
+        // Reverse-lookup the registry by type idx.
+        for (name, recorded_idx) in &ctx.registry.records {
+            if *recorded_idx == idx {
+                return Ok(Some(name.clone()));
             }
+        }
+    }
     Ok(None)
 }
 

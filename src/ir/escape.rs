@@ -188,7 +188,9 @@ fn classify_fn(fd: &FnDef) -> Option<InlineCandidate> {
             arms_by_constructor.insert(name.clone(), (binding_slots, (*arm.body).clone()));
         }
         if !arms_by_constructor.is_empty() {
-            return Some(InlineCandidate::VariantMatch { arms_by_constructor });
+            return Some(InlineCandidate::VariantMatch {
+                arms_by_constructor,
+            });
         }
     }
 

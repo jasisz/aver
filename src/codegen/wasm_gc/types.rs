@@ -135,7 +135,6 @@ pub(super) struct MapSlots {
 }
 
 impl TypeRegistry {
-
     /// Build the registry with a `--handler` shape — pre-register
     /// HttpRequest/HttpResponse refs in case the handler fn is the
     /// only place they appear (otherwise the auto-discovery picks
@@ -832,7 +831,6 @@ impl TypeRegistry {
         }
         None
     }
-
 }
 
 fn is_primitive(ty: &str) -> bool {
