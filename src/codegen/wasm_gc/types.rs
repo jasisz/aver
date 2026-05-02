@@ -1886,9 +1886,32 @@ fn items_reference_name(items: &[crate::ast::TopLevel], name: &str) -> bool {
         TopLevel::FnDef(fd) => {
             fd.return_type.contains(name)
                 || fd.params.iter().any(|(_, t)| t.contains(name))
+                || fd.effects.iter().any(|e| {
+                    effect_implies_builtin_record(e.node.as_str(), name)
+                })
         }
         _ => false,
     })
+}
+
+/// Maps a declared effect (`! [Foo.bar]`) to the builtin record it
+/// implicitly requires. `Terminal.size` is the canonical case —
+/// returns `Terminal.Size`, so the record slot allocates as soon as
+/// any fn declares the effect, even before the body runs the call.
+/// Same logic underpins `--handler` auto-registering HttpRequest /
+/// HttpResponse from the synthesised wrapper.
+fn effect_implies_builtin_record(effect: &str, record_name: &str) -> bool {
+    let needed = match effect {
+        "Terminal.size" => "Terminal.Size",
+        "Tcp.connect" => "Tcp.Connection",
+        // Request / Response surface comes via the user's
+        // `! [Request.method]` etc. The Aver type checker already
+        // requires HttpRequest / HttpResponse in the handler's
+        // signature, so they get picked up by the param/return
+        // walk. No extra mapping needed here.
+        _ => return false,
+    };
+    needed == record_name
 }
 
 

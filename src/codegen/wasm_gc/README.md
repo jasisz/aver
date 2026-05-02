@@ -225,7 +225,7 @@ Audited 2026-05-02 against `src/codegen/wasm/abi.rs` + `src/types/checker/builti
 | Random.*       | ✅ int/float | full |
 | Float math     | ✅ sin/cos/atan2/pow (host imports — wasm has no native libm) | full |
 | Request/Response/Http/Env | ✅ all 13 fetch-bridge effects | full |
-| Terminal.*     | ✅ enableRawMode/disableRawMode/clear/moveTo/print/setColor/resetColor/readKey/size/hideCursor/showCursor/flush + `Terminal.Size` builtin record (must appear in a fn signature for the slot to allocate) | full |
+| Terminal.*     | ✅ enableRawMode/disableRawMode/clear/moveTo/print/setColor/resetColor/readKey/size/hideCursor/showCursor/flush + `Terminal.Size` builtin record (auto-registered when any fn declares `! [Terminal.size]`) | full |
 | Print/Format.value | ❌ deliberately | wasm-gc lowers interpolations natively via `__wasmgc_concat_n` + `Int.toString`; debug helpers not needed |
 | Disk.*, Tcp.*, HttpServer.listen* | ❌ deliberately | per-deployment policy domain (host's job per `docs/wasm.md`) |
 
@@ -240,8 +240,8 @@ Audited 2026-05-02 against `src/codegen/wasm/abi.rs` + `src/types/checker/builti
 | Char      | toCode/fromCode ✅ |
 | Option    | Some/None/withDefault/toResult ✅ |
 | Result    | Ok/Err/withDefault ✅ |
-| List      | prepend/empty/len/length/reverse/concat/take/drop/zip ✅, contains ✅ for T ∈ {Int, Float, Bool, String, Char} + per-(L,V) `Vector.fromList` ✅; **missing per-instantiation**: `contains` for record/sum T (needs typed-eq dispatch beyond i64/f64/i32/string_eq) |
-| Map       | empty/set/get/len/has/keys/values/remove/entries/fromList + fused `Option.withDefault(Map.get(...))` / `match Map.get(...)` shapes ✅. K ∈ `{String, user-defined record, Int, Float, Bool}` ✅ — primitive K is boxed into `(struct (mut K))` so the open-addressing `keys[i] == null` empty marker stays uniform; record K uses field-by-field hash+eq for fields ∈ `{Int, Float, Bool, String}`. **missing**: record-key fields outside `{Int, Float, Bool, String}` (Char, nested records, lists, vectors) |
+| List      | prepend/empty/len/length/reverse/concat/take/drop/zip ✅, contains ✅ for T ∈ {Int, Float, Bool, String} or any user-defined record (inline field-by-field eq) + per-(L,V) `Vector.fromList` ✅. **missing**: `contains` for sum T (no typed-eq dispatch); record T with field types outside `{Int, Float, Bool, String}` (nested records, lists, vectors) |
+| Map       | empty/set/get/len/has/keys/values/remove/entries/fromList + fused `Option.withDefault(Map.get(...))` / `match Map.get(...)` shapes ✅. K ∈ `{String, user-defined record, Int, Float, Bool}` ✅ — primitive K is boxed into `(struct (mut K))` so the open-addressing `keys[i] == null` empty marker stays uniform; record K uses field-by-field hash+eq for fields ∈ `{Int, Float, Bool, String}`. **missing**: record-key field types outside `{Int, Float, Bool, String}` (nested records, lists, vectors) |
 | Tuple     | `(A, B)` literal + match destructure ✅, per-(A,B) instantiation in the type registry, used as a building block for `List.zip` / `Map.entries` / `Map.fromList`. Tuple types accept both Aver-surface `(A, B)` and internal canonical `Tuple<A,B>` interchangeably |
 | Vector    | new/get (boxed)/set (boxed)/len/toList ✅ + `fromList` per-(L,V) ✅ |
 | Byte      | fromHex/toHex ✅ |

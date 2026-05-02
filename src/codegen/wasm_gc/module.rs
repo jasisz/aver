@@ -82,12 +82,21 @@ pub(super) fn emit_module(
     // force-register that builtin if any such list type is in the
     // registry — keeps slot allocation deterministic regardless of
     // whether `match` discovery already picked it up.
-    if registry
-        .list_order
-        .iter()
-        .any(|c| c == "List<String>" || c == "List<Char>")
-    {
+    if registry.list_order.iter().any(|c| c == "List<String>") {
         builtin_registry.register(BuiltinName::StringEq);
+    }
+    // Same trigger for `List<Record>` when the record has any
+    // String field — `List.contains` over such a list does inline
+    // field-by-field eq and reaches `__wasmgc_string_eq`.
+    for canonical in &registry.list_order {
+        if let Some(elem) =
+            super::types::TypeRegistry::list_element_type(canonical)
+            && let Some(fields) = registry.record_fields.get(elem.trim())
+            && fields.iter().any(|(_, t)| t.trim() == "String")
+        {
+            builtin_registry.register(BuiltinName::StringEq);
+            break;
+        }
     }
 
     if fn_defs.is_empty() {
@@ -166,6 +175,7 @@ pub(super) fn emit_module(
         &registry.vector_order,
         &registry.tuple_order,
         needs_split_join,
+        &registry,
         &mut next_builtin_fn_idx,
         &mut next_type_idx,
     )?;

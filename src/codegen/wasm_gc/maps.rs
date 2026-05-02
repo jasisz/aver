@@ -1309,16 +1309,15 @@ fn emit_hash_record(
             }
             "String" => {
                 let helpers = string_key_helpers.ok_or(WasmGcError::Validation(
-                    "hash_record: String field needs String key helpers but they're not registered"
+                    "hash_record: String field needs String key helpers"
                         .into(),
                 ))?;
                 f.instruction(&Instruction::Call(helpers.hash));
             }
-            other => {
-                return Err(WasmGcError::Unimplemented(match other {
-                    "Char" => "phase 3c — Char field in record key (treat as 1-byte string)",
-                    _ => "phase 3c — record-key field type not in {Int, Float, Bool, String}",
-                }));
+            _ => {
+                return Err(WasmGcError::Unimplemented(
+                    "phase 3c — record-key field type not in {Int, Float, Bool, String}",
+                ));
             }
         }
         f.instruction(&Instruction::I32Add);
@@ -1364,16 +1363,15 @@ fn emit_eq_record(
             "Float" => f.instruction(&Instruction::F64Eq),
             "String" => {
                 let helpers = string_key_helpers.ok_or(WasmGcError::Validation(
-                    "eq_record: String field needs String key helpers but they're not registered"
+                    "eq_record: String field needs String key helpers"
                         .into(),
                 ))?;
                 f.instruction(&Instruction::Call(helpers.eq))
             }
-            other => {
-                return Err(WasmGcError::Unimplemented(match other {
-                    "Char" => "phase 3c — Char field in record key (treat as 1-byte string)",
-                    _ => "phase 3c — record-key field type not in {Int, Float, Bool, String}",
-                }));
+            _ => {
+                return Err(WasmGcError::Unimplemented(
+                    "phase 3c — record-key field type not in {Int, Float, Bool, String}",
+                ));
             }
         };
         f.instruction(&Instruction::I32Eqz);

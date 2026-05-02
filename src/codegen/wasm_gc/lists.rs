@@ -113,6 +113,7 @@ impl ListHelperRegistry {
         vector_canonicals: &[String],
         tuple_canonicals: &[String],
         register_string_split_join: bool,
+        registry: &TypeRegistry,
         next_wasm_fn_idx: &mut u32,
         next_type_idx: &mut u32,
     ) -> Result<(), WasmGcError> {
@@ -140,7 +141,7 @@ impl ListHelperRegistry {
                     "list canonical `{canonical}` has no parsable element type"
                 )),
             )?;
-            let contains_eq = list_eq_kind(elem.trim());
+            let contains_eq = list_eq_kind(elem.trim(), registry);
             let contains_type = if contains_eq.is_some() {
                 let t = *next_type_idx;
                 *next_type_idx += 1;
@@ -332,7 +333,7 @@ impl ListHelperRegistry {
             // contains : (List<T>, T) -> Bool — element value type comes
             // from the registry's `aver_to_wasm` for T. Skipped when T
             // isn't natively eq-able (records, sums, nested generics).
-            if list_eq_kind(elem.trim()).is_some() {
+            if list_eq_kind(elem.trim(), registry).is_some() {
                 types.ty().function([list_ref, elem_val], [ValType::I32]);
             }
         }
@@ -472,7 +473,7 @@ impl ListHelperRegistry {
             codes.function(&emit_list_cons(canonical, registry)?);
             if ops.contains.is_some() {
                 let elem = TypeRegistry::list_element_type(canonical).unwrap();
-                let kind = list_eq_kind(elem.trim()).unwrap();
+                let kind = list_eq_kind(elem.trim(), registry).unwrap();
                 codes.function(&emit_list_contains(canonical, registry, kind, string_eq_fn_idx)?);
             }
         }
@@ -514,7 +515,7 @@ impl ListHelperRegistry {
 /// the instruction sequence emitted in `List.contains`. `None` means
 /// the registry won't allocate a `contains` slot for this `List<T>`,
 /// and any call site that hits one surfaces a clear error.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum ListEqKind {
     /// `i64.eq` — Int.
     I64,
@@ -527,15 +528,27 @@ enum ListEqKind {
     /// builtin. Carries that builtin's wasm fn idx so the helper
     /// emit can `call $eq`.
     StringEq,
+    /// User-defined record T. Field-by-field eq emitted inline
+    /// (same shape as `emit_eq_record` in maps.rs but inlined here
+    /// to avoid a cross-module fn idx dependency). Carries the
+    /// record name; field-type dispatch picks the right per-field
+    /// eq instruction.
+    RecordEq(String),
 }
 
-fn list_eq_kind(elem: &str) -> Option<ListEqKind> {
+fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
     match elem.trim() {
         "Int" => Some(ListEqKind::I64),
         "Float" => Some(ListEqKind::F64),
         "Bool" => Some(ListEqKind::I32),
-        "String" | "Char" => Some(ListEqKind::StringEq),
-        _ => None,
+        "String" => Some(ListEqKind::StringEq),
+        other => {
+            if registry.record_type_idx(other).is_some() {
+                Some(ListEqKind::RecordEq(other.to_string()))
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -1328,9 +1341,16 @@ fn emit_list_contains(
         .ok_or(WasmGcError::Validation(format!(
             "list element type `{elem}` has no wasm representation"
         )))?;
-    // params: 0=in, 1=needle. locals: 2=cur.
-    let mut f = Function::new([(1, list_ref)]);
-    let _ = elem_val;
+    // params: 0=in, 1=needle. local 2 = cur. RecordEq adds two
+    // extra scratch locals (3 = head, 4 = needle copy) since field-
+    // by-field eq needs `struct.get` against both refs multiple
+    // times.
+    let mut locals: Vec<(u32, ValType)> = vec![(1, list_ref)];
+    if let ListEqKind::RecordEq(_) = &kind {
+        locals.push((1, elem_val));
+        locals.push((1, elem_val));
+    }
+    let mut f = Function::new(locals);
     // cur = in
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalSet(2));
@@ -1339,24 +1359,50 @@ fn emit_list_contains(
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::RefIsNull);
     f.instruction(&Instruction::BrIf(1));
-    // compare cur.head == needle
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: list_idx,
-        field_index: 0,
-    });
-    f.instruction(&Instruction::LocalGet(1));
-    match kind {
-        ListEqKind::I64 => f.instruction(&Instruction::I64Eq),
-        ListEqKind::F64 => f.instruction(&Instruction::F64Eq),
-        ListEqKind::I32 => f.instruction(&Instruction::I32Eq),
-        ListEqKind::StringEq => {
-            let eq_fn = string_eq_fn_idx.ok_or(WasmGcError::Validation(
-                "List.contains over String/Char needs __wasmgc_string_eq registered".into(),
-            ))?;
-            f.instruction(&Instruction::Call(eq_fn))
+    // compare cur.head == needle, leaving an i32 (1=eq, 0=ne) on stack
+    match &kind {
+        ListEqKind::RecordEq(record_name) => {
+            // Stash head + needle into scratch locals 3, 4 so we
+            // can struct.get fields multiple times.
+            f.instruction(&Instruction::LocalGet(2));
+            f.instruction(&Instruction::StructGet {
+                struct_type_index: list_idx,
+                field_index: 0,
+            });
+            f.instruction(&Instruction::LocalSet(3));
+            f.instruction(&Instruction::LocalGet(1));
+            f.instruction(&Instruction::LocalSet(4));
+            emit_record_eq_inline(
+                &mut f,
+                record_name,
+                registry,
+                3,
+                4,
+                string_eq_fn_idx,
+            )?;
         }
-    };
+        _ => {
+            f.instruction(&Instruction::LocalGet(2));
+            f.instruction(&Instruction::StructGet {
+                struct_type_index: list_idx,
+                field_index: 0,
+            });
+            f.instruction(&Instruction::LocalGet(1));
+            match &kind {
+                ListEqKind::I64 => f.instruction(&Instruction::I64Eq),
+                ListEqKind::F64 => f.instruction(&Instruction::F64Eq),
+                ListEqKind::I32 => f.instruction(&Instruction::I32Eq),
+                ListEqKind::StringEq => {
+                    let eq_fn = string_eq_fn_idx.ok_or(WasmGcError::Validation(
+                        "List.contains over String/Char needs __wasmgc_string_eq registered"
+                            .into(),
+                    ))?;
+                    f.instruction(&Instruction::Call(eq_fn))
+                }
+                ListEqKind::RecordEq(_) => unreachable!(),
+            };
+        }
+    }
     // if eq → return true
     f.instruction(&Instruction::If(BlockType::Empty));
     f.instruction(&Instruction::I32Const(1));
@@ -1375,6 +1421,76 @@ fn emit_list_contains(
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::End);
     Ok(f)
+}
+
+/// Inline field-by-field eq for two records held in scratch locals.
+/// Pushes a single i32 (1=eq, 0=ne) onto the stack. Field type
+/// dispatch covers `{Int, Float, Bool, String}`; other field types
+/// surface as Unimplemented (same constraint as `emit_eq_record` in
+/// maps.rs — extending requires nested-record / list / vector eq
+/// dispatch).
+fn emit_record_eq_inline(
+    f: &mut Function,
+    record_name: &str,
+    registry: &TypeRegistry,
+    head_local: u32,
+    needle_local: u32,
+    string_eq_fn_idx: Option<u32>,
+) -> Result<(), WasmGcError> {
+    let record_idx = registry.record_type_idx(record_name).ok_or(
+        WasmGcError::Validation(format!(
+            "List.contains: record `{record_name}` not registered"
+        )),
+    )?;
+    let fields = registry
+        .record_fields
+        .get(record_name)
+        .ok_or(WasmGcError::Validation(format!(
+            "List.contains: record `{record_name}` has no field info"
+        )))?;
+    if fields.is_empty() {
+        // Two empty records always equal.
+        f.instruction(&Instruction::I32Const(1));
+        return Ok(());
+    }
+    for (i, (_, field_ty)) in fields.iter().enumerate() {
+        // push head.f
+        f.instruction(&Instruction::LocalGet(head_local));
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: record_idx,
+            field_index: i as u32,
+        });
+        // push needle.f
+        f.instruction(&Instruction::LocalGet(needle_local));
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: record_idx,
+            field_index: i as u32,
+        });
+        // emit per-field eq → i32
+        match field_ty.trim() {
+            "Int" => f.instruction(&Instruction::I64Eq),
+            "Bool" => f.instruction(&Instruction::I32Eq),
+            "Float" => f.instruction(&Instruction::F64Eq),
+            "String" => {
+                let eq_fn = string_eq_fn_idx.ok_or(WasmGcError::Validation(
+                    "List.contains record field of String type needs \
+                     __wasmgc_string_eq registered"
+                        .into(),
+                ))?;
+                f.instruction(&Instruction::Call(eq_fn))
+            }
+            _ => {
+                return Err(WasmGcError::Unimplemented(
+                    "phase 4 — record field type in List.contains \
+                     not in {Int, Float, Bool, String}",
+                ));
+            }
+        };
+        if i > 0 {
+            f.instruction(&Instruction::I32And);
+        }
+    }
+    Ok(())
 }
 
 /// `cons : (T, List<T>) -> List<T>`. One `struct.new $list_T`. Used
