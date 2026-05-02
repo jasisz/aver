@@ -1517,7 +1517,7 @@ fn sniff_with_prev(
                         "Map.empty" if registry.map_order.len() == 1 => {
                             return Some(registry.map_order[0].clone());
                         }
-                        "Map.set" if !args.is_empty() => {
+                        "Map.set" | "Map.remove" if !args.is_empty() => {
                             return sniff_with_prev(&args[0].node, fd, fn_map, registry, prev);
                         }
                         "Map.get" if !args.is_empty() => {
@@ -3516,9 +3516,8 @@ fn emit_dotted_builtin(
         // canonical comes from inferring the type of the map argument
         // (or the surrounding context for Map.empty).
         "Map.empty" => emit_map_empty_call(func, args, slots, ctx),
-        "Map.set" | "Map.get" | "Map.len" | "Map.has" | "Map.keys" | "Map.values" => {
-            emit_map_kv_call(func, method, args, slots, ctx)
-        }
+        "Map.set" | "Map.get" | "Map.len" | "Map.has" | "Map.keys" | "Map.values"
+        | "Map.remove" => emit_map_kv_call(func, method, args, slots, ctx),
         // List<T> — per-instantiation helpers via `lists::ListOps`.
         "List.reverse" if args.len() == 1 => {
             emit_list_op_call(func, &args[0], "reverse", slots, ctx)
@@ -3627,7 +3626,7 @@ fn emit_map_kv_call(
 ) -> Result<(), WasmGcError> {
     let arity = match method {
         "set" => 3,
-        "get" | "has" => 2,
+        "get" | "has" | "remove" => 2,
         "len" | "keys" | "values" => 1,
         _ => unreachable!("emit_map_kv_call: unknown method `{method}`"),
     };
@@ -3663,6 +3662,7 @@ fn emit_map_kv_call(
         "len" => helpers.len,
         "keys" => helpers.keys,
         "values" => helpers.values,
+        "remove" => helpers.remove,
         _ => unreachable!(),
     };
     for arg in args {

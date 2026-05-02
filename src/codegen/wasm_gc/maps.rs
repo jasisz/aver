@@ -75,6 +75,12 @@ pub(super) struct MapKVHelpers {
     /// the values array, only when the corresponding key slot is
     /// occupied (`keys[i] != null`).
     pub(super) values: u32,
+    /// `remove(m, k) -> m`. Linear-probe locate of `k`, then
+    /// backwards-shift the contiguous probe chain so subsequent
+    /// `get` calls still find their entries. Mutates `m` in place
+    /// and returns the same handle (Aver semantics: same shape as
+    /// `set`, the returned ref is structurally equal).
+    pub(super) remove: u32,
 }
 
 #[derive(Default)]
@@ -89,10 +95,10 @@ pub(super) struct MapHelperRegistry {
     /// Per-helper wasm type indices (parallel to fn indices). Stored
     /// here so the type section emit can look them up.
     key_type_indices: HashMap<String, (u32, u32)>, // (hash type idx, eq type idx)
-    /// Eight slots per (K, V): empty, set, get, len, get_or_default,
-    /// get_pair, keys, values. Order matches `assign_slots` /
-    /// `emit_function_section` / `emit_helper_bodies` exactly.
-    kv_type_indices: HashMap<String, (u32, u32, u32, u32, u32, u32, u32, u32)>,
+    /// Nine slots per (K, V): empty, set, get, len, get_or_default,
+    /// get_pair, keys, values, remove. Order matches `assign_slots`
+    /// / `emit_function_section` / `emit_helper_bodies` exactly.
+    kv_type_indices: HashMap<String, (u32, u32, u32, u32, u32, u32, u32, u32, u32)>,
 }
 
 impl MapHelperRegistry {
@@ -167,8 +173,9 @@ impl MapHelperRegistry {
             if self.kv.contains_key(canonical) {
                 continue;
             }
-            // Eight fn type slots and eight fn idx slots:
-            // empty, set, get, len, get_or_default, get_pair, keys, values.
+            // Nine fn type slots and nine fn idx slots:
+            // empty, set, get, len, get_or_default, get_pair, keys,
+            // values, remove.
             let empty_type_idx = *next_type_idx;
             *next_type_idx += 1;
             let set_type_idx = *next_type_idx;
@@ -185,6 +192,8 @@ impl MapHelperRegistry {
             *next_type_idx += 1;
             let values_type_idx = *next_type_idx;
             *next_type_idx += 1;
+            let remove_type_idx = *next_type_idx;
+            *next_type_idx += 1;
             let empty_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
             let set_fn = *next_wasm_fn_idx;
@@ -200,6 +209,8 @@ impl MapHelperRegistry {
             let keys_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
             let values_fn = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
+            let remove_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
 
             // K must be String or a user-defined record. Records use
@@ -227,6 +238,7 @@ impl MapHelperRegistry {
                     get_pair: pair_fn,
                     keys: keys_fn,
                     values: values_fn,
+                    remove: remove_fn,
                 },
             );
             self.kv_type_indices.insert(
@@ -240,6 +252,7 @@ impl MapHelperRegistry {
                     pair_type_idx,
                     keys_type_idx,
                     values_type_idx,
+                    remove_type_idx,
                 ),
             );
             self.kv_order.push(canonical.clone());
@@ -337,6 +350,8 @@ impl MapHelperRegistry {
                 heap_type: HeapType::Concrete(list_v_idx),
             });
             types.ty().function([map_ref], [list_v_ref]);
+            // remove : (Map, K) -> Map
+            types.ty().function([map_ref, k_val], [map_ref]);
             let _ = opt_ref; // (consumed by `get`)
         }
         Ok(())
@@ -354,7 +369,7 @@ impl MapHelperRegistry {
             funcs.function(e);
         }
         for canonical in &self.kv_order {
-            let (em, st, gt, ln, god, pair, ks, vs) =
+            let (em, st, gt, ln, god, pair, ks, vs, rm) =
                 self.kv_type_indices[canonical];
             funcs.function(em);
             funcs.function(st);
@@ -364,6 +379,7 @@ impl MapHelperRegistry {
             funcs.function(pair);
             funcs.function(ks);
             funcs.function(vs);
+            funcs.function(rm);
         }
     }
 
@@ -396,6 +412,7 @@ impl MapHelperRegistry {
             codes.function(&emit_map_get_pair(canonical, registry, key_h)?);
             codes.function(&emit_map_keys(canonical, registry)?);
             codes.function(&emit_map_values(canonical, registry)?);
+            codes.function(&emit_map_remove(canonical, registry, key_h)?);
         }
         Ok(())
     }
@@ -1398,6 +1415,226 @@ fn emit_map_walk_values_to_list(
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `remove(map, k) -> map`. Linear-probe locate the entry; if not
+/// found, return the map unchanged. If found, do a backwards-shift
+/// over the contiguous probe chain so subsequent `get` calls still
+/// land their entries (Robin-Hood / canonical open-addressing
+/// remove). Decrements `map.size`. Same-handle return (mutates in
+/// place).
+fn emit_map_remove(
+    canonical: &str,
+    registry: &TypeRegistry,
+    keyh: KeyHelpers,
+) -> Result<Function, WasmGcError> {
+    let slots = slots_for(canonical, registry)?;
+    let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
+    let k_val = super::types::aver_to_wasm(k_aver, Some(registry))?.unwrap();
+    let v_val = super::types::aver_to_wasm(v_aver, Some(registry))?.unwrap();
+    let _ = v_val; // values array uses its own slot type
+    // params: 0=map, 1=k.
+    // locals: 2=cap, 3=mask, 4=keys, 5=values, 6=h, 7=i, 8=j,
+    //         9=cur_key, 10=natural, 11=gap, 12=disp.
+    let mut f = Function::new([
+        (1, ValType::I32), // 2: cap
+        (1, ValType::I32), // 3: mask
+        (
+            1,
+            ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(slots.keys_array),
+            }),
+        ), // 4: keys
+        (
+            1,
+            ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(slots.values_array),
+            }),
+        ), // 5: values
+        (1, ValType::I32), // 6: h
+        (1, ValType::I32), // 7: i
+        (1, ValType::I32), // 8: j
+        (1, k_val),        // 9: cur_key
+        (1, ValType::I32), // 10: natural
+        (1, ValType::I32), // 11: gap
+        (1, ValType::I32), // 12: disp
+    ]);
+
+    // cap = map.cap; mask = cap - 1; keys = map.keys; values = map.values
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 2,
+    });
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 3,
+    });
+    f.instruction(&Instruction::LocalSet(5));
+
+    // h = hash(k) & mask
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(keyh.hash));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(6));
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::LocalSet(7));
+
+    // Find slot. probe loop.
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::ArrayGet(slots.keys_array));
+    f.instruction(&Instruction::LocalSet(9));
+    // if cur_key == null → not found, return map
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    // if eq(cur_key, k) → break (found at i)
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(keyh.eq));
+    f.instruction(&Instruction::BrIf(1));
+    // i = (i+1) & mask
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(7));
+    // safety: if i wrapped to h → not found (full table miss)
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+
+    // Backwards-shift: j = (i+1) & mask
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::ArrayGet(slots.keys_array));
+    f.instruction(&Instruction::LocalSet(9));
+    // if next == null → break
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::BrIf(1));
+    // natural = hash(next) & mask
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::Call(keyh.hash));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(10));
+    // gap = (j - i) & mask
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(11));
+    // disp = (j - natural) & mask
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(12));
+    // if disp < gap → break
+    f.instruction(&Instruction::LocalGet(12));
+    f.instruction(&Instruction::LocalGet(11));
+    f.instruction(&Instruction::I32LtU);
+    f.instruction(&Instruction::BrIf(1));
+    // shift: keys[i] = next; values[i] = values[j]
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::ArraySet(slots.keys_array));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::ArrayGet(slots.values_array));
+    f.instruction(&Instruction::ArraySet(slots.values_array));
+    // i = j; j = (j+1) & mask
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::LocalSet(7));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(8));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+
+    // keys[i] = null
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(
+        // K's heap type: derive from the value type of the array
+        // element. For ref-only K (record / String) this is the
+        // matching struct/array type. Use the keys_array's element
+        // type's heap idx — but ArrayGet for that array yields
+        // K as its declared element type, so RefNull with that
+        // matching idx is correct.
+        registry
+            .string_array_type_idx
+            .filter(|_| k_aver == "String")
+            .or_else(|| registry.record_type_idx(k_aver))
+            .unwrap_or(0),
+    )));
+    f.instruction(&Instruction::ArraySet(slots.keys_array));
+
+    // map.size = map.size - 1
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::StructSet {
+        struct_type_index: slots.map,
+        field_index: 0,
+    });
+
+    // return map
+    f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::End);
     Ok(f)
 }
