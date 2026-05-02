@@ -153,6 +153,38 @@ impl MapHelperRegistry {
             }
         }
 
+        // For every record K, recursively collect all records used
+        // as fields. Each such nested record needs its own hash + eq
+        // helpers so the outer record's per-field dispatch can call
+        // them. Records reached this way get registered as pseudo-K
+        // (their hash + eq slot exists; no Map<X, *> exists).
+        let mut to_visit: Vec<String> = k_names
+            .iter()
+            .filter(|n| registry.record_type_idx(n).is_some())
+            .cloned()
+            .collect();
+        while let Some(rec) = to_visit.pop() {
+            if let Some(fields) = registry.record_fields.get(&rec) {
+                for (_, field_ty) in fields {
+                    let ft = field_ty.trim();
+                    if registry.record_type_idx(ft).is_some()
+                        && k_seen.insert(ft.to_string())
+                    {
+                        k_names.push(ft.to_string());
+                        to_visit.push(ft.to_string());
+                        // If the nested record itself has String
+                        // fields, ensure String is registered too.
+                        if let Some(inner_fields) = registry.record_fields.get(ft)
+                            && inner_fields.iter().any(|(_, t)| t.trim() == "String")
+                            && k_seen.insert("String".into())
+                        {
+                            k_names.push("String".into());
+                        }
+                    }
+                }
+            }
+        }
+
         // First pass: assign K-keyed helpers (hash, eq) per unique K.
         for k_aver in &k_names {
             if !self.key.contains_key(k_aver) {
@@ -436,9 +468,26 @@ impl MapHelperRegistry {
         registry: &TypeRegistry,
     ) -> Result<(), WasmGcError> {
         let string_key_helpers = self.key.get("String").copied();
+        // Snapshot every K's helpers — record hash/eq dispatch
+        // needs to call helpers for nested record fields.
+        let all_key_helpers: HashMap<String, KeyHelpers> = self
+            .key
+            .iter()
+            .map(|(k, h)| (k.clone(), *h))
+            .collect();
         for k_aver in &self.key_order {
-            codes.function(&emit_hash_for(k_aver, registry, string_key_helpers)?);
-            codes.function(&emit_eq_for(k_aver, registry, string_key_helpers)?);
+            codes.function(&emit_hash_for(
+                k_aver,
+                registry,
+                string_key_helpers,
+                &all_key_helpers,
+            )?);
+            codes.function(&emit_eq_for(
+                k_aver,
+                registry,
+                string_key_helpers,
+                &all_key_helpers,
+            )?);
         }
         for canonical in &self.kv_order {
             let (k_aver, _) = super::types::parse_map_kv(canonical).ok_or(
@@ -473,12 +522,13 @@ fn emit_hash_for(
     k_aver: &str,
     registry: &TypeRegistry,
     string_key_helpers: Option<KeyHelpers>,
+    all_key_helpers: &HashMap<String, KeyHelpers>,
 ) -> Result<Function, WasmGcError> {
     if k_aver == "String" {
         return emit_hash_string(registry);
     }
     if registry.record_type_idx(k_aver).is_some() {
-        return emit_hash_record(k_aver, registry, string_key_helpers);
+        return emit_hash_record(k_aver, registry, string_key_helpers, all_key_helpers);
     }
     if super::types::TypeRegistry::is_primitive_map_key(k_aver) {
         return emit_hash_primitive(k_aver);
@@ -492,12 +542,13 @@ fn emit_eq_for(
     k_aver: &str,
     registry: &TypeRegistry,
     string_key_helpers: Option<KeyHelpers>,
+    all_key_helpers: &HashMap<String, KeyHelpers>,
 ) -> Result<Function, WasmGcError> {
     if k_aver == "String" {
         return emit_eq_string(registry);
     }
     if registry.record_type_idx(k_aver).is_some() {
-        return emit_eq_record(k_aver, registry, string_key_helpers);
+        return emit_eq_record(k_aver, registry, string_key_helpers, all_key_helpers);
     }
     if super::types::TypeRegistry::is_primitive_map_key(k_aver) {
         return emit_eq_primitive(k_aver);
@@ -1266,6 +1317,7 @@ fn emit_hash_record(
     record_name: &str,
     registry: &TypeRegistry,
     string_key_helpers: Option<KeyHelpers>,
+    all_key_helpers: &HashMap<String, KeyHelpers>,
 ) -> Result<Function, WasmGcError> {
     let record_idx = registry.record_type_idx(record_name).ok_or(
         WasmGcError::Validation(format!("hash_record: `{record_name}` not registered")),
@@ -1314,10 +1366,25 @@ fn emit_hash_record(
                 ))?;
                 f.instruction(&Instruction::Call(helpers.hash));
             }
-            _ => {
-                return Err(WasmGcError::Unimplemented(
-                    "phase 3c — record-key field type not in {Int, Float, Bool, String}",
-                ));
+            other => {
+                // Nested record field — call its own per-record
+                // hash helper. Nested records are force-registered
+                // as pseudo-K in `assign_slots` so the helpers
+                // exist even without a Map<X, *> reaching them.
+                if registry.record_type_idx(other).is_some() {
+                    let inner = all_key_helpers.get(other).ok_or(
+                        WasmGcError::Validation(format!(
+                            "hash_record: nested record `{other}` not registered \
+                             as key helper (assign_slots should have force-registered it)"
+                        )),
+                    )?;
+                    f.instruction(&Instruction::Call(inner.hash));
+                } else {
+                    return Err(WasmGcError::Unimplemented(
+                        "phase 3c — record-key field type not in \
+                         {Int, Float, Bool, String, nested record}",
+                    ));
+                }
             }
         }
         f.instruction(&Instruction::I32Add);
@@ -1335,6 +1402,7 @@ fn emit_eq_record(
     record_name: &str,
     registry: &TypeRegistry,
     string_key_helpers: Option<KeyHelpers>,
+    all_key_helpers: &HashMap<String, KeyHelpers>,
 ) -> Result<Function, WasmGcError> {
     let record_idx = registry.record_type_idx(record_name).ok_or(
         WasmGcError::Validation(format!("eq_record: `{record_name}` not registered")),
@@ -1368,10 +1436,20 @@ fn emit_eq_record(
                 ))?;
                 f.instruction(&Instruction::Call(helpers.eq))
             }
-            _ => {
-                return Err(WasmGcError::Unimplemented(
-                    "phase 3c — record-key field type not in {Int, Float, Bool, String}",
-                ));
+            other => {
+                if registry.record_type_idx(other).is_some() {
+                    let inner = all_key_helpers.get(other).ok_or(
+                        WasmGcError::Validation(format!(
+                            "eq_record: nested record `{other}` not registered as key helper"
+                        )),
+                    )?;
+                    f.instruction(&Instruction::Call(inner.eq))
+                } else {
+                    return Err(WasmGcError::Unimplemented(
+                        "phase 3c — record-key field type not in \
+                         {Int, Float, Bool, String, nested record}",
+                    ));
+                }
             }
         };
         f.instruction(&Instruction::I32Eqz);

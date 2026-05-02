@@ -546,9 +546,7 @@ enum ListEqKind {
 fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
     let trimmed = elem.trim();
     // Newtype-erased sum / record (single-variant single-field of a
-    // primitive) gets its underlying primitive's eq instruction —
-    // user code can't distinguish `Shape.Circle(r)` from `r` at the
-    // wasm level so the comparison reduces too.
+    // primitive) gets its underlying primitive's eq instruction.
     if let Some(under) = registry.newtype_underlying(trimmed) {
         return list_eq_kind(under, registry);
     }
@@ -559,9 +557,38 @@ fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
         "String" => Some(ListEqKind::StringEq),
         other => {
             if registry.record_type_idx(other).is_some() {
-                Some(ListEqKind::RecordEq(other.to_string()))
+                // Record element only gets a `contains` slot when
+                // every field is comparable inline. Nested records,
+                // lists, vectors, sums in fields would need a
+                // recursive eq dispatch the inline emit doesn't
+                // support — those records still work as Map keys
+                // (where nested record helpers are force-registered
+                // and called by fn idx); they just don't get a
+                // List.contains slot.
+                let fields = registry.record_fields.get(other)?;
+                let all_simple = fields.iter().all(|(_, t)| {
+                    matches!(t.trim(), "Int" | "Float" | "Bool" | "String")
+                });
+                if all_simple {
+                    Some(ListEqKind::RecordEq(other.to_string()))
+                } else {
+                    None
+                }
             } else if registry.variants.values().any(|v| v.parent == other) {
-                Some(ListEqKind::SumEq(other.to_string()))
+                let all_simple = registry
+                    .variants
+                    .values()
+                    .filter(|v| v.parent == other)
+                    .all(|v| {
+                        v.fields.iter().all(|t| {
+                            matches!(t.trim(), "Int" | "Float" | "Bool" | "String")
+                        })
+                    });
+                if all_simple {
+                    Some(ListEqKind::SumEq(other.to_string()))
+                } else {
+                    None
+                }
             } else {
                 None
             }
