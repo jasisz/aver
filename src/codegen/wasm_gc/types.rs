@@ -405,6 +405,22 @@ impl TypeRegistry {
                 }
             }
         }
+        // Same eager registration for every user-defined record. The
+        // common shape is `fn handleAiTurn(state: GameState) -> GameState`
+        // whose body emits a fallback `Option.None` (e.g. inside a
+        // `RecordCreate` field that's actually `Option<X>` but the
+        // emit-time hint falls back to `ctx.return_type` = `GameState`).
+        // Without `Option<GameState>` in the registry the constructor
+        // crashes; with it the slot exists and `wasm-opt -Oz` strips
+        // unused option helpers if nothing actually instantiates them.
+        for record_name in record_fields.keys() {
+            let opt = format!("Option<{record_name}>");
+            if !option_types.contains_key(&opt) {
+                option_types.insert(opt.clone(), next_idx);
+                option_order.push(opt);
+                next_idx += 1;
+            }
+        }
         // Eagerly register `Option<V>` for every `Map<K, V>` reachable
         // anywhere — `Map.get` returns `Option<V>` and the slot has
         // to land before the Map struct does so the wasm type section

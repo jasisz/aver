@@ -410,6 +410,22 @@ pub(super) fn emit_record_create(
             emit_option_constructor(func, None, Some(inner.trim()), slots, ctx)?;
             continue;
         }
+        // Same story for empty-list field values (`pieceMoves = []`
+        // inside a `GameState(...)` literal). `emit_list_literal`
+        // would otherwise default to `ctx.return_type` or the first
+        // registered list canonical — both wrong when the field's
+        // declared type is e.g. `List<List<Point>>`.
+        if let Expr::List(items) = &provided.1.node
+            && items.is_empty()
+        {
+            let canonical: String = decl_ty.chars().filter(|c| !c.is_whitespace()).collect();
+            if let Some(list_idx) = ctx.registry.list_type_idx(&canonical) {
+                func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+                    list_idx,
+                )));
+                continue;
+            }
+        }
         emit_expr(func, &provided.1.node, slots, ctx)?;
     }
     func.instruction(&Instruction::StructNew(type_idx));
@@ -737,7 +753,30 @@ pub(super) fn emit_list_literal(
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     let canonical = if let Some(first) = items.first() {
-        let elem_ty = infer_aver_type(&first.node, ctx)?;
+        // `[Option.None, Option.None, ...]` is a common shape for
+        // building filled rows; `infer_aver_type(Option.None)`
+        // falls back to `ctx.return_type` and produces a doubly-
+        // wrapped `List<List<Option<X>>>` canonical that's never
+        // registered. Same trap for empty-list elements. Prefer
+        // the enclosing fn's return type when it parses as
+        // `List<T>` and the first item lacks its own resolvable
+        // type — this gives the correct T for both shapes.
+        let needs_hint = matches!(&first.node, Expr::List(xs) if xs.is_empty())
+            || is_option_none_expr(&first.node);
+        let elem_ty = if needs_hint {
+            let ret: String = ctx
+                .return_type
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            if let Some(inner) = ret.strip_prefix("List<").and_then(|s| s.strip_suffix('>')) {
+                inner.to_string()
+            } else {
+                infer_aver_type(&first.node, ctx)?
+            }
+        } else {
+            infer_aver_type(&first.node, ctx)?
+        };
         format!("List<{elem_ty}>")
             .chars()
             .filter(|c| !c.is_whitespace())

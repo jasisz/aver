@@ -146,27 +146,22 @@ pub(super) fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
             {
                 return true;
             }
-            // Arm needs a scratch when it's a multi-arm Constructor
-            // match against a non-newtype variant.
-            let constructor_arms: Vec<_> = arms
+            // Reserve a scratch any time the arms include a
+            // Constructor pattern. Earlier we tried to be clever —
+            // skip when all variants reduce to newtypes, since the
+            // newtype unwrap doesn't need the scratch — but multi-
+            // module flatten can land variants whose registry entry
+            // isn't visible at slot-allocation time (rogue's
+            // `EntityKind.WildIfElse` resolves through `types.av`
+            // flattened from a different module). The cost of an
+            // unused scratch local is one wasm value; the cost of a
+            // missing one is `emit_variant_dispatch` crashing with
+            // "no scratch reserved".
+            if arms
                 .iter()
-                .filter(|a| matches!(a.pattern, Pattern::Constructor(_, _)))
-                .collect();
-            if constructor_arms.len() > 1 {
-                let any_non_newtype = constructor_arms.iter().any(|a| {
-                    if let Pattern::Constructor(name, _) = &a.pattern {
-                        let bare = name.rsplit('.').next().unwrap_or(name);
-                        registry
-                            .variant(bare)
-                            .map(|info| registry.newtype_underlying(&info.parent).is_none())
-                            .unwrap_or(false)
-                    } else {
-                        false
-                    }
-                });
-                if any_non_newtype {
-                    return true;
-                }
+                .any(|a| matches!(a.pattern, Pattern::Constructor(_, _)))
+            {
+                return true;
             }
             arms.iter()
                 .any(|a| expr_needs_scratch(&a.body.node, registry))

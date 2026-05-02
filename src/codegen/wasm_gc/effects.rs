@@ -195,8 +195,13 @@ impl EffectName {
             Self::EnvGet => "Env.get",
             Self::EnvSet => "Env.set",
             Self::ConsoleReadLine => "Console.readLine",
-            Self::ArgsLen => "Args._len",
-            Self::ArgsGet => "Args._get",
+            Self::ArgsLen => "Args.len",
+            // `Args.get` is the user-facing name; the `Args._get`
+            // alias exists for legacy reasons but the dotted dispatch
+            // in `emit_dotted_builtin` looks up by the source-level
+            // name. Use the user-facing form as the canonical so
+            // `fn_map.effects.get("Args.get")` succeeds.
+            Self::ArgsGet => "Args.get",
             Self::RandomFloat => "Random.float",
             Self::RandomInt => "Random.int",
             Self::TimeSleep => "Time.sleep",
