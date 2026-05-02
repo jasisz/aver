@@ -1059,7 +1059,42 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
                         return Ok(format!("Vector<{elem}>"));
                     }
                     if dotted == "Vector.set" && args.len() == 3 {
-                        return infer_aver_type(&args[0].node, ctx);
+                        // Boxed return: `Option<Vector<T>>`. Used by
+                        // pattern-match call sites; the fused
+                        // `Option.withDefault(Vector.set(...), v)`
+                        // shape collapses earlier in `emit_option_with_default`,
+                        // so this only fires for non-fused calls.
+                        let v = infer_aver_type(&args[0].node, ctx)?;
+                        let canonical: String =
+                            v.chars().filter(|c| !c.is_whitespace()).collect();
+                        if super::types::TypeRegistry::vector_element_type(&canonical).is_some() {
+                            return Ok(format!("Option<{canonical}>"));
+                        }
+                        return Ok(canonical);
+                    }
+                    if dotted == "Vector.toList" && args.len() == 1 {
+                        let v = infer_aver_type(&args[0].node, ctx)?;
+                        let canonical: String =
+                            v.chars().filter(|c| !c.is_whitespace()).collect();
+                        if let Some(elem) =
+                            super::types::TypeRegistry::vector_element_type(&canonical)
+                        {
+                            return Ok(format!("List<{}>", elem.trim()));
+                        }
+                        return Ok("List<Int>".into());
+                    }
+                    if (dotted == "Map.keys" || dotted == "Map.values") && args.len() == 1 {
+                        let m = infer_aver_type(&args[0].node, ctx)?;
+                        let canonical: String =
+                            m.chars().filter(|c| !c.is_whitespace()).collect();
+                        if let Some((k, v)) = super::types::parse_map_kv(&canonical) {
+                            let elem = if dotted == "Map.keys" { k } else { v };
+                            return Ok(format!("List<{elem}>"));
+                        }
+                        return Ok("List<Int>".into());
+                    }
+                    if dotted == "Map.has" && args.len() == 2 {
+                        return Ok("Bool".into());
                     }
                     if dotted == "Vector.get" && args.len() == 2 {
                         let vec_ty = infer_aver_type(&args[0].node, ctx)?;
@@ -1493,7 +1528,24 @@ fn sniff_with_prev(
                             }
                             return None;
                         }
+                        "Map.keys" if !args.is_empty() => {
+                            let m = sniff_with_prev(&args[0].node, fd, fn_map, registry, prev)?;
+                            let canonical = m.replace(' ', "");
+                            if let Some((k, _)) = super::types::parse_map_kv(&canonical) {
+                                return Some(format!("List<{k}>"));
+                            }
+                            return None;
+                        }
+                        "Map.values" if !args.is_empty() => {
+                            let m = sniff_with_prev(&args[0].node, fd, fn_map, registry, prev)?;
+                            let canonical = m.replace(' ', "");
+                            if let Some((_, v)) = super::types::parse_map_kv(&canonical) {
+                                return Some(format!("List<{v}>"));
+                            }
+                            return None;
+                        }
                         "Map.len" => return Some("Int".into()),
+                        "Map.has" => return Some("Bool".into()),
                         "Vector.new" if args.len() == 2 => {
                             let elem = sniff_with_prev(&args[1].node, fd, fn_map, registry, prev)?;
                             return Some(format!("Vector<{elem}>"));
@@ -1515,6 +1567,24 @@ fn sniff_with_prev(
                             let l = sniff_with_prev(&args[0].node, fd, fn_map, registry, prev)?;
                             if let Some(elem) = TypeRegistry::list_element_type(&l) {
                                 return Some(format!("Vector<{}>", elem.trim()));
+                            }
+                            return None;
+                        }
+                        "Vector.toList" if args.len() == 1 => {
+                            let v = sniff_with_prev(&args[0].node, fd, fn_map, registry, prev)?;
+                            if let Some(elem) = TypeRegistry::vector_element_type(&v) {
+                                return Some(format!("List<{}>", elem.trim()));
+                            }
+                            return None;
+                        }
+                        "Vector.set" if args.len() == 3 => {
+                            // Boxed return: `Option<Vector<T>>`. Recover
+                            // T from the vector arg.
+                            let v = sniff_with_prev(&args[0].node, fd, fn_map, registry, prev)?;
+                            let canonical: String =
+                                v.chars().filter(|c| !c.is_whitespace()).collect();
+                            if TypeRegistry::vector_element_type(&canonical).is_some() {
+                                return Some(format!("Option<{canonical}>"));
                             }
                             return None;
                         }
@@ -1630,15 +1700,26 @@ fn dotted_return_type(dotted: &str) -> Option<&'static str> {
         "Bool.and" | "Bool.or" | "Bool.not" | "String.startsWith"
         | "String.endsWith" | "String.contains" | "Map.has" | "List.contains" => "Bool",
         // Char results
-        "Char.fromCode" => "Char",
+        // Note: `Char.fromCode` actually returns `Option<String>`
+        // (Aver Char = 1-byte String), handled below.
+        // Option-typed
+        "String.charAt" | "Char.fromCode" => "Option<String>",
         // Result-typed parsers
         "Float.fromString" => "Result<Float,String>",
         "Int.fromString" => "Result<Int,String>",
         "Int.mod" => "Result<Int,String>",
         // List-typed — `List.concat/take/drop` flow through
         // sniff_with_prev (return type matches arg[0]); only the
-        // T-fixed `String.split` lands here as `List<String>`.
-        "String.split" => "List<String>",
+        // T-fixed `String.split` / `String.chars` land here.
+        "String.split" | "String.chars" => "List<String>",
+        // Map K/V-derived — actual canonicals come through
+        // `infer_aver_type`'s dispatch (which has access to the
+        // map's K, V); these are the generic placeholders.
+        "Map.keys" => "List<Unknown>",
+        "Map.values" => "List<Unknown>",
+        // Vector tail
+        "Vector.toList" => "List<Unknown>",
+        "Vector.set" => "Option<Vector<Unknown>>",
         _ => return None,
     })
 }
@@ -1669,8 +1750,10 @@ fn builtin_aver_result_type(dotted: &str) -> &'static str {
         // these, so `builtin_aver_result_type` only sees them as a
         // generic "List" tag; the concrete T comes from the caller.
         "List.concat" | "List.take" | "List.drop" => "List<Unknown>",
-        // Returns Char
-        "Char.fromCode" => "Char",
+        // Option-typed (Aver Char = 1-byte String, both wrap Option<String>)
+        "String.charAt" | "Char.fromCode" => "Option<String>",
+        // Returns List<String>
+        "String.chars" => "List<String>",
         // Result-typed parsers
         "Float.fromString" => "Result<Float,String>",
         "Int.fromString" | "Int.mod" => "Result<Int,String>",
@@ -2311,10 +2394,23 @@ fn emit_list_literal(
     } else if ctx.registry.list_order.len() == 1 {
         ctx.registry.list_order[0].clone()
     } else {
-        ctx.return_type
+        // Empty literal in a context we can't pin down (verify
+        // expressions, fn returning a non-List type that wraps `[]`
+        // somewhere). Prefer fn return type when it parses as a
+        // List, otherwise fall back to the first registered List —
+        // a deterministic non-failing choice.
+        let ret: String = ctx
+            .return_type
             .chars()
             .filter(|c| !c.is_whitespace())
-            .collect::<String>()
+            .collect();
+        if ret.starts_with("List<") {
+            ret
+        } else if let Some(first) = ctx.registry.list_order.first() {
+            first.clone()
+        } else {
+            ret
+        }
     };
     let list_idx = ctx
         .registry
@@ -3389,6 +3485,15 @@ fn emit_dotted_builtin(
         "Vector.get" if args.len() == 2 => {
             emit_vector_get_boxed(func, &args[0], &args[1], slots, ctx)
         }
+        // Boxed `Vector.set(v, i, x) -> Option<Vector<T>>`. Mutates
+        // the backing array in place on bounds-check success and
+        // returns `Option.Some(v)`; OOB returns `Option.None` without
+        // touching the array. Aver's surface semantics match the
+        // legacy backend (the fused `Option.withDefault(Vector.set,
+        // v)` shape collapses to an in-place set-and-return-handle).
+        "Vector.set" if args.len() == 3 => {
+            emit_vector_set_boxed(func, &args[0], &args[1], &args[2], slots, ctx)
+        }
         // Option.withDefault(opt, default) — recognise the two fused
         // shapes that show up in vector_ops without ever materialising
         // an Option<T>. Anything else needs real Option boxing, which
@@ -3405,7 +3510,9 @@ fn emit_dotted_builtin(
         // canonical comes from inferring the type of the map argument
         // (or the surrounding context for Map.empty).
         "Map.empty" => emit_map_empty_call(func, args, slots, ctx),
-        "Map.set" | "Map.get" | "Map.len" => emit_map_kv_call(func, method, args, slots, ctx),
+        "Map.set" | "Map.get" | "Map.len" | "Map.has" | "Map.keys" | "Map.values" => {
+            emit_map_kv_call(func, method, args, slots, ctx)
+        }
         // List<T> — per-instantiation helpers via `lists::ListOps`.
         "List.reverse" if args.len() == 1 => {
             emit_list_op_call(func, &args[0], "reverse", slots, ctx)
@@ -3428,6 +3535,9 @@ fn emit_dotted_builtin(
         // Vector.fromList(list: List<T>) -> Vector<T>
         "Vector.fromList" if args.len() == 1 => {
             emit_vec_from_list_call(func, &args[0], slots, ctx)
+        }
+        "Vector.toList" if args.len() == 1 => {
+            emit_vec_to_list_call(func, &args[0], slots, ctx)
         }
         // String.split / String.join — singleton (T=String).
         "String.split" if args.len() == 2 => {
@@ -3511,8 +3621,8 @@ fn emit_map_kv_call(
 ) -> Result<(), WasmGcError> {
     let arity = match method {
         "set" => 3,
-        "get" => 2,
-        "len" => 1,
+        "get" | "has" => 2,
+        "len" | "keys" | "values" => 1,
         _ => unreachable!("emit_map_kv_call: unknown method `{method}`"),
     };
     if args.len() != arity {
@@ -3530,10 +3640,23 @@ fn emit_map_kv_call(
         .ok_or(WasmGcError::Validation(format!(
             "Map.{method}: map argument has type `{map_aver}` but no helpers are registered"
         )))?;
+    // `Map.has(m, k) -> Bool` reuses the `get_pair` helper which
+    // returns `(found: i32, value: V)` and drops the value, leaving
+    // just `found` on the stack — no Option<V> ever allocates.
+    if method == "has" {
+        for arg in args {
+            emit_expr(func, &arg.node, slots, ctx)?;
+        }
+        func.instruction(&Instruction::Call(helpers.get_pair));
+        func.instruction(&Instruction::Drop);
+        return Ok(());
+    }
     let target_idx = match method {
         "set" => helpers.set,
         "get" => helpers.get,
         "len" => helpers.len,
+        "keys" => helpers.keys,
+        "values" => helpers.values,
         _ => unreachable!(),
     };
     for arg in args {
@@ -4248,6 +4371,36 @@ fn emit_vec_from_list_call(
     Ok(())
 }
 
+/// `Vector.toList(vec)` — dispatch to the `to_list` helper. The
+/// canonical is keyed on `List<T>` (`vfl_ops` indexes pairs by list
+/// canonical), so we recover `T` from the vector arg's type and
+/// build the list canonical from it.
+fn emit_vec_to_list_call(
+    func: &mut Function,
+    vec_arg: &Spanned<Expr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let vec_aver = infer_aver_type(&vec_arg.node, ctx)?;
+    let vec_canonical: String = vec_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    let elem = super::types::TypeRegistry::vector_element_type(&vec_canonical).ok_or(
+        WasmGcError::Validation(format!(
+            "Vector.toList: cannot parse element type from `{vec_canonical}`"
+        )),
+    )?;
+    let list_canonical = format!("List<{}>", elem.trim());
+    let ops = ctx
+        .fn_map
+        .vfl_ops
+        .get(&list_canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Vector.toList: helper for `{list_canonical}` wasn't registered"
+        )))?;
+    emit_expr(func, &vec_arg.node, slots, ctx)?;
+    func.instruction(&Instruction::Call(ops.to_list));
+    Ok(())
+}
+
 /// Boxed `Vector.get(v, i) -> Option<T>`. Bounds-check then build a
 /// real `Option<T>` struct: `Option.Some(arr[i])` on success,
 /// `Option.None` on out-of-range. Used when the call result actually
@@ -4314,6 +4467,70 @@ fn emit_vector_get_boxed(
     // value for the field.
     func.instruction(&Instruction::I32Const(0));
     emit_default_value(func, element, ctx.registry)?;
+    func.instruction(&Instruction::StructNew(opt_idx));
+    func.instruction(&Instruction::End);
+    Ok(())
+}
+
+/// Boxed `Vector.set(v, i, x) -> Option<Vector<T>>`. Mutates the
+/// backing array on bounds-check success, returns `Option.Some(v)`;
+/// OOB returns `Option.None`. Aver semantics: the returned handle
+/// is the same as the input (no copy) — Vector is mutable at the
+/// wasm level, surface code must use the returned ref to observe
+/// the change.
+fn emit_vector_set_boxed(
+    func: &mut Function,
+    vector: &Spanned<Expr>,
+    index: &Spanned<Expr>,
+    value: &Spanned<Expr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let vec_aver = infer_aver_type(&vector.node, ctx)?;
+    let canonical: String = vec_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    let vec_idx = ctx
+        .registry
+        .vector_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Vector.set: vector arg of type `{vec_aver}` is not a registered Vector<T>"
+        )))?;
+    let opt_canonical = format!("Option<{canonical}>");
+    let opt_idx = ctx
+        .registry
+        .option_type_idx(&opt_canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Vector.set: `{opt_canonical}` slot was not registered"
+        )))?;
+    let opt_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(opt_idx),
+    });
+    let block_ty = wasm_encoder::BlockType::Result(opt_ref);
+    // Bounds: 0 <= i < vec.len
+    emit_expr(func, &index.node, slots, ctx)?;
+    func.instruction(&Instruction::I64Const(0));
+    func.instruction(&Instruction::I64GeS);
+    emit_expr(func, &index.node, slots, ctx)?;
+    func.instruction(&Instruction::I32WrapI64);
+    emit_expr(func, &vector.node, slots, ctx)?;
+    func.instruction(&Instruction::ArrayLen);
+    func.instruction(&Instruction::I32LtU);
+    func.instruction(&Instruction::I32And);
+    func.instruction(&Instruction::If(block_ty));
+    // In-range: array.set vec[i] = x; return Some(vec)
+    emit_expr(func, &vector.node, slots, ctx)?;
+    emit_expr(func, &index.node, slots, ctx)?;
+    func.instruction(&Instruction::I32WrapI64);
+    emit_expr(func, &value.node, slots, ctx)?;
+    func.instruction(&Instruction::ArraySet(vec_idx));
+    // tag=1 + same vector ref
+    func.instruction(&Instruction::I32Const(1));
+    emit_expr(func, &vector.node, slots, ctx)?;
+    func.instruction(&Instruction::StructNew(opt_idx));
+    func.instruction(&Instruction::Else);
+    // OOB: tag=0, value=null vec ref
+    func.instruction(&Instruction::I32Const(0));
+    func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(vec_idx)));
     func.instruction(&Instruction::StructNew(opt_idx));
     func.instruction(&Instruction::End);
     Ok(())

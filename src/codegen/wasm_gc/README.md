@@ -236,13 +236,13 @@ Audited 2026-05-02 against `src/codegen/wasm/abi.rs` + `src/types/checker/builti
 | Bool      | and/or/not ✅ |
 | Int       | toString/toFloat/abs/min/max/mod ✅, fromString ✅ |
 | Float     | toString/floor/ceil/round/abs/sqrt/min/max/pi/fromInt ✅, fromString ✅ |
-| String    | len/length/byteLength/startsWith/endsWith/contains/slice/toUpper/toLower/trim/split/join/fromInt/fromFloat/fromBool ✅; **missing**: `charAt` (needs Option<String> registered eagerly — same blocker as `Char.fromCode`), `chars` (needs List<String> registered eagerly), `replace` (etap 3b/3c) |
-| Char      | toCode ✅; **missing**: `fromCode` (needs Option<String> registered eagerly — etap 3b) |
+| String    | len/length/byteLength/startsWith/endsWith/contains/slice/toUpper/toLower/trim/split/join/fromInt/fromFloat/fromBool/charAt/chars ✅; **missing**: `replace` |
+| Char      | toCode/fromCode ✅ |
 | Option    | Some/None/withDefault/toResult ✅ |
 | Result    | Ok/Err/withDefault ✅ |
-| List      | prepend/empty/len/length/reverse/concat/take/drop ✅, contains ✅ for T ∈ {Int, Float, Bool, String, Char} + per-(L,V) `Vector.fromList` ✅; **missing per-instantiation**: `contains` for record/sum T (needs typed-eq dispatch beyond i64/f64/i32/string_eq), `zip` (needs Tuple<A,B> support — etap 4a-bis) |
-| Map       | empty/set/get/len + fused `Option.withDefault(Map.get(...))` / `match Map.get(...)` shapes ✅. K = `String` ✅ or any user-defined record (field-by-field hash + eq, fields ∈ {Int, Float, Bool, String}) ✅. **missing**: K = primitive (Int/Float/Bool need a different empty-marker than `keys[i] == null`); record-key fields outside {Int, Float, Bool, String} (Char, nested records, lists, vectors); per-instantiation `has`, `keys`, `values`, `entries`, `remove`, `fromList` (etap 4b) |
-| Vector    | new/get (boxed)/len + `fromList` per-(L,V) ✅; **missing**: `set` (boxed), `toList` per-(V,L) (etap 4c) |
+| List      | prepend/empty/len/length/reverse/concat/take/drop ✅, contains ✅ for T ∈ {Int, Float, Bool, String, Char} + per-(L,V) `Vector.fromList` ✅; **missing per-instantiation**: `contains` for record/sum T (needs typed-eq dispatch beyond i64/f64/i32/string_eq), `zip` (needs Tuple<A,B> support) |
+| Map       | empty/set/get/len/has/keys/values + fused `Option.withDefault(Map.get(...))` / `match Map.get(...)` shapes ✅. K = `String` ✅ or any user-defined record (field-by-field hash + eq, fields ∈ {Int, Float, Bool, String}) ✅. **missing**: K = primitive (Int/Float/Bool need a different empty-marker than `keys[i] == null`); record-key fields outside {Int, Float, Bool, String} (Char, nested records, lists, vectors); `remove`, `entries` (Tuple), `fromList` (Tuple) |
+| Vector    | new/get (boxed)/set (boxed)/len/toList ✅ + `fromList` per-(L,V) ✅ |
 | Byte      | ❌ `fromHex`, `toHex` (etap 3c — small) |
 | BranchPath, Tcp.Connection | ❌ surface-level builtin records, low priority |
 

@@ -63,6 +63,11 @@ pub(super) struct ListTypeIdx {
 #[derive(Debug, Clone, Copy)]
 pub(super) struct VectorFromListOps {
     pub(super) from_list: u32,
+    /// `to_list : (Vector<T>) -> List<T>`. Walks the array right-to-
+    /// left building a cons-list — same shape as `from_list` but in
+    /// reverse. Slotted alongside `from_list` so any pair of
+    /// `(List<T>, Vector<T>)` registers both helpers together.
+    pub(super) to_list: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -81,11 +86,13 @@ pub(super) struct ListHelperRegistry {
     /// `None` (T isn't natively eq-able).
     list_type_indices: HashMap<String, ListTypeIdx>,
 
-    /// `List<T>` canonical → vec-from-list fn idx (paired with the
-    /// `Vector<T>` of the same `T` discovered in the registry).
+    /// `List<T>` canonical → vec-from-list / vec-to-list fn indices
+    /// (paired with the `Vector<T>` of the same `T` discovered in the
+    /// registry).
     vfl_ops: HashMap<String, VectorFromListOps>,
     vfl_order: Vec<String>,
-    vfl_type_indices: HashMap<String, u32>,
+    /// Per-pair: `(from_list_type_idx, to_list_type_idx)`.
+    vfl_type_indices: HashMap<String, (u32, u32)>,
 
     string_split: Option<StringSplitOps>,
     /// (split_type_idx, join_type_idx)
@@ -194,13 +201,23 @@ impl ListHelperRegistry {
             if self.vfl_ops.contains_key(canonical) {
                 continue;
             }
-            let ty = *next_type_idx;
+            let from_ty = *next_type_idx;
             *next_type_idx += 1;
-            let fnx = *next_wasm_fn_idx;
+            let to_ty = *next_type_idx;
+            *next_type_idx += 1;
+            let from_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
-            self.vfl_ops
-                .insert(canonical.clone(), VectorFromListOps { from_list: fnx });
-            self.vfl_type_indices.insert(canonical.clone(), ty);
+            let to_fn = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
+            self.vfl_ops.insert(
+                canonical.clone(),
+                VectorFromListOps {
+                    from_list: from_fn,
+                    to_list: to_fn,
+                },
+            );
+            self.vfl_type_indices
+                .insert(canonical.clone(), (from_ty, to_ty));
             self.vfl_order.push(canonical.clone());
         }
 
@@ -298,7 +315,10 @@ impl ListHelperRegistry {
                 nullable: true,
                 heap_type: HeapType::Concrete(vec_idx),
             });
+            // from_list : (List<T>) -> Vector<T>
             types.ty().function([list_ref], [vec_ref]);
+            // to_list : (Vector<T>) -> List<T>
+            types.ty().function([vec_ref], [list_ref]);
         }
         if self.string_split.is_some() {
             let s_idx = registry.string_array_type_idx.ok_or(WasmGcError::Validation(
@@ -346,8 +366,9 @@ impl ListHelperRegistry {
             }
         }
         for canonical in &self.vfl_order {
-            let t = self.vfl_type_indices[canonical];
-            funcs.function(t);
+            let (from_t, to_t) = self.vfl_type_indices[canonical];
+            funcs.function(from_t);
+            funcs.function(to_t);
         }
         if let Some((split_t, join_t)) = self.string_split_type_indices {
             funcs.function(split_t);
@@ -380,6 +401,7 @@ impl ListHelperRegistry {
         }
         for canonical in &self.vfl_order {
             codes.function(&emit_vec_from_list(canonical, registry)?);
+            codes.function(&emit_vec_to_list(canonical, registry)?);
         }
         if self.string_split.is_some() {
             // string_split needs to call List<String>.reverse to flip
@@ -1280,6 +1302,61 @@ fn emit_list_cons(
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::StructNew(list_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `to_list : (Vector<T>) -> List<T>`. Walks the array right-to-left
+/// prepending each element onto a cons-list accumulator. Single
+/// pass, O(len). Per-(`Vector<T>`, `List<T>`) pair — `T` reads off
+/// the registered list canonical.
+fn emit_vec_to_list(
+    canonical: &str,
+    registry: &TypeRegistry,
+) -> Result<Function, WasmGcError> {
+    let list_idx = list_idx_of(canonical, registry)?;
+    let (vec_idx, _) = vec_idx_of_pair(canonical, registry)?;
+    let list_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(list_idx),
+    });
+    // params: 0=vec. locals: 1=acc, 2=i.
+    let mut f = Function::new([
+        (1, list_ref),
+        (1, ValType::I32),
+    ]);
+    // acc = null
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(list_idx)));
+    f.instruction(&Instruction::LocalSet(1));
+    // i = vec.len - 1
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(2));
+    // while i >= 0:
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32LtS);
+    f.instruction(&Instruction::BrIf(1));
+    // acc = cons(vec[i], acc)
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::ArrayGet(vec_idx));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::StructNew(list_idx));
+    f.instruction(&Instruction::LocalSet(1));
+    // i--
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::End);
     Ok(f)
 }

@@ -519,7 +519,15 @@ fn emit_user_types(
     use wasm_encoder::{
         ArrayType, CompositeInnerType, CompositeType, StructType, SubType,
     };
-    let mut subtypes: Vec<SubType> = Vec::new();
+    // Each entry pairs a registry-recorded type idx with the subtype
+    // shape. Sorting by idx at the end guarantees the rec-group emit
+    // position matches what `vector_type_idx` / `list_type_idx` /
+    // `option_type_idx` / `map_slots` / `record_type_idx` recorded —
+    // critical because eager registrations (`Option<Vector<T>>`,
+    // `List<K>` for Map keys, etc.) interleave categories so the
+    // per-collection iteration order no longer matches insertion
+    // order.
+    let mut entries: Vec<(u32, SubType)> = Vec::new();
     let mk_struct = |fields: Vec<wasm_encoder::FieldType>| SubType {
         is_final: true,
         supertype_idx: None,
@@ -538,16 +546,18 @@ fn emit_user_types(
             shared: false,
         },
     };
-    // Records / variants — same registry order as before. Newtype
-    // slots stay even though the emit paths skip them (preserves
-    // type-idx invariants with `TypeRegistry::build`).
+    // Records / variants — registered first in `TypeRegistry::build`,
+    // idx assigned in source order. Look up the recorded idx for each.
     for item in items {
         match item {
-            TopLevel::TypeDef(TypeDef::Product {
-                name: _, fields, ..
-            }) => {
+            TopLevel::TypeDef(TypeDef::Product { name, fields, .. }) => {
                 let st = record_struct_type(fields, registry)?;
-                subtypes.push(mk_struct(st.fields.iter().copied().collect()));
+                let idx = registry
+                    .record_type_idx(name)
+                    .ok_or(WasmGcError::Validation(format!(
+                        "record `{name}` not registered"
+                    )))?;
+                entries.push((idx, mk_struct(st.fields.iter().copied().collect())));
             }
             TopLevel::TypeDef(TypeDef::Sum { variants, .. }) => {
                 for v in variants {
@@ -564,27 +574,28 @@ fn emit_user_types(
                             mutable: false,
                         });
                     }
-                    subtypes.push(mk_struct(fields));
+                    let info = registry.variant(&v.name).ok_or(WasmGcError::Validation(
+                        format!("variant `{}` not registered", v.name),
+                    ))?;
+                    entries.push((info.type_idx, mk_struct(fields)));
                 }
             }
             _ => {}
         }
     }
 
-    // String — `(array (mut i8))`.
-    if registry.string_array_type_idx.is_some() {
-        subtypes.push(mk_array(wasm_encoder::FieldType {
-            element_type: wasm_encoder::StorageType::I8,
-            mutable: true,
-        }));
+    // String slot.
+    if let Some(idx) = registry.string_array_type_idx {
+        entries.push((
+            idx,
+            mk_array(wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::I8,
+                mutable: true,
+            }),
+        ));
     }
 
-    // Vector<T> instantiations — emit one `(array (mut T))` per
-    // registered slot, in registry insertion order so `vector_type_idx`
-    // matches the type-section position. Mutable=true so `Vector.set`
-    // can `array.set` in place; Aver-side immutability is preserved
-    // by API contract (no user-level ops mutate without returning a
-    // fresh handle).
+    // Vector<T> instantiations.
     for canonical in &registry.vector_order {
         let element = TypeRegistry::vector_element_type(canonical).ok_or(
             WasmGcError::Validation(format!(
@@ -596,10 +607,16 @@ fn emit_user_types(
                 "Vector element type `{element}` has no wasm representation"
             )),
         )?;
-        subtypes.push(mk_array(wasm_encoder::FieldType {
-            element_type: wasm_encoder::StorageType::Val(elem_val),
-            mutable: true,
-        }));
+        let idx = registry.vector_type_idx(canonical).ok_or(WasmGcError::Validation(
+            format!("vector `{canonical}` not registered"),
+        ))?;
+        entries.push((
+            idx,
+            mk_array(wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(elem_val),
+                mutable: true,
+            }),
+        ));
     }
 
     // `Result<T, E>` — `(struct (mut i32 tag) (mut T ok) (mut E err))`.
@@ -619,27 +636,29 @@ fn emit_user_types(
                 "Result E type `{e_aver}` has no wasm representation"
             )),
         )?;
-        subtypes.push(mk_struct(vec![
-            wasm_encoder::FieldType {
-                element_type: wasm_encoder::StorageType::Val(ValType::I32),
-                mutable: true,
-            },
-            wasm_encoder::FieldType {
-                element_type: wasm_encoder::StorageType::Val(t_val),
-                mutable: true,
-            },
-            wasm_encoder::FieldType {
-                element_type: wasm_encoder::StorageType::Val(e_val),
-                mutable: true,
-            },
-        ]));
+        let idx = registry.result_type_idx(canonical).ok_or(WasmGcError::Validation(
+            format!("result `{canonical}` not registered"),
+        ))?;
+        entries.push((
+            idx,
+            mk_struct(vec![
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(t_val),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(e_val),
+                    mutable: true,
+                },
+            ]),
+        ));
     }
 
-    // `List<T>` — recursive Cons cell. Self-reference works inside
-    // the rec group same way it used to via the per-struct implicit
-    // group; cross-collection refs (`List<Map<K, V>>`,
-    // `Vector<List<T>>`) now also work because everything shares
-    // the same explicit rec group.
+    // `List<T>` — recursive Cons cell.
     for canonical in &registry.list_order {
         let element = TypeRegistry::list_element_type(canonical).ok_or(
             WasmGcError::Validation(format!(
@@ -658,16 +677,19 @@ fn emit_user_types(
             nullable: true,
             heap_type: wasm_encoder::HeapType::Concrete(own_idx),
         });
-        subtypes.push(mk_struct(vec![
-            wasm_encoder::FieldType {
-                element_type: wasm_encoder::StorageType::Val(elem_val),
-                mutable: false,
-            },
-            wasm_encoder::FieldType {
-                element_type: wasm_encoder::StorageType::Val(tail_ref),
-                mutable: false,
-            },
-        ]));
+        entries.push((
+            own_idx,
+            mk_struct(vec![
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(elem_val),
+                    mutable: false,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(tail_ref),
+                    mutable: false,
+                },
+            ]),
+        ));
     }
 
     // Option<T> — `(struct (mut i32 tag) (mut T value))`.
@@ -682,16 +704,22 @@ fn emit_user_types(
                 "Option element type `{element}` has no wasm representation"
             )),
         )?;
-        subtypes.push(mk_struct(vec![
-            wasm_encoder::FieldType {
-                element_type: wasm_encoder::StorageType::Val(ValType::I32),
-                mutable: true,
-            },
-            wasm_encoder::FieldType {
-                element_type: wasm_encoder::StorageType::Val(elem_val),
-                mutable: true,
-            },
-        ]));
+        let idx = registry.option_type_idx(canonical).ok_or(WasmGcError::Validation(
+            format!("option `{canonical}` not registered"),
+        ))?;
+        entries.push((
+            idx,
+            mk_struct(vec![
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(elem_val),
+                    mutable: true,
+                },
+            ]),
+        ));
     }
 
     // `Map<K, V>` — three wasm types per registered instantiation
@@ -712,17 +740,23 @@ fn emit_user_types(
                 "Map value type `{v_aver}` has no wasm representation"
             )),
         )?;
-        subtypes.push(mk_array(wasm_encoder::FieldType {
-            element_type: wasm_encoder::StorageType::Val(k_val),
-            mutable: true,
-        }));
-        subtypes.push(mk_array(wasm_encoder::FieldType {
-            element_type: wasm_encoder::StorageType::Val(v_val),
-            mutable: true,
-        }));
         let slots = registry
             .map_slots(canonical)
             .expect("just-registered map slots");
+        entries.push((
+            slots.keys_array,
+            mk_array(wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(k_val),
+                mutable: true,
+            }),
+        ));
+        entries.push((
+            slots.values_array,
+            mk_array(wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(v_val),
+                mutable: true,
+            }),
+        ));
         let keys_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
             nullable: true,
             heap_type: wasm_encoder::HeapType::Concrete(slots.keys_array),
@@ -731,30 +765,31 @@ fn emit_user_types(
             nullable: true,
             heap_type: wasm_encoder::HeapType::Concrete(slots.values_array),
         });
-        subtypes.push(mk_struct(vec![
-            wasm_encoder::FieldType {
-                element_type: wasm_encoder::StorageType::Val(ValType::I32),
-                mutable: true,
-            },
-            wasm_encoder::FieldType {
-                element_type: wasm_encoder::StorageType::Val(ValType::I32),
-                mutable: true,
-            },
-            wasm_encoder::FieldType {
-                element_type: wasm_encoder::StorageType::Val(keys_ref),
-                mutable: true,
-            },
-            wasm_encoder::FieldType {
-                element_type: wasm_encoder::StorageType::Val(values_ref),
-                mutable: true,
-            },
-        ]));
+        entries.push((
+            slots.map,
+            mk_struct(vec![
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(keys_ref),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(values_ref),
+                    mutable: true,
+                },
+            ]),
+        ));
     }
 
     // Built-in records (HttpRequest / HttpResponse / Tcp.Connection /
-    // Terminal.Size) sit at the tail of the rec group — their fields
-    // reference String / List<T> / Map<K,V> which are members of the
-    // same group, so the rec wrapping makes the dependencies legal.
+    // Terminal.Size) — registered with their own deferred idx.
     for record in crate::codegen::builtin_records::BUILTIN_RECORDS {
         if !registry.records.contains_key(record.aver_name) {
             continue;
@@ -764,8 +799,20 @@ fn emit_user_types(
             .get(record.aver_name)
             .expect("builtin record registered without fields");
         let st = super::types::record_struct_type(fields, registry)?;
-        subtypes.push(mk_struct(st.fields.iter().copied().collect()));
+        let idx = registry
+            .record_type_idx(record.aver_name)
+            .ok_or(WasmGcError::Validation(format!(
+                "builtin record `{}` not registered",
+                record.aver_name
+            )))?;
+        entries.push((idx, mk_struct(st.fields.iter().copied().collect())));
     }
+
+    // Sort entries by registry-recorded type idx so the rec-group
+    // emit position matches every recorded `*_type_idx` lookup. The
+    // sort is stable; equal idx values would mean a registry bug.
+    entries.sort_by_key(|(idx, _)| *idx);
+    let subtypes: Vec<SubType> = entries.into_iter().map(|(_, t)| t).collect();
 
     // The rec group counts as ONE type-section entry (single 0x4e
     // prefix + N subtypes), so route through `ty()` which advances

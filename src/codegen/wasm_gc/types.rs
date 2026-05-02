@@ -481,6 +481,46 @@ impl TypeRegistry {
             map_order.push(canonical);
         }
 
+        // Eagerly register `List<K>` and `List<V>` for every
+        // `Map<K, V>` — `Map.keys` / `Map.values` return them but
+        // the canonical never appears anywhere else. Same trick as
+        // the eager `Option<V>` above. Single rec group makes
+        // forward refs from existing types to these new lists OK.
+        for canonical in map_order.iter() {
+            if let Some((k, v)) = parse_map_kv(canonical) {
+                for elem in [k.trim(), v.trim()] {
+                    let lst = format!("List<{elem}>");
+                    if !list_types.contains_key(&lst) {
+                        list_types.insert(lst.clone(), next_idx);
+                        list_order.push(lst);
+                        next_idx += 1;
+                    }
+                }
+            }
+        }
+
+        // Eagerly register `List<T>` and `Option<Vector<T>>` for
+        // every `Vector<T>` — `Vector.toList` returns the list and
+        // `Vector.set` (boxed shape) returns the option. Both
+        // canonical-types only appear in those builtin returns.
+        for canonical in vector_order.iter() {
+            if let Some(elem) = TypeRegistry::vector_element_type(canonical) {
+                let elem = elem.trim();
+                let lst = format!("List<{elem}>");
+                if !list_types.contains_key(&lst) {
+                    list_types.insert(lst.clone(), next_idx);
+                    list_order.push(lst);
+                    next_idx += 1;
+                }
+                let opt = format!("Option<{canonical}>");
+                if !option_types.contains_key(&opt) {
+                    option_types.insert(opt.clone(), next_idx);
+                    option_order.push(opt);
+                    next_idx += 1;
+                }
+            }
+        }
+
         // Now that String / List / Map slots all exist, slot-assign
         // the built-in records — they reference those types in their
         // fields, so the struct-type emit needs them at lower indices.
@@ -992,6 +1032,28 @@ fn collect_options_from_expr(
     use crate::ast::Expr;
     match expr {
         Expr::FnCall(callee, args) => {
+            // `String.charAt(s, i)` and `Char.fromCode(code)` both
+            // declare `Option<String>` as their return type, but the
+            // canonical never appears anywhere else — eager-register
+            // it here so the builtin's emit can resolve the slot.
+            if let Expr::Attr(parent, member) = &callee.node {
+                let parent_name = match &parent.node {
+                    Expr::Ident(n) => Some(n.as_str()),
+                    Expr::Resolved { name, .. } => Some(name.as_str()),
+                    _ => None,
+                };
+                if let Some(p) = parent_name {
+                    let dotted = format!("{p}.{member}");
+                    if matches!(dotted.as_str(), "String.charAt" | "Char.fromCode") {
+                        let canonical = "Option<String>".to_string();
+                        if !out.contains_key(&canonical) {
+                            out.insert(canonical.clone(), *next_idx);
+                            order.push(canonical);
+                            *next_idx += 1;
+                        }
+                    }
+                }
+            }
             collect_options_from_expr(&callee.node, out, order, next_idx);
             for a in args {
                 collect_options_from_expr(&a.node, out, order, next_idx);
@@ -1571,7 +1633,9 @@ fn items_reference_name(items: &[crate::ast::TopLevel], name: &str) -> bool {
 /// the fn signatures don't already spell out. `nested: List<List<Int>>
 /// = [...]` is the canonical case — the outer `List<List<Int>>` only
 /// ever appears in the binding annotation. Mirrors `collect_options
-/// _from_fn_body` and `collect_vectors_from_fn_body`.
+/// _from_fn_body` and `collect_vectors_from_fn_body`. Also walks
+/// expressions to catch builtin calls like `String.chars` whose
+/// return type (`List<String>`) only appears as a stdlib signature.
 fn collect_lists_from_fn_body(
     fd: &crate::ast::FnDef,
     out: &mut HashMap<String, u32>,
@@ -1584,5 +1648,79 @@ fn collect_lists_from_fn_body(
         if let Stmt::Binding(_, Some(annot), _) = stmt {
             collect_lists_from_str(annot, out, order, next_idx);
         }
+        let expr = match stmt {
+            Stmt::Binding(_, _, e) | Stmt::Expr(e) => &e.node,
+        };
+        collect_lists_from_expr(expr, out, order, next_idx);
+    }
+}
+
+fn collect_lists_from_expr(
+    expr: &crate::ast::Expr,
+    out: &mut HashMap<String, u32>,
+    order: &mut Vec<String>,
+    next_idx: &mut u32,
+) {
+    use crate::ast::Expr;
+    match expr {
+        Expr::FnCall(callee, args) => {
+            // `String.chars(s)` returns `List<String>` — register it
+            // eagerly here since the canonical never appears in fn
+            // signatures by itself.
+            if let Expr::Attr(parent, member) = &callee.node {
+                let parent_name = match &parent.node {
+                    Expr::Ident(n) => Some(n.as_str()),
+                    Expr::Resolved { name, .. } => Some(name.as_str()),
+                    _ => None,
+                };
+                if let Some(p) = parent_name {
+                    let dotted = format!("{p}.{member}");
+                    if dotted == "String.chars" {
+                        let canonical = "List<String>".to_string();
+                        if !out.contains_key(&canonical) {
+                            out.insert(canonical.clone(), *next_idx);
+                            order.push(canonical);
+                            *next_idx += 1;
+                        }
+                    }
+                }
+            }
+            collect_lists_from_expr(&callee.node, out, order, next_idx);
+            for a in args {
+                collect_lists_from_expr(&a.node, out, order, next_idx);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            collect_lists_from_expr(&l.node, out, order, next_idx);
+            collect_lists_from_expr(&r.node, out, order, next_idx);
+        }
+        Expr::Match { subject, arms } => {
+            collect_lists_from_expr(&subject.node, out, order, next_idx);
+            for arm in arms {
+                collect_lists_from_expr(&arm.body.node, out, order, next_idx);
+            }
+        }
+        Expr::TailCall(boxed) => {
+            for a in &boxed.args {
+                collect_lists_from_expr(&a.node, out, order, next_idx);
+            }
+        }
+        Expr::Attr(obj, _) => collect_lists_from_expr(&obj.node, out, order, next_idx),
+        Expr::RecordCreate { fields, .. } => {
+            for (_, e) in fields {
+                collect_lists_from_expr(&e.node, out, order, next_idx);
+            }
+        }
+        Expr::Constructor(_, payload) => {
+            if let Some(p) = payload.as_deref() {
+                collect_lists_from_expr(&p.node, out, order, next_idx);
+            }
+        }
+        Expr::List(items) => {
+            for x in items {
+                collect_lists_from_expr(&x.node, out, order, next_idx);
+            }
+        }
+        _ => {}
     }
 }

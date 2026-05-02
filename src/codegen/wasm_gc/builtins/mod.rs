@@ -104,6 +104,9 @@ pub(super) enum BuiltinName {
     StringEq,
     StringEndsWith,
     StringFromBool,
+    StringCharAt,
+    CharFromCode,
+    StringChars,
 }
 
 impl BuiltinName {
@@ -122,6 +125,9 @@ impl BuiltinName {
             "Float.toString" => Some(Self::FloatToString),
             "String.endsWith" => Some(Self::StringEndsWith),
             "String.fromBool" => Some(Self::StringFromBool),
+            "String.charAt" => Some(Self::StringCharAt),
+            "Char.fromCode" => Some(Self::CharFromCode),
+            "String.chars" => Some(Self::StringChars),
             _ => None,
         }
     }
@@ -155,6 +161,9 @@ impl BuiltinName {
             Self::StringEq => "__wasmgc_string_eq",
             Self::StringEndsWith => "String.endsWith",
             Self::StringFromBool => "String.fromBool",
+            Self::StringCharAt => "String.charAt",
+            Self::CharFromCode => "Char.fromCode",
+            Self::StringChars => "String.chars",
         }
     }
 
@@ -180,6 +189,9 @@ impl BuiltinName {
             Self::StringEq => Ok(vec![string_ref_ty(registry)?, string_ref_ty(registry)?]),
             Self::StringEndsWith => Ok(vec![string_ref_ty(registry)?, string_ref_ty(registry)?]),
             Self::StringFromBool => Ok(vec![ValType::I32]),
+            Self::StringCharAt => Ok(vec![string_ref_ty(registry)?, ValType::I64]),
+            Self::CharFromCode => Ok(vec![ValType::I64]),
+            Self::StringChars => Ok(vec![string_ref_ty(registry)?]),
         }
     }
 
@@ -199,6 +211,10 @@ impl BuiltinName {
             Self::StringEq => Ok(vec![ValType::I32]),
             Self::StringFromBool => Ok(vec![string_ref_ty(registry)?]),
             Self::StringEndsWith => Ok(vec![ValType::I32]),
+            Self::StringCharAt | Self::CharFromCode => {
+                Ok(vec![option_ref_ty(registry, "Option<String>")?])
+            }
+            Self::StringChars => Ok(vec![list_ref_ty(registry, "List<String>")?]),
         }
     }
 
@@ -222,6 +238,9 @@ impl BuiltinName {
             Self::StringEq => emit_string_eq(registry),
             Self::StringEndsWith => emit_string_ends_with(registry),
             Self::StringFromBool => emit_string_from_bool(registry),
+            Self::StringCharAt => emit_string_char_at(registry),
+            Self::CharFromCode => emit_char_from_code(registry),
+            Self::StringChars => emit_string_chars(registry),
         }
     }
 }
@@ -287,6 +306,40 @@ fn string_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {
         .ok_or(WasmGcError::Validation(
             "builtin requires String repr but no string type slot was allocated".into(),
         ))?;
+    Ok(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(idx),
+    }))
+}
+
+/// `(ref null $option_T)` — Option instantiation reference. Canonical
+/// is spaceless (e.g. `Option<String>`). Used by `String.charAt` and
+/// `Char.fromCode` which both return `Option<String>`.
+fn option_ref_ty(
+    registry: &TypeRegistry,
+    canonical: &str,
+) -> Result<ValType, WasmGcError> {
+    let idx = registry
+        .option_type_idx(canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "builtin requires `{canonical}` slot but it wasn't registered"
+        )))?;
+    Ok(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(idx),
+    }))
+}
+
+/// `(ref null $list_T)` — List instantiation reference.
+fn list_ref_ty(
+    registry: &TypeRegistry,
+    canonical: &str,
+) -> Result<ValType, WasmGcError> {
+    let idx = registry
+        .list_type_idx(canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "builtin requires `{canonical}` slot but it wasn't registered"
+        )))?;
     Ok(ValType::Ref(wasm_encoder::RefType {
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(idx),
@@ -1921,4 +1974,194 @@ fn emit_string_from_bool(registry: &TypeRegistry) -> Result<Function, WasmGcErro
     "#
     );
     wat_helper::compile_wat_helper(&wat)
+}
+
+/// `String.charAt(s: String, i: Int) -> Option<String>`. Bounds-
+/// check `i`, return `Option.Some(<one-byte string>)` on hit or
+/// `Option.None` on out-of-range. Uses `wasm_encoder` directly
+/// (instead of WAT compile) since the helper needs to materialise
+/// an `Option<String>` struct, which needs a known type idx.
+fn emit_string_char_at(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let s_idx = registry.string_array_type_idx.ok_or(WasmGcError::Validation(
+        "String.charAt: String slot not registered".into(),
+    ))?;
+    let opt_idx = registry
+        .option_type_idx("Option<String>")
+        .ok_or(WasmGcError::Validation(
+            "String.charAt: Option<String> slot not registered".into(),
+        ))?;
+    let string_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(s_idx),
+    });
+    let opt_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(opt_idx),
+    });
+    // params: 0=s, 1=i (i64). locals: 2=out, 3=i32_idx.
+    let mut f = Function::new([(1, string_ref), (1, ValType::I32)]);
+    let block_ty = wasm_encoder::BlockType::Result(opt_ref);
+    // i >= 0 ?
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I64Const(0));
+    f.instruction(&Instruction::I64GeS);
+    // i < s.len ?
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::I32LtU);
+    // and
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::If(block_ty));
+    // in-range: build 1-byte string, return Some(it)
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::ArrayNewDefault(s_idx));
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::ArrayGetU(s_idx));
+    f.instruction(&Instruction::ArraySet(s_idx));
+    // Option layout: (mut i32 tag) (mut T value). tag=1 = Some.
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::StructNew(opt_idx));
+    f.instruction(&Instruction::Else);
+    // OOB: tag=0, value=null
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::StructNew(opt_idx));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `Char.fromCode(code: Int) -> Option<String>`. Validates `code` is
+/// in `[0, 256)`, builds a 1-byte string with that byte. Out-of-range
+/// returns Option.None (Aver `Char` is a 1-byte ASCII string in
+/// wasm-gc, same as legacy backend's representation).
+fn emit_char_from_code(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let s_idx = registry.string_array_type_idx.ok_or(WasmGcError::Validation(
+        "Char.fromCode: String slot not registered".into(),
+    ))?;
+    let opt_idx = registry
+        .option_type_idx("Option<String>")
+        .ok_or(WasmGcError::Validation(
+            "Char.fromCode: Option<String> slot not registered".into(),
+        ))?;
+    let string_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(s_idx),
+    });
+    let opt_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(opt_idx),
+    });
+    // params: 0=code (i64). locals: 1=out (string ref).
+    let mut f = Function::new([(1, string_ref)]);
+    let block_ty = wasm_encoder::BlockType::Result(opt_ref);
+    // 0 <= code AND code < 256
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::I64Const(0));
+    f.instruction(&Instruction::I64GeS);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::I64Const(256));
+    f.instruction(&Instruction::I64LtS);
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::If(block_ty));
+    // valid: alloc 1-byte string, write low 8 bits of code
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::ArrayNewDefault(s_idx));
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::ArraySet(s_idx));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::StructNew(opt_idx));
+    f.instruction(&Instruction::Else);
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::StructNew(opt_idx));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `String.chars(s: String) -> List<String>`. Iterates `s` right-to-
+/// left building a cons list directly (no reverse pass). Each
+/// character is its own 1-byte string allocation — N allocations
+/// for an N-byte input. Same shape the legacy backend uses.
+fn emit_string_chars(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let s_idx = registry.string_array_type_idx.ok_or(WasmGcError::Validation(
+        "String.chars: String slot not registered".into(),
+    ))?;
+    let list_idx = registry
+        .list_type_idx("List<String>")
+        .ok_or(WasmGcError::Validation(
+            "String.chars: List<String> slot not registered".into(),
+        ))?;
+    let string_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(s_idx),
+    });
+    let list_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(list_idx),
+    });
+    // params: 0=s. locals: 1=acc, 2=i, 3=cell.
+    let mut f = Function::new([
+        (1, list_ref),
+        (1, ValType::I32),
+        (1, string_ref),
+    ]);
+    // acc = null
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(list_idx)));
+    f.instruction(&Instruction::LocalSet(1));
+    // i = s.len - 1
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+    // if i < 0 break
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32LtS);
+    f.instruction(&Instruction::BrIf(1));
+    // cell = array.new_default $string 1
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::ArrayNewDefault(s_idx));
+    f.instruction(&Instruction::LocalSet(3));
+    // cell[0] = s[i]
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::ArrayGetU(s_idx));
+    f.instruction(&Instruction::ArraySet(s_idx));
+    // acc = struct.new $list (cell, acc)
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::StructNew(list_idx));
+    f.instruction(&Instruction::LocalSet(1));
+    // i--
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::End);
+    Ok(f)
 }
