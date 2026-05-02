@@ -107,6 +107,18 @@ pub(super) enum BuiltinName {
     StringCharAt,
     CharFromCode,
     StringChars,
+    /// `Byte.fromHex(s) -> Result<Int, String>`. Parses a 2-char hex
+    /// string. Validates length + each digit; returns `Result.Ok(byte)`
+    /// or `Result.Err("not a hex string")`.
+    ByteFromHex,
+    /// `Byte.toHex(b) -> Result<String, String>`. Validates `b` is in
+    /// `[0, 256)`, returns the 2-char lowercase hex string. Out-of-
+    /// range returns `Result.Err("byte out of range")`.
+    ByteToHex,
+    /// `String.replace(s, needle, repl) -> String`. Two-pass naive
+    /// scan: count occurrences, allocate output of exact size, fill.
+    /// Empty needle returns `s` unchanged.
+    StringReplace,
 }
 
 impl BuiltinName {
@@ -128,6 +140,9 @@ impl BuiltinName {
             "String.charAt" => Some(Self::StringCharAt),
             "Char.fromCode" => Some(Self::CharFromCode),
             "String.chars" => Some(Self::StringChars),
+            "Byte.fromHex" => Some(Self::ByteFromHex),
+            "Byte.toHex" => Some(Self::ByteToHex),
+            "String.replace" => Some(Self::StringReplace),
             _ => None,
         }
     }
@@ -164,6 +179,9 @@ impl BuiltinName {
             Self::StringCharAt => "String.charAt",
             Self::CharFromCode => "Char.fromCode",
             Self::StringChars => "String.chars",
+            Self::ByteFromHex => "Byte.fromHex",
+            Self::ByteToHex => "Byte.toHex",
+            Self::StringReplace => "String.replace",
         }
     }
 
@@ -192,6 +210,13 @@ impl BuiltinName {
             Self::StringCharAt => Ok(vec![string_ref_ty(registry)?, ValType::I64]),
             Self::CharFromCode => Ok(vec![ValType::I64]),
             Self::StringChars => Ok(vec![string_ref_ty(registry)?]),
+            Self::ByteFromHex => Ok(vec![string_ref_ty(registry)?]),
+            Self::ByteToHex => Ok(vec![ValType::I64]),
+            Self::StringReplace => Ok(vec![
+                string_ref_ty(registry)?,
+                string_ref_ty(registry)?,
+                string_ref_ty(registry)?,
+            ]),
         }
     }
 
@@ -215,6 +240,9 @@ impl BuiltinName {
                 Ok(vec![option_ref_ty(registry, "Option<String>")?])
             }
             Self::StringChars => Ok(vec![list_ref_ty(registry, "List<String>")?]),
+            Self::ByteFromHex => Ok(vec![result_ref_ty(registry, "Result<Int,String>")?]),
+            Self::ByteToHex => Ok(vec![result_ref_ty(registry, "Result<String,String>")?]),
+            Self::StringReplace => Ok(vec![string_ref_ty(registry)?]),
         }
     }
 
@@ -241,6 +269,9 @@ impl BuiltinName {
             Self::StringCharAt => emit_string_char_at(registry),
             Self::CharFromCode => emit_char_from_code(registry),
             Self::StringChars => emit_string_chars(registry),
+            Self::ByteFromHex => emit_byte_from_hex(registry),
+            Self::ByteToHex => emit_byte_to_hex(registry),
+            Self::StringReplace => emit_string_replace(registry),
         }
     }
 }
@@ -2164,4 +2195,396 @@ fn emit_string_chars(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::End);
     Ok(f)
+}
+
+/// `Byte.fromHex(s: String) -> Result<Int, String>`. Parses a 2-byte
+/// ASCII hex string. Validates length + each digit; returns
+/// `Result.Ok(byte)` on success or `Result.Err(s)` on any parse
+/// failure (length != 2 or any non-hex byte).
+fn emit_byte_from_hex(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let preamble = string_and_result_preamble(
+        registry,
+        "Result<Int,String>",
+        "i64",
+        "(ref null $string)",
+    )?;
+    let wat = format!(
+        r#"
+        (module
+          {preamble}
+          (func (export "helper")
+                (param $s (ref null $string))
+                (result (ref null $result))
+            (local $d0 i32)
+            (local $d1 i32)
+            (local $byte i64)
+            (local $byte_local i32)
+
+            ;; len(s) != 2 → Err(s)
+            local.get $s array.len
+            i32.const 2
+            i32.ne
+            (if
+              (then
+                i32.const 0
+                i64.const 0
+                local.get $s
+                struct.new $result
+                return))
+
+            ;; d0 = hex_digit(s[0]) inline (no subroutines — wat_helper
+            ;; only emits the first function in the module)
+            local.get $s i32.const 0 array.get_u $string local.set $byte_local
+            i32.const -1 local.set $d0
+            local.get $byte_local i32.const 48 i32.ge_u
+            local.get $byte_local i32.const 57 i32.le_u i32.and
+            (if (then local.get $byte_local i32.const 48 i32.sub local.set $d0))
+            local.get $byte_local i32.const 65 i32.ge_u
+            local.get $byte_local i32.const 70 i32.le_u i32.and
+            (if (then local.get $byte_local i32.const 55 i32.sub local.set $d0))
+            local.get $byte_local i32.const 97 i32.ge_u
+            local.get $byte_local i32.const 102 i32.le_u i32.and
+            (if (then local.get $byte_local i32.const 87 i32.sub local.set $d0))
+
+            ;; d1 = hex_digit(s[1]) inline
+            local.get $s i32.const 1 array.get_u $string local.set $byte_local
+            i32.const -1 local.set $d1
+            local.get $byte_local i32.const 48 i32.ge_u
+            local.get $byte_local i32.const 57 i32.le_u i32.and
+            (if (then local.get $byte_local i32.const 48 i32.sub local.set $d1))
+            local.get $byte_local i32.const 65 i32.ge_u
+            local.get $byte_local i32.const 70 i32.le_u i32.and
+            (if (then local.get $byte_local i32.const 55 i32.sub local.set $d1))
+            local.get $byte_local i32.const 97 i32.ge_u
+            local.get $byte_local i32.const 102 i32.le_u i32.and
+            (if (then local.get $byte_local i32.const 87 i32.sub local.set $d1))
+
+            ;; if either < 0 → Err
+            local.get $d0
+            i32.const 0
+            i32.lt_s
+            local.get $d1
+            i32.const 0
+            i32.lt_s
+            i32.or
+            (if
+              (then
+                i32.const 0
+                i64.const 0
+                local.get $s
+                struct.new $result
+                return))
+
+            ;; byte = d0 * 16 + d1
+            local.get $d0
+            i32.const 4
+            i32.shl
+            local.get $d1
+            i32.or
+            i64.extend_i32_u
+            local.set $byte
+
+            ;; Result.Ok(byte): tag=1, ok=byte, err=null
+            i32.const 1
+            local.get $byte
+            ref.null $string
+            struct.new $result)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `Byte.toHex(b: Int) -> Result<String, String>`. Validates `b` is in
+/// `[0, 256)`. On success returns the 2-char lowercase hex string
+/// `Result.Ok(hex)`. Out-of-range returns `Result.Err(empty)` —
+/// callers that want a richer error string should validate themselves
+/// or wrap; this matches the legacy backend's runtime helper.
+fn emit_byte_to_hex(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let preamble = string_and_result_preamble(
+        registry,
+        "Result<String,String>",
+        "(ref null $string)",
+        "(ref null $string)",
+    )?;
+    let wat = format!(
+        r#"
+        (module
+          {preamble}
+          (func (export "helper")
+                (param $b i64)
+                (result (ref null $result))
+            (local $hi i32)
+            (local $lo i32)
+            (local $hi_byte i32)
+            (local $lo_byte i32)
+            (local $out (ref null $string))
+
+            ;; Out of range → Err(empty)
+            local.get $b
+            i64.const 0
+            i64.lt_s
+            local.get $b
+            i64.const 256
+            i64.ge_s
+            i32.or
+            (if
+              (then
+                i32.const 0
+                ref.null $string
+                i32.const 0
+                array.new_default $string
+                struct.new $result
+                return))
+
+            local.get $b i32.wrap_i64 i32.const 4 i32.shr_u local.set $hi
+            local.get $b i32.wrap_i64 i32.const 15 i32.and local.set $lo
+
+            ;; hi_byte = hi < 10 ? '0'+hi : 'a'+hi-10  (inline)
+            local.get $hi i32.const 10 i32.lt_u
+            (if (result i32)
+              (then local.get $hi i32.const 48 i32.add)
+              (else local.get $hi i32.const 87 i32.add))
+            local.set $hi_byte
+            local.get $lo i32.const 10 i32.lt_u
+            (if (result i32)
+              (then local.get $lo i32.const 48 i32.add)
+              (else local.get $lo i32.const 87 i32.add))
+            local.set $lo_byte
+
+            i32.const 2 array.new_default $string local.set $out
+            local.get $out i32.const 0 local.get $hi_byte array.set $string
+            local.get $out i32.const 1 local.get $lo_byte array.set $string
+
+            ;; Result.Ok(out): tag=1, ok=out, err=null
+            i32.const 1
+            local.get $out
+            ref.null $string
+            struct.new $result)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `String.replace(s: String, needle: String, repl: String) -> String`.
+/// Two-pass naive scan: count occurrences of `needle` in `s`, allocate
+/// the output array of exact final size, fill while walking `s`. Empty
+/// needle returns `s` unchanged (avoids the infinite-loop trap;
+/// matches legacy backend behaviour).
+fn emit_string_replace(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let (_, preamble) = string_module_preamble(registry)?;
+    let wat = format!(
+        r#"
+        (module
+          {preamble}
+          (func (export "helper")
+                (param $s (ref null $string))
+                (param $n (ref null $string))
+                (param $r (ref null $string))
+                (result (ref null $string))
+            (local $slen i32)
+            (local $nlen i32)
+            (local $rlen i32)
+            (local $count i32)
+            (local $outlen i32)
+            (local $i i32)
+            (local $j i32)
+            (local $k i32)
+            (local $matched i32)
+            (local $out (ref null $string))
+
+            local.get $s array.len local.set $slen
+            local.get $n array.len local.set $nlen
+            local.get $r array.len local.set $rlen
+
+            ;; Empty needle → return a copy of s (return s itself; Aver
+            ;; semantics are immutable so handle reuse is fine).
+            local.get $nlen
+            i32.eqz
+            (if (then local.get $s return))
+
+            ;; Pass 1: count occurrences.
+            i32.const 0 local.set $count
+            i32.const 0 local.set $i
+            (block $count_done
+              (loop $count_loop
+                ;; if i + nlen > slen → done
+                local.get $i
+                local.get $nlen
+                i32.add
+                local.get $slen
+                i32.gt_u
+                br_if $count_done
+
+                ;; matched = 1; for k in 0..nlen: if s[i+k]!=n[k]: matched=0
+                i32.const 1 local.set $matched
+                i32.const 0 local.set $k
+                (block $cmp_done
+                  (loop $cmp_loop
+                    local.get $k
+                    local.get $nlen
+                    i32.ge_u
+                    br_if $cmp_done
+
+                    local.get $s
+                    local.get $i
+                    local.get $k
+                    i32.add
+                    array.get_u $string
+
+                    local.get $n
+                    local.get $k
+                    array.get_u $string
+
+                    i32.ne
+                    (if
+                      (then
+                        i32.const 0 local.set $matched
+                        br $cmp_done))
+
+                    local.get $k
+                    i32.const 1
+                    i32.add
+                    local.set $k
+                    br $cmp_loop))
+
+                local.get $matched
+                (if
+                  (then
+                    local.get $count i32.const 1 i32.add local.set $count
+                    local.get $i local.get $nlen i32.add local.set $i)
+                  (else
+                    local.get $i i32.const 1 i32.add local.set $i))
+                br $count_loop))
+
+            ;; outlen = slen + count * (rlen - nlen)
+            local.get $slen
+            local.get $count
+            local.get $rlen
+            local.get $nlen
+            i32.sub
+            i32.mul
+            i32.add
+            local.set $outlen
+
+            local.get $outlen
+            array.new_default $string
+            local.set $out
+
+            ;; Pass 2: fill.
+            i32.const 0 local.set $i
+            i32.const 0 local.set $j
+            (block $fill_done
+              (loop $fill_loop
+                local.get $i
+                local.get $slen
+                i32.ge_u
+                br_if $fill_done
+
+                ;; check needle match at i
+                i32.const 0 local.set $matched
+                local.get $i
+                local.get $nlen
+                i32.add
+                local.get $slen
+                i32.le_u
+                (if
+                  (then
+                    i32.const 1 local.set $matched
+                    i32.const 0 local.set $k
+                    (block $fcmp_done
+                      (loop $fcmp_loop
+                        local.get $k
+                        local.get $nlen
+                        i32.ge_u
+                        br_if $fcmp_done
+
+                        local.get $s
+                        local.get $i
+                        local.get $k
+                        i32.add
+                        array.get_u $string
+
+                        local.get $n
+                        local.get $k
+                        array.get_u $string
+
+                        i32.ne
+                        (if
+                          (then
+                            i32.const 0 local.set $matched
+                            br $fcmp_done))
+
+                        local.get $k
+                        i32.const 1
+                        i32.add
+                        local.set $k
+                        br $fcmp_loop))))
+
+                local.get $matched
+                (if
+                  (then
+                    ;; Copy repl bytes to out
+                    i32.const 0 local.set $k
+                    (block $copy_done
+                      (loop $copy_loop
+                        local.get $k
+                        local.get $rlen
+                        i32.ge_u
+                        br_if $copy_done
+
+                        local.get $out
+                        local.get $j
+                        local.get $k
+                        i32.add
+
+                        local.get $r
+                        local.get $k
+                        array.get_u $string
+
+                        array.set $string
+
+                        local.get $k
+                        i32.const 1
+                        i32.add
+                        local.set $k
+                        br $copy_loop))
+
+                    local.get $j
+                    local.get $rlen
+                    i32.add
+                    local.set $j
+
+                    local.get $i
+                    local.get $nlen
+                    i32.add
+                    local.set $i)
+                  (else
+                    ;; copy s[i] to out[j]
+                    local.get $out
+                    local.get $j
+
+                    local.get $s
+                    local.get $i
+                    array.get_u $string
+
+                    array.set $string
+
+                    local.get $j
+                    i32.const 1
+                    i32.add
+                    local.set $j
+
+                    local.get $i
+                    i32.const 1
+                    i32.add
+                    local.set $i))
+                br $fill_loop))
+
+            local.get $out)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
 }

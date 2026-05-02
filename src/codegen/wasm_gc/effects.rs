@@ -93,6 +93,41 @@ pub(super) enum EffectName {
     FloatCos,
     FloatAtan2,
     FloatPow,
+    // ── Terminal raw-mode TUI surface — same set the legacy `abi.rs`
+    //   ports. Hosts that don't implement Terminal (workers, browser)
+    //   should treat these as no-ops; Aver `! [Terminal.foo]` effect
+    //   declarations drive when imports are emitted.
+    /// `() -> Unit` — switch the host terminal to raw mode (no line
+    /// buffering, no echo). Pairs with `Terminal.disableRawMode`.
+    TerminalEnableRawMode,
+    /// `() -> Unit` — restore the host terminal's pre-raw mode.
+    TerminalDisableRawMode,
+    /// `() -> Unit` — clear the entire terminal screen.
+    TerminalClear,
+    /// `(row: Int, col: Int) -> Unit` — move the cursor to the given
+    /// 1-indexed row/col.
+    TerminalMoveTo,
+    /// `(s: String) -> Unit` — write `s` to the terminal at the
+    /// current cursor position. Doesn't append a newline.
+    TerminalPrint,
+    /// `(color: Int) -> Unit` — set the foreground colour to the
+    /// given ANSI 256 colour code.
+    TerminalSetColor,
+    /// `() -> Unit` — reset foreground colour to default.
+    TerminalResetColor,
+    /// `() -> Option<String>` — read one keypress non-blocking. None
+    /// if no input is available; Some(byte_string) for printable +
+    /// special-key sequences.
+    TerminalReadKey,
+    /// `() -> Terminal.Size` — current terminal dimensions in
+    /// (width, height) cells.
+    TerminalSize,
+    /// `() -> Unit` — hide the cursor.
+    TerminalHideCursor,
+    /// `() -> Unit` — show the cursor.
+    TerminalShowCursor,
+    /// `() -> Unit` — flush any buffered terminal output to the host.
+    TerminalFlush,
 }
 
 impl EffectName {
@@ -125,6 +160,18 @@ impl EffectName {
             "Float.cos" => Some(Self::FloatCos),
             "Float.atan2" => Some(Self::FloatAtan2),
             "Float.pow" => Some(Self::FloatPow),
+            "Terminal.enableRawMode" => Some(Self::TerminalEnableRawMode),
+            "Terminal.disableRawMode" => Some(Self::TerminalDisableRawMode),
+            "Terminal.clear" => Some(Self::TerminalClear),
+            "Terminal.moveTo" => Some(Self::TerminalMoveTo),
+            "Terminal.print" => Some(Self::TerminalPrint),
+            "Terminal.setColor" => Some(Self::TerminalSetColor),
+            "Terminal.resetColor" => Some(Self::TerminalResetColor),
+            "Terminal.readKey" => Some(Self::TerminalReadKey),
+            "Terminal.size" => Some(Self::TerminalSize),
+            "Terminal.hideCursor" => Some(Self::TerminalHideCursor),
+            "Terminal.showCursor" => Some(Self::TerminalShowCursor),
+            "Terminal.flush" => Some(Self::TerminalFlush),
             _ => None,
         }
     }
@@ -158,6 +205,18 @@ impl EffectName {
             Self::FloatCos => "Float.cos",
             Self::FloatAtan2 => "Float.atan2",
             Self::FloatPow => "Float.pow",
+            Self::TerminalEnableRawMode => "Terminal.enableRawMode",
+            Self::TerminalDisableRawMode => "Terminal.disableRawMode",
+            Self::TerminalClear => "Terminal.clear",
+            Self::TerminalMoveTo => "Terminal.moveTo",
+            Self::TerminalPrint => "Terminal.print",
+            Self::TerminalSetColor => "Terminal.setColor",
+            Self::TerminalResetColor => "Terminal.resetColor",
+            Self::TerminalReadKey => "Terminal.readKey",
+            Self::TerminalSize => "Terminal.size",
+            Self::TerminalHideCursor => "Terminal.hideCursor",
+            Self::TerminalShowCursor => "Terminal.showCursor",
+            Self::TerminalFlush => "Terminal.flush",
         }
     }
 
@@ -192,6 +251,18 @@ impl EffectName {
             Self::FloatCos => ("aver", "float_cos"),
             Self::FloatAtan2 => ("aver", "float_atan2"),
             Self::FloatPow => ("aver", "float_pow"),
+            Self::TerminalEnableRawMode => ("aver", "terminal_enable_raw_mode"),
+            Self::TerminalDisableRawMode => ("aver", "terminal_disable_raw_mode"),
+            Self::TerminalClear => ("aver", "terminal_clear"),
+            Self::TerminalMoveTo => ("aver", "terminal_move_to"),
+            Self::TerminalPrint => ("aver", "terminal_print"),
+            Self::TerminalSetColor => ("aver", "terminal_set_color"),
+            Self::TerminalResetColor => ("aver", "terminal_reset_color"),
+            Self::TerminalReadKey => ("aver", "terminal_read_key"),
+            Self::TerminalSize => ("aver", "terminal_size"),
+            Self::TerminalHideCursor => ("aver", "terminal_hide_cursor"),
+            Self::TerminalShowCursor => ("aver", "terminal_show_cursor"),
+            Self::TerminalFlush => ("aver", "terminal_flush"),
         }
     }
 
@@ -232,6 +303,18 @@ impl EffectName {
             Self::RandomInt => Ok(vec![ValType::I64, ValType::I64]),
             Self::FloatSin | Self::FloatCos => Ok(vec![ValType::F64]),
             Self::FloatAtan2 | Self::FloatPow => Ok(vec![ValType::F64, ValType::F64]),
+            Self::TerminalEnableRawMode
+            | Self::TerminalDisableRawMode
+            | Self::TerminalClear
+            | Self::TerminalResetColor
+            | Self::TerminalReadKey
+            | Self::TerminalSize
+            | Self::TerminalHideCursor
+            | Self::TerminalShowCursor
+            | Self::TerminalFlush => Ok(vec![]),
+            Self::TerminalMoveTo => Ok(vec![ValType::I64, ValType::I64]),
+            Self::TerminalPrint => Ok(vec![any_ref_ty()]),
+            Self::TerminalSetColor => Ok(vec![ValType::I64]),
         }
     }
 
@@ -266,6 +349,43 @@ impl EffectName {
             | Self::FloatCos
             | Self::FloatAtan2
             | Self::FloatPow => Ok(vec![ValType::F64]),
+            Self::TerminalEnableRawMode
+            | Self::TerminalDisableRawMode
+            | Self::TerminalClear
+            | Self::TerminalMoveTo
+            | Self::TerminalPrint
+            | Self::TerminalSetColor
+            | Self::TerminalResetColor
+            | Self::TerminalHideCursor
+            | Self::TerminalShowCursor
+            | Self::TerminalFlush => Ok(vec![]),
+            Self::TerminalReadKey => {
+                // `Option<String>` ref — eager-registered when any
+                // call site reaches for `String.charAt` / `Char.fromCode`,
+                // or now also when `Terminal.readKey` shows up.
+                let opt_idx = registry
+                    .option_type_idx("Option<String>")
+                    .ok_or(WasmGcError::Validation(
+                        "Terminal.readKey: Option<String> slot not registered".into(),
+                    ))?;
+                Ok(vec![ValType::Ref(wasm_encoder::RefType {
+                    nullable: true,
+                    heap_type: wasm_encoder::HeapType::Concrete(opt_idx),
+                })])
+            }
+            Self::TerminalSize => {
+                let idx = registry
+                    .record_type_idx("Terminal.Size")
+                    .ok_or(WasmGcError::Validation(
+                        "Terminal.size: Terminal.Size record slot not registered \
+                         (did you call Terminal.size in user code?)"
+                            .into(),
+                    ))?;
+                Ok(vec![ValType::Ref(wasm_encoder::RefType {
+                    nullable: true,
+                    heap_type: wasm_encoder::HeapType::Concrete(idx),
+                })])
+            }
         }
     }
 }

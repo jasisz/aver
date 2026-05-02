@@ -805,8 +805,10 @@ fn collect_results_from_builtin_uses(
                     let dotted = format!("{}.{}", p, member);
                     match dotted.as_str() {
                         "Float.fromString" => intern("Result<Float,String>"),
-                        "Int.fromString" => intern("Result<Int,String>"),
-                        "Int.mod" => intern("Result<Int,String>"),
+                        "Int.fromString" | "Int.mod" | "Byte.fromHex" => {
+                            intern("Result<Int,String>")
+                        }
+                        "Byte.toHex" => intern("Result<String,String>"),
                         _ => {}
                     }
                 }
@@ -1044,7 +1046,10 @@ fn collect_options_from_expr(
                 };
                 if let Some(p) = parent_name {
                     let dotted = format!("{p}.{member}");
-                    if matches!(dotted.as_str(), "String.charAt" | "Char.fromCode") {
+                    if matches!(
+                        dotted.as_str(),
+                        "String.charAt" | "Char.fromCode" | "Terminal.readKey"
+                    ) {
                         let canonical = "Option<String>".to_string();
                         if !out.contains_key(&canonical) {
                             out.insert(canonical.clone(), *next_idx);

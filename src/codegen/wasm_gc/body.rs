@@ -1671,6 +1671,8 @@ fn effect_aver_return_type(dotted: &str) -> Option<&'static str> {
         | "Time.now"
         | "Env.get" => "String",
         "Request.headersLoad" | "Request.headers" => "Map<String,List<String>>",
+        "Terminal.readKey" => "Option<String>",
+        "Terminal.size" => "Terminal.Size",
         _ => return None,
     })
 }
@@ -1687,6 +1689,7 @@ fn dotted_return_type(dotted: &str) -> Option<&'static str> {
         "Int.toString" | "Float.toString" | "String.fromInt" | "String.fromFloat"
         | "String.fromBool" | "String.toUpper" | "String.toLower" | "String.trim"
         | "String.replace" | "String.slice" | "String.join" => "String",
+
         // Int results — `Float.floor/ceil/round` return Int per
         // Aver stdlib semantics (legacy backend matches).
         "String.len" | "String.length" | "String.byteLength" | "List.len" | "List.length"
@@ -1706,8 +1709,9 @@ fn dotted_return_type(dotted: &str) -> Option<&'static str> {
         "String.charAt" | "Char.fromCode" => "Option<String>",
         // Result-typed parsers
         "Float.fromString" => "Result<Float,String>",
-        "Int.fromString" => "Result<Int,String>",
+        "Int.fromString" | "Byte.fromHex" => "Result<Int,String>",
         "Int.mod" => "Result<Int,String>",
+        "Byte.toHex" => "Result<String,String>",
         // List-typed — `List.concat/take/drop` flow through
         // sniff_with_prev (return type matches arg[0]); only the
         // T-fixed `String.split` / `String.chars` land here.
@@ -1733,6 +1737,7 @@ fn builtin_aver_result_type(dotted: &str) -> &'static str {
         "Int.toString" | "Float.toString" | "String.fromInt" | "String.fromFloat"
         | "String.fromBool" | "String.toUpper" | "String.toLower" | "String.trim"
         | "String.replace" | "String.slice" | "String.join" => "String",
+
         // Returns Int — `Float.floor / ceil / round` are Aver-Int per
         // stdlib semantics.
         "String.len" | "String.length" | "String.byteLength" | "List.len" | "List.length"
@@ -1756,7 +1761,8 @@ fn builtin_aver_result_type(dotted: &str) -> &'static str {
         "String.chars" => "List<String>",
         // Result-typed parsers
         "Float.fromString" => "Result<Float,String>",
-        "Int.fromString" | "Int.mod" => "Result<Int,String>",
+        "Int.fromString" | "Int.mod" | "Byte.fromHex" => "Result<Int,String>",
+        "Byte.toHex" => "Result<String,String>",
         _ => "Int",
     }
 }

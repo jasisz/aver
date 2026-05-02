@@ -225,7 +225,7 @@ Audited 2026-05-02 against `src/codegen/wasm/abi.rs` + `src/types/checker/builti
 | Random.*       | ✅ int/float | full |
 | Float math     | ✅ sin/cos/atan2/pow (host imports — wasm has no native libm) | full |
 | Request/Response/Http/Env | ✅ all 13 fetch-bridge effects | full |
-| Terminal.*     | ❌ — | TODO etap 2: 11 effects + `Terminal.Size` builtin record |
+| Terminal.*     | ✅ enableRawMode/disableRawMode/clear/moveTo/print/setColor/resetColor/readKey/size/hideCursor/showCursor/flush + `Terminal.Size` builtin record (must appear in a fn signature for the slot to allocate) | full |
 | Print/Format.value | ❌ deliberately | wasm-gc lowers interpolations natively via `__wasmgc_concat_n` + `Int.toString`; debug helpers not needed |
 | Disk.*, Tcp.*, HttpServer.listen* | ❌ deliberately | per-deployment policy domain (host's job per `docs/wasm.md`) |
 
@@ -236,14 +236,14 @@ Audited 2026-05-02 against `src/codegen/wasm/abi.rs` + `src/types/checker/builti
 | Bool      | and/or/not ✅ |
 | Int       | toString/toFloat/abs/min/max/mod ✅, fromString ✅ |
 | Float     | toString/floor/ceil/round/abs/sqrt/min/max/pi/fromInt ✅, fromString ✅ |
-| String    | len/length/byteLength/startsWith/endsWith/contains/slice/toUpper/toLower/trim/split/join/fromInt/fromFloat/fromBool/charAt/chars ✅; **missing**: `replace` |
+| String    | len/length/byteLength/startsWith/endsWith/contains/slice/toUpper/toLower/trim/split/join/fromInt/fromFloat/fromBool/charAt/chars/replace ✅ |
 | Char      | toCode/fromCode ✅ |
 | Option    | Some/None/withDefault/toResult ✅ |
 | Result    | Ok/Err/withDefault ✅ |
 | List      | prepend/empty/len/length/reverse/concat/take/drop ✅, contains ✅ for T ∈ {Int, Float, Bool, String, Char} + per-(L,V) `Vector.fromList` ✅; **missing per-instantiation**: `contains` for record/sum T (needs typed-eq dispatch beyond i64/f64/i32/string_eq), `zip` (needs Tuple<A,B> support) |
 | Map       | empty/set/get/len/has/keys/values + fused `Option.withDefault(Map.get(...))` / `match Map.get(...)` shapes ✅. K = `String` ✅ or any user-defined record (field-by-field hash + eq, fields ∈ {Int, Float, Bool, String}) ✅. **missing**: K = primitive (Int/Float/Bool need a different empty-marker than `keys[i] == null`); record-key fields outside {Int, Float, Bool, String} (Char, nested records, lists, vectors); `remove`, `entries` (Tuple), `fromList` (Tuple) |
 | Vector    | new/get (boxed)/set (boxed)/len/toList ✅ + `fromList` per-(L,V) ✅ |
-| Byte      | ❌ `fromHex`, `toHex` (etap 3c — small) |
+| Byte      | fromHex/toHex ✅ |
 | BranchPath, Tcp.Connection | ❌ surface-level builtin records, low priority |
 
 Zero bench scenario in `bench/scenarios/*.av` calls anything in the "missing" rows. Adding them is per-helper plumbing, not blocking work.
