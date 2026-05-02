@@ -1600,7 +1600,7 @@ fn dotted_return_type(dotted: &str) -> Option<&'static str> {
         | "String.slice" | "String.join" => "String",
         // Int results — `Float.floor/ceil/round` return Int per
         // Aver stdlib semantics (legacy backend matches).
-        "String.len" | "String.length" | "List.len" | "List.length"
+        "String.len" | "String.length" | "String.byteLength" | "List.len" | "List.length"
         | "Vector.len" | "Map.len" | "Char.toCode" | "Int.abs" | "Int.min"
         | "Int.max" | "Float.floor" | "Float.ceil" | "Float.round" => "Int",
         // Float results
@@ -1633,7 +1633,7 @@ fn builtin_aver_result_type(dotted: &str) -> &'static str {
         | "String.slice" | "String.join" => "String",
         // Returns Int — `Float.floor / ceil / round` are Aver-Int per
         // stdlib semantics.
-        "String.len" | "String.length" | "List.len" | "List.length"
+        "String.len" | "String.length" | "String.byteLength" | "List.len" | "List.length"
         | "Vector.len" | "Map.len" | "Char.toCode" | "Int.abs" | "Int.min"
         | "Int.max" | "Float.floor" | "Float.ceil" | "Float.round" => "Int",
         // Returns Float
@@ -3367,14 +3367,30 @@ fn emit_dotted_builtin(
         // String.len already lives behind a builtin helper (legacy
         // matched behaviour). Map String.length here to keep both
         // surface spellings viable without a second helper.
-        "String.length" if args.len() == 1 => {
+        "String.length" | "String.byteLength" if args.len() == 1 => {
             let len_idx = ctx.fn_map.builtins.get("String.len").copied().ok_or(
                 WasmGcError::Validation(
-                    "String.length requires String.len builtin".into(),
+                    "String.length / byteLength require the String.len builtin".into(),
                 ),
             )?;
             emit_expr(func, &args[0].node, slots, ctx)?;
             func.instruction(&Instruction::Call(len_idx));
+            Ok(())
+        }
+        // Char.toCode(s) -> Int — first byte of the 1-char string.
+        // Aver `Char` is just a `String` (single byte today), so this
+        // is a straight `array.get_u 0 + i64.extend`.
+        "Char.toCode" if args.len() == 1 => {
+            let s_idx = ctx
+                .registry
+                .string_array_type_idx
+                .ok_or(WasmGcError::Validation(
+                    "Char.toCode requires the String slot allocated".into(),
+                ))?;
+            emit_expr(func, &args[0].node, slots, ctx)?;
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::ArrayGetU(s_idx));
+            func.instruction(&Instruction::I64ExtendI32U);
             Ok(())
         }
         // Vector.new(size, fill) -> Vector<T>. Element type T is read
@@ -3393,6 +3409,12 @@ fn emit_dotted_builtin(
         // a later phase introduces when it stops being avoidable.
         "Option.withDefault" => emit_option_with_default(func, args, slots, ctx),
         "Result.withDefault" => emit_result_with_default(func, args, slots, ctx),
+        // Option.toResult(opt, err) — `match opt { Some(v) -> Ok(v);
+        // None -> Err(err) }`. Picks the Result<T, E> canonical out
+        // of the inferred Option element type + the err arg's type.
+        "Option.toResult" if args.len() == 2 => {
+            emit_option_to_result(func, &args[0], &args[1], slots, ctx)
+        }
         // Map<K, V> — dispatch to the per-instantiation helper. The
         // canonical comes from inferring the type of the map argument
         // (or the surrounding context for Map.empty).
@@ -3764,6 +3786,90 @@ fn emit_result_with_default(
 /// no fused shape applies. Allocates the Option if `opt` is itself a
 /// shape that allocates (e.g. `Map.get`); the surrounding caller is
 /// expected to use a fused emitter when the alloc is avoidable.
+/// `Option.toResult(opt, err) -> Result<T, E>`. Inline-emit the
+/// pattern match: tag-check on the boxed Option, then either build
+/// `Result.Ok(opt.value)` or `Result.Err(err)`. T comes from the
+/// inferred Option<T>, E from the err argument's type.
+fn emit_option_to_result(
+    func: &mut Function,
+    opt_arg: &Spanned<Expr>,
+    err_arg: &Spanned<Expr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let opt_aver = infer_aver_type(&opt_arg.node, ctx)?;
+    let opt_canonical: String =
+        opt_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    let opt_idx = ctx
+        .registry
+        .option_type_idx(&opt_canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Option.toResult: opt arg of type `{opt_aver}` is not a registered Option<T>"
+        )))?;
+    let t_aver =
+        super::types::TypeRegistry::option_element_type(&opt_canonical).ok_or(
+            WasmGcError::Validation(format!(
+                "Option.toResult: cannot parse element type from `{opt_canonical}`"
+            )),
+        )?;
+    let e_aver = infer_aver_type(&err_arg.node, ctx)?;
+    let result_canonical: String = format!("Result<{},{}>", t_aver.trim(), e_aver.trim())
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let res_idx = ctx
+        .registry
+        .result_type_idx(&result_canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Option.toResult: `{result_canonical}` slot was not registered (the Result instantiation \
+             needs to appear in a fn signature or be auto-discovered from a builtin's return type)"
+        )))?;
+
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "Option.toResult needs a scratch slot but none was reserved".into(),
+    ))?;
+    let res_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(res_idx),
+    });
+    let block_ty = wasm_encoder::BlockType::Result(res_ref);
+
+    emit_expr(func, &opt_arg.node, slots, ctx)?;
+    func.instruction(&Instruction::LocalSet(scratch));
+
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::RefCastNonNull(
+        wasm_encoder::HeapType::Concrete(opt_idx),
+    ));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: opt_idx,
+        field_index: 0,
+    });
+    func.instruction(&Instruction::I32Const(1));
+    func.instruction(&Instruction::I32Eq);
+    func.instruction(&Instruction::If(block_ty));
+    // Result.Ok(opt.value)
+    func.instruction(&Instruction::I32Const(1)); // tag
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::RefCastNonNull(
+        wasm_encoder::HeapType::Concrete(opt_idx),
+    ));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: opt_idx,
+        field_index: 1,
+    });
+    emit_default_value(func, e_aver.trim(), ctx.registry)?;
+    func.instruction(&Instruction::StructNew(res_idx));
+    func.instruction(&Instruction::Else);
+    // Result.Err(err)
+    func.instruction(&Instruction::I32Const(0));
+    emit_default_value(func, t_aver.trim(), ctx.registry)?;
+    emit_expr(func, &err_arg.node, slots, ctx)?;
+    func.instruction(&Instruction::StructNew(res_idx));
+    func.instruction(&Instruction::End);
+    Ok(())
+}
+
 fn emit_option_with_default_boxed(
     func: &mut Function,
     opt_arg: &Spanned<Expr>,
