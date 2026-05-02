@@ -229,17 +229,20 @@ impl MapHelperRegistry {
             let from_list_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
 
-            // K must be String or a user-defined record. Records use
-            // a field-by-field hash + eq, deduplicated per record name
-            // by `key_order`. `Int` / `Float` / `Bool` keys would need
-            // a different open-addressing layout (occupancy bitmap
-            // instead of `keys[i] == null`), so they're still gated.
+            // K can be String, a user-defined record (field-by-field
+            // hash + eq), or a primitive (Int / Float / Bool). Primitive
+            // keys are boxed into a per-K struct ref so the open-
+            // addressing `keys[i] == null` empty marker still holds.
             let (k_aver, _) = super::types::parse_map_kv(canonical).ok_or(
                 WasmGcError::Validation(format!("bad map canonical `{canonical}`")),
             )?;
-            if k_aver != "String" && registry.record_type_idx(k_aver).is_none() {
+            let is_primitive_k = super::types::TypeRegistry::is_primitive_map_key(k_aver);
+            if k_aver != "String"
+                && registry.record_type_idx(k_aver).is_none()
+                && !is_primitive_k
+            {
                 return Err(WasmGcError::Unimplemented(
-                    "phase 3c — Map<K, V> with K not String / user-record (need different empty-marker scheme for primitive keys)",
+                    "phase 3c — Map<K, V> with K not String / user-record / primitive",
                 ));
             }
 
@@ -477,8 +480,11 @@ fn emit_hash_for(
     if registry.record_type_idx(k_aver).is_some() {
         return emit_hash_record(k_aver, registry, string_key_helpers);
     }
+    if super::types::TypeRegistry::is_primitive_map_key(k_aver) {
+        return emit_hash_primitive(k_aver);
+    }
     Err(WasmGcError::Unimplemented(
-        "phase 3c — hash for primitive K (Int/Float/Bool need a different empty-marker scheme)",
+        "phase 3c — hash for unsupported K kind",
     ))
 }
 
@@ -493,9 +499,106 @@ fn emit_eq_for(
     if registry.record_type_idx(k_aver).is_some() {
         return emit_eq_record(k_aver, registry, string_key_helpers);
     }
+    if super::types::TypeRegistry::is_primitive_map_key(k_aver) {
+        return emit_eq_primitive(k_aver);
+    }
     Err(WasmGcError::Unimplemented(
-        "phase 3c — eq for primitive K (Int/Float/Bool need a different empty-marker scheme)",
+        "phase 3c — eq for unsupported K kind",
     ))
+}
+
+/// `hash : (K_raw) -> i32` for primitive K. Helpers consume raw
+/// primitives (callers don't have to box just to compute a hash).
+/// Map's keys array stores boxed refs, but `hash` runs on the raw
+/// value the user passed in.
+fn emit_hash_primitive(k_aver: &str) -> Result<Function, WasmGcError> {
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::LocalGet(0));
+    match k_aver {
+        "Int" => {
+            // i32.wrap_i64 — keeps low 32 bits. Cheap, distributes
+            // poorly for tightly-clustered Int domains; bench
+            // scenarios don't stress this.
+            f.instruction(&Instruction::I32WrapI64);
+        }
+        "Float" => {
+            f.instruction(&Instruction::I64ReinterpretF64);
+            f.instruction(&Instruction::I32WrapI64);
+        }
+        "Bool" => {
+            // Already i32 — no-op (just LocalGet then End)
+        }
+        _ => unreachable!("emit_hash_primitive: K = `{k_aver}` not primitive"),
+    }
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `eq : (K_raw, K_raw) -> i32` for primitive K. Native eq
+/// instruction per K kind.
+fn emit_eq_primitive(k_aver: &str) -> Result<Function, WasmGcError> {
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(1));
+    match k_aver {
+        "Int" => f.instruction(&Instruction::I64Eq),
+        "Float" => f.instruction(&Instruction::F64Eq),
+        "Bool" => f.instruction(&Instruction::I32Eq),
+        _ => unreachable!("emit_eq_primitive: K = `{k_aver}` not primitive"),
+    };
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// Wasm value type used as the `keys` array element. Primitive K
+/// stores boxed refs (`(ref null $primitive_key_box_K)`) so the
+/// open-addressing `keys[i] == null` empty marker stays uniform;
+/// ref K (String / record) stores its own ref directly.
+fn key_storage_val_type(
+    k_aver: &str,
+    registry: &TypeRegistry,
+) -> Result<ValType, WasmGcError> {
+    if let Some(box_idx) = registry.primitive_key_box_idx(k_aver) {
+        Ok(ValType::Ref(RefType {
+            nullable: true,
+            heap_type: HeapType::Concrete(box_idx),
+        }))
+    } else {
+        super::types::aver_to_wasm(k_aver, Some(registry))?.ok_or(
+            WasmGcError::Validation(format!(
+                "Map key type `{k_aver}` has no wasm representation"
+            )),
+        )
+    }
+}
+
+/// Append the instructions that turn a stored-key value (top of
+/// stack) into the raw K_val that `hash` / `eq` expect. For primitive
+/// K: `struct.get $box 0` to unbox; for ref K: no-op.
+fn emit_unbox_key(
+    f: &mut Function,
+    k_aver: &str,
+    registry: &TypeRegistry,
+) {
+    if let Some(box_idx) = registry.primitive_key_box_idx(k_aver) {
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: box_idx,
+            field_index: 0,
+        });
+    }
+}
+
+/// Append the instructions that turn a raw K_val (top of stack) into
+/// a stored-key value ready for `array.set`. For primitive K:
+/// `struct.new $box`; for ref K: no-op.
+fn emit_box_key(
+    f: &mut Function,
+    k_aver: &str,
+    registry: &TypeRegistry,
+) {
+    if let Some(box_idx) = registry.primitive_key_box_idx(k_aver) {
+        f.instruction(&Instruction::StructNew(box_idx));
+    }
 }
 
 fn string_idx(registry: &TypeRegistry) -> Result<u32, WasmGcError> {
@@ -668,9 +771,9 @@ fn emit_map_set(
                 heap_type: HeapType::Concrete(slots.values_array),
             }),
         ), // 7: values
-        (1, k_val),        // 8: cur_key
+        (1, key_storage_val_type(k_aver, registry)?), // 8: cur_key (boxed for primitive)
     ]);
-    let _ = v_val;
+    let _ = (v_val, k_val);
 
     // cap = map.cap; mask = cap - 1; keys = map.keys; values = map.values
     f.instruction(&Instruction::LocalGet(0));
@@ -716,10 +819,11 @@ fn emit_map_set(
     f.instruction(&Instruction::LocalGet(8));
     f.instruction(&Instruction::RefIsNull);
     f.instruction(&Instruction::If(BlockType::Empty));
-    // keys[idx] = k
+    // keys[idx] = box(k)  (primitive K) or k (ref K)
     f.instruction(&Instruction::LocalGet(6));
     f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::LocalGet(1));
+    emit_box_key(&mut f, k_aver, registry);
     f.instruction(&Instruction::ArraySet(slots.keys_array));
     // values[idx] = v
     f.instruction(&Instruction::LocalGet(7));
@@ -744,8 +848,9 @@ fn emit_map_set(
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
 
-    // else if eq(cur_key, k): update.
+    // else if eq(unbox(cur_key), k): update.
     f.instruction(&Instruction::LocalGet(8));
+    emit_unbox_key(&mut f, k_aver, registry);
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::Call(keyh.eq));
     f.instruction(&Instruction::If(BlockType::Empty));
@@ -808,8 +913,9 @@ fn emit_map_get(
                 heap_type: HeapType::Concrete(slots.values_array),
             }),
         ), // 6: values
-        (1, k_val),        // 7: cur_key
+        (1, key_storage_val_type(k_aver, registry)?), // 7: cur_key (boxed for prim)
     ]);
+    let _ = k_val;
     // cap, mask, keys, values
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
@@ -855,8 +961,9 @@ fn emit_map_get(
     f.instruction(&Instruction::StructNew(opt_idx));
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
-    // if eq(cur_key, k) → return Some(values[idx])
+    // if eq(unbox(cur_key), k) → return Some(values[idx])
     f.instruction(&Instruction::LocalGet(7));
+    emit_unbox_key(&mut f, k_aver, registry);
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::Call(keyh.eq));
     f.instruction(&Instruction::If(BlockType::Empty));
@@ -917,7 +1024,7 @@ fn emit_map_get_or_default(
                 heap_type: HeapType::Concrete(slots.values_array),
             }),
         ),
-        (1, k_val), // 8: cur_key
+        (1, key_storage_val_type(k_aver, registry)?), // 8: cur_key
     ]);
 
     // cap = map.cap; mask = cap - 1; keys = map.keys; values = map.values
@@ -967,6 +1074,7 @@ fn emit_map_get_or_default(
     f.instruction(&Instruction::End);
     // key match → return values[idx]
     f.instruction(&Instruction::LocalGet(8));
+    emit_unbox_key(&mut f, k_aver, registry);
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::Call(keyh.eq));
     f.instruction(&Instruction::If(BlockType::Empty));
@@ -1027,7 +1135,7 @@ fn emit_map_get_pair(
                 heap_type: HeapType::Concrete(slots.values_array),
             }),
         ),
-        (1, k_val), // 7: cur_key
+        (1, key_storage_val_type(k_aver, registry)?), // 7: cur_key
     ]);
 
     f.instruction(&Instruction::LocalGet(0));
@@ -1077,6 +1185,7 @@ fn emit_map_get_pair(
 
     // key match → return (1, values[idx])
     f.instruction(&Instruction::LocalGet(7));
+    emit_unbox_key(&mut f, k_aver, registry);
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::Call(keyh.eq));
     f.instruction(&Instruction::If(BlockType::Empty));
@@ -1291,7 +1400,7 @@ fn emit_map_keys(canonical: &str, registry: &TypeRegistry) -> Result<Function, W
         .ok_or(WasmGcError::Validation(format!(
             "Map.keys: `{list_canonical}` not registered"
         )))?;
-    emit_map_walk_keys_to_list(slots.map, slots.keys_array, list_idx)
+    emit_map_walk_keys_to_list(slots.map, slots.keys_array, list_idx, k_aver, registry)
 }
 
 /// `values(m) -> List<V>`. Same shape as `keys` but pulls from
@@ -1311,11 +1420,15 @@ fn emit_map_values(
     emit_map_walk_values_to_list(slots, registry, list_idx)
 }
 
-/// Real impl for `Map.keys` walking the keys array.
+/// Real impl for `Map.keys` walking the keys array. Per primitive
+/// K the stored values are boxed refs; unbox before consing onto
+/// the result list. For ref K (String / record), no unboxing.
 fn emit_map_walk_keys_to_list(
     map_idx: u32,
     keys_array_idx: u32,
     list_idx: u32,
+    k_aver: &str,
+    registry: &TypeRegistry,
 ) -> Result<Function, WasmGcError> {
     let keys_ref = ValType::Ref(RefType {
         nullable: true,
@@ -1357,7 +1470,7 @@ fn emit_map_walk_keys_to_list(
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32LtS);
     f.instruction(&Instruction::BrIf(1));
-    // if keys[i] != null: acc = cons(keys[i], acc)
+    // if keys[i] != null: acc = cons(unbox(keys[i]), acc)
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::ArrayGet(keys_array_idx));
@@ -1367,6 +1480,7 @@ fn emit_map_walk_keys_to_list(
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::ArrayGet(keys_array_idx));
+    emit_unbox_key(&mut f, k_aver, registry);
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::LocalSet(3));
@@ -1503,7 +1617,7 @@ fn emit_map_remove(
         (1, ValType::I32), // 6: h
         (1, ValType::I32), // 7: i
         (1, ValType::I32), // 8: j
-        (1, k_val),        // 9: cur_key
+        (1, key_storage_val_type(k_aver, registry)?), // 9: cur_key (boxed for prim)
         (1, ValType::I32), // 10: natural
         (1, ValType::I32), // 11: gap
         (1, ValType::I32), // 12: disp
@@ -1556,8 +1670,9 @@ fn emit_map_remove(
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
-    // if eq(cur_key, k) → break (found at i)
+    // if eq(unbox(cur_key), k) → break (found at i)
     f.instruction(&Instruction::LocalGet(9));
+    emit_unbox_key(&mut f, k_aver, registry);
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::Call(keyh.eq));
     f.instruction(&Instruction::BrIf(1));
@@ -1597,8 +1712,9 @@ fn emit_map_remove(
     f.instruction(&Instruction::LocalGet(9));
     f.instruction(&Instruction::RefIsNull);
     f.instruction(&Instruction::BrIf(1));
-    // natural = hash(next) & mask
+    // natural = hash(unbox(next)) & mask
     f.instruction(&Instruction::LocalGet(9));
+    emit_unbox_key(&mut f, k_aver, registry);
     f.instruction(&Instruction::Call(keyh.hash));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32And);
@@ -1646,22 +1762,17 @@ fn emit_map_remove(
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
 
-    // keys[i] = null
+    // keys[i] = null. Heap type matches the keys array element ref:
+    // primitive-key box for primitive K, String slot for K=String,
+    // record slot for K=record.
+    let null_heap_idx = registry
+        .primitive_key_box_idx(k_aver)
+        .or(registry.string_array_type_idx.filter(|_| k_aver == "String"))
+        .or_else(|| registry.record_type_idx(k_aver))
+        .unwrap_or(0);
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::RefNull(HeapType::Concrete(
-        // K's heap type: derive from the value type of the array
-        // element. For ref-only K (record / String) this is the
-        // matching struct/array type. Use the keys_array's element
-        // type's heap idx — but ArrayGet for that array yields
-        // K as its declared element type, so RefNull with that
-        // matching idx is correct.
-        registry
-            .string_array_type_idx
-            .filter(|_| k_aver == "String")
-            .or_else(|| registry.record_type_idx(k_aver))
-            .unwrap_or(0),
-    )));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(null_heap_idx)));
     f.instruction(&Instruction::ArraySet(slots.keys_array));
 
     // map.size = map.size - 1
@@ -1746,7 +1857,8 @@ fn emit_map_entries(canonical: &str, registry: &TypeRegistry) -> Result<Function
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32LtS);
     f.instruction(&Instruction::BrIf(1));
-    // if keys[i] != null: tup = struct.new $tuple(keys[i], values[i]); acc = cons(tup, acc)
+    // if keys[i] != null: tup = struct.new $tuple(unbox(keys[i]),
+    // values[i]); acc = cons(tup, acc)
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::ArrayGet(slots.keys_array));
@@ -1756,6 +1868,7 @@ fn emit_map_entries(canonical: &str, registry: &TypeRegistry) -> Result<Function
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::ArrayGet(slots.keys_array));
+    emit_unbox_key(&mut f, k_aver, registry);
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::ArrayGet(slots.values_array));

@@ -87,6 +87,14 @@ pub(super) struct TypeRegistry {
     /// `List<Tuple<K, V>>`), `Map.fromList`, and `List.zip`.
     pub(super) tuple_types: HashMap<String, u32>,
     pub(super) tuple_order: Vec<String>,
+    /// Per-primitive-K `(struct (mut K))` slot used to box primitive
+    /// map keys. The `Map<K, V>` open-addressing layout uses
+    /// `keys[i] == null` as the empty marker, which only works for
+    /// ref types — boxing the primitive into a struct ref keeps the
+    /// marker scheme uniform across all K kinds. Helpers internally
+    /// pass raw `K_val` and box on insert / unbox on read.
+    pub(super) primitive_key_box: HashMap<String, u32>,
+    pub(super) primitive_key_box_order: Vec<String>,
     /// Total number of user-type slots reserved in the type section.
     /// Function types start AFTER these.
     pub(super) user_type_count: u32,
@@ -486,6 +494,26 @@ impl TypeRegistry {
             map_order.push(canonical);
         }
 
+        // Eagerly register the primitive-key box struct for every
+        // `Map<K, *>` where K ∈ {Int, Float, Bool}. The map's
+        // open-addressing layout uses ref-null as the empty marker,
+        // and primitive K can't carry that — boxing the raw value
+        // into `(struct (mut K))` lets the marker stay uniform.
+        let mut primitive_key_box: HashMap<String, u32> = HashMap::new();
+        let mut primitive_key_box_order: Vec<String> = Vec::new();
+        for canonical in map_order.iter() {
+            if let Some((k, _)) = parse_map_kv(canonical) {
+                let k_trim = k.trim();
+                if matches!(k_trim, "Int" | "Float" | "Bool")
+                    && !primitive_key_box.contains_key(k_trim)
+                {
+                    primitive_key_box.insert(k_trim.to_string(), next_idx);
+                    primitive_key_box_order.push(k_trim.to_string());
+                    next_idx += 1;
+                }
+            }
+        }
+
         // Eagerly register `List<K>` and `List<V>` for every
         // `Map<K, V>` — `Map.keys` / `Map.values` return them but
         // the canonical never appears anywhere else. Same trick as
@@ -634,6 +662,8 @@ impl TypeRegistry {
             map_order,
             tuple_types,
             tuple_order,
+            primitive_key_box,
+            primitive_key_box_order,
             user_type_count: next_idx,
             string_array_type_idx,
             string_literals,
@@ -677,6 +707,17 @@ impl TypeRegistry {
 
     pub(super) fn map_slots(&self, canonical: &str) -> Option<MapSlots> {
         self.map_types.get(canonical).copied()
+    }
+
+    pub(super) fn primitive_key_box_idx(&self, k_aver: &str) -> Option<u32> {
+        self.primitive_key_box.get(k_aver.trim()).copied()
+    }
+
+    /// True for K kinds that need to be boxed when used as a
+    /// `Map<K, *>` key (so the keys array element type stays a ref
+    /// and `keys[i] == null` works as the empty marker).
+    pub(super) fn is_primitive_map_key(k_aver: &str) -> bool {
+        matches!(k_aver.trim(), "Int" | "Float" | "Bool")
     }
 
     pub(super) fn tuple_type_idx(&self, canonical: &str) -> Option<u32> {

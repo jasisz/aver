@@ -738,23 +738,35 @@ fn emit_user_types(
                 "registered map `{canonical}` has no parsable K, V"
             )),
         )?;
-        let k_val = super::types::aver_to_wasm(k_aver, Some(registry))?.ok_or(
-            WasmGcError::Validation(format!(
-                "Map key type `{k_aver}` has no wasm representation"
-            )),
-        )?;
         let v_val = super::types::aver_to_wasm(v_aver, Some(registry))?.ok_or(
             WasmGcError::Validation(format!(
                 "Map value type `{v_aver}` has no wasm representation"
             )),
         )?;
+        // Keys array element: for primitive K, a `(ref null
+        // $primitive_key_box_K)` so the empty-slot marker stays
+        // uniform; for ref K (String / record), the K's own ref.
+        let key_storage_val = if let Some(box_idx) =
+            registry.primitive_key_box_idx(k_aver)
+        {
+            ValType::Ref(wasm_encoder::RefType {
+                nullable: true,
+                heap_type: wasm_encoder::HeapType::Concrete(box_idx),
+            })
+        } else {
+            super::types::aver_to_wasm(k_aver, Some(registry))?.ok_or(
+                WasmGcError::Validation(format!(
+                    "Map key type `{k_aver}` has no wasm representation"
+                )),
+            )?
+        };
         let slots = registry
             .map_slots(canonical)
             .expect("just-registered map slots");
         entries.push((
             slots.keys_array,
             mk_array(wasm_encoder::FieldType {
-                element_type: wasm_encoder::StorageType::Val(k_val),
+                element_type: wasm_encoder::StorageType::Val(key_storage_val),
                 mutable: true,
             }),
         ));
@@ -793,6 +805,30 @@ fn emit_user_types(
                     mutable: true,
                 },
             ]),
+        ));
+    }
+
+    // Primitive map-key boxes — `(struct (mut K_val))` per
+    // primitive K used as a Map<K, *>. Boxing primitive keys keeps
+    // the open-addressing layout's `keys[i] == null` empty marker
+    // uniform across all K kinds (raw i64/f64/i32 has no null).
+    for k_aver in &registry.primitive_key_box_order {
+        let k_val = super::types::aver_to_wasm(k_aver, Some(registry))?.ok_or(
+            WasmGcError::Validation(format!(
+                "primitive key box: K=`{k_aver}` has no wasm representation"
+            )),
+        )?;
+        let idx = registry
+            .primitive_key_box_idx(k_aver)
+            .ok_or(WasmGcError::Validation(format!(
+                "primitive key box for `{k_aver}` not registered"
+            )))?;
+        entries.push((
+            idx,
+            mk_struct(vec![wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(k_val),
+                mutable: true,
+            }]),
         ));
     }
 

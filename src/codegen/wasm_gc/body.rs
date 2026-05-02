@@ -3813,9 +3813,18 @@ fn emit_map_empty_call(
     let canonical = if ctx.registry.map_order.len() == 1 {
         ctx.registry.map_order[0].clone()
     } else {
-        return Err(WasmGcError::Unimplemented(
-            "Map.empty across multiple Map<K,V> instantiations needs context-driven type inference",
-        ));
+        // Multi-Map module — disambiguate by checking the enclosing
+        // fn's return type. Common case: `fn build() -> Map<K, V>`
+        // wraps a `Map.set(Map.empty(), ...)` chain; the empty call
+        // inherits its slot from the declared return type.
+        let ret_canonical = super::types::normalize_compound(ctx.return_type);
+        if ctx.registry.map_slots(&ret_canonical).is_some() {
+            ret_canonical
+        } else {
+            return Err(WasmGcError::Unimplemented(
+                "Map.empty across multiple Map<K,V> instantiations needs context-driven type inference",
+            ));
+        }
     };
     let helpers = ctx
         .fn_map
