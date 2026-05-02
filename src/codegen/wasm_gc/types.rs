@@ -333,6 +333,25 @@ impl TypeRegistry {
             next_idx += 1;
         }
 
+        // Eager `Vector<T>` registration for every discovered
+        // `List<T>` — `Vector.fromList(list_call())` is the canonical
+        // way wumpus-shaped programs build a Vector, but the
+        // expression-walker can't infer the produced Vector<T>
+        // without typing the inner list call. Cheap overproduction
+        // here (a slot per List<T>) is harmless; `wasm-opt -Oz`
+        // strips the unused vector helpers, and the `Vector.fromList`
+        // path can finally find its pre-allocated slot.
+        for list_canonical in list_order.iter() {
+            if let Some(elem) = TypeRegistry::list_element_type(list_canonical) {
+                let vec_canonical = format!("Vector<{}>", elem.trim());
+                if !vector_types.contains_key(&vec_canonical) {
+                    vector_types.insert(vec_canonical.clone(), next_idx);
+                    vector_order.push(vec_canonical);
+                    next_idx += 1;
+                }
+            }
+        }
+
         // `Option<T>` instantiations follow the same shape — scan
         // signatures + bodies for any `Option<T>` reference and
         // allocate a struct slot per unique `T`.
@@ -360,6 +379,16 @@ impl TypeRegistry {
                     &mut option_order,
                     &mut next_idx,
                 );
+            }
+        }
+        // Record field walk — `record GameState { lastAiResult:
+        // Option<AiResult> }` only spells `Option<AiResult>` in the
+        // record declaration. Without this walk the canonical never
+        // gets registered, and a `match state.lastAiResult` arm
+        // dispatcher fails to recover its slot.
+        for (_, fields) in record_fields.iter() {
+            for (_, ty) in fields {
+                collect_options_from_str(ty, &mut option_types, &mut option_order, &mut next_idx);
             }
         }
         // Eagerly register `Option<T>` for every `Vector<T>` — a

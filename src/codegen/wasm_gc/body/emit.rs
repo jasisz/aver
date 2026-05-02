@@ -387,7 +387,7 @@ pub(super) fn emit_record_create(
     // Push fields in declaration order. Aver guarantees the user
     // supplies every declared field (the type checker enforces
     // exhaustiveness).
-    for (decl_name, _) in decl_fields {
+    for (decl_name, decl_ty) in decl_fields {
         let provided =
             fields
                 .iter()
@@ -395,10 +395,42 @@ pub(super) fn emit_record_create(
                 .ok_or(WasmGcError::Validation(format!(
                     "record `{type_name}` missing field `{decl_name}`"
                 )))?;
+        // Special-case `Option.None` field values — the constructor
+        // emitter normally falls back to `ctx.return_type` for the T
+        // hint, which is wrong inside a `RecordCreate` (the enclosing
+        // fn's return type has nothing to do with the field's
+        // declared `Option<T>`). Read T off the field declaration
+        // and emit through the constructor directly.
+        if is_option_none_expr(&provided.1.node)
+            && let Some(inner) = decl_ty
+                .trim()
+                .strip_prefix("Option<")
+                .and_then(|s| s.strip_suffix('>'))
+        {
+            emit_option_constructor(func, None, Some(inner.trim()), slots, ctx)?;
+            continue;
+        }
         emit_expr(func, &provided.1.node, slots, ctx)?;
     }
     func.instruction(&Instruction::StructNew(type_idx));
     Ok(())
+}
+
+/// True iff `expr` is the literal `Option.None` constructor reference
+/// (either as `Expr::Attr(Ident("Option"), "None")` or as a
+/// `Constructor("Option.None", None)` after pipeline rewrites).
+fn is_option_none_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Attr(obj, field) => {
+            field == "None" && matches!(&obj.node, Expr::Ident(name) if name == "Option")
+        }
+        Expr::Constructor(name, payload) => {
+            payload.is_none()
+                && (name == "Option.None"
+                    || name.rsplit('.').next() == Some("None") && name.starts_with("Option"))
+        }
+        _ => false,
+    }
 }
 
 /// Lower `RecordUpdate { type_name, base, updates }` to a fresh

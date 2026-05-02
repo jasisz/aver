@@ -304,7 +304,12 @@ impl EffectName {
             | Self::TerminalFlush => Ok(vec![]),
             Self::TerminalMoveTo => Ok(vec![ValType::I64, ValType::I64]),
             Self::TerminalPrint => Ok(vec![any_ref_ty()]),
-            Self::TerminalSetColor => Ok(vec![ValType::I64]),
+            // Terminal.setColor takes `color: String`, not Int — same
+            // shape as Terminal.print. Was previously typed as i64 by
+            // mistake; emit pushes a String ref (`array.new_data`),
+            // engine validator rejects with i64 vs ref mismatch as
+            // soon as a setColor call site appears.
+            Self::TerminalSetColor => Ok(vec![any_ref_ty()]),
         }
     }
 
