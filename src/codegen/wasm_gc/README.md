@@ -1,6 +1,27 @@
-# `wasm_gc` codegen backend (probe — 0.16)
+# `wasm_gc` codegen backend (default in 0.16, codename "Concede")
 
-Parallel WASM backend that targets the **WebAssembly GC + tail-call** proposals natively, instead of layering a custom runtime on top of MVP WASM. Lives alongside `src/codegen/wasm/` for now — both compile from the same IR; `aver bench --target=wasm-local` exercises the legacy backend, `--target=wasm-gc` exercises this one. After bench numbers come in (see Phase 4 below) one of them gets cut.
+Parallel WASM backend that targets the **WebAssembly GC + tail-call** proposals natively, instead of layering a custom runtime on top of MVP WASM. Lives alongside `src/codegen/wasm/`; both compile from the same IR. After the cross-engine bench (see below) the call is in: **`--target wasm-gc` ships as the recommended target from 0.16 onward**, `--target wasm` survives as the optional fallback for pre-2024 hosts (wasmtime CLI < 25, Node < 22, environments that don't speak the GC + tail-call proposals).
+
+The verdict is asymmetric: `wasm-gc` wins decisively where allocations or recursion dominate (`fib` 8.4×, `vector_ops` 182×, `countdown` 2.9×, `record` 1.4×, the edge fetch handler stays a tie at ~33 ms because that workload is f64 arithmetic the engine optimises identically on both backends). It's also a 35 % smaller binary on the edge demo. The legacy backend doesn't gain meaningful headroom from `wasm-opt -O4` or further IR work — it has, on these workloads, said its last word.
+
+What `wasm-gc` does **not** do is delete the Aver runtime. The edge handler binary is 22 KB after DCE, and roughly half of that is still helper functions emitted into the same module: `String.split` / `String.join` / `Float.toString` / `Int.fromString` (and friends) as WAT-source-of-truth helpers; per-(K,V) Map probes (`empty` / `set` / `get` / `len` / `get_or_default` / `get_pair`) for every `Map<K, V>` instantiation in the program; per-`List<T>` `len` / `reverse`; per-(`List<T>`, `Vector<T>`) `from_list`; the `__rt_string_from_lm` / `__rt_string_to_lm` / `__rt_memory_grow` JS bridge plus a 1-page transport memory; the synthesised `aver_http_handle` wrapper. Counted: 78 functions in the wasm-gc edge binary, ~38 of them runtime helpers; the rest are user code. What changed vs `--target wasm` is *where* the runtime lives — instead of merging a separate `aver_runtime.wasm` (~10 KB of allocator + GC + HAMT + str/list/vec ops) via `wasm-merge`, the wasm-gc backend inlines exactly the helpers each program calls and lets `wasm-opt -Oz` DCE the rest. Plus engine GC and native tail-call replace the bits the legacy runtime hand-rolled (custom heap, NaN-boxing, mutual-TCO trampoline).
+
+So the binary-size win comes from "ship only what's actually called" + "delegate heap + tail-call to the engine", not from "no runtime at all". The runtime is still there — it's just per-program and per-instantiation instead of one shared blob.
+
+### Runtime placement: inline vs sidecar
+
+Worth flagging: `--target wasm-gc` today is inline-only. Legacy already has the inline-vs-sidecar split (`--target wasm` merges the runtime into one binary; `--target edge-wasm` ships a thin user.wasm that imports the runtime from a CDN). The same split would in principle make sense for wasm-gc:
+
+| Mode (hypothetical)              | When it pays off |
+|----------------------------------|-------------------|
+| `--target wasm-gc` (inline, default) | Cloudflare Workers (rejects `WebAssembly.instantiate(bytes, …)` from fetched bytes anyway), one-shot deploys, when the tooling story has to be "drop two files into a folder". |
+| `--target edge-wasm-gc` (runtime imported from sidecar module) | Browser playgrounds, dev workflows that run many small programs against one runtime cache, environments where the runtime can be patched independently. |
+
+The reason wasm-gc doesn't ship the sidecar mode yet: most of the helpers are **per-instantiation**. `Map<String, Int>`, `Map<String, List<String>>`, `Map<Int, View>` each get their own struct types, key-helper pair (hash + eq), and `empty / set / get / len / get_or_default / get_pair`. That's per (K, V). `List<T>` and `Vector<T>` and `Vector.fromList(List<T>) → Vector<T>` are per-T. A shared sidecar runtime would have to pick a canonical set of instantiations to expose (probably `String`, `Int`, `Float` for K/V/elem) and force user programs to either match the menu or fall back to inline. The legacy backend doesn't have this problem because its runtime is fully NaN-boxed — one `rt_map_set(map, key, val)` works for any K, V. wasm-gc deliberately gave that up in exchange for type-direct lowering.
+
+Practical proposal: leave `--target wasm-gc` inline-only for now (matches the dominant deploy story), and design `--target edge-wasm-gc` against a fixed monomorphic menu later when there's a concrete consumer (the playground, probably). Memory entry `project_wasm_gc_multimodule.md` captures the related Component Model question.
+
+**Where the sidecar story actually pays off: wasip2.** Component Model gives cross-component types and a real linking story instead of MVP wasm's "two modules, hope the imports line up" shape. A wasip2 component can declare `interface aver-runtime { resource map<...>; ... }` and let the host instantiate the helper module once, hand its functions to every guest component on demand. The per-instantiation problem softens because the Component Model lets a guest component say "instantiate `aver-runtime` with K=String, V=Int" and the runtime component does the monomorphisation locally. That's the model where shared runtime starts to make sense again — not MVP wasm sidecars where every type signature has to be globally agreed up front. `project_015_traversal.md` already has wasip2 on the parallel track; pairing it with `--target edge-wasm-gc` would land both stories together.
 
 ## Why this exists
 

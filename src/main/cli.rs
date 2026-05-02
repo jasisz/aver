@@ -133,25 +133,32 @@ pub(super) enum CompileTarget {
     #[default]
     #[value(name = "rust")]
     Rust,
-    /// Generate a single bundled .wasm binary (data-structure runtime
-    /// inlined, effects merged via wasm-merge). Requires --features wasm
-    /// and `wasm-merge` (binaryen) in PATH if the program uses effects.
+    /// Legacy fallback (`--target wasm`) — bundled .wasm with the
+    /// custom Aver runtime inlined via `wasm-merge`. Recommended only
+    /// for pre-2024 hosts that don't speak the WebAssembly GC + tail-
+    /// call proposals (wasmtime CLI < 25, Node < 22, etc.). For
+    /// modern targets prefer `--target wasm-gc` — same source, same
+    /// `--handler X` shape, faster on most workloads (8.4× on `fib`,
+    /// 182× on `vector_ops`, ~ tied on f64-heavy renderers like the
+    /// fractal demo), and a 35 % smaller binary because there's no
+    /// custom runtime to ship.
     #[value(name = "wasm")]
     Wasm,
-    /// Generate a thin .wasm that imports the data-structure runtime and
-    /// effect host as separate modules (zero external tooling required).
-    /// Designed for browser playgrounds, edge runtimes (Cloudflare Workers,
-    /// Fastly Compute@Edge), and dev workflows where the runtime is shared
-    /// between programs.
+    /// Legacy edge variant — thin .wasm that imports the runtime as a
+    /// separate module instead of inlining it. Same fallback role as
+    /// `--target wasm`; pick this for browser playgrounds / dev
+    /// workflows where one shared runtime serves many programs.
+    /// Modern targets should prefer `--target wasm-gc`.
     #[value(name = "edge-wasm")]
     EdgeWasm,
-    /// EXPERIMENTAL (0.16 probe). Native WebAssembly GC + tail-call output —
-    /// no custom runtime, no NaN-boxing, no boundary GC framing. Assumes
-    /// a modern wasm engine (Chrome 119+, Firefox 120+, Safari 18.2+,
-    /// wasmtime 25+, Node 24+, Cloudflare Workers). See
-    /// `src/codegen/wasm_gc/README.md` for the design notes. Phase-gated:
-    /// today only `fn main() -> Int <literal>` compiles. Use `--target=wasm`
-    /// for production WASM until the bench numbers say otherwise.
+    /// Native WebAssembly GC + tail-call output — no custom runtime,
+    /// no NaN-boxing, no boundary GC framing. The recommended target
+    /// from 0.16 onward. Pairs with `--handler X` to synthesise a
+    /// JS-callable `aver_http_handle` wrapper for fetch-bridge
+    /// deployments (see `tools/edge-gc/`). Requires Chrome 119+ /
+    /// Firefox 120+ / Safari 18.2+ / wasmtime 25+ / Node 22+ /
+    /// Cloudflare Workers. See `src/codegen/wasm_gc/README.md` for
+    /// the design notes and the cross-engine bench matrix.
     #[value(name = "wasm-gc")]
     WasmGc,
 }
