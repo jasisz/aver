@@ -136,50 +136,81 @@ impl MapHelperRegistry {
                     "MapHelperRegistry: cannot parse K, V from `{canonical}`"
                 )),
             )?;
-            // If K is a record whose fields include `String`, ensure
-            // String hash/eq is registered first.
-            if registry.record_type_idx(k_aver).is_some() {
-                let needs_string = registry
-                    .record_fields
-                    .get(k_aver)
-                    .map(|fs| fs.iter().any(|(_, t)| t.trim() == "String"))
-                    .unwrap_or(false);
-                if needs_string && k_seen.insert("String".into()) {
-                    k_names.push("String".into());
-                }
+            // If K is a record / sum whose fields include `String`,
+            // ensure String hash/eq is registered first.
+            let mut needs_string = false;
+            if let Some(fs) = registry.record_fields.get(k_aver) {
+                needs_string |= fs.iter().any(|(_, t)| t.trim() == "String");
+            }
+            if registry.variants.values().any(|v| v.parent == k_aver) {
+                needs_string |= registry
+                    .variants
+                    .values()
+                    .filter(|v| v.parent == k_aver)
+                    .any(|v| v.fields.iter().any(|t| t.trim() == "String"));
+            }
+            if needs_string && k_seen.insert("String".into()) {
+                k_names.push("String".into());
             }
             if k_seen.insert(k_aver.to_string()) {
                 k_names.push(k_aver.to_string());
             }
         }
 
-        // For every record K, recursively collect all records used
-        // as fields. Each such nested record needs its own hash + eq
-        // helpers so the outer record's per-field dispatch can call
-        // them. Records reached this way get registered as pseudo-K
-        // (their hash + eq slot exists; no Map<X, *> exists).
+        // For every record / sum K, recursively collect all
+        // records / sums used as field types. Each nested type
+        // needs its own hash + eq helpers so the outer K's per-
+        // field dispatch can call them. Pseudo-K = registered for
+        // helpers but with no `Map<X, *>` reachable.
         let mut to_visit: Vec<String> = k_names
             .iter()
-            .filter(|n| registry.record_type_idx(n).is_some())
+            .filter(|n| {
+                registry.record_type_idx(n).is_some()
+                    || registry.variants.values().any(|v| v.parent == *n.as_str())
+            })
             .cloned()
             .collect();
-        while let Some(rec) = to_visit.pop() {
-            if let Some(fields) = registry.record_fields.get(&rec) {
-                for (_, field_ty) in fields {
-                    let ft = field_ty.trim();
-                    if registry.record_type_idx(ft).is_some()
-                        && k_seen.insert(ft.to_string())
-                    {
-                        k_names.push(ft.to_string());
-                        to_visit.push(ft.to_string());
-                        // If the nested record itself has String
-                        // fields, ensure String is registered too.
-                        if let Some(inner_fields) = registry.record_fields.get(ft)
-                            && inner_fields.iter().any(|(_, t)| t.trim() == "String")
-                            && k_seen.insert("String".into())
-                        {
-                            k_names.push("String".into());
-                        }
+        while let Some(parent) = to_visit.pop() {
+            // Collect every field type referenced by this parent
+            // (record fields, or every variant's fields if it's a
+            // sum type).
+            let mut field_types: Vec<String> = Vec::new();
+            if let Some(fields) = registry.record_fields.get(&parent) {
+                for (_, t) in fields {
+                    field_types.push(t.trim().to_string());
+                }
+            }
+            for variant in registry
+                .variants
+                .values()
+                .filter(|v| v.parent == parent)
+            {
+                for t in &variant.fields {
+                    field_types.push(t.trim().to_string());
+                }
+            }
+            for ft in field_types {
+                let is_record = registry.record_type_idx(&ft).is_some();
+                let is_sum = registry.variants.values().any(|v| v.parent == ft);
+                if (is_record || is_sum) && k_seen.insert(ft.clone()) {
+                    k_names.push(ft.clone());
+                    to_visit.push(ft.clone());
+                    // String inside the nested type's fields →
+                    // force-register String.
+                    let mut nested_needs_string = false;
+                    if let Some(fs) = registry.record_fields.get(&ft) {
+                        nested_needs_string |=
+                            fs.iter().any(|(_, t)| t.trim() == "String");
+                    }
+                    if is_sum {
+                        nested_needs_string |= registry
+                            .variants
+                            .values()
+                            .filter(|v| v.parent == ft)
+                            .any(|v| v.fields.iter().any(|t| t.trim() == "String"));
+                    }
+                    if nested_needs_string && k_seen.insert("String".into()) {
+                        k_names.push("String".into());
                     }
                 }
             }
@@ -269,12 +300,14 @@ impl MapHelperRegistry {
                 WasmGcError::Validation(format!("bad map canonical `{canonical}`")),
             )?;
             let is_primitive_k = super::types::TypeRegistry::is_primitive_map_key(k_aver);
+            let is_sum_k = registry.variants.values().any(|v| v.parent == k_aver);
             if k_aver != "String"
                 && registry.record_type_idx(k_aver).is_none()
                 && !is_primitive_k
+                && !is_sum_k
             {
                 return Err(WasmGcError::Unimplemented(
-                    "phase 3c — Map<K, V> with K not String / user-record / primitive",
+                    "phase 3c — Map<K, V> with K not String / user-record / sum / primitive",
                 ));
             }
 
@@ -546,6 +579,9 @@ fn emit_hash_for(
     if super::types::TypeRegistry::is_primitive_map_key(k_aver) {
         return emit_hash_primitive(k_aver);
     }
+    if registry.variants.values().any(|v| v.parent == k_aver) {
+        return emit_hash_sum(k_aver, registry, string_key_helpers);
+    }
     Err(WasmGcError::Unimplemented(
         "phase 3c — hash for unsupported K kind",
     ))
@@ -565,6 +601,9 @@ fn emit_eq_for(
     }
     if super::types::TypeRegistry::is_primitive_map_key(k_aver) {
         return emit_eq_primitive(k_aver);
+    }
+    if registry.variants.values().any(|v| v.parent == k_aver) {
+        return emit_eq_sum(k_aver, registry, string_key_helpers);
     }
     Err(WasmGcError::Unimplemented(
         "phase 3c — eq for unsupported K kind",
@@ -1393,18 +1432,23 @@ fn emit_hash_record(
                 };
                 let is_compound =
                     other.starts_with("List<") || other.starts_with("Vector<");
-                if registry.record_type_idx(other).is_some() || is_compound {
+                let is_sum =
+                    registry.variants.values().any(|v| v.parent == other);
+                if registry.record_type_idx(other).is_some()
+                    || is_compound
+                    || is_sum
+                {
                     let inner = all_key_helpers.get(&lookup_key).ok_or(
                         WasmGcError::Validation(format!(
                             "hash_record: field `{other}` has no key helpers \
-                             (record / list / vector T may need force-registration)"
+                             (record / list / vector / sum T may need force-registration)"
                         )),
                     )?;
                     f.instruction(&Instruction::Call(inner.hash));
                 } else {
                     return Err(WasmGcError::Unimplemented(
                         "phase 3c — record-key field type not in \
-                         {Int, Float, Bool, String, nested record, List<T>, Vector<T>}",
+                         {Int, Float, Bool, String, nested record, List<T>, Vector<T>, sum}",
                     ));
                 }
             }
@@ -1468,7 +1512,12 @@ fn emit_eq_record(
                 };
                 let is_compound =
                     other.starts_with("List<") || other.starts_with("Vector<");
-                if registry.record_type_idx(other).is_some() || is_compound {
+                let is_sum =
+                    registry.variants.values().any(|v| v.parent == other);
+                if registry.record_type_idx(other).is_some()
+                    || is_compound
+                    || is_sum
+                {
                     let inner = all_key_helpers.get(&lookup_key).ok_or(
                         WasmGcError::Validation(format!(
                             "eq_record: field `{other}` has no key helpers"
@@ -1478,7 +1527,7 @@ fn emit_eq_record(
                 } else {
                     return Err(WasmGcError::Unimplemented(
                         "phase 3c — record-key field type not in \
-                         {Int, Float, Bool, String, nested record, List<T>, Vector<T>}",
+                         {Int, Float, Bool, String, nested record, List<T>, Vector<T>, sum}",
                     ));
                 }
             }
@@ -2085,6 +2134,177 @@ fn emit_map_from_list(
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `hash : (parent_ref) -> i32` for a user sum type. Per-variant
+/// `ref.test` cascade: each constructor V_i has a tag (its
+/// alphabetical index in the variant list, baked at compile time)
+/// folded in DJB2-style with each V_i field's hash. Variants are
+/// sorted by name for stable emit. Field-type dispatch covers
+/// `{Int, Float, Bool, String}`; other field types surface as
+/// Unimplemented.
+fn emit_hash_sum(
+    parent_name: &str,
+    registry: &TypeRegistry,
+    string_key_helpers: Option<KeyHelpers>,
+) -> Result<Function, WasmGcError> {
+    let mut variants: Vec<(String, super::types::VariantInfo)> = registry
+        .variants
+        .iter()
+        .filter(|(_, v)| v.parent == parent_name)
+        .map(|(n, v)| (n.clone(), v.clone()))
+        .collect();
+    variants.sort_by(|a, b| a.0.cmp(&b.0));
+    if variants.is_empty() {
+        return Err(WasmGcError::Validation(format!(
+            "hash_sum: `{parent_name}` has no variants"
+        )));
+    }
+    let mut f = Function::new([(1, ValType::I32) /* h */]);
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    for (tag, (_v_name, info)) in variants.iter().enumerate() {
+        let v_idx = info.type_idx;
+        let v_heap = wasm_encoder::HeapType::Concrete(v_idx);
+        // if ref.test V head: h = (5381*33+tag), then fold fields, return
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::RefTestNonNull(v_heap));
+        f.instruction(&Instruction::If(BlockType::Empty));
+        // Initial h = 5381 * 33 + tag (variant discriminator).
+        f.instruction(&Instruction::I32Const(5381 * 33 + tag as i32));
+        f.instruction(&Instruction::LocalSet(1));
+        for (i, field_ty) in info.fields.iter().enumerate() {
+            // h = h * 33
+            f.instruction(&Instruction::LocalGet(1));
+            f.instruction(&Instruction::I32Const(5));
+            f.instruction(&Instruction::I32Shl);
+            f.instruction(&Instruction::LocalGet(1));
+            f.instruction(&Instruction::I32Add);
+            // push field_value as i32 hash
+            f.instruction(&Instruction::LocalGet(0));
+            f.instruction(&Instruction::RefCastNonNull(v_heap));
+            f.instruction(&Instruction::StructGet {
+                struct_type_index: v_idx,
+                field_index: i as u32,
+            });
+            match field_ty.trim() {
+                "Int" => {
+                    f.instruction(&Instruction::I32WrapI64);
+                }
+                "Bool" => {}
+                "Float" => {
+                    f.instruction(&Instruction::I64ReinterpretF64);
+                    f.instruction(&Instruction::I32WrapI64);
+                }
+                "String" => {
+                    let helpers = string_key_helpers.ok_or(WasmGcError::Validation(
+                        "hash_sum: String field needs String key helpers".into(),
+                    ))?;
+                    f.instruction(&Instruction::Call(helpers.hash));
+                }
+                _ => {
+                    return Err(WasmGcError::Unimplemented(
+                        "phase 3c — sum-variant field type not in {Int, Float, Bool, String}",
+                    ));
+                }
+            }
+            f.instruction(&Instruction::I32Add);
+            f.instruction(&Instruction::LocalSet(1));
+        }
+        f.instruction(&Instruction::LocalGet(1));
+        f.instruction(&Instruction::Return);
+        f.instruction(&Instruction::End);
+    }
+    f.instruction(&Instruction::End);
+    // Defensive 0 (exhaustiveness should make this unreachable).
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `eq : (parent_ref, parent_ref) -> i32` for a user sum type.
+/// Per-variant `ref.test` cascade: head and needle must share a
+/// constructor, then field-by-field eq with `i32.and` fold.
+fn emit_eq_sum(
+    parent_name: &str,
+    registry: &TypeRegistry,
+    string_key_helpers: Option<KeyHelpers>,
+) -> Result<Function, WasmGcError> {
+    let mut variants: Vec<(String, super::types::VariantInfo)> = registry
+        .variants
+        .iter()
+        .filter(|(_, v)| v.parent == parent_name)
+        .map(|(n, v)| (n.clone(), v.clone()))
+        .collect();
+    variants.sort_by(|a, b| a.0.cmp(&b.0));
+    if variants.is_empty() {
+        return Err(WasmGcError::Validation(format!(
+            "eq_sum: `{parent_name}` has no variants"
+        )));
+    }
+    // params: 0=head, 1=needle. No locals.
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::Block(BlockType::Result(ValType::I32)));
+    for (_v_name, info) in &variants {
+        let v_idx = info.type_idx;
+        let v_heap = wasm_encoder::HeapType::Concrete(v_idx);
+        // if ref.test V head:
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::RefTestNonNull(v_heap));
+        f.instruction(&Instruction::If(BlockType::Empty));
+        // if ref.test V needle:
+        f.instruction(&Instruction::LocalGet(1));
+        f.instruction(&Instruction::RefTestNonNull(v_heap));
+        f.instruction(&Instruction::If(BlockType::Empty));
+        if info.fields.is_empty() {
+            f.instruction(&Instruction::I32Const(1));
+        } else {
+            for (i, field_ty) in info.fields.iter().enumerate() {
+                f.instruction(&Instruction::LocalGet(0));
+                f.instruction(&Instruction::RefCastNonNull(v_heap));
+                f.instruction(&Instruction::StructGet {
+                    struct_type_index: v_idx,
+                    field_index: i as u32,
+                });
+                f.instruction(&Instruction::LocalGet(1));
+                f.instruction(&Instruction::RefCastNonNull(v_heap));
+                f.instruction(&Instruction::StructGet {
+                    struct_type_index: v_idx,
+                    field_index: i as u32,
+                });
+                match field_ty.trim() {
+                    "Int" => f.instruction(&Instruction::I64Eq),
+                    "Bool" => f.instruction(&Instruction::I32Eq),
+                    "Float" => f.instruction(&Instruction::F64Eq),
+                    "String" => {
+                        let helpers = string_key_helpers.ok_or(WasmGcError::Validation(
+                            "eq_sum: String field needs String key helpers".into(),
+                        ))?;
+                        f.instruction(&Instruction::Call(helpers.eq))
+                    }
+                    _ => {
+                        return Err(WasmGcError::Unimplemented(
+                            "phase 3c — sum-variant field type not in {Int, Float, Bool, String}",
+                        ));
+                    }
+                };
+                if i > 0 {
+                    f.instruction(&Instruction::I32And);
+                }
+            }
+        }
+        f.instruction(&Instruction::Br(2));
+        f.instruction(&Instruction::Else);
+        // head V, needle != V → 0
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::Br(2));
+        f.instruction(&Instruction::End);
+        f.instruction(&Instruction::End);
+    }
+    // Defensive — no variant matched head.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     Ok(f)
 }

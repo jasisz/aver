@@ -164,17 +164,24 @@ impl ListHelperRegistry {
             } else {
                 None
             };
-            // List eq + hash share the same eq-able-T constraint —
-            // both walk element pairs (or single elements) and
-            // dispatch on the per-T eq instruction.
-            let list_eq_type = if contains_eq.is_some() {
+            // List eq + hash use a stricter rule than contains —
+            // their bodies expect stack-shape per-element eq.
+            // SumEq / RecordEq need scratch locals + cascade emit;
+            // the bodies don't support those today. The record-key
+            // field-dispatch path that drives these helpers only
+            // ever calls them with primitive / String elements.
+            let needs_list_helpers = matches!(
+                contains_eq,
+                Some(ListEqKind::I64 | ListEqKind::F64 | ListEqKind::I32 | ListEqKind::StringEq)
+            );
+            let list_eq_type = if needs_list_helpers {
                 let t = *next_type_idx;
                 *next_type_idx += 1;
                 Some(t)
             } else {
                 None
             };
-            let list_hash_type = if contains_eq.is_some() {
+            let list_hash_type = if needs_list_helpers {
                 let t = *next_type_idx;
                 *next_type_idx += 1;
                 Some(t)
@@ -268,9 +275,13 @@ impl ListHelperRegistry {
             *next_wasm_fn_idx += 1;
             let to_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
-            // Vector<T> eq + hash conditionally — same eq-able-T
-            // rule the list helpers use.
-            let eq_kind_ok = list_eq_kind(elem.trim(), registry).is_some();
+            // Vector<T> eq + hash conditionally — same primitive /
+            // String constraint as list eq+hash (SumEq / RecordEq
+            // not supported in the stack-eq body).
+            let eq_kind_ok = matches!(
+                list_eq_kind(elem.trim(), registry),
+                Some(ListEqKind::I64 | ListEqKind::F64 | ListEqKind::I32 | ListEqKind::StringEq)
+            );
             let (vec_eq_ty, vec_hash_ty, vec_eq_fn, vec_hash_fn) = if eq_kind_ok {
                 let eq_ty = *next_type_idx;
                 *next_type_idx += 1;
@@ -401,8 +412,14 @@ impl ListHelperRegistry {
             // contains : (List<T>, T) -> Bool — element value type comes
             // from the registry's `aver_to_wasm` for T. Skipped when T
             // isn't natively eq-able (records, sums, nested generics).
-            if list_eq_kind(elem.trim(), registry).is_some() {
+            let kind = list_eq_kind(elem.trim(), registry);
+            if kind.is_some() {
                 types.ty().function([list_ref, elem_val], [ValType::I32]);
+            }
+            if matches!(
+                kind,
+                Some(ListEqKind::I64 | ListEqKind::F64 | ListEqKind::I32 | ListEqKind::StringEq)
+            ) {
                 // eq : (List<T>, List<T>) -> i32
                 types.ty().function([list_ref, list_ref], [ValType::I32]);
                 // hash : (List<T>) -> i32
@@ -435,7 +452,10 @@ impl ListHelperRegistry {
             // to_list : (Vector<T>) -> List<T>
             types.ty().function([vec_ref], [list_ref]);
             let elem = TypeRegistry::list_element_type(canonical).unwrap();
-            if list_eq_kind(elem.trim(), registry).is_some() {
+            if matches!(
+                list_eq_kind(elem.trim(), registry),
+                Some(ListEqKind::I64 | ListEqKind::F64 | ListEqKind::I32 | ListEqKind::StringEq)
+            ) {
                 // eq : (Vector<T>, Vector<T>) -> i32
                 types.ty().function([vec_ref, vec_ref], [ValType::I32]);
                 // hash : (Vector<T>) -> i32
@@ -571,20 +591,22 @@ impl ListHelperRegistry {
                     kind.clone(),
                     string_eq_fn_idx,
                 )?);
-                codes.function(&emit_list_eq(
-                    canonical,
-                    registry,
-                    kind.clone(),
-                    string_eq_fn_idx,
-                    ops.eq.unwrap(),
-                )?);
-                codes.function(&emit_list_hash(
-                    canonical,
-                    registry,
-                    kind,
-                    string_eq_fn_idx,
-                    ops.hash.unwrap(),
-                )?);
+                if let (Some(eq_fn), Some(_hash_fn)) = (ops.eq, ops.hash) {
+                    codes.function(&emit_list_eq(
+                        canonical,
+                        registry,
+                        kind.clone(),
+                        string_eq_fn_idx,
+                        eq_fn,
+                    )?);
+                    codes.function(&emit_list_hash(
+                        canonical,
+                        registry,
+                        kind,
+                        string_eq_fn_idx,
+                        ops.hash.unwrap(),
+                    )?);
+                }
             }
         }
         for canonical in &self.vfl_order {
