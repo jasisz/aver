@@ -1493,14 +1493,23 @@ fn expr_uses_string(expr: &crate::ast::Expr) -> bool {
                             | "String.join"
                             | "String.fromInt"
                             | "String.fromFloat"
-                            // `Int.mod`, `Int.fromString`, `Float.fromString`
-                            // return Result<_, String> — touching them
-                            // forces the String slot for the error
-                            // payload even when the program never
-                            // reads the Err arm.
+                            | "String.fromBool"
+                            | "String.endsWith"
+                            | "String.charAt"
+                            | "String.chars"
+                            | "String.byteLength"
+                            | "Char.toCode"
+                            | "Char.fromCode"
+                            | "Byte.toHex"
+                            // `Int.mod`, `Int.fromString`, `Float.fromString`,
+                            // `Byte.fromHex` return Result<_, String> —
+                            // touching them forces the String slot for
+                            // the error payload even when the program
+                            // never reads the Err arm.
                             | "Int.mod"
                             | "Int.fromString"
                             | "Float.fromString"
+                            | "Byte.fromHex"
                     ) {
                         return true;
                     }

@@ -534,10 +534,25 @@ enum ListEqKind {
     /// record name; field-type dispatch picks the right per-field
     /// eq instruction.
     RecordEq(String),
+    /// User-defined sum / variant T (e.g. `type Shape = Circle(Float)
+    /// | Rectangle(Float, Float)`). Two values are equal iff they
+    /// share a constructor AND every field-pair is equal. Emitted as
+    /// a per-variant `ref.test` cascade — for each constructor V_i:
+    /// if both head and needle are V_i, compare fields; if only one
+    /// is V_i, return false. Carries the parent type name.
+    SumEq(String),
 }
 
 fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
-    match elem.trim() {
+    let trimmed = elem.trim();
+    // Newtype-erased sum / record (single-variant single-field of a
+    // primitive) gets its underlying primitive's eq instruction —
+    // user code can't distinguish `Shape.Circle(r)` from `r` at the
+    // wasm level so the comparison reduces too.
+    if let Some(under) = registry.newtype_underlying(trimmed) {
+        return list_eq_kind(under, registry);
+    }
+    match trimmed {
         "Int" => Some(ListEqKind::I64),
         "Float" => Some(ListEqKind::F64),
         "Bool" => Some(ListEqKind::I32),
@@ -545,6 +560,8 @@ fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
         other => {
             if registry.record_type_idx(other).is_some() {
                 Some(ListEqKind::RecordEq(other.to_string()))
+            } else if registry.variants.values().any(|v| v.parent == other) {
+                Some(ListEqKind::SumEq(other.to_string()))
             } else {
                 None
             }
@@ -1323,8 +1340,9 @@ fn emit_list_drop(
 
 /// `contains : (List<T>, T) -> Bool`. Walks the cons chain comparing
 /// each head against the needle via the per-T eq instruction picked
-/// by `kind`. For T=String/Char dispatches to `__wasmgc_string_eq`
-/// (`string_eq_fn_idx` must be present in that case).
+/// by `kind`. For T=String dispatches to `__wasmgc_string_eq`; for
+/// T=record / sum, emits inline field-by-field eq (record) or per-
+/// variant `ref.test` cascade (sum).
 fn emit_list_contains(
     canonical: &str,
     registry: &TypeRegistry,
@@ -1346,7 +1364,10 @@ fn emit_list_contains(
     // by-field eq needs `struct.get` against both refs multiple
     // times.
     let mut locals: Vec<(u32, ValType)> = vec![(1, list_ref)];
-    if let ListEqKind::RecordEq(_) = &kind {
+    if matches!(&kind, ListEqKind::RecordEq(_) | ListEqKind::SumEq(_)) {
+        // Record / sum eq does multiple struct.get reads against
+        // both head and needle — stash them into scratch locals
+        // (3 = head, 4 = needle).
         locals.push((1, elem_val));
         locals.push((1, elem_val));
     }
@@ -1381,6 +1402,26 @@ fn emit_list_contains(
                 string_eq_fn_idx,
             )?;
         }
+        ListEqKind::SumEq(parent_name) => {
+            // Same scratch dance as RecordEq — both ref.test and
+            // ref.cast want repeated access to head + needle.
+            f.instruction(&Instruction::LocalGet(2));
+            f.instruction(&Instruction::StructGet {
+                struct_type_index: list_idx,
+                field_index: 0,
+            });
+            f.instruction(&Instruction::LocalSet(3));
+            f.instruction(&Instruction::LocalGet(1));
+            f.instruction(&Instruction::LocalSet(4));
+            emit_sum_eq_inline(
+                &mut f,
+                parent_name,
+                registry,
+                3,
+                4,
+                string_eq_fn_idx,
+            )?;
+        }
         _ => {
             f.instruction(&Instruction::LocalGet(2));
             f.instruction(&Instruction::StructGet {
@@ -1399,7 +1440,7 @@ fn emit_list_contains(
                     ))?;
                     f.instruction(&Instruction::Call(eq_fn))
                 }
-                ListEqKind::RecordEq(_) => unreachable!(),
+                ListEqKind::RecordEq(_) | ListEqKind::SumEq(_) => unreachable!(),
             };
         }
     }
@@ -1490,6 +1531,104 @@ fn emit_record_eq_inline(
             f.instruction(&Instruction::I32And);
         }
     }
+    Ok(())
+}
+
+/// Inline sum-type eq for two values held in scratch locals. For
+/// each constructor variant of `parent_name`, test whether both head
+/// and needle have that concrete type. If both: cast + field-by-
+/// field eq, push result. If only one: push 0 (different variants).
+/// Final i32 on stack: 1 = equal, 0 = different.
+fn emit_sum_eq_inline(
+    f: &mut Function,
+    parent_name: &str,
+    registry: &TypeRegistry,
+    head_local: u32,
+    needle_local: u32,
+    string_eq_fn_idx: Option<u32>,
+) -> Result<(), WasmGcError> {
+    // Collect all variants of this sum (use a stable order — names
+    // sorted ascending — so two compiler runs produce identical wasm).
+    let mut variants: Vec<(String, super::types::VariantInfo)> = registry
+        .variants
+        .iter()
+        .filter(|(_, v)| v.parent == parent_name)
+        .map(|(n, v)| (n.clone(), v.clone()))
+        .collect();
+    variants.sort_by(|a, b| a.0.cmp(&b.0));
+    if variants.is_empty() {
+        return Err(WasmGcError::Validation(format!(
+            "List.contains: sum type `{parent_name}` has no variants"
+        )));
+    }
+    // The whole cascade lives inside an `(block (result i32))` so
+    // each per-variant arm can `br` out with its own i32 verdict.
+    f.instruction(&Instruction::Block(BlockType::Result(ValType::I32)));
+    for (_v_name, info) in &variants {
+        let v_idx = info.type_idx;
+        let v_heap = wasm_encoder::HeapType::Concrete(v_idx);
+        // if ref.test V head:
+        f.instruction(&Instruction::LocalGet(head_local));
+        f.instruction(&Instruction::RefTestNonNull(v_heap));
+        f.instruction(&Instruction::If(BlockType::Empty));
+        // if ref.test V needle:
+        f.instruction(&Instruction::LocalGet(needle_local));
+        f.instruction(&Instruction::RefTestNonNull(v_heap));
+        f.instruction(&Instruction::If(BlockType::Empty));
+        // both V — compare fields. If no fields, push 1.
+        if info.fields.is_empty() {
+            f.instruction(&Instruction::I32Const(1));
+        } else {
+            for (i, field_ty) in info.fields.iter().enumerate() {
+                f.instruction(&Instruction::LocalGet(head_local));
+                f.instruction(&Instruction::RefCastNonNull(v_heap));
+                f.instruction(&Instruction::StructGet {
+                    struct_type_index: v_idx,
+                    field_index: i as u32,
+                });
+                f.instruction(&Instruction::LocalGet(needle_local));
+                f.instruction(&Instruction::RefCastNonNull(v_heap));
+                f.instruction(&Instruction::StructGet {
+                    struct_type_index: v_idx,
+                    field_index: i as u32,
+                });
+                match field_ty.trim() {
+                    "Int" => f.instruction(&Instruction::I64Eq),
+                    "Bool" => f.instruction(&Instruction::I32Eq),
+                    "Float" => f.instruction(&Instruction::F64Eq),
+                    "String" => {
+                        let eq_fn = string_eq_fn_idx.ok_or(WasmGcError::Validation(
+                            "List.contains sum field of String type needs \
+                             __wasmgc_string_eq registered"
+                                .into(),
+                        ))?;
+                        f.instruction(&Instruction::Call(eq_fn))
+                    }
+                    _ => {
+                        return Err(WasmGcError::Unimplemented(
+                            "phase 4 — sum-variant field type in List.contains \
+                             not in {Int, Float, Bool, String}",
+                        ));
+                    }
+                };
+                if i > 0 {
+                    f.instruction(&Instruction::I32And);
+                }
+            }
+        }
+        f.instruction(&Instruction::Br(2)); // out of outer Block(result i32)
+        f.instruction(&Instruction::Else);
+        // head V, needle != V → different variants → false
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::Br(2));
+        f.instruction(&Instruction::End);
+        f.instruction(&Instruction::End);
+    }
+    // No variant matched head — exhaustiveness should make this
+    // unreachable, but emit a defensive `0` so the block produces a
+    // well-typed i32 either way.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::End); // outer block result
     Ok(())
 }
 
