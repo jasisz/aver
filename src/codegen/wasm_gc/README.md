@@ -21,6 +21,15 @@ The reason wasm-gc doesn't ship the sidecar mode yet: most of the helpers are **
 
 Practical proposal: leave `--target wasm-gc` inline-only for now (matches the dominant deploy story), and design `--target edge-wasm-gc` against a fixed monomorphic menu later when there's a concrete consumer (the playground, probably). Memory entry `project_wasm_gc_multimodule.md` captures the related Component Model question.
 
+**Why we don't do "wasm-gc with legacy ABI" as a third mode.** It's tempting: emit `Request.method()` etc. with the legacy `(i32 ptr, i32 len)` signatures so the existing `tools/edge/dist/worker.js` (~490 lines, debugged, JSPI-aware) runs both backends unchanged. The reasons against:
+
+- Per-call LM round-trip per String I/O — every `Request.*` / `Response.*` crossing has to write/read an OBJ_STRING (8-byte header + bytes) into a transport buffer, plus an `array.new_default $string` + per-byte loop to land it in the wasm-gc carrier. Cost is small absolute (~µs), but it taxes every call on a path the native ABI does in one ref-pass.
+- The compiler grows a dual emit path for every effect — every new effect lands twice, every per-instantiation helper needs both shapes. Maintenance debt scales with the surface, not with the deploy story.
+- The "drop-in worker.js" gain is illusory anyway. Even with matching `(ptr, len)` signatures, the host has to know how strings are represented inside the wasm module. wasm-gc strings are `(array i8)`; legacy strings are OBJ_STRING with an 8-byte header. The host code that builds / reads them diverges either way.
+- Cheaper to write `tools/edge-gc/worker.js` once (~120 lines, demonstrated working) than to carry dual-ABI emit forever.
+
+So the migration story stays: pick a target, use the matching worker.js. Legacy stays for pre-2024 hosts unchanged; modern targets get `wasm-gc` + `tools/edge-gc/worker.js`. No third mode.
+
 **Where the sidecar story actually pays off: wasip2.** Component Model gives cross-component types and a real linking story instead of MVP wasm's "two modules, hope the imports line up" shape. A wasip2 component can declare `interface aver-runtime { resource map<...>; ... }` and let the host instantiate the helper module once, hand its functions to every guest component on demand. The per-instantiation problem softens because the Component Model lets a guest component say "instantiate `aver-runtime` with K=String, V=Int" and the runtime component does the monomorphisation locally. That's the model where shared runtime starts to make sense again — not MVP wasm sidecars where every type signature has to be globally agreed up front. `project_015_traversal.md` already has wasip2 on the parallel track; pairing it with `--target edge-wasm-gc` would land both stories together.
 
 ## Why this exists
