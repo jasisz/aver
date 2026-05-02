@@ -1229,6 +1229,23 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
                     if dotted == "List.reverse" && args.len() == 1 {
                         return infer_aver_type(&args[0].node, ctx);
                     }
+                    // T-preserving list ops — return type matches the
+                    // first list arg's inferred type. Without these,
+                    // a chained `List.len(List.concat(a, b))` would
+                    // fall through to the generic "callee must be
+                    // Ident/Resolved" branch and surface as
+                    // Unimplemented even though the lowering itself
+                    // is supported.
+                    if (dotted == "List.concat" && args.len() == 2)
+                        || (dotted == "List.take" && args.len() == 2)
+                        || (dotted == "List.drop" && args.len() == 2)
+                    {
+                        return infer_aver_type(&args[0].node, ctx);
+                    }
+                    // Map.remove(m, k) -> Map<K,V> — same shape as set.
+                    if dotted == "Map.remove" && args.len() == 2 {
+                        return infer_aver_type(&args[0].node, ctx);
+                    }
                     // Vector.fromList(list: List<T>) -> Vector<T>
                     if dotted == "Vector.fromList" && args.len() == 1 {
                         let list_ty = infer_aver_type(&args[0].node, ctx)?;
@@ -2166,6 +2183,18 @@ fn emit_expr(
                 && field == "None"
             {
                 emit_option_constructor(func, None, Some(ctx.return_type), slots, ctx)?;
+            } else if let Expr::Ident(parent) = &obj.node
+                && let Some(info) = ctx.registry.variant(field).cloned()
+                && info.parent == *parent
+                && info.fields.is_empty()
+            {
+                // `Tag.Red` etc. — Attr access on a user-defined sum
+                // type's name resolves to a nullary variant constructor.
+                // The FnCall path already does this for `Tag.Red()`;
+                // mirror it for the bare-attr form so the variant can
+                // be used in any value position (Map K, fn arg, return
+                // expr) without a trailing `()`.
+                emit_constructor_with_args(func, &info, &[], slots, ctx)?;
             } else {
                 emit_attr_get(func, obj, field, slots, ctx)?;
             }

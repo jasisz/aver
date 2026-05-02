@@ -166,14 +166,6 @@ fn main() -> Int
     );
 }
 
-/// Currently fails: `wasm-gc compile failed: Unimplemented("phase 3b
-/// — exotic callee shape (chained Attr, lambda)")`. Aver source is
-/// shape-legal under `--target wasm`. The wasm-gc backend rejects
-/// `List.concat(lhs(), rhs())` (a builtin Attr callee whose first arg
-/// is itself a fn call returning the list). Keep the test in tree as
-/// the regression target; un-ignore once the chained-Attr emit path
-/// in `body.rs` lands. See PR #14 review for the full inventory.
-#[ignore = "wasm-gc backend gap: builtin Attr callee with chained-call first arg"]
 #[test]
 fn list_int_concat_len() {
     assert_eq!(
@@ -241,10 +233,6 @@ fn main() -> Int
     );
 }
 
-/// Currently fails with the same chained-Attr `Unimplemented` as
-/// `list_int_concat_len`. `List.take(dropped(), 3)` and
-/// `List.drop(build(), 1)` both hit it. Tracked in PR #14 review.
-#[ignore = "wasm-gc backend gap: builtin Attr callee with chained-call first arg"]
 #[test]
 fn list_int_take_drop() {
     assert_eq!(
@@ -352,11 +340,6 @@ fn main() -> Int
     );
 }
 
-/// Currently fails: `Map.remove(seeded(), "k")` triggers the same
-/// chained-Attr `Unimplemented` as the List.concat / List.take cases.
-/// The Map<String,Int> shape itself works (other map tests pass) — the
-/// gap is specifically `Map.remove` with a fn-call first arg.
-#[ignore = "wasm-gc backend gap: builtin Attr callee with chained-call first arg"]
 #[test]
 fn map_remove_then_get_returns_default() {
     assert_eq!(
@@ -449,12 +432,6 @@ fn main() -> Int
     );
 }
 
-/// Currently fails: `Tag.Red` (Attr access on a user-defined sum-type
-/// name) emits `Unimplemented("phase 3b — Attr on non-Resolved obj
-/// (chained access)")`. Built-in sum types (Option.Some, Result.Ok)
-/// work because the parser treats them as known constructors; user
-/// sums need the same Attr→Constructor lowering. PR #14 review item.
-#[ignore = "wasm-gc backend gap: Attr access on user-defined sum type name"]
 #[test]
 fn map_sum_key_get() {
     assert_eq!(
