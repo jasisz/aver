@@ -34,6 +34,23 @@ use super::types::TypeRegistry;
 pub(super) struct ListOps {
     pub(super) len: u32,
     pub(super) reverse: u32,
+    pub(super) concat: u32,
+    pub(super) take: u32,
+    pub(super) drop: u32,
+    /// Per-T equality probe. `None` for T types we can't compare
+    /// natively (records, sums, nested generics) — call sites surface a
+    /// clear error in that case rather than silently emit garbage.
+    pub(super) contains: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct ListTypeIdx {
+    pub(super) len: u32,
+    pub(super) reverse: u32,
+    pub(super) concat: u32,
+    pub(super) take: u32,
+    pub(super) drop: u32,
+    pub(super) contains: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -52,8 +69,10 @@ pub(super) struct ListHelperRegistry {
     /// `List<T>` canonical → its method indices.
     list_ops: HashMap<String, ListOps>,
     list_order: Vec<String>,
-    /// (len_type_idx, reverse_type_idx)
-    list_type_indices: HashMap<String, (u32, u32)>,
+    /// Per-T type indices for the helpers in `ListOps`. The
+    /// `contains` slot is `None` exactly when `ListOps::contains` is
+    /// `None` (T isn't natively eq-able).
+    list_type_indices: HashMap<String, ListTypeIdx>,
 
     /// `List<T>` canonical → vec-from-list fn idx (paired with the
     /// `Vector<T>` of the same `T` discovered in the registry).
@@ -75,7 +94,9 @@ impl ListHelperRegistry {
         next_wasm_fn_idx: &mut u32,
         next_type_idx: &mut u32,
     ) -> Result<(), WasmGcError> {
-        // Per-`List<T>` len + reverse.
+        // Per-`List<T>` helpers. `len + reverse` always; `concat +
+        // take + drop` always (they're T-agnostic over the cons-cell
+        // shape); `contains` only when `T` is natively eq-able.
         for canonical in list_canonicals {
             if self.list_ops.contains_key(canonical) {
                 continue;
@@ -84,19 +105,64 @@ impl ListHelperRegistry {
             *next_type_idx += 1;
             let rev_type = *next_type_idx;
             *next_type_idx += 1;
+            let concat_type = *next_type_idx;
+            *next_type_idx += 1;
+            let take_type = *next_type_idx;
+            *next_type_idx += 1;
+            let drop_type = *next_type_idx;
+            *next_type_idx += 1;
+            let elem = TypeRegistry::list_element_type(canonical).ok_or(
+                WasmGcError::Validation(format!(
+                    "list canonical `{canonical}` has no parsable element type"
+                )),
+            )?;
+            let contains_eq = list_eq_kind(elem.trim());
+            let contains_type = if contains_eq.is_some() {
+                let t = *next_type_idx;
+                *next_type_idx += 1;
+                Some(t)
+            } else {
+                None
+            };
             let len_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
             let rev_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
+            let concat_fn = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
+            let take_fn = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
+            let drop_fn = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
+            let contains_fn = if contains_type.is_some() {
+                let f = *next_wasm_fn_idx;
+                *next_wasm_fn_idx += 1;
+                Some(f)
+            } else {
+                None
+            };
             self.list_ops.insert(
                 canonical.clone(),
                 ListOps {
                     len: len_fn,
                     reverse: rev_fn,
+                    concat: concat_fn,
+                    take: take_fn,
+                    drop: drop_fn,
+                    contains: contains_fn,
                 },
             );
-            self.list_type_indices
-                .insert(canonical.clone(), (len_type, rev_type));
+            self.list_type_indices.insert(
+                canonical.clone(),
+                ListTypeIdx {
+                    len: len_type,
+                    reverse: rev_type,
+                    concat: concat_type,
+                    take: take_type,
+                    drop: drop_type,
+                    contains: contains_type,
+                },
+            );
             self.list_order.push(canonical.clone());
         }
 
@@ -172,6 +238,23 @@ impl ListHelperRegistry {
             });
             types.ty().function([list_ref], [ValType::I64]); // len
             types.ty().function([list_ref], [list_ref]); // reverse
+            // concat : (List<T>, List<T>) -> List<T>
+            types.ty().function([list_ref, list_ref], [list_ref]);
+            // take : (List<T>, Int) -> List<T>
+            types.ty().function([list_ref, ValType::I64], [list_ref]);
+            // drop : (List<T>, Int) -> List<T>
+            types.ty().function([list_ref, ValType::I64], [list_ref]);
+            // contains : (List<T>, T) -> Bool — element value type comes
+            // from the registry's `aver_to_wasm` for T. Skipped when T
+            // isn't natively eq-able (records, sums, nested generics).
+            let elem = TypeRegistry::list_element_type(canonical).unwrap();
+            if list_eq_kind(elem.trim()).is_some() {
+                let elem_val = super::types::aver_to_wasm(elem.trim(), Some(registry))?
+                    .ok_or(WasmGcError::Validation(format!(
+                        "list element type `{elem}` has no wasm representation"
+                    )))?;
+                types.ty().function([list_ref, elem_val], [ValType::I32]);
+            }
         }
         for canonical in &self.vfl_order {
             let list_idx = registry
@@ -226,9 +309,15 @@ impl ListHelperRegistry {
         funcs: &mut wasm_encoder::FunctionSection,
     ) {
         for canonical in &self.list_order {
-            let (len_t, rev_t) = self.list_type_indices[canonical];
-            funcs.function(len_t);
-            funcs.function(rev_t);
+            let idx = self.list_type_indices[canonical];
+            funcs.function(idx.len);
+            funcs.function(idx.reverse);
+            funcs.function(idx.concat);
+            funcs.function(idx.take);
+            funcs.function(idx.drop);
+            if let Some(t) = idx.contains {
+                funcs.function(t);
+            }
         }
         for canonical in &self.vfl_order {
             let t = self.vfl_type_indices[canonical];
@@ -244,10 +333,20 @@ impl ListHelperRegistry {
         &self,
         codes: &mut CodeSection,
         registry: &TypeRegistry,
+        string_eq_fn_idx: Option<u32>,
     ) -> Result<(), WasmGcError> {
         for canonical in &self.list_order {
             codes.function(&emit_list_len(canonical, registry)?);
             codes.function(&emit_list_reverse(canonical, registry)?);
+            let ops = self.list_ops[canonical];
+            codes.function(&emit_list_concat(canonical, registry, ops.reverse)?);
+            codes.function(&emit_list_take(canonical, registry, ops.reverse)?);
+            codes.function(&emit_list_drop(canonical, registry)?);
+            if ops.contains.is_some() {
+                let elem = TypeRegistry::list_element_type(canonical).unwrap();
+                let kind = list_eq_kind(elem.trim()).unwrap();
+                codes.function(&emit_list_contains(canonical, registry, kind, string_eq_fn_idx)?);
+            }
         }
         for canonical in &self.vfl_order {
             codes.function(&emit_vec_from_list(canonical, registry)?);
@@ -267,6 +366,35 @@ impl ListHelperRegistry {
             codes.function(&emit_string_join(registry)?);
         }
         Ok(())
+    }
+}
+
+/// What underlying eq compiles to for `T`. Returned variant decides
+/// the instruction sequence emitted in `List.contains`. `None` means
+/// the registry won't allocate a `contains` slot for this `List<T>`,
+/// and any call site that hits one surfaces a clear error.
+#[derive(Debug, Clone, Copy)]
+enum ListEqKind {
+    /// `i64.eq` — Int.
+    I64,
+    /// `f64.eq` — Float (bit-exact compare; matches `==` in Aver
+    /// semantics, NaN ≠ NaN like everywhere else).
+    F64,
+    /// `i32.eq` — Bool.
+    I32,
+    /// String byte-array equality via the `__wasmgc_string_eq`
+    /// builtin. Carries that builtin's wasm fn idx so the helper
+    /// emit can `call $eq`.
+    StringEq,
+}
+
+fn list_eq_kind(elem: &str) -> Option<ListEqKind> {
+    match elem.trim() {
+        "Int" => Some(ListEqKind::I64),
+        "Float" => Some(ListEqKind::F64),
+        "Bool" => Some(ListEqKind::I32),
+        "String" | "Char" => Some(ListEqKind::StringEq),
+        _ => None,
     }
 }
 
@@ -867,6 +995,243 @@ fn emit_string_join(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     f.instruction(&Instruction::End);
 
     f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `concat : (List<T>, List<T>) -> List<T>`. Builds `reverse(a)`,
+/// then walks it prepending onto `b`. Two passes (reverse + cons),
+/// O(len(a)). The trailing `b` is shared structurally — no copy.
+fn emit_list_concat(
+    canonical: &str,
+    registry: &TypeRegistry,
+    reverse_fn: u32,
+) -> Result<Function, WasmGcError> {
+    let list_idx = list_idx_of(canonical, registry)?;
+    let list_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(list_idx),
+    });
+    // params: 0=a, 1=b. locals: 2=cur, 3=acc.
+    let mut f = Function::new([
+        (1, list_ref),
+        (1, list_ref),
+    ]);
+    // cur = reverse(a)
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::Call(reverse_fn));
+    f.instruction(&Instruction::LocalSet(2));
+    // acc = b
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalSet(3));
+    // while cur not null: acc = cons(cur.head, acc); cur = cur.tail
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: list_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::StructNew(list_idx));
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: list_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `take : (List<T>, Int) -> List<T>`. Builds the prefix LIFO into an
+/// accumulator then calls `reverse_fn` to flip into source order.
+/// `n <= 0` returns the empty list.
+fn emit_list_take(
+    canonical: &str,
+    registry: &TypeRegistry,
+    reverse_fn: u32,
+) -> Result<Function, WasmGcError> {
+    let list_idx = list_idx_of(canonical, registry)?;
+    let list_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(list_idx),
+    });
+    // params: 0=in, 1=n. locals: 2=cur, 3=acc, 4=i.
+    let mut f = Function::new([
+        (1, list_ref),
+        (1, list_ref),
+        (1, ValType::I64),
+    ]);
+    // cur = in
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalSet(2));
+    // acc = null
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(list_idx)));
+    f.instruction(&Instruction::LocalSet(3));
+    // i = 0
+    f.instruction(&Instruction::I64Const(0));
+    f.instruction(&Instruction::LocalSet(4));
+    // while i < n and cur not null: acc = cons(head, acc); i++; cur = tail
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I64GeS);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: list_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::StructNew(list_idx));
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I64Const(1));
+    f.instruction(&Instruction::I64Add);
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: list_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    // reverse(acc)
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::Call(reverse_fn));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `drop : (List<T>, Int) -> List<T>`. Walks the cons chain `n`
+/// times, returns the remaining tail (shared structurally with the
+/// input). `n <= 0` returns the input unchanged.
+fn emit_list_drop(
+    canonical: &str,
+    registry: &TypeRegistry,
+) -> Result<Function, WasmGcError> {
+    let list_idx = list_idx_of(canonical, registry)?;
+    let list_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(list_idx),
+    });
+    // params: 0=in, 1=n. locals: 2=cur, 3=i.
+    let mut f = Function::new([
+        (1, list_ref),
+        (1, ValType::I64),
+    ]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::I64Const(0));
+    f.instruction(&Instruction::LocalSet(3));
+    // while i < n and cur not null: cur = tail; i++
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I64GeS);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: list_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I64Const(1));
+    f.instruction(&Instruction::I64Add);
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `contains : (List<T>, T) -> Bool`. Walks the cons chain comparing
+/// each head against the needle via the per-T eq instruction picked
+/// by `kind`. For T=String/Char dispatches to `__wasmgc_string_eq`
+/// (`string_eq_fn_idx` must be present in that case).
+fn emit_list_contains(
+    canonical: &str,
+    registry: &TypeRegistry,
+    kind: ListEqKind,
+    string_eq_fn_idx: Option<u32>,
+) -> Result<Function, WasmGcError> {
+    let list_idx = list_idx_of(canonical, registry)?;
+    let list_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(list_idx),
+    });
+    let elem = TypeRegistry::list_element_type(canonical).unwrap();
+    let elem_val = super::types::aver_to_wasm(elem.trim(), Some(registry))?
+        .ok_or(WasmGcError::Validation(format!(
+            "list element type `{elem}` has no wasm representation"
+        )))?;
+    // params: 0=in, 1=needle. locals: 2=cur.
+    let mut f = Function::new([(1, list_ref)]);
+    let _ = elem_val;
+    // cur = in
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::BrIf(1));
+    // compare cur.head == needle
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: list_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::LocalGet(1));
+    match kind {
+        ListEqKind::I64 => f.instruction(&Instruction::I64Eq),
+        ListEqKind::F64 => f.instruction(&Instruction::F64Eq),
+        ListEqKind::I32 => f.instruction(&Instruction::I32Eq),
+        ListEqKind::StringEq => {
+            let eq_fn = string_eq_fn_idx.ok_or(WasmGcError::Validation(
+                "List.contains over String/Char needs __wasmgc_string_eq registered".into(),
+            ))?;
+            f.instruction(&Instruction::Call(eq_fn))
+        }
+    };
+    // if eq → return true
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    // cur = cur.tail
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: list_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::End);
     Ok(f)
 }

@@ -76,6 +76,20 @@ pub(super) fn emit_module(
         }
     }
 
+    // List<String>/List<Char> show up as soon as the program reaches
+    // for `String.split` or any List<String> literal. Their per-T
+    // `contains` helper compares heads via `__wasmgc_string_eq`, so
+    // force-register that builtin if any such list type is in the
+    // registry — keeps slot allocation deterministic regardless of
+    // whether `match` discovery already picked it up.
+    if registry
+        .list_order
+        .iter()
+        .any(|c| c == "List<String>" || c == "List<Char>")
+    {
+        builtin_registry.register(BuiltinName::StringEq);
+    }
+
     if fn_defs.is_empty() {
         return Err(WasmGcError::Validation(
             "module has no fn definitions".into(),
@@ -447,7 +461,8 @@ pub(super) fn emit_module(
     map_helpers.emit_helper_bodies(&mut codes, &registry)?;
 
     // List / Vector.fromList / String.split-join helper bodies.
-    list_helpers.emit_helper_bodies(&mut codes, &registry)?;
+    let string_eq_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::StringEq);
+    list_helpers.emit_helper_bodies(&mut codes, &registry, string_eq_fn_idx)?;
 
     if let Some(hw) = &handler_wrapper {
         let user_handler_wasm_idx = import_count + 1 + (hw.user_handler_idx as u32);

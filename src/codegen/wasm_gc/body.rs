@@ -1492,6 +1492,9 @@ fn sniff_with_prev(
                         "List.reverse" if args.len() == 1 => {
                             return sniff_with_prev(&args[0].node, fd, fn_map, registry, prev);
                         }
+                        "List.concat" | "List.take" | "List.drop" if !args.is_empty() => {
+                            return sniff_with_prev(&args[0].node, fd, fn_map, registry, prev);
+                        }
                         "Vector.fromList" if args.len() == 1 => {
                             let l = sniff_with_prev(&args[0].node, fd, fn_map, registry, prev)?;
                             if let Some(elem) = TypeRegistry::list_element_type(&l) {
@@ -1616,7 +1619,9 @@ fn dotted_return_type(dotted: &str) -> Option<&'static str> {
         "Float.fromString" => "Result<Float,String>",
         "Int.fromString" => "Result<Int,String>",
         "Int.mod" => "Result<Int,String>",
-        // List-typed
+        // List-typed — `List.concat/take/drop` flow through
+        // sniff_with_prev (return type matches arg[0]); only the
+        // T-fixed `String.split` lands here as `List<String>`.
         "String.split" => "List<String>",
         _ => return None,
     })
@@ -1643,6 +1648,11 @@ fn builtin_aver_result_type(dotted: &str) -> &'static str {
         // Returns Bool
         "Bool.and" | "Bool.or" | "Bool.not" | "String.startsWith"
         | "String.endsWith" | "String.contains" | "Map.has" | "List.contains" => "Bool",
+        // List-T-preserving — return type matches arg[0] (List<T>).
+        // `infer_aver_type` reaches into the call args itself for
+        // these, so `builtin_aver_result_type` only sees them as a
+        // generic "List" tag; the concrete T comes from the caller.
+        "List.concat" | "List.take" | "List.drop" => "List<Unknown>",
         // Returns Char
         "Char.fromCode" => "Char",
         // Result-typed parsers
@@ -3427,6 +3437,18 @@ fn emit_dotted_builtin(
         "List.len" | "List.length" if args.len() == 1 => {
             emit_list_op_call(func, &args[0], "len", slots, ctx)
         }
+        "List.concat" if args.len() == 2 => {
+            emit_list_op_call_2(func, &args[0], &args[1], "concat", slots, ctx)
+        }
+        "List.take" if args.len() == 2 => {
+            emit_list_op_call_2(func, &args[0], &args[1], "take", slots, ctx)
+        }
+        "List.drop" if args.len() == 2 => {
+            emit_list_op_call_2(func, &args[0], &args[1], "drop", slots, ctx)
+        }
+        "List.contains" if args.len() == 2 => {
+            emit_list_op_call_2(func, &args[0], &args[1], "contains", slots, ctx)
+        }
         // Vector.fromList(list: List<T>) -> Vector<T>
         "Vector.fromList" if args.len() == 1 => {
             emit_vec_from_list_call(func, &args[0], slots, ctx)
@@ -4178,6 +4200,48 @@ fn emit_list_op_call(
         _ => {
             return Err(WasmGcError::Validation(format!(
                 "emit_list_op_call: unknown op `{op}`"
+            )));
+        }
+    };
+    func.instruction(&Instruction::Call(fn_idx));
+    Ok(())
+}
+
+/// `List.concat(a, b) / take(l, n) / drop(l, n) / contains(l, x)` —
+/// 2-arg per-`List<T>` helpers. The canonical comes from the first
+/// list arg's inferred type. For `contains` over a `T` we can't
+/// natively eq-compare (records, sums) the helper isn't registered
+/// and the call surfaces a clear error.
+fn emit_list_op_call_2(
+    func: &mut Function,
+    list_arg: &Spanned<Expr>,
+    second_arg: &Spanned<Expr>,
+    op: &str,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let list_aver = infer_aver_type(&list_arg.node, ctx)?;
+    let canonical: String = list_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    let ops = ctx
+        .fn_map
+        .list_ops
+        .get(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "List.{op} called but `{canonical}` helper wasn't registered"
+        )))?;
+    emit_expr(func, &list_arg.node, slots, ctx)?;
+    emit_expr(func, &second_arg.node, slots, ctx)?;
+    let fn_idx = match op {
+        "concat" => ops.concat,
+        "take" => ops.take,
+        "drop" => ops.drop,
+        "contains" => ops.contains.ok_or(WasmGcError::Validation(format!(
+            "List.contains over `{canonical}`: element type isn't natively eq-able \
+             (only Int/Float/Bool/String/Char are supported today)"
+        )))?,
+        _ => {
+            return Err(WasmGcError::Validation(format!(
+                "emit_list_op_call_2: unknown op `{op}`"
             )));
         }
     };
