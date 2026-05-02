@@ -95,13 +95,41 @@ impl MapHelperRegistry {
         next_wasm_fn_idx: &mut u32,
         next_type_idx: &mut u32,
     ) -> Result<(), WasmGcError> {
-        // First pass: assign K-keyed helpers (hash, eq) per unique K.
+        // Collect unique K names in the same order Maps appear.
+        // Adds an extra synthetic K="String" up front when any
+        // user-record K transitively has a String field — the
+        // record's hash/eq body delegates to `hash<String>` /
+        // `eq<String>` which therefore must be registered in the
+        // same module even when no `Map<String, V>` is reachable
+        // from the surface code.
+        let mut k_names: Vec<String> = Vec::new();
+        let mut k_seen: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         for canonical in map_canonicals {
             let (k_aver, _) = super::types::parse_map_kv(canonical).ok_or(
                 WasmGcError::Validation(format!(
                     "MapHelperRegistry: cannot parse K, V from `{canonical}`"
                 )),
             )?;
+            // If K is a record whose fields include `String`, ensure
+            // String hash/eq is registered first.
+            if registry.record_type_idx(k_aver).is_some() {
+                let needs_string = registry
+                    .record_fields
+                    .get(k_aver)
+                    .map(|fs| fs.iter().any(|(_, t)| t.trim() == "String"))
+                    .unwrap_or(false);
+                if needs_string && k_seen.insert("String".into()) {
+                    k_names.push("String".into());
+                }
+            }
+            if k_seen.insert(k_aver.to_string()) {
+                k_names.push(k_aver.to_string());
+            }
+        }
+
+        // First pass: assign K-keyed helpers (hash, eq) per unique K.
+        for k_aver in &k_names {
             if !self.key.contains_key(k_aver) {
                 let hash_type_idx = *next_type_idx;
                 *next_type_idx += 1;
@@ -112,14 +140,14 @@ impl MapHelperRegistry {
                 let eq_fn = *next_wasm_fn_idx;
                 *next_wasm_fn_idx += 1;
                 self.key.insert(
-                    k_aver.to_string(),
+                    k_aver.clone(),
                     KeyHelpers { hash: hash_fn, eq: eq_fn },
                 );
                 self.key_type_indices.insert(
-                    k_aver.to_string(),
+                    k_aver.clone(),
                     (hash_type_idx, eq_type_idx),
                 );
-                self.key_order.push(k_aver.to_string());
+                self.key_order.push(k_aver.clone());
             }
         }
 
@@ -155,16 +183,19 @@ impl MapHelperRegistry {
             let pair_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
 
-            // Validate K is supported now (only `String` in phase 3c).
+            // K must be String or a user-defined record. Records use
+            // a field-by-field hash + eq, deduplicated per record name
+            // by `key_order`. `Int` / `Float` / `Bool` keys would need
+            // a different open-addressing layout (occupancy bitmap
+            // instead of `keys[i] == null`), so they're still gated.
             let (k_aver, _) = super::types::parse_map_kv(canonical).ok_or(
                 WasmGcError::Validation(format!("bad map canonical `{canonical}`")),
             )?;
-            if k_aver != "String" {
+            if k_aver != "String" && registry.record_type_idx(k_aver).is_none() {
                 return Err(WasmGcError::Unimplemented(
-                    "phase 3c — Map<K, V> with K != String (need hash + eq for that K)",
+                    "phase 3c — Map<K, V> with K not String / user-record (need different empty-marker scheme for primitive keys)",
                 ));
             }
-            let _ = registry; // touch so the borrow-checker is happy
 
             self.kv.insert(
                 canonical.clone(),
@@ -293,9 +324,10 @@ impl MapHelperRegistry {
         codes: &mut CodeSection,
         registry: &TypeRegistry,
     ) -> Result<(), WasmGcError> {
+        let string_key_helpers = self.key.get("String").copied();
         for k_aver in &self.key_order {
-            codes.function(&emit_hash_for(k_aver, registry)?);
-            codes.function(&emit_eq_for(k_aver, registry)?);
+            codes.function(&emit_hash_for(k_aver, registry, string_key_helpers)?);
+            codes.function(&emit_eq_for(k_aver, registry, string_key_helpers)?);
         }
         for canonical in &self.kv_order {
             let (k_aver, _) = super::types::parse_map_kv(canonical).ok_or(
@@ -317,24 +349,39 @@ impl MapHelperRegistry {
     }
 }
 
-/// `hash : (K) -> i32`. Phase 3c: only K=String supported.
-fn emit_hash_for(k_aver: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
-    match k_aver {
-        "String" => emit_hash_string(registry),
-        other => Err(WasmGcError::Unimplemented(match other {
-            "Int" => "phase 3c — hash for K=Int (need separate empty-marker scheme)",
-            _ => "phase 3c — hash for non-String K",
-        })),
+/// `hash : (K) -> i32`. K can be `String` (DJB2 over the bytes) or
+/// any user-defined record (field-by-field combine, delegating to
+/// the per-K helper for String fields).
+fn emit_hash_for(
+    k_aver: &str,
+    registry: &TypeRegistry,
+    string_key_helpers: Option<KeyHelpers>,
+) -> Result<Function, WasmGcError> {
+    if k_aver == "String" {
+        return emit_hash_string(registry);
     }
+    if registry.record_type_idx(k_aver).is_some() {
+        return emit_hash_record(k_aver, registry, string_key_helpers);
+    }
+    Err(WasmGcError::Unimplemented(
+        "phase 3c — hash for primitive K (Int/Float/Bool need a different empty-marker scheme)",
+    ))
 }
 
-fn emit_eq_for(k_aver: &str, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
-    match k_aver {
-        "String" => emit_eq_string(registry),
-        _ => Err(WasmGcError::Unimplemented(
-            "phase 3c — eq for non-String K",
-        )),
+fn emit_eq_for(
+    k_aver: &str,
+    registry: &TypeRegistry,
+    string_key_helpers: Option<KeyHelpers>,
+) -> Result<Function, WasmGcError> {
+    if k_aver == "String" {
+        return emit_eq_string(registry);
     }
+    if registry.record_type_idx(k_aver).is_some() {
+        return emit_eq_record(k_aver, registry, string_key_helpers);
+    }
+    Err(WasmGcError::Unimplemented(
+        "phase 3c — eq for primitive K (Int/Float/Bool need a different empty-marker scheme)",
+    ))
 }
 
 fn string_idx(registry: &TypeRegistry) -> Result<u32, WasmGcError> {
@@ -983,4 +1030,136 @@ fn emit_default_value_for(f: &mut Function, ty: ValType) {
             f.instruction(&Instruction::V128Const(0));
         }
     }
+}
+
+/// Field-by-field hash combine for a user record. Iterates each
+/// field, picks an inline hash strategy from the field's Aver type,
+/// and folds with `h = h * 33 + field_hash`. String fields delegate
+/// to the per-K String hash helper (force-registered when any
+/// record key transitively uses one). Field types we can't hash
+/// natively (lists, vectors, nested records, sums) surface as
+/// Unimplemented; widening that set is a follow-up.
+fn emit_hash_record(
+    record_name: &str,
+    registry: &TypeRegistry,
+    string_key_helpers: Option<KeyHelpers>,
+) -> Result<Function, WasmGcError> {
+    let record_idx = registry.record_type_idx(record_name).ok_or(
+        WasmGcError::Validation(format!("hash_record: `{record_name}` not registered")),
+    )?;
+    let fields = registry
+        .record_fields
+        .get(record_name)
+        .ok_or(WasmGcError::Validation(format!(
+            "hash_record: `{record_name}` has no field info"
+        )))?;
+    let mut f = Function::new([(1, ValType::I32) /* h */]);
+    // h = 5381
+    f.instruction(&Instruction::I32Const(5381));
+    f.instruction(&Instruction::LocalSet(1));
+    for (i, (_field_name, field_ty)) in fields.iter().enumerate() {
+        // h = h * 33 (h<<5 + h)
+        f.instruction(&Instruction::LocalGet(1));
+        f.instruction(&Instruction::I32Const(5));
+        f.instruction(&Instruction::I32Shl);
+        f.instruction(&Instruction::LocalGet(1));
+        f.instruction(&Instruction::I32Add);
+        // push struct.get of field
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: record_idx,
+            field_index: i as u32,
+        });
+        // emit field hash → i32
+        match field_ty.trim() {
+            "Int" => {
+                // i64 → low 32 bits
+                f.instruction(&Instruction::I32WrapI64);
+            }
+            "Bool" => {
+                // already i32
+            }
+            "Float" => {
+                // f64 bit pattern → low 32 bits
+                f.instruction(&Instruction::I64ReinterpretF64);
+                f.instruction(&Instruction::I32WrapI64);
+            }
+            "String" => {
+                let helpers = string_key_helpers.ok_or(WasmGcError::Validation(
+                    "hash_record: String field needs String key helpers but they're not registered"
+                        .into(),
+                ))?;
+                f.instruction(&Instruction::Call(helpers.hash));
+            }
+            other => {
+                return Err(WasmGcError::Unimplemented(match other {
+                    "Char" => "phase 3c — Char field in record key (treat as 1-byte string)",
+                    _ => "phase 3c — record-key field type not in {Int, Float, Bool, String}",
+                }));
+            }
+        }
+        f.instruction(&Instruction::I32Add);
+        f.instruction(&Instruction::LocalSet(1));
+    }
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// Field-by-field equality for a user record. Returns 1 iff every
+/// field-pair tests equal under its type's natural compare. Short-
+/// circuits on first mismatch via `if … return 0`.
+fn emit_eq_record(
+    record_name: &str,
+    registry: &TypeRegistry,
+    string_key_helpers: Option<KeyHelpers>,
+) -> Result<Function, WasmGcError> {
+    let record_idx = registry.record_type_idx(record_name).ok_or(
+        WasmGcError::Validation(format!("eq_record: `{record_name}` not registered")),
+    )?;
+    let fields = registry
+        .record_fields
+        .get(record_name)
+        .ok_or(WasmGcError::Validation(format!(
+            "eq_record: `{record_name}` has no field info"
+        )))?;
+    let mut f = Function::new([]);
+    for (i, (_field_name, field_ty)) in fields.iter().enumerate() {
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: record_idx,
+            field_index: i as u32,
+        });
+        f.instruction(&Instruction::LocalGet(1));
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: record_idx,
+            field_index: i as u32,
+        });
+        match field_ty.trim() {
+            "Int" => f.instruction(&Instruction::I64Eq),
+            "Bool" => f.instruction(&Instruction::I32Eq),
+            "Float" => f.instruction(&Instruction::F64Eq),
+            "String" => {
+                let helpers = string_key_helpers.ok_or(WasmGcError::Validation(
+                    "eq_record: String field needs String key helpers but they're not registered"
+                        .into(),
+                ))?;
+                f.instruction(&Instruction::Call(helpers.eq))
+            }
+            other => {
+                return Err(WasmGcError::Unimplemented(match other {
+                    "Char" => "phase 3c — Char field in record key (treat as 1-byte string)",
+                    _ => "phase 3c — record-key field type not in {Int, Float, Bool, String}",
+                }));
+            }
+        };
+        f.instruction(&Instruction::I32Eqz);
+        f.instruction(&Instruction::If(BlockType::Empty));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::Return);
+        f.instruction(&Instruction::End);
+    }
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::End);
+    Ok(f)
 }

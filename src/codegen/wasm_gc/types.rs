@@ -96,6 +96,12 @@ pub(super) struct TypeRegistry {
     /// $string $segment_idx` with offset=0, size=len.
     pub(super) string_literals: Vec<Vec<u8>>,
     pub(super) string_literal_idx: HashMap<Vec<u8>, u32>,
+    /// Type names that must NOT be erased to their underlying
+    /// primitive by the newtype optimisation. Populated with every
+    /// record/variant used as a `Map<K, *>` key — Map's open-
+    /// addressing layout uses `keys[i] == null` as the empty marker,
+    /// which only works when keys are emitted as ref values.
+    pub(super) non_newtypable_keys: std::collections::HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -496,6 +502,23 @@ impl TypeRegistry {
             }
         }
 
+        // Mark every record/variant used as a `Map<K, *>` key as
+        // non-newtypable so it stays a struct ref in the type
+        // section — the open-addressing layout's `keys[i] == null`
+        // empty marker requires that.
+        let mut non_newtypable_keys: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        for canonical in map_order.iter() {
+            if let Some((k, _)) = parse_map_kv(canonical) {
+                let k_trim = k.trim();
+                if record_fields.contains_key(k_trim)
+                    || variants.values().any(|v| v.parent == k_trim)
+                {
+                    non_newtypable_keys.insert(k_trim.to_string());
+                }
+            }
+        }
+
         Self {
             records,
             variants,
@@ -514,6 +537,7 @@ impl TypeRegistry {
             string_array_type_idx,
             string_literals,
             string_literal_idx,
+            non_newtypable_keys,
         }
     }
 
@@ -616,6 +640,15 @@ impl TypeRegistry {
     /// to the underlying `T` value with no `struct.get`. Same trick
     /// rustc uses for `struct UserId(u64)`.
     pub(super) fn newtype_underlying(&self, type_name: &str) -> Option<&str> {
+        // Suppress newtype optimisation when the type is used as a
+        // `Map<K, *>` key. Map's open-addressing layout uses
+        // `keys[i] == null` as the empty marker, which only works
+        // when keys land in `keys` as ref values — newtyping a key
+        // record down to its underlying primitive (e.g. i64) would
+        // strip the ref and break the marker.
+        if self.non_newtypable_keys.contains(type_name) {
+            return None;
+        }
         // Record case: exactly one field, primitive type.
         if let Some(fields) = self.record_fields.get(type_name)
             && fields.len() == 1
