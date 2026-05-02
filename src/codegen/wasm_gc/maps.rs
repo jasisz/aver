@@ -466,15 +466,28 @@ impl MapHelperRegistry {
         &self,
         codes: &mut CodeSection,
         registry: &TypeRegistry,
+        list_eq_hash: &HashMap<String, (u32, u32)>,
     ) -> Result<(), WasmGcError> {
         let string_key_helpers = self.key.get("String").copied();
         // Snapshot every K's helpers — record hash/eq dispatch
-        // needs to call helpers for nested record fields.
-        let all_key_helpers: HashMap<String, KeyHelpers> = self
+        // needs to call helpers for nested record fields. Plus
+        // virtual entries for `List<T>` field types so hash/eq
+        // dispatch can call into list_helpers without a
+        // separate cross-module lookup.
+        let mut all_key_helpers: HashMap<String, KeyHelpers> = self
             .key
             .iter()
             .map(|(k, h)| (k.clone(), *h))
             .collect();
+        for (list_canonical, &(eq_fn, hash_fn)) in list_eq_hash {
+            all_key_helpers.insert(
+                list_canonical.clone(),
+                KeyHelpers {
+                    hash: hash_fn,
+                    eq: eq_fn,
+                },
+            );
+        }
         for k_aver in &self.key_order {
             codes.function(&emit_hash_for(
                 k_aver,
@@ -1367,22 +1380,29 @@ fn emit_hash_record(
                 f.instruction(&Instruction::Call(helpers.hash));
             }
             other => {
-                // Nested record field — call its own per-record
-                // hash helper. Nested records are force-registered
-                // as pseudo-K in `assign_slots` so the helpers
-                // exist even without a Map<X, *> reaching them.
-                if registry.record_type_idx(other).is_some() {
-                    let inner = all_key_helpers.get(other).ok_or(
+                // Nested record / List<T> field. Both dispatch via
+                // `all_key_helpers` — records were force-registered
+                // as pseudo-K in `assign_slots`; list canonicals were
+                // injected by `emit_helper_bodies` from list_helpers.
+                let lookup_key = if other.starts_with("List<") {
+                    super::types::normalize_compound(other).to_string()
+                } else {
+                    other.to_string()
+                };
+                if registry.record_type_idx(other).is_some()
+                    || other.starts_with("List<")
+                {
+                    let inner = all_key_helpers.get(&lookup_key).ok_or(
                         WasmGcError::Validation(format!(
-                            "hash_record: nested record `{other}` not registered \
-                             as key helper (assign_slots should have force-registered it)"
+                            "hash_record: field `{other}` has no key helpers \
+                             (record / list T may need force-registration)"
                         )),
                     )?;
                     f.instruction(&Instruction::Call(inner.hash));
                 } else {
                     return Err(WasmGcError::Unimplemented(
                         "phase 3c — record-key field type not in \
-                         {Int, Float, Bool, String, nested record}",
+                         {Int, Float, Bool, String, nested record, List<T>}",
                     ));
                 }
             }
@@ -1437,17 +1457,24 @@ fn emit_eq_record(
                 f.instruction(&Instruction::Call(helpers.eq))
             }
             other => {
-                if registry.record_type_idx(other).is_some() {
-                    let inner = all_key_helpers.get(other).ok_or(
+                let lookup_key = if other.starts_with("List<") {
+                    super::types::normalize_compound(other).to_string()
+                } else {
+                    other.to_string()
+                };
+                if registry.record_type_idx(other).is_some()
+                    || other.starts_with("List<")
+                {
+                    let inner = all_key_helpers.get(&lookup_key).ok_or(
                         WasmGcError::Validation(format!(
-                            "eq_record: nested record `{other}` not registered as key helper"
+                            "eq_record: field `{other}` has no key helpers"
                         )),
                     )?;
                     f.instruction(&Instruction::Call(inner.eq))
                 } else {
                     return Err(WasmGcError::Unimplemented(
                         "phase 3c — record-key field type not in \
-                         {Int, Float, Bool, String, nested record}",
+                         {Int, Float, Bool, String, nested record, List<T>}",
                     ));
                 }
             }

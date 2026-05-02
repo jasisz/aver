@@ -47,6 +47,14 @@ pub(super) struct ListOps {
     /// any scratch local (which would race with the outer literal's
     /// own accumulator). Body is a single `struct.new $list_T`.
     pub(super) cons: u32,
+    /// `eq : (list_T, list_T) -> i32`. Walks both cons chains in
+    /// lockstep — equal heads + equal tails. Same `None`-when-T-
+    /// isn't-eq-able rule as `contains` (records / sums with non-
+    /// trivial fields skip the slot).
+    pub(super) eq: Option<u32>,
+    /// `hash : (list_T) -> i32`. Folds element hashes with DJB2
+    /// `h * 33 + element_hash`. Same `None` rule as `eq`.
+    pub(super) hash: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -58,6 +66,8 @@ pub(super) struct ListTypeIdx {
     pub(super) drop: u32,
     pub(super) contains: Option<u32>,
     pub(super) cons: u32,
+    pub(super) eq: Option<u32>,
+    pub(super) hash: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -149,6 +159,23 @@ impl ListHelperRegistry {
             } else {
                 None
             };
+            // List eq + hash share the same eq-able-T constraint —
+            // both walk element pairs (or single elements) and
+            // dispatch on the per-T eq instruction.
+            let list_eq_type = if contains_eq.is_some() {
+                let t = *next_type_idx;
+                *next_type_idx += 1;
+                Some(t)
+            } else {
+                None
+            };
+            let list_hash_type = if contains_eq.is_some() {
+                let t = *next_type_idx;
+                *next_type_idx += 1;
+                Some(t)
+            } else {
+                None
+            };
             let len_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
             let rev_fn = *next_wasm_fn_idx;
@@ -168,6 +195,20 @@ impl ListHelperRegistry {
             } else {
                 None
             };
+            let list_eq_fn = if list_eq_type.is_some() {
+                let f = *next_wasm_fn_idx;
+                *next_wasm_fn_idx += 1;
+                Some(f)
+            } else {
+                None
+            };
+            let list_hash_fn = if list_hash_type.is_some() {
+                let f = *next_wasm_fn_idx;
+                *next_wasm_fn_idx += 1;
+                Some(f)
+            } else {
+                None
+            };
             self.list_ops.insert(
                 canonical.clone(),
                 ListOps {
@@ -178,6 +219,8 @@ impl ListHelperRegistry {
                     drop: drop_fn,
                     contains: contains_fn,
                     cons: cons_fn,
+                    eq: list_eq_fn,
+                    hash: list_hash_fn,
                 },
             );
             self.list_type_indices.insert(
@@ -190,6 +233,8 @@ impl ListHelperRegistry {
                     drop: drop_type,
                     contains: contains_type,
                     cons: cons_type,
+                    eq: list_eq_type,
+                    hash: list_hash_type,
                 },
             );
             self.list_order.push(canonical.clone());
@@ -335,6 +380,10 @@ impl ListHelperRegistry {
             // isn't natively eq-able (records, sums, nested generics).
             if list_eq_kind(elem.trim(), registry).is_some() {
                 types.ty().function([list_ref, elem_val], [ValType::I32]);
+                // eq : (List<T>, List<T>) -> i32
+                types.ty().function([list_ref, list_ref], [ValType::I32]);
+                // hash : (List<T>) -> i32
+                types.ty().function([list_ref], [ValType::I32]);
             }
         }
         for canonical in &self.vfl_order {
@@ -439,6 +488,12 @@ impl ListHelperRegistry {
             if let Some(t) = idx.contains {
                 funcs.function(t);
             }
+            if let Some(t) = idx.eq {
+                funcs.function(t);
+            }
+            if let Some(t) = idx.hash {
+                funcs.function(t);
+            }
         }
         for canonical in &self.vfl_order {
             let (from_t, to_t) = self.vfl_type_indices[canonical];
@@ -474,7 +529,26 @@ impl ListHelperRegistry {
             if ops.contains.is_some() {
                 let elem = TypeRegistry::list_element_type(canonical).unwrap();
                 let kind = list_eq_kind(elem.trim(), registry).unwrap();
-                codes.function(&emit_list_contains(canonical, registry, kind, string_eq_fn_idx)?);
+                codes.function(&emit_list_contains(
+                    canonical,
+                    registry,
+                    kind.clone(),
+                    string_eq_fn_idx,
+                )?);
+                codes.function(&emit_list_eq(
+                    canonical,
+                    registry,
+                    kind.clone(),
+                    string_eq_fn_idx,
+                    ops.eq.unwrap(),
+                )?);
+                codes.function(&emit_list_hash(
+                    canonical,
+                    registry,
+                    kind,
+                    string_eq_fn_idx,
+                    ops.hash.unwrap(),
+                )?);
             }
         }
         for canonical in &self.vfl_order {
@@ -1822,6 +1896,166 @@ fn emit_list_zip(
     // reverse(acc)
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::Call(reverse_fn));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `eq : (la, lb) -> i32`. Walks both cons chains in lockstep,
+/// compares head pairs with the per-T eq instruction. Self-recursive
+/// via `return_call` so deep lists don't blow the stack. Returns 1
+/// when both lists end at the same step with all heads equal; 0
+/// otherwise. Same `T` constraint as contains — only emitted when T
+/// has a `list_eq_kind`.
+fn emit_list_eq(
+    canonical: &str,
+    registry: &TypeRegistry,
+    kind: ListEqKind,
+    string_eq_fn_idx: Option<u32>,
+    self_fn_idx: u32,
+) -> Result<Function, WasmGcError> {
+    let list_idx = list_idx_of(canonical, registry)?;
+    // params: 0 = la, 1 = lb. No locals — short body.
+    let mut f = Function::new([]);
+    // if la is_null and lb is_null → 1
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    // la is non-null. if lb is null → 0
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    // both non-null. Compare heads:
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: list_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: list_idx,
+        field_index: 0,
+    });
+    match &kind {
+        ListEqKind::I64 => f.instruction(&Instruction::I64Eq),
+        ListEqKind::F64 => f.instruction(&Instruction::F64Eq),
+        ListEqKind::I32 => f.instruction(&Instruction::I32Eq),
+        ListEqKind::StringEq => {
+            let eq_fn = string_eq_fn_idx.ok_or(WasmGcError::Validation(
+                "List eq over String needs __wasmgc_string_eq".into(),
+            ))?;
+            f.instruction(&Instruction::Call(eq_fn))
+        }
+        ListEqKind::RecordEq(_) | ListEqKind::SumEq(_) => {
+            // Same `all_simple` constraint as contains — these
+            // variants don't reach this emit path.
+            unreachable!("emit_list_eq: record/sum element should be filtered upstream")
+        }
+    };
+    // if heads differ → 0
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    // tail-call self with tails
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: list_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: list_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::ReturnCall(self_fn_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `hash : (l) -> i32`. DJB2-style fold: `h = 5381; for elem: h = h
+/// * 33 + element_hash`. Element hash dispatched per `kind`. Same
+/// `T` constraint as eq.
+fn emit_list_hash(
+    canonical: &str,
+    registry: &TypeRegistry,
+    kind: ListEqKind,
+    string_eq_fn_idx: Option<u32>,
+    _self_fn_idx: u32,
+) -> Result<Function, WasmGcError> {
+    let list_idx = list_idx_of(canonical, registry)?;
+    let _ = string_eq_fn_idx;
+    let elem = TypeRegistry::list_element_type(canonical).unwrap();
+    // params: 0=l. locals: 1=cur, 2=h.
+    let list_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(list_idx),
+    });
+    let mut f = Function::new([(1, list_ref), (1, ValType::I32)]);
+    // h = 5381
+    f.instruction(&Instruction::I32Const(5381));
+    f.instruction(&Instruction::LocalSet(2));
+    // cur = l
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::BrIf(1));
+    // h = h * 33 + element_hash(cur.head)
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Const(5));
+    f.instruction(&Instruction::I32Shl);
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: list_idx,
+        field_index: 0,
+    });
+    // Element hash → i32
+    match elem.trim() {
+        "Int" => {
+            f.instruction(&Instruction::I32WrapI64);
+        }
+        "Bool" => {} // already i32
+        "Float" => {
+            f.instruction(&Instruction::I64ReinterpretF64);
+            f.instruction(&Instruction::I32WrapI64);
+        }
+        "String" => {
+            // Inline DJB2 over the (array i8) — short version
+            // that reuses the per-fn locals would need extra
+            // scratch. Cheap fallback: take array length as the
+            // string "hash" — collisions are fine, eq still
+            // disambiguates. Same shape the legacy backend uses
+            // for non-cryptographic mix.
+            f.instruction(&Instruction::ArrayLen);
+        }
+        _ => unreachable!("list hash: kind filtered upstream"),
+    }
+    let _ = kind;
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(2));
+    // cur = cur.tail
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: list_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::End);
     Ok(f)
 }

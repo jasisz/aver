@@ -476,7 +476,17 @@ pub(super) fn emit_module(
     // Map helper bodies (hash, eq, empty, set, get, len per
     // instantiation) — emitted last so their wasm fn indices line up
     // with what `MapHelperRegistry::assign_slots` recorded.
-    map_helpers.emit_helper_bodies(&mut codes, &registry)?;
+    // Snapshot list eq/hash fn idxes so map record-key helpers can
+    // dispatch List<T> field types without a cross-module lookup.
+    let mut list_eq_hash_lookup: HashMap<String, (u32, u32)> = HashMap::new();
+    for canonical in &registry.list_order {
+        if let Some(o) = list_helpers.list_ops_for(canonical)
+            && let (Some(eq_fn), Some(hash_fn)) = (o.eq, o.hash)
+        {
+            list_eq_hash_lookup.insert(canonical.clone(), (eq_fn, hash_fn));
+        }
+    }
+    map_helpers.emit_helper_bodies(&mut codes, &registry, &list_eq_hash_lookup)?;
 
     // List / Vector.fromList / String.split-join helper bodies.
     let string_eq_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::StringEq);
