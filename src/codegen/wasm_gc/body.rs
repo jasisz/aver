@@ -582,11 +582,8 @@ fn infer_expr_wasm_type(
                         return aver_to_wasm(builtin_aver_result_type(&dotted), Some(registry));
                     }
                     if fn_map.effects.contains_key(&dotted) {
-                        // Most effects return Unit, but `Time.unixMs`
-                        // returns `Int`. Special-case the known
-                        // value-returning effects.
-                        if dotted == "Time.unixMs" {
-                            return Ok(Some(ValType::I64));
+                        if let Some(ty) = effect_aver_return_type(&dotted) {
+                            return aver_to_wasm(ty, Some(registry));
                         }
                         return Ok(None);
                     }
@@ -944,10 +941,12 @@ fn wasm_type_of(
                         let aver_ty = builtin_aver_result_type(&dotted);
                         return aver_to_wasm(aver_ty, Some(ctx.registry));
                     }
-                    // Time.unixMs (and analogous value-returning effects).
+                    // Effects: lookup return type via the shared
+                    // `effect_aver_return_type` table (mirrors
+                    // `EffectName::results` in `effects.rs`).
                     if ctx.fn_map.effects.contains_key(&dotted) {
-                        if dotted == "Time.unixMs" {
-                            return Ok(Some(ValType::I64));
+                        if let Some(ty) = effect_aver_return_type(&dotted) {
+                            return aver_to_wasm(ty, Some(ctx.registry));
                         }
                         return Ok(None);
                     }
@@ -1041,10 +1040,9 @@ fn infer_aver_type(expr: &Expr, ctx: &EmitCtx<'_>) -> Result<String, WasmGcError
                         return Ok(builtin_aver_result_type(&dotted).into());
                     }
                     if ctx.fn_map.effects.contains_key(&dotted) {
-                        if dotted == "Time.unixMs" {
-                            return Ok("Int".into());
-                        }
-                        return Ok("Unit".into());
+                        return Ok(effect_aver_return_type(&dotted)
+                            .unwrap_or("Unit")
+                            .into());
                     }
                     if dotted == "Float.fromInt" {
                         return Ok("Float".into());
@@ -1559,6 +1557,34 @@ fn sniff_with_prev(
     }
 }
 
+
+/// Aver return type string for an effect dotted name (`Time.unixMs`
+/// → `"Int"`, `Request.method` → `"String"`, etc.). `None` means
+/// the effect returns Unit. Mirrors the `EffectName::results` table
+/// in `effects.rs` — keep them in sync.
+fn effect_aver_return_type(dotted: &str) -> Option<&'static str> {
+    Some(match dotted {
+        "Time.unixMs" | "Random.int" | "Args._len" | "Args.len" => "Int",
+        "Random.float"
+        | "Float.sin"
+        | "Float.cos"
+        | "Float.atan2"
+        | "Float.pow" => "Float",
+        "Request.method"
+        | "Request.url"
+        | "Request.path"
+        | "Request.query"
+        | "Request.body"
+        | "Request.country"
+        | "Console.readLine"
+        | "Args._get"
+        | "Args.get"
+        | "Time.now"
+        | "Env.get" => "String",
+        "Request.headersLoad" | "Request.headers" => "Map<String,List<String>>",
+        _ => return None,
+    })
+}
 
 /// Aver return type for a stdlib dotted builtin. Used by
 /// `infer_aver_type` to decide a `Type.method(args)` call's type

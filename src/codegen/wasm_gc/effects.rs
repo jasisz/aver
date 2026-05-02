@@ -70,6 +70,29 @@ pub(super) enum EffectName {
     /// `(name: String, value: String) -> Unit` — no-op on
     /// Workers (env is read-only).
     EnvSet,
+    // ── CLI / runtime side effects covered by the legacy
+    //    `abi.rs` table; ported one-for-one so wasm-gc has the
+    //    same surface area.
+    /// `() -> String` — read one line from stdin.
+    ConsoleReadLine,
+    /// `() -> Int` — number of CLI args.
+    ArgsLen,
+    /// `(i: Int) -> String` — i-th CLI arg.
+    ArgsGet,
+    /// `() -> Float` — uniform [0, 1).
+    RandomFloat,
+    /// `(lo: Int, hi: Int) -> Int` — uniform inclusive on both ends.
+    RandomInt,
+    /// `(ms: Int) -> Unit` — block (or no-op when the host can't).
+    TimeSleep,
+    /// `() -> String` — RFC 3339 timestamp from the host clock.
+    TimeNow,
+    /// libm bridges — wasm has no native sin/cos/atan2/pow, so the
+    /// host (Math.sin / `f64::sin`) supplies them.
+    FloatSin,
+    FloatCos,
+    FloatAtan2,
+    FloatPow,
 }
 
 impl EffectName {
@@ -91,6 +114,17 @@ impl EffectName {
             "Http.clearRequestHeaders" => Some(Self::HttpClearRequestHeaders),
             "Env.get" => Some(Self::EnvGet),
             "Env.set" => Some(Self::EnvSet),
+            "Console.readLine" => Some(Self::ConsoleReadLine),
+            "Args._len" | "Args.len" => Some(Self::ArgsLen),
+            "Args._get" | "Args.get" => Some(Self::ArgsGet),
+            "Random.float" => Some(Self::RandomFloat),
+            "Random.int" => Some(Self::RandomInt),
+            "Time.sleep" => Some(Self::TimeSleep),
+            "Time.now" => Some(Self::TimeNow),
+            "Float.sin" => Some(Self::FloatSin),
+            "Float.cos" => Some(Self::FloatCos),
+            "Float.atan2" => Some(Self::FloatAtan2),
+            "Float.pow" => Some(Self::FloatPow),
             _ => None,
         }
     }
@@ -113,6 +147,17 @@ impl EffectName {
             Self::HttpClearRequestHeaders => "Http.clearRequestHeaders",
             Self::EnvGet => "Env.get",
             Self::EnvSet => "Env.set",
+            Self::ConsoleReadLine => "Console.readLine",
+            Self::ArgsLen => "Args._len",
+            Self::ArgsGet => "Args._get",
+            Self::RandomFloat => "Random.float",
+            Self::RandomInt => "Random.int",
+            Self::TimeSleep => "Time.sleep",
+            Self::TimeNow => "Time.now",
+            Self::FloatSin => "Float.sin",
+            Self::FloatCos => "Float.cos",
+            Self::FloatAtan2 => "Float.atan2",
+            Self::FloatPow => "Float.pow",
         }
     }
 
@@ -136,6 +181,17 @@ impl EffectName {
             Self::HttpClearRequestHeaders => ("aver", "http_clear_request_headers"),
             Self::EnvGet => ("aver", "env_get"),
             Self::EnvSet => ("aver", "env_set"),
+            Self::ConsoleReadLine => ("aver", "console_read_line"),
+            Self::ArgsLen => ("aver", "args_len"),
+            Self::ArgsGet => ("aver", "args_get"),
+            Self::RandomFloat => ("aver", "random_float"),
+            Self::RandomInt => ("aver", "random_int"),
+            Self::TimeSleep => ("aver", "time_sleep"),
+            Self::TimeNow => ("aver", "time_now"),
+            Self::FloatSin => ("aver", "float_sin"),
+            Self::FloatCos => ("aver", "float_cos"),
+            Self::FloatAtan2 => ("aver", "float_atan2"),
+            Self::FloatPow => ("aver", "float_pow"),
         }
     }
 
@@ -168,6 +224,14 @@ impl EffectName {
             Self::HttpAddRequestHeader => Ok(vec![any_ref_ty(), any_ref_ty()]),
             Self::EnvGet => Ok(vec![any_ref_ty()]),
             Self::EnvSet => Ok(vec![any_ref_ty(), any_ref_ty()]),
+            Self::ConsoleReadLine
+            | Self::ArgsLen
+            | Self::RandomFloat
+            | Self::TimeNow => Ok(vec![]),
+            Self::ArgsGet | Self::TimeSleep => Ok(vec![ValType::I64]),
+            Self::RandomInt => Ok(vec![ValType::I64, ValType::I64]),
+            Self::FloatSin | Self::FloatCos => Ok(vec![ValType::F64]),
+            Self::FloatAtan2 | Self::FloatPow => Ok(vec![ValType::F64, ValType::F64]),
         }
     }
 
@@ -192,6 +256,16 @@ impl EffectName {
                 map_string_list_string_ref_ty(registry)?,
                 string_ref_ty(registry)?,
             ]),
+            Self::ConsoleReadLine | Self::ArgsGet | Self::TimeNow => {
+                Ok(vec![string_ref_ty(registry)?])
+            }
+            Self::ArgsLen | Self::RandomInt => Ok(vec![ValType::I64]),
+            Self::TimeSleep => Ok(vec![]),
+            Self::RandomFloat
+            | Self::FloatSin
+            | Self::FloatCos
+            | Self::FloatAtan2
+            | Self::FloatPow => Ok(vec![ValType::F64]),
         }
     }
 }
