@@ -103,7 +103,7 @@ fn rust_hash_eq_safe_type(
         Type::Tuple(items) => items
             .iter()
             .all(|item| rust_hash_eq_safe_type(item, ctx, visiting)),
-        Type::Map(_, _) | Type::Fn(_, _, _) | Type::Unknown | Type::Var(_) | Type::Any => false,
+        Type::Map(_, _) | Type::Fn(_, _, _) | Type::Var(_) | Type::Invalid => false,
         Type::Named(name) => rust_hash_eq_safe_named(name, ctx, visiting),
     }
 }

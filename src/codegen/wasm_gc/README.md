@@ -12,7 +12,7 @@ So the binary-size win comes from "ship only what's actually called" + "delegate
 
 This backend reads expression types from `Spanned::ty()` (the `OnceLock<Type>` field on every AST node, set by `TypeChecker::infer_type`) instead of the previous five ad-hoc inference functions (`infer_aver_type`, `sniff_with_prev`, `dotted_return_type`, `effect_aver_return_type`, `infer_expr_wasm_type`). The single reader is `body/infer.rs::aver_type_of(&Spanned<Expr>) -> &Type`; if a node lacks a stamp, the reader panics with the offending node — no fallback chain. The same shape lives in `src/codegen/wasm/expr/infer.rs` (legacy WASM) and `src/codegen/rust/` (codegen Rust); three of four backends now read from the single source of truth. VM is unchanged because its NaN-boxed runtime self-types at execution.
 
-One band-aid survives: `body/infer.rs::aver_type_canonical` recovers `Type::Unknown`-bearing canonicals (`Map<Unknown,Unknown>`, `Option<Unknown>`, `List<Unknown>`) from either a single registered instantiation or the enclosing fn's return type. The proper fix is constraint-propagating type inference in the type checker — currently bidirectional only on local context, not on positional call-arg expected types. That refactor is multi-day work and lives in `src/types/checker/` not here.
+Generic constructor stamps are resolved in the type checker before codegen. `body/infer.rs::aver_type_canonical` now only normalizes the stamped type string for registry lookup; it does not recover missing type arguments.
 
 ### Game compilation status
 

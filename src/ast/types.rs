@@ -19,28 +19,24 @@ pub enum Type {
     Map(Box<Type>, Box<Type>),
     Vector(Box<Type>),
     Fn(Vec<Type>, Box<Type>, Vec<String>),
-    Unknown,       // legacy fallback — being phased out
-    Var(String),   // named type variable in polymorphic builtin signatures (instantiated at call site)
-    Any,           // explicit "any value, no constraint" — for dynamic-dispatch builtins (Console.print etc.)
+    Var(String), // named type variable in polymorphic builtin signatures (instantiated at call site)
+    Invalid,     // checker recovery after an earlier error; never compatible with concrete types
     Named(String), // user-defined type: Shape, User, etc.
 }
 
 impl Type {
     /// `a.compatible(b)` — can a value of type `self` be used where `other` is expected?
-    /// `Unknown`, `Var(_)`, and `Any` are compatible with everything (placeholders or
-    /// no-constraint sites). Two concrete types must be equal (structurally) to be compatible.
+    /// Two concrete types must be equal (structurally) to be compatible. Type variables
+    /// are resolved by the type checker at call sites, not by this raw relation.
     pub fn compatible(&self, other: &Type) -> bool {
-        if matches!(self, Type::Unknown | Type::Var(_) | Type::Any)
-            || matches!(other, Type::Unknown | Type::Var(_) | Type::Any)
-        {
-            return true;
-        }
         match (self, other) {
             (Type::Int, Type::Int) => true,
             (Type::Float, Type::Float) => true,
             (Type::Str, Type::Str) => true,
             (Type::Bool, Type::Bool) => true,
             (Type::Unit, Type::Unit) => true,
+            (Type::Var(a), Type::Var(b)) => a == b,
+            (Type::Invalid, _) | (_, Type::Invalid) => false,
             (Type::Result(a1, b1), Type::Result(a2, b2)) => a1.compatible(a2) && b1.compatible(b2),
             (Type::Option(a), Type::Option(b)) => a.compatible(b),
             (Type::List(a), Type::List(b)) => a.compatible(b),
@@ -98,9 +94,8 @@ impl Type {
                     )
                 }
             }
-            Type::Unknown => "Unknown".to_string(),
             Type::Var(name) => name.clone(),
-            Type::Any => "Any".to_string(),
+            Type::Invalid => "Invalid".to_string(),
             Type::Named(n) => n.clone(),
         }
     }

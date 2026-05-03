@@ -590,7 +590,7 @@ impl<'a> ExprEmitter<'a> {
                     None
                 }
             })
-            .unwrap_or(Type::Unknown);
+            .unwrap_or(Type::Invalid);
         let elem_wasm_type = aver_type_to_wasm(&elem_aver_type);
         let expected_kind = match elem_wasm_type {
             WasmType::F64 => value::OBJ_LIST_CONS_F64,
@@ -664,7 +664,7 @@ impl<'a> ExprEmitter<'a> {
         let is_last = idx == arms.len() - 1;
         let tuple_types = match self.local_aver_types.get(&subj_local) {
             Some(Type::Tuple(types)) => types.clone(),
-            _ => vec![Type::Unknown; items.len()],
+            _ => vec![Type::Invalid; items.len()],
         };
         self.emit_tuple_shape_check(subj_local, items.len());
         self.emit_if(wasm_encoder::BlockType::Empty);
@@ -674,7 +674,7 @@ impl<'a> ExprEmitter<'a> {
         self.instructions.push(Instruction::LocalSet(matched_local));
 
         for (i, pattern) in items.iter().enumerate() {
-            let aver_ty = tuple_types.get(i).cloned().unwrap_or(Type::Unknown);
+            let aver_ty = tuple_types.get(i).cloned().unwrap_or(Type::Invalid);
             let (field_local, field_wasm_type) = self.emit_tuple_item_local(subj_local, i, aver_ty);
             self.instructions.push(Instruction::LocalGet(matched_local));
             self.emit_pattern_match_flag(field_local, field_wasm_type, pattern);
@@ -808,7 +808,7 @@ impl<'a> ExprEmitter<'a> {
                         Type::List(inner) => Some(inner.as_ref().clone()),
                         _ => None,
                     })
-                    .unwrap_or(Type::Unknown);
+                    .unwrap_or(Type::Invalid);
                 let elem_wasm_type = aver_type_to_wasm(&elem_aver_type);
                 let expected_kind = match elem_wasm_type {
                     WasmType::F64 => value::OBJ_LIST_CONS_F64,
@@ -1002,7 +1002,7 @@ impl<'a> ExprEmitter<'a> {
             Pattern::Tuple(items) => {
                 let tuple_types = match self.local_aver_types.get(&subj_local) {
                     Some(Type::Tuple(types)) => types.clone(),
-                    _ => vec![Type::Unknown; items.len()],
+                    _ => vec![Type::Invalid; items.len()],
                 };
                 self.emit_tuple_shape_check(subj_local, items.len());
                 self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
@@ -1011,7 +1011,7 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalSet(matched_local));
 
                 for (i, pattern) in items.iter().enumerate() {
-                    let aver_ty = tuple_types.get(i).cloned().unwrap_or(Type::Unknown);
+                    let aver_ty = tuple_types.get(i).cloned().unwrap_or(Type::Invalid);
                     let (field_local, field_wasm_type) =
                         self.emit_tuple_item_local(subj_local, i, aver_ty);
                     self.instructions.push(Instruction::LocalGet(matched_local));

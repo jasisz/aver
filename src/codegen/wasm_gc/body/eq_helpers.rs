@@ -69,9 +69,7 @@ impl EqHelperRegistry {
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&str, EqKind)> + '_ {
-        self.order
-            .iter()
-            .map(|n| (n.as_str(), self.kinds[n]))
+        self.order.iter().map(|n| (n.as_str(), self.kinds[n]))
     }
 
     pub(crate) fn assign_slots(&mut self, next_fn_idx: &mut u32, next_type_idx: &mut u32) {

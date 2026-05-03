@@ -23,7 +23,7 @@ impl TypeChecker {
     }
 
     pub(in super::super) fn check_binop(&mut self, op: &BinOp, lt: &Type, rt: &Type, line: usize) {
-        if matches!(lt, Type::Unknown) || matches!(rt, Type::Unknown) {
+        if matches!(lt, Type::Invalid) || matches!(rt, Type::Invalid) {
             return; // gradual — skip
         }
         match op {
@@ -51,7 +51,7 @@ impl TypeChecker {
                 }
             }
             BinOp::Eq | BinOp::Neq => {
-                if !lt.compatible(rt) {
+                if !Self::constraint_compatible(lt, rt) && !Self::constraint_compatible(rt, lt) {
                     self.error_at_line(
                         line,
                         format!(

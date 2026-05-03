@@ -227,7 +227,7 @@ fn parse_items(src: &str) -> Vec<TopLevel> {
 fn result_with_default_rejects_option_argument() {
     // Regression: `Result.withDefault(Vector.get(...), 0)` is a foot-gun —
     // `Vector.get` returns `Option<T>` but `Result.withDefault` silently
-    // accepted it (sigs were both Unknown -> Unknown), passed `aver check`,
+    // accepted it through unresolved generic placeholders, passed `aver check`,
     // and at runtime returned the default for every lookup. Now caught at
     // type-check time.
     let items = parse_items(
@@ -347,7 +347,7 @@ fn main(ctx: AppCtx) -> Unit
 #[test]
 fn self_host_runtime_listen_rejects_non_handler() {
     // SelfHostRuntime.httpServerListen used to accept any second arg
-    // (Type::Unknown), letting callers pass an Int where a handler
+    // (Type::Invalid), letting callers pass an Int where a handler
     // function was expected. Now caught.
     let items = parse_items(
         r#"

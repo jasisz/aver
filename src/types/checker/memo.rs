@@ -110,8 +110,8 @@ impl TypeChecker {
             | Type::Vector(_)
             | Type::Map(_, _)
             | Type::Fn(_, _, _)
-            | Type::Unknown
-            | Type::Var(_) | Type::Any => false,
+            | Type::Invalid
+            | Type::Var(_) => false,
             Type::Result(_, _) | Type::Option(_) => false,
             Type::Named(name) => {
                 // Prevent infinite recursion for cyclic type defs

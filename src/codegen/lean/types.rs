@@ -36,9 +36,9 @@ pub fn type_to_lean(ty: &Type) -> String {
             parts.push(type_to_lean(ret));
             parts.join(" → ")
         }
-        Type::Unknown | Type::Var(_) | Type::Any => {
+        Type::Var(_) | Type::Invalid => {
             panic!(
-                "Lean codegen: encountered Type::Unknown or Type::Var. \
+                "Lean codegen: encountered Type::Invalid or Type::Var. \
                  This indicates unresolved typing leaked into codegen."
             )
         }

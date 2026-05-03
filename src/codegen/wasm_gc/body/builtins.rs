@@ -389,19 +389,24 @@ pub(super) fn emit_args_get_inline(
              slots::SlotTable should have allocated them via fn_needs_args_get_scratch"
                 .into(),
         ))?;
-    let args_len_idx = ctx.fn_map.effects.get("Args.len").copied().ok_or(
-        WasmGcError::Validation(
-            "Args.get() inline needs the Args.len effect import — \
+    let args_len_idx =
+        ctx.fn_map
+            .effects
+            .get("Args.len")
+            .copied()
+            .ok_or(WasmGcError::Validation(
+                "Args.get() inline needs the Args.len effect import — \
              discovery walker should register it when Args.get() is reachable"
-                .into(),
-        ),
-    )?;
-    let args_get_idx = ctx.fn_map.effects.get("Args.get").copied().ok_or(
-        WasmGcError::Validation(
-            "Args.get() inline needs the Args.get effect import (the i64 → String form)"
-                .into(),
-        ),
-    )?;
+                    .into(),
+            ))?;
+    let args_get_idx =
+        ctx.fn_map
+            .effects
+            .get("Args.get")
+            .copied()
+            .ok_or(WasmGcError::Validation(
+                "Args.get() inline needs the Args.get effect import (the i64 → String form)".into(),
+            ))?;
     let list_string_idx =
         ctx.registry
             .list_type_idx("List<String>")
@@ -518,39 +523,11 @@ pub(super) fn emit_map_kv_call(
             args.len()
         )));
     }
-    // The map argument's stamped type is sometimes under-specialised
-    // — `Map.empty()` reports `Map<Unknown, Unknown>` because the type
-    // checker can't see the surrounding context (Step 0 stamps each
-    // expression with its standalone type). Recover the missing K/V
-    // from the other arguments where possible: `set/get/has/remove` all
-    // carry the key in args[1], `set` additionally carries the value in
-    // args[2]. Falls back to a single-instantiation lookup if the
-    // surface type still has Unknowns.
     let map_aver_raw = aver_type_str_of(&args[0]);
-    let mut canonical: String = map_aver_raw
+    let canonical: String = map_aver_raw
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect();
-    if canonical.contains("Unknown") {
-        let recovered_k = if args.len() >= 2 {
-            Some(aver_type_str_of(&args[1]))
-        } else {
-            None
-        };
-        let recovered_v = if method == "set" && args.len() >= 3 {
-            Some(aver_type_str_of(&args[2]))
-        } else {
-            None
-        };
-        if let (Some(k), Some(v)) = (recovered_k.as_ref(), recovered_v.as_ref()) {
-            canonical = format!("Map<{},{}>", k.trim(), v.trim())
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect();
-        } else if ctx.registry.map_order.len() == 1 {
-            canonical = ctx.registry.map_order[0].clone();
-        }
-    }
     let helpers = ctx
         .fn_map
         .map_helpers_lookup(&canonical)

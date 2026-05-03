@@ -51,7 +51,7 @@ impl TypeChecker {
         arity: usize,
     ) -> Vec<Type> {
         let ctor_base = ctor_name.rsplit('.').next().unwrap_or(ctor_name);
-        let unknowns = || vec![Type::Unknown; arity];
+        let unknowns = || vec![Type::Invalid; arity];
 
         let from_sig = |name: &str| -> Option<Vec<Type>> {
             self.find_fn_sig(name).and_then(|sig| {
@@ -105,7 +105,7 @@ impl TypeChecker {
             Pattern::Cons(head, tail) => {
                 let elem_ty = match subject_ty {
                     Type::List(inner) => *inner.clone(),
-                    _ => Type::Unknown,
+                    _ => Type::Invalid,
                 };
                 if head != "_" {
                     out.push((head.clone(), elem_ty.clone()));
@@ -124,7 +124,7 @@ impl TypeChecker {
                     ));
                     for bind_name in bindings {
                         if bind_name != "_" {
-                            out.push((bind_name.clone(), Type::Unknown));
+                            out.push((bind_name.clone(), Type::Invalid));
                         }
                     }
                     return;
@@ -140,7 +140,7 @@ impl TypeChecker {
             Pattern::Tuple(items) => {
                 let elem_tys = match subject_ty {
                     Type::Tuple(elems) if elems.len() == items.len() => elems.clone(),
-                    _ => vec![Type::Unknown; items.len()],
+                    _ => vec![Type::Invalid; items.len()],
                 };
                 for (item, elem_ty) in items.iter().zip(elem_tys.iter()) {
                     self.collect_pattern_bindings(item, elem_ty, out);

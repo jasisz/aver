@@ -540,8 +540,8 @@ fn mark_type_uses(
         | Type::Str
         | Type::Bool
         | Type::Unit
-        | Type::Unknown
-        | Type::Var(_) | Type::Any => {}
+        | Type::Invalid
+        | Type::Var(_) => {}
     }
 }
 

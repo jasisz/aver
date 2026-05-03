@@ -15,7 +15,7 @@ impl TypeChecker {
                                     "Function '{}': unknown type '{}' for parameter '{}'",
                                     f.name, unknown, param_name
                                 ));
-                                params.push(Type::Unknown);
+                                params.push(Type::Invalid);
                             }
                         }
                     }
@@ -26,7 +26,7 @@ impl TypeChecker {
                                 "Function '{}': unknown return type '{}'",
                                 f.name, unknown
                             ));
-                            Type::Unknown
+                            Type::Invalid
                         }
                     };
                     self.fn_sigs.insert(
@@ -74,7 +74,7 @@ impl TypeChecker {
                     let params: Vec<Type> = variant
                         .fields
                         .iter()
-                        .map(|f| parse_type_str_strict(f).unwrap_or(Type::Unknown))
+                        .map(|f| parse_type_str_strict(f).unwrap_or(Type::Invalid))
                         .collect();
                     let key = crate::visibility::member_key(type_name, &variant.name);
                     if params.is_empty() {
@@ -102,7 +102,7 @@ impl TypeChecker {
                 // Register a dummy sig so Ident("TypeName") resolves to Named(type_name).
                 let params: Vec<Type> = fields
                     .iter()
-                    .map(|(_, ty_str)| parse_type_str_strict(ty_str).unwrap_or(Type::Unknown))
+                    .map(|(_, ty_str)| parse_type_str_strict(ty_str).unwrap_or(Type::Invalid))
                     .collect();
                 self.fn_sigs.insert(
                     type_name.clone(),
@@ -114,7 +114,7 @@ impl TypeChecker {
                 );
                 // Register per-field types so dot-access is checked.
                 for (field_name, ty_str) in fields {
-                    let field_ty = parse_type_str_strict(ty_str).unwrap_or(Type::Unknown);
+                    let field_ty = parse_type_str_strict(ty_str).unwrap_or(Type::Invalid);
                     self.record_field_types.insert(
                         crate::visibility::member_key(type_name, field_name),
                         field_ty,
@@ -224,7 +224,7 @@ impl TypeChecker {
                 } => {
                     let params: Vec<Type> = field_types
                         .iter()
-                        .map(|f| parse_type_str_strict(f).unwrap_or(Type::Unknown))
+                        .map(|f| parse_type_str_strict(f).unwrap_or(Type::Invalid))
                         .collect();
                     if params.is_empty() {
                         self.value_members
@@ -241,7 +241,7 @@ impl TypeChecker {
                     }
                 }
                 SymbolKind::RecordField { field_type, .. } => {
-                    let field_ty = parse_type_str_strict(field_type).unwrap_or(Type::Unknown);
+                    let field_ty = parse_type_str_strict(field_type).unwrap_or(Type::Invalid);
                     self.record_field_types
                         .insert(entry.canonical_name.clone(), field_ty);
                 }

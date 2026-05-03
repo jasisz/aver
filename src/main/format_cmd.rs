@@ -373,9 +373,8 @@ fn format_type_for_source(ty: &Type) -> String {
                 format!("Fn({params}) -> {ret} ! [{}]", effects.join(", "))
             }
         }
-        Type::Unknown => "Unknown".to_string(),
         Type::Var(name) => name.clone(),
-        Type::Any => "Any".to_string(),
+        Type::Invalid => "Invalid".to_string(),
         Type::Named(name) => name.clone(),
     }
 }

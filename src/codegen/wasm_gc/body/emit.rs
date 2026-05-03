@@ -298,7 +298,7 @@ pub(super) fn emit_expr(
                         }
                         "None" => {
                             // Read T from the typed AST first; use the
-                            // Type::Unknown-recovery reader so post-
+                            // Type::Invalid-recovery reader so post-
                             // error gradual-typing branches still
                             // resolve to a concrete Option<T>.
                             let stamped_canonical =
@@ -399,7 +399,7 @@ pub(super) fn emit_expr(
             {
                 // Read T from the typed AST: type checker stamps every
                 // `Option.None` with the inferred Option<T>. Use the
-                // Type::Unknown-recovery canonical reader so post-error
+                // Type::Invalid-recovery canonical reader so post-error
                 // gradual-typing branches still resolve to a concrete
                 // instantiation (single-instantiation fallback or
                 // enclosing-fn return-type carry-through).
@@ -2231,7 +2231,7 @@ pub(super) fn emit_constructor(
     }
     if name == "Option.None" || (bare == "None" && name.starts_with("Option")) {
         // Read T off the typed outer expr (Option<T> stamped by the
-        // type checker), with the Type::Unknown-recovery reader so
+        // type checker), with the Type::Invalid-recovery reader so
         // post-error gradual-typing branches still resolve.
         let stamped_canonical = aver_type_canonical(outer, ctx.return_type, ctx.registry);
         let hint: String = if let Some(inner) = stamped_canonical
@@ -2300,10 +2300,9 @@ pub(super) fn emit_match(
     if arms.is_empty() {
         return Err(WasmGcError::Validation("match has no arms".into()));
     }
-    // Match arms always agree on type by typecheck; pick the first one
-    // and recover any Unknown branches from context (registry single-
-    // instantiation or enclosing fn return type) so an arm whose body
-    // is e.g. `[]` doesn't surface as `List<Unknown>` here.
+    // Match arms always agree on type by typecheck; pick the first one.
+    // Generic arm bodies such as `[]` must already be resolved by the
+    // type checker before codegen reaches this point.
     let result_ty_str =
         super::infer::aver_type_canonical(&arms[0].body, ctx.return_type, ctx.registry);
     let result_wasm = aver_to_wasm(&result_ty_str, Some(ctx.registry))?;

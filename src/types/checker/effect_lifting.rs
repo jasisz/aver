@@ -843,7 +843,7 @@ pub fn type_to_annotation(ty: &Type) -> String {
                 format!("Fn({}) -> {} ! [{}]", ps, r, effects.join(", "))
             }
         }
-        Type::Unknown => "_".to_string(),
+        Type::Invalid => "_".to_string(),
         // These shapes don't appear in v1 oracle/capability signatures —
         // if they show up we fall back to a legible-but-inexact rendering
         // rather than panicking.

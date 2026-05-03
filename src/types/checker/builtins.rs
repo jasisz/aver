@@ -41,18 +41,20 @@ impl TypeChecker {
                 ty.clone(),
             );
         }
-        // Oracle v1: EffectEvent = { method: String, args: List<Unknown> }.
+        let effect_arg_var = || Type::Var("EffectArg".to_string());
+        let printable_var = || Type::Var("Printable".to_string());
+        let context_var = || Type::Var("Context".to_string());
+
+        // Oracle v1: EffectEvent = { method: String, args: List<EffectArg> }.
         // `args` element type is heterogeneous across effects (Int for
         // Random.int, Str for Console.print<T=Str>, etc.) — v0 types it
-        // as `List<Unknown>` so users can inspect events without the
+        // as a named element type variable so users can inspect events without the
         // checker blocking on a polymorphic arg element type. Richer
         // typing ties args to the effect method's runtime_params once
         // we thread method-dispatch-driven arg types into the checker.
         let effect_event_fields: &[(&str, Type)] = &[
             ("method", Type::Str),
-            // EffectEvent.args is heterogeneous (different element type per
-            // event method) — `Type::Any` marks "any value, no constraint".
-            ("args", Type::List(Box::new(Type::Any))),
+            ("args", Type::List(Box::new(effect_arg_var()))),
             ("path", Type::Str),
         ];
         for (field, ty) in effect_event_fields {
@@ -147,10 +149,8 @@ impl TypeChecker {
             )
         };
         let http_handler_with_context = || {
-            // Context is user-provided arbitrary value — `Type::Any` marks
-            // "any type, no constraint".
             Type::Fn(
-                vec![Type::Any, Type::Named("HttpRequest".to_string())],
+                vec![context_var(), Type::Named("HttpRequest".to_string())],
                 Box::new(Type::Named("HttpResponse".to_string())),
                 server_handler_effects(),
             )
@@ -162,23 +162,22 @@ impl TypeChecker {
                 Type::List(Box::new(Type::Str)),
                 &["Args.get"],
             ),
-            // Console.print/error/warn accept any value (runtime
-            // dispatches via Format.value); `Type::Any` = "any type".
+            // Console.print/error/warn are generic over the value being formatted.
             (
                 "Console.print",
-                &[Type::Any],
+                &[printable_var()],
                 Type::Unit,
                 &["Console.print"],
             ),
             (
                 "Console.error",
-                &[Type::Any],
+                &[printable_var()],
                 Type::Unit,
                 &["Console.error"],
             ),
             (
                 "Console.warn",
-                &[Type::Any],
+                &[printable_var()],
                 Type::Unit,
                 &["Console.warn"],
             ),
@@ -217,7 +216,7 @@ impl TypeChecker {
             ),
             (
                 "HttpServer.listenWith",
-                &[Type::Int, Type::Any, http_handler_with_context()],
+                &[Type::Int, context_var(), http_handler_with_context()],
                 Type::Unit,
                 &["HttpServer.listenWith"],
             ),
@@ -229,7 +228,7 @@ impl TypeChecker {
             ),
             (
                 "SelfHostRuntime.httpServerListenWith",
-                &[Type::Int, Type::Any, http_handler_with_context()],
+                &[Type::Int, context_var(), http_handler_with_context()],
                 disk_unit(),
                 &["HttpServer.listenWith"],
             ),
@@ -350,7 +349,7 @@ impl TypeChecker {
                 ),
                 (
                     "Terminal.print",
-                    &[Type::Any],
+                    &[printable_var()],
                     Type::Unit,
                     &["Terminal.print"],
                 ),
@@ -510,42 +509,12 @@ impl TypeChecker {
         let list_t = || Type::List(Box::new(t_var()));
         let list_sigs: &[(&str, &[Type], Type, &[&str])] = &[
             ("List.len", &[list_t()], Type::Int, &[]),
-            (
-                "List.prepend",
-                &[t_var(), list_t()],
-                list_t(),
-                &[],
-            ),
-            (
-                "List.take",
-                &[list_t(), Type::Int],
-                list_t(),
-                &[],
-            ),
-            (
-                "List.drop",
-                &[list_t(), Type::Int],
-                list_t(),
-                &[],
-            ),
-            (
-                "List.concat",
-                &[list_t(), list_t()],
-                list_t(),
-                &[],
-            ),
-            (
-                "List.reverse",
-                &[list_t()],
-                list_t(),
-                &[],
-            ),
-            (
-                "List.contains",
-                &[list_t(), t_var()],
-                Type::Bool,
-                &[],
-            ),
+            ("List.prepend", &[t_var(), list_t()], list_t(), &[]),
+            ("List.take", &[list_t(), Type::Int], list_t(), &[]),
+            ("List.drop", &[list_t(), Type::Int], list_t(), &[]),
+            ("List.concat", &[list_t(), list_t()], list_t(), &[]),
+            ("List.reverse", &[list_t()], list_t(), &[]),
+            ("List.contains", &[list_t(), t_var()], Type::Bool, &[]),
             (
                 "List.zip",
                 &[
@@ -569,31 +538,16 @@ impl TypeChecker {
         let map_kv = || Type::Map(Box::new(k_var()), Box::new(v_var()));
         let map_sigs: &[(&str, &[Type], Type, &[&str])] = &[
             ("Map.empty", &[], map_kv(), &[]),
-            (
-                "Map.set",
-                &[map_kv(), k_var(), v_var()],
-                map_kv(),
-                &[],
-            ),
+            ("Map.set", &[map_kv(), k_var(), v_var()], map_kv(), &[]),
             (
                 "Map.get",
                 &[map_kv(), k_var()],
                 Type::Option(Box::new(v_var())),
                 &[],
             ),
-            (
-                "Map.remove",
-                &[map_kv(), k_var()],
-                map_kv(),
-                &[],
-            ),
+            ("Map.remove", &[map_kv(), k_var()], map_kv(), &[]),
             ("Map.has", &[map_kv(), k_var()], Type::Bool, &[]),
-            (
-                "Map.keys",
-                &[map_kv()],
-                Type::List(Box::new(k_var())),
-                &[],
-            ),
+            ("Map.keys", &[map_kv()], Type::List(Box::new(k_var())), &[]),
             (
                 "Map.values",
                 &[map_kv()],
@@ -621,12 +575,7 @@ impl TypeChecker {
         // Vector namespace — polymorphic over T.
         let vec_t = || Type::Vector(Box::new(t_var()));
         let vector_sigs: &[(&str, &[Type], Type, &[&str])] = &[
-            (
-                "Vector.new",
-                &[Type::Int, t_var()],
-                vec_t(),
-                &[],
-            ),
+            ("Vector.new", &[Type::Int, t_var()], vec_t(), &[]),
             (
                 "Vector.get",
                 &[vec_t(), Type::Int],
@@ -724,25 +673,10 @@ impl TypeChecker {
             .insert("Option.None".to_string(), option_t());
 
         // Result combinators
-        self.insert_sig(
-            "Result.withDefault",
-            &[result_te(), t_var()],
-            t_var(),
-            &[],
-        );
+        self.insert_sig("Result.withDefault", &[result_te(), t_var()], t_var(), &[]);
 
         // Option combinators
-        self.insert_sig(
-            "Option.withDefault",
-            &[option_t(), t_var()],
-            t_var(),
-            &[],
-        );
-        self.insert_sig(
-            "Option.toResult",
-            &[option_t(), e_var()],
-            result_te(),
-            &[],
-        );
+        self.insert_sig("Option.withDefault", &[option_t(), t_var()], t_var(), &[]);
+        self.insert_sig("Option.toResult", &[option_t(), e_var()], result_te(), &[]);
     }
 }

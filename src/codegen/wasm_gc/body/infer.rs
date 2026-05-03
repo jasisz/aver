@@ -87,57 +87,15 @@ pub(super) fn wasm_type_of(
     aver_to_wasm(&aver_type_str_of(expr), Some(registry))
 }
 
-/// Display string of the stamped Aver type **with context-driven
-/// recovery for the common Type::Unknown loophole**: when the
-/// typechecker stamps a generic type with one or more `Unknown`
-/// branches (e.g. `Map.empty()` reports `Map<Unknown, Unknown>`,
-/// `List.empty()` reports `List<Unknown>`, `Option.None` reports
-/// `Option<Unknown>`), recover the missing branch from:
-///   1. A single registered instantiation of that generic in the
-///      registry (covers the common "fn returns the only Map<K,V> in
-///      the program" shape).
-///   2. The enclosing fn's return type (covers tail-position
-///      constructors like `fn f() -> List<Int>; []` or
-///      `fn g() -> Result<T,E>; Result.Ok(v)`).
-///
-/// Returning the original (Unknown-bearing) display is the last
-/// resort — callers that need a registered canonical will then surface
-/// a clear "no helpers registered" error.
+/// Display string of the stamped Aver type in the canonical no-whitespace
+/// form used by wasm-gc registries. Generic constructors must already be
+/// resolved by the type checker before codegen reaches this reader.
 #[track_caller]
 pub(super) fn aver_type_canonical(
     expr: &Spanned<Expr>,
-    return_type: &str,
-    registry: &TypeRegistry,
+    _return_type: &str,
+    _registry: &TypeRegistry,
 ) -> String {
     let raw = aver_type_str_of(expr);
-    let stripped: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
-    if !stripped.contains("Unknown") {
-        return stripped;
-    }
-    // Try the enclosing fn's return type first if it shares the head
-    // (`Map<...>` vs `List<...>` etc.) — it carries both K and V from
-    // the source signature.
-    let return_canonical: String = return_type.chars().filter(|c| !c.is_whitespace()).collect();
-    let head = stripped
-        .split_once('<')
-        .map(|(h, _)| h)
-        .unwrap_or(stripped.as_str());
-    if return_canonical.starts_with(&format!("{head}<")) && !return_canonical.contains("Unknown") {
-        return return_canonical;
-    }
-    // Single-instantiation registry fallback.
-    let single = match head {
-        "Map" if registry.map_order.len() == 1 => Some(&registry.map_order[0]),
-        "List" if registry.list_order.len() == 1 => Some(&registry.list_order[0]),
-        "Option" if registry.option_order.len() == 1 => Some(&registry.option_order[0]),
-        "Result" if registry.result_order.len() == 1 => Some(&registry.result_order[0]),
-        "Vector" if registry.vector_order.len() == 1 => Some(&registry.vector_order[0]),
-        _ => None,
-    };
-    if let Some(c) = single {
-        return c.clone();
-    }
-    // Last resort: return the Unknown-bearing string and let the
-    // caller surface a clear validation error.
-    stripped
+    raw.chars().filter(|c| !c.is_whitespace()).collect()
 }

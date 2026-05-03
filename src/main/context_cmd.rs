@@ -294,8 +294,8 @@ fn collect_named_type_refs(ty: &Type, out: &mut Vec<String>) {
         | Type::Str
         | Type::Bool
         | Type::Unit
-        | Type::Unknown
-        | Type::Var(_) | Type::Any => {}
+        | Type::Invalid
+        | Type::Var(_) => {}
     }
 }
 

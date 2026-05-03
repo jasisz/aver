@@ -226,8 +226,8 @@ impl TypeChecker {
         // "test failed" rather than error propagation.
         let prev_ret = self.current_fn_ret.take();
         self.current_fn_ret = Some(Type::Result(
-            Box::new(Type::Unknown),
-            Box::new(Type::Unknown),
+            Box::new(Type::Var("VerifyOk".to_string())),
+            Box::new(Type::Var("VerifyErr".to_string())),
         ));
         // Oracle v1: identify recursive functions once. A `verify fn trace law`
         // targeting an effectful recursive function is rejected because the
