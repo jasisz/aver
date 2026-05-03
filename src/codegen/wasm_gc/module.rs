@@ -25,11 +25,13 @@ use wasm_encoder::{
 };
 
 use super::WasmGcError;
+use super::body::eq_helpers::{EqHelperRegistry, EqKind};
 use super::body::{FnEntry, FnMap, emit_fn_body};
 use super::builtins::{BuiltinName, BuiltinRegistry};
 use super::effects::{EffectName, EffectRegistry};
 use super::maps::MapHelperRegistry;
 use super::types::{TypeRegistry, param_types, record_struct_type, return_results};
+use crate::types::Type as AverType;
 
 use crate::ast::{Expr, FnDef, Stmt, TopLevel, TypeDef};
 
@@ -54,8 +56,21 @@ pub(super) fn emit_module(
     // order.
     let mut builtin_registry = BuiltinRegistry::new();
     let mut effect_registry = EffectRegistry::new();
+    let mut eq_helpers_registry = EqHelperRegistry::new();
     for fd in &fn_defs {
-        discover_builtins_in_fn(fd, &mut builtin_registry, &mut effect_registry);
+        discover_builtins_in_fn(
+            fd,
+            &mut builtin_registry,
+            &mut effect_registry,
+            &mut eq_helpers_registry,
+            &registry,
+        );
+    }
+    // Eq helpers over records / sums with String fields need
+    // `__wasmgc_string_eq` — force-register so the slot is allocated
+    // before bodies emit.
+    if eq_helpers_registry.needs_string_eq(&registry) {
+        builtin_registry.register(BuiltinName::StringEq);
     }
     // `--handler X` shape — the synthesised `aver_http_handle`
     // wrapper reads `Request.*` and dispatches `Response.text` /
@@ -180,6 +195,12 @@ pub(super) fn emit_module(
     )?;
     list_helpers.emit_helper_types(&mut types, &registry)?;
 
+    // Per-(record/sum) `__eq_<TypeName>` helpers — slot allocation +
+    // type emit. Bodies emitted after list helpers (they may call
+    // `__wasmgc_string_eq` registered above).
+    eq_helpers_registry.assign_slots(&mut next_builtin_fn_idx, &mut next_type_idx);
+    eq_helpers_registry.emit_helper_types(&mut types);
+
     // 8a) `aver_http_handle` wrapper — `--handler X` synthesises a
     //     no-arg fn that reads request fields via the `Request.*`
     //     effects, builds an `HttpRequest`, calls the user's
@@ -292,6 +313,13 @@ pub(super) fn emit_module(
     }
     map_helpers.emit_function_section(&mut funcs);
     list_helpers.emit_function_section(&mut funcs);
+    // Eq helpers — one fn entry per registered `__eq_<TypeName>` slot.
+    for (name, _kind) in eq_helpers_registry.iter() {
+        let t_idx = eq_helpers_registry
+            .lookup_type_idx(name)
+            .expect("registered eq helper has type idx after assign_slots");
+        funcs.function(t_idx);
+    }
     if let Some(hw) = &handler_wrapper {
         funcs.function(hw.wrapper_type);
         funcs.function(hw.list_cons_type);
@@ -380,6 +408,12 @@ pub(super) fn emit_module(
         }
     }
     let string_split_ops = list_helpers.string_split_ops();
+    let mut eq_helpers_lookup: HashMap<String, u32> = HashMap::new();
+    for (name, _kind) in eq_helpers_registry.iter() {
+        if let Some(fn_idx) = eq_helpers_registry.lookup_fn_idx(name) {
+            eq_helpers_lookup.insert(name.to_string(), fn_idx);
+        }
+    }
     let fn_map = FnMap {
         by_name,
         builtins: builtin_idx_lookup,
@@ -389,6 +423,7 @@ pub(super) fn emit_module(
         vfl_ops: vfl_ops_lookup,
         zip_ops: zip_ops_lookup,
         string_split_ops,
+        eq_helpers: eq_helpers_lookup,
     };
 
     // ── Export section ─────────────────────────────────────────────
@@ -502,6 +537,11 @@ pub(super) fn emit_module(
     // List / Vector.fromList / String.split-join helper bodies.
     let string_eq_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::StringEq);
     list_helpers.emit_helper_bodies(&mut codes, &registry, string_eq_fn_idx)?;
+
+    // Per-(record/sum) `__eq_<TypeName>` helper bodies — emit after
+    // list helpers so any String fields can call `__wasmgc_string_eq`
+    // by the index recorded above.
+    eq_helpers_registry.emit_helper_bodies(&mut codes, &registry, string_eq_fn_idx)?;
 
     if let Some(hw) = &handler_wrapper {
         let user_handler_wasm_idx = import_count + 1 + (hw.user_handler_idx as u32);
@@ -922,10 +962,12 @@ fn discover_builtins_in_fn(
     fd: &FnDef,
     builtins: &mut BuiltinRegistry,
     effects: &mut EffectRegistry,
+    eq_helpers: &mut EqHelperRegistry,
+    type_registry: &TypeRegistry,
 ) {
     let crate::ast::FnBody::Block(stmts) = fd.body.as_ref();
     for stmt in stmts {
-        discover_builtins_in_stmt(stmt, builtins, effects);
+        discover_builtins_in_stmt(stmt, builtins, effects, eq_helpers, type_registry);
     }
 }
 
@@ -933,10 +975,12 @@ fn discover_builtins_in_stmt(
     stmt: &Stmt,
     builtins: &mut BuiltinRegistry,
     effects: &mut EffectRegistry,
+    eq_helpers: &mut EqHelperRegistry,
+    type_registry: &TypeRegistry,
 ) {
     match stmt {
         Stmt::Binding(_, _, e) | Stmt::Expr(e) => {
-            discover_builtins_in_expr(&e.node, builtins, effects)
+            discover_builtins_in_expr(&e.node, builtins, effects, eq_helpers, type_registry)
         }
     }
 }
@@ -945,6 +989,8 @@ fn discover_builtins_in_expr(
     expr: &Expr,
     builtins: &mut BuiltinRegistry,
     effects: &mut EffectRegistry,
+    eq_helpers: &mut EqHelperRegistry,
+    type_registry: &TypeRegistry,
 ) {
     use crate::ast::StrPart;
     match expr {
@@ -960,9 +1006,9 @@ fn discover_builtins_in_expr(
                     effects.register(name);
                 }
             }
-            discover_builtins_in_expr(&callee.node, builtins, effects);
+            discover_builtins_in_expr(&callee.node, builtins, effects, eq_helpers, type_registry);
             for arg in args {
-                discover_builtins_in_expr(&arg.node, builtins, effects);
+                discover_builtins_in_expr(&arg.node, builtins, effects, eq_helpers, type_registry);
             }
         }
         Expr::BinOp(op, l, r) => {
@@ -981,11 +1027,25 @@ fn discover_builtins_in_expr(
                     _ => {}
                 }
             }
-            discover_builtins_in_expr(&l.node, builtins, effects);
-            discover_builtins_in_expr(&r.node, builtins, effects);
+            // Sum/record `==`/`!=` need a per-type `__eq_<TypeName>`
+            // helper — register on discovery so the slot is allocated
+            // before emit runs the BinOp dispatch.
+            use crate::ast::BinOp as Op;
+            if matches!(op, Op::Eq | Op::Neq)
+                && let Some(t) = l.ty()
+                && let AverType::Named(name) = t
+            {
+                if type_registry.record_fields.contains_key(name) {
+                    eq_helpers.register(name, EqKind::Record);
+                } else if type_registry.variants.values().any(|v| &v.parent == name) {
+                    eq_helpers.register(name, EqKind::Sum);
+                }
+            }
+            discover_builtins_in_expr(&l.node, builtins, effects, eq_helpers, type_registry);
+            discover_builtins_in_expr(&r.node, builtins, effects, eq_helpers, type_registry);
         }
         Expr::Match { subject, arms } => {
-            discover_builtins_in_expr(&subject.node, builtins, effects);
+            discover_builtins_in_expr(&subject.node, builtins, effects, eq_helpers, type_registry);
             // String-subject match (`match path { "/" -> ... }`)
             // needs `StringEq` to compare each non-default arm's
             // literal against the subject. Register it eagerly when
@@ -999,30 +1059,40 @@ fn discover_builtins_in_expr(
                 builtins.register(BuiltinName::StringEq);
             }
             for arm in arms {
-                discover_builtins_in_expr(&arm.body.node, builtins, effects);
+                discover_builtins_in_expr(
+                    &arm.body.node,
+                    builtins,
+                    effects,
+                    eq_helpers,
+                    type_registry,
+                );
             }
         }
         Expr::TailCall(boxed) => {
             for arg in &boxed.args {
-                discover_builtins_in_expr(&arg.node, builtins, effects);
+                discover_builtins_in_expr(&arg.node, builtins, effects, eq_helpers, type_registry);
             }
         }
-        Expr::Attr(obj, _) => discover_builtins_in_expr(&obj.node, builtins, effects),
-        Expr::ErrorProp(inner) => discover_builtins_in_expr(&inner.node, builtins, effects),
+        Expr::Attr(obj, _) => {
+            discover_builtins_in_expr(&obj.node, builtins, effects, eq_helpers, type_registry)
+        }
+        Expr::ErrorProp(inner) => {
+            discover_builtins_in_expr(&inner.node, builtins, effects, eq_helpers, type_registry)
+        }
         Expr::Constructor(_, payload) => {
             if let Some(p) = payload.as_deref() {
-                discover_builtins_in_expr(&p.node, builtins, effects);
+                discover_builtins_in_expr(&p.node, builtins, effects, eq_helpers, type_registry);
             }
         }
         Expr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
-                discover_builtins_in_expr(&e.node, builtins, effects);
+                discover_builtins_in_expr(&e.node, builtins, effects, eq_helpers, type_registry);
             }
         }
         Expr::RecordUpdate { base, updates, .. } => {
-            discover_builtins_in_expr(&base.node, builtins, effects);
+            discover_builtins_in_expr(&base.node, builtins, effects, eq_helpers, type_registry);
             for (_, e) in updates {
-                discover_builtins_in_expr(&e.node, builtins, effects);
+                discover_builtins_in_expr(&e.node, builtins, effects, eq_helpers, type_registry);
             }
         }
         // `InterpolatedStr` lowers to `array.new_fixed` + the variadic
@@ -1036,24 +1106,30 @@ fn discover_builtins_in_expr(
             builtins.register(BuiltinName::IntToString);
             for p in parts {
                 if let StrPart::Parsed(inner) = p {
-                    discover_builtins_in_expr(&inner.node, builtins, effects);
+                    discover_builtins_in_expr(
+                        &inner.node,
+                        builtins,
+                        effects,
+                        eq_helpers,
+                        type_registry,
+                    );
                 }
             }
         }
         Expr::List(items) => {
             for item in items {
-                discover_builtins_in_expr(&item.node, builtins, effects);
+                discover_builtins_in_expr(&item.node, builtins, effects, eq_helpers, type_registry);
             }
         }
         Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items {
-                discover_builtins_in_expr(&item.node, builtins, effects);
+                discover_builtins_in_expr(&item.node, builtins, effects, eq_helpers, type_registry);
             }
         }
         Expr::MapLiteral(entries) => {
             for (k, v) in entries {
-                discover_builtins_in_expr(&k.node, builtins, effects);
-                discover_builtins_in_expr(&v.node, builtins, effects);
+                discover_builtins_in_expr(&k.node, builtins, effects, eq_helpers, type_registry);
+                discover_builtins_in_expr(&v.node, builtins, effects, eq_helpers, type_registry);
             }
         }
         _ => {}

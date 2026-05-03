@@ -1604,7 +1604,7 @@ fn emit_list_contains(
 /// surface as Unimplemented (same constraint as `emit_eq_record` in
 /// maps.rs — extending requires nested-record / list / vector eq
 /// dispatch).
-fn emit_record_eq_inline(
+pub(super) fn emit_record_eq_inline(
     f: &mut Function,
     record_name: &str,
     registry: &TypeRegistry,
@@ -1673,7 +1673,7 @@ fn emit_record_eq_inline(
 /// and needle have that concrete type. If both: cast + field-by-
 /// field eq, push result. If only one: push 0 (different variants).
 /// Final i32 on stack: 1 = equal, 0 = different.
-fn emit_sum_eq_inline(
+pub(super) fn emit_sum_eq_inline(
     f: &mut Function,
     parent_name: &str,
     registry: &TypeRegistry,

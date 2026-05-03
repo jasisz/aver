@@ -232,6 +232,19 @@ pub(super) fn emit_expr(
                 if matches!(op, BinOp::Neq) {
                     func.instruction(&Instruction::I32Eqz);
                 }
+            } else if matches!(op, BinOp::Eq | BinOp::Neq)
+                && let Some(eq_fn_idx) = sum_or_record_eq_fn(l, ctx)
+            {
+                // Sum / record `==` / `!=`: structural equality via
+                // per-type `__eq_<TypeName>` helper. Both operands push
+                // an eqref; helper returns i32 (1=eq, 0=ne). `Neq`
+                // appends `i32.eqz` to flip the verdict.
+                emit_expr(func, l, slots, ctx)?;
+                emit_expr(func, r, slots, ctx)?;
+                func.instruction(&Instruction::Call(eq_fn_idx));
+                if matches!(op, BinOp::Neq) {
+                    func.instruction(&Instruction::I32Eqz);
+                }
             } else {
                 emit_expr(func, &l, slots, ctx)?;
                 emit_expr(func, &r, slots, ctx)?;
@@ -439,6 +452,32 @@ pub(super) fn emit_expr(
 /// form) since the parser may insert empty arg lists for explicit-paren
 /// calls. Matches both `Constructor(name, None)` and `Attr(Ident,
 /// field)` shapes.
+/// Looks up the per-type `__eq_<TypeName>` helper fn idx for an operand
+/// of `BinOp::Eq` / `BinOp::Neq` whose stamped type is a record or sum.
+/// Returns `None` for primitive operand types (the caller's default
+/// `i64.eq` / `f64.eq` path handles those) or for nominal types whose
+/// helper wasn't registered — discovery should've registered every
+/// reachable site, so a miss surfaces as `None` and the call falls
+/// through to the default arm where wasm validation will catch the
+/// type mismatch.
+fn sum_or_record_eq_fn(operand: &Spanned<Expr>, ctx: &EmitCtx<'_>) -> Option<u32> {
+    let ty = operand.ty()?;
+    let crate::types::Type::Named(name) = ty else {
+        return None;
+    };
+    // Newtypes already lower to their underlying primitive — no helper
+    // needed (the default i64/f64 eq handles them).
+    if ctx.registry.newtype_underlying(name).is_some() {
+        return None;
+    }
+    let is_record = ctx.registry.record_fields.contains_key(name);
+    let is_sum = ctx.registry.variants.values().any(|v| &v.parent == name);
+    if !is_record && !is_sum {
+        return None;
+    }
+    ctx.fn_map.eq_helpers.get(name).copied()
+}
+
 fn nullary_variant_idx(expr: &Spanned<Expr>, ctx: &EmitCtx<'_>) -> Option<u32> {
     match &expr.node {
         Expr::Attr(obj, field) => {

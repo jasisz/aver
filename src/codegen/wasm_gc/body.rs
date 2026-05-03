@@ -34,6 +34,7 @@ use crate::ir::CallLowerCtx;
 
 mod builtins;
 mod emit;
+pub(super) mod eq_helpers;
 mod infer;
 mod slots;
 
@@ -69,6 +70,9 @@ pub(super) struct FnMap {
     /// Singleton `String.split` / `String.join` helpers (T=String).
     /// Registered when the surface code calls either.
     pub(super) string_split_ops: Option<super::lists::StringSplitOps>,
+    /// Per-(record/sum) `__eq_<TypeName>` helpers used by `BinOp::Eq`
+    /// / `BinOp::Neq` over nominal types. Key = bare type name.
+    pub(super) eq_helpers: std::collections::HashMap<String, u32>,
 }
 
 impl FnMap {
