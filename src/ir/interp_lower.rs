@@ -165,7 +165,7 @@ fn build_buffer_pipeline(line: usize, parts: &[StrPart]) -> Spanned<Expr> {
 }
 
 fn sp_at(line: usize, node: Expr) -> Spanned<Expr> {
-    Spanned { node, line }
+    Spanned::new(node, line)
 }
 
 fn intrinsic_call(line: usize, name: &str, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {

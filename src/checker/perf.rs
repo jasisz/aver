@@ -541,10 +541,7 @@ mod tests {
     use crate::ast::{FnBody, Literal, MatchArm, SourceLine, Spanned, TailCallData};
 
     fn spanned(node: Expr) -> Spanned<Expr> {
-        Spanned {
-            node,
-            line: 1 as SourceLine,
-        }
+        Spanned::new(node, 1 as SourceLine)
     }
 
     fn ident(name: &str) -> Expr {

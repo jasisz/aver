@@ -642,7 +642,7 @@ mod tests {
     // ── builders ────────────────────────────────────────────────────
 
     fn sp<T>(node: T) -> Spanned<T> {
-        Spanned { node, line: 1 }
+        Spanned::new(node, 1)
     }
 
     fn lit_int(n: i64) -> Spanned<Expr> {

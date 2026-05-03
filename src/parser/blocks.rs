@@ -353,20 +353,14 @@ impl Parser {
                         None => next,
                         Some(prev) => {
                             let line = prev.line;
-                            let bool_and = Spanned {
-                                node: Expr::Attr(
-                                    Box::new(Spanned {
-                                        node: Expr::Ident("Bool".to_string()),
-                                        line,
-                                    }),
+                            let bool_and = Spanned::new(
+                                Expr::Attr(
+                                    Box::new(Spanned::new(Expr::Ident("Bool".to_string()), line)),
                                     "and".to_string(),
                                 ),
                                 line,
-                            };
-                            Spanned {
-                                node: Expr::FnCall(Box::new(bool_and), vec![prev, next]),
-                                line,
-                            }
+                            );
+                            Spanned::new(Expr::FnCall(Box::new(bool_and), vec![prev, next]), line)
                         }
                     });
                 }

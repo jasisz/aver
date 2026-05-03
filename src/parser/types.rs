@@ -237,7 +237,7 @@ impl Parser {
                 TokenKind::Ident(_) => {
                     let line = self.current().line;
                     let name = self.parse_qualified_ident()?;
-                    effects.push(crate::ast::Spanned { node: name, line });
+                    effects.push(crate::ast::Spanned::new(name, line));
                 }
                 TokenKind::Comma => {
                     self.advance();

@@ -100,10 +100,10 @@ fn make_verify_helper(
         return_type: String::new(),
         effects,
         desc: None,
-        body: Rc::new(FnBody::from_expr(Spanned {
-            node: Expr::Constructor("Result.Ok".to_string(), Some(Box::new(body_expr))),
+        body: Rc::new(FnBody::from_expr(Spanned::new(
+            Expr::Constructor("Result.Ok".to_string(), Some(Box::new(body_expr))),
             line,
-        })),
+        ))),
         resolution: None,
     })
 }
@@ -229,10 +229,7 @@ fn repl_execute(accumulated: &[TopLevel], new_items: &[TopLevel]) -> Result<(), 
     // rejecting a wrapper whose body the type checker already approved.
     let all_effects: Vec<Spanned<String>> = aver::services::all_effect_names()
         .into_iter()
-        .map(|s| Spanned {
-            node: s.to_string(),
-            line: 0,
-        })
+        .map(|s| Spanned::new(s.to_string(), 0))
         .collect();
 
     enum Action {

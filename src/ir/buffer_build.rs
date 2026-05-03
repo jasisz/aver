@@ -589,7 +589,7 @@ pub fn synthesize_buffered_variants(
 /// won't be source-located by the user, but having a non-zero line
 /// keeps downstream visitors happy).
 fn sp_at(line: usize, expr: Expr) -> Spanned<Expr> {
-    Spanned { node: expr, line }
+    Spanned::new(expr, line)
 }
 
 /// Build `<intrinsic>(args...)` as a Spanned<Expr>. Intrinsic names
@@ -1078,10 +1078,7 @@ mod tests {
     use std::sync::Arc;
 
     fn sp<T>(value: T) -> Spanned<T> {
-        Spanned {
-            node: value,
-            line: 1,
-        }
+        Spanned::new(value, 1)
     }
 
     fn ident(name: &str) -> Spanned<Expr> {

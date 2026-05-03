@@ -72,7 +72,17 @@ fn const_int_expr(expr: &Spanned<Expr>) -> Option<i64> {
 }
 
 impl TypeChecker {
+    /// Infer the type of `expr` and record it on the `Spanned` node so later
+    /// passes can read the result without re-running inference. The actual
+    /// inference logic lives in `infer_type_inner`; this wrapper exists only
+    /// to keep the `set_ty` step in one place.
     pub(in super::super) fn infer_type(&mut self, expr: &Spanned<Expr>) -> Type {
+        let t = self.infer_type_inner(expr);
+        expr.set_ty(t.clone());
+        t
+    }
+
+    fn infer_type_inner(&mut self, expr: &Spanned<Expr>) -> Type {
         match &expr.node {
             Expr::Literal(lit) => match lit {
                 crate::ast::Literal::Int(_) => Type::Int,

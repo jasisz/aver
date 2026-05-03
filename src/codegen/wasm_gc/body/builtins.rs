@@ -537,16 +537,13 @@ pub(super) fn emit_option_with_default(
     // automatically. The classifier is re-run on the parent call
     // because `Option.withDefault` is the shape's outer shell.
     let outer_call = Expr::FnCall(
-        Box::new(Spanned {
-            node: Expr::Attr(
-                Box::new(Spanned {
-                    node: Expr::Ident("Option".into()),
-                    line: 0,
-                }),
+        Box::new(Spanned::new(
+            Expr::Attr(
+                Box::new(Spanned::new(Expr::Ident("Option".into()), 0)),
                 "withDefault".into(),
             ),
-            line: 0,
-        }),
+            0,
+        )),
         args.to_vec(),
     );
     if let Some(leaf) = classify_leaf_op(&outer_call, ctx) {
@@ -563,10 +560,7 @@ pub(super) fn emit_option_with_default(
                 index,
                 default_literal,
             } => {
-                let default_spanned = Spanned {
-                    node: Expr::Literal(default_literal.clone()),
-                    line: 0,
-                };
+                let default_spanned = Spanned::new(Expr::Literal(default_literal.clone()), 0);
                 return emit_vector_get_or_default(
                     func,
                     vector,

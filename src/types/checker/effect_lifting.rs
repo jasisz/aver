@@ -415,7 +415,7 @@ fn stmts_to_let_chain(stmts: &[Stmt], line: SourceLine) -> Spanned<Expr> {
 }
 
 fn spanned(node: Expr, line: SourceLine) -> Spanned<Expr> {
-    Spanned { node, line }
+    Spanned::new(node, line)
 }
 
 /// Build the AST expression `BranchPath.child(parent_path, idx)`.
@@ -640,10 +640,7 @@ fn lift_expr(
             }))
         }
     };
-    Ok(Spanned {
-        node: new_node,
-        line: expr.line,
-    })
+    Ok(Spanned::new(new_node, expr.line))
 }
 
 fn lift_args(
@@ -713,10 +710,10 @@ fn lift_classified_call(
                     })?;
             let new_args = lift_args(args, cfg, path_expr, counter)?;
             Ok(Expr::FnCall(
-                Box::new(Spanned {
-                    node: Expr::Ident(oracle_name.clone()),
-                    line: original.line,
-                }),
+                Box::new(Spanned::new(
+                    Expr::Ident(oracle_name.clone()),
+                    original.line,
+                )),
                 new_args,
             ))
         }
@@ -730,17 +727,17 @@ fn lift_classified_call(
             let current_counter = *counter;
             *counter += 1;
             let path_arg = path_expr.clone();
-            let counter_arg = Spanned {
-                node: Expr::Literal(Literal::Int(current_counter as i64)),
-                line: original.line,
-            };
+            let counter_arg = Spanned::new(
+                Expr::Literal(Literal::Int(current_counter as i64)),
+                original.line,
+            );
             let mut new_args = vec![path_arg, counter_arg];
             new_args.extend(lift_args(args, cfg, path_expr, counter)?);
             Ok(Expr::FnCall(
-                Box::new(Spanned {
-                    node: Expr::Ident(oracle_name.clone()),
-                    line: original.line,
-                }),
+                Box::new(Spanned::new(
+                    Expr::Ident(oracle_name.clone()),
+                    original.line,
+                )),
                 new_args,
             ))
         }
@@ -1024,16 +1021,13 @@ fn rebuild_dotted_callee(full_name: &str, from: &Spanned<Expr>) -> Spanned<Expr>
         Some((h, t)) => (h, t),
         None => (full_name, ""),
     };
-    Spanned {
-        node: Expr::Attr(
-            Box::new(Spanned {
-                node: Expr::Ident(head.to_string()),
-                line: from.line,
-            }),
+    Spanned::new(
+        Expr::Attr(
+            Box::new(Spanned::new(Expr::Ident(head.to_string()), from.line)),
             tail.to_string(),
         ),
-        line: from.line,
-    }
+        from.line,
+    )
 }
 
 #[cfg(test)]

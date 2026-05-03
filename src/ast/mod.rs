@@ -1,3 +1,6 @@
+pub mod types;
+pub use types::Type;
+
 /// Source line number (1-based). 0 = synthetic/unknown.
 pub type SourceLine = usize;
 
@@ -19,12 +22,36 @@ impl From<bool> for AnnotBool {
     }
 }
 
-/// AST node with source location. Line-agnostic equality: two `Spanned` values
-/// are equal iff their inner nodes are equal, regardless of line.
-#[derive(Debug, Clone)]
+/// AST node with source location plus an optional inferred type.
+///
+/// Line-agnostic equality: two `Spanned` values are equal iff their inner
+/// nodes are equal, regardless of line or attached type. The type slot is a
+/// `OnceLock<Type>` populated by the type checker; backends that have not
+/// been migrated to consume it stay agnostic and continue inferring locally.
+/// `OnceLock` (rather than `OnceCell`) keeps `Spanned` `Sync`, which matters
+/// because parts of the AST live behind `Arc` and cross thread boundaries
+/// (e.g. parallel verify execution, REPL background tasks).
+#[derive(Debug)]
 pub struct Spanned<T> {
     pub node: T,
     pub line: SourceLine,
+    pub ty: std::sync::OnceLock<Type>,
+}
+
+// `OnceLock` does not derive `Clone` (the cell is invariant over `T`), so the
+// inner type is cloned manually.
+impl<T: Clone> Clone for Spanned<T> {
+    fn clone(&self) -> Self {
+        let ty = std::sync::OnceLock::new();
+        if let Some(t) = self.ty.get() {
+            let _ = ty.set(t.clone());
+        }
+        Self {
+            node: self.node.clone(),
+            line: self.line,
+            ty,
+        }
+    }
 }
 
 impl<T: PartialEq> PartialEq for Spanned<T> {
@@ -35,12 +62,27 @@ impl<T: PartialEq> PartialEq for Spanned<T> {
 
 impl<T> Spanned<T> {
     pub fn new(node: T, line: SourceLine) -> Self {
-        Self { node, line }
+        Self {
+            node,
+            line,
+            ty: std::sync::OnceLock::new(),
+        }
     }
 
     /// Create a Spanned with line=0 (synthetic/generated AST, no source location).
     pub fn bare(node: T) -> Self {
-        Self { node, line: 0 }
+        Self::new(node, 0)
+    }
+
+    /// Record the inferred type for this node. No-op if a type is already set
+    /// (later inference passes must not contradict the first one).
+    pub fn set_ty(&self, ty: Type) {
+        let _ = self.ty.set(ty);
+    }
+
+    /// Inferred type for this node, if the type checker has visited it.
+    pub fn ty(&self) -> Option<&Type> {
+        self.ty.get()
     }
 }
 

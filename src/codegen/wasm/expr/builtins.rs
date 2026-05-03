@@ -867,10 +867,7 @@ impl<'a> ExprEmitter<'a> {
             }
             _ => {
                 let ret_type = self.infer_call_return_type(
-                    &crate::ast::Spanned {
-                        node: crate::ast::Expr::Ident(name.to_string()),
-                        line: 0,
-                    },
+                    &crate::ast::Spanned::new(crate::ast::Expr::Ident(name.to_string()), 0),
                     args,
                 );
                 self.codegen_error(format!("unknown builtin `{}` in WASM backend", name));
