@@ -3,6 +3,11 @@ use super::*;
 fn display_type_for_expected(ty: &Type) -> String {
     match ty {
         Type::Unknown => "Any".to_string(),
+        // `Var("_")` is the anonymous "any value" placeholder used by
+        // dynamic-dispatch builtins (Console.print, etc.) — surface it
+        // as "Any" in error messages, same as the legacy Unknown.
+        // Named vars (`Var("K")`, `Var("T")`, ...) display as their name.
+        Type::Var(name) if name == "_" => "Any".to_string(),
         Type::Var(name) => name.clone(),
         Type::Int => "Int".to_string(),
         Type::Float => "Float".to_string(),
