@@ -16,7 +16,7 @@ Generic constructor stamps are resolved in the type checker before codegen. `bod
 
 ### Game compilation status
 
-`examples/games/` covers the realistic shape diversity that the 26 unit tests in `src/codegen/wasm_gc/tests.rs` couldn't (each unit test has explicit fn signatures that side-step the inference gaps). After Step 0–3 + variadic tuple + IndependentProduct unwrap (commit `f8c4f9bc`):
+`examples/games/` covers the realistic shape diversity that the 26 unit tests in `src/codegen/wasm_gc/tests.rs` couldn't (each unit test has explicit fn signatures that side-step the inference gaps). After Step 0–3 + variadic tuple + IndependentProduct unwrap, sum-type/record equality dispatch via `__eq_<TypeName>` helpers, bidirectional infer in FnCall arg positions, and the `Type::Unknown`/`Type::Any` removal series (HEAD on `0.16-wasm-gc-probe`):
 
 | Game | Status | Size |
 |---|---|---|
@@ -24,11 +24,11 @@ Generic constructor stamps are resolved in the type checker before codegen. `bod
 | `life.av` | ✅ | 9194 B |
 | `wumpus.av` | ✅ | 7218 B |
 | `tetris/main.av` | ✅ | 11201 B |
-| `checkers/main.av` | ❌ | sum-type equality (`state.currentPlayer == playerColor` for `Color` enum). `BinOp::Eq` lowers to `i64.eq`, treating struct refs as Int. Fix: dispatch on stamped operand type — `Type::Named(N)` where N is a sum type → `ref.eq` or per-N `__eq_N` helper |
-| `rogue/main.av` | ❌ | wasm validation: nullability cascade in cross-module Pathfinding call. `struct.new` produces non-null `(ref T)`, signature declares `(ref null T)`. Fix: insert `ref.as_non_null` or unify nullability across param/result signatures |
-| `doom/main.av` | ❌ | empty `[]` in call-arg position gets the wrong type stamp. `genRooms(seed, 6, 0, [])` — typecheck stamps `[]` from fn return type rather than formal param type. Fix at typecheck: propagate formal param type as expected type into empty-list literal args |
+| `checkers/main.av` | ✅ | 26505 B |
+| `doom/main.av` | ✅ | 23618 B |
+| `rogue/main.av` | ✅ | 33631 B |
 
-Each remaining blocker lives in a different subsystem (BinOp emit, ref-cast emit, typecheck constraint propagation), so they unblock independently. Snake compiles ~6 KiB, the largest passing game (tetris) ~11 KiB; full playground migration story (`tools/website/playground`, currently `--target edge-wasm`) waits on all three.
+All seven games compile and validate. The blockers (sum-type equality, nullability cascade, empty-list call-arg stamp) were closed by per-subsystem fixes: `body/eq_helpers.rs` for sum/record `==`, `body/builtins.rs` `emit_map_kv_call` shim cleanup, and `infer/expr.rs` bidirectional propagation of expected types into generic constructors and collection literals. Full playground migration to `--target wasm-gc` (`tools/website/playground`, currently `--target edge-wasm`) is a separate workstream — the backend itself is no longer the blocker.
 
 ### Runtime placement: inline vs sidecar
 

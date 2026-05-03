@@ -203,10 +203,10 @@ pub(super) fn emit_fn_body(
                 // Whether the expression leaves a value on the stack
                 // is decided structurally (typecheck stamps `Unit` on
                 // pure-effect expressions, every other shape pushes a
-                // value). We avoid `aver_to_wasm` here so that an
-                // under-specialised type like `Result<Int, Unknown>`
-                // — which the registry can't lower without context —
-                // doesn't poison the trailing-drop decision.
+                // value). We avoid `aver_to_wasm` here so that a type
+                // carrying an unresolved `Type::Var` (e.g. for a
+                // generic call site the registry can't lower without
+                // context) doesn't poison the trailing-drop decision.
                 let produces_value = aver_type_str_of(spanned).trim() != "Unit";
                 if !is_last && produces_value {
                     func.instruction(&Instruction::Drop);

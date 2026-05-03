@@ -811,8 +811,9 @@ pub(super) fn emit_record_update(
         if let Some((_, override_expr)) = updates.iter().find(|(n, _)| n == decl_name) {
             // Same `Option.None` / empty-list field special-cases as
             // `emit_record_create` — the override expression's typed-AST
-            // info often resolves to Unknown for these literal forms,
-            // but the field's declared type is known and authoritative.
+            // info may resolve to a generic `Type::Var` for these
+            // literal forms, but the field's declared type is the
+            // authoritative shape to emit against.
             if is_option_none_expr(&override_expr.node)
                 && let Some(inner) = decl_ty
                     .trim()
@@ -1250,7 +1251,6 @@ pub(super) fn emit_list_literal(
     // per-fn-return heuristics below.
     let stamped = aver_type_canonical(outer, ctx.return_type, ctx.registry);
     let canonical = if stamped.starts_with("List<")
-        && !stamped.contains("Unknown")
         && ctx.registry.list_type_idx(&stamped).is_some()
     {
         stamped
@@ -1333,8 +1333,8 @@ pub(super) fn emit_list_literal(
         .cons;
     // Element type derived from the resolved canonical. Used to give
     // `Option.None` and empty-list elements the correct T even when
-    // their typed-AST type is Unknown — same trick `emit_record_create`
-    // uses for declared field types.
+    // their typed-AST stamp is a generic `Type::Var` — same trick
+    // `emit_record_create` uses for declared field types.
     let elem_ty = TypeRegistry::list_element_type(&canonical).map(|s| s.to_string());
     for item in items {
         if let Some(elem) = elem_ty.as_deref()

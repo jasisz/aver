@@ -1257,10 +1257,13 @@ fn collect_tuples_from_expr(
         let elem_tys: Vec<String> = items
             .iter()
             .map(|item| {
+                // Defensive fallback for any Spanned that escaped
+                // typecheck without a stamp (synthesised AST etc.).
+                // The guard below skips canonicals that pick this up.
                 let stamped = item
                     .ty()
                     .map(|t| t.display())
-                    .unwrap_or_else(|| "Unknown".into());
+                    .unwrap_or_else(|| "Invalid".into());
                 if unwrap {
                     // `?!` element must be Result<T, E>; canonical
                     // tuple uses T (the Ok payload type).
@@ -1276,7 +1279,7 @@ fn collect_tuples_from_expr(
             .chars()
             .filter(|c| !c.is_whitespace())
             .collect();
-        if !canonical.contains("Unknown") && !out.contains_key(&canonical) {
+        if !canonical.contains("Invalid") && !out.contains_key(&canonical) {
             for elem in &elem_tys {
                 collect_tuples_from_str(elem, out, order, next_idx);
             }
