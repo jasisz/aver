@@ -853,38 +853,32 @@ fn emit_user_types(
         ));
     }
 
-    // `Tuple<A, B>` — `(struct (mut A) (mut B))`. Used by Map.entries
-    // (returns List<Tuple<K, V>>), Map.fromList, List.zip.
+    // `Tuple<A, B, ..., N>` — `(struct (mut A) (mut B) ... (mut N))`.
+    // Variadic arity: 2-tuples used by Map.entries / Map.fromList /
+    // List.zip; 3+ tuples used by user code (`scoreTriple`,
+    // `scoreQuad`) and `(...)!` independent products.
     for canonical in &registry.tuple_order {
-        let (a_aver, b_aver) = TypeRegistry::tuple_ab(canonical).ok_or(WasmGcError::Validation(
-            format!("registered tuple `{canonical}` has no parsable A, B"),
+        let elems = TypeRegistry::tuple_elements(canonical).ok_or(WasmGcError::Validation(
+            format!("registered tuple `{canonical}` has no parsable elements"),
         ))?;
-        let a_val =
-            super::types::aver_to_wasm(a_aver, Some(registry))?.ok_or(WasmGcError::Validation(
-                format!("Tuple A type `{a_aver}` has no wasm representation"),
-            ))?;
-        let b_val =
-            super::types::aver_to_wasm(b_aver, Some(registry))?.ok_or(WasmGcError::Validation(
-                format!("Tuple B type `{b_aver}` has no wasm representation"),
-            ))?;
+        let mut fields: Vec<wasm_encoder::FieldType> = Vec::with_capacity(elems.len());
+        for elem_aver in &elems {
+            let elem_val = super::types::aver_to_wasm(elem_aver, Some(registry))?.ok_or(
+                WasmGcError::Validation(format!(
+                    "Tuple element type `{elem_aver}` has no wasm representation"
+                )),
+            )?;
+            fields.push(wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(elem_val),
+                mutable: true,
+            });
+        }
         let idx = registry
             .tuple_type_idx(canonical)
             .ok_or(WasmGcError::Validation(format!(
                 "tuple `{canonical}` not registered"
             )))?;
-        entries.push((
-            idx,
-            mk_struct(vec![
-                wasm_encoder::FieldType {
-                    element_type: wasm_encoder::StorageType::Val(a_val),
-                    mutable: true,
-                },
-                wasm_encoder::FieldType {
-                    element_type: wasm_encoder::StorageType::Val(b_val),
-                    mutable: true,
-                },
-            ]),
-        ));
+        entries.push((idx, mk_struct(fields)));
     }
 
     // Built-in records (HttpRequest / HttpResponse / Tcp.Connection /

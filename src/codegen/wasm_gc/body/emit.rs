@@ -173,16 +173,17 @@ pub(super) fn emit_expr(
         }
         Expr::IndependentProduct(items, unwrap) => {
             // wasm-gc has no parallelism (no `std::thread::scope`
-            // analogue), so `(a, b)!` lowers as a sequential tuple
-            // — same shape `Expr::Tuple` produces. The `?!` form (set
-            // when `unwrap == true`) requires Result-unwrapping; for
-            // now reject loudly, no game uses it under wasm-gc.
+            // analogue), so both `(a, b, c)!` and `(a, b, c)?!` lower
+            // as sequential evaluation. `!` (unwrap=false) is just a
+            // tuple. `?!` (unwrap=true) requires every element to be
+            // `Result<T_i, E>` — unwrap each Ok value into the tuple,
+            // early-return a freshly-built `Result<EnclosingT, E>::Err`
+            // on the first Err.
             if *unwrap {
-                return Err(WasmGcError::Unimplemented(
-                    "phase 5 — `?!` independent product (Result-unwrapping)",
-                ));
+                emit_independent_product_unwrap(func, items, slots, ctx)?;
+            } else {
+                emit_tuple_literal(func, items, slots, ctx)?;
             }
-            emit_tuple_literal(func, items, slots, ctx)?;
         }
         Expr::Ident(_) => {
             return Err(WasmGcError::Unimplemented(
@@ -975,20 +976,168 @@ pub(super) fn emit_list_empty(func: &mut Function, ctx: &EmitCtx<'_>) -> Result<
 /// must already be registered (eager paths cover the common cases:
 /// every Map<K,V> registers Tuple<K,V>; user fn signatures register
 /// the rest).
+/// `(a, b, c)?!` — independent product with Result-unwrapping.
+/// Each element evaluates to `Result<T_i, E>`. On Ok, push the inner
+/// `T_i` onto the stack; on Err, build a fresh
+/// `Result<EnclosingT, E>::Err(<err value>)` and early return. After
+/// every element succeeds, materialise `Tuple<T_0, T_1, ..., T_N>`
+/// via `struct.new`.
+///
+/// Type checker proves: every element is `Result<T_i, E>` with the
+/// same `E`; the enclosing fn returns `Result<X, E>` with that same
+/// `E`. We rely on those invariants here.
+pub(super) fn emit_independent_product_unwrap(
+    func: &mut Function,
+    items: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    if items.len() < 2 {
+        return Err(WasmGcError::Validation(format!(
+            "Independent product `?!` needs at least 2 elements; got {}",
+            items.len()
+        )));
+    }
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "`?!` independent product requires a subject scratch slot but none was reserved \
+         (slots::expr_needs_scratch must opt in for Expr::IndependentProduct(_, true))"
+            .into(),
+    ))?;
+
+    // Resolve enclosing fn's return Result canonical (`Result<X, E>`).
+    // Used to materialise the early-return Err with the correct shape.
+    let enclosing_canonical: String = ctx
+        .return_type
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let enclosing_idx = ctx
+        .registry
+        .result_type_idx(&enclosing_canonical)
+        .ok_or_else(|| {
+            WasmGcError::Validation(format!(
+                "`?!` independent product: enclosing fn return type `{enclosing_canonical}` \
+                 is not a registered Result<X, E>"
+            ))
+        })?;
+    let (enclosing_t_aver, _enclosing_e_aver) = TypeRegistry::result_te(&enclosing_canonical)
+        .ok_or_else(|| {
+            WasmGcError::Validation(format!(
+                "`?!` independent product: enclosing canonical `{enclosing_canonical}` malformed"
+            ))
+        })?;
+
+    for item in items {
+        // Each element's stamped type must be `Result<T_i, E>`.
+        let elem_aver = aver_type_str_of(item);
+        let elem_canonical: String = elem_aver.chars().filter(|c| !c.is_whitespace()).collect();
+        let elem_res_idx = ctx
+            .registry
+            .result_type_idx(&elem_canonical)
+            .ok_or_else(|| {
+                WasmGcError::Validation(format!(
+                    "`?!` element type `{elem_aver}` is not a registered Result<T_i, E>"
+                ))
+            })?;
+        let (elem_t_aver, _elem_e_aver) =
+            TypeRegistry::result_te(&elem_canonical).ok_or_else(|| {
+                WasmGcError::Validation(format!(
+                    "`?!` element canonical `{elem_canonical}` malformed"
+                ))
+            })?;
+        let ok_wasm = aver_to_wasm(elem_t_aver, Some(ctx.registry))?.ok_or_else(|| {
+            WasmGcError::Validation(format!(
+                "`?!` Ok-payload type `{elem_t_aver}` has no wasm representation"
+            ))
+        })?;
+        let block_ty = wasm_encoder::BlockType::Result(ok_wasm);
+
+        // Eval, stash in scratch, branch on tag.
+        emit_expr(func, item, slots, ctx)?;
+        func.instruction(&Instruction::LocalSet(scratch));
+        func.instruction(&Instruction::LocalGet(scratch));
+        func.instruction(&Instruction::RefCastNonNull(
+            wasm_encoder::HeapType::Concrete(elem_res_idx),
+        ));
+        func.instruction(&Instruction::StructGet {
+            struct_type_index: elem_res_idx,
+            field_index: 0, // tag
+        });
+        func.instruction(&Instruction::I32Const(1)); // OK tag
+        func.instruction(&Instruction::I32Eq);
+        func.instruction(&Instruction::If(block_ty));
+        // Ok arm: push the T_i payload.
+        func.instruction(&Instruction::LocalGet(scratch));
+        func.instruction(&Instruction::RefCastNonNull(
+            wasm_encoder::HeapType::Concrete(elem_res_idx),
+        ));
+        func.instruction(&Instruction::StructGet {
+            struct_type_index: elem_res_idx,
+            field_index: 1, // Ok value
+        });
+        func.instruction(&Instruction::Else);
+        // Err arm: rebuild `Result<EnclosingT, E>::Err(elem_err_value)`
+        // and return. Same struct shape as `emit_result_constructor`
+        // for variant=Err: tag=0, default(T), then the err value from
+        // the failing element.
+        func.instruction(&Instruction::I32Const(0)); // ERR tag
+        emit_default_value(func, enclosing_t_aver, ctx.registry)?;
+        func.instruction(&Instruction::LocalGet(scratch));
+        func.instruction(&Instruction::RefCastNonNull(
+            wasm_encoder::HeapType::Concrete(elem_res_idx),
+        ));
+        func.instruction(&Instruction::StructGet {
+            struct_type_index: elem_res_idx,
+            field_index: 2, // err value (same E as enclosing)
+        });
+        func.instruction(&Instruction::StructNew(enclosing_idx));
+        func.instruction(&Instruction::Return);
+        func.instruction(&Instruction::End);
+    }
+
+    // After every element succeeded, all N Ok payloads are on the
+    // stack. Materialise the tuple — same shape as `emit_tuple_literal`
+    // but without re-emitting the items (they were emitted+unwrapped
+    // above). Build the canonical from per-element Ok types.
+    let mut elem_t_avers: Vec<String> = Vec::with_capacity(items.len());
+    for item in items {
+        let elem_aver = aver_type_str_of(item);
+        let elem_canonical: String = elem_aver.chars().filter(|c| !c.is_whitespace()).collect();
+        let (t, _) = TypeRegistry::result_te(&elem_canonical).expect("re-parse");
+        elem_t_avers.push(t.to_string());
+    }
+    let tuple_canonical: String = format!("Tuple<{}>", elem_t_avers.join(","))
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let tuple_idx = ctx
+        .registry
+        .tuple_type_idx(&tuple_canonical)
+        .ok_or_else(|| {
+            WasmGcError::Validation(format!(
+                "`?!` result tuple `{tuple_canonical}` not registered"
+            ))
+        })?;
+    func.instruction(&Instruction::StructNew(tuple_idx));
+    Ok(())
+}
+
 pub(super) fn emit_tuple_literal(
     func: &mut Function,
     items: &[Spanned<Expr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    if items.len() != 2 {
-        return Err(WasmGcError::Unimplemented(
-            "phase 5 — tuples with arity != 2 (only Tuple<A, B> supported)",
-        ));
+    if items.len() < 2 {
+        return Err(WasmGcError::Validation(format!(
+            "Tuple literal needs at least 2 elements; got {}",
+            items.len()
+        )));
     }
-    let a_ty = aver_type_str_of(&items[0]);
-    let b_ty = aver_type_str_of(&items[1]);
-    let canonical = format!("Tuple<{a_ty},{b_ty}>")
+    // Build canonical from each element's stamped type. Variadic
+    // arity — `struct.new` pops N values regardless.
+    let elem_tys: Vec<String> = items.iter().map(aver_type_str_of).collect();
+    let canonical = format!("Tuple<{}>", elem_tys.join(","))
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect::<String>();
@@ -998,8 +1147,9 @@ pub(super) fn emit_tuple_literal(
         .ok_or(WasmGcError::Validation(format!(
             "Tuple literal: `{canonical}` slot not registered"
         )))?;
-    emit_expr(func, &items[0], slots, ctx)?;
-    emit_expr(func, &items[1], slots, ctx)?;
+    for item in items {
+        emit_expr(func, item, slots, ctx)?;
+    }
     func.instruction(&Instruction::StructNew(tuple_idx));
     Ok(())
 }
@@ -2213,11 +2363,12 @@ pub(super) fn emit_match(
         return emit_option_match(func, subject, arms, block_ty, slots, ctx);
     }
 
-    // Tuple match — single arm `(a, b) -> ...`. Subject is a
-    // `(ref null $tuple_AB)`; struct.get its two fields into bindings.
+    // Tuple match — single arm `(a, b, ..., n) -> ...`. Subject is a
+    // `(ref null $tuple_A_B_..._N)`; struct.get its fields into
+    // bindings. Variadic arity (any N >= 2).
     if arms.len() == 1
         && let Pattern::Tuple(items) = &arms[0].pattern
-        && items.len() == 2
+        && items.len() >= 2
     {
         return emit_tuple_match(func, subject, items, &arms[0].body, slots, ctx);
     }

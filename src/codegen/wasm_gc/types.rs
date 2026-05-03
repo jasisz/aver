@@ -802,11 +802,12 @@ impl TypeRegistry {
         }
     }
 
-    /// Split `Tuple<A, B>` (or `(A, B)`) into (A, B). Same depth-
-    /// aware comma scan as `result_te` / `parse_map_kv`. Returns
-    /// owned strings since the canonical may be normalized from
-    /// Aver-surface `(A, B)` form.
-    pub(super) fn tuple_ab(canonical: &str) -> Option<(&str, &str)> {
+    /// Split `Tuple<A, B, C, ...>` (or `(A, B, C, ...)`) into the full
+    /// element list. Depth-aware comma scan handles nested generics
+    /// like `Tuple<Map<String, Int>, List<Int>>`. Returns slices of
+    /// the original `canonical` so callers don't allocate; arity is
+    /// arbitrary (no hardcoded 2-cap).
+    pub(super) fn tuple_elements(canonical: &str) -> Option<Vec<&str>> {
         let trimmed = canonical.trim();
         let inner = if let Some(i) = trimmed
             .strip_prefix("Tuple<")
@@ -820,17 +821,34 @@ impl TypeRegistry {
         };
         let bytes = inner.as_bytes();
         let mut depth: i32 = 0;
+        let mut start = 0usize;
+        let mut out: Vec<&str> = Vec::new();
         for (idx, b) in bytes.iter().enumerate() {
             match b {
                 b'(' | b'<' => depth += 1,
                 b')' | b'>' => depth -= 1,
                 b',' if depth == 0 => {
-                    return Some((inner[..idx].trim(), inner[idx + 1..].trim()));
+                    out.push(inner[start..idx].trim());
+                    start = idx + 1;
                 }
                 _ => {}
             }
         }
-        None
+        out.push(inner[start..].trim());
+        if out.len() < 2 { None } else { Some(out) }
+    }
+
+    /// Convenience wrapper returning the first two elements as a pair —
+    /// kept for callers that genuinely only need `(A, B)` (e.g.
+    /// `List.zip` lowering, the existing 2-tuple `Map.entries`
+    /// canonicals). For variadic destructure use `tuple_elements`.
+    pub(super) fn tuple_ab(canonical: &str) -> Option<(&str, &str)> {
+        let elems = Self::tuple_elements(canonical)?;
+        if elems.len() == 2 {
+            Some((elems[0], elems[1]))
+        } else {
+            None
+        }
     }
 
     pub(super) fn option_type_idx(&self, canonical: &str) -> Option<u32> {
@@ -1224,36 +1242,44 @@ fn collect_tuples_from_expr(
     // `(a, (b, c))` registers both inner and outer canonicals.
     // `Expr::IndependentProduct` (the `(...)!` form) lowers as a
     // tuple under wasm-gc and shares the same canonical shape.
-    let tuple_items: Option<&Vec<crate::ast::Spanned<crate::ast::Expr>>> = match &expr.node {
-        Expr::Tuple(xs) | Expr::IndependentProduct(xs, false) => Some(xs),
-        _ => None,
-    };
-    if let Some(items) = tuple_items
-        && items.len() == 2
+    // `(...)?!` (unwrap=true) is a tuple of unwrapped Ok types —
+    // strip the Result<_,_> wrapper from each stamped element type
+    // before building the canonical.
+    let tuple_items_with_unwrap: Option<(&Vec<crate::ast::Spanned<crate::ast::Expr>>, bool)> =
+        match &expr.node {
+            Expr::Tuple(xs) => Some((xs, false)),
+            Expr::IndependentProduct(xs, unwrap) => Some((xs, *unwrap)),
+            _ => None,
+        };
+    if let Some((items, unwrap)) = tuple_items_with_unwrap
+        && items.len() >= 2
     {
-        // Build canonical from typed-AST element types. Unknown types
-        // produce `Tuple<...,Unknown>` which the registry can't lower
-        // — that's the right failure mode (typecheck gap surfaces
-        // here, not silently succeeds with the wrong shape).
-        let a = items[0]
-            .ty()
-            .map(|t| t.display())
-            .unwrap_or_else(|| "Unknown".into());
-        let b = items[1]
-            .ty()
-            .map(|t| t.display())
-            .unwrap_or_else(|| "Unknown".into());
-        let canonical: String = format!("Tuple<{a},{b}>")
+        let elem_tys: Vec<String> = items
+            .iter()
+            .map(|item| {
+                let stamped = item
+                    .ty()
+                    .map(|t| t.display())
+                    .unwrap_or_else(|| "Unknown".into());
+                if unwrap {
+                    // `?!` element must be Result<T, E>; canonical
+                    // tuple uses T (the Ok payload type).
+                    let stripped: String = stamped.chars().filter(|c| !c.is_whitespace()).collect();
+                    if let Some((t, _)) = TypeRegistry::result_te(&stripped) {
+                        return t.to_string();
+                    }
+                }
+                stamped
+            })
+            .collect();
+        let canonical: String = format!("Tuple<{}>", elem_tys.join(","))
             .chars()
             .filter(|c| !c.is_whitespace())
             .collect();
-        // Recursively register the inner tuple types first so depth-
-        // ordered idx assignment respects forward-reference rules.
         if !canonical.contains("Unknown") && !out.contains_key(&canonical) {
-            // First recurse through item types (in case they're
-            // themselves Tuple<...>) via the type-string scanner.
-            collect_tuples_from_str(&a, out, order, next_idx);
-            collect_tuples_from_str(&b, out, order, next_idx);
+            for elem in &elem_tys {
+                collect_tuples_from_str(elem, out, order, next_idx);
+            }
             out.insert(canonical.clone(), *next_idx);
             order.push(canonical);
             *next_idx += 1;

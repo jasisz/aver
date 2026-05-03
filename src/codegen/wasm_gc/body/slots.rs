@@ -312,16 +312,16 @@ pub(super) fn collect_expr_binding_slots(
                         }
                     }
                 }
-                if let Pattern::Tuple(items) = &arm.pattern
-                    && items.len() == 2
-                {
+                if let Pattern::Tuple(items) = &arm.pattern {
                     let subject_ty_str = aver_type_str_of(subject);
                     let canonical: String = subject_ty_str
                         .chars()
                         .filter(|c| !c.is_whitespace())
                         .collect();
-                    if let Some((a, b)) = TypeRegistry::tuple_ab(&canonical) {
-                        for (pat, ty) in items.iter().zip([a, b]) {
+                    if let Some(elems) = TypeRegistry::tuple_elements(&canonical)
+                        && elems.len() == items.len()
+                    {
+                        for (pat, ty) in items.iter().zip(elems.iter()) {
                             if let Pattern::Ident(name) = pat
                                 && name != "_"
                                 && let Some(v) = aver_to_wasm(ty, Some(registry))?
