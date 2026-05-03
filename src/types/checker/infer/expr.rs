@@ -59,6 +59,27 @@ fn display_type_for_expected(ty: &Type) -> String {
     }
 }
 
+/// True iff `ty` contains no `Type::Unknown` or `Type::Var(_)` anywhere
+/// in its structure. Used to gate expected-type propagation: a formal
+/// param like `Map<Var("K"), Var("V")>` must NOT be passed as expected
+/// into arg inference, otherwise the recogniser stamps the arg with
+/// the bare Var-bearing type and breaks downstream backends.
+fn type_is_fully_concrete(ty: &Type) -> bool {
+    match ty {
+        Type::Unknown | Type::Var(_) => false,
+        Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit | Type::Named(_) => true,
+        Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
+            type_is_fully_concrete(inner)
+        }
+        Type::Result(ok, err) => type_is_fully_concrete(ok) && type_is_fully_concrete(err),
+        Type::Map(k, v) => type_is_fully_concrete(k) && type_is_fully_concrete(v),
+        Type::Tuple(items) => items.iter().all(type_is_fully_concrete),
+        Type::Fn(params, ret, _) => {
+            params.iter().all(type_is_fully_concrete) && type_is_fully_concrete(ret)
+        }
+    }
+}
+
 fn const_int_expr(expr: &Spanned<Expr>) -> Option<i64> {
     match &expr.node {
         Expr::Literal(crate::ast::Literal::Int(i)) => Some(*i),
@@ -238,8 +259,30 @@ impl TypeChecker {
                     self.current_fn_line.unwrap_or(1)
                 };
 
-                // Infer arg types
-                let arg_types: Vec<Type> = args.iter().map(|a| self.infer_type(a)).collect();
+                // Bidirectional: if we can resolve the callee's signature
+                // up front, infer each arg WITH its formal param type as
+                // expected. Lets generic constructors in arg position
+                // (`genRooms(seed, 6, 0, [])` — last arg is List<Room>)
+                // pick up T from the signature instead of stamping
+                // List<Unknown>. Falls back to standalone inference when
+                // the callee is unresolvable (eg. dotted-builtin without
+                // a fn_sig, or callable values).
+                let formal_params: Option<Vec<Type>> = match &fn_expr.node {
+                    Expr::Ident(name) => self.find_fn_sig(name).map(|s| s.params.clone()),
+                    _ => Self::callee_key(&fn_expr.node)
+                        .and_then(|key| self.find_fn_sig(&key).map(|s| s.params.clone())),
+                };
+                let arg_types: Vec<Type> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(i, a)| {
+                        let expected = formal_params
+                            .as_ref()
+                            .and_then(|p| p.get(i))
+                            .filter(|t| type_is_fully_concrete(t));
+                        self.infer_type_with_expected(a, expected)
+                    })
+                    .collect();
 
                 // Helper: check arity + arg types against a sig, return sig.ret
                 let check_call = |tc: &mut Self, display_name: &str, sig: FnSig| -> Type {
