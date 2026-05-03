@@ -31,21 +31,19 @@ impl<'a> ExprEmitter<'a> {
             let is_last = i == stmts.len() - 1;
             match stmt {
                 Stmt::Binding(name, _type_ann, expr) => {
-                    let wt = self.infer_expr_type(&expr.node);
-                    let at = self.infer_aver_type(&expr.node);
-                    self.emit_expr(&expr.node);
+                    let at = self.aver_type_of(expr).clone();
+                    let wt = aver_type_to_wasm(&at);
+                    self.emit_expr(expr);
                     let idx = self.alloc_local(wt);
                     self.locals.insert(name.clone(), idx);
-                    if let Some(at) = at {
-                        self.local_aver_types.insert(idx, at);
-                    }
+                    self.local_aver_types.insert(idx, at);
                     self.instructions.push(Instruction::LocalSet(idx));
                     if is_last {
                         self.instructions.push(Instruction::I32Const(0));
                     }
                 }
                 Stmt::Expr(expr) => {
-                    self.emit_expr(&expr.node);
+                    self.emit_expr(expr);
                     if !is_last {
                         self.instructions.push(Instruction::Drop);
                     }
@@ -54,8 +52,8 @@ impl<'a> ExprEmitter<'a> {
         }
     }
 
-    pub(super) fn emit_expr(&mut self, expr: &Expr) {
-        match expr {
+    pub(super) fn emit_expr(&mut self, expr: &Spanned<Expr>) {
+        match &expr.node {
             Expr::Literal(lit) => self.emit_literal(lit),
             Expr::Ident(name) | Expr::Resolved { name, .. } => {
                 if let Some(&idx) = self.locals.get(name) {
@@ -65,13 +63,13 @@ impl<'a> ExprEmitter<'a> {
                         "unresolved local identifier `{}` in WASM codegen",
                         name
                     ));
-                    self.emit_default_value(self.infer_expr_type(expr));
+                    self.emit_default_value(self.wasm_type_of(expr));
                 }
             }
             Expr::BinOp(op, lhs, rhs) => self.emit_binop(op, lhs, rhs),
-            Expr::FnCall(callee, args) => self.emit_fn_call(callee, args),
-            Expr::Match { subject, arms } => self.emit_match(subject, arms),
-            Expr::Constructor(name, inner) => self.emit_constructor(name, inner),
+            Expr::FnCall(callee, args) => self.emit_fn_call(expr, callee, args),
+            Expr::Match { subject, arms } => self.emit_match(expr, subject, arms),
+            Expr::Constructor(name, inner) => self.emit_constructor(expr, name, inner),
             Expr::ErrorProp(inner) => self.emit_error_prop(inner),
             // Pipeline contract: `interp_lower` always runs before WASM
             // codegen — it desugars `Expr::InterpolatedStr` into the
@@ -91,7 +89,7 @@ impl<'a> ExprEmitter<'a> {
             Expr::Attr(_, _) => {
                 let leaf = {
                     let ctx = self.ir_ctx();
-                    classify_leaf_op(expr, &ctx)
+                    classify_leaf_op(&expr.node, &ctx)
                 };
                 match leaf {
                     Some(LeafOp::NoneValue) => {
@@ -114,7 +112,8 @@ impl<'a> ExprEmitter<'a> {
                     Some(LeafOp::FieldAccess {
                         object, field_name, ..
                     }) => {
-                        self.emit_field_access(object, field_name);
+                        let field_wasm_type = self.wasm_type_of(expr);
+                        self.emit_field_access(object, field_name, field_wasm_type);
                     }
                     Some(other) => {
                         unreachable!(
@@ -149,8 +148,8 @@ impl<'a> ExprEmitter<'a> {
     // -----------------------------------------------------------------------
 
     fn emit_binop(&mut self, op: &BinOp, lhs: &Spanned<Expr>, rhs: &Spanned<Expr>) {
-        let lhs_type = self.infer_expr_type(&lhs.node);
-        let rhs_type = self.infer_expr_type(&rhs.node);
+        let lhs_type = self.wasm_type_of(lhs);
+        let rhs_type = self.wasm_type_of(rhs);
         let operand_type = if lhs_type == WasmType::F64 || rhs_type == WasmType::F64 {
             WasmType::F64
         } else {
@@ -159,10 +158,10 @@ impl<'a> ExprEmitter<'a> {
 
         // String concatenation: + on strings → str_concat
         if matches!(op, BinOp::Add) && operand_type == WasmType::I32 {
-            let lhs_aver = self.infer_aver_type(&lhs.node);
-            if matches!(lhs_aver, Some(Type::Str)) {
-                self.emit_expr(&lhs.node);
-                self.emit_expr(&rhs.node);
+            let lhs_aver = self.aver_type_of(lhs);
+            if matches!(lhs_aver, Type::Str) {
+                self.emit_expr(lhs);
+                self.emit_expr(rhs);
                 self.instructions
                     .push(Instruction::Call(self.rt.str_concat));
                 return;
@@ -172,15 +171,15 @@ impl<'a> ExprEmitter<'a> {
         // Heap object equality (I32 pointers) or I64 values that might be
         // heap pointers (parameters of Named types default to I64).
         if matches!(op, BinOp::Eq | BinOp::Neq) && operand_type != WasmType::F64 {
-            let lhs_aver = self.infer_aver_type(&lhs.node);
+            let lhs_aver = self.aver_type_of(lhs);
 
             // String equality: content comparison via str_eq runtime
-            if matches!(lhs_aver, Some(Type::Str)) {
-                self.emit_expr(&lhs.node);
+            if matches!(lhs_aver, Type::Str) {
+                self.emit_expr(lhs);
                 if lhs_type != WasmType::I32 {
                     self.instructions.push(Instruction::I32WrapI64);
                 }
-                self.emit_expr(&rhs.node);
+                self.emit_expr(rhs);
                 if rhs_type != WasmType::I32 {
                     self.instructions.push(Instruction::I32WrapI64);
                 }
@@ -195,18 +194,15 @@ impl<'a> ExprEmitter<'a> {
             // Works for Named types, variants, records — any I32 heap pointer.
             // Also handles I64 operands (function parameters of Named types
             // are stored as I64 in the WASM calling convention).
-            if !matches!(
-                lhs_aver,
-                Some(Type::Int) | Some(Type::Bool) | Some(Type::Float)
-            ) {
+            if !matches!(lhs_aver, Type::Int | Type::Bool | Type::Float) {
                 let a_local = self.alloc_local(WasmType::I32);
                 let b_local = self.alloc_local(WasmType::I32);
-                self.emit_expr(&lhs.node);
+                self.emit_expr(lhs);
                 if lhs_type != WasmType::I32 {
                     self.instructions.push(Instruction::I32WrapI64);
                 }
                 self.instructions.push(Instruction::LocalSet(a_local));
-                self.emit_expr(&rhs.node);
+                self.emit_expr(rhs);
                 if rhs_type != WasmType::I32 {
                     self.instructions.push(Instruction::I32WrapI64);
                 }
@@ -240,11 +236,11 @@ impl<'a> ExprEmitter<'a> {
             }
         }
 
-        self.emit_expr(&lhs.node);
+        self.emit_expr(lhs);
         if operand_type == WasmType::F64 && lhs_type == WasmType::I64 {
             self.instructions.push(Instruction::F64ConvertI64S);
         }
-        self.emit_expr(&rhs.node);
+        self.emit_expr(rhs);
         if operand_type == WasmType::F64 && rhs_type == WasmType::I64 {
             self.instructions.push(Instruction::F64ConvertI64S);
         }
@@ -301,15 +297,20 @@ impl<'a> ExprEmitter<'a> {
     // Function calls -- via IR CallPlan
     // -----------------------------------------------------------------------
 
-    fn emit_fn_call(&mut self, callee: &Spanned<Expr>, args: &[Spanned<Expr>]) {
+    fn emit_fn_call(
+        &mut self,
+        outer: &Spanned<Expr>,
+        callee: &Spanned<Expr>,
+        args: &[Spanned<Expr>],
+    ) {
         let plan = classify_call_plan(&callee.node, &self.ir_ctx());
 
         match plan {
             CallPlan::Function(ref name) => {
-                let ret_type = self.infer_call_return_type(callee, args);
+                let ret_type = self.wasm_type_of(outer);
                 let resolved_name = self.resolve_user_fn_name(name);
                 for arg in args {
-                    self.emit_expr(&arg.node);
+                    self.emit_expr(arg);
                 }
                 if let Some(&fn_idx) = self.fn_indices.get(resolved_name.as_str()) {
                     self.instructions.push(Instruction::Call(fn_idx));
@@ -327,7 +328,7 @@ impl<'a> ExprEmitter<'a> {
 
             CallPlan::Wrapper(kind) => {
                 if args.len() == 1 {
-                    self.emit_expr(&args[0].node);
+                    self.emit_expr(&args[0]);
                     self.emit_wrap(kind, &args[0]);
                 } else {
                     self.codegen_error("wrapper call with invalid arity");
@@ -337,7 +338,7 @@ impl<'a> ExprEmitter<'a> {
 
             CallPlan::NoneValue => {
                 for arg in args {
-                    self.emit_expr(&arg.node);
+                    self.emit_expr(arg);
                     self.instructions.push(Instruction::Drop);
                 }
                 self.instructions
@@ -382,20 +383,20 @@ impl<'a> ExprEmitter<'a> {
                 // the generic builtin dispatch and call it directly so
                 // we keep the static type information off the AST node.
                 if name == "__to_str" && args.len() == 1 {
-                    self.emit_value_to_str(&args[0].node);
+                    self.emit_value_to_str(&args[0]);
                     return;
                 }
                 for arg in args {
-                    self.emit_expr(&arg.node);
+                    self.emit_expr(arg);
                 }
                 self.emit_builtin_call(name, args);
             }
 
             CallPlan::Dynamic => {
-                let ret_type = self.infer_call_return_type(callee, args);
+                let ret_type = self.wasm_type_of(outer);
                 self.codegen_error("dynamic function calls are not supported in the WASM backend");
                 for arg in args {
-                    self.emit_expr(&arg.node);
+                    self.emit_expr(arg);
                 }
                 for _ in args {
                     self.instructions.push(Instruction::Drop);
@@ -407,8 +408,8 @@ impl<'a> ExprEmitter<'a> {
 
     /// Emit a wrapper constructor. Value is already on the stack.
     fn emit_wrap(&mut self, kind: WrapperKind, arg: &Spanned<Expr>) {
-        let inner_type = self.infer_expr_type(&arg.node);
-        let inner_is_ptr = self.expr_is_heap_ptr(&arg.node);
+        let inner_type = self.wasm_type_of(arg);
+        let inner_is_ptr = self.expr_is_heap_ptr_spanned(arg);
         let wrap_tag = match kind {
             WrapperKind::ResultOk => value::WRAP_OK,
             WrapperKind::ResultErr => value::WRAP_ERR,
@@ -472,9 +473,9 @@ impl<'a> ExprEmitter<'a> {
 
         // Store fields (all as i64 -- convert if needed)
         for (i, arg) in args.iter().enumerate() {
-            let field_type = self.infer_expr_type(&arg.node);
+            let field_type = self.wasm_type_of(arg);
             self.instructions.push(Instruction::LocalGet(ptr_local));
-            self.emit_expr(&arg.node);
+            self.emit_expr(arg);
             match field_type {
                 WasmType::I64 => {}
                 WasmType::F64 => {
@@ -500,13 +501,13 @@ impl<'a> ExprEmitter<'a> {
     // -----------------------------------------------------------------------
 
     fn emit_error_prop(&mut self, inner: &Spanned<Expr>) {
-        self.emit_expr(&inner.node);
+        self.emit_expr(inner);
         let val_local = self.alloc_local(WasmType::I32);
         self.instructions.push(Instruction::LocalSet(val_local));
 
-        let inner_aver_type = self.infer_aver_type(&inner.node);
-        let ok_wasm_type = match &inner_aver_type {
-            Some(Type::Result(ok, _)) => aver_type_to_wasm(ok),
+        let inner_aver_type = self.aver_type_of(inner);
+        let ok_wasm_type = match inner_aver_type {
+            Type::Result(ok, _) => aver_type_to_wasm(ok),
             _ => WasmType::I64,
         };
 
@@ -549,7 +550,12 @@ impl<'a> ExprEmitter<'a> {
     // Constructors (Expr::Constructor from AST, not FnCall)
     // -----------------------------------------------------------------------
 
-    fn emit_constructor(&mut self, name: &str, inner: &Option<Box<Spanned<Expr>>>) {
+    fn emit_constructor(
+        &mut self,
+        _outer: &Spanned<Expr>,
+        name: &str,
+        inner: &Option<Box<Spanned<Expr>>>,
+    ) {
         let ctor = classify_constructor_name(name, &self.ir_ctx());
         match ctor {
             SemanticConstructor::Wrapper(kind) => {
@@ -559,14 +565,14 @@ impl<'a> ExprEmitter<'a> {
                     WrapperKind::OptionSome => value::WRAP_SOME,
                 };
                 if let Some(expr) = inner {
-                    let inner_type = self.infer_expr_type(&expr.node);
+                    let inner_type = self.wasm_type_of(expr);
                     self.instructions
                         .push(Instruction::I32Const(wrap_tag as i32));
-                    self.emit_expr(&expr.node);
+                    self.emit_expr(expr);
                     match inner_type {
                         WasmType::I64 => {
                             self.instructions.push(Instruction::I32Const(
-                                if self.expr_is_heap_ptr(&expr.node) {
+                                if self.expr_is_heap_ptr_spanned(expr) {
                                     1
                                 } else {
                                     0
@@ -579,7 +585,7 @@ impl<'a> ExprEmitter<'a> {
                         }
                         WasmType::I32 => {
                             self.instructions.push(Instruction::I32Const(
-                                if self.expr_is_heap_ptr(&expr.node) {
+                                if self.expr_is_heap_ptr_spanned(expr) {
                                     1
                                 } else {
                                     0
@@ -609,7 +615,7 @@ impl<'a> ExprEmitter<'a> {
             }
             SemanticConstructor::Unknown(_) => {
                 if let Some(expr) = inner {
-                    self.emit_expr(&expr.node);
+                    self.emit_expr(expr);
                 } else {
                     self.instructions.push(Instruction::I32Const(0));
                 }
@@ -627,14 +633,14 @@ impl<'a> ExprEmitter<'a> {
                 .push(Instruction::I32Const(value::EMPTY_LIST));
             return;
         }
-        let elem_type = self.infer_expr_type(&items[0].node);
-        let elem_is_ptr = self.expr_is_heap_ptr(&items[0].node);
+        let elem_type = self.wasm_type_of(&items[0]);
+        let elem_is_ptr = self.expr_is_heap_ptr_spanned(&items[0]);
         self.instructions
             .push(Instruction::I32Const(value::EMPTY_LIST));
         for item in items.iter().rev() {
             let tail_local = self.alloc_local(WasmType::I32);
             self.instructions.push(Instruction::LocalSet(tail_local));
-            self.emit_expr(&item.node);
+            self.emit_expr(item);
             self.instructions.push(Instruction::LocalGet(tail_local));
             match elem_type {
                 WasmType::F64 => {
@@ -685,9 +691,9 @@ impl<'a> ExprEmitter<'a> {
                 memory_index: 0,
             }));
         for (i, item) in items.iter().enumerate() {
-            let item_type = self.infer_expr_type(&item.node);
+            let item_type = self.wasm_type_of(item);
             self.instructions.push(Instruction::LocalGet(ptr_local));
-            self.emit_expr(&item.node);
+            self.emit_expr(item);
             match item_type {
                 WasmType::I64 => {}
                 WasmType::F64 => self.instructions.push(Instruction::I64ReinterpretF64),
@@ -833,7 +839,7 @@ impl<'a> ExprEmitter<'a> {
         let mut tuple_locals = Vec::with_capacity(items.len());
 
         for item in items {
-            self.emit_expr(&item.node);
+            self.emit_expr(item);
             let result_local = self.alloc_local(WasmType::I32);
             self.instructions.push(Instruction::LocalSet(result_local));
 
@@ -855,9 +861,11 @@ impl<'a> ExprEmitter<'a> {
             self.emit_boundary_return_from_stack(self.fn_return_type, self.fn_return_is_heap);
             self.emit_end();
 
-            let ok_type = match self.infer_aver_type(&item.node) {
-                Some(Type::Result(ok, _)) => *ok,
-                _ => Type::Unknown,
+            // Independent product unwraps each Result<T, E> element to T;
+            // the element's `ty()` is `Result(ok, err)`, so peel it.
+            let ok_type = match self.aver_type_of(item) {
+                Type::Result(ok, _) => (**ok).clone(),
+                other => other.clone(),
             };
             let ok_wasm_type = aver_type_to_wasm(&ok_type);
             let ok_local = self.alloc_local(ok_wasm_type);
@@ -905,14 +913,14 @@ impl<'a> ExprEmitter<'a> {
                 if let (Some(headers_expr), Some(&set_header_idx)) =
                     (headers, self.host_import_indices.get("response_set_header"))
                 {
-                    self.emit_fetch_apply_headers(&headers_expr.node, set_header_idx);
+                    self.emit_fetch_apply_headers(headers_expr, set_header_idx);
                 }
 
                 // status: Int → i64 → i32
-                self.emit_expr(&status_expr.node);
+                self.emit_expr(status_expr);
                 self.instructions.push(Instruction::I32WrapI64);
                 // body: OBJ_STRING ptr → save, push ptr+len pair
-                self.emit_expr(&body_expr.node);
+                self.emit_expr(body_expr);
                 self.instructions.push(Instruction::LocalSet(body_local));
                 self.instructions.push(Instruction::LocalGet(body_local));
                 self.instructions.push(Instruction::I32Const(8));
@@ -953,9 +961,9 @@ impl<'a> ExprEmitter<'a> {
                 memory_index: 0,
             }));
         for (i, (_name, expr)) in fields.iter().enumerate() {
-            let field_type = self.infer_expr_type(&expr.node);
+            let field_type = self.wasm_type_of(expr);
             self.instructions.push(Instruction::LocalGet(ptr_local));
-            self.emit_expr(&expr.node);
+            self.emit_expr(expr);
             match field_type {
                 WasmType::I64 => {}
                 WasmType::F64 => self.instructions.push(Instruction::I64ReinterpretF64),
@@ -1279,7 +1287,7 @@ impl<'a> ExprEmitter<'a> {
     /// (Set-Cookie with multiple cookies, Vary with multiple field
     /// names, …) come through as separate calls — the bridge bootstrap
     /// is expected to preserve order in the pending response headers.
-    fn emit_fetch_apply_headers(&mut self, headers_expr: &Expr, set_header_idx: u32) {
+    fn emit_fetch_apply_headers(&mut self, headers_expr: &Spanned<Expr>, set_header_idx: u32) {
         use wasm_encoder::{BlockType, MemArg};
 
         let entries_local = self.alloc_local(WasmType::I32);
@@ -1397,19 +1405,19 @@ impl<'a> ExprEmitter<'a> {
         updates: &[(String, Spanned<Expr>)],
     ) {
         let Some(fields) = self.record_fields(type_name).map(|fields| fields.to_vec()) else {
-            self.emit_expr(&base.node);
+            self.emit_expr(base);
             return;
         };
 
         let base_local = self.alloc_local(WasmType::I32);
-        self.emit_expr(&base.node);
+        self.emit_expr(base);
         self.instructions.push(Instruction::LocalSet(base_local));
 
         let mut update_locals = HashMap::with_capacity(updates.len());
         for (field_name, expr) in updates {
-            let field_type = self.infer_expr_type(&expr.node);
+            let field_type = self.wasm_type_of(expr);
             let field_local = self.alloc_local(field_type);
-            self.emit_expr(&expr.node);
+            self.emit_expr(expr);
             self.instructions.push(Instruction::LocalSet(field_local));
             update_locals.insert(field_name.as_str(), (field_local, field_type));
         }
@@ -1483,8 +1491,8 @@ impl<'a> ExprEmitter<'a> {
         // whole map.
         let (key_kind, value_ptr_flag) = match entries.first() {
             Some((k, v)) => {
-                let k_kind = self.kind_for_aver_type(self.infer_aver_type(&k.node).as_ref());
-                let v_ptr = self.value_is_heap_aver_type(self.infer_aver_type(&v.node).as_ref());
+                let k_kind = self.kind_for_aver_type(Some(self.aver_type_of(k)));
+                let v_ptr = self.value_is_heap_aver_type(Some(self.aver_type_of(v)));
                 (k_kind, v_ptr)
             }
             None => (4, 1),
@@ -1506,8 +1514,8 @@ impl<'a> ExprEmitter<'a> {
                     value::OBJ_TUPLE,
                     0,
                     self.ptr_mask_for_types(&[
-                        self.infer_aver_type(&key.node).unwrap_or(Type::Unknown),
-                        self.infer_aver_type(&val.node).unwrap_or(Type::Unknown),
+                        self.aver_type_of(key).clone(),
+                        self.aver_type_of(val).clone(),
                     ]) as u64,
                     2,
                 ) as i64));
@@ -1519,8 +1527,8 @@ impl<'a> ExprEmitter<'a> {
                 }));
             // Field 0: key
             self.instructions.push(Instruction::LocalGet(tuple_ptr));
-            self.emit_expr(&key.node);
-            let key_type = self.infer_expr_type(&key.node);
+            self.emit_expr(key);
+            let key_type = self.wasm_type_of(key);
             match key_type {
                 WasmType::I64 => {}
                 WasmType::I32 => self.instructions.push(Instruction::I64ExtendI32U),
@@ -1534,8 +1542,8 @@ impl<'a> ExprEmitter<'a> {
                 }));
             // Field 1: value
             self.instructions.push(Instruction::LocalGet(tuple_ptr));
-            self.emit_expr(&val.node);
-            let val_type = self.infer_expr_type(&val.node);
+            self.emit_expr(val);
+            let val_type = self.wasm_type_of(val);
             match val_type {
                 WasmType::I64 => {}
                 WasmType::I32 => self.instructions.push(Instruction::I64ExtendI32S),
@@ -1566,17 +1574,22 @@ impl<'a> ExprEmitter<'a> {
             .push(Instruction::Call(self.rt.map_from_list));
     }
 
-    fn emit_field_access(&mut self, base_expr: &Spanned<Expr>, field_name: &str) {
+    fn emit_field_access(
+        &mut self,
+        base_expr: &Spanned<Expr>,
+        field_name: &str,
+        field_wasm_type: WasmType,
+    ) {
         // Runtime field access on a record object.
         // Uppercase dotted paths (None, variant ctors, static refs) are handled
         // by classify_leaf_op in emit_expr before reaching here.
-        self.emit_expr(&base_expr.node);
+        self.emit_expr(base_expr);
 
         // Resolve field index using base expression's type for disambiguation
-        let base_type_name = self.infer_aver_type(&base_expr.node).and_then(|t| match t {
-            Type::Named(name) => Some(name),
+        let base_type_name = match self.aver_type_of(base_expr) {
+            Type::Named(name) => Some(name.clone()),
             _ => None,
-        });
+        };
 
         // Fetch-bridge lowering: a `req.method` style read on
         // `HttpRequest` becomes a host call into the JS bootstrap
@@ -1643,9 +1656,6 @@ impl<'a> ExprEmitter<'a> {
                 .unwrap_or(0)
         };
 
-        // Determine field type from type_defs
-        let field_wasm_type = self.infer_record_field_type(base_expr, field_name);
-
         self.instructions
             .push(Instruction::I32Const(field_idx as i32));
         match field_wasm_type {
@@ -1684,7 +1694,7 @@ impl<'a> ExprEmitter<'a> {
                 self.mutual_tco_uniform && self.is_no_alloc && param_slots.len() == args.len();
 
             for arg in args {
-                self.emit_expr(&arg.node);
+                self.emit_expr(arg);
             }
 
             let tmp_base = if direct_to_slots {
@@ -1692,7 +1702,7 @@ impl<'a> ExprEmitter<'a> {
             } else {
                 let base = self.next_local;
                 for arg in args {
-                    let wt = self.infer_expr_type(&arg.node);
+                    let wt = self.wasm_type_of(arg);
                     self.alloc_local(wt);
                 }
                 for i in (0..args.len()).rev() {
@@ -1777,12 +1787,12 @@ impl<'a> ExprEmitter<'a> {
             .filter(|_| resolved_name == self.current_fn_name)
         {
             for arg in args {
-                self.emit_expr(&arg.node);
+                self.emit_expr(arg);
             }
             let arg_count = args.len();
             let tmp_base = self.next_local;
             for arg in args.iter() {
-                let wt = self.infer_expr_type(&arg.node);
+                let wt = self.wasm_type_of(arg);
                 self.alloc_local(wt);
             }
             for i in (0..arg_count).rev() {
@@ -1826,7 +1836,7 @@ impl<'a> ExprEmitter<'a> {
             self.instructions.push(Instruction::Unreachable);
         } else {
             for arg in args {
-                self.emit_expr(&arg.node);
+                self.emit_expr(arg);
             }
             if let Some(&fn_idx) = self.fn_indices.get(resolved_name.as_str()) {
                 self.instructions.push(Instruction::Call(fn_idx));
@@ -1902,10 +1912,10 @@ impl<'a> ExprEmitter<'a> {
         let i_local = self.alloc_local(WasmType::I32);
 
         // Evaluate idx (i64) and val (i64) onto stack, stash into locals.
-        self.emit_expr(&inner_args[1].node);
+        self.emit_expr(&inner_args[1]);
         self.instructions.push(Instruction::LocalSet(idx_local));
-        self.emit_expr(&inner_args[2].node);
-        match self.infer_expr_type(&inner_args[2].node) {
+        self.emit_expr(&inner_args[2]);
+        match self.wasm_type_of(&inner_args[2]) {
             WasmType::I64 => {}
             WasmType::I32 => self.instructions.push(Instruction::I64ExtendI32S),
             WasmType::F64 => self.instructions.push(Instruction::I64ReinterpretF64),
@@ -1983,11 +1993,11 @@ impl<'a> ExprEmitter<'a> {
             return false;
         };
 
-        let result_type = self.infer_expr_type(&default_expr.node);
+        let result_type = self.wasm_type_of(default_expr);
 
         // Emit: vec, idx (evaluate Vector.get's args but don't call vec_get)
-        self.emit_expr(&inner_args[0].node); // vec: i32
-        self.emit_expr(&inner_args[1].node); // idx: i64
+        self.emit_expr(&inner_args[0]); // vec: i32
+        self.emit_expr(&inner_args[1]); // idx: i64
 
         let vec_local = self.alloc_local(WasmType::I32);
         let idx_local = self.alloc_local(WasmType::I64);
@@ -2084,7 +2094,7 @@ impl<'a> ExprEmitter<'a> {
         self.instructions
             .push(Instruction::Call(self.rt.collect_begin));
         for (arg_idx, arg) in args.iter().enumerate() {
-            if self.expr_is_heap_ptr(&arg.node) {
+            if self.expr_is_heap_ptr_spanned(arg) {
                 self.instructions
                     .push(Instruction::LocalGet(tmp_base + arg_idx as u32));
                 self.instructions
@@ -2096,7 +2106,7 @@ impl<'a> ExprEmitter<'a> {
         self.instructions
             .push(Instruction::Call(self.rt.collect_end));
         for (arg_idx, arg) in args.iter().enumerate() {
-            if self.expr_is_heap_ptr(&arg.node) {
+            if self.expr_is_heap_ptr_spanned(arg) {
                 self.instructions
                     .push(Instruction::LocalGet(tmp_base + arg_idx as u32));
                 self.instructions

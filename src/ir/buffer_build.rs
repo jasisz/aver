@@ -1024,12 +1024,16 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
         .collect();
     new_args.push(sep_ident());
 
-    let new_recursive_body = sp_at(
+    // The recursive tail-call lands on `<fn>__buffered`, which returns
+    // Buffer; stamp the type so the typed WASM emitter doesn't have to
+    // re-derive it from the call target.
+    let new_recursive_body = sp_at_typed(
         line,
         Expr::TailCall(Box::new(TailCallData {
             target: buffered_target.clone(),
             args: new_args,
         })),
+        buffer_ty.clone(),
     );
 
     // Terminating arm body: just return `__buf` — the buffer IS the result.
@@ -1071,12 +1075,18 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
         }
     };
 
-    let new_match = sp_at(
+    // Synthesised Match returns Buffer — both arms produce one
+    // (terminating arm: bare `__buf` ident; recursive arm: a
+    // `<fn>__buffered` tail-call returning Buffer). Stamp it so the
+    // Step 2 type-driven WASM emitter can read the type without a
+    // fallback.
+    let new_match = sp_at_typed(
         line,
         Expr::Match {
             subject: subject_orig.clone(),
             arms: new_arms,
         },
+        crate::types::Type::Named("Buffer".to_string()),
     );
 
     let new_body = FnBody::Block(vec![Stmt::Expr(new_match)]);

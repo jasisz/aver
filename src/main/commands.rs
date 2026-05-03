@@ -5688,22 +5688,47 @@ fn load_module_recursive(
         process::exit(1);
     }
 
-    // Dep modules go through the same pipeline shape as the entry. Typecheck
-    // runs at the entry-module level via `build_codegen_context`, so we skip
-    // it here. The `analyze` stage runs on the dep module's items so the
-    // ModuleInfo we publish carries per-module mutual_tco_members /
-    // recursive_fns / FnAnalysis facts; codegen builds its global view by
-    // unioning per-module sets (sound under Aver's module DAG invariant).
+    // Dep modules go through the same pipeline shape as the entry, AND
+    // they typecheck against the same on-disk module tree. Typecheck
+    // here populates `Spanned::ty()` on this module's expressions so
+    // type-driven codegen (legacy WASM Step 2, Rust Step 1) can read
+    // them without per-backend ad-hoc inference. The entry-level
+    // typecheck only validates cross-module references — it visits the
+    // entry's items, not dep bodies, because the items it sees are a
+    // separate parse from the ones flowing into ModuleInfo. Errors are
+    // surfaced as fatal — a dep module that fails to typecheck means
+    // the program is incoherent and codegen would emit broken output.
     let neutral_policy = aver::ir::NeutralAllocPolicy;
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
+            typecheck: Some(aver::ir::TypecheckMode::Full {
+                base_dir: Some(module_root),
+            }),
             run_interp_lower,
             run_buffer_build,
             alloc_policy: Some(&neutral_policy),
             ..Default::default()
         },
     );
+    if let Some(tc) = pipeline_result.typecheck.as_ref()
+        && !tc.errors.is_empty()
+    {
+        eprintln!(
+            "{}",
+            format!(
+                "Type errors in dependency module '{}':\n{}",
+                name,
+                tc.errors
+                    .iter()
+                    .map(|e| format!("  {}:{}: {}", e.line, e.col, e.message))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+            .red()
+        );
+        process::exit(1);
+    }
 
     let depends = items
         .iter()
