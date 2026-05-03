@@ -8,6 +8,28 @@ What `wasm-gc` does **not** do is delete the Aver runtime. The edge handler bina
 
 So the binary-size win comes from "ship only what's actually called" + "delegate heap + tail-call to the engine", not from "no runtime at all". The runtime is still there — it's just per-program and per-instantiation instead of one shared blob.
 
+### Typed-AST consumption (Step 0–3 refactor, late 0.16-wasm-gc-probe)
+
+This backend reads expression types from `Spanned::ty()` (the `OnceLock<Type>` field on every AST node, set by `TypeChecker::infer_type`) instead of the previous five ad-hoc inference functions (`infer_aver_type`, `sniff_with_prev`, `dotted_return_type`, `effect_aver_return_type`, `infer_expr_wasm_type`). The single reader is `body/infer.rs::aver_type_of(&Spanned<Expr>) -> &Type`; if a node lacks a stamp, the reader panics with the offending node — no fallback chain. The same shape lives in `src/codegen/wasm/expr/infer.rs` (legacy WASM) and `src/codegen/rust/` (codegen Rust); three of four backends now read from the single source of truth. VM is unchanged because its NaN-boxed runtime self-types at execution.
+
+One band-aid survives: `body/infer.rs::aver_type_canonical` recovers `Type::Unknown`-bearing canonicals (`Map<Unknown,Unknown>`, `Option<Unknown>`, `List<Unknown>`) from either a single registered instantiation or the enclosing fn's return type. The proper fix is constraint-propagating type inference in the type checker — currently bidirectional only on local context, not on positional call-arg expected types. That refactor is multi-day work and lives in `src/types/checker/` not here.
+
+### Game compilation status
+
+`examples/games/` covers the realistic shape diversity that the 26 unit tests in `src/codegen/wasm_gc/tests.rs` couldn't (each unit test has explicit fn signatures that side-step the inference gaps). After Step 0–3 + variadic tuple + IndependentProduct unwrap (commit `f8c4f9bc`):
+
+| Game | Status | Size |
+|---|---|---|
+| `snake.av` | ✅ | 5870 B |
+| `life.av` | ✅ | 9194 B |
+| `wumpus.av` | ✅ | 7218 B |
+| `tetris/main.av` | ✅ | 11201 B |
+| `checkers/main.av` | ❌ | sum-type equality (`state.currentPlayer == playerColor` for `Color` enum). `BinOp::Eq` lowers to `i64.eq`, treating struct refs as Int. Fix: dispatch on stamped operand type — `Type::Named(N)` where N is a sum type → `ref.eq` or per-N `__eq_N` helper |
+| `rogue/main.av` | ❌ | wasm validation: nullability cascade in cross-module Pathfinding call. `struct.new` produces non-null `(ref T)`, signature declares `(ref null T)`. Fix: insert `ref.as_non_null` or unify nullability across param/result signatures |
+| `doom/main.av` | ❌ | empty `[]` in call-arg position gets the wrong type stamp. `genRooms(seed, 6, 0, [])` — typecheck stamps `[]` from fn return type rather than formal param type. Fix at typecheck: propagate formal param type as expected type into empty-list literal args |
+
+Each remaining blocker lives in a different subsystem (BinOp emit, ref-cast emit, typecheck constraint propagation), so they unblock independently. Snake compiles ~6 KiB, the largest passing game (tetris) ~11 KiB; full playground migration story (`tools/website/playground`, currently `--target edge-wasm`) waits on all three.
+
 ### Runtime placement: inline vs sidecar
 
 Worth flagging: `--target wasm-gc` today is inline-only. Legacy already has the inline-vs-sidecar split (`--target wasm` merges the runtime into one binary; `--target edge-wasm` ships a thin user.wasm that imports the runtime from a CDN). The same split would in principle make sense for wasm-gc:
