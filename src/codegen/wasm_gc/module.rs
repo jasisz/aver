@@ -284,6 +284,22 @@ pub(super) fn emit_module(
         None
     };
 
+    // 9) Wasm-owned value factories. JS host can't construct wasm-gc
+    //    structs/variants directly, so any effect import that returns
+    //    a structured ref needs per-type constructor helpers exported
+    //    from the binary. Same per-instantiation pattern as
+    //    `__rt_string_from_lm` / per-Map probes — host calls the
+    //    factory, factory does `struct.new`, returns the ref. Emitted
+    //    only when the corresponding effect is registered (DCE'd
+    //    otherwise by `wasm-opt -Oz`).
+    let factory_exports = allocate_factory_exports(
+        &mut types,
+        &mut next_type_idx,
+        &mut next_builtin_fn_idx,
+        &registry,
+        &effect_registry,
+    )?;
+
     module.section(&types);
 
     // ── Import section ─────────────────────────────────────────────
@@ -330,6 +346,7 @@ pub(super) fn emit_module(
         funcs.function(b.pages_type);
         funcs.function(b.grow_type);
     }
+    factory_exports.emit_function_entries(&mut funcs);
     module.section(&funcs);
 
     // ── Memory section (bridge LM only) ────────────────────────────
@@ -440,6 +457,7 @@ pub(super) fn emit_module(
         exports.export("__rt_memory_grow", ExportKind::Func, b.grow_fn);
         exports.export("memory", ExportKind::Memory, 0);
     }
+    factory_exports.emit_exports(&mut exports);
     if let Some(hw) = &handler_wrapper {
         exports.export("aver_http_handle", ExportKind::Func, hw.wrapper_fn);
         exports.export("__rt_list_string_cons", ExportKind::Func, hw.list_cons_fn);
@@ -557,6 +575,8 @@ pub(super) fn emit_module(
     if bridge.is_some() {
         emit_bridge_bodies(&mut codes, &registry)?;
     }
+
+    factory_exports.emit_bodies(&mut codes, &registry)?;
 
     module.section(&codes);
 
@@ -1222,6 +1242,293 @@ fn emit_list_string_cons(registry: &TypeRegistry) -> Result<wasm_encoder::Functi
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::StructNew(list_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// Wasm-owned value factory exports. Effect imports that return
+/// structured GC refs (`Option<String>`, records, `Result<T,E>`) can't
+/// be implemented in JS directly because JS has no API to construct a
+/// wasm-gc struct/variant. Instead, the binary exports per-type
+/// constructor helpers; the host calls them and gets back a wasm-owned
+/// ref it can hand straight to the importing code.
+///
+/// This is the same per-instantiation pattern as `__rt_string_from_lm`
+/// and the per-(K,V) Map probes — pre-1.0 we ship one helper pair per
+/// effect that needs it. Generic factories aren't worth the slot churn
+/// while only three effects (`Terminal.readKey`, `Terminal.size`,
+/// `Console.readLine`) cross the boundary with structured returns.
+#[derive(Default)]
+struct FactoryExports {
+    /// `__rt_option_string_some(s)` / `__rt_option_string_none()` —
+    /// emitted when `Terminal.readKey` is registered.
+    opt_string_some: Option<FactorySlot>,
+    opt_string_none: Option<FactorySlot>,
+    /// `__rt_record_terminal_size_make(width, height)` — emitted when
+    /// `Terminal.size` is registered.
+    terminal_size_make: Option<FactorySlot>,
+    /// `__rt_result_string_string_ok(s)` / `_err(s)` — emitted when
+    /// `Console.readLine` is registered.
+    result_string_string_ok: Option<FactorySlot>,
+    result_string_string_err: Option<FactorySlot>,
+}
+
+#[derive(Clone, Copy)]
+struct FactorySlot {
+    type_idx: u32,
+    fn_idx: u32,
+}
+
+fn allocate_factory_exports(
+    types: &mut TypeSection,
+    next_type_idx: &mut u32,
+    next_fn_idx: &mut u32,
+    registry: &TypeRegistry,
+    effect_registry: &EffectRegistry,
+) -> Result<FactoryExports, WasmGcError> {
+    let mut fx = FactoryExports::default();
+
+    // Option<String> factories — driven by `Terminal.readKey`.
+    if effect_registry
+        .iter()
+        .any(|e| e == EffectName::TerminalReadKey)
+    {
+        let opt_idx = registry
+            .option_type_idx("Option<String>")
+            .ok_or(WasmGcError::Validation(
+                "Terminal.readKey factory requires Option<String> slot".into(),
+            ))?;
+        let s_idx = registry
+            .string_array_type_idx
+            .ok_or(WasmGcError::Validation(
+                "Terminal.readKey factory requires String slot".into(),
+            ))?;
+        let s_ref = ref_null(s_idx);
+        let opt_ref = ref_null(opt_idx);
+
+        types.ty().function([s_ref], [opt_ref.clone()]);
+        fx.opt_string_some = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        types.ty().function([], [opt_ref]);
+        fx.opt_string_none = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+    }
+
+    // Terminal.Size record factory — driven by `Terminal.size`.
+    if effect_registry.iter().any(|e| e == EffectName::TerminalSize) {
+        let rec_idx = registry
+            .record_type_idx("Terminal.Size")
+            .ok_or(WasmGcError::Validation(
+                "Terminal.size factory requires Terminal.Size record slot".into(),
+            ))?;
+        let rec_ref = ref_null(rec_idx);
+        types
+            .ty()
+            .function([ValType::I64, ValType::I64], [rec_ref]);
+        fx.terminal_size_make = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+    }
+
+    // Result<String,String> factories — driven by `Console.readLine`.
+    if effect_registry
+        .iter()
+        .any(|e| e == EffectName::ConsoleReadLine)
+    {
+        let res_idx = registry
+            .result_type_idx("Result<String,String>")
+            .ok_or(WasmGcError::Validation(
+                "Console.readLine factory requires Result<String,String> slot".into(),
+            ))?;
+        let s_idx = registry
+            .string_array_type_idx
+            .ok_or(WasmGcError::Validation(
+                "Console.readLine factory requires String slot".into(),
+            ))?;
+        let s_ref = ref_null(s_idx);
+        let res_ref = ref_null(res_idx);
+
+        types.ty().function([s_ref.clone()], [res_ref.clone()]);
+        fx.result_string_string_ok = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        types.ty().function([s_ref], [res_ref]);
+        fx.result_string_string_err = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+    }
+
+    Ok(fx)
+}
+
+fn ref_null(type_idx: u32) -> ValType {
+    ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(type_idx),
+    })
+}
+
+impl FactoryExports {
+    fn emit_function_entries(&self, funcs: &mut FunctionSection) {
+        for slot in self.iter_slots() {
+            funcs.function(slot.type_idx);
+        }
+    }
+
+    fn emit_exports(&self, exports: &mut ExportSection) {
+        if let Some(s) = self.opt_string_some {
+            exports.export("__rt_option_string_some", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.opt_string_none {
+            exports.export("__rt_option_string_none", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.terminal_size_make {
+            exports.export("__rt_record_terminal_size_make", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.result_string_string_ok {
+            exports.export("__rt_result_string_string_ok", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.result_string_string_err {
+            exports.export("__rt_result_string_string_err", ExportKind::Func, s.fn_idx);
+        }
+    }
+
+    fn emit_bodies(
+        &self,
+        codes: &mut CodeSection,
+        registry: &TypeRegistry,
+    ) -> Result<(), WasmGcError> {
+        if self.opt_string_some.is_some() {
+            codes.function(&emit_factory_option_string_some(registry)?);
+        }
+        if self.opt_string_none.is_some() {
+            codes.function(&emit_factory_option_string_none(registry)?);
+        }
+        if self.terminal_size_make.is_some() {
+            codes.function(&emit_factory_terminal_size_make(registry)?);
+        }
+        if self.result_string_string_ok.is_some() {
+            codes.function(&emit_factory_result_string_string_ok(registry)?);
+        }
+        if self.result_string_string_err.is_some() {
+            codes.function(&emit_factory_result_string_string_err(registry)?);
+        }
+        Ok(())
+    }
+
+    fn iter_slots(&self) -> impl Iterator<Item = FactorySlot> + '_ {
+        [
+            self.opt_string_some,
+            self.opt_string_none,
+            self.terminal_size_make,
+            self.result_string_string_ok,
+            self.result_string_string_err,
+        ]
+        .into_iter()
+        .flatten()
+    }
+}
+
+fn emit_factory_option_string_some(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let opt_idx = registry
+        .option_type_idx("Option<String>")
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructNew(opt_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_option_string_none(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let opt_idx = registry
+        .option_type_idx("Option<String>")
+        .expect("checked at allocation");
+    let s_idx = registry
+        .string_array_type_idx
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::StructNew(opt_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_terminal_size_make(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let rec_idx = registry
+        .record_type_idx("Terminal.Size")
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    // params (width: i64, height: i64) → struct in declaration order.
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::StructNew(rec_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_result_string_string_ok(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let res_idx = registry
+        .result_type_idx("Result<String,String>")
+        .expect("checked at allocation");
+    let s_idx = registry
+        .string_array_type_idx
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    // Result layout matches `emit_result_constructor`: tag, T, E.
+    // Ok: tag=1, payload=arg, E=null.
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::StructNew(res_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_result_string_string_err(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let res_idx = registry
+        .result_type_idx("Result<String,String>")
+        .expect("checked at allocation");
+    let s_idx = registry
+        .string_array_type_idx
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    // Err: tag=0, T=null, payload=arg.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructNew(res_idx));
     f.instruction(&Instruction::End);
     Ok(f)
 }

@@ -196,11 +196,6 @@ function spawnWorker(fixedSize) {
         lineBuffer: state.sharedLineBuffer,
     });
 
-    if (state.runtimeBytes) {
-        const buf = state.runtimeBytes.slice(0);
-        worker.postMessage({ type: "runtime-bytes", runtimeBytes: buf }, [buf]);
-    }
-
     autoSizeTerminalSurface();
     const { cols, rows } = fixedSize || terminalMetrics();
     worker.postMessage({ type: "resize", cols, rows });
@@ -1106,18 +1101,9 @@ async function loadCompiler() {
     const mod = await import("./wasm/aver.js");
     await mod.default("./wasm/aver_bg.wasm");
     compiler = mod;
-    // Step 1 of the 0.14 Edge runtime split: user.wasm imports memory,
-    // heap_ptr, and rt_alloc from a separate `aver_runtime` module.
-    // Pull its bytes once and hand them to the worker; the worker
-    // caches the instance so subsequent runs reuse it.
-    if (typeof compiler.aver_runtime_wasm === "function") {
-        const rtBytes = compiler.aver_runtime_wasm();
-        state.runtimeBytes = rtBytes.buffer;
-        if (state.worker) {
-            const buf = state.runtimeBytes.slice(0);
-            state.worker.postMessage({ type: "runtime-bytes", runtimeBytes: buf }, [buf]);
-        }
-    }
+    // wasm-gc binaries are self-contained — engine GC and tail-calls
+    // replace the legacy `aver_runtime.wasm` sidecar (heap, NaN-boxing,
+    // mutual-TCO trampoline). No runtime to fetch, no worker handoff.
     return compiler;
 }
 

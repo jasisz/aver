@@ -1,24 +1,5 @@
 import { TerminalBuffer } from "./browser_terminal.js";
 
-const IO_SCRATCH_SIZE = 128;
-const NONE_SENTINEL = -1;
-
-const OBJ_STRING = 0;
-const OBJ_RECORD = 1;
-const OBJ_VARIANT = 2;
-const OBJ_WRAPPER = 3;
-const OBJ_LIST_CONS = 4;
-const OBJ_TUPLE = 5;
-const OBJ_WRAPPER_F64 = 7;
-const OBJ_WRAPPER_I32 = 8;
-const OBJ_LIST_CONS_F64 = 9;
-const OBJ_VECTOR = 10;
-const OBJ_MAP_ENTRY = 11;
-
-const WRAP_OK = 0;
-const WRAP_ERR = 1;
-const WRAP_SOME = 2;
-
 const COLOR_NAMES = new Set([
     "default",
     "red",
@@ -43,21 +24,10 @@ const KEY_CODE_ESCAPE = 5;
 const KEY_CODE_ENTER = 6;
 const KEY_CODE_CHAR_BASE = 1024;
 
-function clampI32(value) {
-    return value | 0;
-}
-
-function asSigned64String(value) {
-    return BigInt.asIntN(64, value).toString();
-}
-
 function chooseRandomInt(min, max) {
     const lo = BigInt.asIntN(64, min);
     const hi = BigInt.asIntN(64, max);
-    if (hi <= lo) {
-        return lo;
-    }
-
+    if (hi <= lo) return lo;
     const span = hi - lo + 1n;
     const buf = new Uint32Array(2);
     if (globalThis.crypto?.getRandomValues) {
@@ -78,7 +48,6 @@ function sleepMillis(ms) {
         Atomics.wait(view, 0, 0, millis);
         return;
     }
-
     const start = performance.now();
     while (performance.now() - start < millis) {
         // Busy fallback for engines without Atomics.wait in workers.
@@ -107,49 +76,36 @@ function decodeKeyCode(code) {
     }
 }
 
+/// Wasm-gc playground host.
+///
+/// Bridges effect imports (`aver/*`) for browser-played games. Strings
+/// cross via the LM transport (`__rt_string_from_lm` / `_to_lm` —
+/// host writes UTF-8 bytes into linear memory, calls a getter that
+/// materialises the bytes as a wasm-gc `(array i8)` ref, and vice
+/// versa). Structured returns (`Option<String>`, `Result<String,String>`,
+/// `Terminal.Size`) are constructed via wasm-owned factory exports
+/// (`__rt_option_string_some/none`, `__rt_result_string_string_ok/err`,
+/// `__rt_record_terminal_size_make`) — JS can't build wasm-gc structs
+/// directly so the binary exports per-type constructors.
 export class AverBrowserHost {
     constructor(postMessageFn) {
         this.post = postMessageFn;
         this.instance = null;
-        this.decoder = new TextDecoder();
         this.encoder = new TextEncoder();
+        this.decoder = new TextDecoder();
         this.terminal = new TerminalBuffer(80, 35);
         this.keyQueue = [];
         this.keyQueueView = null;
         this.lineQueue = [];
+        this.lineBufferView = null;
+        this.lineBufferBytes = null;
         this.programArgs = [];
         this.rawMode = false;
         this.lastFlushMs = 0;
     }
 
-    setInstance(instance, fallbackMemory) {
+    setInstance(instance) {
         this.instance = instance;
-        // In edge-wasm mode, user.wasm imports memory from aver_runtime
-        // and does not re-export it, so `instance.exports.memory` is
-        // undefined. Worker passes runtime.exports.memory as the
-        // fallback in that case; bundled artifacts continue to work
-        // with the instance's own export.
-        this.memory = instance.exports.memory ?? fallbackMemory;
-        this.variantNames = this.loadVariantNames();
-    }
-
-    loadVariantNames() {
-        const map = {};
-        try {
-            const exports = this.instance.exports;
-            const ptr = exports.$variant_names_ptr?.value;
-            const len = exports.$variant_names_len?.value;
-            if (ptr == null || len == null || len === 0) return map;
-            const bytes = new Uint8Array(this.memory.buffer, ptr, len);
-            const text = new TextDecoder().decode(bytes);
-            for (const entry of text.split("|")) {
-                const colon = entry.indexOf(":");
-                if (colon > 0) {
-                    map[entry.slice(0, colon)] = entry.slice(colon + 1);
-                }
-            }
-        } catch (_) {}
-        return map;
     }
 
     setTerminalSize(cols, rows) {
@@ -167,29 +123,6 @@ export class AverBrowserHost {
         this.lineBufferBytes = buffer ? new Uint8Array(buffer) : null;
     }
 
-    /// Blocking readLine: wait on SharedArrayBuffer for main thread to signal.
-    blockingReadLine() {
-        // Layout: [0]=ready flag, [1]=length, [2..]=UTF-8 bytes
-        const view = this.lineBufferView;
-        if (!view) {
-            if (this.lineQueue.length > 0) {
-                return this.lineQueue.shift();
-            }
-            throw new Error(
-                "Console.readLine() requires cross-origin isolation. Serve the playground with COOP/COEP headers.",
-            );
-        }
-        // Signal main thread we need a line
-        Atomics.store(view, 0, 0); // ready=0
-        this.post({ type: "readline-wait" });
-        // Block until main thread sets ready=1
-        Atomics.wait(view, 0, 0);
-        const len = Atomics.load(view, 1);
-        if (len <= 0) return "";
-        const bytes = this.lineBufferBytes.slice(8, 8 + len);
-        return new TextDecoder().decode(bytes);
-    }
-
     setProgramArgs(args) {
         this.programArgs = Array.isArray(args) ? args.map((arg) => String(arg)) : [];
     }
@@ -200,119 +133,80 @@ export class AverBrowserHost {
 
     enqueueLine(line) {
         this.lineQueue.push(line);
-        this.post({
-            type: "line-queue",
-            queued: this.lineQueue.length,
-        });
+        this.post({ type: "line-queue", queued: this.lineQueue.length });
     }
 
-    createImports() {
-        return {
-            aver: {
-                args_len: () => this.programArgs.length,
-                args_get: (index) => {
-                    const idx = clampI32(index);
-                    const value =
-                        idx >= 0 && idx < this.programArgs.length ? this.programArgs[idx] : "";
-                    return this.writeGuestString(value);
-                },
-                console_print: (ptr, len) => {
-                    this.postConsole("stdout", this.readRawString(ptr, len));
-                },
-                console_error: (ptr, len) => {
-                    this.postConsole("stderr", this.readRawString(ptr, len));
-                },
-                console_readLine: () => {
-                    const line = this.blockingReadLine();
-                    this.post({
-                        type: "line-queue",
-                        queued: this.lineQueue.length,
-                    });
-                    return this.writeGuestString(line);
-                },
-                print_value: (tag, value) => {
-                    this.postConsole("stdout", this.formatTaggedValue(tag, value));
-                },
-                format_value: (tag, value) => {
-                    return this.writeGuestString(this.formatTaggedValue(tag, value));
-                },
-                random_int: (min, max) => {
-                    return chooseRandomInt(min, max);
-                },
-                time_now: () => {
-                    return this.writeGuestString(new Date().toISOString());
-                },
-                time_unixMs: () => {
-                    return BigInt(Date.now());
-                },
-                time_sleep: (millis) => {
-                    sleepMillis(millis);
-                },
-                terminal_enableRawMode: () => {
-                    this.rawMode = true;
-                    this.post({ type: "raw-mode", enabled: true });
-                },
-                terminal_disableRawMode: () => {
-                    this.rawMode = false;
-                    this.post({ type: "raw-mode", enabled: false });
-                },
-                terminal_clear: () => {
-                    this.terminal.clear();
-                },
-                terminal_moveTo: (x, y) => {
-                    this.terminal.moveTo(x, y);
-                },
-                terminal_print: (ptr, len) => {
-                    this.terminal.print(this.readRawString(ptr, len));
-                },
-                terminal_setColor: (ptr, len) => {
-                    const color = this.readRawString(ptr, len);
-                    this.terminal.setColor(COLOR_NAMES.has(color) ? color : "default");
-                },
-                terminal_resetColor: () => {
-                    this.terminal.resetColor();
-                },
-                terminal_readKey: () => {
-                    const key = this.dequeueKey();
-                    if (!key) {
-                        return [NONE_SENTINEL, 0];
-                    }
-                    return this.writeGuestString(key);
-                },
-                terminal_size: () => {
-                    return [this.terminal.cols, this.terminal.rows];
-                },
-                terminal_hideCursor: () => {
-                    this.terminal.hideCursor();
-                },
-                terminal_showCursor: () => {
-                    this.terminal.showCursor();
-                },
-                terminal_flush: () => {
-                    this.postTerminalSnapshot();
-                },
-                math_sin: (x) => Math.sin(x),
-                math_cos: (x) => Math.cos(x),
-                math_atan2: (y, x) => Math.atan2(y, x),
-                math_pow: (base, exp) => Math.pow(base, exp),
-            },
-        };
+    /// Blocking readLine: wait on SharedArrayBuffer for main thread.
+    /// Layout: [0]=ready flag, [1]=length, [2..]=UTF-8 bytes.
+    blockingReadLine() {
+        const view = this.lineBufferView;
+        if (!view) {
+            if (this.lineQueue.length > 0) return this.lineQueue.shift();
+            throw new Error(
+                "Console.readLine() requires cross-origin isolation. Serve the playground with COOP/COEP headers.",
+            );
+        }
+        Atomics.store(view, 0, 0);
+        this.post({ type: "readline-wait" });
+        Atomics.wait(view, 0, 0);
+        const len = Atomics.load(view, 1);
+        if (len <= 0) return "";
+        const bytes = this.lineBufferBytes.slice(8, 8 + len);
+        return new TextDecoder().decode(bytes);
+    }
+
+    dequeueKey() {
+        if (this.keyQueue.length > 0) return this.keyQueue.shift();
+        if (this.keyQueueView) {
+            const head = Atomics.load(this.keyQueueView, KEY_QUEUE_HEAD);
+            const tail = Atomics.load(this.keyQueueView, KEY_QUEUE_TAIL);
+            if (head === tail) return null;
+            const slot = KEY_QUEUE_DATA + (head % KEY_QUEUE_CAPACITY);
+            const code = Atomics.load(this.keyQueueView, slot);
+            Atomics.store(this.keyQueueView, KEY_QUEUE_HEAD, head + 1);
+            return decodeKeyCode(code);
+        }
+        return null;
+    }
+
+    memU8() {
+        return new Uint8Array(this.instance.exports.memory.buffer);
+    }
+
+    ensurePages(needed) {
+        const exports = this.instance.exports;
+        const cur = Number(exports.__rt_memory_pages());
+        if (needed > cur) exports.__rt_memory_grow(needed - cur);
+    }
+
+    /// JS string → wasm-gc `(ref null $string)` via LM transport.
+    jsToAver(text) {
+        const s = text ?? "";
+        const upperBytes = s.length * 3;
+        this.ensurePages(((upperBytes + 65535) >> 16) || 1);
+        const { written } = this.encoder.encodeInto(s, this.memU8());
+        return this.instance.exports.__rt_string_from_lm(written);
+    }
+
+    /// wasm-gc string ref → JS string via LM transport.
+    averToJs(s) {
+        const len = Number(this.instance.exports.__rt_string_to_lm(s));
+        return this.decoder.decode(this.memU8().subarray(0, len));
+    }
+
+    postConsole(level, text) {
+        this.post({ type: "console", level, text });
     }
 
     postTerminalSnapshot() {
-        // Throttle to ~60fps to prevent message queue from growing
-        // unboundedly when the WASM module flushes faster than the
-        // main thread can render.
+        // Throttle to ~60fps so the message queue can't grow unbounded
+        // when the wasm module flushes faster than the UI renders.
         const now = performance.now();
-        if (now - this.lastFlushMs < 16) {
-            return;
-        }
+        if (now - this.lastFlushMs < 16) return;
         this.lastFlushMs = now;
-
         const snapshot = this.terminal.toSnapshot();
-        const heapPtr = this.instance?.exports?.$heap_ptr?.value;
-        const pageBytes = this.memory ? this.memory.buffer.byteLength : 0;
-        const memBytes = heapPtr != null ? heapPtr : pageBytes;
+        const memory = this.instance?.exports?.memory;
+        const memBytes = memory ? memory.buffer.byteLength : 0;
         this.post({
             type: "terminal",
             cols: this.terminal.cols,
@@ -321,283 +215,80 @@ export class AverBrowserHost {
             blank: this.terminal.isBlank(),
             rawMode: this.rawMode,
             memoryBytes: memBytes,
-            memoryPages: pageBytes,
+            memoryPages: memBytes,
         }, [snapshot.chars.buffer, snapshot.colors.buffer]);
     }
 
-    dequeueKey() {
-        if (this.keyQueue.length > 0) {
-            return this.keyQueue.shift();
-        }
-
-        if (this.keyQueueView) {
-            const head = Atomics.load(this.keyQueueView, KEY_QUEUE_HEAD);
-            const tail = Atomics.load(this.keyQueueView, KEY_QUEUE_TAIL);
-            if (head === tail) {
-                return null;
-            }
-            const slot = KEY_QUEUE_DATA + (head % KEY_QUEUE_CAPACITY);
-            const code = Atomics.load(this.keyQueueView, slot);
-            Atomics.store(this.keyQueueView, KEY_QUEUE_HEAD, head + 1);
-            return decodeKeyCode(code);
-        }
-
-        return null;
-    }
-
-    postConsole(level, text) {
-        this.post({
-            type: "console",
-            level,
-            text,
-        });
-    }
-
-    memoryView() {
-        return new Uint8Array(this.memory.buffer);
-    }
-
-    dataView() {
-        return new DataView(this.memory.buffer);
-    }
-
-    readBytes(ptr, len) {
-        const start = clampI32(ptr);
-        const count = clampI32(len);
-        if (start < 0 || count < 0) {
-            return new Uint8Array();
-        }
-        const mem = this.memoryView();
-        const end = Math.min(mem.length, start + count);
-        return mem.slice(start, end);
-    }
-
-    readRawString(ptr, len) {
-        return this.decoder.decode(this.readBytes(ptr, len));
-    }
-
-    writeGuestString(text) {
-        const bytes = this.encoder.encode(text);
-        // Short strings: use IO_SCRATCH tail (bytes 96-127).
-        const SCRATCH_STRING_BASE = 96;
-        const SCRATCH_STRING_CAP = IO_SCRATCH_SIZE - SCRATCH_STRING_BASE;
-        if (bytes.length <= SCRATCH_STRING_CAP) {
-            const mem = this.memoryView();
-            mem.set(bytes, SCRATCH_STRING_BASE);
-            return [SCRATCH_STRING_BASE, bytes.length];
-        }
-        // Longer strings: allocate via exported $alloc to avoid heap collision.
-        if (this.instance?.exports?.alloc) {
-            const ptr = this.instance.exports.alloc(bytes.length);
-            const mem = this.memoryView();
-            mem.set(bytes, ptr);
-            return [ptr, bytes.length];
-        }
-        // Fallback: end of memory (legacy modules without alloc export).
-        const mem = this.memoryView();
-        const ptr = Math.max(IO_SCRATCH_SIZE, mem.length - bytes.length - 64);
-        mem.set(bytes, ptr);
-        return [ptr, bytes.length];
-    }
-
-    readU64(offset) {
-        if (offset < 0 || offset + 8 > this.dataView().byteLength) {
-            return 0n;
-        }
-        return this.dataView().getBigUint64(offset, true);
-    }
-
-    readHeapString(ptr, quoted) {
-        const addr = Number(ptr);
-        const header = this.readU64(addr);
-        const len = Number(header & 0xffffffffn);
-        const text = this.decoder.decode(this.readBytes(addr + 8, len));
-        return quoted ? JSON.stringify(text) : text;
-    }
-
-    formatTaggedValue(tag, value) {
-        switch (tag) {
-            case 0:
-                return asSigned64String(value);
-            case 1: {
-                const bits = BigInt.asUintN(64, value);
-                const bytes = new ArrayBuffer(8);
-                const view = new DataView(bytes);
-                view.setBigUint64(0, bits, true);
-                return String(view.getFloat64(0, true));
-            }
-            case 2:
-                return value !== 0n ? "true" : "false";
-            case 3:
-                return this.readHeapString(Number(value), false);
-            case 4:
-                if (value === 0n) {
-                    return "[]";
-                }
-                if (BigInt.asIntN(32, value) === BigInt(NONE_SENTINEL)) {
-                    return "Option.None";
-                }
-                return this.formatWasmValue(value);
-            case 5:
-                return "";
-            default:
-                return String(value);
-        }
-    }
-
-    formatWasmValue(value) {
-        const signed = BigInt.asIntN(64, value);
-        const ptr = Number(BigInt.asUintN(32, value));
-        const mem = this.memoryView();
-        if (ptr < IO_SCRATCH_SIZE || ptr + 8 > mem.length) {
-            return signed.toString();
-        }
-
-        const header = this.readU64(ptr);
-        const kind = Number((header >> 56n) & 0xffn);
-        const tag = Number((header >> 48n) & 0xffn);
-        const fieldCount = Number(header & 0xffffffffn);
-
-        if (kind > OBJ_MAP_ENTRY) {
-            return signed.toString();
-        }
-
-        switch (kind) {
-            case OBJ_STRING:
-                return this.readHeapString(ptr, true);
-            case OBJ_MAP_ENTRY:
-                return this.formatMap(ptr);
-            case OBJ_LIST_CONS:
-            case OBJ_LIST_CONS_F64:
-                return this.formatList(ptr, kind === OBJ_LIST_CONS_F64);
-            case OBJ_TUPLE:
-                return this.formatTuple(ptr, fieldCount);
-            case OBJ_WRAPPER:
-            case OBJ_WRAPPER_F64:
-            case OBJ_WRAPPER_I32:
-                return this.formatWrapper(ptr, kind, tag);
-            case OBJ_RECORD:
-                return this.formatRecord(ptr, fieldCount);
-            case OBJ_VARIANT:
-                return this.formatVariant(ptr, fieldCount, tag);
-            case OBJ_VECTOR:
-                return this.formatVector(ptr, fieldCount);
-            default:
-                return signed.toString();
-        }
-    }
-
-    formatMap(ptr) {
-        const seen = new Set();
-        const entries = [];
-        let current = ptr;
-
-        while (current !== 0 && current + 24 <= this.memoryView().length) {
-            const header = this.readU64(current);
-            const kind = Number((header >> 56n) & 0xffn);
-            if (kind !== OBJ_MAP_ENTRY) {
-                break;
-            }
-
-            const tuplePtr = Number(BigInt.asUintN(32, this.readU64(current + 8)));
-            if (tuplePtr !== 0 && tuplePtr + 24 <= this.memoryView().length) {
-                const key = this.formatWasmValue(this.readU64(tuplePtr + 8));
-                if (!seen.has(key)) {
-                    seen.add(key);
-                    const val = this.formatWasmValue(this.readU64(tuplePtr + 16));
-                    entries.push(`${key}: ${val}`);
-                }
-            }
-
-            current = Number(BigInt.asUintN(32, this.readU64(current + 16)));
-        }
-
-        return `{${entries.join(", ")}}`;
-    }
-
-    formatList(ptr, isF64) {
-        const items = [];
-        let current = ptr;
-
-        while (current !== 0 && current + 24 <= this.memoryView().length) {
-            const header = this.readU64(current);
-            const kind = Number((header >> 56n) & 0xffn);
-            if (kind !== (isF64 ? OBJ_LIST_CONS_F64 : OBJ_LIST_CONS)) {
-                break;
-            }
-
-            const head = this.readU64(current + 8);
-            if (isF64) {
-                const bytes = new ArrayBuffer(8);
-                const view = new DataView(bytes);
-                view.setBigUint64(0, head, true);
-                items.push(String(view.getFloat64(0, true)));
-            } else {
-                items.push(this.formatWasmValue(head));
-            }
-            current = Number(BigInt.asUintN(32, this.readU64(current + 16)));
-        }
-
-        return `[${items.join(", ")}]`;
-    }
-
-    formatTuple(ptr, count) {
-        const items = [];
-        for (let i = 0; i < count; i += 1) {
-            items.push(this.formatWasmValue(this.readU64(ptr + 8 + i * 8)));
-        }
-        return `(${items.join(", ")})`;
-    }
-
-    formatWrapper(ptr, kind, tag) {
-        const prefix =
-            tag === WRAP_OK ? "Result.Ok" : tag === WRAP_ERR ? "Result.Err" : tag === WRAP_SOME ? "Option.Some" : "Wrapper";
-        const inner = this.readU64(ptr + 8);
-
-        if (kind === OBJ_WRAPPER_F64) {
-            const bytes = new ArrayBuffer(8);
-            const view = new DataView(bytes);
-            view.setBigUint64(0, inner, true);
-            return `${prefix}(${String(view.getFloat64(0, true))})`;
-        }
-
-        if (kind === OBJ_WRAPPER_I32) {
-            const innerI32 = Number(BigInt.asIntN(32, inner));
-            if (innerI32 === NONE_SENTINEL) {
-                return `${prefix}(Option.None)`;
-            }
-            if (innerI32 >= IO_SCRATCH_SIZE) {
-                return `${prefix}(${this.formatWasmValue(BigInt(innerI32))})`;
-            }
-            return `${prefix}(${innerI32})`;
-        }
-
-        return `${prefix}(${this.formatWasmValue(inner)})`;
-    }
-
-    formatRecord(ptr, count) {
-        const fields = [];
-        for (let i = 0; i < count; i += 1) {
-            fields.push(this.formatWasmValue(this.readU64(ptr + 8 + i * 8)));
-        }
-        return `Record(${fields.join(", ")})`;
-    }
-
-    formatVariant(ptr, count, tag) {
-        const name = (this.variantNames && this.variantNames[tag]) || `Variant#${tag}`;
-        const fields = [];
-        for (let i = 0; i < count; i += 1) {
-            fields.push(this.formatWasmValue(this.readU64(ptr + 8 + i * 8)));
-        }
-        if (count === 0) return name;
-        return `${name}(${fields.join(", ")})`;
-    }
-
-    formatVector(ptr, count) {
-        const items = [];
-        for (let i = 0; i < count; i += 1) {
-            items.push(this.formatWasmValue(this.readU64(ptr + 8 + i * 8)));
-        }
-        return `Vector[${items.join(", ")}]`;
+    createImports() {
+        return {
+            aver: {
+                args_len: () => BigInt(this.programArgs.length),
+                args_get: (index) => {
+                    const idx = Number(index);
+                    const value =
+                        idx >= 0 && idx < this.programArgs.length ? this.programArgs[idx] : "";
+                    return this.jsToAver(value);
+                },
+                console_print: (sref) => {
+                    this.postConsole("stdout", this.averToJs(sref));
+                },
+                console_error: (sref) => {
+                    this.postConsole("stderr", this.averToJs(sref));
+                },
+                console_warn: (sref) => {
+                    this.postConsole("stderr", this.averToJs(sref));
+                },
+                console_read_line: () => {
+                    const exports = this.instance.exports;
+                    try {
+                        const line = this.blockingReadLine();
+                        return exports.__rt_result_string_string_ok(this.jsToAver(line));
+                    } catch (err) {
+                        const msg = err instanceof Error ? err.message : String(err);
+                        return exports.__rt_result_string_string_err(this.jsToAver(msg));
+                    }
+                },
+                random_int: (min, max) => chooseRandomInt(min, max),
+                random_float: () => Math.random(),
+                time_unix_ms: () => BigInt(Date.now()),
+                time_now: () => this.jsToAver(new Date().toISOString()),
+                time_sleep: (millis) => sleepMillis(millis),
+                float_sin: (x) => Math.sin(x),
+                float_cos: (x) => Math.cos(x),
+                float_atan2: (y, x) => Math.atan2(y, x),
+                float_pow: (b, e) => Math.pow(b, e),
+                terminal_enable_raw_mode: () => {
+                    this.rawMode = true;
+                    this.post({ type: "raw-mode", enabled: true });
+                },
+                terminal_disable_raw_mode: () => {
+                    this.rawMode = false;
+                    this.post({ type: "raw-mode", enabled: false });
+                },
+                terminal_clear: () => this.terminal.clear(),
+                terminal_move_to: (x, y) => this.terminal.moveTo(Number(x), Number(y)),
+                terminal_print: (sref) => this.terminal.print(this.averToJs(sref)),
+                terminal_set_color: (sref) => {
+                    const color = this.averToJs(sref);
+                    this.terminal.setColor(COLOR_NAMES.has(color) ? color : "default");
+                },
+                terminal_reset_color: () => this.terminal.resetColor(),
+                terminal_read_key: () => {
+                    const key = this.dequeueKey();
+                    const exports = this.instance.exports;
+                    if (!key) return exports.__rt_option_string_none();
+                    return exports.__rt_option_string_some(this.jsToAver(key));
+                },
+                terminal_size: () => {
+                    return this.instance.exports.__rt_record_terminal_size_make(
+                        BigInt(this.terminal.cols),
+                        BigInt(this.terminal.rows),
+                    );
+                },
+                terminal_hide_cursor: () => this.terminal.hideCursor(),
+                terminal_show_cursor: () => this.terminal.showCursor(),
+                terminal_flush: () => this.postTerminalSnapshot(),
+            },
+        };
     }
 }
