@@ -27,6 +27,13 @@ pub(super) struct SlotTable {
     /// least one multi-arm Constructor match. Slot index, when set,
     /// is always the last slot in `by_slot`.
     pub(super) subject_scratch: Option<u32>,
+    /// Optional 4-tuple of scratch slots reserved for inline
+    /// `Args.get()` expansion: `(i, len, acc, s)`. `Args.get()` lowers
+    /// to `args_len + loop args_get(i) cons` — no host-side
+    /// args_get_all import. Allocated only when the body actually
+    /// reaches `Args.get()` with no args. `i, len` are i64; `acc` is
+    /// `(ref null $List_String)`; `s` is `(ref null $string)`.
+    pub(super) args_get_scratch: Option<[u32; 4]>,
 }
 
 impl SlotTable {
@@ -74,14 +81,132 @@ impl SlotTable {
         } else {
             None
         };
+        // Reserve 4 scratch slots for inline `Args.get()` expansion
+        // when reachable. Order matches the inline emit's local-set
+        // sequence: i (i64), len (i64), acc (ref List<String>), s
+        // (ref string). Allocated once per fn body (multiple Args.get
+        // call sites within the same fn share these slots — Args.get
+        // is non-reentrant relative to itself, the inline expansion
+        // is straight-line).
+        let args_get_scratch = if fn_needs_args_get_scratch(fd) {
+            let i64_ty = ValType::I64;
+            let list_ref = registry.list_type_idx("List<String>").map(|idx| {
+                ValType::Ref(wasm_encoder::RefType {
+                    nullable: true,
+                    heap_type: wasm_encoder::HeapType::Concrete(idx),
+                })
+            });
+            let str_ref = registry.string_array_type_idx.map(|idx| {
+                ValType::Ref(wasm_encoder::RefType {
+                    nullable: true,
+                    heap_type: wasm_encoder::HeapType::Concrete(idx),
+                })
+            });
+            match (list_ref, str_ref) {
+                (Some(list_ty), Some(s_ty)) => {
+                    let i_idx = by_slot.len() as u32;
+                    by_slot.push(i64_ty);
+                    let len_idx = by_slot.len() as u32;
+                    by_slot.push(i64_ty);
+                    let acc_idx = by_slot.len() as u32;
+                    by_slot.push(list_ty);
+                    let s_idx = by_slot.len() as u32;
+                    by_slot.push(s_ty);
+                    Some([i_idx, len_idx, acc_idx, s_idx])
+                }
+                _ => {
+                    return Err(WasmGcError::Validation(
+                        "Args.get() requires List<String> and String slots in registry — \
+                         pre-register them by ensuring the program reaches a List<String> \
+                         literal or String value first"
+                            .into(),
+                    ));
+                }
+            }
+        } else {
+            None
+        };
         Ok(Self {
             by_slot,
             subject_scratch,
+            args_get_scratch,
         })
     }
 
     pub(super) fn extra_locals(&self, params_count: usize) -> Vec<ValType> {
         self.by_slot.iter().skip(params_count).copied().collect()
+    }
+}
+
+/// True if the body reaches an `Args.get()` call (no args). The inline
+/// expansion needs four scratch slots; they're only worth reserving
+/// when actually used.
+pub(super) fn fn_needs_args_get_scratch(fd: &FnDef) -> bool {
+    let FnBody::Block(stmts) = fd.body.as_ref();
+    stmts.iter().any(stmt_reaches_args_get_no_args)
+}
+
+fn stmt_reaches_args_get_no_args(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Binding(_, _, e) | Stmt::Expr(e) => expr_reaches_args_get_no_args(&e.node),
+    }
+}
+
+fn expr_reaches_args_get_no_args(expr: &Expr) -> bool {
+    match expr {
+        Expr::FnCall(callee, args) => {
+            if args.is_empty()
+                && let Expr::Attr(parent, member) = &callee.node
+                && let Expr::Ident(p) = &parent.node
+                && p == "Args"
+                && member == "get"
+            {
+                return true;
+            }
+            expr_reaches_args_get_no_args(&callee.node)
+                || args.iter().any(|a| expr_reaches_args_get_no_args(&a.node))
+        }
+        Expr::BinOp(_, l, r) => {
+            expr_reaches_args_get_no_args(&l.node) || expr_reaches_args_get_no_args(&r.node)
+        }
+        Expr::Match { subject, arms } => {
+            expr_reaches_args_get_no_args(&subject.node)
+                || arms
+                    .iter()
+                    .any(|a| expr_reaches_args_get_no_args(&a.body.node))
+        }
+        Expr::TailCall(boxed) => boxed
+            .args
+            .iter()
+            .any(|a| expr_reaches_args_get_no_args(&a.node)),
+        Expr::Attr(obj, _) => expr_reaches_args_get_no_args(&obj.node),
+        Expr::ErrorProp(inner) => expr_reaches_args_get_no_args(&inner.node),
+        Expr::Constructor(_, payload) => payload
+            .as_deref()
+            .is_some_and(|p| expr_reaches_args_get_no_args(&p.node)),
+        Expr::RecordCreate { fields, .. } => fields
+            .iter()
+            .any(|(_, e)| expr_reaches_args_get_no_args(&e.node)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_reaches_args_get_no_args(&base.node)
+                || updates
+                    .iter()
+                    .any(|(_, e)| expr_reaches_args_get_no_args(&e.node))
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            items.iter().any(|e| expr_reaches_args_get_no_args(&e.node))
+        }
+        Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
+            expr_reaches_args_get_no_args(&k.node) || expr_reaches_args_get_no_args(&v.node)
+        }),
+        Expr::InterpolatedStr(parts) => parts.iter().any(|p| {
+            if let crate::ast::StrPart::Parsed(inner) = p {
+                expr_reaches_args_get_no_args(&inner.node)
+            } else {
+                false
+            }
+        }),
+        _ => false,
     }
 }
 

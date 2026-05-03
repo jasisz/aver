@@ -1005,6 +1005,14 @@ fn discover_builtins_in_expr(
                 if let Some(name) = EffectName::from_dotted(&dotted) {
                     effects.register(name);
                 }
+                // `Args.get()` (no args, returns List<String>) lowers
+                // inline as `args_len + loop args_get(i) cons` — no
+                // single host import. Force-register both effects here
+                // so `emit_args_get_inline` can look them up by name.
+                if dotted == "Args.get" && args.is_empty() {
+                    effects.register(EffectName::ArgsLen);
+                    effects.register(EffectName::ArgsGet);
+                }
             }
             discover_builtins_in_expr(&callee.node, builtins, effects, eq_helpers, type_registry);
             for arg in args {

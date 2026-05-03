@@ -151,7 +151,14 @@ impl EffectName {
             "Env.set" => Some(Self::EnvSet),
             "Console.readLine" => Some(Self::ConsoleReadLine),
             "Args._len" | "Args.len" => Some(Self::ArgsLen),
-            "Args._get" | "Args.get" => Some(Self::ArgsGet),
+            // `Args._get` is the low-level host import (i64 idx → String).
+            // The user-facing `Args.get()` (no args, returns List<String>)
+            // doesn't map to a single effect — `body/builtins.rs::emit_args_get_inline`
+            // expands it to `args_len + loop args_get(i) cons`. The
+            // discovery walker in `module.rs` registers ArgsLen + ArgsGet
+            // separately whenever it sees `Args.get()` so both host
+            // imports are linked.
+            "Args._get" => Some(Self::ArgsGet),
             "Random.float" => Some(Self::RandomFloat),
             "Random.int" => Some(Self::RandomInt),
             "Time.sleep" => Some(Self::TimeSleep),
