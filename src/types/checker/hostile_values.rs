@@ -65,7 +65,7 @@ pub fn boundary_values(ty: &Type) -> Vec<Literal> {
         // Named (user records / sum types) and Unknown: no literal
         // representation available without checking the project's type
         // table. Caller should leave these alone.
-        Type::Named(_) | Type::Unknown => Vec::new(),
+        Type::Named(_) | Type::Unknown | Type::Var(_) => Vec::new(),
     }
 }
 
@@ -144,7 +144,7 @@ pub fn boundary_exprs(ty: &Type) -> Vec<Spanned<Expr>> {
         // syntax for boundary inputs), Fn / Named / Unknown require
         // user-defined witnesses that hostile mode cannot invent.
         Type::Map(_, _) | Type::Vector(_) | Type::Fn(_, _, _) => Vec::new(),
-        Type::Named(_) | Type::Unknown => Vec::new(),
+        Type::Named(_) | Type::Unknown | Type::Var(_) => Vec::new(),
     }
 }
 

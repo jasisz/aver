@@ -3,6 +3,7 @@ use super::*;
 fn display_type_for_expected(ty: &Type) -> String {
     match ty {
         Type::Unknown => "Any".to_string(),
+        Type::Var(name) => name.clone(),
         Type::Int => "Int".to_string(),
         Type::Float => "Float".to_string(),
         Type::Str => "String".to_string(),

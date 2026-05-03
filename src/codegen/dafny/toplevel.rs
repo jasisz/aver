@@ -82,7 +82,7 @@ fn type_to_dafny(ty: &Type) -> String {
                 name.to_string()
             }
         }
-        Type::Unknown => "/* unknown type */".to_string(),
+        Type::Unknown | Type::Var(_) => "/* unknown type */".to_string(),
     }
 }
 

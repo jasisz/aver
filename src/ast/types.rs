@@ -19,16 +19,19 @@ pub enum Type {
     Map(Box<Type>, Box<Type>),
     Vector(Box<Type>),
     Fn(Vec<Type>, Box<Type>, Vec<String>),
-    Unknown,       // internal fallback when checker cannot infer a precise type
+    Unknown, // legacy fallback — being phased out; use Var("_") for new code
+    Var(String), // type variable in polymorphic builtin signatures (instantiated at call site)
     Named(String), // user-defined type: Shape, User, etc.
 }
 
 impl Type {
     /// `a.compatible(b)` — can a value of type `self` be used where `other` is expected?
-    /// `Unknown` is compatible with everything (internal fallback).
-    /// Two concrete types must be equal (structurally) to be compatible.
+    /// `Unknown` and `Var(_)` are compatible with everything (placeholders awaiting
+    /// instantiation). Two concrete types must be equal (structurally) to be compatible.
     pub fn compatible(&self, other: &Type) -> bool {
-        if matches!(self, Type::Unknown) || matches!(other, Type::Unknown) {
+        if matches!(self, Type::Unknown | Type::Var(_))
+            || matches!(other, Type::Unknown | Type::Var(_))
+        {
             return true;
         }
         match (self, other) {
@@ -95,6 +98,7 @@ impl Type {
                 }
             }
             Type::Unknown => "Unknown".to_string(),
+            Type::Var(name) => name.clone(),
             Type::Named(n) => n.clone(),
         }
     }

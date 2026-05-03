@@ -547,7 +547,13 @@ fn type_contains_named(ty: &Type, wanted: &str) -> bool {
             params.iter().any(|t| type_contains_named(t, wanted))
                 || type_contains_named(ret, wanted)
         }
-        Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit | Type::Unknown => false,
+        Type::Int
+        | Type::Float
+        | Type::Str
+        | Type::Bool
+        | Type::Unit
+        | Type::Unknown
+        | Type::Var(_) => false,
     }
 }
 

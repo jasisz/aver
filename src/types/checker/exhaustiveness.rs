@@ -50,7 +50,9 @@ impl TypeChecker {
     ) {
         // Preserve historical behavior: these domains are not exhaustiveness-checked.
         match subject_ty {
-            Type::Map(_, _) | Type::Fn(_, _, _) | Type::Unit | Type::Unknown => return,
+            Type::Map(_, _) | Type::Fn(_, _, _) | Type::Unit | Type::Unknown | Type::Var(_) => {
+                return;
+            }
             Type::Named(name) if !self.type_variants.contains_key(name) => return, // records
             _ => {}
         }
@@ -242,7 +244,8 @@ impl TypeChecker {
             | Type::Map(_, _)
             | Type::Fn(_, _, _)
             | Type::Unit
-            | Type::Unknown => None,
+            | Type::Unknown
+            | Type::Var(_) => None,
         }
     }
 

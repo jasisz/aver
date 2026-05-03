@@ -535,7 +535,13 @@ fn mark_type_uses(
             }
             mark_type_uses(ret, dep_targets, unique_type_owner, used_by_target);
         }
-        Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit | Type::Unknown => {}
+        Type::Int
+        | Type::Float
+        | Type::Str
+        | Type::Bool
+        | Type::Unit
+        | Type::Unknown
+        | Type::Var(_) => {}
     }
 }
 
