@@ -576,6 +576,17 @@ impl TypeRegistry {
                 for (_, ty) in &fd.params {
                     collect_tuples_from_str(ty, &mut tuple_types, &mut tuple_order, &mut next_idx);
                 }
+                // Walk the body for `Expr::Tuple` literals — the
+                // canonical `Tuple<A,B>` for a `(a, b)` literal is
+                // built from the items' typed-AST element types and
+                // never has to appear in any signature.
+                collect_tuples_from_fn_body(fd, &mut tuple_types, &mut tuple_order, &mut next_idx);
+            }
+        }
+        // Record fields can carry tuple types too.
+        for (_, fields) in record_fields.iter() {
+            for (_, ty) in fields {
+                collect_tuples_from_str(ty, &mut tuple_types, &mut tuple_order, &mut next_idx);
             }
         }
         // Eagerly register `Tuple<K, V>` for every `Map<K, V>` —
@@ -697,7 +708,20 @@ impl TypeRegistry {
 
     pub(super) fn list_type_idx(&self, canonical: &str) -> Option<u32> {
         let normalized = normalize_compound(canonical);
-        self.list_types.get(&normalized).copied()
+        if let Some(idx) = self.list_types.get(&normalized).copied() {
+            return Some(idx);
+        }
+        // Cross-module: a fn signature may spell a record as
+        // `Module.Room` while the dep's source uses bare `Room`. The
+        // type registry only has one slot per record (keyed by the
+        // bare name), so strip dotted prefixes from inner type names
+        // and retry.
+        let bare = strip_inner_dotted_prefixes(&normalized);
+        if bare != normalized {
+            self.list_types.get(&bare).copied()
+        } else {
+            None
+        }
     }
 
     pub(super) fn list_element_type(canonical: &str) -> Option<&str> {
@@ -707,7 +731,15 @@ impl TypeRegistry {
     }
 
     pub(super) fn result_type_idx(&self, canonical: &str) -> Option<u32> {
-        self.result_types.get(canonical).copied()
+        if let Some(idx) = self.result_types.get(canonical).copied() {
+            return Some(idx);
+        }
+        let bare = strip_inner_dotted_prefixes(canonical);
+        if bare != canonical {
+            self.result_types.get(&bare).copied()
+        } else {
+            None
+        }
     }
 
     /// Split `Result<T, E>` into (T, E) borrowed slices.
@@ -732,7 +764,15 @@ impl TypeRegistry {
     }
 
     pub(super) fn map_slots(&self, canonical: &str) -> Option<MapSlots> {
-        self.map_types.get(canonical).copied()
+        if let Some(s) = self.map_types.get(canonical).copied() {
+            return Some(s);
+        }
+        let bare = strip_inner_dotted_prefixes(canonical);
+        if bare != canonical {
+            self.map_types.get(&bare).copied()
+        } else {
+            None
+        }
     }
 
     pub(super) fn primitive_key_box_idx(&self, k_aver: &str) -> Option<u32> {
@@ -751,7 +791,15 @@ impl TypeRegistry {
         // (Aver surface syntax). Normalize the latter, strip
         // whitespace, then look up.
         let normalized = normalize_tuple_canonical(canonical);
-        self.tuple_types.get(normalized.as_ref()).copied()
+        if let Some(idx) = self.tuple_types.get(normalized.as_ref()).copied() {
+            return Some(idx);
+        }
+        let bare = strip_inner_dotted_prefixes(normalized.as_ref());
+        if bare.as_str() != normalized.as_ref() {
+            self.tuple_types.get(&bare).copied()
+        } else {
+            None
+        }
     }
 
     /// Split `Tuple<A, B>` (or `(A, B)`) into (A, B). Same depth-
@@ -786,7 +834,15 @@ impl TypeRegistry {
     }
 
     pub(super) fn option_type_idx(&self, canonical: &str) -> Option<u32> {
-        self.option_types.get(canonical).copied()
+        if let Some(idx) = self.option_types.get(canonical).copied() {
+            return Some(idx);
+        }
+        let bare = strip_inner_dotted_prefixes(canonical);
+        if bare != canonical {
+            self.option_types.get(&bare).copied()
+        } else {
+            None
+        }
     }
 
     /// Element-type Aver string for a registered `Option<T>` (analog
@@ -806,7 +862,15 @@ impl TypeRegistry {
     /// Wasm type idx for a canonical Aver `Vector<T>` string, if the
     /// instantiation was registered during `build`.
     pub(super) fn vector_type_idx(&self, canonical: &str) -> Option<u32> {
-        self.vector_types.get(canonical).copied()
+        if let Some(idx) = self.vector_types.get(canonical).copied() {
+            return Some(idx);
+        }
+        let bare = strip_inner_dotted_prefixes(canonical);
+        if bare != canonical {
+            self.vector_types.get(&bare).copied()
+        } else {
+            None
+        }
     }
 
     /// Element-type Aver string for a registered `Vector<T>`. Used by
@@ -988,7 +1052,7 @@ fn collect_results_from_builtin_uses(
                         "Int.fromString" | "Int.mod" | "Byte.fromHex" => {
                             intern("Result<Int,String>")
                         }
-                        "Byte.toHex" => intern("Result<String,String>"),
+                        "Byte.toHex" | "Console.readLine" => intern("Result<String,String>"),
                         _ => {}
                     }
                 }
@@ -1013,6 +1077,7 @@ fn collect_results_from_builtin_uses(
                 }
             }
             Expr::Attr(obj, _) => walk(&obj.node, out, order, next_idx),
+            Expr::ErrorProp(inner) => walk(&inner.node, out, order, next_idx),
             Expr::Constructor(_, payload) => {
                 if let Some(p) = payload.as_deref() {
                     walk(&p.node, out, order, next_idx);
@@ -1122,6 +1187,136 @@ fn collect_tuples_from_str(
             }
         }
         i += 1;
+    }
+}
+
+/// Walk a fn body for `Expr::Tuple` literals — register each unique
+/// `Tuple<A,B>` derived from the items' stamped types. Mirrors the
+/// body walks already done for `List`/`Option`/`Vector` discovery.
+fn collect_tuples_from_fn_body(
+    fd: &crate::ast::FnDef,
+    out: &mut HashMap<String, u32>,
+    order: &mut Vec<String>,
+    next_idx: &mut u32,
+) {
+    use crate::ast::{FnBody, Stmt};
+    let FnBody::Block(stmts) = fd.body.as_ref();
+    for stmt in stmts {
+        if let Stmt::Binding(_, Some(annot), _) = stmt {
+            collect_tuples_from_str(annot, out, order, next_idx);
+        }
+        let expr = match stmt {
+            Stmt::Binding(_, _, e) | Stmt::Expr(e) => e,
+        };
+        collect_tuples_from_expr(expr, out, order, next_idx);
+    }
+}
+
+fn collect_tuples_from_expr(
+    expr: &crate::ast::Spanned<crate::ast::Expr>,
+    out: &mut HashMap<String, u32>,
+    order: &mut Vec<String>,
+    next_idx: &mut u32,
+) {
+    use crate::ast::Expr;
+    // Register the canonical for this node first if it's a tuple
+    // literal — derived from the items' stamped types so nested
+    // `(a, (b, c))` registers both inner and outer canonicals.
+    // `Expr::IndependentProduct` (the `(...)!` form) lowers as a
+    // tuple under wasm-gc and shares the same canonical shape.
+    let tuple_items: Option<&Vec<crate::ast::Spanned<crate::ast::Expr>>> = match &expr.node {
+        Expr::Tuple(xs) | Expr::IndependentProduct(xs, false) => Some(xs),
+        _ => None,
+    };
+    if let Some(items) = tuple_items
+        && items.len() == 2
+    {
+        // Build canonical from typed-AST element types. Unknown types
+        // produce `Tuple<...,Unknown>` which the registry can't lower
+        // — that's the right failure mode (typecheck gap surfaces
+        // here, not silently succeeds with the wrong shape).
+        let a = items[0]
+            .ty()
+            .map(|t| t.display())
+            .unwrap_or_else(|| "Unknown".into());
+        let b = items[1]
+            .ty()
+            .map(|t| t.display())
+            .unwrap_or_else(|| "Unknown".into());
+        let canonical: String = format!("Tuple<{a},{b}>")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        // Recursively register the inner tuple types first so depth-
+        // ordered idx assignment respects forward-reference rules.
+        if !canonical.contains("Unknown") && !out.contains_key(&canonical) {
+            // First recurse through item types (in case they're
+            // themselves Tuple<...>) via the type-string scanner.
+            collect_tuples_from_str(&a, out, order, next_idx);
+            collect_tuples_from_str(&b, out, order, next_idx);
+            out.insert(canonical.clone(), *next_idx);
+            order.push(canonical);
+            *next_idx += 1;
+        }
+    }
+    // Recurse into sub-expressions.
+    match &expr.node {
+        Expr::FnCall(callee, args) => {
+            collect_tuples_from_expr(callee, out, order, next_idx);
+            for a in args {
+                collect_tuples_from_expr(a, out, order, next_idx);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            collect_tuples_from_expr(l, out, order, next_idx);
+            collect_tuples_from_expr(r, out, order, next_idx);
+        }
+        Expr::Match { subject, arms } => {
+            collect_tuples_from_expr(subject, out, order, next_idx);
+            for arm in arms {
+                collect_tuples_from_expr(&arm.body, out, order, next_idx);
+            }
+        }
+        Expr::TailCall(boxed) => {
+            for a in &boxed.args {
+                collect_tuples_from_expr(a, out, order, next_idx);
+            }
+        }
+        Expr::Attr(obj, _) => collect_tuples_from_expr(obj, out, order, next_idx),
+        Expr::ErrorProp(inner) => collect_tuples_from_expr(inner, out, order, next_idx),
+        Expr::Constructor(_, payload) => {
+            if let Some(p) = payload.as_deref() {
+                collect_tuples_from_expr(p, out, order, next_idx);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, e) in fields {
+                collect_tuples_from_expr(e, out, order, next_idx);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_tuples_from_expr(base, out, order, next_idx);
+            for (_, e) in updates {
+                collect_tuples_from_expr(e, out, order, next_idx);
+            }
+        }
+        Expr::List(items) => {
+            for x in items {
+                collect_tuples_from_expr(x, out, order, next_idx);
+            }
+        }
+        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for x in items {
+                collect_tuples_from_expr(x, out, order, next_idx);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                collect_tuples_from_expr(k, out, order, next_idx);
+                collect_tuples_from_expr(v, out, order, next_idx);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1356,6 +1551,12 @@ fn collect_options_from_expr(
                 collect_options_from_expr(&p.node, out, order, next_idx);
             }
         }
+        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for it in items {
+                collect_options_from_expr(&it.node, out, order, next_idx);
+            }
+        }
+        Expr::ErrorProp(inner) => collect_options_from_expr(&inner.node, out, order, next_idx),
         _ => {}
     }
 }
@@ -1399,7 +1600,16 @@ fn collect_vectors_from_expr(
                 collect_vectors_from_expr(&a.node, out, order, next_idx);
             }
         }
-        Expr::BinOp(_, l, r) => {
+        Expr::BinOp(op, l, r) => {
+            // String `+` lowers to `__wasmgc_concat_n`, which takes a
+            // `Vector<String>` (array of String refs). Register that
+            // canonical eagerly when we see the operator on String
+            // operands. Mirrors the InterpolatedStr arm below.
+            if matches!(op, crate::ast::BinOp::Add)
+                && l.ty().is_some_and(|t| t.display().trim() == "String")
+            {
+                collect_vectors_from_str("Vector<String>", out, order, next_idx);
+            }
             collect_vectors_from_expr(&l.node, out, order, next_idx);
             collect_vectors_from_expr(&r.node, out, order, next_idx);
         }
@@ -1431,6 +1641,12 @@ fn collect_vectors_from_expr(
                 collect_vectors_from_expr(&p.node, out, order, next_idx);
             }
         }
+        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for it in items {
+                collect_vectors_from_expr(&it.node, out, order, next_idx);
+            }
+        }
+        Expr::ErrorProp(inner) => collect_vectors_from_expr(&inner.node, out, order, next_idx),
         Expr::InterpolatedStr(parts) => {
             // Interpolation lowers to an `array.new_fixed (array (ref
             // null $string)) N` + variadic concat. The array type
@@ -1695,6 +1911,7 @@ fn collect_string_literals_in_expr(
             }
         }
         Expr::Attr(obj, _) => collect_string_literals_in_expr(&obj.node, out, idx),
+        Expr::ErrorProp(inner) => collect_string_literals_in_expr(&inner.node, out, idx),
         Expr::Constructor(_, payload) => {
             if let Some(p) = payload.as_deref() {
                 collect_string_literals_in_expr(&p.node, out, idx);
@@ -1712,6 +1929,11 @@ fn collect_string_literals_in_expr(
             }
         }
         Expr::List(items) => {
+            for item in items {
+                collect_string_literals_in_expr(&item.node, out, idx);
+            }
+        }
+        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items {
                 collect_string_literals_in_expr(&item.node, out, idx);
             }
@@ -2118,6 +2340,12 @@ fn collect_lists_from_expr(
                 collect_lists_from_expr(&p.node, out, order, next_idx);
             }
         }
+        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for it in items {
+                collect_lists_from_expr(&it.node, out, order, next_idx);
+            }
+        }
+        Expr::ErrorProp(inner) => collect_lists_from_expr(&inner.node, out, order, next_idx),
         Expr::List(items) => {
             for x in items {
                 collect_lists_from_expr(&x.node, out, order, next_idx);
@@ -2147,6 +2375,48 @@ fn normalize_tuple_canonical(s: &str) -> std::borrow::Cow<'_, str> {
 pub(super) fn normalize_compound(s: &str) -> String {
     let stripped: String = s.chars().filter(|c| !c.is_whitespace()).collect();
     rewrite_paren_tuples(&stripped)
+}
+
+/// Strip module-qualifier dots from inner type-name tokens. Walks the
+/// type string and rewrites `Module.Name` to `Name` whenever `Name`
+/// follows a `<` / `,` (i.e. it's an inner type argument). Used when
+/// the registry lookup for the qualified form misses — same record
+/// type may be referenced through `Module.Room` from one fn and
+/// through bare `Room` from another after multi-module flatten.
+pub(super) fn strip_inner_dotted_prefixes(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        out.push(bytes[i] as char);
+        // After a token boundary, look for `Capital.Name` and skip
+        // the `Capital.` part.
+        if matches!(bytes[i], b'<' | b',' | b'(') {
+            // Try to find a dotted Capital identifier: chars consisting
+            // of letters/digits/underscores then `.` then more chars.
+            let start = i + 1;
+            let mut j = start;
+            while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+                j += 1;
+            }
+            if j > start && j < bytes.len() && bytes[j] == b'.' && bytes[start].is_ascii_uppercase()
+            {
+                let after_dot = j + 1;
+                let mut k = after_dot;
+                while k < bytes.len() && (bytes[k].is_ascii_alphanumeric() || bytes[k] == b'_') {
+                    k += 1;
+                }
+                if k > after_dot && bytes[after_dot].is_ascii_uppercase() {
+                    // Emit the bare suffix, skip the prefix + dot.
+                    out.push_str(&s[after_dot..k]);
+                    i = k;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    out
 }
 
 fn rewrite_paren_tuples(s: &str) -> String {

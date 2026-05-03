@@ -5571,11 +5571,75 @@ fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[ModuleInfo]) {
         }
     }
 
+    // Build the union of module-qualified type names used across
+    // entry + dep modules (`Foo.SomeRecord`). After flatten the entry
+    // and the dep both contribute fn signatures into the same wasm-gc
+    // type registry; if one signature spells a record as `Foo.Room`
+    // and another spells it `Room`, the registry sees two different
+    // canonicals and allocates two struct slots, which then mismatch
+    // at the call site (`expected (ref null $A), found (ref null $B)`).
+    // Strip the `Foo.` prefix from every type-annotation string so
+    // both forms collapse to the bare `Room`.
+    let qualified_type_names: std::collections::HashSet<String> = dep_modules
+        .iter()
+        .flat_map(|dep| {
+            dep.type_defs.iter().map(|td| {
+                let name = match td {
+                    aver::ast::TypeDef::Sum { name, .. } => name.clone(),
+                    aver::ast::TypeDef::Product { name, .. } => name.clone(),
+                };
+                format!("{}.{}", dep.prefix, name)
+            })
+        })
+        .collect();
+
+    fn strip_module_prefixes(
+        type_str: &str,
+        qualified_type_names: &std::collections::HashSet<String>,
+    ) -> String {
+        if qualified_type_names.is_empty() {
+            return type_str.to_string();
+        }
+        let mut out = type_str.to_string();
+        for qualified in qualified_type_names {
+            if let Some((_, bare)) = qualified.rsplit_once('.') {
+                // Whole-word replace — guarded by leading/trailing
+                // type boundary (whitespace, `<`, `>`, `,`, `(`, `)`,
+                // start/end). Avoids matching prefixes inside other
+                // identifiers.
+                let mut new_out = String::with_capacity(out.len());
+                let mut i = 0;
+                let bytes = out.as_bytes();
+                while i < bytes.len() {
+                    let rest = &out[i..];
+                    if rest.starts_with(qualified.as_str()) {
+                        let after = i + qualified.len();
+                        let after_ok = after >= bytes.len()
+                            || matches!(bytes[after], b'<' | b'>' | b',' | b' ' | b'(' | b')');
+                        if after_ok {
+                            new_out.push_str(bare);
+                            i = after;
+                            continue;
+                        }
+                    }
+                    new_out.push(bytes[i] as char);
+                    i += 1;
+                }
+                out = new_out;
+            }
+        }
+        out
+    }
+
     // Rewrite entry items first: cross-module calls (no same-module
     // prefix to apply, only `Attr(Ident("Foo"), "bar")` rewriting).
     let empty_set: std::collections::HashSet<String> = std::collections::HashSet::new();
     for item in items.iter_mut() {
         if let TopLevel::FnDef(fd) = item {
+            for (_, ty) in fd.params.iter_mut() {
+                *ty = strip_module_prefixes(ty, &qualified_type_names);
+            }
+            fd.return_type = strip_module_prefixes(&fd.return_type, &qualified_type_names);
             let body_arc = std::sync::Arc::make_mut(&mut fd.body);
             let FnBody::Block(stmts) = body_arc;
             rewrite_stmts(stmts, &prefixes, None, &empty_set);
@@ -5591,6 +5655,10 @@ fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[ModuleInfo]) {
         }
         for fd in &dep.fn_defs {
             let mut new_fd = fd.clone();
+            for (_, ty) in new_fd.params.iter_mut() {
+                *ty = strip_module_prefixes(ty, &qualified_type_names);
+            }
+            new_fd.return_type = strip_module_prefixes(&new_fd.return_type, &qualified_type_names);
             // Rewrite the body's same-module bare calls to the
             // prefixed name, plus any cross-module `Attr(Ident("Bar"),
             // "baz")` shape (a dep can `depends [Other]` too).

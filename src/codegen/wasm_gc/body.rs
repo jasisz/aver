@@ -71,6 +71,64 @@ pub(super) struct FnMap {
     pub(super) string_split_ops: Option<super::lists::StringSplitOps>,
 }
 
+impl FnMap {
+    /// Lookup a `List<T>` helper triple, falling back to the bare-name
+    /// form when the canonical carries a module qualifier (`List<Mod.X>`
+    /// → `List<X>`). Multi-module flatten can leave inner type strings
+    /// in either form depending on whether the call site originated in
+    /// the entry or a dep module.
+    pub(super) fn list_ops_lookup(&self, canonical: &str) -> Option<&super::lists::ListOps> {
+        if let Some(o) = self.list_ops.get(canonical) {
+            return Some(o);
+        }
+        let bare = super::types::strip_inner_dotted_prefixes(canonical);
+        if bare != canonical {
+            self.list_ops.get(&bare)
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn map_helpers_lookup(&self, canonical: &str) -> Option<&super::maps::MapKVHelpers> {
+        if let Some(o) = self.map_helpers.get(canonical) {
+            return Some(o);
+        }
+        let bare = super::types::strip_inner_dotted_prefixes(canonical);
+        if bare != canonical {
+            self.map_helpers.get(&bare)
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn vfl_ops_lookup(
+        &self,
+        canonical: &str,
+    ) -> Option<&super::lists::VectorFromListOps> {
+        if let Some(o) = self.vfl_ops.get(canonical) {
+            return Some(o);
+        }
+        let bare = super::types::strip_inner_dotted_prefixes(canonical);
+        if bare != canonical {
+            self.vfl_ops.get(&bare)
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn zip_ops_lookup(&self, canonical: &str) -> Option<u32> {
+        if let Some(&o) = self.zip_ops.get(canonical) {
+            return Some(o);
+        }
+        let bare = super::types::strip_inner_dotted_prefixes(canonical);
+        if bare != canonical {
+            self.zip_ops.get(&bare).copied()
+        } else {
+            None
+        }
+    }
+}
+
 pub(super) struct FnEntry {
     pub(super) wasm_idx: u32,
     pub(super) return_type: String,

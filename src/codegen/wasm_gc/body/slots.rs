@@ -177,6 +177,9 @@ pub(super) fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
             .iter()
             .any(|a| expr_needs_scratch(&a.node, registry)),
         Expr::Attr(obj, _) => expr_needs_scratch(&obj.node, registry),
+        // `subject?` stashes the Result in scratch, reads tag, and
+        // either unwraps field 1 or returns the whole subject.
+        Expr::ErrorProp(_) => true,
         Expr::Constructor(_, payload) => payload
             .as_deref()
             .is_some_and(|p| expr_needs_scratch(&p.node, registry)),
@@ -371,6 +374,7 @@ pub(super) fn collect_expr_binding_slots(
             }
         }
         Expr::Attr(obj, _) => collect_expr_binding_slots(obj, out, registry)?,
+        Expr::ErrorProp(inner) => collect_expr_binding_slots(inner, out, registry)?,
         Expr::Constructor(_, payload) => {
             if let Some(p) = payload.as_deref() {
                 collect_expr_binding_slots(p, out, registry)?;

@@ -339,9 +339,22 @@ impl EffectName {
                 map_string_list_string_ref_ty(registry)?,
                 string_ref_ty(registry)?,
             ]),
-            Self::ConsoleReadLine | Self::ArgsGet | Self::TimeNow => {
-                Ok(vec![string_ref_ty(registry)?])
+            Self::ConsoleReadLine => {
+                // Aver-level signature is `Result<String, String>`. The
+                // host returns a Result struct ref directly so the
+                // caller's `?` (ErrorProp) can read the tag without an
+                // intermediate wrap step.
+                let idx = registry.result_type_idx("Result<String,String>").ok_or(
+                    WasmGcError::Validation(
+                        "Console.readLine: Result<String,String> slot not registered".into(),
+                    ),
+                )?;
+                Ok(vec![ValType::Ref(wasm_encoder::RefType {
+                    nullable: true,
+                    heap_type: wasm_encoder::HeapType::Concrete(idx),
+                })])
             }
+            Self::ArgsGet | Self::TimeNow => Ok(vec![string_ref_ty(registry)?]),
             Self::ArgsLen | Self::RandomInt => Ok(vec![ValType::I64]),
             Self::TimeSleep => Ok(vec![]),
             Self::RandomFloat

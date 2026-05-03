@@ -8,7 +8,10 @@ use crate::ast::{BinOp, Expr, Literal, MatchArm, Pattern, Spanned};
 use super::super::WasmGcError;
 use super::super::types::{TypeRegistry, aver_to_wasm};
 use super::builtins::{emit_dotted_builtin, emit_interpolated_str};
-use super::infer::{arm_is_option_pattern, arm_is_result_pattern, aver_type_str_of, wasm_type_of};
+use super::infer::{
+    arm_is_option_pattern, arm_is_result_pattern, aver_type_canonical, aver_type_str_of,
+    wasm_type_of,
+};
 use super::{EmitCtx, SlotTable};
 
 /// Emit a "default value" of the given Aver primitive / ref type onto
@@ -160,12 +163,25 @@ pub(super) fn emit_expr(
             emit_interpolated_str(func, parts, slots, ctx)?;
         }
         Expr::List(items) => {
-            emit_list_literal(func, items, slots, ctx)?;
+            emit_list_literal(func, expr, items, slots, ctx)?;
         }
         Expr::MapLiteral(entries) => {
             emit_map_literal(func, entries, slots, ctx)?;
         }
         Expr::Tuple(items) => {
+            emit_tuple_literal(func, items, slots, ctx)?;
+        }
+        Expr::IndependentProduct(items, unwrap) => {
+            // wasm-gc has no parallelism (no `std::thread::scope`
+            // analogue), so `(a, b)!` lowers as a sequential tuple
+            // — same shape `Expr::Tuple` produces. The `?!` form (set
+            // when `unwrap == true`) requires Result-unwrapping; for
+            // now reject loudly, no game uses it under wasm-gc.
+            if *unwrap {
+                return Err(WasmGcError::Unimplemented(
+                    "phase 5 — `?!` independent product (Result-unwrapping)",
+                ));
+            }
             emit_tuple_literal(func, items, slots, ctx)?;
         }
         Expr::Ident(_) => {
@@ -177,38 +193,75 @@ pub(super) fn emit_expr(
             func.instruction(&Instruction::LocalGet(*slot as u32));
         }
         Expr::BinOp(op, l, r) => {
-            emit_expr(func, &l, slots, ctx)?;
-            emit_expr(func, &r, slots, ctx)?;
-            // Pick op-set by the operand wasm type. Aver's type checker
+            // Read operand types from typed AST. Aver's type checker
             // has already proven both operands have the same type, so
             // peeking at the LHS suffices.
-            let operand = wasm_type_of(l, ctx.registry)?;
-            let inst = match (operand, op) {
-                (Some(ValType::F64), BinOp::Add) => Instruction::F64Add,
-                (Some(ValType::F64), BinOp::Sub) => Instruction::F64Sub,
-                (Some(ValType::F64), BinOp::Mul) => Instruction::F64Mul,
-                (Some(ValType::F64), BinOp::Div) => Instruction::F64Div,
-                (Some(ValType::F64), BinOp::Eq) => Instruction::F64Eq,
-                (Some(ValType::F64), BinOp::Neq) => Instruction::F64Ne,
-                (Some(ValType::F64), BinOp::Lt) => Instruction::F64Lt,
-                (Some(ValType::F64), BinOp::Gt) => Instruction::F64Gt,
-                (Some(ValType::F64), BinOp::Lte) => Instruction::F64Le,
-                (Some(ValType::F64), BinOp::Gte) => Instruction::F64Ge,
-                // Default to i64 ops for Int. Bool ops would land here
-                // too if Aver had `&&` / `||` as BinOps; today they're
-                // builtins (Bool.and / Bool.or), routed through FnCall.
-                (_, BinOp::Add) => Instruction::I64Add,
-                (_, BinOp::Sub) => Instruction::I64Sub,
-                (_, BinOp::Mul) => Instruction::I64Mul,
-                (_, BinOp::Div) => Instruction::I64DivS,
-                (_, BinOp::Eq) => Instruction::I64Eq,
-                (_, BinOp::Neq) => Instruction::I64Ne,
-                (_, BinOp::Lt) => Instruction::I64LtS,
-                (_, BinOp::Gt) => Instruction::I64GtS,
-                (_, BinOp::Lte) => Instruction::I64LeS,
-                (_, BinOp::Gte) => Instruction::I64GeS,
-            };
-            func.instruction(&inst);
+            let lhs_aver = aver_type_str_of(l);
+            let lhs_aver_trim = lhs_aver.trim();
+            // String `+` and `==` lower to dedicated builtins, not the
+            // primitive numeric op set.
+            if matches!(op, BinOp::Add) && lhs_aver_trim == "String" {
+                emit_string_concat2(func, l, r, slots, ctx)?;
+            } else if matches!(op, BinOp::Eq | BinOp::Neq) && lhs_aver_trim == "String" {
+                emit_string_eq(func, l, r, slots, ctx, matches!(op, BinOp::Neq))?;
+            } else if matches!(op, BinOp::Eq | BinOp::Neq)
+                && let Some(variant_idx) = nullary_variant_idx(r, ctx)
+            {
+                // `<expr> == VariantName` where VariantName is a
+                // nullary user-variant constructor — lower as
+                // `ref.test (ref $variant_idx) <expr>`. Two distinct
+                // `struct.new` calls of the same nullary variant don't
+                // share identity, so `ref.eq` won't work; type-test
+                // semantics match the user-level "is the value of this
+                // variant" intent for nullary variants.
+                emit_expr(func, l, slots, ctx)?;
+                func.instruction(&Instruction::RefTestNonNull(
+                    wasm_encoder::HeapType::Concrete(variant_idx),
+                ));
+                if matches!(op, BinOp::Neq) {
+                    func.instruction(&Instruction::I32Eqz);
+                }
+            } else if matches!(op, BinOp::Eq | BinOp::Neq)
+                && let Some(variant_idx) = nullary_variant_idx(l, ctx)
+            {
+                emit_expr(func, r, slots, ctx)?;
+                func.instruction(&Instruction::RefTestNonNull(
+                    wasm_encoder::HeapType::Concrete(variant_idx),
+                ));
+                if matches!(op, BinOp::Neq) {
+                    func.instruction(&Instruction::I32Eqz);
+                }
+            } else {
+                emit_expr(func, &l, slots, ctx)?;
+                emit_expr(func, &r, slots, ctx)?;
+                let operand = wasm_type_of(l, ctx.registry)?;
+                let inst = match (operand, op) {
+                    (Some(ValType::F64), BinOp::Add) => Instruction::F64Add,
+                    (Some(ValType::F64), BinOp::Sub) => Instruction::F64Sub,
+                    (Some(ValType::F64), BinOp::Mul) => Instruction::F64Mul,
+                    (Some(ValType::F64), BinOp::Div) => Instruction::F64Div,
+                    (Some(ValType::F64), BinOp::Eq) => Instruction::F64Eq,
+                    (Some(ValType::F64), BinOp::Neq) => Instruction::F64Ne,
+                    (Some(ValType::F64), BinOp::Lt) => Instruction::F64Lt,
+                    (Some(ValType::F64), BinOp::Gt) => Instruction::F64Gt,
+                    (Some(ValType::F64), BinOp::Lte) => Instruction::F64Le,
+                    (Some(ValType::F64), BinOp::Gte) => Instruction::F64Ge,
+                    // Default to i64 ops for Int. Bool ops would land here
+                    // too if Aver had `&&` / `||` as BinOps; today they're
+                    // builtins (Bool.and / Bool.or), routed through FnCall.
+                    (_, BinOp::Add) => Instruction::I64Add,
+                    (_, BinOp::Sub) => Instruction::I64Sub,
+                    (_, BinOp::Mul) => Instruction::I64Mul,
+                    (_, BinOp::Div) => Instruction::I64DivS,
+                    (_, BinOp::Eq) => Instruction::I64Eq,
+                    (_, BinOp::Neq) => Instruction::I64Ne,
+                    (_, BinOp::Lt) => Instruction::I64LtS,
+                    (_, BinOp::Gt) => Instruction::I64GtS,
+                    (_, BinOp::Lte) => Instruction::I64LeS,
+                    (_, BinOp::Gte) => Instruction::I64GeS,
+                };
+                func.instruction(&inst);
+            }
         }
         Expr::FnCall(callee, args) => {
             // `Type.Variant(args)` parses as `FnCall(Attr(_, name),
@@ -230,7 +283,21 @@ pub(super) fn emit_expr(
                             emit_option_constructor(func, Some(&args[0]), None, slots, ctx)
                         }
                         "None" => {
-                            emit_option_constructor(func, None, Some(ctx.return_type), slots, ctx)
+                            // Read T from the typed AST first; use the
+                            // Type::Unknown-recovery reader so post-
+                            // error gradual-typing branches still
+                            // resolve to a concrete Option<T>.
+                            let stamped_canonical =
+                                aver_type_canonical(expr, ctx.return_type, ctx.registry);
+                            let hint: String = if let Some(inner) = stamped_canonical
+                                .strip_prefix("Option<")
+                                .and_then(|s| s.strip_suffix('>'))
+                            {
+                                inner.to_string()
+                            } else {
+                                ctx.return_type.to_string()
+                            };
+                            emit_option_constructor(func, None, Some(&hint), slots, ctx)
                         }
                         _ => Err(WasmGcError::Validation(format!(
                             "Option.{member} with {} args is not a valid constructor",
@@ -316,7 +383,22 @@ pub(super) fn emit_expr(
                 && p == "Option"
                 && field == "None"
             {
-                emit_option_constructor(func, None, Some(ctx.return_type), slots, ctx)?;
+                // Read T from the typed AST: type checker stamps every
+                // `Option.None` with the inferred Option<T>. Use the
+                // Type::Unknown-recovery canonical reader so post-error
+                // gradual-typing branches still resolve to a concrete
+                // instantiation (single-instantiation fallback or
+                // enclosing-fn return-type carry-through).
+                let stamped_canonical = aver_type_canonical(expr, ctx.return_type, ctx.registry);
+                let hint: String = if let Some(inner) = stamped_canonical
+                    .strip_prefix("Option<")
+                    .and_then(|s| s.strip_suffix('>'))
+                {
+                    inner.to_string()
+                } else {
+                    ctx.return_type.to_string()
+                };
+                emit_option_constructor(func, None, Some(&hint), slots, ctx)?;
             } else if let Expr::Ident(parent) = &obj.node
                 && let Some(info) = ctx.registry.variant(field).cloned()
                 && info.parent == *parent
@@ -334,8 +416,9 @@ pub(super) fn emit_expr(
             }
         }
         Expr::Constructor(name, payload) => {
-            emit_constructor(func, name, payload.as_deref(), slots, ctx)?
+            emit_constructor(func, expr, name, payload.as_deref(), slots, ctx)?
         }
+        Expr::ErrorProp(inner) => emit_error_prop(func, inner, slots, ctx)?,
         other => {
             eprintln!("UNIMPL EMIT shape={:?}", other);
             return Err(WasmGcError::Unimplemented(
@@ -343,6 +426,210 @@ pub(super) fn emit_expr(
             ));
         }
     }
+    Ok(())
+}
+
+/// Recognise the syntactic form `Tile.Floor` / `EntityKind.WildIfElse`
+/// etc. — a bare attribute access on a registered sum-type's name
+/// resolving to a nullary variant. Returns the variant's wasm struct
+/// type index when the shape matches.
+///
+/// Also accepts `FnCall(Attr(parent, name), [])` (the `Tile.Floor()`
+/// form) since the parser may insert empty arg lists for explicit-paren
+/// calls. Matches both `Constructor(name, None)` and `Attr(Ident,
+/// field)` shapes.
+fn nullary_variant_idx(expr: &Spanned<Expr>, ctx: &EmitCtx<'_>) -> Option<u32> {
+    match &expr.node {
+        Expr::Attr(obj, field) => {
+            let parent = match &obj.node {
+                Expr::Ident(p) => p.as_str(),
+                Expr::Resolved { name, .. } => name.as_str(),
+                _ => return None,
+            };
+            let info = ctx.registry.variant(field)?;
+            if info.parent == parent && info.fields.is_empty() {
+                Some(info.type_idx)
+            } else {
+                None
+            }
+        }
+        Expr::FnCall(callee, args) if args.is_empty() => {
+            if let Expr::Attr(obj, field) = &callee.node {
+                let parent = match &obj.node {
+                    Expr::Ident(p) => p.as_str(),
+                    Expr::Resolved { name, .. } => name.as_str(),
+                    _ => return None,
+                };
+                let info = ctx.registry.variant(field)?;
+                if info.parent == parent && info.fields.is_empty() {
+                    Some(info.type_idx)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        Expr::Constructor(name, payload) if payload.is_none() => {
+            let bare = name.rsplit('.').next().unwrap_or(name);
+            let info = ctx.registry.variant(bare)?;
+            if info.fields.is_empty() {
+                Some(info.type_idx)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// `lhs + rhs` for `String + String` — build a 2-element array of
+/// `(ref null $string)` and call `__wasmgc_concat_n`. Reuses the
+/// variadic helper already used by interpolation, so no new runtime
+/// surface; same O(total_len) bytes copied.
+pub(super) fn emit_string_concat2(
+    func: &mut Function,
+    lhs: &Spanned<Expr>,
+    rhs: &Spanned<Expr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let vec_idx = ctx
+        .registry
+        .vector_type_idx("Vector<String>")
+        .ok_or(WasmGcError::Validation(
+            "String `+` requires Vector<String> slot but it wasn't registered \
+             (discovery should eager-allocate it on any String concat use)"
+                .into(),
+        ))?;
+    let concat_idx = ctx
+        .fn_map
+        .builtins
+        .get("__wasmgc_concat_n")
+        .copied()
+        .ok_or(WasmGcError::Validation(
+            "String `+` requires __wasmgc_concat_n builtin but it wasn't registered \
+             (discovery should register it on any String `+` site)"
+                .into(),
+        ))?;
+    emit_expr(func, lhs, slots, ctx)?;
+    emit_expr(func, rhs, slots, ctx)?;
+    func.instruction(&Instruction::ArrayNewFixed {
+        array_type_index: vec_idx,
+        array_size: 2,
+    });
+    func.instruction(&Instruction::Call(concat_idx));
+    Ok(())
+}
+
+/// `String == String` / `String != String` — call `__wasmgc_string_eq`,
+/// optionally invert with `i32.eqz` for `!=`.
+pub(super) fn emit_string_eq(
+    func: &mut Function,
+    lhs: &Spanned<Expr>,
+    rhs: &Spanned<Expr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+    invert: bool,
+) -> Result<(), WasmGcError> {
+    let eq_idx = ctx
+        .fn_map
+        .builtins
+        .get("__wasmgc_string_eq")
+        .copied()
+        .ok_or(WasmGcError::Validation(
+            "String `==`/`!=` requires __wasmgc_string_eq builtin but it wasn't registered \
+             (discovery should register it on any String comparison site)"
+                .into(),
+        ))?;
+    emit_expr(func, lhs, slots, ctx)?;
+    emit_expr(func, rhs, slots, ctx)?;
+    func.instruction(&Instruction::Call(eq_idx));
+    if invert {
+        func.instruction(&Instruction::I32Eqz);
+    }
+    Ok(())
+}
+
+/// `subject?` postfix: subject must be `Result<T, E>`. If `Result.Ok(v)`,
+/// push the unwrapped `v` (struct field 1). If `Result.Err`, return the
+/// whole subject struct as the surrounding fn's return value (which the
+/// type checker has guaranteed is `Result<_, E>` with the same `E`).
+///
+/// We reuse the existing scratch slot reservation: `expr_needs_scratch`
+/// already returns `true` for any FnCall containing `Option.withDefault`
+/// shapes etc., but ErrorProp may appear in fns that have no other
+/// scratch consumer. To avoid a separate slot allocation pass for one
+/// instruction, we stage the subject ref via `local.tee` on the enclosing
+/// fn's return-type-shaped local — wrong: we don't have one. Instead use
+/// a dedicated `block` with a result of the Ok type: emit subject, dup
+/// via tee into the always-reserved scratch (callers of fns with
+/// ErrorProp will already need a scratch — the schema-only
+/// `expr_needs_scratch` predicate is updated to cover this case).
+pub(super) fn emit_error_prop(
+    func: &mut Function,
+    inner: &Spanned<Expr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "ErrorProp (`?`) requires a subject scratch slot but none was reserved \
+         (slots::expr_needs_scratch must opt in for Expr::ErrorProp)"
+            .into(),
+    ))?;
+    let subject_ty = aver_type_str_of(inner);
+    let canonical: String = subject_ty.chars().filter(|c| !c.is_whitespace()).collect();
+    let res_idx = ctx
+        .registry
+        .result_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "ErrorProp: subject type `{subject_ty}` is not a registered Result<T,E>"
+        )))?;
+    let (t_aver, _e_aver) = TypeRegistry::result_te(&canonical).ok_or(WasmGcError::Validation(
+        format!("ErrorProp: Result canonical `{canonical}` malformed"),
+    ))?;
+    let ok_wasm = aver_to_wasm(t_aver, Some(ctx.registry))?.ok_or(WasmGcError::Validation(
+        format!("ErrorProp: Ok type `{t_aver}` has no wasm representation"),
+    ))?;
+    let block_ty = wasm_encoder::BlockType::Result(ok_wasm);
+
+    // Push subject and stash in scratch so we can read tag and either
+    // unwrap field 1 or return the whole struct on the Err arm.
+    emit_expr(func, inner, slots, ctx)?;
+    func.instruction(&Instruction::LocalSet(scratch));
+
+    // tag == 1 (Ok)?
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::RefCastNonNull(
+        wasm_encoder::HeapType::Concrete(res_idx),
+    ));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: res_idx,
+        field_index: 0,
+    });
+    func.instruction(&Instruction::I32Const(1));
+    func.instruction(&Instruction::I32Eq);
+    func.instruction(&Instruction::If(block_ty));
+    // Ok arm — push field 1 (the T payload).
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::RefCastNonNull(
+        wasm_encoder::HeapType::Concrete(res_idx),
+    ));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: res_idx,
+        field_index: 1,
+    });
+    func.instruction(&Instruction::Else);
+    // Err arm — push the whole subject (cast back to the concrete
+    // Result heap type since the scratch slot stores it as eqref) and
+    // return. Type checker guarantees the enclosing fn returns
+    // Result<_, E> with the same E.
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::RefCastNonNull(
+        wasm_encoder::HeapType::Concrete(res_idx),
+    ));
+    func.instruction(&Instruction::Return);
+    func.instruction(&Instruction::End);
     Ok(())
 }
 
@@ -480,8 +767,32 @@ pub(super) fn emit_record_update(
             "record `{type_name}` missing field list"
         )))?
         .clone();
-    for (decl_name, _) in &decl_fields {
+    for (decl_name, decl_ty) in &decl_fields {
         if let Some((_, override_expr)) = updates.iter().find(|(n, _)| n == decl_name) {
+            // Same `Option.None` / empty-list field special-cases as
+            // `emit_record_create` — the override expression's typed-AST
+            // info often resolves to Unknown for these literal forms,
+            // but the field's declared type is known and authoritative.
+            if is_option_none_expr(&override_expr.node)
+                && let Some(inner) = decl_ty
+                    .trim()
+                    .strip_prefix("Option<")
+                    .and_then(|s| s.strip_suffix('>'))
+            {
+                emit_option_constructor(func, None, Some(inner.trim()), slots, ctx)?;
+                continue;
+            }
+            if let Expr::List(items) = &override_expr.node
+                && items.is_empty()
+            {
+                let canonical: String = decl_ty.chars().filter(|c| !c.is_whitespace()).collect();
+                if let Some(list_idx) = ctx.registry.list_type_idx(&canonical) {
+                    func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+                        list_idx,
+                    )));
+                    continue;
+                }
+            }
             emit_expr(func, &override_expr, slots, ctx)?;
         } else {
             let field_idx = ctx
@@ -738,11 +1049,23 @@ pub(super) fn emit_map_literal(
 
 pub(super) fn emit_list_literal(
     func: &mut Function,
+    outer: &Spanned<Expr>,
     items: &[Spanned<Expr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    let canonical = if let Some(first) = items.first() {
+    // Prefer the typed-AST canonical when it's a registered List<T>.
+    // The type checker stamps every Expr::List with the expected list
+    // type from context (call-arg signature, binding annotation, fn
+    // return type), which is more reliable than the per-item /
+    // per-fn-return heuristics below.
+    let stamped = aver_type_canonical(outer, ctx.return_type, ctx.registry);
+    let canonical = if stamped.starts_with("List<")
+        && !stamped.contains("Unknown")
+        && ctx.registry.list_type_idx(&stamped).is_some()
+    {
+        stamped
+    } else if let Some(first) = items.first() {
         // `[Option.None, Option.None, ...]` is a common shape for
         // building filled rows; `infer_aver_type(Option.None)`
         // falls back to `ctx.return_type` and produces a doubly-
@@ -814,13 +1137,36 @@ pub(super) fn emit_list_literal(
     // accumulators.
     let cons_fn = ctx
         .fn_map
-        .list_ops
-        .get(&canonical)
+        .list_ops_lookup(&canonical)
         .ok_or(WasmGcError::Validation(format!(
             "List literal: cons helper for `{canonical}` not registered"
         )))?
         .cons;
+    // Element type derived from the resolved canonical. Used to give
+    // `Option.None` and empty-list elements the correct T even when
+    // their typed-AST type is Unknown — same trick `emit_record_create`
+    // uses for declared field types.
+    let elem_ty = TypeRegistry::list_element_type(&canonical).map(|s| s.to_string());
     for item in items {
+        if let Some(elem) = elem_ty.as_deref()
+            && is_option_none_expr(&item.node)
+            && let Some(inner) = elem
+                .strip_prefix("Option<")
+                .and_then(|s| s.strip_suffix('>'))
+        {
+            emit_option_constructor(func, None, Some(inner.trim()), slots, ctx)?;
+            continue;
+        }
+        if let Some(elem) = elem_ty.as_deref()
+            && let Expr::List(xs) = &item.node
+            && xs.is_empty()
+            && let Some(list_idx) = ctx.registry.list_type_idx(elem)
+        {
+            func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+                list_idx,
+            )));
+            continue;
+        }
         emit_expr(func, &item, slots, ctx)?;
     }
     func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
@@ -1681,6 +2027,7 @@ pub(super) fn emit_constructor_with_args(
 /// `struct.new`.
 pub(super) fn emit_constructor(
     func: &mut Function,
+    outer: &Spanned<Expr>,
     name: &str,
     payload: Option<&Spanned<Expr>>,
     slots: &SlotTable,
@@ -1694,7 +2041,19 @@ pub(super) fn emit_constructor(
         return emit_option_constructor(func, payload, None, slots, ctx);
     }
     if name == "Option.None" || (bare == "None" && name.starts_with("Option")) {
-        return emit_option_constructor(func, None, Some(ctx.return_type), slots, ctx);
+        // Read T off the typed outer expr (Option<T> stamped by the
+        // type checker), with the Type::Unknown-recovery reader so
+        // post-error gradual-typing branches still resolve.
+        let stamped_canonical = aver_type_canonical(outer, ctx.return_type, ctx.registry);
+        let hint: String = if let Some(inner) = stamped_canonical
+            .strip_prefix("Option<")
+            .and_then(|s| s.strip_suffix('>'))
+        {
+            inner.to_string()
+        } else {
+            ctx.return_type.to_string()
+        };
+        return emit_option_constructor(func, None, Some(&hint), slots, ctx);
     }
     if name == "Result.Ok" || (bare == "Ok" && name.starts_with("Result")) {
         return emit_result_constructor(func, "Ok", payload, slots, ctx);

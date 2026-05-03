@@ -391,8 +391,7 @@ pub(super) fn emit_map_empty_call(
     };
     let helpers = ctx
         .fn_map
-        .map_helpers
-        .get(&canonical)
+        .map_helpers_lookup(&canonical)
         .ok_or(WasmGcError::Validation(format!(
             "Map.empty: helpers missing for `{canonical}`"
         )))?;
@@ -462,8 +461,7 @@ pub(super) fn emit_map_kv_call(
     }
     let helpers = ctx
         .fn_map
-        .map_helpers
-        .get(&canonical)
+        .map_helpers_lookup(&canonical)
         .ok_or(WasmGcError::Validation(format!(
             "Map.{method}: map argument has type `{map_aver_raw}` but no helpers are registered"
         )))?;
@@ -887,8 +885,7 @@ pub(super) fn emit_map_get_or_default(
     let canonical: String = map_aver.chars().filter(|c| !c.is_whitespace()).collect();
     let helpers = ctx
         .fn_map
-        .map_helpers
-        .get(&canonical)
+        .map_helpers_lookup(&canonical)
         .ok_or(WasmGcError::Validation(format!(
             "Map.get fusion: map argument has type `{map_aver}` but no helpers are registered"
         )))?;
@@ -1111,8 +1108,7 @@ pub(super) fn emit_list_op_call(
     let canonical = super::super::types::normalize_compound(&list_aver);
     let ops = ctx
         .fn_map
-        .list_ops
-        .get(&canonical)
+        .list_ops_lookup(&canonical)
         .ok_or(WasmGcError::Validation(format!(
             "List.{op} called but `{canonical}` helper wasn't registered"
         )))?;
@@ -1147,8 +1143,7 @@ pub(super) fn emit_list_op_call_2(
     let canonical = super::super::types::normalize_compound(&list_aver);
     let ops = ctx
         .fn_map
-        .list_ops
-        .get(&canonical)
+        .list_ops_lookup(&canonical)
         .ok_or(WasmGcError::Validation(format!(
             "List.{op} called but `{canonical}` helper wasn't registered"
         )))?;
@@ -1192,8 +1187,7 @@ pub(super) fn emit_map_from_list_call(
     let map_canonical = format!("Map<{},{}>", k.trim(), v.trim());
     let helpers = ctx
         .fn_map
-        .map_helpers
-        .get(&map_canonical)
+        .map_helpers_lookup(&map_canonical)
         .ok_or(WasmGcError::Validation(format!(
             "Map.fromList: helpers for `{map_canonical}` not registered"
         )))?;
@@ -1223,9 +1217,7 @@ pub(super) fn emit_list_zip_call(
     let tup_canonical = format!("Tuple<{},{}>", a.trim(), b.trim());
     let zip_fn = ctx
         .fn_map
-        .zip_ops
-        .get(&tup_canonical)
-        .copied()
+        .zip_ops_lookup(&tup_canonical)
         .ok_or(WasmGcError::Validation(format!(
             "List.zip: helper for `{tup_canonical}` wasn't registered"
         )))?;
@@ -1247,8 +1239,7 @@ pub(super) fn emit_vec_from_list_call(
     let canonical = super::super::types::normalize_compound(&list_aver);
     let ops = ctx
         .fn_map
-        .vfl_ops
-        .get(&canonical)
+        .vfl_ops_lookup(&canonical)
         .ok_or(WasmGcError::Validation(format!(
             "Vector.fromList: helper for `{canonical}` wasn't registered \
              (matching Vector<T> may be missing from the registry)"

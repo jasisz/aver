@@ -971,7 +971,22 @@ fn discover_builtins_in_expr(
                 discover_builtins_in_expr(&arg.node, builtins, effects);
             }
         }
-        Expr::BinOp(_, l, r) => {
+        Expr::BinOp(op, l, r) => {
+            // String `+` lowers to `__wasmgc_concat_n`; String `==`/`!=`
+            // lower to `__wasmgc_string_eq`. Both helpers must be
+            // registered up front so emit can `Call` them by index.
+            // Read the operand type off the typed AST — Step 3 stamps
+            // every node's `ty`.
+            if let Some(t) = l.ty()
+                && t.display().trim() == "String"
+            {
+                use crate::ast::BinOp as Op;
+                match op {
+                    Op::Add => builtins.register(BuiltinName::StringConcatN),
+                    Op::Eq | Op::Neq => builtins.register(BuiltinName::StringEq),
+                    _ => {}
+                }
+            }
             discover_builtins_in_expr(&l.node, builtins, effects);
             discover_builtins_in_expr(&r.node, builtins, effects);
         }
@@ -999,6 +1014,7 @@ fn discover_builtins_in_expr(
             }
         }
         Expr::Attr(obj, _) => discover_builtins_in_expr(&obj.node, builtins, effects),
+        Expr::ErrorProp(inner) => discover_builtins_in_expr(&inner.node, builtins, effects),
         Expr::Constructor(_, payload) => {
             if let Some(p) = payload.as_deref() {
                 discover_builtins_in_expr(&p.node, builtins, effects);
@@ -1033,6 +1049,17 @@ fn discover_builtins_in_expr(
         Expr::List(items) => {
             for item in items {
                 discover_builtins_in_expr(&item.node, builtins, effects);
+            }
+        }
+        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for item in items {
+                discover_builtins_in_expr(&item.node, builtins, effects);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                discover_builtins_in_expr(&k.node, builtins, effects);
+                discover_builtins_in_expr(&v.node, builtins, effects);
             }
         }
         _ => {}
