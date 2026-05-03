@@ -3,11 +3,11 @@ use super::*;
 fn display_type_for_expected(ty: &Type) -> String {
     match ty {
         Type::Unknown => "Any".to_string(),
-        // `Var("_")` is the anonymous "any value" placeholder used by
-        // dynamic-dispatch builtins (Console.print, etc.) — surface it
-        // as "Any" in error messages, same as the legacy Unknown.
+        // `Type::Any` is the explicit "any value, no constraint" used
+        // by dynamic-dispatch builtins (Console.print, etc.) — surfaces
+        // as "Any" in error messages.
+        Type::Any => "Any".to_string(),
         // Named vars (`Var("K")`, `Var("T")`, ...) display as their name.
-        Type::Var(name) if name == "_" => "Any".to_string(),
         Type::Var(name) => name.clone(),
         Type::Int => "Int".to_string(),
         Type::Float => "Float".to_string(),
@@ -59,14 +59,16 @@ fn display_type_for_expected(ty: &Type) -> String {
     }
 }
 
-/// True iff `ty` contains no `Type::Unknown` or `Type::Var(_)` anywhere
-/// in its structure. Used to gate expected-type propagation: a formal
-/// param like `Map<Var("K"), Var("V")>` must NOT be passed as expected
-/// into arg inference, otherwise the recogniser stamps the arg with
-/// the bare Var-bearing type and breaks downstream backends.
+/// True iff `ty` contains no `Type::Unknown`, `Type::Var(_)`, or
+/// `Type::Any` anywhere in its structure. Used to gate expected-type
+/// propagation: a formal param like `Map<Var("K"), Var("V")>` must
+/// NOT be passed as expected into arg inference, otherwise the
+/// recogniser stamps the arg with the bare Var-bearing type and
+/// breaks downstream backends. Same for `Type::Any` placeholders in
+/// dynamic-dispatch builtins (Console.print etc.).
 fn type_is_fully_concrete(ty: &Type) -> bool {
     match ty {
-        Type::Unknown | Type::Var(_) => false,
+        Type::Unknown | Type::Var(_) | Type::Any => false,
         Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit | Type::Named(_) => true,
         Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
             type_is_fully_concrete(inner)

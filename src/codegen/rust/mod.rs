@@ -553,7 +553,7 @@ fn type_contains_named(ty: &Type, wanted: &str) -> bool {
         | Type::Bool
         | Type::Unit
         | Type::Unknown
-        | Type::Var(_) => false,
+        | Type::Var(_) | Type::Any => false,
     }
 }
 

@@ -541,7 +541,7 @@ fn mark_type_uses(
         | Type::Bool
         | Type::Unit
         | Type::Unknown
-        | Type::Var(_) => {}
+        | Type::Var(_) | Type::Any => {}
     }
 }
 

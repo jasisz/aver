@@ -561,7 +561,7 @@ pub fn is_memo_safe_type(ty: &crate::types::Type, safe_named: &HashSet<String>) 
         | Type::Map(_, _)
         | Type::Fn(_, _, _)
         | Type::Unknown
-        | Type::Var(_) => false,
+        | Type::Var(_) | Type::Any => false,
         Type::Result(_, _) | Type::Option(_) => false,
         Type::Named(name) => safe_named.contains(name),
     }

@@ -51,8 +51,8 @@ impl TypeChecker {
         let effect_event_fields: &[(&str, Type)] = &[
             ("method", Type::Str),
             // EffectEvent.args is heterogeneous (different element type per
-            // event method) — `Var("_")` marks "any value, no constraint".
-            ("args", Type::List(Box::new(Type::Var("_".to_string())))),
+            // event method) — `Type::Any` marks "any value, no constraint".
+            ("args", Type::List(Box::new(Type::Any))),
             ("path", Type::Str),
         ];
         for (field, ty) in effect_event_fields {
@@ -147,13 +147,10 @@ impl TypeChecker {
             )
         };
         let http_handler_with_context = || {
-            // Context is user-provided arbitrary value — `Var("_")` marks
+            // Context is user-provided arbitrary value — `Type::Any` marks
             // "any type, no constraint".
             Type::Fn(
-                vec![
-                    Type::Var("_".to_string()),
-                    Type::Named("HttpRequest".to_string()),
-                ],
+                vec![Type::Any, Type::Named("HttpRequest".to_string())],
                 Box::new(Type::Named("HttpResponse".to_string())),
                 server_handler_effects(),
             )
@@ -166,22 +163,22 @@ impl TypeChecker {
                 &["Args.get"],
             ),
             // Console.print/error/warn accept any value (runtime
-            // dispatches via Format.value); `Var("_")` = "any type".
+            // dispatches via Format.value); `Type::Any` = "any type".
             (
                 "Console.print",
-                &[Type::Var("_".to_string())],
+                &[Type::Any],
                 Type::Unit,
                 &["Console.print"],
             ),
             (
                 "Console.error",
-                &[Type::Var("_".to_string())],
+                &[Type::Any],
                 Type::Unit,
                 &["Console.error"],
             ),
             (
                 "Console.warn",
-                &[Type::Var("_".to_string())],
+                &[Type::Any],
                 Type::Unit,
                 &["Console.warn"],
             ),
@@ -220,7 +217,7 @@ impl TypeChecker {
             ),
             (
                 "HttpServer.listenWith",
-                &[Type::Int, Type::Var("_".to_string()), http_handler_with_context()],
+                &[Type::Int, Type::Any, http_handler_with_context()],
                 Type::Unit,
                 &["HttpServer.listenWith"],
             ),
@@ -232,7 +229,7 @@ impl TypeChecker {
             ),
             (
                 "SelfHostRuntime.httpServerListenWith",
-                &[Type::Int, Type::Var("_".to_string()), http_handler_with_context()],
+                &[Type::Int, Type::Any, http_handler_with_context()],
                 disk_unit(),
                 &["HttpServer.listenWith"],
             ),
@@ -353,7 +350,7 @@ impl TypeChecker {
                 ),
                 (
                     "Terminal.print",
-                    &[Type::Var("_".to_string())],
+                    &[Type::Any],
                     Type::Unit,
                     &["Terminal.print"],
                 ),

@@ -287,7 +287,7 @@ impl<'a> ExprEmitter<'a> {
             | Type::Unit
             | Type::Fn(_, _, _)
             | Type::Unknown
-            | Type::Var(_) => false,
+            | Type::Var(_) | Type::Any => false,
             Type::Str
             | Type::Result(_, _)
             | Type::Option(_)

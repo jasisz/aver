@@ -19,18 +19,19 @@ pub enum Type {
     Map(Box<Type>, Box<Type>),
     Vector(Box<Type>),
     Fn(Vec<Type>, Box<Type>, Vec<String>),
-    Unknown, // legacy fallback — being phased out; use Var("_") for new code
-    Var(String), // type variable in polymorphic builtin signatures (instantiated at call site)
+    Unknown,       // legacy fallback — being phased out
+    Var(String),   // named type variable in polymorphic builtin signatures (instantiated at call site)
+    Any,           // explicit "any value, no constraint" — for dynamic-dispatch builtins (Console.print etc.)
     Named(String), // user-defined type: Shape, User, etc.
 }
 
 impl Type {
     /// `a.compatible(b)` — can a value of type `self` be used where `other` is expected?
-    /// `Unknown` and `Var(_)` are compatible with everything (placeholders awaiting
-    /// instantiation). Two concrete types must be equal (structurally) to be compatible.
+    /// `Unknown`, `Var(_)`, and `Any` are compatible with everything (placeholders or
+    /// no-constraint sites). Two concrete types must be equal (structurally) to be compatible.
     pub fn compatible(&self, other: &Type) -> bool {
-        if matches!(self, Type::Unknown | Type::Var(_))
-            || matches!(other, Type::Unknown | Type::Var(_))
+        if matches!(self, Type::Unknown | Type::Var(_) | Type::Any)
+            || matches!(other, Type::Unknown | Type::Var(_) | Type::Any)
         {
             return true;
         }
@@ -99,6 +100,7 @@ impl Type {
             }
             Type::Unknown => "Unknown".to_string(),
             Type::Var(name) => name.clone(),
+            Type::Any => "Any".to_string(),
             Type::Named(n) => n.clone(),
         }
     }

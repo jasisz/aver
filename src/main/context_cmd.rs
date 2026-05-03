@@ -295,7 +295,7 @@ fn collect_named_type_refs(ty: &Type, out: &mut Vec<String>) {
         | Type::Bool
         | Type::Unit
         | Type::Unknown
-        | Type::Var(_) => {}
+        | Type::Var(_) | Type::Any => {}
     }
 }
 
