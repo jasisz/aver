@@ -88,6 +88,117 @@ impl TypeChecker {
         t
     }
 
+    /// Bidirectional companion to `infer_type`. When `expected` is `Some(T)`
+    /// and `expr` is a generic constructor (`Option.None`, `Map.empty()`,
+    /// empty `[]`, `Result.Ok(v)`, etc.) whose result type would otherwise
+    /// be `Option<Unknown>` / `Map<Unknown, Unknown>` / etc., propagates
+    /// `T` into the unbound positions instead of leaking `Unknown`.
+    /// Falls back to plain `infer_type` for anything that doesn't need
+    /// the hint.
+    pub(in super::super) fn infer_type_with_expected(
+        &mut self,
+        expr: &Spanned<Expr>,
+        expected: Option<&Type>,
+    ) -> Type {
+        if let Some(exp) = expected
+            && let Some(ty) = self.try_infer_with_expected(expr, exp)
+        {
+            expr.set_ty(ty.clone());
+            return ty;
+        }
+        self.infer_type(expr)
+    }
+
+    /// Recogniser for the generic-constructor shapes that need an expected
+    /// type to produce a precise stamp. Returns `Some(concrete_type)` when
+    /// the shape matches and the expected type aligns; `None` otherwise
+    /// (caller falls back to plain `infer_type`).
+    fn try_infer_with_expected(
+        &mut self,
+        expr: &Spanned<Expr>,
+        expected: &Type,
+    ) -> Option<Type> {
+        match &expr.node {
+            // Empty list literal `[]` adopts expected `List<T>`.
+            Expr::List(items) if items.is_empty() => match expected {
+                Type::List(_) => Some(expected.clone()),
+                _ => None,
+            },
+
+            // Bare `None` constructor.
+            Expr::Constructor(name, None) if name == "None" => match expected {
+                Type::Option(_) => Some(expected.clone()),
+                _ => None,
+            },
+
+            // `Some(v)` / `Ok(v)` / `Err(e)` — propagate inner expected.
+            Expr::Constructor(name, Some(arg_box)) => match (name.as_str(), expected) {
+                ("Some", Type::Option(inner)) => {
+                    let inferred = self.infer_type_with_expected(arg_box, Some(inner));
+                    Some(Type::Option(Box::new(inferred)))
+                }
+                ("Ok", Type::Result(ok, err)) => {
+                    let inferred = self.infer_type_with_expected(arg_box, Some(ok));
+                    Some(Type::Result(Box::new(inferred), err.clone()))
+                }
+                ("Err", Type::Result(ok, err)) => {
+                    let inferred = self.infer_type_with_expected(arg_box, Some(err));
+                    Some(Type::Result(ok.clone(), Box::new(inferred)))
+                }
+                _ => None,
+            },
+
+            // `Option.None` as bare attr access — value, not call.
+            Expr::Attr(obj, field)
+                if field == "None" && matches!(&obj.node, Expr::Ident(n) if n == "Option") =>
+            {
+                match expected {
+                    Type::Option(_) => Some(expected.clone()),
+                    _ => None,
+                }
+            }
+
+            // `Foo.bar(...)` — handle generic-constructor calls.
+            Expr::FnCall(callee, args) => {
+                let Expr::Attr(obj, field) = &callee.node else {
+                    return None;
+                };
+                let Expr::Ident(parent) = &obj.node else {
+                    return None;
+                };
+                match (parent.as_str(), field.as_str(), args.len(), expected) {
+                    // Map.empty() — no args, expected must be Map<K, V>.
+                    ("Map", "empty", 0, Type::Map(_, _)) => Some(expected.clone()),
+
+                    // Option.None — accidentally written as zero-arg call.
+                    ("Option", "None", 0, Type::Option(_)) => Some(expected.clone()),
+
+                    // Option.Some(v) — propagate inner T.
+                    ("Option", "Some", 1, Type::Option(inner)) => {
+                        let inferred = self.infer_type_with_expected(&args[0], Some(inner));
+                        Some(Type::Option(Box::new(inferred)))
+                    }
+
+                    // Result.Ok(v) — propagate ok side.
+                    ("Result", "Ok", 1, Type::Result(ok, err)) => {
+                        let inferred = self.infer_type_with_expected(&args[0], Some(ok));
+                        Some(Type::Result(Box::new(inferred), err.clone()))
+                    }
+
+                    // Result.Err(e) — propagate err side.
+                    ("Result", "Err", 1, Type::Result(ok, err)) => {
+                        let inferred = self.infer_type_with_expected(&args[0], Some(err));
+                        Some(Type::Result(ok.clone(), Box::new(inferred)))
+                    }
+
+                    _ => None,
+                }
+            }
+
+            _ => None,
+        }
+    }
+
     fn infer_type_inner(&mut self, expr: &Spanned<Expr>) -> Type {
         match &expr.node {
             Expr::Literal(lit) => match lit {
@@ -540,18 +651,26 @@ impl TypeChecker {
                 };
                 let subject_ty = self.infer_type(subject);
                 self.check_match_exhaustiveness(&subject_ty, arms, match_line);
+                // Bidirectional: propagate the enclosing fn's declared
+                // return type into each arm body. Lets generic constructors
+                // in arm positions (`[] -> Option.None`) pick up T without
+                // requiring per-arm annotation.
+                let arm_expected = self.current_fn_ret.clone();
+                let arm_expected_ref = arm_expected.as_ref();
                 // Infer from first arm; check remaining arms for consistency
                 if let Some(first_arm) = arms.first() {
-                    let first_ty = self.infer_type_with_pattern_bindings(
+                    let first_ty = self.infer_type_with_pattern_bindings_expected(
                         &first_arm.pattern,
                         &subject_ty,
                         &first_arm.body,
+                        arm_expected_ref,
                     );
                     for arm in arms.iter().skip(1) {
-                        let arm_ty = self.infer_type_with_pattern_bindings(
+                        let arm_ty = self.infer_type_with_pattern_bindings_expected(
                             &arm.pattern,
                             &subject_ty,
                             &arm.body,
+                            arm_expected_ref,
                         );
                         // Only report mismatch when both types are concrete
                         if !first_ty.compatible(&arm_ty)

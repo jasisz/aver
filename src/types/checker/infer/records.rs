@@ -26,7 +26,15 @@ impl TypeChecker {
 
         let mut seen = HashSet::new();
         for (field_name, expr) in fields {
-            let actual_ty = self.infer_type(expr);
+            // Bidirectional: pass declared field type as expected so that
+            // generic constructors (`Option.None`, `[]`, `Map.empty()`)
+            // pick up T from the field declaration instead of stamping
+            // `Unknown`.
+            let actual_ty = if let Some(field_ty) = expected.get(field_name) {
+                self.infer_type_with_expected(expr, Some(field_ty))
+            } else {
+                self.infer_type(expr)
+            };
             if !seen.insert(field_name.clone()) {
                 self.error(format!(
                     "Record '{}' field '{}' provided more than once",
@@ -105,7 +113,13 @@ impl TypeChecker {
         }
 
         for (field_name, expr) in updates {
-            let actual_ty = self.infer_type(expr);
+            // Bidirectional: same propagation as RecordCreate so generic
+            // constructors in update field positions pick up T.
+            let actual_ty = if let Some(field_ty) = expected_fields.get(field_name) {
+                self.infer_type_with_expected(expr, Some(field_ty))
+            } else {
+                self.infer_type(expr)
+            };
             if expected_fields.is_empty() {
                 continue;
             }

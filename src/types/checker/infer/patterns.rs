@@ -7,6 +7,20 @@ impl TypeChecker {
         subject_ty: &Type,
         body: &Spanned<Expr>,
     ) -> Type {
+        self.infer_type_with_pattern_bindings_expected(pattern, subject_ty, body, None)
+    }
+
+    /// Same as `infer_type_with_pattern_bindings`, but threads an `expected`
+    /// type into the arm body so generic constructors in arm positions
+    /// (`[] -> Option.None`) pick up T from the surrounding context (fn
+    /// return type, outer expected) instead of stamping `Unknown`.
+    pub(in super::super) fn infer_type_with_pattern_bindings_expected(
+        &mut self,
+        pattern: &Pattern,
+        subject_ty: &Type,
+        body: &Spanned<Expr>,
+        expected: Option<&Type>,
+    ) -> Type {
         let mut bindings = Vec::new();
         self.collect_pattern_bindings(pattern, subject_ty, &mut bindings);
 
@@ -17,7 +31,7 @@ impl TypeChecker {
             self.locals.insert(bind_name, bind_ty);
         }
 
-        let out_ty = self.infer_type(body);
+        let out_ty = self.infer_type_with_expected(body, expected);
 
         for (name, old) in prev {
             if let Some(old_val) = old {
