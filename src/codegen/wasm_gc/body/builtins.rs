@@ -11,7 +11,7 @@ use crate::ir::{LeafOp, classify_leaf_op};
 use super::super::WasmGcError;
 use super::super::types::{TypeRegistry, aver_to_wasm};
 use super::emit::{emit_default_value, emit_expr};
-use super::infer::infer_aver_type;
+use super::infer::aver_type_str_of;
 use super::{EmitCtx, SlotTable};
 
 /// Lower a `Type.Variant(args...)` call (parsed as `FnCall(Attr, args)`)
@@ -35,7 +35,7 @@ pub(super) fn emit_dotted_builtin(
     // Registered helper builtin? Push args, emit `call $idx`.
     if let Some(&wasm_idx) = ctx.fn_map.builtins.get(&dotted) {
         for arg in args {
-            emit_expr(func, &arg.node, slots, ctx)?;
+            emit_expr(func, &arg, slots, ctx)?;
         }
         func.instruction(&Instruction::Call(wasm_idx));
         return Ok(());
@@ -46,7 +46,7 @@ pub(super) fn emit_dotted_builtin(
     // identically to a Unit-returning user fn call.
     if let Some(&wasm_idx) = ctx.fn_map.effects.get(&dotted) {
         for arg in args {
-            emit_expr(func, &arg.node, slots, ctx)?;
+            emit_expr(func, &arg, slots, ctx)?;
         }
         func.instruction(&Instruction::Call(wasm_idx));
         return Ok(());
@@ -61,7 +61,7 @@ pub(super) fn emit_dotted_builtin(
                     args.len()
                 )));
             }
-            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::F64ConvertI64S);
             Ok(())
         }
@@ -73,7 +73,7 @@ pub(super) fn emit_dotted_builtin(
                     args.len()
                 )));
             }
-            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::I64TruncF64S);
             Ok(())
         }
@@ -83,42 +83,42 @@ pub(super) fn emit_dotted_builtin(
         // arithmetic, not back through Float ops). Lower as f64 op +
         // truncate to i64.
         "Float.floor" if args.len() == 1 => {
-            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::F64Floor);
             func.instruction(&Instruction::I64TruncF64S);
             Ok(())
         }
         "Float.ceil" if args.len() == 1 => {
-            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::F64Ceil);
             func.instruction(&Instruction::I64TruncF64S);
             Ok(())
         }
         "Float.round" if args.len() == 1 => {
-            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::F64Nearest);
             func.instruction(&Instruction::I64TruncF64S);
             Ok(())
         }
         "Float.abs" if args.len() == 1 => {
-            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::F64Abs);
             Ok(())
         }
         "Float.sqrt" if args.len() == 1 => {
-            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::F64Sqrt);
             Ok(())
         }
         "Float.min" if args.len() == 2 => {
-            emit_expr(func, &args[0].node, slots, ctx)?;
-            emit_expr(func, &args[1].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
+            emit_expr(func, &args[1], slots, ctx)?;
             func.instruction(&Instruction::F64Min);
             Ok(())
         }
         "Float.max" if args.len() == 2 => {
-            emit_expr(func, &args[0].node, slots, ctx)?;
-            emit_expr(func, &args[1].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
+            emit_expr(func, &args[1], slots, ctx)?;
             func.instruction(&Instruction::F64Max);
             Ok(())
         }
@@ -129,51 +129,51 @@ pub(super) fn emit_dotted_builtin(
         // `Int.toFloat` is the same op as `Float.fromInt` — Aver has
         // both spellings; map both to the same instruction.
         "Int.toFloat" if args.len() == 1 => {
-            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::F64ConvertI64S);
             Ok(())
         }
         "Int.abs" if args.len() == 1 => {
             // Branched: if (x < 0) 0 - x else x. Two evaluations of x;
             // cheap when x is a Resolved local.
-            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::I64Const(0));
             func.instruction(&Instruction::I64LtS);
             func.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
                 ValType::I64,
             )));
             func.instruction(&Instruction::I64Const(0));
-            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::I64Sub);
             func.instruction(&Instruction::Else);
-            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::End);
             Ok(())
         }
         "Int.min" if args.len() == 2 => {
             // Branched: if (a < b) a else b. Two evaluations of each.
-            emit_expr(func, &args[0].node, slots, ctx)?;
-            emit_expr(func, &args[1].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
+            emit_expr(func, &args[1], slots, ctx)?;
             func.instruction(&Instruction::I64LtS);
             func.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
                 ValType::I64,
             )));
-            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::Else);
-            emit_expr(func, &args[1].node, slots, ctx)?;
+            emit_expr(func, &args[1], slots, ctx)?;
             func.instruction(&Instruction::End);
             Ok(())
         }
         "Int.max" if args.len() == 2 => {
-            emit_expr(func, &args[0].node, slots, ctx)?;
-            emit_expr(func, &args[1].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
+            emit_expr(func, &args[1], slots, ctx)?;
             func.instruction(&Instruction::I64GtS);
             func.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
                 ValType::I64,
             )));
-            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::Else);
-            emit_expr(func, &args[1].node, slots, ctx)?;
+            emit_expr(func, &args[1], slots, ctx)?;
             func.instruction(&Instruction::End);
             Ok(())
         }
@@ -186,27 +186,27 @@ pub(super) fn emit_dotted_builtin(
             // (or pattern match) handle the error path. Bare Int.mod
             // not wrapped in withDefault will trap on b==0 — the type
             // checker accepts that surface form regardless.
-            emit_expr(func, &args[0].node, slots, ctx)?;
-            emit_expr(func, &args[1].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
+            emit_expr(func, &args[1], slots, ctx)?;
             func.instruction(&Instruction::I64RemS);
             Ok(())
         }
         // Bool ops: Aver Bool == wasm i32. and/or/not are bitwise
         // single-instructions on i32.
         "Bool.and" if args.len() == 2 => {
-            emit_expr(func, &args[0].node, slots, ctx)?;
-            emit_expr(func, &args[1].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
+            emit_expr(func, &args[1], slots, ctx)?;
             func.instruction(&Instruction::I32And);
             Ok(())
         }
         "Bool.or" if args.len() == 2 => {
-            emit_expr(func, &args[0].node, slots, ctx)?;
-            emit_expr(func, &args[1].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
+            emit_expr(func, &args[1], slots, ctx)?;
             func.instruction(&Instruction::I32Or);
             Ok(())
         }
         "Bool.not" if args.len() == 1 => {
-            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::I32Eqz);
             Ok(())
         }
@@ -223,14 +223,14 @@ pub(super) fn emit_dotted_builtin(
                     .ok_or(WasmGcError::Validation(
                         "String.fromInt requires Int.toString builtin".into(),
                     ))?;
-            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::Call(to_string_idx));
             Ok(())
         }
         // Vector.len is a single wasm instruction over our concrete
         // `(array T)` representation, plus widening to Aver's i64.
         "Vector.len" if args.len() == 1 => {
-            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::ArrayLen);
             func.instruction(&Instruction::I64ExtendI32U);
             Ok(())
@@ -247,7 +247,7 @@ pub(super) fn emit_dotted_builtin(
                     .ok_or(WasmGcError::Validation(
                         "String.length / byteLength require the String.len builtin".into(),
                     ))?;
-            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::Call(len_idx));
             Ok(())
         }
@@ -261,7 +261,7 @@ pub(super) fn emit_dotted_builtin(
                 .ok_or(WasmGcError::Validation(
                     "Char.toCode requires the String slot allocated".into(),
                 ))?;
-            emit_expr(func, &args[0].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::I32Const(0));
             func.instruction(&Instruction::ArrayGetU(s_idx));
             func.instruction(&Instruction::I64ExtendI32U);
@@ -333,8 +333,8 @@ pub(super) fn emit_dotted_builtin(
             let ops = ctx.fn_map.string_split_ops.ok_or(WasmGcError::Validation(
                 "String.split called but split helper wasn't registered".into(),
             ))?;
-            emit_expr(func, &args[0].node, slots, ctx)?;
-            emit_expr(func, &args[1].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
+            emit_expr(func, &args[1], slots, ctx)?;
             func.instruction(&Instruction::Call(ops.split));
             Ok(())
         }
@@ -342,8 +342,8 @@ pub(super) fn emit_dotted_builtin(
             let ops = ctx.fn_map.string_split_ops.ok_or(WasmGcError::Validation(
                 "String.join called but join helper wasn't registered".into(),
             ))?;
-            emit_expr(func, &args[0].node, slots, ctx)?;
-            emit_expr(func, &args[1].node, slots, ctx)?;
+            emit_expr(func, &args[0], slots, ctx)?;
+            emit_expr(func, &args[1], slots, ctx)?;
             func.instruction(&Instruction::Call(ops.join));
             Ok(())
         }
@@ -427,21 +427,52 @@ pub(super) fn emit_map_kv_call(
             args.len()
         )));
     }
-    let map_aver = infer_aver_type(&args[0].node, ctx)?;
-    let canonical: String = map_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    // The map argument's stamped type is sometimes under-specialised
+    // — `Map.empty()` reports `Map<Unknown, Unknown>` because the type
+    // checker can't see the surrounding context (Step 0 stamps each
+    // expression with its standalone type). Recover the missing K/V
+    // from the other arguments where possible: `set/get/has/remove` all
+    // carry the key in args[1], `set` additionally carries the value in
+    // args[2]. Falls back to a single-instantiation lookup if the
+    // surface type still has Unknowns.
+    let map_aver_raw = aver_type_str_of(&args[0]);
+    let mut canonical: String = map_aver_raw
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    if canonical.contains("Unknown") {
+        let recovered_k = if args.len() >= 2 {
+            Some(aver_type_str_of(&args[1]))
+        } else {
+            None
+        };
+        let recovered_v = if method == "set" && args.len() >= 3 {
+            Some(aver_type_str_of(&args[2]))
+        } else {
+            None
+        };
+        if let (Some(k), Some(v)) = (recovered_k.as_ref(), recovered_v.as_ref()) {
+            canonical = format!("Map<{},{}>", k.trim(), v.trim())
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+        } else if ctx.registry.map_order.len() == 1 {
+            canonical = ctx.registry.map_order[0].clone();
+        }
+    }
     let helpers = ctx
         .fn_map
         .map_helpers
         .get(&canonical)
         .ok_or(WasmGcError::Validation(format!(
-            "Map.{method}: map argument has type `{map_aver}` but no helpers are registered"
+            "Map.{method}: map argument has type `{map_aver_raw}` but no helpers are registered"
         )))?;
     // `Map.has(m, k) -> Bool` reuses the `get_pair` helper which
     // returns `(found: i32, value: V)` and drops the value, leaving
     // just `found` on the stack — no Option<V> ever allocates.
     if method == "has" {
         for arg in args {
-            emit_expr(func, &arg.node, slots, ctx)?;
+            emit_expr(func, &arg, slots, ctx)?;
         }
         func.instruction(&Instruction::Call(helpers.get_pair));
         func.instruction(&Instruction::Drop);
@@ -463,7 +494,7 @@ pub(super) fn emit_map_kv_call(
         ),
     };
     for arg in args {
-        emit_expr(func, &arg.node, slots, ctx)?;
+        emit_expr(func, &arg, slots, ctx)?;
     }
     func.instruction(&Instruction::Call(target_idx));
     Ok(())
@@ -485,7 +516,7 @@ pub(super) fn emit_vector_new(
             args.len()
         )));
     }
-    let elem_aver = infer_aver_type(&args[1].node, ctx)?;
+    let elem_aver = aver_type_str_of(&args[1]);
     let canonical = format!("Vector<{}>", elem_aver);
     let vec_idx = ctx
         .registry
@@ -496,8 +527,8 @@ pub(super) fn emit_vector_new(
         )))?;
     // wasm `array.new $T` pops [value, size:i32]. Aver pushes size
     // (i64) then fill — we re-order to match wasm's stack discipline.
-    emit_expr(func, &args[1].node, slots, ctx)?; // fill
-    emit_expr(func, &args[0].node, slots, ctx)?; // size i64
+    emit_expr(func, &args[1], slots, ctx)?; // fill
+    emit_expr(func, &args[0], slots, ctx)?; // size i64
     func.instruction(&Instruction::I32WrapI64);
     func.instruction(&Instruction::ArrayNew(vec_idx));
     Ok(())
@@ -637,20 +668,20 @@ pub(super) fn emit_result_with_default(
     {
         let block_ty = wasm_encoder::BlockType::Result(ValType::I64);
         // if b == 0
-        emit_expr(func, &inner_args[1].node, slots, ctx)?;
+        emit_expr(func, &inner_args[1], slots, ctx)?;
         func.instruction(&Instruction::I64Const(0));
         func.instruction(&Instruction::I64Eq);
         func.instruction(&Instruction::If(block_ty));
-        emit_expr(func, &default_arg.node, slots, ctx)?;
+        emit_expr(func, &default_arg, slots, ctx)?;
         func.instruction(&Instruction::Else);
-        emit_expr(func, &inner_args[0].node, slots, ctx)?;
-        emit_expr(func, &inner_args[1].node, slots, ctx)?;
+        emit_expr(func, &inner_args[0], slots, ctx)?;
+        emit_expr(func, &inner_args[1], slots, ctx)?;
         func.instruction(&Instruction::I64RemS);
         func.instruction(&Instruction::End);
         return Ok(());
     }
 
-    let res_aver = infer_aver_type(&res_arg.node, ctx)?;
+    let res_aver = aver_type_str_of(&res_arg);
     let canonical: String = res_aver.chars().filter(|c| !c.is_whitespace()).collect();
     let res_idx = ctx
         .registry
@@ -669,7 +700,7 @@ pub(super) fn emit_result_with_default(
         "Result.withDefault needs a scratch slot but none was reserved".into(),
     ))?;
 
-    emit_expr(func, &res_arg.node, slots, ctx)?;
+    emit_expr(func, &res_arg, slots, ctx)?;
     func.instruction(&Instruction::LocalSet(scratch));
 
     func.instruction(&Instruction::LocalGet(scratch));
@@ -692,7 +723,7 @@ pub(super) fn emit_result_with_default(
         field_index: 1,
     });
     func.instruction(&Instruction::Else);
-    emit_expr(func, &default_arg.node, slots, ctx)?;
+    emit_expr(func, &default_arg, slots, ctx)?;
     func.instruction(&Instruction::End);
     Ok(())
 }
@@ -713,7 +744,7 @@ pub(super) fn emit_option_to_result(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    let opt_aver = infer_aver_type(&opt_arg.node, ctx)?;
+    let opt_aver = aver_type_str_of(&opt_arg);
     let opt_canonical: String = opt_aver.chars().filter(|c| !c.is_whitespace()).collect();
     let opt_idx = ctx
         .registry
@@ -726,7 +757,7 @@ pub(super) fn emit_option_to_result(
             "Option.toResult: cannot parse element type from `{opt_canonical}`"
         )),
     )?;
-    let e_aver = infer_aver_type(&err_arg.node, ctx)?;
+    let e_aver = aver_type_str_of(&err_arg);
     let result_canonical: String = format!("Result<{},{}>", t_aver.trim(), e_aver.trim())
         .chars()
         .filter(|c| !c.is_whitespace())
@@ -748,7 +779,7 @@ pub(super) fn emit_option_to_result(
     });
     let block_ty = wasm_encoder::BlockType::Result(res_ref);
 
-    emit_expr(func, &opt_arg.node, slots, ctx)?;
+    emit_expr(func, &opt_arg, slots, ctx)?;
     func.instruction(&Instruction::LocalSet(scratch));
 
     func.instruction(&Instruction::LocalGet(scratch));
@@ -778,7 +809,7 @@ pub(super) fn emit_option_to_result(
     // Result.Err(err)
     func.instruction(&Instruction::I32Const(0));
     emit_default_value(func, t_aver.trim(), ctx.registry)?;
-    emit_expr(func, &err_arg.node, slots, ctx)?;
+    emit_expr(func, &err_arg, slots, ctx)?;
     func.instruction(&Instruction::StructNew(res_idx));
     func.instruction(&Instruction::End);
     Ok(())
@@ -791,7 +822,7 @@ pub(super) fn emit_option_with_default_boxed(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    let opt_aver = infer_aver_type(&opt_arg.node, ctx)?;
+    let opt_aver = aver_type_str_of(&opt_arg);
     let canonical: String = opt_aver.chars().filter(|c| !c.is_whitespace()).collect();
     let opt_idx = ctx
         .registry
@@ -813,7 +844,7 @@ pub(super) fn emit_option_with_default_boxed(
     let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
         "Option.withDefault (boxed) needs a scratch slot but none was reserved".into(),
     ))?;
-    emit_expr(func, &opt_arg.node, slots, ctx)?;
+    emit_expr(func, &opt_arg, slots, ctx)?;
     func.instruction(&Instruction::LocalSet(scratch));
 
     func.instruction(&Instruction::LocalGet(scratch));
@@ -836,7 +867,7 @@ pub(super) fn emit_option_with_default_boxed(
         field_index: 1,
     });
     func.instruction(&Instruction::Else);
-    emit_expr(func, &default_arg.node, slots, ctx)?;
+    emit_expr(func, &default_arg, slots, ctx)?;
     func.instruction(&Instruction::End);
     Ok(())
 }
@@ -852,7 +883,7 @@ pub(super) fn emit_map_get_or_default(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    let map_aver = infer_aver_type(&map.node, ctx)?;
+    let map_aver = aver_type_str_of(&map);
     let canonical: String = map_aver.chars().filter(|c| !c.is_whitespace()).collect();
     let helpers = ctx
         .fn_map
@@ -861,9 +892,9 @@ pub(super) fn emit_map_get_or_default(
         .ok_or(WasmGcError::Validation(format!(
             "Map.get fusion: map argument has type `{map_aver}` but no helpers are registered"
         )))?;
-    emit_expr(func, &map.node, slots, ctx)?;
-    emit_expr(func, &key.node, slots, ctx)?;
-    emit_expr(func, &default.node, slots, ctx)?;
+    emit_expr(func, &map, slots, ctx)?;
+    emit_expr(func, &key, slots, ctx)?;
+    emit_expr(func, &default, slots, ctx)?;
     func.instruction(&Instruction::Call(helpers.get_or_default));
     Ok(())
 }
@@ -880,7 +911,7 @@ pub(super) fn emit_vector_set_or_default(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    let vec_aver = infer_aver_type(&vector.node, ctx)?;
+    let vec_aver = aver_type_str_of(&vector);
     let canonical: String = vec_aver.chars().filter(|c| !c.is_whitespace()).collect();
     let vec_idx = ctx
         .registry
@@ -891,25 +922,25 @@ pub(super) fn emit_vector_set_or_default(
 
     // 0 <= index < array.len, all i32. Aver Int is i64 → wrap once
     // and reuse via re-emit (cheap when Resolved).
-    emit_expr(func, &index.node, slots, ctx)?;
+    emit_expr(func, &index, slots, ctx)?;
     func.instruction(&Instruction::I64Const(0));
     func.instruction(&Instruction::I64GeS);
 
-    emit_expr(func, &index.node, slots, ctx)?;
+    emit_expr(func, &index, slots, ctx)?;
     func.instruction(&Instruction::I32WrapI64);
-    emit_expr(func, &vector.node, slots, ctx)?;
+    emit_expr(func, &vector, slots, ctx)?;
     func.instruction(&Instruction::ArrayLen);
     func.instruction(&Instruction::I32LtU);
 
     func.instruction(&Instruction::I32And);
     func.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-    emit_expr(func, &vector.node, slots, ctx)?;
-    emit_expr(func, &index.node, slots, ctx)?;
+    emit_expr(func, &vector, slots, ctx)?;
+    emit_expr(func, &index, slots, ctx)?;
     func.instruction(&Instruction::I32WrapI64);
-    emit_expr(func, &value.node, slots, ctx)?;
+    emit_expr(func, &value, slots, ctx)?;
     func.instruction(&Instruction::ArraySet(vec_idx));
     func.instruction(&Instruction::End);
-    emit_expr(func, &vector.node, slots, ctx)?;
+    emit_expr(func, &vector, slots, ctx)?;
     Ok(())
 }
 
@@ -980,8 +1011,8 @@ pub(super) fn emit_interpolated_str(
                 });
             }
             StrPart::Parsed(inner) => {
-                let aver_ty = infer_aver_type(&inner.node, ctx)?;
-                emit_expr(func, &inner.node, slots, ctx)?;
+                let aver_ty = aver_type_str_of(&inner);
+                emit_expr(func, &inner, slots, ctx)?;
                 match aver_ty.trim() {
                     "String" => { /* identity */ }
                     "Int" => {
@@ -1023,7 +1054,7 @@ pub(super) fn emit_vector_get_or_default(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    let vec_aver = infer_aver_type(&vector.node, ctx)?;
+    let vec_aver = aver_type_str_of(&vector);
     let canonical: String = vec_aver.chars().filter(|c| !c.is_whitespace()).collect();
     let vec_idx = ctx
         .registry
@@ -1044,24 +1075,24 @@ pub(super) fn emit_vector_get_or_default(
     ))?;
     let block_ty = wasm_encoder::BlockType::Result(elem_val);
 
-    emit_expr(func, &index.node, slots, ctx)?;
+    emit_expr(func, &index, slots, ctx)?;
     func.instruction(&Instruction::I64Const(0));
     func.instruction(&Instruction::I64GeS);
 
-    emit_expr(func, &index.node, slots, ctx)?;
+    emit_expr(func, &index, slots, ctx)?;
     func.instruction(&Instruction::I32WrapI64);
-    emit_expr(func, &vector.node, slots, ctx)?;
+    emit_expr(func, &vector, slots, ctx)?;
     func.instruction(&Instruction::ArrayLen);
     func.instruction(&Instruction::I32LtU);
 
     func.instruction(&Instruction::I32And);
     func.instruction(&Instruction::If(block_ty));
-    emit_expr(func, &vector.node, slots, ctx)?;
-    emit_expr(func, &index.node, slots, ctx)?;
+    emit_expr(func, &vector, slots, ctx)?;
+    emit_expr(func, &index, slots, ctx)?;
     func.instruction(&Instruction::I32WrapI64);
     func.instruction(&Instruction::ArrayGet(vec_idx));
     func.instruction(&Instruction::Else);
-    emit_expr(func, &default.node, slots, ctx)?;
+    emit_expr(func, &default, slots, ctx)?;
     func.instruction(&Instruction::End);
     Ok(())
 }
@@ -1076,7 +1107,7 @@ pub(super) fn emit_list_op_call(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    let list_aver = infer_aver_type(&list_arg.node, ctx)?;
+    let list_aver = aver_type_str_of(&list_arg);
     let canonical = super::super::types::normalize_compound(&list_aver);
     let ops = ctx
         .fn_map
@@ -1085,7 +1116,7 @@ pub(super) fn emit_list_op_call(
         .ok_or(WasmGcError::Validation(format!(
             "List.{op} called but `{canonical}` helper wasn't registered"
         )))?;
-    emit_expr(func, &list_arg.node, slots, ctx)?;
+    emit_expr(func, &list_arg, slots, ctx)?;
     let fn_idx = match op {
         "reverse" => ops.reverse,
         "len" => ops.len,
@@ -1112,7 +1143,7 @@ pub(super) fn emit_list_op_call_2(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    let list_aver = infer_aver_type(&list_arg.node, ctx)?;
+    let list_aver = aver_type_str_of(&list_arg);
     let canonical = super::super::types::normalize_compound(&list_aver);
     let ops = ctx
         .fn_map
@@ -1121,8 +1152,8 @@ pub(super) fn emit_list_op_call_2(
         .ok_or(WasmGcError::Validation(format!(
             "List.{op} called but `{canonical}` helper wasn't registered"
         )))?;
-    emit_expr(func, &list_arg.node, slots, ctx)?;
-    emit_expr(func, &second_arg.node, slots, ctx)?;
+    emit_expr(func, &list_arg, slots, ctx)?;
+    emit_expr(func, &second_arg, slots, ctx)?;
     let fn_idx = match op {
         "concat" => ops.concat,
         "take" => ops.take,
@@ -1150,7 +1181,7 @@ pub(super) fn emit_map_from_list_call(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    let list_aver = infer_aver_type(&list_arg.node, ctx)?;
+    let list_aver = aver_type_str_of(&list_arg);
     let list_canonical: String = list_aver.chars().filter(|c| !c.is_whitespace()).collect();
     let elem = TypeRegistry::list_element_type(&list_canonical).ok_or(WasmGcError::Validation(
         format!("Map.fromList: input `{list_aver}` is not a List<Tuple<K,V>>"),
@@ -1166,7 +1197,7 @@ pub(super) fn emit_map_from_list_call(
         .ok_or(WasmGcError::Validation(format!(
             "Map.fromList: helpers for `{map_canonical}` not registered"
         )))?;
-    emit_expr(func, &list_arg.node, slots, ctx)?;
+    emit_expr(func, &list_arg, slots, ctx)?;
     func.instruction(&Instruction::Call(helpers.from_list));
     Ok(())
 }
@@ -1181,8 +1212,8 @@ pub(super) fn emit_list_zip_call(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    let la_aver = infer_aver_type(&la.node, ctx)?;
-    let lb_aver = infer_aver_type(&lb.node, ctx)?;
+    let la_aver = aver_type_str_of(&la);
+    let lb_aver = aver_type_str_of(&lb);
     let a = TypeRegistry::list_element_type(&la_aver).ok_or(WasmGcError::Validation(format!(
         "List.zip: first arg type `{la_aver}` is not a List<T>"
     )))?;
@@ -1198,8 +1229,8 @@ pub(super) fn emit_list_zip_call(
         .ok_or(WasmGcError::Validation(format!(
             "List.zip: helper for `{tup_canonical}` wasn't registered"
         )))?;
-    emit_expr(func, &la.node, slots, ctx)?;
-    emit_expr(func, &lb.node, slots, ctx)?;
+    emit_expr(func, &la, slots, ctx)?;
+    emit_expr(func, &lb, slots, ctx)?;
     func.instruction(&Instruction::Call(zip_fn));
     Ok(())
 }
@@ -1212,7 +1243,7 @@ pub(super) fn emit_vec_from_list_call(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    let list_aver = infer_aver_type(&list_arg.node, ctx)?;
+    let list_aver = aver_type_str_of(&list_arg);
     let canonical = super::super::types::normalize_compound(&list_aver);
     let ops = ctx
         .fn_map
@@ -1222,7 +1253,7 @@ pub(super) fn emit_vec_from_list_call(
             "Vector.fromList: helper for `{canonical}` wasn't registered \
              (matching Vector<T> may be missing from the registry)"
         )))?;
-    emit_expr(func, &list_arg.node, slots, ctx)?;
+    emit_expr(func, &list_arg, slots, ctx)?;
     func.instruction(&Instruction::Call(ops.from_list));
     Ok(())
 }
@@ -1237,7 +1268,7 @@ pub(super) fn emit_vec_to_list_call(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    let vec_aver = infer_aver_type(&vec_arg.node, ctx)?;
+    let vec_aver = aver_type_str_of(&vec_arg);
     let vec_canonical: String = vec_aver.chars().filter(|c| !c.is_whitespace()).collect();
     let elem = super::super::types::TypeRegistry::vector_element_type(&vec_canonical).ok_or(
         WasmGcError::Validation(format!(
@@ -1252,7 +1283,7 @@ pub(super) fn emit_vec_to_list_call(
         .ok_or(WasmGcError::Validation(format!(
             "Vector.toList: helper for `{list_canonical}` wasn't registered"
         )))?;
-    emit_expr(func, &vec_arg.node, slots, ctx)?;
+    emit_expr(func, &vec_arg, slots, ctx)?;
     func.instruction(&Instruction::Call(ops.to_list));
     Ok(())
 }
@@ -1269,7 +1300,7 @@ pub(super) fn emit_vector_get_boxed(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    let vec_aver = infer_aver_type(&vector.node, ctx)?;
+    let vec_aver = aver_type_str_of(&vector);
     let canonical: String = vec_aver.chars().filter(|c| !c.is_whitespace()).collect();
     let vec_idx = ctx
         .registry
@@ -1298,13 +1329,13 @@ pub(super) fn emit_vector_get_boxed(
     });
     let block_ty = wasm_encoder::BlockType::Result(opt_ref);
 
-    emit_expr(func, &index.node, slots, ctx)?;
+    emit_expr(func, &index, slots, ctx)?;
     func.instruction(&Instruction::I64Const(0));
     func.instruction(&Instruction::I64GeS);
 
-    emit_expr(func, &index.node, slots, ctx)?;
+    emit_expr(func, &index, slots, ctx)?;
     func.instruction(&Instruction::I32WrapI64);
-    emit_expr(func, &vector.node, slots, ctx)?;
+    emit_expr(func, &vector, slots, ctx)?;
     func.instruction(&Instruction::ArrayLen);
     func.instruction(&Instruction::I32LtU);
 
@@ -1313,8 +1344,8 @@ pub(super) fn emit_vector_get_boxed(
     // In-range: Option.Some(arr[i]) → struct.new $option_T
     // Option layout: `(struct (mut i32 tag) (mut T value))`, tag = 1.
     func.instruction(&Instruction::I32Const(1));
-    emit_expr(func, &vector.node, slots, ctx)?;
-    emit_expr(func, &index.node, slots, ctx)?;
+    emit_expr(func, &vector, slots, ctx)?;
+    emit_expr(func, &index, slots, ctx)?;
     func.instruction(&Instruction::I32WrapI64);
     func.instruction(&Instruction::ArrayGet(vec_idx));
     func.instruction(&Instruction::StructNew(opt_idx));
@@ -1342,7 +1373,7 @@ pub(super) fn emit_vector_set_boxed(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    let vec_aver = infer_aver_type(&vector.node, ctx)?;
+    let vec_aver = aver_type_str_of(&vector);
     let canonical: String = vec_aver.chars().filter(|c| !c.is_whitespace()).collect();
     let vec_idx = ctx
         .registry
@@ -1363,25 +1394,25 @@ pub(super) fn emit_vector_set_boxed(
     });
     let block_ty = wasm_encoder::BlockType::Result(opt_ref);
     // Bounds: 0 <= i < vec.len
-    emit_expr(func, &index.node, slots, ctx)?;
+    emit_expr(func, &index, slots, ctx)?;
     func.instruction(&Instruction::I64Const(0));
     func.instruction(&Instruction::I64GeS);
-    emit_expr(func, &index.node, slots, ctx)?;
+    emit_expr(func, &index, slots, ctx)?;
     func.instruction(&Instruction::I32WrapI64);
-    emit_expr(func, &vector.node, slots, ctx)?;
+    emit_expr(func, &vector, slots, ctx)?;
     func.instruction(&Instruction::ArrayLen);
     func.instruction(&Instruction::I32LtU);
     func.instruction(&Instruction::I32And);
     func.instruction(&Instruction::If(block_ty));
     // In-range: array.set vec[i] = x; return Some(vec)
-    emit_expr(func, &vector.node, slots, ctx)?;
-    emit_expr(func, &index.node, slots, ctx)?;
+    emit_expr(func, &vector, slots, ctx)?;
+    emit_expr(func, &index, slots, ctx)?;
     func.instruction(&Instruction::I32WrapI64);
-    emit_expr(func, &value.node, slots, ctx)?;
+    emit_expr(func, &value, slots, ctx)?;
     func.instruction(&Instruction::ArraySet(vec_idx));
     // tag=1 + same vector ref
     func.instruction(&Instruction::I32Const(1));
-    emit_expr(func, &vector.node, slots, ctx)?;
+    emit_expr(func, &vector, slots, ctx)?;
     func.instruction(&Instruction::StructNew(opt_idx));
     func.instruction(&Instruction::Else);
     // OOB: tag=0, value=null vec ref

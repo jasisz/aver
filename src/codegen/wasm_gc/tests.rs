@@ -10,7 +10,12 @@ fn parse(src: &str) -> Vec<crate::ast::TopLevel> {
 
 #[test]
 fn phase1_int_literal_main_emits_valid_module() {
-    let items = parse(
+    // Step 3 (typed-ABI refactor): codegen reads `Spanned::ty()` for
+    // every node, so the pipeline (typecheck + resolve) must run
+    // before the codegen entry — even for the simplest module. This
+    // mirrors what every real caller does (`aver compile`,
+    // playground, bench harness).
+    let mut items = parse(
         r#"
 module Hello
     intent = "smoke"
@@ -19,6 +24,14 @@ module Hello
 fn main() -> Int
     42
 "#,
+    );
+    use crate::ir::{PipelineConfig, TypecheckMode};
+    let _result = crate::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            ..Default::default()
+        },
     );
     let bytes = compile_to_wasm_gc(&items, None).expect("compile");
     assert!(!bytes.is_empty(), "module bytes should be non-empty");

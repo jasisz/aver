@@ -8,11 +8,7 @@ use crate::ast::{BinOp, Expr, Literal, MatchArm, Pattern, Spanned};
 use super::super::WasmGcError;
 use super::super::types::{TypeRegistry, aver_to_wasm};
 use super::builtins::{emit_dotted_builtin, emit_interpolated_str};
-use super::infer::{
-    arm_is_option_pattern, arm_is_result_pattern, infer_aver_type, struct_name_of,
-    struct_name_of_unboxed,
-};
-use super::slots::wasm_type_of;
+use super::infer::{arm_is_option_pattern, arm_is_result_pattern, aver_type_str_of, wasm_type_of};
 use super::{EmitCtx, SlotTable};
 
 /// Emit a "default value" of the given Aver primitive / ref type onto
@@ -76,7 +72,7 @@ pub(super) fn emit_option_constructor(
 ) -> Result<(), WasmGcError> {
     // Resolve T. From payload type if present, else from the hint.
     let t_aver: String = match payload {
-        Some(p) => infer_aver_type(&p.node, ctx)?,
+        Some(p) => aver_type_str_of(&p),
         None => t_aver_hint
             .ok_or(WasmGcError::Validation(
                 "Option.None without context — cannot infer the T in Option<T>. \
@@ -107,7 +103,7 @@ pub(super) fn emit_option_constructor(
     match payload {
         Some(p) => {
             func.instruction(&Instruction::I32Const(1));
-            emit_expr(func, &p.node, slots, ctx)?;
+            emit_expr(func, &p, slots, ctx)?;
         }
         None => {
             func.instruction(&Instruction::I32Const(0));
@@ -122,11 +118,11 @@ pub(super) fn emit_option_constructor(
 /// function pushes one value (or zero for `Unit`) for every call.
 pub(super) fn emit_expr(
     func: &mut Function,
-    expr: &Expr,
+    expr: &Spanned<Expr>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    match expr {
+    match &expr.node {
         Expr::Literal(Literal::Int(n)) => {
             func.instruction(&Instruction::I64Const(*n));
         }
@@ -181,12 +177,12 @@ pub(super) fn emit_expr(
             func.instruction(&Instruction::LocalGet(*slot as u32));
         }
         Expr::BinOp(op, l, r) => {
-            emit_expr(func, &l.node, slots, ctx)?;
-            emit_expr(func, &r.node, slots, ctx)?;
+            emit_expr(func, &l, slots, ctx)?;
+            emit_expr(func, &r, slots, ctx)?;
             // Pick op-set by the operand wasm type. Aver's type checker
             // has already proven both operands have the same type, so
             // peeking at the LHS suffices.
-            let operand = wasm_type_of(&l.node, slots, ctx)?;
+            let operand = wasm_type_of(l, ctx.registry)?;
             let inst = match (operand, op) {
                 (Some(ValType::F64), BinOp::Add) => Instruction::F64Add,
                 (Some(ValType::F64), BinOp::Sub) => Instruction::F64Sub,
@@ -290,7 +286,7 @@ pub(super) fn emit_expr(
                 }
             };
             for arg in args {
-                emit_expr(func, &arg.node, slots, ctx)?;
+                emit_expr(func, &arg, slots, ctx)?;
             }
             let entry = ctx
                 .fn_map
@@ -369,7 +365,7 @@ pub(super) fn emit_record_create(
         let field = fields.first().ok_or(WasmGcError::Validation(format!(
             "newtype record `{type_name}` requires one field"
         )))?;
-        return emit_expr(func, &field.1.node, slots, ctx);
+        return emit_expr(func, &field.1, slots, ctx);
     }
     let type_idx = ctx
         .registry
@@ -426,7 +422,7 @@ pub(super) fn emit_record_create(
                 continue;
             }
         }
-        emit_expr(func, &provided.1.node, slots, ctx)?;
+        emit_expr(func, &provided.1, slots, ctx)?;
     }
     func.instruction(&Instruction::StructNew(type_idx));
     Ok(())
@@ -486,7 +482,7 @@ pub(super) fn emit_record_update(
         .clone();
     for (decl_name, _) in &decl_fields {
         if let Some((_, override_expr)) = updates.iter().find(|(n, _)| n == decl_name) {
-            emit_expr(func, &override_expr.node, slots, ctx)?;
+            emit_expr(func, &override_expr, slots, ctx)?;
         } else {
             let field_idx = ctx
                 .registry
@@ -494,7 +490,7 @@ pub(super) fn emit_record_update(
                 .ok_or(WasmGcError::Validation(format!(
                     "record `{type_name}` has no field `{decl_name}` to copy from base"
                 )))?;
-            emit_expr(func, &base.node, slots, ctx)?;
+            emit_expr(func, &base, slots, ctx)?;
             func.instruction(&Instruction::StructGet {
                 struct_type_index: type_idx,
                 field_index: field_idx,
@@ -506,8 +502,10 @@ pub(super) fn emit_record_update(
 }
 
 /// Lower `Attr(obj, field)` to `obj; struct.get $type_idx $field_idx`.
-/// We need to know the struct type of `obj` — for now we infer it
-/// from the slot's wasm type via the registry's reverse map.
+/// The struct type of `obj` comes straight from `Spanned::ty()` — the
+/// type checker has already resolved chained attribute access (e.g.
+/// `state.snake.head` walks GameState → Snake → Point), so the
+/// backend just reads the stamp.
 pub(super) fn emit_attr_get(
     func: &mut Function,
     obj: &Spanned<Expr>,
@@ -515,21 +513,13 @@ pub(super) fn emit_attr_get(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    // Try the slot table first (Resolved on record-typed slot), then
-    // fall back to walking the AST for newtype detection (where the
-    // slot type is the underlying primitive, not a struct ref).
-    let from_slots = struct_name_of(&obj.node, slots, ctx)?;
-    let from_ast = struct_name_of_unboxed(&obj.node, ctx)?;
-    if let Some(name) = from_ast.as_deref()
-        && ctx.registry.newtype_underlying(name).is_some()
-    {
-        // Newtype: Attr is identity — just emit `obj` and return its
-        // primitive value directly.
-        return emit_expr(func, &obj.node, slots, ctx);
+    let record_name = aver_type_str_of(&obj);
+    // Newtype: Attr is identity — just emit `obj` and return its
+    // primitive value directly. The newtype-underlying check works on
+    // the bare type name (no generics involved here).
+    if ctx.registry.newtype_underlying(&record_name).is_some() {
+        return emit_expr(func, &obj, slots, ctx);
     }
-    let record_name = from_slots.or(from_ast).ok_or(WasmGcError::Unimplemented(
-        "phase 3b — Attr on non-Resolved obj (chained access)",
-    ))?;
     let type_idx = ctx
         .registry
         .record_type_idx(&record_name)
@@ -542,7 +532,7 @@ pub(super) fn emit_attr_get(
             .ok_or(WasmGcError::Validation(format!(
                 "record `{record_name}` has no field `{field}`"
             )))?;
-    emit_expr(func, &obj.node, slots, ctx)?;
+    emit_expr(func, &obj, slots, ctx)?;
     func.instruction(&Instruction::StructGet {
         struct_type_index: type_idx,
         field_index: field_idx,
@@ -564,7 +554,7 @@ pub(super) fn emit_result_constructor(
     let payload = payload.ok_or(WasmGcError::Validation(format!(
         "Result.{variant} requires a payload"
     )))?;
-    let payload_ty = infer_aver_type(&payload.node, ctx)?;
+    let payload_ty = aver_type_str_of(&payload);
     // Find a registered Result<T,E> where the matching position
     // matches the payload's inferred type. Fallback: pick the only
     // registered Result instantiation, or use the fn's return type.
@@ -607,12 +597,12 @@ pub(super) fn emit_result_constructor(
 
     if variant == "Ok" {
         func.instruction(&Instruction::I32Const(1));
-        emit_expr(func, &payload.node, slots, ctx)?;
+        emit_expr(func, &payload, slots, ctx)?;
         emit_default_value(func, e_aver, ctx.registry)?;
     } else {
         func.instruction(&Instruction::I32Const(0));
         emit_default_value(func, t_aver, ctx.registry)?;
-        emit_expr(func, &payload.node, slots, ctx)?;
+        emit_expr(func, &payload, slots, ctx)?;
     }
     func.instruction(&Instruction::StructNew(res_idx));
     Ok(())
@@ -626,7 +616,7 @@ pub(super) fn emit_list_prepend(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    let tail_ty = infer_aver_type(&tail.node, ctx)?;
+    let tail_ty = aver_type_str_of(&tail);
     let canonical: String = tail_ty.chars().filter(|c| !c.is_whitespace()).collect();
     let list_idx = ctx
         .registry
@@ -634,8 +624,8 @@ pub(super) fn emit_list_prepend(
         .ok_or(WasmGcError::Validation(format!(
             "List.prepend: tail type `{tail_ty}` is not a registered List<T>"
         )))?;
-    emit_expr(func, &head.node, slots, ctx)?;
-    emit_expr(func, &tail.node, slots, ctx)?;
+    emit_expr(func, &head, slots, ctx)?;
+    emit_expr(func, &tail, slots, ctx)?;
     func.instruction(&Instruction::StructNew(list_idx));
     Ok(())
 }
@@ -685,8 +675,8 @@ pub(super) fn emit_tuple_literal(
             "phase 5 — tuples with arity != 2 (only Tuple<A, B> supported)",
         ));
     }
-    let a_ty = infer_aver_type(&items[0].node, ctx)?;
-    let b_ty = infer_aver_type(&items[1].node, ctx)?;
+    let a_ty = aver_type_str_of(&items[0]);
+    let b_ty = aver_type_str_of(&items[1]);
     let canonical = format!("Tuple<{a_ty},{b_ty}>")
         .chars()
         .filter(|c| !c.is_whitespace())
@@ -697,8 +687,8 @@ pub(super) fn emit_tuple_literal(
         .ok_or(WasmGcError::Validation(format!(
             "Tuple literal: `{canonical}` slot not registered"
         )))?;
-    emit_expr(func, &items[0].node, slots, ctx)?;
-    emit_expr(func, &items[1].node, slots, ctx)?;
+    emit_expr(func, &items[0], slots, ctx)?;
+    emit_expr(func, &items[1], slots, ctx)?;
     func.instruction(&Instruction::StructNew(tuple_idx));
     Ok(())
 }
@@ -722,8 +712,8 @@ pub(super) fn emit_map_literal(
             ));
         }
     } else {
-        let k_aver = infer_aver_type(&entries[0].0.node, ctx)?;
-        let v_aver = infer_aver_type(&entries[0].1.node, ctx)?;
+        let k_aver = aver_type_str_of(&entries[0].0);
+        let v_aver = aver_type_str_of(&entries[0].1);
         format!("Map<{},{}>", k_aver.trim(), v_aver.trim())
             .chars()
             .filter(|c| !c.is_whitespace())
@@ -739,8 +729,8 @@ pub(super) fn emit_map_literal(
 
     func.instruction(&Instruction::Call(helpers.empty));
     for (k_expr, v_expr) in entries {
-        emit_expr(func, &k_expr.node, slots, ctx)?;
-        emit_expr(func, &v_expr.node, slots, ctx)?;
+        emit_expr(func, &k_expr, slots, ctx)?;
+        emit_expr(func, &v_expr, slots, ctx)?;
         func.instruction(&Instruction::Call(helpers.set));
     }
     Ok(())
@@ -772,10 +762,10 @@ pub(super) fn emit_list_literal(
             if let Some(inner) = ret.strip_prefix("List<").and_then(|s| s.strip_suffix('>')) {
                 inner.to_string()
             } else {
-                infer_aver_type(&first.node, ctx)?
+                aver_type_str_of(&first)
             }
         } else {
-            infer_aver_type(&first.node, ctx)?
+            aver_type_str_of(&first)
         };
         format!("List<{elem_ty}>")
             .chars()
@@ -831,7 +821,7 @@ pub(super) fn emit_list_literal(
         )))?
         .cons;
     for item in items {
-        emit_expr(func, &item.node, slots, ctx)?;
+        emit_expr(func, &item, slots, ctx)?;
     }
     func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
         list_idx,
@@ -853,7 +843,7 @@ pub(super) fn emit_tuple_match(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    let subj_ty = infer_aver_type(&subject.node, ctx)?;
+    let subj_ty = aver_type_str_of(&subject);
     let canonical: String = subj_ty.chars().filter(|c| !c.is_whitespace()).collect();
     let tuple_idx = ctx
         .registry
@@ -864,7 +854,7 @@ pub(super) fn emit_tuple_match(
     let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
         "Tuple match needs a subject scratch slot but none was reserved".into(),
     ))?;
-    emit_expr(func, &subject.node, slots, ctx)?;
+    emit_expr(func, &subject, slots, ctx)?;
     func.instruction(&Instruction::LocalSet(scratch));
     for (field_idx, pat) in pat_items.iter().enumerate() {
         if let Pattern::Ident(name) = pat
@@ -882,7 +872,7 @@ pub(super) fn emit_tuple_match(
             func.instruction(&Instruction::LocalSet(binding_slot));
         }
     }
-    emit_expr(func, &body.node, slots, ctx)?;
+    emit_expr(func, &body, slots, ctx)?;
     Ok(())
 }
 
@@ -900,7 +890,7 @@ pub(super) fn emit_list_match(
     let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
         "List match needs a subject scratch slot but none was reserved".into(),
     ))?;
-    let subject_ty = infer_aver_type(&subject.node, ctx)?;
+    let subject_ty = aver_type_str_of(&subject);
     let canonical: String = subject_ty.chars().filter(|c| !c.is_whitespace()).collect();
     let list_idx = ctx
         .registry
@@ -932,13 +922,13 @@ pub(super) fn emit_list_match(
         "List match missing cons arm".into(),
     ))?;
 
-    emit_expr(func, &subject.node, slots, ctx)?;
+    emit_expr(func, &subject, slots, ctx)?;
     func.instruction(&Instruction::LocalSet(scratch));
 
     func.instruction(&Instruction::LocalGet(scratch));
     func.instruction(&Instruction::RefIsNull);
     func.instruction(&Instruction::If(block_ty));
-    emit_expr(func, &empty_arm.body.node, slots, ctx)?;
+    emit_expr(func, &empty_arm.body, slots, ctx)?;
     func.instruction(&Instruction::Else);
     if let Pattern::Cons(head_name, tail_name) = &cons_arm.pattern {
         if head_name != "_" {
@@ -974,7 +964,7 @@ pub(super) fn emit_list_match(
             func.instruction(&Instruction::LocalSet(slot));
         }
     }
-    emit_expr(func, &cons_arm.body.node, slots, ctx)?;
+    emit_expr(func, &cons_arm.body, slots, ctx)?;
     func.instruction(&Instruction::End);
     Ok(())
 }
@@ -993,7 +983,7 @@ pub(super) fn emit_result_match(
     let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
         "Result match needs a subject scratch slot but none was reserved".into(),
     ))?;
-    let subject_ty = infer_aver_type(&subject.node, ctx)?;
+    let subject_ty = aver_type_str_of(&subject);
     let canonical: String = subject_ty.chars().filter(|c| !c.is_whitespace()).collect();
     let res_idx = ctx
         .registry
@@ -1031,7 +1021,7 @@ pub(super) fn emit_result_match(
         "Result match missing Err arm".into(),
     ))?;
 
-    emit_expr(func, &subject.node, slots, ctx)?;
+    emit_expr(func, &subject, slots, ctx)?;
     func.instruction(&Instruction::LocalSet(scratch));
 
     func.instruction(&Instruction::LocalGet(scratch));
@@ -1064,7 +1054,7 @@ pub(super) fn emit_result_match(
         });
         func.instruction(&Instruction::LocalSet(slot));
     }
-    emit_expr(func, &ok_arm.body.node, slots, ctx)?;
+    emit_expr(func, &ok_arm.body, slots, ctx)?;
     func.instruction(&Instruction::Else);
     if let Pattern::Constructor(_, bindings) = &err_arm.pattern
         && let Some(name) = bindings.first()
@@ -1085,7 +1075,7 @@ pub(super) fn emit_result_match(
         });
         func.instruction(&Instruction::LocalSet(slot));
     }
-    emit_expr(func, &err_arm.body.node, slots, ctx)?;
+    emit_expr(func, &err_arm.body, slots, ctx)?;
     func.instruction(&Instruction::End);
     Ok(())
 }
@@ -1105,7 +1095,7 @@ pub(super) fn emit_map_get_match_fused(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    let map_aver = infer_aver_type(&map.node, ctx)?;
+    let map_aver = aver_type_str_of(&map);
     let canonical: String = map_aver.chars().filter(|c| !c.is_whitespace()).collect();
     let helpers = ctx
         .fn_map
@@ -1145,8 +1135,8 @@ pub(super) fn emit_map_get_match_fused(
         "Map.get match fusion missing None arm".into(),
     ))?;
 
-    emit_expr(func, &map.node, slots, ctx)?;
-    emit_expr(func, &key.node, slots, ctx)?;
+    emit_expr(func, &map, slots, ctx)?;
+    emit_expr(func, &key, slots, ctx)?;
     func.instruction(&Instruction::Call(helpers.get_pair));
     // Stack now: [..., found(i32), value(V)]. Pop V into the Some
     // binding slot (if any); the value is harmlessly dead in the
@@ -1168,9 +1158,9 @@ pub(super) fn emit_map_get_match_fused(
     }
     // Stack: [..., found(i32)]. Branch.
     func.instruction(&Instruction::If(block_ty));
-    emit_expr(func, &some_arm.body.node, slots, ctx)?;
+    emit_expr(func, &some_arm.body, slots, ctx)?;
     func.instruction(&Instruction::Else);
-    emit_expr(func, &none_arm.body.node, slots, ctx)?;
+    emit_expr(func, &none_arm.body, slots, ctx)?;
     func.instruction(&Instruction::End);
     Ok(())
 }
@@ -1198,7 +1188,7 @@ pub(super) fn emit_option_match(
 
     // Resolve the canonical `Option<T>` and its slot from the subject's
     // inferred Aver type.
-    let subject_ty = infer_aver_type(&subject.node, ctx)?;
+    let subject_ty = aver_type_str_of(&subject);
     let canonical: String = subject_ty.chars().filter(|c| !c.is_whitespace()).collect();
     let opt_idx = ctx
         .registry
@@ -1239,7 +1229,7 @@ pub(super) fn emit_option_match(
     ))?;
 
     // Stash subject in scratch, then test tag.
-    emit_expr(func, &subject.node, slots, ctx)?;
+    emit_expr(func, &subject, slots, ctx)?;
     func.instruction(&Instruction::LocalSet(scratch));
 
     func.instruction(&Instruction::LocalGet(scratch));
@@ -1275,10 +1265,10 @@ pub(super) fn emit_option_match(
         });
         func.instruction(&Instruction::LocalSet(slot));
     }
-    emit_expr(func, &some_arm.body.node, slots, ctx)?;
+    emit_expr(func, &some_arm.body, slots, ctx)?;
 
     func.instruction(&Instruction::Else);
-    emit_expr(func, &none_arm.body.node, slots, ctx)?;
+    emit_expr(func, &none_arm.body, slots, ctx)?;
     func.instruction(&Instruction::End);
     Ok(())
 }
@@ -1332,7 +1322,7 @@ pub(super) fn emit_string_match(
     };
 
     // Stash subject; we read it once per arm.
-    emit_expr(func, &subject.node, slots, ctx)?;
+    emit_expr(func, &subject, slots, ctx)?;
     func.instruction(&Instruction::LocalSet(scratch));
 
     // Split arms: literal-string arms first (in source order), then
@@ -1365,7 +1355,7 @@ pub(super) fn emit_string_match(
         func.instruction(&Instruction::If(block_ty));
         // Bind the variable if the pattern has one (string match
         // patterns don't usually bind, so this is a no-op).
-        emit_expr(func, &arm.body.node, slots, ctx)?;
+        emit_expr(func, &arm.body, slots, ctx)?;
         func.instruction(&Instruction::Else);
         ends_to_close += 1;
     }
@@ -1374,7 +1364,7 @@ pub(super) fn emit_string_match(
     // would need the resolver to surface a slot, which the current
     // pattern shape doesn't expose. Surface forms in app.av use `_`,
     // so we don't carry the name-binding case here.
-    emit_expr(func, &default_arm.body.node, slots, ctx)?;
+    emit_expr(func, &default_arm.body, slots, ctx)?;
     for _ in 0..ends_to_close {
         func.instruction(&Instruction::End);
     }
@@ -1425,7 +1415,7 @@ pub(super) fn emit_variant_dispatch(
     ))?;
 
     // Stash subject in scratch.
-    emit_expr(func, &subject.node, slots, ctx)?;
+    emit_expr(func, &subject, slots, ctx)?;
     func.instruction(&Instruction::LocalSet(scratch));
 
     emit_variant_arm_cascade(func, arms, block_ty, scratch, slots, ctx)
@@ -1520,7 +1510,7 @@ pub(super) fn emit_arm_body(
                 )))?;
             func.instruction(&Instruction::LocalGet(subject_scratch));
             func.instruction(&Instruction::LocalSet(slot));
-            return emit_expr(func, &arm.body.node, slots, ctx);
+            return emit_expr(func, &arm.body, slots, ctx);
         }
         // Extract each field into its bound slot.
         for (i, binding_name) in bindings.iter().enumerate() {
@@ -1542,10 +1532,10 @@ pub(super) fn emit_arm_body(
             });
             func.instruction(&Instruction::LocalSet(slot));
         }
-        return emit_expr(func, &arm.body.node, slots, ctx);
+        return emit_expr(func, &arm.body, slots, ctx);
     }
     // Wildcard / non-pattern arms: just emit body.
-    emit_expr(func, &arm.body.node, slots, ctx)
+    emit_expr(func, &arm.body, slots, ctx)
 }
 
 /// Lower a single-arm `match subject { Variant(bindings) -> body }`.
@@ -1592,9 +1582,9 @@ pub(super) fn emit_single_variant_match(
             .ok_or(WasmGcError::Validation(format!(
                 "binding `{binding_name}` has no resolver slot"
             )))?;
-        emit_expr(func, &subject.node, slots, ctx)?;
+        emit_expr(func, &subject, slots, ctx)?;
         func.instruction(&Instruction::LocalSet(slot));
-        emit_expr(func, &body.node, slots, ctx)?;
+        emit_expr(func, &body, slots, ctx)?;
         return Ok(());
     }
 
@@ -1607,15 +1597,15 @@ pub(super) fn emit_single_variant_match(
         // Nullary constructor — body doesn't need any binds, just
         // emit it. Subject still needs to be evaluated for side
         // effects, then dropped.
-        emit_expr(func, &subject.node, slots, ctx)?;
+        emit_expr(func, &subject, slots, ctx)?;
         func.instruction(&Instruction::Drop);
-        emit_expr(func, &body.node, slots, ctx)?;
+        emit_expr(func, &body, slots, ctx)?;
         return Ok(());
     }
 
     // Stash the cast subject in a fresh local slot so we can
     // struct.get each field without recomputing.
-    emit_expr(func, &subject.node, slots, ctx)?;
+    emit_expr(func, &subject, slots, ctx)?;
     func.instruction(&Instruction::RefCastNonNull(cast_ty));
     // We need a slot to hold the cast ref. Use a synthetic one — the
     // resolver doesn't allocate extra slots for the implicit cast,
@@ -1650,7 +1640,7 @@ pub(super) fn emit_single_variant_match(
             field_index: 0,
         });
         func.instruction(&Instruction::LocalSet(slot));
-        emit_expr(func, &body.node, slots, ctx)?;
+        emit_expr(func, &body, slots, ctx)?;
         return Ok(());
     }
 
@@ -1676,10 +1666,10 @@ pub(super) fn emit_constructor_with_args(
     // Newtype optimization for single-payload single-variant sums:
     // skip struct.new — emit the payload directly.
     if ctx.registry.newtype_underlying(&info.parent).is_some() {
-        return emit_expr(func, &args[0].node, slots, ctx);
+        return emit_expr(func, &args[0], slots, ctx);
     }
     for arg in args {
-        emit_expr(func, &arg.node, slots, ctx)?;
+        emit_expr(func, &arg, slots, ctx)?;
     }
     func.instruction(&Instruction::StructNew(info.type_idx));
     Ok(())
@@ -1736,7 +1726,7 @@ pub(super) fn emit_constructor(
     let payload = payload.ok_or(WasmGcError::Validation(format!(
         "variant `{name}` expects 1 payload but got 0"
     )))?;
-    emit_expr(func, &payload.node, slots, ctx)?;
+    emit_expr(func, &payload, slots, ctx)?;
     func.instruction(&Instruction::StructNew(info.type_idx));
     Ok(())
 }
@@ -1762,7 +1752,12 @@ pub(super) fn emit_match(
     if arms.is_empty() {
         return Err(WasmGcError::Validation("match has no arms".into()));
     }
-    let result_ty_str = infer_aver_type(&arms[0].body.node, ctx)?;
+    // Match arms always agree on type by typecheck; pick the first one
+    // and recover any Unknown branches from context (registry single-
+    // instantiation or enclosing fn return type) so an arm whose body
+    // is e.g. `[]` doesn't surface as `List<Unknown>` here.
+    let result_ty_str =
+        super::infer::aver_type_canonical(&arms[0].body, ctx.return_type, ctx.registry);
     let result_wasm = aver_to_wasm(&result_ty_str, Some(ctx.registry))?;
     let block_ty = match result_wasm {
         Some(v) => wasm_encoder::BlockType::Result(v),
@@ -1771,7 +1766,7 @@ pub(super) fn emit_match(
 
     // Bool subject — special-case to a single `if`/`else`. No subject
     // local needed (wasm `if` consumes the i32 directly).
-    let subject_ty = infer_aver_type(&subject.node, ctx)?;
+    let subject_ty = aver_type_str_of(&subject);
     if subject_ty == "Bool" {
         if arms.len() != 2 {
             return Err(WasmGcError::Unimplemented(
@@ -1806,11 +1801,11 @@ pub(super) fn emit_match(
         let f = false_body.ok_or(WasmGcError::Validation(
             "Bool match missing false arm".into(),
         ))?;
-        emit_expr(func, &subject.node, slots, ctx)?;
+        emit_expr(func, &subject, slots, ctx)?;
         func.instruction(&Instruction::If(block_ty));
-        emit_expr(func, &t.node, slots, ctx)?;
+        emit_expr(func, &t, slots, ctx)?;
         func.instruction(&Instruction::Else);
-        emit_expr(func, &f.node, slots, ctx)?;
+        emit_expr(func, &f, slots, ctx)?;
         func.instruction(&Instruction::End);
         return Ok(());
     }
@@ -1946,15 +1941,15 @@ pub(super) fn emit_int_match_cascade(
 ) -> Result<(), WasmGcError> {
     if typed_arms.is_empty() {
         // No typed arms left — just emit wildcard.
-        emit_expr(func, &wildcard.node, slots, ctx)?;
+        emit_expr(func, &wildcard, slots, ctx)?;
         return Ok(());
     }
     let (pat_lit, body) = typed_arms[0];
-    emit_expr(func, &subject.node, slots, ctx)?;
+    emit_expr(func, &subject, slots, ctx)?;
     func.instruction(&Instruction::I64Const(pat_lit));
     func.instruction(&Instruction::I64Eq);
     func.instruction(&Instruction::If(block_ty));
-    emit_expr(func, &body.node, slots, ctx)?;
+    emit_expr(func, &body, slots, ctx)?;
     func.instruction(&Instruction::Else);
     emit_int_match_cascade(
         func,
@@ -1989,7 +1984,7 @@ pub(super) fn emit_tail_call(
             "tail call to unknown fn `{target}`"
         )))?;
     for arg in args {
-        emit_expr(func, &arg.node, slots, ctx)?;
+        emit_expr(func, &arg, slots, ctx)?;
     }
     // `AVER_WASM_GC_NO_TAIL_CALL=1` swaps `return_call` for a plain
     // `call` + fall-through return — used to A/B whether the

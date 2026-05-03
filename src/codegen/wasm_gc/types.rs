@@ -818,7 +818,20 @@ impl TypeRegistry {
     }
 
     pub(super) fn record_type_idx(&self, name: &str) -> Option<u32> {
-        self.records.get(name).copied()
+        // Direct lookup. After multi-module flatten the discovery
+        // walker registers records under either the bare name (`Room`)
+        // or the qualified name (`Level.Room`); the type checker
+        // sometimes hands us the qualified form even when the
+        // registry only knows the bare one (or vice versa). Try both.
+        if let Some(idx) = self.records.get(name).copied() {
+            return Some(idx);
+        }
+        if let Some(bare) = name.rsplit_once('.').map(|(_, b)| b)
+            && let Some(idx) = self.records.get(bare).copied()
+        {
+            return Some(idx);
+        }
+        None
     }
 
     pub(super) fn variant(&self, name: &str) -> Option<&VariantInfo> {
@@ -826,16 +839,27 @@ impl TypeRegistry {
     }
 
     pub(super) fn record_field_index(&self, record: &str, field: &str) -> Option<u32> {
-        self.record_fields
-            .get(record)
-            .and_then(|fs| fs.iter().position(|(n, _)| n == field))
+        // Same Module.Name → Name fallback as `record_type_idx`.
+        let fields = self.record_fields.get(record).or_else(|| {
+            record
+                .rsplit_once('.')
+                .and_then(|(_, b)| self.record_fields.get(b))
+        })?;
+        fields
+            .iter()
+            .position(|(n, _)| n == field)
             .map(|i| i as u32)
     }
 
     pub(super) fn record_field_type(&self, record: &str, field: &str) -> Option<&str> {
-        self.record_fields
-            .get(record)
-            .and_then(|fs| fs.iter().find(|(n, _)| n == field))
+        let fields = self.record_fields.get(record).or_else(|| {
+            record
+                .rsplit_once('.')
+                .and_then(|(_, b)| self.record_fields.get(b))
+        })?;
+        fields
+            .iter()
+            .find(|(n, _)| n == field)
             .map(|(_, t)| t.as_str())
     }
 
