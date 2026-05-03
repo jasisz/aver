@@ -1022,33 +1022,44 @@ fn expr_is_loop_invariant(
     }
 }
 
+/// `Buffer` (alias for the runtime `aver_rt::Buffer` type) is what every
+/// `__buf_*` builder synthesizes. Buffers are mutable-owned scratch
+/// storage that gets consumed exactly once — perfect candidate for the
+/// "do not hoist" rule below.
+fn type_is_owned_mut_buffer(ty: &Type) -> bool {
+    matches!(ty, Type::Named(name) if name == "Buffer")
+}
+
 fn expr_is_hoistable_invariant(
-    expr: &Expr,
+    expr: &Spanned<Expr>,
     stable_names: &HashSet<String>,
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> bool {
-    if !expr_is_loop_invariant(expr, stable_names, ctx, ectx) {
+    if !expr_is_loop_invariant(&expr.node, stable_names, ctx, ectx) {
         return false;
     }
 
     // Buffer-build sinks return an owned `aver_rt::Buffer` (≈ String).
-    // Hoisting `__buf_new(N)` outside the loop is wrong: every loop
-    // iteration *consumes* the buffer (it gets moved into a `__b`
+    // Hoisting an owned-mutable buffer outside the loop is wrong: every
+    // loop iteration *consumes* the buffer (it gets moved into a `__b`
     // local that grows with `push_str` and is then converted to
-    // `AverStr`). After iter 0 the hoisted local has been moved
-    // away, so iter 1 dereferences a moved value and rustc rejects
-    // it. Cloning per-iter would defeat the hoist anyway. Same logic
-    // applies to other mutable-owned buffer constructors should they
-    // appear; `__buf_new` is the one we synthesise today.
-    if let Expr::FnCall(callee, _) = expr
-        && let Some(name) = crate::ir::expr_to_dotted_name(&callee.node)
-        && name == "__buf_new"
+    // `AverStr`). After iter 0 the hoisted local has been moved away, so
+    // iter 1 dereferences a moved value and rustc rejects it. Cloning
+    // per-iter would defeat the hoist anyway.
+    //
+    // The check is type-driven (Step 1: TypeChecker stamps every
+    // `Spanned<Expr>` with its inferred `Type`). Any expression that
+    // produces a `Buffer` — `__buf_new(...)`, `__buf_push_*(...)`,
+    // future buffer constructors — falls under the rule by virtue of
+    // its return type, no string-name allowlist required.
+    if let Some(ty) = expr.ty()
+        && type_is_owned_mut_buffer(ty)
     {
         return false;
     }
 
-    match classify_body_expr_plan_for_rust(expr, ctx, ectx) {
+    match classify_body_expr_plan_for_rust(&expr.node, ctx, ectx) {
         BodyExprPlan::Leaf(
             LeafOp::StaticRef(_) | LeafOp::NoneValue | LeafOp::VariantConstructor { .. },
         ) => false,
@@ -1060,7 +1071,7 @@ fn expr_is_hoistable_invariant(
 }
 
 fn collect_hoistable_invariant_subexprs<'a>(
-    expr: &'a Expr,
+    expr: &'a Spanned<Expr>,
     stable_names: &HashSet<String>,
     ctx: &CodegenContext,
     ectx: &EmitCtx,
@@ -1069,21 +1080,21 @@ fn collect_hoistable_invariant_subexprs<'a>(
     next_idx: &mut usize,
 ) {
     if expr_is_hoistable_invariant(expr, stable_names, ctx, ectx) {
-        let ptr = expr_ptr(expr);
+        let ptr = expr_ptr(&expr.node);
         if seen.insert(ptr) {
             hoists.push(TcoInvariantHoist {
                 ptr,
                 temp_name: format!("__aver_inv{}", *next_idx),
-                expr,
+                expr: &expr.node,
             });
             *next_idx += 1;
         }
         return;
     }
 
-    match expr {
+    match &expr.node {
         Expr::Attr(obj, _) => collect_hoistable_invariant_subexprs(
-            &obj.node,
+            obj,
             stable_names,
             ctx,
             ectx,
@@ -1093,7 +1104,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
         ),
         Expr::FnCall(fn_expr, args) => {
             collect_hoistable_invariant_subexprs(
-                &fn_expr.node,
+                fn_expr,
                 stable_names,
                 ctx,
                 ectx,
@@ -1103,7 +1114,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
             );
             for arg in args {
                 collect_hoistable_invariant_subexprs(
-                    &arg.node,
+                    arg,
                     stable_names,
                     ctx,
                     ectx,
@@ -1115,7 +1126,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
         }
         Expr::BinOp(_, left, right) => {
             collect_hoistable_invariant_subexprs(
-                &left.node,
+                left,
                 stable_names,
                 ctx,
                 ectx,
@@ -1124,7 +1135,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
                 next_idx,
             );
             collect_hoistable_invariant_subexprs(
-                &right.node,
+                right,
                 stable_names,
                 ctx,
                 ectx,
@@ -1135,7 +1146,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
         }
         Expr::Match { subject, arms, .. } => {
             collect_hoistable_invariant_subexprs(
-                &subject.node,
+                subject,
                 stable_names,
                 ctx,
                 ectx,
@@ -1145,7 +1156,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
             );
             for arm in arms {
                 collect_hoistable_invariant_subexprs(
-                    &arm.body.node,
+                    &arm.body,
                     stable_names,
                     ctx,
                     ectx,
@@ -1157,7 +1168,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
         }
         Expr::Constructor(_, Some(inner)) | Expr::ErrorProp(inner) => {
             collect_hoistable_invariant_subexprs(
-                &inner.node,
+                inner,
                 stable_names,
                 ctx,
                 ectx,
@@ -1168,9 +1179,9 @@ fn collect_hoistable_invariant_subexprs<'a>(
         }
         Expr::InterpolatedStr(parts) => {
             for part in parts {
-                if let StrPart::Parsed(expr) = part {
+                if let StrPart::Parsed(inner) = part {
                     collect_hoistable_invariant_subexprs(
-                        &expr.node,
+                        inner,
                         stable_names,
                         ctx,
                         ectx,
@@ -1184,7 +1195,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
         Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items {
                 collect_hoistable_invariant_subexprs(
-                    &item.node,
+                    item,
                     stable_names,
                     ctx,
                     ectx,
@@ -1197,7 +1208,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
         Expr::MapLiteral(entries) => {
             for (key, value) in entries {
                 collect_hoistable_invariant_subexprs(
-                    &key.node,
+                    key,
                     stable_names,
                     ctx,
                     ectx,
@@ -1206,7 +1217,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
                     next_idx,
                 );
                 collect_hoistable_invariant_subexprs(
-                    &value.node,
+                    value,
                     stable_names,
                     ctx,
                     ectx,
@@ -1219,7 +1230,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
         Expr::RecordCreate { fields, .. } => {
             for (_, value) in fields {
                 collect_hoistable_invariant_subexprs(
-                    &value.node,
+                    value,
                     stable_names,
                     ctx,
                     ectx,
@@ -1231,7 +1242,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
         }
         Expr::RecordUpdate { base, updates, .. } => {
             collect_hoistable_invariant_subexprs(
-                &base.node,
+                base,
                 stable_names,
                 ctx,
                 ectx,
@@ -1241,7 +1252,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
             );
             for (_, value) in updates {
                 collect_hoistable_invariant_subexprs(
-                    &value.node,
+                    value,
                     stable_names,
                     ctx,
                     ectx,
@@ -1261,7 +1272,7 @@ fn collect_hoistable_invariant_subexprs<'a>(
 
 #[allow(clippy::too_many_arguments)]
 fn collect_self_tailcall_hoists_in_expr<'a>(
-    expr: &'a Expr,
+    expr: &'a Spanned<Expr>,
     self_name: &str,
     stable_names: &HashSet<String>,
     ctx: &CodegenContext,
@@ -1270,13 +1281,13 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
     seen: &mut HashSet<usize>,
     next_idx: &mut usize,
 ) {
-    match expr {
+    match &expr.node {
         Expr::TailCall(boxed) => {
             let TailCallData { target, args, .. } = boxed.as_ref();
             if target == self_name {
                 for arg in args {
                     collect_hoistable_invariant_subexprs(
-                        &arg.node,
+                        arg,
                         stable_names,
                         ctx,
                         ectx,
@@ -1288,7 +1299,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
             } else {
                 for arg in args {
                     collect_self_tailcall_hoists_in_expr(
-                        &arg.node,
+                        arg,
                         self_name,
                         stable_names,
                         ctx,
@@ -1302,7 +1313,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
         }
         Expr::Match { subject, arms, .. } => {
             collect_self_tailcall_hoists_in_expr(
-                &subject.node,
+                subject,
                 self_name,
                 stable_names,
                 ctx,
@@ -1313,7 +1324,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
             );
             for arm in arms {
                 collect_self_tailcall_hoists_in_expr(
-                    &arm.body.node,
+                    &arm.body,
                     self_name,
                     stable_names,
                     ctx,
@@ -1325,7 +1336,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
             }
         }
         Expr::Attr(obj, _) => collect_self_tailcall_hoists_in_expr(
-            &obj.node,
+            obj,
             self_name,
             stable_names,
             ctx,
@@ -1336,7 +1347,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
         ),
         Expr::FnCall(fn_expr, args) => {
             collect_self_tailcall_hoists_in_expr(
-                &fn_expr.node,
+                fn_expr,
                 self_name,
                 stable_names,
                 ctx,
@@ -1347,7 +1358,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
             );
             for arg in args {
                 collect_self_tailcall_hoists_in_expr(
-                    &arg.node,
+                    arg,
                     self_name,
                     stable_names,
                     ctx,
@@ -1360,7 +1371,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
         }
         Expr::BinOp(_, left, right) => {
             collect_self_tailcall_hoists_in_expr(
-                &left.node,
+                left,
                 self_name,
                 stable_names,
                 ctx,
@@ -1370,7 +1381,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
                 next_idx,
             );
             collect_self_tailcall_hoists_in_expr(
-                &right.node,
+                right,
                 self_name,
                 stable_names,
                 ctx,
@@ -1382,7 +1393,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
         }
         Expr::Constructor(_, Some(inner)) | Expr::ErrorProp(inner) => {
             collect_self_tailcall_hoists_in_expr(
-                &inner.node,
+                inner,
                 self_name,
                 stable_names,
                 ctx,
@@ -1394,9 +1405,9 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
         }
         Expr::InterpolatedStr(parts) => {
             for part in parts {
-                if let StrPart::Parsed(expr) = part {
+                if let StrPart::Parsed(inner) = part {
                     collect_self_tailcall_hoists_in_expr(
-                        &expr.node,
+                        inner,
                         self_name,
                         stable_names,
                         ctx,
@@ -1411,7 +1422,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
         Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             for item in items {
                 collect_self_tailcall_hoists_in_expr(
-                    &item.node,
+                    item,
                     self_name,
                     stable_names,
                     ctx,
@@ -1425,7 +1436,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
         Expr::MapLiteral(entries) => {
             for (key, value) in entries {
                 collect_self_tailcall_hoists_in_expr(
-                    &key.node,
+                    key,
                     self_name,
                     stable_names,
                     ctx,
@@ -1435,7 +1446,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
                     next_idx,
                 );
                 collect_self_tailcall_hoists_in_expr(
-                    &value.node,
+                    value,
                     self_name,
                     stable_names,
                     ctx,
@@ -1449,7 +1460,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
         Expr::RecordCreate { fields, .. } => {
             for (_, value) in fields {
                 collect_self_tailcall_hoists_in_expr(
-                    &value.node,
+                    value,
                     self_name,
                     stable_names,
                     ctx,
@@ -1462,7 +1473,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
         }
         Expr::RecordUpdate { base, updates, .. } => {
             collect_self_tailcall_hoists_in_expr(
-                &base.node,
+                base,
                 self_name,
                 stable_names,
                 ctx,
@@ -1473,7 +1484,7 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
             );
             for (_, value) in updates {
                 collect_self_tailcall_hoists_in_expr(
-                    &value.node,
+                    value,
                     self_name,
                     stable_names,
                     ctx,
@@ -1504,7 +1515,7 @@ fn collect_self_tailcall_invariant_hoists<'a>(
     for stmt in body.stmts() {
         match stmt {
             Stmt::Expr(expr) | Stmt::Binding(_, _, expr) => collect_self_tailcall_hoists_in_expr(
-                &expr.node,
+                expr,
                 self_name,
                 &stable_names,
                 ctx,

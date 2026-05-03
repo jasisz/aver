@@ -200,12 +200,11 @@ fn emit_expr_with_options(
     match expr {
         Expr::Literal(lit) => emit_literal(lit),
         Expr::Ident(name) | Expr::Resolved { name, .. } => aver_name_to_rust(name),
-        Expr::Attr(obj, field) => {
-            // classify_leaf_op handles all Attr cases (field access, None,
-            // variant constructors, static refs). This fallback is a safety net.
-            let obj_str = emit_expr(&obj.node, ctx, ectx);
-            format!("{}.{}", obj_str, aver_name_to_rust(field))
-        }
+        Expr::Attr(_, _) => unreachable!(
+            "Expr::Attr must be lowered through classify_leaf_op (field access, None, \
+             variant constructor, or static ref); reaching this arm means \
+             classify_field_access returned None for an Attr shape — a bug in ir::leaf"
+        ),
         Expr::FnCall(fn_expr, args) => {
             let bare_args: Vec<Expr> = args.iter().map(|a| a.node.clone()).collect();
             emit_fn_call_with_options(
