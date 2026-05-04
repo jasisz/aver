@@ -311,7 +311,82 @@ fn dispatch_aver_import(
             }
             Ok(true)
         }
+        "terminal_enable_raw_mode" => {
+            let _ = aver_rt::terminal_enable_raw_mode();
+            Ok(true)
+        }
+        "terminal_disable_raw_mode" => {
+            let _ = aver_rt::terminal_disable_raw_mode();
+            Ok(true)
+        }
+        "terminal_clear" => {
+            let _ = aver_rt::terminal_clear();
+            Ok(true)
+        }
+        "terminal_move_to" => {
+            let x = params.first().and_then(val_i64).unwrap_or(0);
+            let y = params.get(1).and_then(val_i64).unwrap_or(0);
+            let _ = aver_rt::terminal_move_to(x, y);
+            Ok(true)
+        }
+        "terminal_print" => {
+            // Same shape as console_print (any_ref payload through the
+            // LM bridge), but writes via aver_rt::terminal_print so it
+            // respects raw-mode without injecting a trailing newline.
+            let text = lm_string_to_host(caller, params.first())?;
+            if let Some(t) = text {
+                let _ = aver_rt::terminal_print(&t);
+            }
+            Ok(true)
+        }
+        "terminal_set_color" => {
+            let text = lm_string_to_host(caller, params.first())?;
+            if let Some(t) = text {
+                let _ = aver_rt::terminal_set_color(&t);
+            }
+            Ok(true)
+        }
+        "terminal_reset_color" => {
+            let _ = aver_rt::terminal_reset_color();
+            Ok(true)
+        }
+        "terminal_hide_cursor" => {
+            let _ = aver_rt::terminal_hide_cursor();
+            Ok(true)
+        }
+        "terminal_show_cursor" => {
+            let _ = aver_rt::terminal_show_cursor();
+            Ok(true)
+        }
+        "terminal_flush" => {
+            let _ = aver_rt::terminal_flush();
+            Ok(true)
+        }
+        "terminal_read_key" => {
+            let key = aver_rt::terminal_read_key();
+            let opt_ref = match key {
+                Some(text) => host_option_string_some(caller, &text)?,
+                None => host_option_string_none(caller)?,
+            };
+            results[0] = Val::AnyRef(opt_ref);
+            Ok(true)
+        }
+        "terminal_size" => {
+            let (w, h) = aver_rt::terminal_size().unwrap_or((80, 24));
+            let rec_ref = host_terminal_size_make(caller, w, h)?;
+            results[0] = Val::AnyRef(rec_ref);
+            Ok(true)
+        }
         _ => Ok(false),
+    }
+}
+
+/// Decode an `i64` param without panicking if it's a different val kind.
+#[cfg(feature = "wasm")]
+fn val_i64(v: &wasmtime::Val) -> Option<i64> {
+    match v {
+        wasmtime::Val::I64(n) => Some(*n),
+        _ => None,
     }
 }
 
@@ -363,6 +438,114 @@ fn host_print(
         }
     }
     Ok(())
+}
+
+/// Decode an Aver String ref (passed as `any_ref` in the import ABI)
+/// back to a Rust `String` via the LM transport bridge.
+#[cfg(feature = "wasm")]
+fn lm_string_to_host(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    val: Option<&wasmtime::Val>,
+) -> Result<Option<String>, wasmtime::Error> {
+    use wasmtime::Val;
+    let any_ref = match val {
+        Some(Val::AnyRef(r)) => r.clone(),
+        _ => return Ok(None),
+    };
+    let Some(any_ref) = any_ref else {
+        return Ok(None);
+    };
+    let to_lm = caller
+        .get_export("__rt_string_to_lm")
+        .and_then(|e| e.into_func());
+    let memory = caller.get_export("memory").and_then(|e| e.into_memory());
+    let (Some(to_lm), Some(memory)) = (to_lm, memory) else {
+        return Ok(None);
+    };
+    let mut out = [Val::I32(0)];
+    to_lm.call(&mut *caller, &[Val::AnyRef(Some(any_ref))], &mut out)?;
+    let len = match out[0] {
+        Val::I32(n) => n.max(0) as usize,
+        _ => 0,
+    };
+    let mut buf = vec![0u8; len];
+    if len > 0 {
+        memory.read(&caller, 0, &mut buf)?;
+    }
+    Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
+}
+
+/// Build an `Option<String>::Some(text)` ref via the
+/// `__rt_option_string_some` factory.
+#[cfg(feature = "wasm")]
+fn host_option_string_some(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    text: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let s = match lm_string_from_host(caller, text)? {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    let factory = caller
+        .get_export("__rt_option_string_some")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
+    Ok(match &out[0] {
+        Val::AnyRef(r) => r.clone(),
+        _ => None,
+    })
+}
+
+/// Build an `Option<String>::None` ref via `__rt_option_string_none`.
+#[cfg(feature = "wasm")]
+fn host_option_string_none(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let factory = caller
+        .get_export("__rt_option_string_none")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[], &mut out)?;
+    Ok(match &out[0] {
+        Val::AnyRef(r) => r.clone(),
+        _ => None,
+    })
+}
+
+/// Build a `Terminal.Size(width, height)` record via the
+/// `__rt_record_terminal_size_make` factory.
+#[cfg(feature = "wasm")]
+fn host_terminal_size_make(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    width: i64,
+    height: i64,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let factory = caller
+        .get_export("__rt_record_terminal_size_make")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(
+        &mut *caller,
+        &[Val::I64(width), Val::I64(height)],
+        &mut out,
+    )?;
+    Ok(match &out[0] {
+        Val::AnyRef(r) => r.clone(),
+        _ => None,
+    })
 }
 
 /// Build a `Result<String,String>::Ok(text)` ref by calling the
