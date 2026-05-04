@@ -241,8 +241,7 @@ fn main() {
             // wrapper, no separate fetch shim) and standalone runtime via
             // the planned `--target wasip2` Component Model output. Reject
             // up front rather than silently ignoring the flag.
-            if matches!(effective_target, cli::CompileTarget::WasmGc)
-                && effective_bridge.is_some()
+            if matches!(effective_target, cli::CompileTarget::WasmGc) && effective_bridge.is_some()
             {
                 use colored::Colorize;
                 let hint = match effective_bridge {
