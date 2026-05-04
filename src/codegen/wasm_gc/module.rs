@@ -27,6 +27,7 @@ use wasm_encoder::{
 use super::WasmGcError;
 use super::body::eq_helpers::{EqHelperRegistry, EqKind};
 use super::body::{FnEntry, FnMap, emit_fn_body};
+use super::wat_helper;
 use super::builtins::{BuiltinName, BuiltinRegistry};
 use super::effects::{EffectName, EffectRegistry};
 use super::maps::MapHelperRegistry;
@@ -1920,124 +1921,120 @@ fn emit_bridge_bodies(codes: &mut CodeSection, registry: &TypeRegistry) -> Resul
     let s_idx = registry
         .string_array_type_idx
         .expect("bridge bodies emitted only when string slot exists");
-    // from_lm(len) -> string. Allocate `(array i8)` of `len`, copy
-    // bytes from LM[0..len] via a loop of `i32.load8_u` + `array.set`.
-    //
-    // Locals: 1 = arr, 2 = i.
-    let mut from_lm = wasm_encoder::Function::new([
-        (
-            1,
-            ValType::Ref(wasm_encoder::RefType {
-                nullable: true,
-                heap_type: wasm_encoder::HeapType::Concrete(s_idx),
-            }),
-        ),
-        (1, ValType::I32),
-    ]);
-    from_lm.instruction(&Instruction::LocalGet(0));
-    from_lm.instruction(&Instruction::ArrayNewDefault(s_idx));
-    from_lm.instruction(&Instruction::LocalSet(1));
-    from_lm.instruction(&Instruction::I32Const(0));
-    from_lm.instruction(&Instruction::LocalSet(2));
-    from_lm.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
-    from_lm.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
-    // if i >= len break
-    from_lm.instruction(&Instruction::LocalGet(2));
-    from_lm.instruction(&Instruction::LocalGet(0));
-    from_lm.instruction(&Instruction::I32GeU);
-    from_lm.instruction(&Instruction::BrIf(1));
-    // arr[i] = i32.load8_u(memory[i])
-    from_lm.instruction(&Instruction::LocalGet(1));
-    from_lm.instruction(&Instruction::LocalGet(2));
-    from_lm.instruction(&Instruction::LocalGet(2));
-    from_lm.instruction(&Instruction::I32Load8U(wasm_encoder::MemArg {
-        offset: 0,
-        align: 0,
-        memory_index: 0,
-    }));
-    from_lm.instruction(&Instruction::ArraySet(s_idx));
-    // i++
-    from_lm.instruction(&Instruction::LocalGet(2));
-    from_lm.instruction(&Instruction::I32Const(1));
-    from_lm.instruction(&Instruction::I32Add);
-    from_lm.instruction(&Instruction::LocalSet(2));
-    from_lm.instruction(&Instruction::Br(0));
-    from_lm.instruction(&Instruction::End); // loop
-    from_lm.instruction(&Instruction::End); // block
-    from_lm.instruction(&Instruction::LocalGet(1));
-    from_lm.instruction(&Instruction::End);
-    codes.function(&from_lm);
+    let padding = wat_helper::padding_types(s_idx);
 
-    // to_lm(s) -> i32 (= s.len). Auto-grow memory if `s.len`
-    // exceeds the current LM capacity, then loop-write bytes to
-    // LM[0..s.len].
-    //
-    // Locals: 1 = len, 2 = i, 3 = needed_pages, 4 = current_pages.
-    let mut to_lm = wasm_encoder::Function::new([(4, ValType::I32)]);
-    // len = arr.len
-    to_lm.instruction(&Instruction::LocalGet(0));
-    to_lm.instruction(&Instruction::ArrayLen);
-    to_lm.instruction(&Instruction::LocalSet(1));
-    // needed_pages = (len + 65535) >> 16
-    to_lm.instruction(&Instruction::LocalGet(1));
-    to_lm.instruction(&Instruction::I32Const(65535));
-    to_lm.instruction(&Instruction::I32Add);
-    to_lm.instruction(&Instruction::I32Const(16));
-    to_lm.instruction(&Instruction::I32ShrU);
-    to_lm.instruction(&Instruction::LocalSet(3));
-    // current_pages = memory.size
-    to_lm.instruction(&Instruction::MemorySize(0));
-    to_lm.instruction(&Instruction::LocalSet(4));
-    // if needed_pages > current_pages: memory.grow(needed - current)
-    to_lm.instruction(&Instruction::LocalGet(3));
-    to_lm.instruction(&Instruction::LocalGet(4));
-    to_lm.instruction(&Instruction::I32GtU);
-    to_lm.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-    to_lm.instruction(&Instruction::LocalGet(3));
-    to_lm.instruction(&Instruction::LocalGet(4));
-    to_lm.instruction(&Instruction::I32Sub);
-    to_lm.instruction(&Instruction::MemoryGrow(0));
-    to_lm.instruction(&Instruction::Drop);
-    to_lm.instruction(&Instruction::End);
-    // i = 0
-    to_lm.instruction(&Instruction::I32Const(0));
-    to_lm.instruction(&Instruction::LocalSet(2));
-    to_lm.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
-    to_lm.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
-    // if i >= len break
-    to_lm.instruction(&Instruction::LocalGet(2));
-    to_lm.instruction(&Instruction::LocalGet(1));
-    to_lm.instruction(&Instruction::I32GeU);
-    to_lm.instruction(&Instruction::BrIf(1));
-    // memory[i] = arr[i]
-    to_lm.instruction(&Instruction::LocalGet(2));
-    to_lm.instruction(&Instruction::LocalGet(0));
-    to_lm.instruction(&Instruction::LocalGet(2));
-    to_lm.instruction(&Instruction::ArrayGetU(s_idx));
-    to_lm.instruction(&Instruction::I32Store8(wasm_encoder::MemArg {
-        offset: 0,
-        align: 0,
-        memory_index: 0,
-    }));
-    // i++
-    to_lm.instruction(&Instruction::LocalGet(2));
-    to_lm.instruction(&Instruction::I32Const(1));
-    to_lm.instruction(&Instruction::I32Add);
-    to_lm.instruction(&Instruction::LocalSet(2));
-    to_lm.instruction(&Instruction::Br(0));
-    to_lm.instruction(&Instruction::End); // loop
-    to_lm.instruction(&Instruction::End); // block
-    to_lm.instruction(&Instruction::LocalGet(1));
-    to_lm.instruction(&Instruction::End);
-    codes.function(&to_lm);
+    // from_lm(len) → string. Allocate `(array i8)` of `len`, then
+    // copy LM[0..len] byte-by-byte. Loop over `i32.load8_u` + `array.set`.
+    let from_lm_wat = format!(
+        r#"
+        (module
+          {padding}
+          (type $string (array (mut i8)))
+          (memory 1)
+          (func (export "helper") (param $len i32) (result (ref null $string))
+            (local $arr (ref null $string))
+            (local $i i32)
+            local.get $len
+            array.new_default $string
+            local.set $arr
+            i32.const 0
+            local.set $i
+            (block $break
+              (loop $next
+                local.get $i
+                local.get $len
+                i32.ge_u
+                br_if $break
 
-    // pages() -> i32 (= memory.size)
+                local.get $arr
+                local.get $i
+                local.get $i
+                i32.load8_u
+                array.set $string
+
+                local.get $i
+                i32.const 1
+                i32.add
+                local.set $i
+                br $next))
+            local.get $arr)
+        )
+    "#
+    );
+    codes.function(&wat_helper::compile_wat_helper(&from_lm_wat)?);
+
+    // to_lm(s) → i32 (= s.len). Auto-grow memory if `s.len` exceeds
+    // current LM capacity, then loop-write bytes to LM[0..s.len].
+    let to_lm_wat = format!(
+        r#"
+        (module
+          {padding}
+          (type $string (array (mut i8)))
+          (memory 1)
+          (func (export "helper") (param $s (ref null $string)) (result i32)
+            (local $len i32)
+            (local $i i32)
+            (local $needed i32)
+            (local $current i32)
+            local.get $s
+            array.len
+            local.set $len
+
+            ;; needed = (len + 65535) >> 16
+            local.get $len
+            i32.const 65535
+            i32.add
+            i32.const 16
+            i32.shr_u
+            local.set $needed
+
+            memory.size
+            local.set $current
+
+            local.get $needed
+            local.get $current
+            i32.gt_u
+            (if
+              (then
+                local.get $needed
+                local.get $current
+                i32.sub
+                memory.grow
+                drop))
+
+            i32.const 0
+            local.set $i
+            (block $break
+              (loop $next
+                local.get $i
+                local.get $len
+                i32.ge_u
+                br_if $break
+
+                local.get $i
+                local.get $s
+                local.get $i
+                array.get_u $string
+                i32.store8
+
+                local.get $i
+                i32.const 1
+                i32.add
+                local.set $i
+                br $next))
+            local.get $len)
+        )
+    "#
+    );
+    codes.function(&wat_helper::compile_wat_helper(&to_lm_wat)?);
+
+    // pages() -> i32 (= memory.size). Trivially small; wasm-encoder.
     let mut pages = wasm_encoder::Function::new([]);
     pages.instruction(&Instruction::MemorySize(0));
     pages.instruction(&Instruction::End);
     codes.function(&pages);
 
-    // grow(pages) -> i32 (= memory.grow result; -1 on fail)
+    // grow(pages) -> i32 (= memory.grow result; -1 on fail).
     let mut grow = wasm_encoder::Function::new([]);
     grow.instruction(&Instruction::LocalGet(0));
     grow.instruction(&Instruction::MemoryGrow(0));
