@@ -226,15 +226,27 @@ impl TypeChecker {
                 Type::Unit,
                 &["HttpServer.listenWith"],
             ),
+            // SelfHostRuntime.* are the self-host bridge calls — the
+            // generated Rust passes a `Val` (sumtype carrying the
+            // already-evaluated guest fn through `Val::ValFn`), not a
+            // typed `Fn(...)`. Accept any handler-position argument
+            // here; the runtime code path unwraps `Val::ValFn` and
+            // dispatches. `HttpServer.listen` (the user-facing
+            // builtin, defined above) keeps the strict `Fn(...)`
+            // signature — this opening is scoped to the bridge.
             (
                 "SelfHostRuntime.httpServerListen",
-                &[Type::Int, http_handler()],
+                &[Type::Int, Type::Var("Handler".to_string())],
                 disk_unit(),
                 &["HttpServer.listen"],
             ),
             (
                 "SelfHostRuntime.httpServerListenWith",
-                &[Type::Int, context_var(), http_handler_with_context()],
+                &[
+                    Type::Int,
+                    Type::Var("Ctx".to_string()),
+                    Type::Var("Handler".to_string()),
+                ],
                 disk_unit(),
                 &["HttpServer.listenWith"],
             ),

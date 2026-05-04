@@ -350,21 +350,27 @@ fn main(ctx: AppCtx) -> Unit
 }
 
 #[test]
-fn self_host_runtime_listen_rejects_non_handler() {
-    // SelfHostRuntime.httpServerListen used to accept any second arg
-    // (Type::Invalid), letting callers pass an Int where a handler
-    // function was expected. Now caught.
+fn self_host_runtime_listen_accepts_opaque_handler() {
+    // `SelfHostRuntime.httpServerListen` is the self-host bridge
+    // call — generated Rust passes a `Val` sumtype carrying the
+    // evaluated guest fn (`Val::ValFn`), not a typed `Fn(...)`.
+    // The checker keeps an open second arg (`Type::Var("Handler")`)
+    // for this builtin so the bridge signature matches reality;
+    // user-facing `HttpServer.listen` retains the strict
+    // `Fn(HttpRequest) -> HttpResponse` shape.
     let items = parse_items(
         r#"
-fn main(notAHandler: Int) -> Result<Unit, String>
+fn main(handler: Val) -> Result<Unit, String>
     ! [HttpServer.listen]
-    Result.Ok(SelfHostRuntime.httpServerListen(8080, notAHandler))
+    SelfHostRuntime.httpServerListen(8080, handler)
+
+type Val
+    ValFn(Int)
 "#,
     );
     let errs = errors(items);
     assert!(
-        errs.iter()
-            .any(|e| e.contains("SelfHostRuntime.httpServerListen") && e.contains("Int")),
-        "expected SelfHostRuntime.httpServerListen handler-shape error, got: {errs:?}"
+        errs.is_empty(),
+        "expected no errors for opaque self-host handler, got: {errs:?}"
     );
 }

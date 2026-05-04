@@ -839,7 +839,9 @@ fn headersToValMap(headers: Map<String, List<String>>, names: List<String>, acc:
     ? "Walk header keys, converting each value list to a Val.ValList."
     match names
         [] -> acc
-        [name, ..rest] -> headersToValMap(headers, rest, Map.set(acc, name, Val.ValList(stringsToValStrs(Option.withDefault(Map.get(headers, name), []), []))))
+        [name, ..rest] -> match Map.get(headers, name)
+            Option.Some(values) -> headersToValMap(headers, rest, Map.set(acc, name, Val.ValList(stringsToValStrs(values, []))))
+            Option.None -> headersToValMap(headers, rest, Map.set(acc, name, Val.ValList([])))
 
 fn stringsToValStrs(values: List<String>, acc: List<Val>) -> List<Val>
     ? "Convert a list of strings into a list of Val.ValStr (tail-recursive)."
