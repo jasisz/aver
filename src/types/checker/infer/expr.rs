@@ -1112,8 +1112,20 @@ impl TypeChecker {
 
             Expr::TailCall(boxed) => {
                 let TailCallData { target, args, .. } = boxed.as_ref();
-                for arg in args {
-                    let _ = self.infer_type(arg);
+                // Bidirectional: propagate the target fn's formal params into
+                // arg inference so generic constructors in tail-call position
+                // (`parseListItems(s, pos, [])`, `loop(acc, [])`) pick up T
+                // from the signature instead of stamping `List<T>` /
+                // `Option<T>`. Mirrors the `Expr::FnCall` handler — TailCall
+                // is the same call, just rewritten by tail-check.
+                let formal_params: Option<Vec<Type>> =
+                    self.find_fn_sig(target).map(|s| s.params.clone());
+                for (i, arg) in args.iter().enumerate() {
+                    let expected = formal_params
+                        .as_ref()
+                        .and_then(|p| p.get(i))
+                        .filter(|t| type_is_fully_concrete(t));
+                    let _ = self.infer_type_with_expected(arg, expected);
                 }
                 // Return type is the same as the target function's return type
                 if let Some(sig) = self.find_fn_sig(target).cloned() {
