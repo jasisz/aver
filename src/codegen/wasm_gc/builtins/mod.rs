@@ -2042,12 +2042,18 @@ fn emit_string_char_at(registry: &TypeRegistry) -> Result<Function, WasmGcError>
     Ok(f)
 }
 
-/// `Char.fromCode(code: Int) -> Option<String>`. Validates `code` is
-/// in `[0, 256)`, builds a 1-byte string with that byte. Out-of-range
-/// returns Option.None (Aver `Char` is a 1-byte ASCII string in
-/// wasm-gc, same as legacy backend's representation).
+/// `Char.fromCode(code: Int) -> Option<String>`. Encodes a Unicode
+/// code point as UTF-8 (1–4 bytes) into a fresh `(array i8)`. Returns
+/// Option.None for negative values, codepoints above U+10FFFF, and the
+/// surrogate range U+D800..U+DFFF. Ported from
+/// `src/codegen/wasm/runtime/wat/char_from_code.part.wat` (legacy
+/// backend) — the linear-memory `OBJ_STRING` shape is replaced with
+/// `array.new_default $string` + `array.set`, the rest is byte-for-byte
+/// the same UTF-8 encoder. Critical for games like
+/// `examples/games/doom` that emit Braille block characters
+/// (U+2800..U+28FF, 3-byte UTF-8).
 fn emit_char_from_code(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
-    let s_idx = registry
+    let string_idx = registry
         .string_array_type_idx
         .ok_or(WasmGcError::Validation(
             "Char.fromCode: String slot not registered".into(),
@@ -2057,47 +2063,146 @@ fn emit_char_from_code(registry: &TypeRegistry) -> Result<Function, WasmGcError>
         .ok_or(WasmGcError::Validation(
             "Char.fromCode: Option<String> slot not registered".into(),
         ))?;
-    let string_ref = ValType::Ref(wasm_encoder::RefType {
-        nullable: true,
-        heap_type: wasm_encoder::HeapType::Concrete(s_idx),
-    });
-    let opt_ref = ValType::Ref(wasm_encoder::RefType {
-        nullable: true,
-        heap_type: wasm_encoder::HeapType::Concrete(opt_idx),
-    });
-    // params: 0=code (i64). locals: 1=out (string ref).
-    let mut f = Function::new([(1, string_ref)]);
-    let block_ty = wasm_encoder::BlockType::Result(opt_ref);
-    // 0 <= code AND code < 256
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::I64Const(0));
-    f.instruction(&Instruction::I64GeS);
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::I64Const(256));
-    f.instruction(&Instruction::I64LtS);
-    f.instruction(&Instruction::I32And);
-    f.instruction(&Instruction::If(block_ty));
-    // valid: alloc 1-byte string, write low 8 bits of code
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::ArrayNewDefault(s_idx));
-    f.instruction(&Instruction::LocalSet(1));
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::I32WrapI64);
-    f.instruction(&Instruction::ArraySet(s_idx));
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::StructNew(opt_idx));
-    f.instruction(&Instruction::Else);
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        s_idx,
-    )));
-    f.instruction(&Instruction::StructNew(opt_idx));
-    f.instruction(&Instruction::End);
-    f.instruction(&Instruction::End);
-    Ok(f)
+    if opt_idx <= string_idx {
+        return Err(WasmGcError::Validation(format!(
+            "Char.fromCode helper expects opt_idx > string_idx (got {opt_idx} vs {string_idx})"
+        )));
+    }
+    let pre_string = wat_helper::padding_types(string_idx);
+    let between = wat_helper::padding_types(opt_idx - string_idx - 1);
+    let wat = format!(
+        r#"
+        (module
+          {pre_string}
+          (type $string (array (mut i8)))
+          {between}
+          (type $option_string (struct (field $tag i32) (field $val (ref null $string))))
+          (func (export "helper") (param $code i64) (result (ref null $option_string))
+            (local $c i32)
+            (local $len i32)
+            (local $arr (ref null $string))
+
+            ;; Reject negatives, > 0x10FFFF, or surrogate range [0xD800, 0xDFFF].
+            local.get $code
+            i64.const 0
+            i64.lt_s
+            local.get $code
+            i64.const 0x10FFFF
+            i64.gt_s
+            i32.or
+            local.get $code
+            i64.const 0xD800
+            i64.ge_s
+            local.get $code
+            i64.const 0xDFFF
+            i64.le_s
+            i32.and
+            i32.or
+            (if (result (ref null $option_string))
+              (then
+                ;; Option.None — tag=0, val=null.
+                i32.const 0
+                ref.null $string
+                struct.new $option_string)
+              (else
+                local.get $code
+                i32.wrap_i64
+                local.set $c
+
+                ;; len = 1/2/3/4 by code range.
+                local.get $c
+                i32.const 0x80
+                i32.lt_u
+                (if (result i32)
+                  (then i32.const 1)
+                  (else
+                    local.get $c
+                    i32.const 0x800
+                    i32.lt_u
+                    (if (result i32)
+                      (then i32.const 2)
+                      (else
+                        local.get $c
+                        i32.const 0x10000
+                        i32.lt_u
+                        (if (result i32)
+                          (then i32.const 3)
+                          (else i32.const 4))))))
+                local.set $len
+
+                ;; Allocate result array and write UTF-8 bytes.
+                local.get $len
+                array.new_default $string
+                local.set $arr
+
+                local.get $len
+                i32.const 1
+                i32.eq
+                (if
+                  (then
+                    local.get $arr
+                    i32.const 0
+                    local.get $c
+                    array.set $string)
+                  (else
+                    local.get $len
+                    i32.const 2
+                    i32.eq
+                    (if
+                      (then
+                        local.get $arr
+                        i32.const 0
+                        local.get $c i32.const 6 i32.shr_u i32.const 0xC0 i32.or
+                        array.set $string
+                        local.get $arr
+                        i32.const 1
+                        local.get $c i32.const 0x3F i32.and i32.const 0x80 i32.or
+                        array.set $string)
+                      (else
+                        local.get $len
+                        i32.const 3
+                        i32.eq
+                        (if
+                          (then
+                            local.get $arr
+                            i32.const 0
+                            local.get $c i32.const 12 i32.shr_u i32.const 0xE0 i32.or
+                            array.set $string
+                            local.get $arr
+                            i32.const 1
+                            local.get $c i32.const 6 i32.shr_u i32.const 0x3F i32.and i32.const 0x80 i32.or
+                            array.set $string
+                            local.get $arr
+                            i32.const 2
+                            local.get $c i32.const 0x3F i32.and i32.const 0x80 i32.or
+                            array.set $string)
+                          (else
+                            ;; len == 4
+                            local.get $arr
+                            i32.const 0
+                            local.get $c i32.const 18 i32.shr_u i32.const 0xF0 i32.or
+                            array.set $string
+                            local.get $arr
+                            i32.const 1
+                            local.get $c i32.const 12 i32.shr_u i32.const 0x3F i32.and i32.const 0x80 i32.or
+                            array.set $string
+                            local.get $arr
+                            i32.const 2
+                            local.get $c i32.const 6 i32.shr_u i32.const 0x3F i32.and i32.const 0x80 i32.or
+                            array.set $string
+                            local.get $arr
+                            i32.const 3
+                            local.get $c i32.const 0x3F i32.and i32.const 0x80 i32.or
+                            array.set $string))))))
+
+                ;; Option.Some(arr) — tag=1, val=arr.
+                i32.const 1
+                local.get $arr
+                struct.new $option_string)))
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
 }
 
 /// `String.chars(s: String) -> List<String>`. Iterates `s` right-to-
