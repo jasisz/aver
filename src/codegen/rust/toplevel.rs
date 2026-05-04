@@ -1040,21 +1040,21 @@ fn expr_is_hoistable_invariant(
         return false;
     }
 
-    // Buffer-build sinks return an owned `aver_rt::Buffer` (≈ String).
-    // Hoisting an owned-mutable buffer outside the loop is wrong: every
-    // loop iteration *consumes* the buffer (it gets moved into a `__b`
-    // local that grows with `push_str` and is then converted to
-    // `AverStr`). After iter 0 the hoisted local has been moved away, so
-    // iter 1 dereferences a moved value and rustc rejects it. Cloning
-    // per-iter would defeat the hoist anyway.
+    // Hoisting only works for `Copy` types. Anything that produces a
+    // non-`Copy` owned value (a freshly-constructed variant payload
+    // like `Val::ValList(AverList::empty())`, a buffer-build sink's
+    // `aver_rt::Buffer`, a freshly-allocated `AverList` / `AverMap` /
+    // `AverVector`) gets *moved* into the tail-call body on every
+    // iteration. Hoist + first-iter move = second iter dereferences a
+    // moved value and rustc rejects it; per-iter `.clone()` would
+    // defeat the hoist anyway.
     //
-    // The check is type-driven (Step 1: TypeChecker stamps every
-    // `Spanned<Expr>` with its inferred `Type`). Any expression that
-    // produces a `Buffer` — `__buf_new(...)`, `__buf_push_*(...)`,
-    // future buffer constructors — falls under the rule by virtue of
-    // its return type, no string-name allowlist required.
+    // The check is type-driven (TypeChecker stamps every `Spanned<Expr>`
+    // with its inferred `Type`). Any expression whose result type is
+    // not `Copy` falls under the rule by virtue of its return type, no
+    // ad-hoc allowlist required.
     if let Some(ty) = expr.ty()
-        && type_is_owned_mut_buffer(ty)
+        && !is_copy_type(ty)
     {
         return false;
     }
