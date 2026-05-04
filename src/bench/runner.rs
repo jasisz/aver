@@ -478,7 +478,7 @@ fn run_wasm_gc(manifest: &Manifest) -> Result<BenchReport, RunError> {
         .map_err(|e| RunError::Setup(format!("spawn aver compile --target=wasm-gc: {}", e)))?;
     if !status.success() {
         return Err(RunError::Compile(format!(
-            "aver compile --target=wasm-gc exited with {} (likely a phase-3+ feature in this scenario; see src/codegen/wasm_gc/README.md)",
+            "aver compile --target=wasm-gc exited with {}",
             status
         )));
     }

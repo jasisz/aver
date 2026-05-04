@@ -81,21 +81,22 @@ pub(super) enum DeployPack {
     Cloudflare,
 }
 
-/// One-flag UX shortcut that expands to a `(target, bridge, pack)`
-/// preset. `--preset cloudflare` ≡ `--target wasm --bridge fetch
-/// --pack cloudflare`. Equivalent CLI surface, fewer keystrokes.
+/// One-flag UX shortcut that expands to a `(target, pack)` preset.
+/// `--preset cloudflare` ≡ `--target wasm-gc --pack cloudflare`.
+/// Requires `--handler <fn>` (the Aver fn with signature
+/// `Fn(HttpRequest) -> HttpResponse` to expose as the worker's
+/// request handler). Equivalent CLI surface, fewer keystrokes.
 ///
-/// Cloudflare Workers reject `WebAssembly.instantiate(bytes, …)` from
-/// runtime-fetched bytes (sandbox security). Only statically imported
-/// wasm modules are accepted, so `--target edge-wasm`'s "thin
-/// user.wasm + imported runtime from CDN" architecture doesn't apply
-/// on this host — the preset uses `--target wasm` (wasm-merge inlines
-/// the runtime into a single bundled module that worker.js imports
-/// statically). Browsers / Deno / Bun keep the edge-wasm shape via
-/// the runtime CDN at averlang.dev/runtime/.
+/// wasm-gc replaces the legacy `--target wasm` + wasm-merge bundle
+/// from prior releases. Workerd's V8 ships stable wasm-gc + tail
+/// calls, the runtime is inlined as per-instantiation `__rt_*`
+/// helpers (no `WebAssembly.instantiate(bytes, …)` from runtime-
+/// fetched bytes — that's the path Cloudflare Workers reject), and
+/// the emitted binary is ~20% smaller than the legacy bundle on
+/// representative handlers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub(super) enum DeployPreset {
-    /// wasm + fetch bridge + Cloudflare worker.js/wrangler.toml.
+    /// wasm-gc + Cloudflare worker.js/wrangler.toml. Requires --handler.
     Cloudflare,
 }
 
@@ -426,9 +427,9 @@ pub(super) enum Commands {
         /// `--target` and `--bridge`.
         #[arg(long, value_enum)]
         pack: Option<DeployPack>,
-        /// One-flag preset that expands to a `(target, bridge, pack)`
-        /// triple. `cloudflare` ≡ `--target edge-wasm --bridge fetch
-        /// --pack cloudflare`. Mutually exclusive with explicit
+        /// One-flag preset that expands to a `(target, pack)` pair.
+        /// `cloudflare` ≡ `--target wasm-gc --pack cloudflare` (also
+        /// requires `--handler <fn>`). Mutually exclusive with explicit
         /// `--target` / `--bridge` / `--pack` — pick one shape of UX.
         #[arg(long, value_enum, conflicts_with_all = &["target", "bridge", "pack"])]
         preset: Option<DeployPreset>,

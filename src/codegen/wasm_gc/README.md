@@ -98,7 +98,7 @@ This backend assumes the host runtime supports:
 - **GC proposal** — struct/array types, `(ref null $T)`, `ref.cast`, `br_on_cast`.
 - **Tail-call proposal** — `return_call`, `return_call_indirect`.
 - **Reference types** (transitive — pulled in by GC).
-- **Stringref proposal**, when emitted (`(ref string)`); fallback path is a struct of `i32 ptr + i32 len + memory` if a target rejects stringref. Phase 1 picks one and doesn't carry both.
+- **Stringref proposal**, when emitted (`(ref string)`); fallback path is a struct of `i32 ptr + i32 len + memory` if a target rejects stringref. The backend ships one shape and doesn't carry both.
 
 These are stable in Chrome 119+, Firefox 120+, Safari 18.2+, wasmtime 25+, Cloudflare Workers, Node 22+ (flag) / 24+ (default). If you target older runtimes, use `aver compile --target=wasm` (the legacy backend stays). No feature flags, no probes, no graceful degradation here — the whole point is leveraging what the modern engine gives us.
 
@@ -125,19 +125,7 @@ src/codegen/wasm_gc/
 └── module.rs          ← top-level wasm Module assembly + wasm-tools validation
 ```
 
-## Phase plan
-
-- **Phase 1 (probe):** scaffold, hello-world `fn main() -> Int 42` produces valid wasm-gc module that wasmtime exits with 42.
-- **Phase 2 (primitives):** Int / Float / Bool / Unit with arithmetic and comparisons.
-- **Phase 3 (compound):** List / Tuple / Record / Constructor + their match dispatch.
-- **Phase 4 (control flow):** match → `br_table` / `br_if` chains; tail-call lowering.
-- **Phase 5 (bench):** `aver bench --target=wasm-gc` against the existing scenarios. Decision rule lives in `TaskList`. Numbers say everything.
-
-If Phase 5 closes the perf gap with ≥2x on numeric loops and ≥50% smaller binary, the legacy backend gets cut in 0.16 with a new codename ("Concede"). If numbers are flat, this directory gets deleted and `0.15.x` work continues.
-
 ## Bench numbers (2026-05-01, macOS aarch64, release build)
-
-After phase 3a + 3b/1 + 3c **and `ir::escape` IR pass with both record-access and variant-match shapes**:
 
 | Scenario          | VM      | wasm-local | wasm-gc | wasm-gc vs legacy |
 |-------------------|---------|------------|---------|-------------------|
@@ -155,7 +143,7 @@ After phase 3a + 3b/1 + 3c **and `ir::escape` IR pass with both record-access an
 | `map_lookup`      | (tbd)   | 1.16ms     | 2.20ms  | 1.9x slower ⚠ (wasmtime GC, V8 wins) |
 | `fractal_seahorse`| (tbd)   | 34.1ms     | 212.8ms | 6.2x slower ⚠ (wasmtime GC, V8 wins by 3.5x over wasm-local) |
 
-**13/13 wasm-gc compile + run, 2 engine-bound regressions on wasmtime.** Both alloc-heavy patterns (`record`, `match_dispatch`) now go through escape analysis at the IR level — no struct/variant alloc reaches codegen. `vector_ops` lands on native `(array (mut i64))` with bounds-checked `array.set`/`array.get` and zero Option boxing — the legacy backend round-trips every read/write through runtime helpers + AverVector allocation. `Map<K,V>` is monomorphised per instantiation: per-K hash + eq helpers, per-(K,V) empty/set/get/len helpers, open-addressing flat hashtable, 16384-bucket fixed cap (resize is a phase-3c+ extension).
+**13/13 wasm-gc compile + run, 2 engine-bound regressions on wasmtime.** Both alloc-heavy patterns (`record`, `match_dispatch`) now go through escape analysis at the IR level — no struct/variant alloc reaches codegen. `vector_ops` lands on native `(array (mut i64))` with bounds-checked `array.set`/`array.get` and zero Option boxing — the legacy backend round-trips every read/write through runtime helpers + AverVector allocation. `Map<K,V>` is monomorphised per instantiation: per-K hash + eq helpers, per-(K,V) empty/set/get/len helpers, open-addressing flat hashtable, 16384-bucket fixed cap (resize is a follow-up extension).
 
 ### Cross-engine + cross-backend matrix
 
@@ -274,7 +262,7 @@ Binary size: `fib.wasm` = **110 bytes** (wasm-gc) vs **13,107 bytes** (legacy wi
 
 This is a real cost of nominal types in alloc-heavy workloads. Two paths forward in 0.16:
 
-- **Escape analysis** — detect "struct allocated and consumed within the same fn frame, no captures, no escape into caller" → scalar replace fields onto the stack. Standard compiler pass; rustc has a less-aggressive form via mem2reg + LLVM's allocation sinking. Phase 3c work.
+- **Escape analysis** — detect "struct allocated and consumed within the same fn frame, no captures, no escape into caller" → scalar replace fields onto the stack. Standard compiler pass; rustc has a less-aggressive form via mem2reg + LLVM's allocation sinking. Already shipping at IR level for record-access and variant-match shapes.
 - **Engine improvement** — V8 / wasmtime may eventually eliminate short-lived wasm-gc allocations themselves. Not a path we control.
 
 For now the pattern "fresh-record-per-iteration in a tight loop" is a known regression vs legacy. Most real programs don't hit it; bench scenarios specifically stress the case.
@@ -286,12 +274,6 @@ Single-field records of primitives (`record UserId { raw: Int }`) and single-var
 Detection: `TypeRegistry::newtype_underlying(name)` returns `Some(primitive)` when the type qualifies. `aver_to_wasm` returns the primitive directly for newtype names; emit sites (`RecordCreate`, `Attr`, `Constructor`, single-arm variant `match` unwrap) take a fast path that's literally `emit_expr(field_value)` — no struct ops emitted.
 
 Without this optimization wasm-gc was 3-3.5x slower on newtype_record / newtype_variant (allocating 600K structs per bench run). With it, faster than legacy.
-
-## Phase 3 status
-
-- **3a (shipped)**: Float, Records (struct types, `RecordCreate`, `Attr`), Single-arm Variants, **newtype optimization**.
-- **3b/1 (shipped)**: multi-arm variant dispatch via `ref.test` cascade, multi-field variant patterns, `Float.fromInt` / `Int.fromFloat`. Wasmtime dependency bumped 29 → 44 (29 had ref.cast bugs).
-- **3c (next)**: String representation + Int.toString + List + Map + Vector. Builtin scaffold lives in `builtins/` — `BuiltinRegistry` allocates per-module wasm fn slots for pure helpers (`Int.toString`, `List.prepend`, …), `effects.rs` (TBA) declares host imports for effectful operations (`Console.print`, …). Architecture decided; wiring + first real implementation lands once String repr is picked (`(ref null (array i8))` is the leading candidate — engine-managed, no linear memory needed).
 
 ## Where builtins live (architectural decision, 2026-05-01)
 
@@ -317,5 +299,3 @@ Working (13/13 bench scenarios):
 - string_interp — String literals via passive data segments + `array.new_data`; `Expr::InterpolatedStr` lowers natively (skipping `interp_lower`) to `array.new_fixed (Vector<String>) N` + variadic concat helper. Same primitive will back `String.join`. Engine-bound on wasmtime today (see note above)
 - map_build, map_lookup — `Map<K,V>` monomorphised per instantiation, open-addressing hashtable with linear probing. Per-K helpers (DJB2 hash + byte-eq for K=String), per-(K,V) helpers (empty/set/get/len). Map.get returns real boxed `Option<V>`. Wasmtime engine-bound on `map_lookup` (600k Option struct allocs); V8 lands the wins
 - fractal_seahorse — `depends [Fractal]`. Multi-module flatten loader (`flatten_multimodule` in `src/main/commands.rs`) inlines dep modules into the compile unit; full Mandelbrot render works through the same single-binary path. Per-instantiation `List<T>` helpers (`len` / `reverse`), per-(`List<T>`, `Vector<T>`) `Vector.fromList`, plus singleton `String.split` / `String.join` (T=String) live in `lists.rs`. Boxed `Vector.get`, `Result.withDefault(Int.mod(…), default)` fusion, full WAT bodies for `String.startsWith` / `String.contains` / `String.slice` / `String.toUpper` / `String.toLower` / `String.trim` / `Int.fromString` / `Float.fromString` / `Float.toString` round it out. Engine-bound on wasmtime (~6.4s/30 iter), same alloc-heavy tax `string_interp` already pays
-
-## Phase plan

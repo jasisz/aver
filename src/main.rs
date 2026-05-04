@@ -203,23 +203,38 @@ fn main() {
             // stands for. Clap's `conflicts_with_all` already rejects
             // mixing --preset with explicit axes.
             let (effective_target, effective_bridge, effective_pack) = match preset {
-                // Cloudflare Workers reject `WebAssembly.instantiate(bytes, ...)`
-                // from runtime-fetched bytes, so the "thin user.wasm + imported
-                // runtime from CDN" shape of `--target edge-wasm` doesn't fly
-                // here — the runtime would have to be either bundled or bundle-
-                // imported anyway. Single bundled wasm via `--target wasm`
-                // (wasm-merge inlines aver_runtime.*) is the cleaner shape:
-                // worker.js statically imports one file, no two-instance dance.
-                // wasm-merge becomes a hard dep, but anyone shipping to CF
-                // already has the npm/Node toolchain — `brew install binaryen`
-                // is the same tier.
+                // wasm-gc + the synthesised `aver_http_handle` wrapper is
+                // the production shape on Cloudflare Workers: workerd
+                // ships a stable wasm-gc + tail-call V8, the runtime is
+                // inlined as per-instantiation `__rt_*` helpers (no
+                // `WebAssembly.instantiate(bytes, …)` from runtime-fetched
+                // bytes — that's the path Workers reject), and the
+                // emitted binary is ~20% smaller than the legacy
+                // `--target wasm` + wasm-merge bundle. The bridge axis
+                // does not apply: `--handler <fn>` synthesises a thin
+                // wrapper that reads request fields via `Request.*` host
+                // imports and writes the response via `Response.*`, no
+                // separate fetch shim. The accompanying worker.js
+                // template is the LM string transport plus a 138-line
+                // request adapter — no JSPI, no NaN-box dance. User must
+                // pass `--handler <fn>` (validated below).
                 Some(cli::DeployPreset::Cloudflare) => (
-                    cli::CompileTarget::Wasm,
-                    Some(cli::WasmBridge::Fetch),
+                    cli::CompileTarget::WasmGc,
+                    None,
                     Some(cli::DeployPack::Cloudflare),
                 ),
                 None => (*target, *bridge, *pack),
             };
+            if matches!(preset, Some(cli::DeployPreset::Cloudflare)) && handler.is_none() {
+                use colored::Colorize;
+                eprintln!(
+                    "{}",
+                    "--preset cloudflare requires --handler <fn> (the Aver fn with signature \
+                     `Fn(HttpRequest) -> HttpResponse` to expose as the request handler)"
+                        .red()
+                );
+                std::process::exit(1);
+            }
             // `--emit-ir-after=PASS` short-circuits before codegen — print
             // the IR snapshot for the named stage and exit. Drives observability
             // in 0.15.1 without touching the compile path otherwise.

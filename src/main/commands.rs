@@ -4400,6 +4400,7 @@ fn cmd_compile_wasm(
                 module_root_override,
                 handler,
                 optimize,
+                pack,
             );
             return;
         }
@@ -4679,6 +4680,7 @@ fn cmd_compile_wasm_gc(
     module_root_override: Option<&str>,
     handler: Option<&str>,
     optimize: Option<super::cli::WasmOptMode>,
+    pack: Option<super::cli::DeployPack>,
 ) {
     use aver::codegen::wasm_gc;
 
@@ -4746,22 +4748,14 @@ fn cmd_compile_wasm_gc(
     // above; this picks up the newly appended dep FnDefs.
     aver::ir::pipeline::resolve(&mut items);
 
-    let bytes = match wasm_gc::compile_to_wasm_gc_with_handler(
-        &items,
-        result.analysis.as_ref(),
-        handler,
-    ) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("{}", format!("{e}").red());
-            eprintln!(
-                "{}",
-                "see src/codegen/wasm_gc/README.md for the phase plan; use --target=wasm for production WASM today"
-                    .yellow()
-            );
-            process::exit(1);
-        }
-    };
+    let bytes =
+        match wasm_gc::compile_to_wasm_gc_with_handler(&items, result.analysis.as_ref(), handler) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("{}", format!("{e}").red());
+                process::exit(1);
+            }
+        };
 
     let out_path = Path::new(output_dir);
     if let Err(e) = std::fs::create_dir_all(out_path) {
@@ -4798,6 +4792,13 @@ fn cmd_compile_wasm_gc(
         final_size,
         opt_suffix
     );
+    // Deployment pack — drops platform-specific bootstrap files
+    // next to the wasm-gc artifact. Same call site as the legacy
+    // backend; the worker.js template is wasm-gc-aware (LM string
+    // transport + `aver_http_handle` synth wrapper).
+    if let Some(super::cli::DeployPack::Cloudflare) = pack {
+        emit_cloudflare_pack(out_path, &wasm_name, &wasm_file);
+    }
 }
 
 /// True if `bytes` declares any import whose module name is exactly
