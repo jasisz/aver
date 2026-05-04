@@ -25,9 +25,6 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 ### Coverage
 - Of the 71 single-file or entry-point examples + project mains, 68 run identically to the VM under `aver run --wasm-gc` (every `examples/{core, data, games, formal, wasm, services, apps, modules}` and `projects/*` plus 13 of 14 playground samples). The remaining 3 are intentionally bad code that *show* compile errors (`examples/diagnostics/{lint_demo, test_errors}.av`, `tools/website/playground/sources/examples/effect-violation.av`).
 
-### Fixed
-- **`--target wasm-gc --optimize` was silently a no-op** — `cmd_compile_wasm_gc` short-circuited before the optimize pipeline. Threaded through to `finalize_wasm_artifact`.
-
 ## 0.15.2 "Traversal" — observability lands, regression gate closes (unreleased)
 
 > _Every pipeline pass exposes its decisions through one typed shape; bench reports gain the metrics that make regressions catchable; CI gates them per-host without per-runner branching._
