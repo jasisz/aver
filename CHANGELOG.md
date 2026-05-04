@@ -4,7 +4,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
-## 0.16.0 "Anneal" (unreleased)
+## 0.16.0 "Anneal" — 2026-05-05
 
 > _Heat-treat the internals — every backend now agrees what `Console.print` is, what's a type, and that engine GC beats hand-rolling._
 
