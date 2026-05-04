@@ -17,18 +17,31 @@ pub fn build_aver_runtime_wasm() -> Result<Vec<u8>, String> {
     codegen::wasm::build_runtime_wasm()
 }
 
-/// Compile Aver source text to WASM bytes.
+/// Compile Aver source text to WASM bytes via the wasm-gc backend.
+///
+/// Playground migrated from `--target edge-wasm` to `--target wasm-gc`
+/// in 0.16; the browser host (`tools/website/playground/wasm_host.js`)
+/// expects wasm-gc binaries with engine GC + tail calls + per-type
+/// factory exports for structured effect returns. The legacy
+/// `codegen::wasm::emit_wasm` path is no longer reachable from this
+/// entry point.
 pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
     let mut items = parse_source(source)?;
 
-    // Full pipeline — matches CLI `aver compile --target wasm`. Pre-0.15
-    // the playground bypassed interp_lower + buffer_build by accident
-    // (the deforestation work landed without a playground update). Bytes
-    // shifting compared to old cached artifacts is a fix, not a regression.
     let pipeline_result = crate::ir::pipeline::run(
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            // wasm-gc backend lowers `Expr::InterpolatedStr` natively
+            // (`array.new_fixed` + variadic concat helper). The
+            // `__buf_*` pipeline that `interp_lower` produces targets
+            // bump-allocator backends; wasm-gc would have to emulate
+            // a mutable buffer over `(struct len array)` with
+            // grow-on-append, while `array.copy` x2 is the idiomatic
+            // shape. Skip both lowering passes — same as the CLI
+            // `--target wasm-gc` path in `cmd_compile_wasm_gc`.
+            run_interp_lower: false,
+            run_buffer_build: false,
             ..Default::default()
         },
     );
@@ -37,15 +50,8 @@ pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
         return Err(format_tc_errors(&tc_result.errors));
     }
 
-    let ctx = codegen::build_context(
-        items,
-        &tc_result,
-        pipeline_result.analysis.as_ref(),
-        HashSet::new(),
-        "playground".to_string(),
-        vec![],
-    );
-    codegen::wasm::emit_wasm(&ctx)
+    codegen::wasm_gc::compile_to_wasm_gc(&items, pipeline_result.analysis.as_ref())
+        .map_err(|e| format!("{e}"))
 }
 
 /// Compile a multi-file Aver project from an in-memory file map.
@@ -91,6 +97,15 @@ pub fn compile_project_to_wasm(
         .map(|m| loaded_to_module_info(m, true))
         .collect();
 
+    // TODO(0.16): port multi-file playground to wasm-gc. Requires
+    // lifting `flatten_multimodule` (currently in `src/main/commands.rs`,
+    // ~250 lines) out of the CLI into the library so both
+    // `cmd_compile_wasm_gc` and this entry point can reuse it. For
+    // single-file live-compile (the dominant playground use case) the
+    // sibling `compile_to_wasm` already targets wasm-gc; multi-module
+    // games (checkers/doom/rogue/tetris) ship as pre-built .wasm in
+    // `tools/website/playground/` via `rebuild_playground.py` so the
+    // user-facing live-compile experience is unaffected today.
     let ctx = codegen::build_context(
         entry_items,
         &tc_result,

@@ -22,7 +22,6 @@ const dom = {
     console: document.querySelector("[data-console]"),
     lineInput: document.querySelector("[data-line-input]"),
     lineButton: document.querySelector("[data-line-button]"),
-    memory: document.querySelector("[data-memory]"),
     isolationNote: document.querySelector("[data-isolation-note]"),
     isolationCopy: document.querySelector("[data-isolation-copy]"),
 };
@@ -108,18 +107,10 @@ function formatBytes(bytes) {
     return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
 
-let lastMemUpdate = 0;
-function updateMemoryDisplay(heapBytes, pageBytes) {
-    if (!dom.memory) return;
-    const now = performance.now();
-    if (now - lastMemUpdate < 500) return;
-    lastMemUpdate = now;
-    if (pageBytes) {
-        dom.memory.textContent = "heap " + formatBytes(heapBytes) + " / " + formatBytes(pageBytes);
-    } else {
-        dom.memory.textContent = "mem " + formatBytes(heapBytes);
-    }
-}
+// Heap reporting was a legacy `--target edge-wasm` feature: the bump
+// allocator's `$heap_ptr` global gave the host a real watermark of
+// program-owned memory. Under wasm-gc the engine owns the heap and
+// nothing meaningful crosses the host boundary — drop the display.
 
 function setRawMode(enabled) {
     state.rawMode = enabled;
@@ -215,9 +206,6 @@ function handleWorkerMessage(event) {
             break;
         case "terminal":
             queueTerminalFrame(message);
-            if (message.memoryBytes != null) {
-                updateMemoryDisplay(message.memoryBytes, message.memoryPages);
-            }
             break;
         case "status":
             setStatus(message.text, message.level);
@@ -366,7 +354,6 @@ async function runSelectedModule(fixedSize) {
 
     clearOutput();
     setRawMode(false);
-    if (dom.memory) dom.memory.textContent = "";
     dom.runButton.disabled = true;
     dom.stopButton.disabled = false;
     dom.stopButton.hidden = false;

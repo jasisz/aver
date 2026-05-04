@@ -4,6 +4,24 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
+## 0.16 "Concede" — native WebAssembly GC backend (unreleased)
+
+> _Stop hand-rolling what the engine does better. Engine GC and native tail calls replace the bump allocator, NaN-boxing, and the mutual-TCO trampoline; `--target wasm-gc` lands as the recommended WASM target with structured-return host imports, full Aver type parity, a wasm-gc playground, and `wasm-opt -Oz` size wins of 19-32 % across the example games._
+
+### Added
+- **`--target wasm-gc`** — native WebAssembly GC + tail-call output. No NaN-boxing, no boundary GC framing, no inline runtime. Per-instantiation monomorphisation for `Vector<T>`, `List<T>`, `Map<K, V>`, `Option<T>`, `Result<T, E>`, `Tuple<A, B>`. Full Aver type parity with the legacy `--target wasm`: tuples, cross-collection nesting, sum-type and record `Map<K>`, `List.contains` over user types, all 12 `Terminal.*` effects, generic constructors driven by bidirectional inference (no backend recovery shims).
+- **Wasm-owned value factory ABI** — effect imports that return GC-structured refs (`Option<String>`, `Result<String, String>`, `Terminal.Size`) export per-type constructor helpers (`__rt_option_string_some/none`, `__rt_result_string_string_ok/err`, `__rt_record_terminal_size_make`) the binary alone can build. JS hosts call them and get back wasm-owned refs — same per-instantiation pattern as `__rt_string_from_lm` / `__rt_map_*` probes.
+- **`--target wasm-gc --optimize size`** — wasm-opt pipeline now passes `--enable-gc --enable-reference-types`, so `wasm-metadce` and `wasm-opt -Oz` apply to wasm-gc artifacts. Factory exports + LM transport survive (they're host-callable roots); per-program binaries shrink 19-32 %.
+- **Cross-engine bench harness** — `tools/wasm-gc-bench-v8.mjs --compare` runs every `bench/scenarios/*.av` through both `--target wasm` and `--target wasm-gc` under V8. Wasm-gc wins on the alloc / recursion / collection workloads (vector_ops 269×, map_build 5.67×, record_access 3.37×, map_lookup 2.6×); ties on micro-arithmetic; one known regression on `newtype record` reads (0.18×, ~ns scale, see memory `project_wasm_gc_newtype_regression`).
+
+### Changed
+- **Browser playground migrated from `--target edge-wasm` to `--target wasm-gc`.** Engine GC replaces the shared `aver_runtime.wasm` sidecar; binaries are self-contained. Modern-browser baseline (Chrome 119+ / Firefox 120+ / Safari 18.2+). Live playground sizes after `--optimize size`: snake 4.0 KiB, life 6.4 KiB, wumpus 4.9 KiB, tetris 7.8 KiB, doom 18.9 KiB, checkers 19.6 KiB, rogue 25.0 KiB.
+- **`Char.fromCode` accepts the full Unicode range.** Previous wasm-gc implementation rejected codepoints ≥ 256 (returned `Option.None`) — `examples/games/doom`'s Braille block characters (U+2800..U+28FF) silently collapsed to spaces. Now ports the legacy backend's UTF-8 encoder (1-4 byte branches, surrogate + range rejection) as a `compile_wat_helper` template.
+- **`Type::Unknown` / `Type::Any` removed from the static type enum.** Generic builtin positions use named `Type::Var(K|V|T|E)` resolved per call site by `match_expected_type` substitution; error recovery uses `Type::Invalid` (never compatible with concrete types). Bidirectional propagation drives expected types into generic constructors and collection literals — `Map.empty`, `Option.None`, `Result.Ok/Err`, empty list literals all type without backend shims.
+
+### Fixed
+- **`--target wasm-gc --optimize` was silently a no-op** — `cmd_compile_wasm_gc` short-circuited before the optimize pipeline, so the flag was dropped on wasm-gc builds. Threaded through to `finalize_wasm_artifact` with `MetadceMode::HostCallable`.
+
 ## 0.15.2 "Traversal" — observability lands, regression gate closes (unreleased)
 
 > _Every pipeline pass exposes its decisions through one typed shape; bench reports gain the metrics that make regressions catchable; CI gates them per-host without per-runner branching._

@@ -205,8 +205,11 @@ export class AverBrowserHost {
         if (now - this.lastFlushMs < 16) return;
         this.lastFlushMs = now;
         const snapshot = this.terminal.toSnapshot();
-        const memory = this.instance?.exports?.memory;
-        const memBytes = memory ? memory.buffer.byteLength : 0;
+        // No memory reporting: under wasm-gc the engine owns the program
+        // heap and host code can't observe it. The exported `memory` is
+        // a 1-page LM transport buffer for string round-trips, not a
+        // user heap — reporting its size would mislead. Leaving the
+        // field out keeps the UI label empty (handled in `app.js`).
         this.post({
             type: "terminal",
             cols: this.terminal.cols,
@@ -214,8 +217,6 @@ export class AverBrowserHost {
             snapshot,
             blank: this.terminal.isBlank(),
             rawMode: this.rawMode,
-            memoryBytes: memBytes,
-            memoryPages: memBytes,
         }, [snapshot.chars.buffer, snapshot.colors.buffer]);
     }
 
