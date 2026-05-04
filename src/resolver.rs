@@ -14,20 +14,59 @@ use std::sync::Arc as Rc;
 
 use crate::ast::*;
 
+/// Cross-function type info gathered from the program's `TypeDef` items.
+/// Used by the slot-types pass to recover the field type list for a
+/// user-declared variant or record so pattern bindings get a precise
+/// `Type` per slot.
+struct TypeInfo {
+    /// `variant_name -> (parent_sum_name, field type strings)`. Variant
+    /// names are stored bare (the part after the last `.`), matching
+    /// what `Pattern::Constructor`'s `rsplit('.').next()` produces at
+    /// match sites — so `Lambda.Abs` and `Abs` both look up the same
+    /// entry.
+    variants: HashMap<String, Vec<String>>,
+    /// `record_name -> [(field_name, field_type_string)]`. Records that
+    /// reach a binding via record-update or pattern destructure are
+    /// looked up here when the slot-types pass needs to know a field's
+    /// declared type.
+    #[allow(dead_code)]
+    records: HashMap<String, Vec<(String, String)>>,
+}
+
+fn build_type_info(items: &[TopLevel]) -> TypeInfo {
+    let mut variants: HashMap<String, Vec<String>> = HashMap::new();
+    let mut records: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    for item in items {
+        match item {
+            TopLevel::TypeDef(TypeDef::Sum { variants: vs, .. }) => {
+                for v in vs {
+                    variants.insert(v.name.clone(), v.fields.clone());
+                }
+            }
+            TopLevel::TypeDef(TypeDef::Product { name, fields, .. }) => {
+                records.insert(name.clone(), fields.clone());
+            }
+            _ => {}
+        }
+    }
+    TypeInfo { variants, records }
+}
+
 /// Run the resolver on all top-level function definitions. Stops after
 /// slot resolution — last-use ownership annotation is its own pipeline
 /// stage (`ir::pipeline::last_use`) so the two analyses are individually
 /// observable and skippable.
 pub fn resolve_program(items: &mut [TopLevel]) {
+    let type_info = build_type_info(items);
     for item in items.iter_mut() {
         if let TopLevel::FnDef(fd) = item {
-            resolve_fn(fd);
+            resolve_fn(fd, &type_info);
         }
     }
 }
 
 /// Resolve a single function definition.
-fn resolve_fn(fd: &mut FnDef) {
+fn resolve_fn(fd: &mut FnDef, type_info: &TypeInfo) {
     let mut local_slots: HashMap<String, u16> = HashMap::new();
     let mut next_slot: u16 = 0;
 
@@ -40,6 +79,21 @@ fn resolve_fn(fd: &mut FnDef) {
     // Scan body for val/var bindings to pre-allocate slots
     collect_binding_slots(fd.body.stmts(), &mut local_slots, &mut next_slot);
 
+    // Compute the per-slot Aver type. Runs *after* slot allocation
+    // (so we know how many entries we need) and *before* `resolve_stmts`
+    // rewrites `Expr::Ident` into `Expr::Resolved` (so binding-name
+    // lookups still see the raw names, though stamps survive either
+    // way). Default `Type::Invalid` marks slots the body never assigns
+    // to — backends typically skip those.
+    let mut slot_types: Vec<Type> = vec![Type::Invalid; next_slot as usize];
+    for (param_name, ty_str) in &fd.params {
+        if let Some(&slot) = local_slots.get(param_name) {
+            slot_types[slot as usize] =
+                crate::types::parse_type_str_strict(ty_str).unwrap_or(Type::Invalid);
+        }
+    }
+    compute_stmts_slot_types(fd.body.stmts(), &local_slots, type_info, &mut slot_types);
+
     // Resolve expressions in the body
     let mut body = fd.body.as_ref().clone();
     resolve_stmts(body.stmts_mut(), &local_slots);
@@ -48,7 +102,209 @@ fn resolve_fn(fd: &mut FnDef) {
     fd.resolution = Some(FnResolution {
         local_count: next_slot,
         local_slots: Rc::new(local_slots),
+        local_slot_types: Rc::new(slot_types),
     });
+}
+
+/// Walk every binding-introducing site in a statement list and stamp
+/// `slot_types[slot]` with the binding's Aver type. Stmt-level `let`
+/// bindings pull the type from the producer expression's stamp; match-
+/// arm pattern bindings pull from the subject's stamp + the pattern
+/// shape.
+fn compute_stmts_slot_types(
+    stmts: &[Stmt],
+    local_slots: &HashMap<String, u16>,
+    type_info: &TypeInfo,
+    slot_types: &mut [Type],
+) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Binding(name, _annot, expr) => {
+                if let Some(&slot) = local_slots.get(name)
+                    && let Some(ty) = expr.ty()
+                {
+                    slot_types[slot as usize] = ty.clone();
+                }
+                compute_expr_slot_types(expr, local_slots, type_info, slot_types);
+            }
+            Stmt::Expr(expr) => {
+                compute_expr_slot_types(expr, local_slots, type_info, slot_types);
+            }
+        }
+    }
+}
+
+fn compute_expr_slot_types(
+    expr: &Spanned<Expr>,
+    local_slots: &HashMap<String, u16>,
+    type_info: &TypeInfo,
+    slot_types: &mut [Type],
+) {
+    match &expr.node {
+        Expr::Match { subject, arms } => {
+            compute_expr_slot_types(subject, local_slots, type_info, slot_types);
+            let subject_ty = subject.ty().cloned();
+            for arm in arms {
+                walk_pattern_bindings(
+                    &arm.pattern,
+                    subject_ty.as_ref(),
+                    local_slots,
+                    type_info,
+                    slot_types,
+                );
+                compute_expr_slot_types(&arm.body, local_slots, type_info, slot_types);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            compute_expr_slot_types(l, local_slots, type_info, slot_types);
+            compute_expr_slot_types(r, local_slots, type_info, slot_types);
+        }
+        Expr::FnCall(callee, args) => {
+            compute_expr_slot_types(callee, local_slots, type_info, slot_types);
+            for a in args {
+                compute_expr_slot_types(a, local_slots, type_info, slot_types);
+            }
+        }
+        Expr::TailCall(boxed) => {
+            for a in &boxed.args {
+                compute_expr_slot_types(a, local_slots, type_info, slot_types);
+            }
+        }
+        Expr::ErrorProp(inner) => {
+            compute_expr_slot_types(inner, local_slots, type_info, slot_types);
+        }
+        Expr::Constructor(_, payload) => {
+            if let Some(p) = payload.as_deref() {
+                compute_expr_slot_types(p, local_slots, type_info, slot_types);
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for it in items {
+                compute_expr_slot_types(it, local_slots, type_info, slot_types);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                compute_expr_slot_types(k, local_slots, type_info, slot_types);
+                compute_expr_slot_types(v, local_slots, type_info, slot_types);
+            }
+        }
+        Expr::InterpolatedStr(parts) => {
+            for p in parts {
+                if let StrPart::Parsed(inner) = p {
+                    compute_expr_slot_types(inner, local_slots, type_info, slot_types);
+                }
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, e) in fields {
+                compute_expr_slot_types(e, local_slots, type_info, slot_types);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            compute_expr_slot_types(base, local_slots, type_info, slot_types);
+            for (_, e) in updates {
+                compute_expr_slot_types(e, local_slots, type_info, slot_types);
+            }
+        }
+        Expr::Attr(obj, _) => {
+            compute_expr_slot_types(obj, local_slots, type_info, slot_types);
+        }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
+    }
+}
+
+/// Recursive descent over a pattern, stamping each binding's slot with
+/// the correct Aver type derived from the subject's type + the pattern
+/// shape. Built-in shapes (Result, Option, List, Tuple) come from
+/// `Type` constructors; user-declared variants come from `TypeInfo`.
+fn walk_pattern_bindings(
+    pattern: &Pattern,
+    subject_ty: Option<&Type>,
+    local_slots: &HashMap<String, u16>,
+    type_info: &TypeInfo,
+    slot_types: &mut [Type],
+) {
+    fn store(name: &str, ty: Type, local_slots: &HashMap<String, u16>, slot_types: &mut [Type]) {
+        if name == "_" {
+            return;
+        }
+        if let Some(&slot) = local_slots.get(name) {
+            // First-occurrence wins; the resolver assigns a slot only
+            // once per name and reuses it across arms, so we shouldn't
+            // overwrite later occurrences with a different (possibly
+            // less precise) type.
+            if matches!(slot_types[slot as usize], Type::Invalid) {
+                slot_types[slot as usize] = ty;
+            }
+        }
+    }
+    match pattern {
+        Pattern::Ident(name) => {
+            if let Some(ty) = subject_ty {
+                store(name, ty.clone(), local_slots, slot_types);
+            }
+        }
+        Pattern::Cons(head, tail) => {
+            // `[head, ..tail]` — head: T, tail: List<T>.
+            if let Some(Type::List(inner)) = subject_ty {
+                store(head, (**inner).clone(), local_slots, slot_types);
+                store(
+                    tail,
+                    Type::List(inner.clone()),
+                    local_slots,
+                    slot_types,
+                );
+            }
+        }
+        Pattern::Tuple(items) => {
+            // `(a, b, c) -> ...` — each element gets the matching tuple
+            // field type. Per-item recursion handles nested patterns
+            // (e.g. `Pattern::Constructor` inside a tuple, used by
+            // multi-arm tuple-of-Ok/Err matches).
+            if let Some(Type::Tuple(elem_tys)) = subject_ty
+                && elem_tys.len() == items.len()
+            {
+                for (pat, ty) in items.iter().zip(elem_tys.iter()) {
+                    walk_pattern_bindings(pat, Some(ty), local_slots, type_info, slot_types);
+                }
+            }
+        }
+        Pattern::Constructor(name, bindings) => {
+            let bare = name.rsplit('.').next().unwrap_or(name);
+            // Built-in shapes — Result / Option / Wrapper.
+            match (bare, subject_ty) {
+                ("Ok", Some(Type::Result(t, _))) => {
+                    if let Some(b) = bindings.first() {
+                        store(b, (**t).clone(), local_slots, slot_types);
+                    }
+                }
+                ("Err", Some(Type::Result(_, e))) => {
+                    if let Some(b) = bindings.first() {
+                        store(b, (**e).clone(), local_slots, slot_types);
+                    }
+                }
+                ("Some", Some(Type::Option(inner))) => {
+                    if let Some(b) = bindings.first() {
+                        store(b, (**inner).clone(), local_slots, slot_types);
+                    }
+                }
+                ("None", _) => { /* nullary; no bindings */ }
+                _ => {
+                    // User-declared variant — look up the parent sum's
+                    // declared field types via the cross-fn registry.
+                    if let Some(fields) = type_info.variants.get(bare) {
+                        for (binding, field_ty_str) in bindings.iter().zip(fields.iter()) {
+                            let field_ty = crate::types::parse_type_str_strict(field_ty_str)
+                                .unwrap_or(Type::Invalid);
+                            store(binding, field_ty, local_slots, slot_types);
+                        }
+                    }
+                }
+            }
+        }
+        Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => {}
+    }
 }
 
 /// Collect all binding names from a statement list and assign slots.
@@ -305,7 +561,7 @@ mod tests {
             )))),
             resolution: None,
         };
-        resolve_fn(&mut fd);
+        resolve_fn(&mut fd, &TypeInfo { variants: HashMap::new(), records: HashMap::new() });
         let res = fd.resolution.as_ref().unwrap();
         assert_eq!(res.local_slots["a"], 0);
         assert_eq!(res.local_slots["b"], 1);
@@ -352,7 +608,7 @@ mod tests {
             )))),
             resolution: None,
         };
-        resolve_fn(&mut fd);
+        resolve_fn(&mut fd, &TypeInfo { variants: HashMap::new(), records: HashMap::new() });
         match fd.body.tail_expr() {
             Some(Spanned {
                 node: Expr::FnCall(func, args),
@@ -395,7 +651,7 @@ mod tests {
             ])),
             resolution: None,
         };
-        resolve_fn(&mut fd);
+        resolve_fn(&mut fd, &TypeInfo { variants: HashMap::new(), records: HashMap::new() });
         let res = fd.resolution.as_ref().unwrap();
         assert_eq!(res.local_slots["x"], 0);
         assert_eq!(res.local_slots["y"], 1);
@@ -464,7 +720,7 @@ mod tests {
             ))),
             resolution: None,
         };
-        resolve_fn(&mut fd);
+        resolve_fn(&mut fd, &TypeInfo { variants: HashMap::new(), records: HashMap::new() });
         let res = fd.resolution.as_ref().unwrap();
         // x=0, v=1
         assert_eq!(res.local_slots["v"], 1);
@@ -522,7 +778,7 @@ mod tests {
             resolution: None,
         };
 
-        resolve_fn(&mut fd);
+        resolve_fn(&mut fd, &TypeInfo { variants: HashMap::new(), records: HashMap::new() });
         let res = fd.resolution.as_ref().unwrap();
         assert_eq!(res.local_slots["x"], 0);
         assert_eq!(res.local_slots["result"], 1);

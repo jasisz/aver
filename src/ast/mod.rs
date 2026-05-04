@@ -255,6 +255,21 @@ pub struct FnResolution {
     pub local_count: u16,
     /// Map from local variable name → slot index in the local `Slots` frame.
     pub local_slots: std::sync::Arc<std::collections::HashMap<String, u16>>,
+    /// Aver type per slot index. Length == `local_count`. Built post-
+    /// typecheck so each entry pulls from the matching `Spanned::ty()`
+    /// stamp on the producer expression, plus pattern-binding shape
+    /// rules (`Result.Ok` → T, `Cons head` → list element, tuple item
+    /// → tuple element, …). Backends that need a typed local table
+    /// (the wasm-gc lowering uses one to declare each `local` with a
+    /// concrete `ValType`) consume this directly instead of re-deriving
+    /// the same information from patterns.
+    ///
+    /// Default `Type::Invalid` for unreachable / unstamped slots — every
+    /// real binding gets overwritten during the slot-types pass, so an
+    /// `Invalid` reaching the backend means the slot was never the
+    /// target of a binding (resolver counted but no expression
+    /// produced into it; usually a wildcard slot the backend skips).
+    pub local_slot_types: std::sync::Arc<Vec<Type>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
