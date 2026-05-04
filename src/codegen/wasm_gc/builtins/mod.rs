@@ -129,7 +129,7 @@ impl BuiltinName {
         match s {
             "Int.toString" | "String.fromInt" => Some(Self::IntToString),
             "String.fromFloat" => Some(Self::FloatToString),
-            "String.len" => Some(Self::StringLength),
+            "String.len" | "String.length" | "String.byteLength" => Some(Self::StringLength),
             "String.startsWith" => Some(Self::StringStartsWith),
             "String.contains" => Some(Self::StringContains),
             "String.slice" => Some(Self::StringSlice),

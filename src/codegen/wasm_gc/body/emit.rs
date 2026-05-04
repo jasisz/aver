@@ -37,6 +37,13 @@ pub(super) fn emit_default_value(
             func.instruction(&Instruction::I32Const(0));
             Ok(())
         }
+        "Unit" => {
+            // Unit lowers to a placeholder i32 slot when it appears as a
+            // payload position inside Result<Unit, E> / Result<T, Unit>
+            // (struct shape stays uniform; the slot is never read).
+            func.instruction(&Instruction::I32Const(0));
+            Ok(())
+        }
         other => {
             // Single-field records flattened to a primitive (newtype
             // optimisation) need the matching primitive zero, not a
@@ -687,9 +694,9 @@ pub(super) fn emit_error_prop(
     let (t_aver, _e_aver) = TypeRegistry::result_te(&canonical).ok_or(WasmGcError::Validation(
         format!("ErrorProp: Result canonical `{canonical}` malformed"),
     ))?;
-    let ok_wasm = aver_to_wasm(t_aver, Some(ctx.registry))?.ok_or(WasmGcError::Validation(
-        format!("ErrorProp: Ok type `{t_aver}` has no wasm representation"),
-    ))?;
+    // Unit Ok-payload uses the i32 placeholder slot (see Result struct
+    // shape in module.rs).
+    let ok_wasm = aver_to_wasm(t_aver, Some(ctx.registry))?.unwrap_or(ValType::I32);
     let block_ty = wasm_encoder::BlockType::Result(ok_wasm);
 
     // Push subject and stash in scratch so we can read tag and either
@@ -1006,14 +1013,25 @@ pub(super) fn emit_result_constructor(
         format!("Result canonical `{canonical}` malformed"),
     ))?;
 
+    // Unit payload doesn't push a value (`emit_expr` for `Literal::Unit`
+    // is a no-op). The struct slot is still i32-sized (see module.rs
+    // Result type emission), so push the i32 placeholder ourselves.
+    let emit_payload = |func: &mut Function, ty: &str| -> Result<(), WasmGcError> {
+        if ty.trim() == "Unit" {
+            func.instruction(&Instruction::I32Const(0));
+            Ok(())
+        } else {
+            emit_expr(func, &payload, slots, ctx)
+        }
+    };
     if variant == "Ok" {
         func.instruction(&Instruction::I32Const(1));
-        emit_expr(func, &payload, slots, ctx)?;
+        emit_payload(func, t_aver)?;
         emit_default_value(func, e_aver, ctx.registry)?;
     } else {
         func.instruction(&Instruction::I32Const(0));
         emit_default_value(func, t_aver, ctx.registry)?;
-        emit_expr(func, &payload, slots, ctx)?;
+        emit_payload(func, e_aver)?;
     }
     func.instruction(&Instruction::StructNew(res_idx));
     Ok(())
@@ -1144,11 +1162,9 @@ pub(super) fn emit_independent_product_unwrap(
                     "`?!` element canonical `{elem_canonical}` malformed"
                 ))
             })?;
-        let ok_wasm = aver_to_wasm(elem_t_aver, Some(ctx.registry))?.ok_or_else(|| {
-            WasmGcError::Validation(format!(
-                "`?!` Ok-payload type `{elem_t_aver}` has no wasm representation"
-            ))
-        })?;
+        // Unit Ok-payload uses i32 placeholder (same convention as the
+        // Result<Unit, E> struct slot).
+        let ok_wasm = aver_to_wasm(elem_t_aver, Some(ctx.registry))?.unwrap_or(ValType::I32);
         let block_ty = wasm_encoder::BlockType::Result(ok_wasm);
 
         // Eval, stash in scratch, branch on tag.

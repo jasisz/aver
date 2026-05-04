@@ -722,19 +722,17 @@ fn emit_user_types(
     }
 
     // `Result<T, E>` — `(struct (mut i32 tag) (mut T ok) (mut E err))`.
+    // Unit on either side has no wasm value; we use a dummy `i32` slot
+    // so the struct shape stays uniform. The slot is never read for
+    // Unit-typed sides — pattern matching only inspects the tag and
+    // unwraps the *other* side.
     for canonical in &registry.result_order {
         let (t_aver, e_aver) =
             TypeRegistry::result_te(canonical).ok_or(WasmGcError::Validation(format!(
                 "registered result `{canonical}` has no parsable T, E"
             )))?;
-        let t_val =
-            super::types::aver_to_wasm(t_aver, Some(registry))?.ok_or(WasmGcError::Validation(
-                format!("Result T type `{t_aver}` has no wasm representation"),
-            ))?;
-        let e_val =
-            super::types::aver_to_wasm(e_aver, Some(registry))?.ok_or(WasmGcError::Validation(
-                format!("Result E type `{e_aver}` has no wasm representation"),
-            ))?;
+        let t_val = super::types::aver_to_wasm(t_aver, Some(registry))?.unwrap_or(ValType::I32);
+        let e_val = super::types::aver_to_wasm(e_aver, Some(registry))?.unwrap_or(ValType::I32);
         let idx = registry
             .result_type_idx(canonical)
             .ok_or(WasmGcError::Validation(format!(
@@ -924,11 +922,11 @@ fn emit_user_types(
         ))?;
         let mut fields: Vec<wasm_encoder::FieldType> = Vec::with_capacity(elems.len());
         for elem_aver in &elems {
-            let elem_val = super::types::aver_to_wasm(elem_aver, Some(registry))?.ok_or(
-                WasmGcError::Validation(format!(
-                    "Tuple element type `{elem_aver}` has no wasm representation"
-                )),
-            )?;
+            // Unit tuple element → i32 placeholder slot (same logic as
+            // Result<Unit, E>): keeps the struct shape uniform; the
+            // slot is never read because Unit has no observable value.
+            let elem_val = super::types::aver_to_wasm(elem_aver, Some(registry))?
+                .unwrap_or(ValType::I32);
             fields.push(wasm_encoder::FieldType {
                 element_type: wasm_encoder::StorageType::Val(elem_val),
                 mutable: true,

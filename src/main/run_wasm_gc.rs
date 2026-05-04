@@ -220,6 +220,24 @@ fn dispatch_aver_import(
         }
         "console_print" => host_print(caller, params, true).map(|()| true),
         "console_error" | "console_warn" => host_print(caller, params, false).map(|()| true),
+        "console_read_line" => {
+            // Read one line from stdin. EOF / IO error → Result.Err("EOF").
+            // Trailing '\n' / '\r\n' is stripped to match VM semantics.
+            use std::io::BufRead;
+            let mut line = String::new();
+            let read = std::io::stdin().lock().read_line(&mut line);
+            let result_ref = match read {
+                Ok(0) | Err(_) => host_result_err_string(caller, "EOF")?,
+                Ok(_) => {
+                    while line.ends_with('\n') || line.ends_with('\r') {
+                        line.pop();
+                    }
+                    host_result_ok_string(caller, &line)?
+                }
+            };
+            results[0] = Val::AnyRef(result_ref);
+            Ok(true)
+        }
         "time_now" => {
             let text = aver_rt::time_now();
             let r = lm_string_from_host(caller, &text)?;
@@ -345,6 +363,61 @@ fn host_print(
         }
     }
     Ok(())
+}
+
+/// Build a `Result<String,String>::Ok(text)` ref by calling the
+/// module's exported factory `__rt_result_string_string_ok`. Returns
+/// `Ok(None)` if the factory or string bridge isn't exported (the
+/// program declared `Console.readLine` but didn't reach the type
+/// registration that materialises the factory).
+#[cfg(feature = "wasm")]
+fn host_result_ok_string(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    text: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let s = match lm_string_from_host(caller, text)? {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    let factory = caller
+        .get_export("__rt_result_string_string_ok")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
+    Ok(match &out[0] {
+        Val::AnyRef(r) => r.clone(),
+        _ => None,
+    })
+}
+
+/// Build a `Result<String,String>::Err(text)` ref via the symmetric
+/// `__rt_result_string_string_err` factory.
+#[cfg(feature = "wasm")]
+fn host_result_err_string(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    text: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let s = match lm_string_from_host(caller, text)? {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    let factory = caller
+        .get_export("__rt_result_string_string_err")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
+    Ok(match &out[0] {
+        Val::AnyRef(r) => r.clone(),
+        _ => None,
+    })
 }
 
 /// Materialise a host-supplied UTF-8 string as an Aver string ref via
