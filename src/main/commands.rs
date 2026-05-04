@@ -1015,7 +1015,7 @@ pub(super) fn cmd_run_vm(
         process::exit(1);
     }
 
-    let module_root = super::shared::resolve_module_root(module_root_override);
+    let module_root = super::shared::resolve_module_root_for_entry(file, module_root_override);
     let source = match super::shared::read_file(file) {
         Ok(s) => s,
         Err(e) => {
@@ -5454,6 +5454,22 @@ pub(super) fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[Modu
         format!("{}_{}", prefix.replace('.', "_"), name)
     }
 
+    /// Flatten a chained `Attr` expression into its dotted form. Returns
+    /// `None` for any non-Attr or any Attr whose root isn't an Ident.
+    /// `Attr(Attr(Ident("Apps"), "Notepad"), "Store")` becomes
+    /// `Some("Apps.Notepad.Store")`. `Attr(Attr(Attr(Ident("A"), "B"),
+    /// "C"), "d")` becomes `Some("A.B.C.d")`.
+    fn attr_chain_to_dotted(expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Ident(name) => Some(name.clone()),
+            Expr::Attr(parent, member) => {
+                let head = attr_chain_to_dotted(&parent.node)?;
+                Some(format!("{head}.{member}"))
+            }
+            _ => None,
+        }
+    }
+
     fn rewrite_expr(
         expr: &mut Expr,
         prefixes: &std::collections::HashSet<String>,
@@ -5468,12 +5484,83 @@ pub(super) fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[Modu
                 // 2. `Ident("bar")` where `bar` is a same-module fn →
                 //    `Ident("{prefix}_bar")`.
                 let mut new_callee: Option<Expr> = None;
-                if let Expr::Attr(parent, member) = &callee.node
-                    && let Expr::Ident(p) = &parent.node
-                    && prefixes.contains(p)
-                {
-                    new_callee = Some(Expr::Ident(prefixed(p, member)));
-                } else if let Expr::Ident(name) = &callee.node
+                if let Expr::Attr(parent, member) = &callee.node {
+                    // Single-segment prefix: Attr(Ident("Foo"), "bar").
+                    if let Expr::Ident(p) = &parent.node
+                        && prefixes.contains(p)
+                    {
+                        new_callee = Some(Expr::Ident(prefixed(p, member)));
+                    } else if let Some(dotted) = attr_chain_to_dotted(&callee.node) {
+                        // Multi-segment prefix. Two viable shapes
+                        // depending on whether the chain ends with a
+                        // top-level fn or a sum-type constructor:
+                        //
+                        // 1. `Apps.Notepad.Store.initStore` — module
+                        //    prefix "Apps.Notepad.Store", fn part
+                        //    "initStore". Result: `Ident("Apps_Notepad_
+                        //    Store_initStore")`.
+                        //
+                        // 2. `Domain.Types.TaskEvent.TaskCreated` —
+                        //    module prefix "Domain.Types", type name
+                        //    "TaskEvent", variant "TaskCreated".
+                        //    Result: `Attr(Ident("Domain_Types_
+                        //    TaskEvent"), "TaskCreated")` — same
+                        //    shape `emit_dotted_builtin` already
+                        //    accepts for `<Module_TypeName>.<Variant>`.
+                        //
+                        // Pick the longest registered prefix in the
+                        // chain; treat any segments between the prefix
+                        // and the trailing member as a single
+                        // underscore-joined identifier, then either
+                        // produce a flat Ident (no extra segment) or
+                        // re-wrap as Attr.
+                        let segments: Vec<&str> = dotted.split('.').collect();
+                        if segments.len() >= 2 {
+                            let mut best: Option<usize> = None;
+                            for split in (1..segments.len()).rev() {
+                                let candidate = segments[..split].join(".");
+                                if prefixes.contains(&candidate) {
+                                    best = Some(split);
+                                    break;
+                                }
+                            }
+                            if let Some(split) = best {
+                                let prefix_dotted = segments[..split].join(".");
+                                match segments.len() - split {
+                                    0 => {} // unreachable — split < len
+                                    1 => {
+                                        // last segment IS the fn name
+                                        new_callee = Some(Expr::Ident(prefixed(
+                                            &prefix_dotted,
+                                            segments[split],
+                                        )));
+                                    }
+                                    _ => {
+                                        // Sum-type variant constructor:
+                                        // `Module.TypeName.Variant`. The
+                                        // wasm-gc registry stores the
+                                        // type name BARE (TypeDefs are
+                                        // not module-prefixed during
+                                        // flatten), so the resulting
+                                        // shape `Attr(Ident("TypeName"),
+                                        // "Variant")` lines up with the
+                                        // codegen's variant lookup.
+                                        let type_name =
+                                            segments[split..segments.len() - 1].join("_");
+                                        let last = segments[segments.len() - 1].to_string();
+                                        new_callee = Some(Expr::Attr(
+                                            Box::new(Spanned::bare(Expr::Ident(type_name))),
+                                            last,
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let _ = member;
+                }
+                if new_callee.is_none()
+                    && let Expr::Ident(name) = &callee.node
                     && let Some(prefix) = same_module_prefix
                     && same_module_fns.contains(name)
                 {
@@ -5522,8 +5609,61 @@ pub(super) fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[Modu
                     );
                 }
             }
-            Expr::Attr(obj, _) => {
-                rewrite_expr(&mut obj.node, prefixes, same_module_prefix, same_module_fns);
+            Expr::Attr(_, _) => {
+                // Chained-attr standalone form: `Domain.Types.TaskStatus.
+                // Blocked` (a nullary variant) needs the same prefix
+                // collapse as the FnCall callee path. Reform into
+                // `Attr(Ident("Domain_Types_TaskStatus"), "Blocked")`
+                // so the codegen's nullary-variant recogniser fires.
+                let rewrite: Option<Expr> = {
+                    let dotted = attr_chain_to_dotted(expr);
+                    dotted.and_then(|d| {
+                        let segments: Vec<&str> = d.split('.').collect();
+                        if segments.len() < 2 {
+                            return None;
+                        }
+                        let mut best: Option<usize> = None;
+                        for split in (1..segments.len()).rev() {
+                            let candidate = segments[..split].join(".");
+                            if prefixes.contains(&candidate) {
+                                best = Some(split);
+                                break;
+                            }
+                        }
+                        let split = best?;
+                        let prefix_dotted = segments[..split].join(".");
+                        let middle_count = segments.len() - split - 1;
+                        Some(if middle_count == 0 {
+                            Expr::Ident(prefixed(
+                                &prefix_dotted,
+                                segments[segments.len() - 1],
+                            ))
+                        } else {
+                            // Variant constructor — keep the type name
+                            // bare so the registry's `variant(member)`
+                            // lookup (parent=type name) succeeds.
+                            let type_name =
+                                segments[split..segments.len() - 1].join("_");
+                            let last = segments[segments.len() - 1].to_string();
+                            Expr::Attr(
+                                Box::new(Spanned::bare(Expr::Ident(type_name))),
+                                last,
+                            )
+                        })
+                    })
+                };
+                if let Some(new_node) = rewrite {
+                    *expr = new_node;
+                    return;
+                }
+                if let Expr::Attr(obj, _) = expr {
+                    rewrite_expr(
+                        &mut obj.node,
+                        prefixes,
+                        same_module_prefix,
+                        same_module_fns,
+                    );
+                }
             }
             Expr::Constructor(_, payload) => {
                 if let Some(p) = payload.as_deref_mut() {
