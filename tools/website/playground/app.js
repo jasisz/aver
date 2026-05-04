@@ -891,6 +891,7 @@ const codeEditor = document.querySelector("[data-code-editor]");
 // `codeEditor.value` directly, so the same flow works for a single
 // freshly-typed file or a dropped folder.
 function getActiveSource() {
+    syncActiveEditorToFiles();
     if (state.activeFile && state.files.has(state.activeFile)) {
         return state.files.get(state.activeFile);
     }
@@ -900,6 +901,7 @@ function getActiveName() {
     return state.activeFile || "playground.av";
 }
 function getProjectFiles() {
+    syncActiveEditorToFiles();
     // Return a plain object {path: source} for multi-file consumers.
     // Single-file fallback: use whatever's in the editor.
     if (state.files.size === 0) {
@@ -908,6 +910,12 @@ function getProjectFiles() {
     const out = {};
     for (const [k, v] of state.files) out[k] = v;
     return out;
+}
+
+function syncActiveEditorToFiles() {
+    if (codeEditor && state.activeFile && state.files.has(state.activeFile)) {
+        state.files.set(state.activeFile, codeEditor.value);
+    }
 }
 
 function renderTabs() {
@@ -1077,6 +1085,14 @@ async function loadCompiler() {
     return compiler;
 }
 
+function cacheCompiledWasm(bytes, name = "playground.wasm") {
+    const copy = bytes instanceof Uint8Array ? bytes.slice() : new Uint8Array(bytes).slice();
+    state.wasmBytes = copy.buffer;
+    state.wasmName = name;
+    dom.runButton.disabled = false;
+    return copy;
+}
+
 // Dispatch check/verify/why/context/audit to the multi-file binding
 // when the virtual fs has more than one tab, so depends[...] resolve
 // against the in-browser file map instead of surfacing as bogus
@@ -1084,7 +1100,7 @@ async function loadCompiler() {
 function runAnalysis(comp, kind, fallbackSource) {
     const entry = pickEntryFile();
     if (state.files.size > 1 && entry && typeof comp[`aver_${kind}_project`] === "function") {
-        const filesObj = Object.fromEntries(state.files);
+        const filesObj = getProjectFiles();
         return comp[`aver_${kind}_project`](JSON.stringify(filesObj), entry);
     }
     return comp[`aver_${kind}`](fallbackSource);
@@ -1107,6 +1123,7 @@ if (compileRunBtn) {
             runSelectedModule(fixed);
             return;
         }
+        syncActiveEditorToFiles();
         const entry = pickEntryFile();
         const source = entry ? state.files.get(entry) : getActiveSource();
         if (!source || !source.trim()) return;
@@ -1133,7 +1150,7 @@ if (compileRunBtn) {
             // fs instead of erroring on "unknown module".
             if (state.files.size > 1 && entry) {
                 setStatus(`Compiling project (entry: ${entry})…`, "info");
-                const filesObj = Object.fromEntries(state.files);
+                const filesObj = getProjectFiles();
                 wasmBytes = comp.aver_compile_project(JSON.stringify(filesObj), entry);
             } else {
                 setStatus("Compiling…", "info");
@@ -1141,10 +1158,8 @@ if (compileRunBtn) {
             }
             const ms = (performance.now() - t0).toFixed(0);
 
-            state.wasmBytes = wasmBytes.buffer;
-            state.wasmName = "playground.wasm";
-            renderCompileMeta(wasmBytes.length, ms);
-            dom.runButton.disabled = false;
+            const compiledBytes = cacheCompiledWasm(wasmBytes);
+            renderCompileMeta(compiledBytes.length, ms);
             runSelectedModule();
         } catch (e) {
             const msg = e.message || String(e);
@@ -1682,7 +1697,7 @@ async function downloadContextMarkdown(ctx) {
         const md =
             state.files.size > 1 && entry
                 ? comp.aver_context_md_project(
-                      JSON.stringify(Object.fromEntries(state.files)),
+                      JSON.stringify(getProjectFiles()),
                       entry
                   )
                 : comp.aver_context_md(getActiveSource());
@@ -1807,6 +1822,7 @@ function downloadProject() {
         setTimeout(() => URL.revokeObjectURL(url), 100);
         return;
     }
+    syncActiveEditorToFiles();
     if (state.files.size === 0) {
         setStatus("Nothing to download.", "info");
         return;
@@ -1885,14 +1901,19 @@ async function downloadAs(format) {
     if (format === "wasm") {
         try {
             const comp = await loadCompiler();
+            syncActiveEditorToFiles();
             const entry = pickEntryFile();
             const source = entry ? state.files.get(entry) : getActiveSource();
             if (!source || !source.trim()) { setStatus("Nothing to compile.", "info"); return; }
+            const t0 = performance.now();
             setStatus("Compiling to WASM…", "info");
             const wasmBytes = state.files.size > 1 && entry
-                ? comp.aver_compile_project(JSON.stringify(Object.fromEntries(state.files)), entry)
+                ? comp.aver_compile_project(JSON.stringify(getProjectFiles()), entry)
                 : comp.aver_compile(source);
-            const blob = new Blob([wasmBytes], { type: "application/wasm" });
+            const compiledBytes = cacheCompiledWasm(wasmBytes, `${name}.wasm`);
+            const ms = (performance.now() - t0).toFixed(0);
+            renderCompileMeta(compiledBytes.length, ms);
+            const blob = new Blob([compiledBytes], { type: "application/wasm" });
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = url;
@@ -1918,6 +1939,7 @@ async function downloadAs(format) {
 
     try {
         const comp = await loadCompiler();
+        syncActiveEditorToFiles();
         const entry = pickEntryFile();
         const source = entry ? state.files.get(entry) : getActiveSource();
         if (!source || !source.trim()) { setStatus("Nothing to compile.", "info"); return; }
@@ -1926,7 +1948,7 @@ async function downloadAs(format) {
         // the project binding so dependencies resolve against the
         // virtual fs instead of erroring on "Unknown identifier".
         const json = state.files.size > 1 && entry
-            ? comp[fnName.project](JSON.stringify(Object.fromEntries(state.files)), entry)
+            ? comp[fnName.project](JSON.stringify(getProjectFiles()), entry)
             : comp[fnName.single](source);
         const filesObj = JSON.parse(json);
         downloadFilesAsZip(filesObj, `${name}-${format}`);
@@ -2711,9 +2733,7 @@ function escapeHtml(str) {
 }
 
 function currentProjectFiles() {
-    return state.files.size > 0
-        ? Object.fromEntries(state.files)
-        : { "playground.av": getActiveSource() };
+    return getProjectFiles();
 }
 
 async function doRecord(skipDownload = true, entryExpr = null) {

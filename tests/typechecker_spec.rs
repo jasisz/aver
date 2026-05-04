@@ -775,6 +775,12 @@ fn valid_error_prop_in_result_fn() {
 }
 
 #[test]
+fn error_prop_accepts_unconstrained_ok_constructor_err_type() {
+    let src = "fn safe() -> Result<Int, String>\n    x = Result.Ok(5)?\n    Result.Ok(x)\n";
+    assert_no_errors(src);
+}
+
+#[test]
 fn error_prop_in_non_result_fn() {
     // ? used inside a function that returns Int — type error.
     let src = "fn bad(r: Result<Int, String>) -> Int\n    r?\n";

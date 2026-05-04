@@ -915,7 +915,9 @@ impl TypeChecker {
                         match self.current_fn_ret.clone() {
                             Some(Type::Result(_, fn_err_ty)) => {
                                 let mut subst = HashMap::new();
-                                if !Self::match_expected_type(&err_ty, &fn_err_ty, &mut subst) {
+                                let err_matches = matches!(err_ty.as_ref(), Type::Var(_))
+                                    || Self::match_expected_type(&err_ty, &fn_err_ty, &mut subst);
+                                if !err_matches {
                                     self.error_at_line(prop_line, format!(
                                         "Operator '?': Err type {} is incompatible with function's Err type {}",
                                         err_ty.display(),

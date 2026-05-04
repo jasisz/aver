@@ -13,6 +13,7 @@ use crate::ir::AnalysisResult;
 mod body;
 mod builtins;
 mod effects;
+mod flatten;
 mod lists;
 mod maps;
 mod module;
@@ -20,6 +21,8 @@ mod module;
 mod tests;
 mod types;
 mod wat_helper;
+
+pub use flatten::flatten_multimodule;
 
 #[derive(Debug)]
 pub enum WasmGcError {
