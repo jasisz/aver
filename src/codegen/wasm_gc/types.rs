@@ -990,6 +990,7 @@ impl TypeRegistry {
             .map(|i| i as u32)
     }
 
+    #[allow(dead_code)]
     pub(super) fn record_field_type(&self, record: &str, field: &str) -> Option<&str> {
         let fields = self.record_fields.get(record).or_else(|| {
             record

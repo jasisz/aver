@@ -701,8 +701,7 @@ mod tests {
     fn arm(pattern: Pattern, body: Spanned<Expr>) -> MatchArm {
         MatchArm {
             pattern,
-            body: Box::new(body),
-        }
+            body: Box::new(body), binding_slots: std::sync::OnceLock::new() }
     }
 
     /// Build a single-param fn whose body is `body_expr` (one Stmt::Expr).

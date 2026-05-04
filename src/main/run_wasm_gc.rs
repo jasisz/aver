@@ -12,7 +12,9 @@
 use colored::Colorize;
 use std::process;
 
+#[cfg(feature = "wasm")]
 use super::shared;
+#[cfg(feature = "wasm")]
 use super::shared::{parse_file, read_file, resolve_module_root_for_entry};
 
 #[cfg(feature = "wasm")]
@@ -640,7 +642,7 @@ fn host_print(
 ) -> Result<(), wasmtime::Error> {
     use wasmtime::Val;
     let any_ref = match params.first() {
-        Some(Val::AnyRef(r)) => r.clone(),
+        Some(Val::AnyRef(r)) => *r,
         _ => return Ok(()),
     };
     let Some(any_ref) = any_ref else {
@@ -692,7 +694,7 @@ fn lm_string_to_host(
 ) -> Result<Option<String>, wasmtime::Error> {
     use wasmtime::Val;
     let any_ref = match val {
-        Some(Val::AnyRef(r)) => r.clone(),
+        Some(Val::AnyRef(r)) => *r,
         _ => return Ok(None),
     };
     let Some(any_ref) = any_ref else {
@@ -739,7 +741,7 @@ fn host_option_string_some(
     let mut out = [Val::AnyRef(None)];
     factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
     Ok(match &out[0] {
-        Val::AnyRef(r) => r.clone(),
+        Val::AnyRef(r) => *r,
         _ => None,
     })
 }
@@ -759,7 +761,7 @@ fn host_option_string_none(
     let mut out = [Val::AnyRef(None)];
     factory.call(&mut *caller, &[], &mut out)?;
     Ok(match &out[0] {
-        Val::AnyRef(r) => r.clone(),
+        Val::AnyRef(r) => *r,
         _ => None,
     })
 }
@@ -782,7 +784,7 @@ fn host_terminal_size_make(
     let mut out = [Val::AnyRef(None)];
     factory.call(&mut *caller, &[Val::I64(width), Val::I64(height)], &mut out)?;
     Ok(match &out[0] {
-        Val::AnyRef(r) => r.clone(),
+        Val::AnyRef(r) => *r,
         _ => None,
     })
 }
@@ -810,7 +812,7 @@ fn host_http_response_make(
         &mut out,
     )?;
     Ok(match &out[0] {
-        Val::AnyRef(r) => r.clone(),
+        Val::AnyRef(r) => *r,
         _ => None,
     })
 }
@@ -830,7 +832,7 @@ fn host_result_http_response_ok(
     let mut out = [Val::AnyRef(None)];
     factory.call(&mut *caller, &[Val::AnyRef(resp)], &mut out)?;
     Ok(match &out[0] {
-        Val::AnyRef(r) => r.clone(),
+        Val::AnyRef(r) => *r,
         _ => None,
     })
 }
@@ -854,7 +856,7 @@ fn host_result_http_response_err(
     let mut out = [Val::AnyRef(None)];
     factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
     Ok(match &out[0] {
-        Val::AnyRef(r) => r.clone(),
+        Val::AnyRef(r) => *r,
         _ => None,
     })
 }
@@ -873,7 +875,7 @@ fn host_map_string_list_string_empty(
     let mut out = [Val::AnyRef(None)];
     factory.call(&mut *caller, &[], &mut out)?;
     Ok(match &out[0] {
-        Val::AnyRef(r) => r.clone(),
+        Val::AnyRef(r) => *r,
         _ => None,
     })
 }
@@ -901,7 +903,7 @@ fn host_tcp_connection_make(
         &mut out,
     )?;
     Ok(match &out[0] {
-        Val::AnyRef(r) => r.clone(),
+        Val::AnyRef(r) => *r,
         _ => None,
     })
 }
@@ -916,7 +918,7 @@ fn host_tcp_connection_id(
 ) -> Result<Option<String>, wasmtime::Error> {
     use wasmtime::Val;
     let any_ref = match val {
-        Some(Val::AnyRef(r)) => r.clone(),
+        Some(Val::AnyRef(r)) => *r,
         _ => return Ok(None),
     };
     let Some(_) = any_ref else { return Ok(None) };
@@ -946,7 +948,7 @@ fn host_result_tcp_connection_ok(
     let mut out = [Val::AnyRef(None)];
     factory.call(&mut *caller, &[Val::AnyRef(conn)], &mut out)?;
     Ok(match &out[0] {
-        Val::AnyRef(r) => r.clone(),
+        Val::AnyRef(r) => *r,
         _ => None,
     })
 }
@@ -970,7 +972,7 @@ fn host_result_tcp_connection_err(
     let mut out = [Val::AnyRef(None)];
     factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
     Ok(match &out[0] {
-        Val::AnyRef(r) => r.clone(),
+        Val::AnyRef(r) => *r,
         _ => None,
     })
 }
@@ -990,7 +992,7 @@ fn host_result_ok_unit(
     let mut out = [Val::AnyRef(None)];
     factory.call(&mut *caller, &[], &mut out)?;
     Ok(match &out[0] {
-        Val::AnyRef(r) => r.clone(),
+        Val::AnyRef(r) => *r,
         _ => None,
     })
 }
@@ -1014,7 +1016,7 @@ fn host_result_err_unit_string(
     let mut out = [Val::AnyRef(None)];
     factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
     Ok(match &out[0] {
-        Val::AnyRef(r) => r.clone(),
+        Val::AnyRef(r) => *r,
         _ => None,
     })
 }
@@ -1043,7 +1045,7 @@ fn host_result_ok_list_string(
     let mut tail_out = [Val::AnyRef(None)];
     nil.call(&mut *caller, &[], &mut tail_out)?;
     let mut current = match &tail_out[0] {
-        Val::AnyRef(r) => r.clone(),
+        Val::AnyRef(r) => *r,
         _ => None,
     };
     // Cons in reverse so the resulting list keeps the input order.
@@ -1055,18 +1057,18 @@ fn host_result_ok_list_string(
         let mut next = [Val::AnyRef(None)];
         cons.call(
             &mut *caller,
-            &[Val::AnyRef(Some(head)), Val::AnyRef(current.clone())],
+            &[Val::AnyRef(Some(head)), Val::AnyRef(current)],
             &mut next,
         )?;
         current = match &next[0] {
-            Val::AnyRef(r) => r.clone(),
+            Val::AnyRef(r) => *r,
             _ => None,
         };
     }
     let mut wrapped = [Val::AnyRef(None)];
     factory.call(&mut *caller, &[Val::AnyRef(current)], &mut wrapped)?;
     Ok(match &wrapped[0] {
-        Val::AnyRef(r) => r.clone(),
+        Val::AnyRef(r) => *r,
         _ => None,
     })
 }
@@ -1090,7 +1092,7 @@ fn host_result_err_list_string(
     let mut out = [Val::AnyRef(None)];
     factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
     Ok(match &out[0] {
-        Val::AnyRef(r) => r.clone(),
+        Val::AnyRef(r) => *r,
         _ => None,
     })
 }
@@ -1119,7 +1121,7 @@ fn host_result_ok_string(
     let mut out = [Val::AnyRef(None)];
     factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
     Ok(match &out[0] {
-        Val::AnyRef(r) => r.clone(),
+        Val::AnyRef(r) => *r,
         _ => None,
     })
 }
@@ -1145,7 +1147,7 @@ fn host_result_err_string(
     let mut out = [Val::AnyRef(None)];
     factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
     Ok(match &out[0] {
-        Val::AnyRef(r) => r.clone(),
+        Val::AnyRef(r) => *r,
         _ => None,
     })
 }
@@ -1201,7 +1203,7 @@ fn lm_string_from_host<T: 'static>(
         &mut from_lm_out,
     )?;
     let r = match &from_lm_out[0] {
-        Val::AnyRef(r) => r.clone(),
+        Val::AnyRef(r) => *r,
         _ => None,
     };
     Ok(r)

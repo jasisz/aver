@@ -984,12 +984,10 @@ mod tests {
             arms: vec![
                 MatchArm {
                     pattern: Pattern::Constructor("Option.Some".to_string(), vec!["x".to_string()]),
-                    body: Box::new(ident("x")),
-                },
+                    body: Box::new(ident("x")), binding_slots: std::sync::OnceLock::new() },
                 MatchArm {
                     pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
-                    body: Box::new(int(0)),
-                },
+                    body: Box::new(int(0)), binding_slots: std::sync::OnceLock::new() },
             ],
         });
         substitute_ident(&mut expr, "x", &int(1));
@@ -1018,12 +1016,10 @@ mod tests {
             arms: vec![
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: Box::new(ident("x")),
-                },
+                    body: Box::new(ident("x")), binding_slots: std::sync::OnceLock::new() },
                 MatchArm {
                     pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
-                    body: Box::new(ident("x")),
-                },
+                    body: Box::new(ident("x")), binding_slots: std::sync::OnceLock::new() },
             ],
         });
         substitute_ident(&mut expr, "x", &int(7));
@@ -1054,8 +1050,7 @@ mod tests {
                     BinOp::Add,
                     Box::new(ident("a")),
                     Box::new(ident("b")),
-                ))),
-            }],
+                ))), binding_slots: std::sync::OnceLock::new() }],
         });
         let mut bindings = std::collections::HashMap::new();
         bindings.insert("a".to_string(), int(99));

@@ -703,12 +703,10 @@ mod tests {
             arms: vec![
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
-                    body: Box::new(spanned(true_body)),
-                },
+                    body: Box::new(spanned(true_body)), binding_slots: std::sync::OnceLock::new() },
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(false)),
-                    body: Box::new(spanned(false_body)),
-                },
+                    body: Box::new(spanned(false_body)), binding_slots: std::sync::OnceLock::new() },
             ],
         }
     }
@@ -854,12 +852,10 @@ mod tests {
             arms: vec![
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
-                    body: Box::new(spanned(Expr::Literal(Literal::Str("one".to_string())))),
-                },
+                    body: Box::new(spanned(Expr::Literal(Literal::Str("one".to_string())))), binding_slots: std::sync::OnceLock::new() },
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: Box::new(spanned(Expr::Literal(Literal::Str("other".to_string())))),
-                },
+                    body: Box::new(spanned(Expr::Literal(Literal::Str("other".to_string())))), binding_slots: std::sync::OnceLock::new() },
             ],
         };
         let outer = Expr::Match {
@@ -867,12 +863,10 @@ mod tests {
             arms: vec![
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
-                    body: Box::new(spanned(Expr::Literal(Literal::Str("zero".to_string())))),
-                },
+                    body: Box::new(spanned(Expr::Literal(Literal::Str("zero".to_string())))), binding_slots: std::sync::OnceLock::new() },
                 MatchArm {
                     pattern: Pattern::Wildcard,
-                    body: Box::new(spanned(inner)),
-                },
+                    body: Box::new(spanned(inner)), binding_slots: std::sync::OnceLock::new() },
             ],
         };
         let fd = make_fn(

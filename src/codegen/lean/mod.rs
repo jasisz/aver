@@ -2842,16 +2842,14 @@ verify mirror law involutive
                                     sbb(Expr::Ident("n".to_string())),
                                     sbb(Expr::Literal(Literal::Int(1))),
                                 )),
-                            )),
-                        },
+                            )), binding_slots: std::sync::OnceLock::new() },
                         MatchArm {
                             pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
                             body: Box::new(map_set(
                                 sb(Expr::Ident("counts".to_string())),
                                 sb(Expr::Ident("word".to_string())),
                                 sb(Expr::Literal(Literal::Int(1))),
-                            )),
-                        },
+                            )), binding_slots: std::sync::OnceLock::new() },
                     ],
                 })),
             ])),
@@ -3171,8 +3169,7 @@ verify mirror law involutive
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Int(0)),
-                        body: sbb(Expr::Literal(Literal::Int(0))),
-                    },
+                        body: sbb(Expr::Literal(Literal::Int(0))), binding_slots: std::sync::OnceLock::new() },
                     MatchArm {
                         pattern: Pattern::Wildcard,
                         body: sbb(Expr::TailCall(Box::new(TailCallData::new(
@@ -3182,8 +3179,7 @@ verify mirror law involutive
                                 sbb(Expr::Ident("n".to_string())),
                                 sbb(Expr::Literal(Literal::Int(1))),
                             ))],
-                        )))),
-                    },
+                        )))), binding_slots: std::sync::OnceLock::new() },
                 ],
             }))),
             resolution: None,
@@ -3232,8 +3228,7 @@ verify mirror law involutive
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(true)),
-                        body: sbb(Expr::List(vec![])),
-                    },
+                        body: sbb(Expr::List(vec![])), binding_slots: std::sync::OnceLock::new() },
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(false)),
                         body: sbb(Expr::TailCall(Box::new(TailCallData::new(
@@ -3246,8 +3241,7 @@ verify mirror law involutive
                                     sbb(Expr::Literal(Literal::Int(1))),
                                 )),
                             ],
-                        )))),
-                    },
+                        )))), binding_slots: std::sync::OnceLock::new() },
                 ],
             }))),
             resolution: None,
@@ -3300,12 +3294,10 @@ verify mirror law involutive
                                 sbb(Expr::Ident("angle".to_string())),
                                 sbb(Expr::Literal(Literal::Int(360))),
                             ))],
-                        )))),
-                    },
+                        )))), binding_slots: std::sync::OnceLock::new() },
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(false)),
-                        body: sbb(Expr::Ident("angle".to_string())),
-                    },
+                        body: sbb(Expr::Ident("angle".to_string())), binding_slots: std::sync::OnceLock::new() },
                 ],
             }))),
             resolution: None,
@@ -3346,15 +3338,13 @@ verify mirror law involutive
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::EmptyList,
-                        body: sbb(Expr::Literal(Literal::Int(0))),
-                    },
+                        body: sbb(Expr::Literal(Literal::Int(0))), binding_slots: std::sync::OnceLock::new() },
                     MatchArm {
                         pattern: Pattern::Cons("h".to_string(), "t".to_string()),
                         body: sbb(Expr::TailCall(Box::new(TailCallData::new(
                             "len".to_string(),
                             vec![sb(Expr::Ident("t".to_string()))],
-                        )))),
-                    },
+                        )))), binding_slots: std::sync::OnceLock::new() },
                 ],
             }))),
             resolution: None,
@@ -3389,8 +3379,7 @@ verify mirror law involutive
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::EmptyList,
-                        body: sbb(Expr::Ident("count".to_string())),
-                    },
+                        body: sbb(Expr::Ident("count".to_string())), binding_slots: std::sync::OnceLock::new() },
                     MatchArm {
                         pattern: Pattern::Cons("h".to_string(), "t".to_string()),
                         body: sbb(Expr::TailCall(Box::new(TailCallData::new(
@@ -3403,8 +3392,7 @@ verify mirror law involutive
                                 )),
                                 sb(Expr::Ident("t".to_string())),
                             ],
-                        )))),
-                    },
+                        )))), binding_slots: std::sync::OnceLock::new() },
                 ],
             }))),
             resolution: None,
@@ -3453,8 +3441,7 @@ verify mirror law involutive
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
-                        body: sbb(Expr::Ident("pos".to_string())),
-                    },
+                        body: sbb(Expr::Ident("pos".to_string())), binding_slots: std::sync::OnceLock::new() },
                     MatchArm {
                         pattern: Pattern::Wildcard,
                         body: sbb(Expr::TailCall(Box::new(TailCallData::new(
@@ -3467,8 +3454,7 @@ verify mirror law involutive
                                     sbb(Expr::Literal(Literal::Int(1))),
                                 )),
                             ],
-                        )))),
-                    },
+                        )))), binding_slots: std::sync::OnceLock::new() },
                 ],
             }))),
             resolution: None,
@@ -3505,8 +3491,7 @@ verify mirror law involutive
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Int(0)),
-                        body: sbb(Expr::Literal(Literal::Bool(true))),
-                    },
+                        body: sbb(Expr::Literal(Literal::Bool(true))), binding_slots: std::sync::OnceLock::new() },
                     MatchArm {
                         pattern: Pattern::Wildcard,
                         body: sbb(Expr::TailCall(Box::new(TailCallData::new(
@@ -3516,8 +3501,7 @@ verify mirror law involutive
                                 sbb(Expr::Ident("n".to_string())),
                                 sbb(Expr::Literal(Literal::Int(1))),
                             ))],
-                        )))),
-                    },
+                        )))), binding_slots: std::sync::OnceLock::new() },
                 ],
             }))),
             resolution: None,
@@ -3534,8 +3518,7 @@ verify mirror law involutive
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Int(0)),
-                        body: sbb(Expr::Literal(Literal::Bool(false))),
-                    },
+                        body: sbb(Expr::Literal(Literal::Bool(false))), binding_slots: std::sync::OnceLock::new() },
                     MatchArm {
                         pattern: Pattern::Wildcard,
                         body: sbb(Expr::TailCall(Box::new(TailCallData::new(
@@ -3545,8 +3528,7 @@ verify mirror law involutive
                                 sbb(Expr::Ident("n".to_string())),
                                 sbb(Expr::Literal(Literal::Int(1))),
                             ))],
-                        )))),
-                    },
+                        )))), binding_slots: std::sync::OnceLock::new() },
                 ],
             }))),
             resolution: None,
@@ -3594,8 +3576,7 @@ verify mirror law involutive
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(true)),
-                        body: sbb(Expr::Ident("pos".to_string())),
-                    },
+                        body: sbb(Expr::Ident("pos".to_string())), binding_slots: std::sync::OnceLock::new() },
                     MatchArm {
                         pattern: Pattern::Wildcard,
                         body: sbb(Expr::TailCall(Box::new(TailCallData::new(
@@ -3604,8 +3585,7 @@ verify mirror law involutive
                                 sb(Expr::Ident("s".to_string())),
                                 sb(Expr::Ident("pos".to_string())),
                             ],
-                        )))),
-                    },
+                        )))), binding_slots: std::sync::OnceLock::new() },
                 ],
             }))),
             resolution: None,
@@ -3629,8 +3609,7 @@ verify mirror law involutive
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(true)),
-                        body: sbb(Expr::Ident("pos".to_string())),
-                    },
+                        body: sbb(Expr::Ident("pos".to_string())), binding_slots: std::sync::OnceLock::new() },
                     MatchArm {
                         pattern: Pattern::Wildcard,
                         body: sbb(Expr::TailCall(Box::new(TailCallData::new(
@@ -3643,8 +3622,7 @@ verify mirror law involutive
                                     sbb(Expr::Literal(Literal::Int(1))),
                                 )),
                             ],
-                        )))),
-                    },
+                        )))), binding_slots: std::sync::OnceLock::new() },
                 ],
             }))),
             resolution: None,
@@ -3705,15 +3683,13 @@ verify mirror law involutive
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::EmptyList,
-                        body: sbb(Expr::Literal(Literal::Int(0))),
-                    },
+                        body: sbb(Expr::Literal(Literal::Int(0))), binding_slots: std::sync::OnceLock::new() },
                     MatchArm {
                         pattern: Pattern::Cons("h".to_string(), "t".to_string()),
                         body: sbb(Expr::TailCall(Box::new(TailCallData::new(
                             "f".to_string(),
                             vec![sb(Expr::Ident("t".to_string()))],
-                        )))),
-                    },
+                        )))), binding_slots: std::sync::OnceLock::new() },
                 ],
             }))),
             resolution: None,

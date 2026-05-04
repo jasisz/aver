@@ -135,6 +135,11 @@ impl FnMap {
 
 pub(super) struct FnEntry {
     pub(super) wasm_idx: u32,
+    /// Kept for symmetry with the other backends' fn-table entries —
+    /// wasm-gc emit reads return type from `fd.return_type` directly
+    /// today, but the slot stays so the JSON-shaped `FnMap` consumed
+    /// by `--explain-passes` retains the field.
+    #[allow(dead_code)]
     pub(super) return_type: String,
 }
 

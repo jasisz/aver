@@ -8,12 +8,12 @@
 
 use wasm_encoder::ValType;
 
-use crate::ast::{Expr, FnBody, FnDef, Literal, Pattern, Spanned, Stmt};
+use crate::ast::{Expr, FnBody, FnDef, Literal, Pattern, Stmt};
 
 use super::super::WasmGcError;
 use super::super::types::{TypeRegistry, aver_to_wasm};
 use super::FnMap;
-use super::infer::{arm_is_option_pattern, arm_is_result_pattern, aver_type_str_of, wasm_type_of};
+use super::infer::{arm_is_option_pattern, arm_is_result_pattern};
 
 /// Per-fn slot table — one entry per local (param or binding) in
 /// resolver-allocation order. Slot N maps to `wasm local N`.
@@ -253,6 +253,7 @@ pub(super) fn stmt_needs_scratch(stmt: &Stmt, registry: &TypeRegistry) -> bool {
     }
 }
 
+#[allow(clippy::only_used_in_recursion)]
 pub(super) fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
     match expr {
         Expr::Match { subject, arms } => {

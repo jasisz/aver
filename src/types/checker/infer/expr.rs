@@ -460,7 +460,7 @@ impl TypeChecker {
                                 arg_types.len()
                             ),
                         );
-                        return Type::Invalid;
+                        Type::Invalid
                     } else {
                         let mut subst = HashMap::new();
                         for (i, (arg_ty, param_ty)) in
@@ -479,7 +479,7 @@ impl TypeChecker {
                                 );
                             }
                         }
-                        return Self::instantiate_type(&sig.ret, &subst);
+                        Self::instantiate_type(&sig.ret, &subst)
                     }
                 };
                 let validate_special_call =

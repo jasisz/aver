@@ -167,9 +167,19 @@ impl<'a> ResolverState<'a> {
         idx
     }
 
-    /// Allocate a fresh slot, declare `name` in the innermost scope,
-    /// also record in `last_alloc` for post-resolve lookups. Wildcard
-    /// (`_`) returns `u16::MAX` and is *not* declared.
+    /// Declare `name` in the innermost scope. Wildcard (`_`) returns
+    /// `u16::MAX` and is *not* declared.
+    ///
+    /// Always allocates a fresh slot — including when `name` already
+    /// exists in an outer scope. That keeps two arms in the same
+    /// match sound when they bind the same name to different types
+    /// (workflow_engine's `serializeTaskEvent` reuses `deadline` as
+    /// `Option<String>` in one arm and `String` in another). Backends
+    /// that key off names (Rust, Lean, Dafny — all emit pattern-syntax
+    /// directly) keep working unchanged. The two slot-driven backends
+    /// (VM and wasm-gc) consult `MatchArm::binding_slots` for the per-
+    /// arm fresh slot rather than `FnResolution.local_slots[name]`,
+    /// which only carries the last allocation per name.
     fn declare(&mut self, name: &str, ty: Type) -> u16 {
         if name == "_" {
             return u16::MAX;
@@ -198,9 +208,15 @@ impl<'a> ResolverState<'a> {
         for stmt in stmts {
             match stmt {
                 Stmt::Binding(name, _annot, expr) => {
-                    self.walk_expr(expr);
+                    // Allocate the binding's slot BEFORE walking the
+                    // RHS — pattern bindings inside the RHS expression
+                    // get later slots, matching the legacy layout (the
+                    // slot table observable through `FnResolution.
+                    // local_slots` keeps params, then top-level let
+                    // bindings, then pattern-introduced bindings).
                     let ty = expr.ty().cloned().unwrap_or(Type::Invalid);
                     self.declare(name, ty);
+                    self.walk_expr(expr);
                 }
                 Stmt::Expr(expr) => self.walk_expr(expr),
             }
@@ -345,9 +361,7 @@ impl<'a> ResolverState<'a> {
             }
             Pattern::Tuple(items) => {
                 let elem_tys: Vec<Type> = match subject_ty {
-                    Some(Type::Tuple(elems)) if elems.len() == items.len() => {
-                        elems.iter().cloned().collect()
-                    }
+                    Some(Type::Tuple(elems)) if elems.len() == items.len() => elems.to_vec(),
                     _ => vec![Type::Invalid; items.len()],
                 };
                 let mut slots = Vec::new();
@@ -357,450 +371,6 @@ impl<'a> ResolverState<'a> {
                 slots
             }
             Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => Vec::new(),
-        }
-    }
-}
-
-/// Walk every binding-introducing site in a statement list and stamp
-/// `slot_types[slot]` with the binding's Aver type. Stmt-level `let`
-/// bindings pull the type from the producer expression's stamp; match-
-/// arm pattern bindings pull from the subject's stamp + the pattern
-/// shape.
-fn compute_stmts_slot_types(
-    stmts: &[Stmt],
-    local_slots: &HashMap<String, u16>,
-    type_info: &TypeInfo,
-    slot_types: &mut [Type],
-) {
-    for stmt in stmts {
-        match stmt {
-            Stmt::Binding(name, _annot, expr) => {
-                if let Some(&slot) = local_slots.get(name)
-                    && let Some(ty) = expr.ty()
-                {
-                    slot_types[slot as usize] = ty.clone();
-                }
-                compute_expr_slot_types(expr, local_slots, type_info, slot_types);
-            }
-            Stmt::Expr(expr) => {
-                compute_expr_slot_types(expr, local_slots, type_info, slot_types);
-            }
-        }
-    }
-}
-
-fn compute_expr_slot_types(
-    expr: &Spanned<Expr>,
-    local_slots: &HashMap<String, u16>,
-    type_info: &TypeInfo,
-    slot_types: &mut [Type],
-) {
-    match &expr.node {
-        Expr::Match { subject, arms } => {
-            compute_expr_slot_types(subject, local_slots, type_info, slot_types);
-            let subject_ty = subject.ty().cloned();
-            for arm in arms {
-                walk_pattern_bindings(
-                    &arm.pattern,
-                    subject_ty.as_ref(),
-                    local_slots,
-                    type_info,
-                    slot_types,
-                );
-                compute_expr_slot_types(&arm.body, local_slots, type_info, slot_types);
-            }
-        }
-        Expr::BinOp(_, l, r) => {
-            compute_expr_slot_types(l, local_slots, type_info, slot_types);
-            compute_expr_slot_types(r, local_slots, type_info, slot_types);
-        }
-        Expr::FnCall(callee, args) => {
-            compute_expr_slot_types(callee, local_slots, type_info, slot_types);
-            for a in args {
-                compute_expr_slot_types(a, local_slots, type_info, slot_types);
-            }
-        }
-        Expr::TailCall(boxed) => {
-            for a in &boxed.args {
-                compute_expr_slot_types(a, local_slots, type_info, slot_types);
-            }
-        }
-        Expr::ErrorProp(inner) => {
-            compute_expr_slot_types(inner, local_slots, type_info, slot_types);
-        }
-        Expr::Constructor(_, payload) => {
-            if let Some(p) = payload.as_deref() {
-                compute_expr_slot_types(p, local_slots, type_info, slot_types);
-            }
-        }
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            for it in items {
-                compute_expr_slot_types(it, local_slots, type_info, slot_types);
-            }
-        }
-        Expr::MapLiteral(entries) => {
-            for (k, v) in entries {
-                compute_expr_slot_types(k, local_slots, type_info, slot_types);
-                compute_expr_slot_types(v, local_slots, type_info, slot_types);
-            }
-        }
-        Expr::InterpolatedStr(parts) => {
-            for p in parts {
-                if let StrPart::Parsed(inner) = p {
-                    compute_expr_slot_types(inner, local_slots, type_info, slot_types);
-                }
-            }
-        }
-        Expr::RecordCreate { fields, .. } => {
-            for (_, e) in fields {
-                compute_expr_slot_types(e, local_slots, type_info, slot_types);
-            }
-        }
-        Expr::RecordUpdate { base, updates, .. } => {
-            compute_expr_slot_types(base, local_slots, type_info, slot_types);
-            for (_, e) in updates {
-                compute_expr_slot_types(e, local_slots, type_info, slot_types);
-            }
-        }
-        Expr::Attr(obj, _) => {
-            compute_expr_slot_types(obj, local_slots, type_info, slot_types);
-        }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
-    }
-}
-
-/// Recursive descent over a pattern, stamping each binding's slot with
-/// the correct Aver type derived from the subject's type + the pattern
-/// shape. Built-in shapes (Result, Option, List, Tuple) come from
-/// `Type` constructors; user-declared variants come from `TypeInfo`.
-fn walk_pattern_bindings(
-    pattern: &Pattern,
-    subject_ty: Option<&Type>,
-    local_slots: &HashMap<String, u16>,
-    type_info: &TypeInfo,
-    slot_types: &mut [Type],
-) {
-    fn store(name: &str, ty: Type, local_slots: &HashMap<String, u16>, slot_types: &mut [Type]) {
-        if name == "_" {
-            return;
-        }
-        if let Some(&slot) = local_slots.get(name) {
-            // First-occurrence wins; the resolver assigns a slot only
-            // once per name and reuses it across arms, so we shouldn't
-            // overwrite later occurrences with a different (possibly
-            // less precise) type.
-            if matches!(slot_types[slot as usize], Type::Invalid) {
-                slot_types[slot as usize] = ty;
-            }
-        }
-    }
-    match pattern {
-        Pattern::Ident(name) => {
-            if let Some(ty) = subject_ty {
-                store(name, ty.clone(), local_slots, slot_types);
-            }
-        }
-        Pattern::Cons(head, tail) => {
-            // `[head, ..tail]` — head: T, tail: List<T>.
-            if let Some(Type::List(inner)) = subject_ty {
-                store(head, (**inner).clone(), local_slots, slot_types);
-                store(tail, Type::List(inner.clone()), local_slots, slot_types);
-            }
-        }
-        Pattern::Tuple(items) => {
-            // `(a, b, c) -> ...` — each element gets the matching tuple
-            // field type. Per-item recursion handles nested patterns
-            // (e.g. `Pattern::Constructor` inside a tuple, used by
-            // multi-arm tuple-of-Ok/Err matches).
-            if let Some(Type::Tuple(elem_tys)) = subject_ty
-                && elem_tys.len() == items.len()
-            {
-                for (pat, ty) in items.iter().zip(elem_tys.iter()) {
-                    walk_pattern_bindings(pat, Some(ty), local_slots, type_info, slot_types);
-                }
-            }
-        }
-        Pattern::Constructor(name, bindings) => {
-            let bare = name.rsplit('.').next().unwrap_or(name);
-            // Built-in shapes — Result / Option / Wrapper.
-            match (bare, subject_ty) {
-                ("Ok", Some(Type::Result(t, _))) => {
-                    if let Some(b) = bindings.first() {
-                        store(b, (**t).clone(), local_slots, slot_types);
-                    }
-                }
-                ("Err", Some(Type::Result(_, e))) => {
-                    if let Some(b) = bindings.first() {
-                        store(b, (**e).clone(), local_slots, slot_types);
-                    }
-                }
-                ("Some", Some(Type::Option(inner))) => {
-                    if let Some(b) = bindings.first() {
-                        store(b, (**inner).clone(), local_slots, slot_types);
-                    }
-                }
-                ("None", _) => { /* nullary; no bindings */ }
-                _ => {
-                    // User-declared variant — look up the parent sum's
-                    // declared field types via the cross-fn registry.
-                    // Disambiguate by subject type when the same bare
-                    // variant name is shared across multiple sumtypes
-                    // (e.g. `Query.ProviderSummary(String)` vs
-                    // `QueryOutput.ProviderSummary(ProviderSummary)`).
-                    let parent_hint: Option<String> = match (subject_ty, name.split_once('.')) {
-                        (Some(Type::Named(parent)), _) => Some(parent.clone()),
-                        (_, Some((parent, _))) => Some(parent.to_string()),
-                        _ => type_info.variant_parents.get(bare).and_then(|parents| {
-                            if parents.len() == 1 {
-                                Some(parents[0].clone())
-                            } else {
-                                None
-                            }
-                        }),
-                    };
-                    let fields =
-                        parent_hint.and_then(|p| type_info.variants.get(&(p, bare.to_string())));
-                    if let Some(fields) = fields {
-                        for (binding, field_ty_str) in bindings.iter().zip(fields.iter()) {
-                            let field_ty = crate::types::parse_type_str_strict(field_ty_str)
-                                .unwrap_or(Type::Invalid);
-                            store(binding, field_ty, local_slots, slot_types);
-                        }
-                    }
-                }
-            }
-        }
-        Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => {}
-    }
-}
-
-/// Collect all binding names from a statement list and assign slots.
-/// This handles match arms recursively (pattern bindings get slots too).
-fn collect_binding_slots(
-    stmts: &[Stmt],
-    local_slots: &mut HashMap<String, u16>,
-    next_slot: &mut u16,
-) {
-    for stmt in stmts {
-        match stmt {
-            Stmt::Binding(name, _, expr) => {
-                if !local_slots.contains_key(name) {
-                    local_slots.insert(name.clone(), *next_slot);
-                    *next_slot += 1;
-                }
-                collect_expr_bindings(expr, local_slots, next_slot);
-            }
-            Stmt::Expr(expr) => {
-                collect_expr_bindings(expr, local_slots, next_slot);
-            }
-        }
-    }
-}
-
-/// Collect pattern bindings from match expressions inside an expression tree.
-fn collect_expr_bindings(
-    expr: &Spanned<Expr>,
-    local_slots: &mut HashMap<String, u16>,
-    next_slot: &mut u16,
-) {
-    match &expr.node {
-        Expr::Match { subject, arms } => {
-            collect_expr_bindings(subject, local_slots, next_slot);
-            for arm in arms {
-                collect_pattern_bindings(&arm.pattern, local_slots, next_slot);
-                collect_expr_bindings(&arm.body, local_slots, next_slot);
-            }
-        }
-        Expr::BinOp(_, left, right) => {
-            collect_expr_bindings(left, local_slots, next_slot);
-            collect_expr_bindings(right, local_slots, next_slot);
-        }
-        Expr::FnCall(func, args) => {
-            collect_expr_bindings(func, local_slots, next_slot);
-            for arg in args {
-                collect_expr_bindings(arg, local_slots, next_slot);
-            }
-        }
-        Expr::ErrorProp(inner) => {
-            collect_expr_bindings(inner, local_slots, next_slot);
-        }
-        Expr::Constructor(_, Some(inner)) => {
-            collect_expr_bindings(inner, local_slots, next_slot);
-        }
-        Expr::List(elements) => {
-            for elem in elements {
-                collect_expr_bindings(elem, local_slots, next_slot);
-            }
-        }
-        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            for item in items {
-                collect_expr_bindings(item, local_slots, next_slot);
-            }
-        }
-        Expr::MapLiteral(entries) => {
-            for (key, value) in entries {
-                collect_expr_bindings(key, local_slots, next_slot);
-                collect_expr_bindings(value, local_slots, next_slot);
-            }
-        }
-        Expr::InterpolatedStr(parts) => {
-            for part in parts {
-                if let StrPart::Parsed(e) = part {
-                    collect_expr_bindings(e, local_slots, next_slot);
-                }
-            }
-        }
-        Expr::RecordCreate { fields, .. } => {
-            for (_, expr) in fields {
-                collect_expr_bindings(expr, local_slots, next_slot);
-            }
-        }
-        Expr::RecordUpdate { base, updates, .. } => {
-            collect_expr_bindings(base, local_slots, next_slot);
-            for (_, expr) in updates {
-                collect_expr_bindings(expr, local_slots, next_slot);
-            }
-        }
-        Expr::Attr(obj, _) => {
-            collect_expr_bindings(obj, local_slots, next_slot);
-        }
-        Expr::TailCall(boxed) => {
-            for arg in &boxed.args {
-                collect_expr_bindings(arg, local_slots, next_slot);
-            }
-        }
-        // Leaves — no bindings to collect
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {}
-    }
-}
-
-/// Assign slots for names introduced by a pattern.
-fn collect_pattern_bindings(
-    pattern: &Pattern,
-    local_slots: &mut HashMap<String, u16>,
-    next_slot: &mut u16,
-) {
-    match pattern {
-        Pattern::Ident(name) => {
-            if !local_slots.contains_key(name) {
-                local_slots.insert(name.clone(), *next_slot);
-                *next_slot += 1;
-            }
-        }
-        Pattern::Cons(head, tail) => {
-            for name in [head, tail] {
-                if name != "_" && !local_slots.contains_key(name) {
-                    local_slots.insert(name.clone(), *next_slot);
-                    *next_slot += 1;
-                }
-            }
-        }
-        Pattern::Constructor(_, bindings) => {
-            for name in bindings {
-                if name != "_" && !local_slots.contains_key(name) {
-                    local_slots.insert(name.clone(), *next_slot);
-                    *next_slot += 1;
-                }
-            }
-        }
-        Pattern::Tuple(items) => {
-            for item in items {
-                collect_pattern_bindings(item, local_slots, next_slot);
-            }
-        }
-        Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => {}
-    }
-}
-
-/// Resolve `Expr::Ident` → `Expr::Resolved` for locals in an expression.
-fn resolve_expr(expr: &mut Spanned<Expr>, local_slots: &HashMap<String, u16>) {
-    match &mut expr.node {
-        Expr::Ident(name) => {
-            if let Some(&slot) = local_slots.get(name) {
-                expr.node = Expr::Resolved {
-                    slot,
-                    name: name.clone(),
-                    last_use: AnnotBool(false),
-                };
-            }
-            // else: global/namespace — leave as Ident for HashMap fallback
-        }
-        Expr::Resolved { .. } | Expr::Literal(_) => {}
-        Expr::Attr(obj, _) => {
-            resolve_expr(obj, local_slots);
-        }
-        Expr::FnCall(func, args) => {
-            resolve_expr(func, local_slots);
-            for arg in args {
-                resolve_expr(arg, local_slots);
-            }
-        }
-        Expr::BinOp(_, left, right) => {
-            resolve_expr(left, local_slots);
-            resolve_expr(right, local_slots);
-        }
-        Expr::Match { subject, arms } => {
-            resolve_expr(subject, local_slots);
-            for arm in arms {
-                resolve_expr(&mut arm.body, local_slots);
-            }
-        }
-        Expr::Constructor(_, Some(inner)) => {
-            resolve_expr(inner, local_slots);
-        }
-        Expr::Constructor(_, None) => {}
-        Expr::ErrorProp(inner) => {
-            resolve_expr(inner, local_slots);
-        }
-        Expr::InterpolatedStr(parts) => {
-            for part in parts {
-                if let StrPart::Parsed(e) = part {
-                    resolve_expr(e, local_slots);
-                }
-            }
-        }
-        Expr::List(elements) => {
-            for elem in elements {
-                resolve_expr(elem, local_slots);
-            }
-        }
-        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            for item in items {
-                resolve_expr(item, local_slots);
-            }
-        }
-        Expr::MapLiteral(entries) => {
-            for (key, value) in entries {
-                resolve_expr(key, local_slots);
-                resolve_expr(value, local_slots);
-            }
-        }
-        Expr::RecordCreate { fields, .. } => {
-            for (_, expr) in fields {
-                resolve_expr(expr, local_slots);
-            }
-        }
-        Expr::RecordUpdate { base, updates, .. } => {
-            resolve_expr(base, local_slots);
-            for (_, expr) in updates {
-                resolve_expr(expr, local_slots);
-            }
-        }
-        Expr::TailCall(boxed) => {
-            for arg in &mut boxed.args {
-                resolve_expr(arg, local_slots);
-            }
-        }
-    }
-}
-
-/// Resolve expressions inside statements.
-fn resolve_stmts(stmts: &mut [Stmt], local_slots: &HashMap<String, u16>) {
-    for stmt in stmts {
-        match stmt {
-            Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
-                resolve_expr(expr, local_slots);
-            }
         }
     }
 }

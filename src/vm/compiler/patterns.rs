@@ -289,6 +289,7 @@ impl<'a> FnCompiler<'a> {
 
         for (i, arm) in arms.iter().enumerate() {
             let is_last = i == arms.len() - 1;
+            let saved = self.install_arm_slots(arm);
 
             // Match is exhaustive — last arm always matches, skip pattern check.
             let fail_patches = if is_last {
@@ -329,6 +330,7 @@ impl<'a> FnCompiler<'a> {
 
             self.emit_op(POP);
             self.compile_expr(&arm.body)?;
+            self.restore_local_slots(saved);
 
             if !is_last {
                 end_jumps.push(self.emit_jump(JUMP));
@@ -478,12 +480,15 @@ impl<'a> FnCompiler<'a> {
             self.code[entry_offset_patches[table_idx]] = bytes[0];
             self.code[entry_offset_patches[table_idx] + 1] = bytes[1];
 
+            let saved = self.install_arm_slots(arm);
+
             // Prologue: unwrap/bind for tag-match arms.
             self.emit_dispatch_arm_prologue(plan_entry);
 
             // Pop subject, compile body.
             self.emit_op(POP);
             self.compile_expr(&arm.body)?;
+            self.restore_local_slots(saved);
 
             end_jumps.push(self.emit_jump(JUMP));
         }
@@ -498,11 +503,13 @@ impl<'a> FnCompiler<'a> {
         if has_default {
             let default_plan = shape.default_arm.as_ref().unwrap();
             let default_arm = &arms[default_plan.arm_index];
+            let saved = self.install_arm_slots(default_arm);
             if let Some(name) = &default_plan.binding_name {
                 self.dup_and_bind_top_to_local(name);
             }
             self.emit_op(POP);
             self.compile_expr(&default_arm.body)?;
+            self.restore_local_slots(saved);
         } else {
             // Match is exhaustive by Aver's type system — no MATCH_FAIL needed.
         }
@@ -560,11 +567,13 @@ impl<'a> FnCompiler<'a> {
             // Default arm body — subject was popped by opcode on miss,
             // then pushed back. Compile normally.
             let default_arm = &arms[default_arm_index.unwrap()];
+            let saved = self.install_arm_slots(default_arm);
             if let Pattern::Ident(name) = &default_arm.pattern {
                 self.dup_and_bind_top_to_local(name);
             }
             self.emit_op(POP);
             self.compile_expr(&default_arm.body)?;
+            self.restore_local_slots(saved);
         }
 
         // Patch the hit-skip JUMP to land here (after the default body).

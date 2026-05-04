@@ -466,12 +466,10 @@ mod tests {
             arms: vec![
                 MatchArm {
                     pattern: crate::ast::Pattern::Literal(Literal::Bool(true)),
-                    body: Box::new(spanned(body)),
-                },
+                    body: Box::new(spanned(body)), binding_slots: std::sync::OnceLock::new() },
                 MatchArm {
                     pattern: crate::ast::Pattern::Literal(Literal::Bool(false)),
-                    body: Box::new(spanned(ident("i"))),
-                },
+                    body: Box::new(spanned(ident("i"))), binding_slots: std::sync::OnceLock::new() },
             ],
         };
 
@@ -509,12 +507,10 @@ mod tests {
             arms: vec![
                 MatchArm {
                     pattern: crate::ast::Pattern::Literal(Literal::Bool(true)),
-                    body: Box::new(spanned(body)),
-                },
+                    body: Box::new(spanned(body)), binding_slots: std::sync::OnceLock::new() },
                 MatchArm {
                     pattern: crate::ast::Pattern::Literal(Literal::Bool(false)),
-                    body: Box::new(spanned(ident("x"))),
-                },
+                    body: Box::new(spanned(ident("x"))), binding_slots: std::sync::OnceLock::new() },
             ],
         };
 
@@ -549,12 +545,10 @@ mod tests {
             arms: vec![
                 MatchArm {
                     pattern: crate::ast::Pattern::Literal(Literal::Bool(true)),
-                    body: Box::new(spanned(ident("x"))),
-                },
+                    body: Box::new(spanned(ident("x"))), binding_slots: std::sync::OnceLock::new() },
                 MatchArm {
                     pattern: crate::ast::Pattern::Literal(Literal::Bool(false)),
-                    body: Box::new(spanned(ident("x"))),
-                },
+                    body: Box::new(spanned(ident("x"))), binding_slots: std::sync::OnceLock::new() },
             ],
         };
 

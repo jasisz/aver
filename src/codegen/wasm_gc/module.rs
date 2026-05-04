@@ -1373,7 +1373,7 @@ fn allocate_factory_exports(
         let s_ref = ref_null(s_idx);
         let opt_ref = ref_null(opt_idx);
 
-        types.ty().function([s_ref], [opt_ref.clone()]);
+        types.ty().function([s_ref], [opt_ref]);
         fx.opt_string_some = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
@@ -1436,7 +1436,7 @@ fn allocate_factory_exports(
         let s_ref = ref_null(s_idx);
         let res_ref = ref_null(res_idx);
 
-        types.ty().function([s_ref.clone()], [res_ref.clone()]);
+        types.ty().function([s_ref], [res_ref]);
         fx.result_string_string_ok = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
@@ -1484,7 +1484,7 @@ fn allocate_factory_exports(
         let s_ref = ref_null(s_idx);
         let res_ref = ref_null(res_idx);
 
-        types.ty().function([], [res_ref.clone()]);
+        types.ty().function([], [res_ref]);
         fx.result_unit_string_ok = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
@@ -1526,10 +1526,7 @@ fn allocate_factory_exports(
         let s_ref = ref_null(s_idx);
         let rec_ref = ref_null(rec_idx);
 
-        types.ty().function(
-            [s_ref.clone(), s_ref.clone(), ValType::I64],
-            [rec_ref.clone()],
-        );
+        types.ty().function([s_ref, s_ref, ValType::I64], [rec_ref]);
         fx.tcp_connection_make = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
@@ -1568,7 +1565,7 @@ fn allocate_factory_exports(
         let rec_ref = ref_null(rec_idx);
         let res_ref = ref_null(res_idx);
 
-        types.ty().function([rec_ref], [res_ref.clone()]);
+        types.ty().function([rec_ref], [res_ref]);
         fx.result_tcp_connection_string_ok = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
@@ -1627,10 +1624,9 @@ fn allocate_factory_exports(
         let values_ref = ref_null(map_slots.values_array);
         let _ = (keys_ref, values_ref);
 
-        types.ty().function(
-            [ValType::I64, s_ref.clone(), map_ref.clone()],
-            [rec_ref.clone()],
-        );
+        types
+            .ty()
+            .function([ValType::I64, s_ref, map_ref], [rec_ref]);
         fx.http_response_make = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
@@ -1638,7 +1634,7 @@ fn allocate_factory_exports(
         *next_type_idx += 1;
         *next_fn_idx += 1;
 
-        types.ty().function([rec_ref], [res_ref.clone()]);
+        types.ty().function([rec_ref], [res_ref]);
         fx.result_http_response_string_ok = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
@@ -1688,7 +1684,7 @@ fn allocate_factory_exports(
         let list_ref = ref_null(list_idx);
         let res_ref = ref_null(res_idx);
 
-        types.ty().function([list_ref.clone()], [res_ref.clone()]);
+        types.ty().function([list_ref], [res_ref]);
         fx.result_list_string_string_ok = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
@@ -1696,7 +1692,7 @@ fn allocate_factory_exports(
         *next_type_idx += 1;
         *next_fn_idx += 1;
 
-        types.ty().function([s_ref.clone()], [res_ref]);
+        types.ty().function([s_ref], [res_ref]);
         fx.result_list_string_string_err = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
@@ -1704,9 +1700,7 @@ fn allocate_factory_exports(
         *next_type_idx += 1;
         *next_fn_idx += 1;
 
-        types
-            .ty()
-            .function([s_ref, list_ref.clone()], [list_ref.clone()]);
+        types.ty().function([s_ref, list_ref], [list_ref]);
         fx.list_string_cons = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,

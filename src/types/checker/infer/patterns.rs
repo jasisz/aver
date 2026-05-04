@@ -1,16 +1,7 @@
 use super::*;
 
 impl TypeChecker {
-    pub(in super::super) fn infer_type_with_pattern_bindings(
-        &mut self,
-        pattern: &Pattern,
-        subject_ty: &Type,
-        body: &Spanned<Expr>,
-    ) -> Type {
-        self.infer_type_with_pattern_bindings_expected(pattern, subject_ty, body, None)
-    }
-
-    /// Same as `infer_type_with_pattern_bindings`, but threads an `expected`
+    /// Threads an `expected`
     /// type into the arm body so generic constructors in arm positions
     /// (`[] -> Option.None`) pick up T from the surrounding context (fn
     /// return type, outer expected) instead of stamping `Unknown`.
