@@ -81,9 +81,9 @@ fn main() -> Int
             "interp_lower",
             "buffer_build",
             "resolve",
-            "last_use",
             "analyze",
             "escape",
+            "last_use",
         ]
     );
 }

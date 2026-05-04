@@ -616,9 +616,9 @@ fn id(n: Int) -> Int
                 PipelineStage::InterpLower,
                 PipelineStage::BufferBuild,
                 PipelineStage::Resolve,
-                PipelineStage::LastUse,
                 PipelineStage::Analyze,
                 PipelineStage::Escape,
+                PipelineStage::LastUse,
             ]
         );
     }
@@ -849,8 +849,8 @@ fn id(n: Int) -> Int
                 PipelineStage::Typecheck,
                 PipelineStage::InterpLower,
                 PipelineStage::BufferBuild,
-                PipelineStage::LastUse, // fires even without Resolve — a no-op pass
                 PipelineStage::Escape,
+                PipelineStage::LastUse, // fires even without Resolve — a no-op pass
             ]
         );
     }
@@ -885,9 +885,9 @@ fn factorial(n: Int, acc: Int) -> Int
                 PipelineStage::InterpLower,
                 PipelineStage::BufferBuild,
                 PipelineStage::Resolve,
-                PipelineStage::LastUse,
                 PipelineStage::Analyze,
                 PipelineStage::Escape,
+                PipelineStage::LastUse,
             ]
         );
 
