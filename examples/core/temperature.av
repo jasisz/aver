@@ -100,29 +100,31 @@ verify collectFreezingTemps
     collectFreezingTemps([0.0, -10.0, 4.0]) => [0.0, -10.0]
     collectFreezingTemps([5.0, 10.0]) => []
 
+fn showKelvin(r: Result<Float, String>) -> String
+    ? "Render a Kelvin Result as `K(N)` or `Err(\"...\")`."
+    match r
+        Result.Ok(k)    -> "K({k})"
+        Result.Err(msg) -> "Err(\"{msg}\")"
+
+fn showListFloatInner(xs: List<Float>) -> String
+    ? "Comma-separated body of a List<Float> render."
+    match xs
+        [] -> ""
+        [head, ..tail] -> match tail
+            [] -> "{head}"
+            _  -> "{head}, {showListFloatInner(tail)}"
+
+fn showListFloat(xs: List<Float>) -> String
+    ? "Render List<Float> as `[1.0, 2.0]`."
+    "[{showListFloatInner(xs)}]"
+
 fn main() -> Unit
     ! [Console.print]
-    boiling = celsiusToFahr(100.0)
-    Console.print("100 C in Fahrenheit:")
-    Console.print(boiling)
-
-    body = fahrToCelsius(98.6)
-    Console.print("98.6 F in Celsius:")
-    Console.print(body)
-
-    freezeK = celsiusToKelvin(0.0)
-    Console.print("0 C in Kelvin:")
-    Console.print(freezeK)
-
-    invalid = celsiusToKelvin(-300.0)
-    Console.print("−300 C in Kelvin:")
-    Console.print(invalid)
+    Console.print("100 C in Fahrenheit: {celsiusToFahr(100.0)}")
+    Console.print("98.6 F in Celsius: {fahrToCelsius(98.6)}")
+    Console.print("0 C in Kelvin: {showKelvin(celsiusToKelvin(0.0))}")
+    Console.print("-300 C in Kelvin: {showKelvin(celsiusToKelvin(-300.0))}")
 
     temps = [0.0, 15.0, 25.0, 37.0, 100.0]
-    boilingTemps = collectBoilingTemps(temps)
-    Console.print("Boiling:")
-    Console.print(boilingTemps)
-
-    freezingTemps = collectFreezingTemps(temps)
-    Console.print("Freezing:")
-    Console.print(freezingTemps)
+    Console.print("Boiling: {showListFloat(collectBoilingTemps(temps))}")
+    Console.print("Freezing: {showListFloat(collectFreezingTemps(temps))}")

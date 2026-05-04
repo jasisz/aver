@@ -1131,8 +1131,15 @@ fn discover_builtins_in_expr(
         // we conservatively register that too; unused registrations
         // are stripped by `wasm-opt -Oz`.
         Expr::InterpolatedStr(parts) => {
+            // Variadic concat is mandatory; the per-type stringifiers
+            // are registered conservatively whenever interpolation
+            // exists in the program — unused registrations get DCE'd
+            // by `wasm-opt -Oz`. Cheaper than a per-part type-driven
+            // walk.
             builtins.register(BuiltinName::StringConcatN);
             builtins.register(BuiltinName::IntToString);
+            builtins.register(BuiltinName::FloatToString);
+            builtins.register(BuiltinName::StringFromBool);
             for p in parts {
                 if let StrPart::Parsed(inner) = p {
                     discover_builtins_in_expr(

@@ -19,6 +19,8 @@ mod format_cmd;
 mod repl;
 #[path = "main/replay_cmd.rs"]
 mod replay_cmd;
+#[path = "main/run_wasm_gc.rs"]
+mod run_wasm_gc;
 #[path = "main/shared.rs"]
 mod shared;
 #[path = "main/why_cmd.rs"]
@@ -42,6 +44,7 @@ fn main() {
             self_host,
             profile,
             wasm,
+            wasm_gc,
             program_args,
         } => {
             let expressions = match shared::collect_entry_expressions(expr, input_file.as_deref()) {
@@ -53,11 +56,11 @@ fn main() {
                 }
             };
 
-            if !expressions.is_empty() && (*wasm || *self_host) {
+            if !expressions.is_empty() && (*wasm || *wasm_gc || *self_host) {
                 use colored::Colorize;
                 eprintln!(
                     "{}",
-                    "--expr / --input-file are not supported with --wasm or --self-host in this release"
+                    "--expr / --input-file are not supported with --wasm / --wasm-gc / --self-host in this release"
                         .red()
                 );
                 std::process::exit(1);
@@ -65,6 +68,8 @@ fn main() {
 
             if *wasm {
                 commands::cmd_run_wasm(file, module_root.as_deref(), program_args.clone());
+            } else if *wasm_gc {
+                run_wasm_gc::cmd_run_wasm_gc(file, module_root.as_deref(), program_args.clone());
             } else if *self_host {
                 commands::cmd_run_self_hosted(
                     file,

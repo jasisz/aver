@@ -42,7 +42,11 @@ impl TypeChecker {
             );
         }
         let effect_arg_var = || Type::Var("EffectArg".to_string());
-        let printable_var = || Type::Var("Printable".to_string());
+        // `printable_var` retired in 0.16: Console.print/error/warn now
+        // take String. Stringification of non-String values is the
+        // caller's job (interpolation `"{x}"` or explicit
+        // `Int.toString` / `Float.toString` / record-field-by-field
+        // formatting). Effect ABI stays trivial across backends.
         let context_var = || Type::Var("Context".to_string());
 
         // Oracle v1: EffectEvent = { method: String, args: List<EffectArg> }.
@@ -162,22 +166,29 @@ impl TypeChecker {
                 Type::List(Box::new(Type::Str)),
                 &["Args.get"],
             ),
-            // Console.print/error/warn are generic over the value being formatted.
+            // Console.print/error/warn take String. Stringification of
+            // non-String values is the caller's job (use interpolation
+            // `"{x}"` or explicit `Int.toString` / `Float.toString` /
+            // record-field-by-field formatting). Keeps the effect ABI
+            // trivial across backends and makes value→string
+            // conversion explicit at the call site, which the AI-
+            // reading-code-as-letter principle of Aver wants over
+            // implicit Show/Display dispatch.
             (
                 "Console.print",
-                &[printable_var()],
+                &[Type::Str],
                 Type::Unit,
                 &["Console.print"],
             ),
             (
                 "Console.error",
-                &[printable_var()],
+                &[Type::Str],
                 Type::Unit,
                 &["Console.error"],
             ),
             (
                 "Console.warn",
-                &[printable_var()],
+                &[Type::Str],
                 Type::Unit,
                 &["Console.warn"],
             ),
@@ -349,7 +360,7 @@ impl TypeChecker {
                 ),
                 (
                     "Terminal.print",
-                    &[printable_var()],
+                    &[Type::Str],
                     Type::Unit,
                     &["Terminal.print"],
                 ),

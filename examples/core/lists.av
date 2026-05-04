@@ -2,24 +2,43 @@ module Lists
     intent =
         "Demonstrates the core List API without callbacks."
         "Aver prefers recursion, pattern matching, and first-order helpers."
+        "Console.print takes String — value→string conversion is the caller's job."
+        "Helpers below render List<Int> via explicit recursion + interpolation."
     effects [Console]
+
+fn showListInt(xs: List<Int>) -> String
+    ? "Render a List<Int> as `[1, 2, 3]` via direct recursion. No higher-order map — Aver's stdlib intentionally omits it; recursion is the canonical shape."
+    "[{showListIntInner(xs)}]"
+
+fn showListIntInner(xs: List<Int>) -> String
+    ? "Comma-separated body of a List<Int> render. Empty list collapses to empty string."
+    match xs
+        [] -> ""
+        [head, ..tail] -> match tail
+            [] -> "{head}"
+            _  -> "{head}, {showListIntInner(tail)}"
+
+fn showListString(xs: List<String>) -> String
+    ? "Render a List<String> as `[\"a\", \"b\"]`. String elements quoted to disambiguate from bare identifiers."
+    "[{showListStringInner(xs)}]"
+
+fn showListStringInner(xs: List<String>) -> String
+    ? "Comma-separated body of a List<String> render."
+    match xs
+        [] -> ""
+        [head, ..tail] -> match tail
+            [] -> "\"{head}\""
+            _  -> "\"{head}\", {showListStringInner(tail)}"
 
 fn main() -> Unit
     ! [Console.print]
     numbers = [1, 2, 3]
-    Console.print("len:")
-    Console.print(List.len(numbers))
-    Console.print("prepend 0:")
-    Console.print(List.prepend(0, numbers))
-    Console.print("take 2:")
-    Console.print(List.take(numbers, 2))
-    Console.print("drop 1:")
-    Console.print(List.drop(numbers, 1))
-    Console.print("concat:")
-    Console.print(List.concat(numbers, [4, 5]))
-    Console.print("reverse:")
-    Console.print(List.reverse(numbers))
-    Console.print("contains 2:")
-    Console.print(List.contains(numbers, 2))
-    Console.print("zip:")
-    Console.print(List.zip(["a", "b", "c"], numbers))
+    Console.print("len: {List.len(numbers)}")
+    Console.print("prepend 0: {showListInt(List.prepend(0, numbers))}")
+    Console.print("take 2: {showListInt(List.take(numbers, 2))}")
+    Console.print("drop 1: {showListInt(List.drop(numbers, 1))}")
+    Console.print("concat: {showListInt(List.concat(numbers, [4, 5]))}")
+    Console.print("reverse: {showListInt(List.reverse(numbers))}")
+    Console.print("contains 2: {List.contains(numbers, 2)}")
+    letters = ["a", "b", "c"]
+    Console.print("letters: {showListString(letters)}")

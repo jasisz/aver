@@ -221,10 +221,9 @@ pub(super) fn emit_dotted_builtin(
             func.instruction(&Instruction::I32Eqz);
             Ok(())
         }
-        // String.fromInt is just a different spelling of Int.toString
-        // — same `(i64) -> $string` shape, same helper. Aver allows
-        // both in source. Same goes for String.fromFloat once
-        // Float.toString lands.
+        // String.fromInt / String.fromFloat are different spellings of
+        // Int.toString / Float.toString — Aver source allows both,
+        // backend points each at the same helper.
         "String.fromInt" if args.len() == 1 => {
             let to_string_idx =
                 ctx.fn_map
@@ -233,6 +232,19 @@ pub(super) fn emit_dotted_builtin(
                     .copied()
                     .ok_or(WasmGcError::Validation(
                         "String.fromInt requires Int.toString builtin".into(),
+                    ))?;
+            emit_expr(func, &args[0], slots, ctx)?;
+            func.instruction(&Instruction::Call(to_string_idx));
+            Ok(())
+        }
+        "String.fromFloat" if args.len() == 1 => {
+            let to_string_idx =
+                ctx.fn_map
+                    .builtins
+                    .get("Float.toString")
+                    .copied()
+                    .ok_or(WasmGcError::Validation(
+                        "String.fromFloat requires Float.toString builtin".into(),
                     ))?;
             emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::Call(to_string_idx));
@@ -1090,12 +1102,28 @@ pub(super) fn emit_interpolated_str(
                             )?;
                         func.instruction(&Instruction::Call(to_string_idx));
                     }
-                    other => {
-                        return Err(WasmGcError::Unimplemented(match other {
-                            "Float" => "phase 3c — interpolation of Float (needs Float.toString)",
-                            "Bool" => "phase 3c — interpolation of Bool (needs Bool.toString)",
-                            _ => "phase 3c — interpolation of compound type",
-                        }));
+                    "Float" => {
+                        let to_string_idx =
+                            ctx.fn_map.builtins.get("Float.toString").copied().ok_or(
+                                WasmGcError::Validation(
+                                    "interpolation of Float requires Float.toString builtin".into(),
+                                ),
+                            )?;
+                        func.instruction(&Instruction::Call(to_string_idx));
+                    }
+                    "Bool" => {
+                        let to_string_idx =
+                            ctx.fn_map.builtins.get("String.fromBool").copied().ok_or(
+                                WasmGcError::Validation(
+                                    "interpolation of Bool requires String.fromBool builtin".into(),
+                                ),
+                            )?;
+                        func.instruction(&Instruction::Call(to_string_idx));
+                    }
+                    _ => {
+                        return Err(WasmGcError::Unimplemented(
+                            "phase 3c — interpolation of compound type",
+                        ));
                     }
                 }
             }

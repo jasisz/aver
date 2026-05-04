@@ -8,5 +8,5 @@ fn main() -> Unit
     ! [Console.print]
     result = Data.Fibonacci.buildFibStats(10)
     match result
-        Result.Ok(stats) -> Console.print(stats.sum)
+        Result.Ok(stats) -> Console.print("{stats.sum}")
         Result.Err(msg) -> Console.print(msg)

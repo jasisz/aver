@@ -75,13 +75,9 @@ fn main() -> Unit
     ! [Console.print]
     words = ["alice", "bob", "alice", "eve"]
     counts = countWords(words)
-    Console.print("Counts:")
-    Console.print(counts)
-    Console.print("alice count:")
-    Console.print(Map.get(counts, "alice"))
-    Console.print("Keys:")
-    Console.print(Map.keys(counts))
-    Console.print("Entries:")
-    Console.print(Map.entries(counts))
-    Console.print("Contains 'eve':")
-    Console.print(containsWord(words, "eve"))
+    aliceCount = match Map.get(counts, "alice")
+        Option.Some(n) -> "{n}"
+        Option.None    -> "(none)"
+    Console.print("alice count: {aliceCount}")
+    hasEve = containsWord(words, "eve")
+    Console.print("Contains 'eve': {hasEve}")

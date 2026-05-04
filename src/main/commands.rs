@@ -4792,6 +4792,7 @@ fn cmd_compile_wasm_gc(
     );
 }
 
+
 /// True if `bytes` declares any import whose module name is exactly
 /// `module`. Used to detect effect imports without false positives from
 /// data sections that happen to spell `aver_rt`.
@@ -5433,7 +5434,7 @@ fn cmd_proof_dafny(file: &str, output_dir: &str, ctx: &codegen::CodegenContext) 
 /// Component Model is a future separate mode; this single-binary
 /// path is the bench-friendly default.
 #[cfg(feature = "wasm")]
-fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[ModuleInfo]) {
+pub(super) fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[ModuleInfo]) {
     use aver::ast::{Expr, FnBody, Spanned, Stmt, TopLevel};
 
     if dep_modules.is_empty() {
@@ -5696,7 +5697,7 @@ fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[ModuleInfo]) {
     let _ = std::any::TypeId::of::<Spanned<Expr>>();
 }
 
-fn load_compile_deps(
+pub(super) fn load_compile_deps(
     items: &[TopLevel],
     module_root: &str,
     run_interp_lower: bool,

@@ -123,7 +123,8 @@ pub(super) enum BuiltinName {
 impl BuiltinName {
     pub(super) fn from_dotted(s: &str) -> Option<Self> {
         match s {
-            "Int.toString" => Some(Self::IntToString),
+            "Int.toString" | "String.fromInt" => Some(Self::IntToString),
+            "String.fromFloat" => Some(Self::FloatToString),
             "String.len" => Some(Self::StringLength),
             "String.startsWith" => Some(Self::StringStartsWith),
             "String.contains" => Some(Self::StringContains),

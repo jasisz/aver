@@ -256,8 +256,13 @@ pub(super) enum Commands {
         #[arg(long)]
         profile: bool,
         /// Compile to WASM and execute with built-in host (aver/* import ABI)
-        #[arg(long, conflicts_with_all = ["self_host", "profile"])]
+        #[arg(long, conflicts_with_all = ["self_host", "profile", "wasm_gc"])]
         wasm: bool,
+        /// Compile via the wasm-gc backend (engine GC + tail calls) and
+        /// execute with built-in host. Same `aver/*` effect surface as
+        /// `--wasm`, different ABI (GC structs, factory exports).
+        #[arg(long = "wasm-gc", conflicts_with_all = ["self_host", "profile", "wasm"])]
+        wasm_gc: bool,
         /// Arguments passed to the Aver program (available via Args.get()), after --
         #[arg(last = true)]
         program_args: Vec<String>,

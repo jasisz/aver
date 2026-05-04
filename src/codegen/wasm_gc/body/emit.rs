@@ -38,16 +38,30 @@ pub(super) fn emit_default_value(
             Ok(())
         }
         other => {
-            // Ref types: emit `ref.null $T`. The exact heap type comes
-            // from the resolved wasm representation.
+            // Single-field records flattened to a primitive (newtype
+            // optimisation) need the matching primitive zero, not a
+            // ref.null. Ref types emit `ref.null $T`. The exact wasm
+            // shape comes from `aver_to_wasm`.
             let val = aver_to_wasm(other, Some(registry))?;
             match val {
                 Some(ValType::Ref(rt)) => {
                     func.instruction(&Instruction::RefNull(rt.heap_type));
                     Ok(())
                 }
-                Some(_) => Err(WasmGcError::Validation(format!(
-                    "Option.None default for `{other}` resolved to a non-ref primitive but no default emitter matched"
+                Some(ValType::I64) => {
+                    func.instruction(&Instruction::I64Const(0));
+                    Ok(())
+                }
+                Some(ValType::F64) => {
+                    func.instruction(&Instruction::F64Const(0.0));
+                    Ok(())
+                }
+                Some(ValType::I32) => {
+                    func.instruction(&Instruction::I32Const(0));
+                    Ok(())
+                }
+                Some(other_ty) => Err(WasmGcError::Validation(format!(
+                    "Option.None default for `{other}` resolved to {other_ty:?} — no default emitter for that wasm type"
                 ))),
                 None => Err(WasmGcError::Validation(format!(
                     "Option.None over `{other}` has no wasm representation"
@@ -246,9 +260,27 @@ pub(super) fn emit_expr(
                     func.instruction(&Instruction::I32Eqz);
                 }
             } else {
+                // Operand kind: Aver may type-check `Int op Float` as
+                // Float (e.g. unary `-273.15` parses to `0 - 273.15`
+                // where the `0` is `Literal::Int(0)`). Pick `F64` if
+                // either side wants it; emit `f64.convert_i64_s` after
+                // any I64-typed operand to promote into the chosen
+                // numeric kind. Mirror of `src/codegen/wasm/expr/emit.rs`.
+                let l_ty = wasm_type_of(l, ctx.registry)?;
+                let r_ty = wasm_type_of(r, ctx.registry)?;
+                let operand = if l_ty == Some(ValType::F64) || r_ty == Some(ValType::F64) {
+                    Some(ValType::F64)
+                } else {
+                    l_ty
+                };
                 emit_expr(func, &l, slots, ctx)?;
+                if operand == Some(ValType::F64) && l_ty == Some(ValType::I64) {
+                    func.instruction(&Instruction::F64ConvertI64S);
+                }
                 emit_expr(func, &r, slots, ctx)?;
-                let operand = wasm_type_of(l, ctx.registry)?;
+                if operand == Some(ValType::F64) && r_ty == Some(ValType::I64) {
+                    func.instruction(&Instruction::F64ConvertI64S);
+                }
                 let inst = match (operand, op) {
                     (Some(ValType::F64), BinOp::Add) => Instruction::F64Add,
                     (Some(ValType::F64), BinOp::Sub) => Instruction::F64Sub,
