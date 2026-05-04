@@ -332,6 +332,18 @@ impl TypeRegistry {
             list_order.push("List<String>".to_string());
             next_idx += 1;
         }
+        // `Disk.listDir` host import returns `Result<List<String>, String>` —
+        // ensure the underlying `List<String>` slot exists even when no
+        // user-fn signature mentions it.
+        let needs_list_string_for_disk = items.iter().any(|item| match item {
+            TopLevel::FnDef(fd) => fd.effects.iter().any(|e| e.node == "Disk.listDir"),
+            _ => false,
+        });
+        if needs_list_string_for_disk && !list_types.contains_key("List<String>") {
+            list_types.insert("List<String>".to_string(), next_idx);
+            list_order.push("List<String>".to_string());
+            next_idx += 1;
+        }
 
         // Eager `Vector<T>` registration for every discovered
         // `List<T>` — `Vector.fromList(list_call())` is the canonical
@@ -1073,7 +1085,15 @@ fn collect_results_from_builtin_uses(
                         "Int.fromString" | "Int.mod" | "Byte.fromHex" => {
                             intern("Result<Int,String>")
                         }
-                        "Byte.toHex" | "Console.readLine" => intern("Result<String,String>"),
+                        "Byte.toHex" | "Console.readLine" | "Disk.readText" => {
+                            intern("Result<String,String>")
+                        }
+                        "Disk.writeText"
+                        | "Disk.appendText"
+                        | "Disk.delete"
+                        | "Disk.deleteDir"
+                        | "Disk.makeDir" => intern("Result<Unit,String>"),
+                        "Disk.listDir" => intern("Result<List<String>,String>"),
                         _ => {}
                     }
                 }

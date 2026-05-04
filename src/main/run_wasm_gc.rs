@@ -365,6 +365,79 @@ fn dispatch_aver_import(
             results[0] = Val::AnyRef(rec_ref);
             Ok(true)
         }
+        "disk_read_text" => {
+            let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            let result_ref = match aver_rt::read_text(&path) {
+                Ok(text) => host_result_ok_string(caller, &text)?,
+                Err(e) => host_result_err_string(caller, &e)?,
+            };
+            results[0] = Val::AnyRef(result_ref);
+            Ok(true)
+        }
+        "disk_write_text" => {
+            let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            let content = lm_string_to_host(caller, params.get(1))?.unwrap_or_default();
+            let result_ref = match aver_rt::write_text(&path, &content) {
+                Ok(()) => host_result_ok_unit(caller)?,
+                Err(e) => host_result_err_unit_string(caller, &e)?,
+            };
+            results[0] = Val::AnyRef(result_ref);
+            Ok(true)
+        }
+        "disk_append_text" => {
+            let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            let content = lm_string_to_host(caller, params.get(1))?.unwrap_or_default();
+            let result_ref = match aver_rt::append_text(&path, &content) {
+                Ok(()) => host_result_ok_unit(caller)?,
+                Err(e) => host_result_err_unit_string(caller, &e)?,
+            };
+            results[0] = Val::AnyRef(result_ref);
+            Ok(true)
+        }
+        "disk_exists" => {
+            let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            results[0] = Val::I32(if aver_rt::path_exists(&path) { 1 } else { 0 });
+            Ok(true)
+        }
+        "disk_delete" => {
+            let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            let result_ref = match aver_rt::delete_file(&path) {
+                Ok(()) => host_result_ok_unit(caller)?,
+                Err(e) => host_result_err_unit_string(caller, &e)?,
+            };
+            results[0] = Val::AnyRef(result_ref);
+            Ok(true)
+        }
+        "disk_delete_dir" => {
+            let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            let result_ref = match aver_rt::delete_dir(&path) {
+                Ok(()) => host_result_ok_unit(caller)?,
+                Err(e) => host_result_err_unit_string(caller, &e)?,
+            };
+            results[0] = Val::AnyRef(result_ref);
+            Ok(true)
+        }
+        "disk_list_dir" => {
+            let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            let result_ref = match aver_rt::list_dir(&path) {
+                Ok(list) => {
+                    let names: Vec<String> = list.iter().cloned().collect();
+                    host_result_ok_list_string(caller, &names)?
+                }
+                Err(e) => host_result_err_list_string(caller, &e)?,
+            };
+            results[0] = Val::AnyRef(result_ref);
+            Ok(true)
+        }
+        "disk_make_dir" => {
+            let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            let result_ref = match aver_rt::make_dir(&path) {
+                Ok(()) => host_result_ok_unit(caller)?,
+                Err(e) => host_result_err_unit_string(caller, &e)?,
+            };
+            results[0] = Val::AnyRef(result_ref);
+            Ok(true)
+        }
         _ => Ok(false),
     }
 }
@@ -530,6 +603,126 @@ fn host_terminal_size_make(
         &[Val::I64(width), Val::I64(height)],
         &mut out,
     )?;
+    Ok(match &out[0] {
+        Val::AnyRef(r) => r.clone(),
+        _ => None,
+    })
+}
+
+/// `Result<Unit, String>::Ok(())` via the matching factory export.
+#[cfg(feature = "wasm")]
+fn host_result_ok_unit(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let factory = caller
+        .get_export("__rt_result_unit_string_ok")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[], &mut out)?;
+    Ok(match &out[0] {
+        Val::AnyRef(r) => r.clone(),
+        _ => None,
+    })
+}
+
+#[cfg(feature = "wasm")]
+fn host_result_err_unit_string(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    text: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let s = match lm_string_from_host(caller, text)? {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    let factory = caller
+        .get_export("__rt_result_unit_string_err")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
+    Ok(match &out[0] {
+        Val::AnyRef(r) => r.clone(),
+        _ => None,
+    })
+}
+
+/// Build a `Result<List<String>, String>::Ok(list)` ref. The list is
+/// constructed bottom-up via repeated `__rt_list_string_cons` calls,
+/// terminated by `__rt_list_string_nil`.
+#[cfg(feature = "wasm")]
+fn host_result_ok_list_string(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    items: &[String],
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let nil = caller
+        .get_export("__rt_list_string_nil")
+        .and_then(|e| e.into_func());
+    let cons = caller
+        .get_export("__rt_list_string_cons")
+        .and_then(|e| e.into_func());
+    let factory = caller
+        .get_export("__rt_result_list_string_string_ok")
+        .and_then(|e| e.into_func());
+    let (Some(nil), Some(cons), Some(factory)) = (nil, cons, factory) else {
+        return Ok(None);
+    };
+    let mut tail_out = [Val::AnyRef(None)];
+    nil.call(&mut *caller, &[], &mut tail_out)?;
+    let mut current = match &tail_out[0] {
+        Val::AnyRef(r) => r.clone(),
+        _ => None,
+    };
+    // Cons in reverse so the resulting list keeps the input order.
+    for text in items.iter().rev() {
+        let head = match lm_string_from_host(caller, text)? {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+        let mut next = [Val::AnyRef(None)];
+        cons.call(
+            &mut *caller,
+            &[Val::AnyRef(Some(head)), Val::AnyRef(current.clone())],
+            &mut next,
+        )?;
+        current = match &next[0] {
+            Val::AnyRef(r) => r.clone(),
+            _ => None,
+        };
+    }
+    let mut wrapped = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(current)], &mut wrapped)?;
+    Ok(match &wrapped[0] {
+        Val::AnyRef(r) => r.clone(),
+        _ => None,
+    })
+}
+
+#[cfg(feature = "wasm")]
+fn host_result_err_list_string(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    text: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let s = match lm_string_from_host(caller, text)? {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    let factory = caller
+        .get_export("__rt_result_list_string_string_err")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
     Ok(match &out[0] {
         Val::AnyRef(r) => r.clone(),
         _ => None,

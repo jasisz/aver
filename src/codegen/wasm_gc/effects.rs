@@ -128,6 +128,20 @@ pub(super) enum EffectName {
     TerminalShowCursor,
     /// `() -> Unit` — flush any buffered terminal output to the host.
     TerminalFlush,
+    // ── Disk surface — POSIX-shaped file I/O wired through aver_rt::*.
+    //   `Disk.exists` returns Bool; everything else returns
+    //   `Result<…, String>`. `listDir` produces `Result<List<String>, String>`,
+    //   the rest a `Result<Unit, String>` on the failure side and either
+    //   `Result<String, String>` (read) or `Result<Unit, String>` (write/
+    //   append/delete/mkdir) on success.
+    DiskReadText,
+    DiskWriteText,
+    DiskAppendText,
+    DiskExists,
+    DiskDelete,
+    DiskDeleteDir,
+    DiskListDir,
+    DiskMakeDir,
 }
 
 impl EffectName {
@@ -179,6 +193,14 @@ impl EffectName {
             "Terminal.hideCursor" => Some(Self::TerminalHideCursor),
             "Terminal.showCursor" => Some(Self::TerminalShowCursor),
             "Terminal.flush" => Some(Self::TerminalFlush),
+            "Disk.readText" => Some(Self::DiskReadText),
+            "Disk.writeText" => Some(Self::DiskWriteText),
+            "Disk.appendText" => Some(Self::DiskAppendText),
+            "Disk.exists" => Some(Self::DiskExists),
+            "Disk.delete" => Some(Self::DiskDelete),
+            "Disk.deleteDir" => Some(Self::DiskDeleteDir),
+            "Disk.listDir" => Some(Self::DiskListDir),
+            "Disk.makeDir" => Some(Self::DiskMakeDir),
             _ => None,
         }
     }
@@ -229,6 +251,14 @@ impl EffectName {
             Self::TerminalHideCursor => "Terminal.hideCursor",
             Self::TerminalShowCursor => "Terminal.showCursor",
             Self::TerminalFlush => "Terminal.flush",
+            Self::DiskReadText => "Disk.readText",
+            Self::DiskWriteText => "Disk.writeText",
+            Self::DiskAppendText => "Disk.appendText",
+            Self::DiskExists => "Disk.exists",
+            Self::DiskDelete => "Disk.delete",
+            Self::DiskDeleteDir => "Disk.deleteDir",
+            Self::DiskListDir => "Disk.listDir",
+            Self::DiskMakeDir => "Disk.makeDir",
         }
     }
 
@@ -275,6 +305,14 @@ impl EffectName {
             Self::TerminalHideCursor => ("aver", "terminal_hide_cursor"),
             Self::TerminalShowCursor => ("aver", "terminal_show_cursor"),
             Self::TerminalFlush => ("aver", "terminal_flush"),
+            Self::DiskReadText => ("aver", "disk_read_text"),
+            Self::DiskWriteText => ("aver", "disk_write_text"),
+            Self::DiskAppendText => ("aver", "disk_append_text"),
+            Self::DiskExists => ("aver", "disk_exists"),
+            Self::DiskDelete => ("aver", "disk_delete"),
+            Self::DiskDeleteDir => ("aver", "disk_delete_dir"),
+            Self::DiskListDir => ("aver", "disk_list_dir"),
+            Self::DiskMakeDir => ("aver", "disk_make_dir"),
         }
     }
 
@@ -322,6 +360,13 @@ impl EffectName {
             // engine validator rejects with i64 vs ref mismatch as
             // soon as a setColor call site appears.
             Self::TerminalSetColor => Ok(vec![any_ref_ty()]),
+            Self::DiskReadText
+            | Self::DiskExists
+            | Self::DiskDelete
+            | Self::DiskDeleteDir
+            | Self::DiskListDir
+            | Self::DiskMakeDir => Ok(vec![any_ref_ty()]),
+            Self::DiskWriteText | Self::DiskAppendText => Ok(vec![any_ref_ty(), any_ref_ty()]),
         }
     }
 
@@ -408,8 +453,31 @@ impl EffectName {
                     heap_type: wasm_encoder::HeapType::Concrete(idx),
                 })])
             }
+            Self::DiskReadText => Ok(vec![result_ref_ty(registry, "Result<String,String>")?]),
+            Self::DiskWriteText
+            | Self::DiskAppendText
+            | Self::DiskDelete
+            | Self::DiskDeleteDir
+            | Self::DiskMakeDir => Ok(vec![result_ref_ty(registry, "Result<Unit,String>")?]),
+            Self::DiskListDir => Ok(vec![result_ref_ty(
+                registry,
+                "Result<List<String>,String>",
+            )?]),
+            Self::DiskExists => Ok(vec![ValType::I32]),
         }
     }
+}
+
+fn result_ref_ty(registry: &TypeRegistry, canonical: &str) -> Result<ValType, WasmGcError> {
+    let idx = registry
+        .result_type_idx(canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "effect requires `{canonical}` slot but none was registered"
+        )))?;
+    Ok(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(idx),
+    }))
 }
 
 fn map_string_list_string_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> {

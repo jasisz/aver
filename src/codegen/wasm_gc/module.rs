@@ -1277,9 +1277,26 @@ struct FactoryExports {
     /// `Terminal.size` is registered.
     terminal_size_make: Option<FactorySlot>,
     /// `__rt_result_string_string_ok(s)` / `_err(s)` — emitted when
-    /// `Console.readLine` is registered.
+    /// `Console.readLine` (or any host effect that reports back a
+    /// `Result<String, String>`, e.g. `Disk.readText`) is registered.
     result_string_string_ok: Option<FactorySlot>,
     result_string_string_err: Option<FactorySlot>,
+    /// `__rt_result_unit_string_ok()` / `_err(s)` — emitted when any
+    /// effect with a `Result<Unit, String>` return shape is registered
+    /// (e.g. `Disk.writeText`, `Disk.delete`, `Tcp.close`).
+    result_unit_string_ok: Option<FactorySlot>,
+    result_unit_string_err: Option<FactorySlot>,
+    /// `__rt_result_list_string_string_ok(list)` / `_err(s)` — emitted
+    /// when an effect returning `Result<List<String>, String>` is
+    /// registered (e.g. `Disk.listDir`).
+    result_list_string_string_ok: Option<FactorySlot>,
+    result_list_string_string_err: Option<FactorySlot>,
+    /// `__rt_list_string_cons(head, tail) -> List<String>` /
+    /// `__rt_list_string_nil() -> List<String>` — emitted when the
+    /// host has to materialise a `List<String>` from the outside (the
+    /// only case so far is `Disk.listDir`'s success arm).
+    list_string_cons: Option<FactorySlot>,
+    list_string_nil: Option<FactorySlot>,
 }
 
 #[derive(Clone, Copy)]
@@ -1351,20 +1368,24 @@ fn allocate_factory_exports(
         *next_fn_idx += 1;
     }
 
-    // Result<String,String> factories — driven by `Console.readLine`.
-    if effect_registry
-        .iter()
-        .any(|e| e == EffectName::ConsoleReadLine)
-    {
+    // Result<String,String> factories — driven by any effect whose
+    // host impl yields back a `Result<String, String>`.
+    let needs_result_string_string = effect_registry.iter().any(|e| {
+        matches!(
+            e,
+            EffectName::ConsoleReadLine | EffectName::DiskReadText
+        )
+    });
+    if needs_result_string_string {
         let res_idx = registry
             .result_type_idx("Result<String,String>")
             .ok_or(WasmGcError::Validation(
-                "Console.readLine factory requires Result<String,String> slot".into(),
+                "Result<String,String> factory required but slot not registered".into(),
             ))?;
         let s_idx = registry
             .string_array_type_idx
             .ok_or(WasmGcError::Validation(
-                "Console.readLine factory requires String slot".into(),
+                "Result<String,String> factory requires String slot".into(),
             ))?;
         let s_ref = ref_null(s_idx);
         let res_ref = ref_null(res_idx);
@@ -1379,6 +1400,109 @@ fn allocate_factory_exports(
 
         types.ty().function([s_ref], [res_ref]);
         fx.result_string_string_err = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+    }
+
+    // Result<Unit, String> factories — Disk.{writeText, appendText,
+    // delete, deleteDir, makeDir} all yield this shape.
+    let needs_result_unit_string = effect_registry.iter().any(|e| {
+        matches!(
+            e,
+            EffectName::DiskWriteText
+                | EffectName::DiskAppendText
+                | EffectName::DiskDelete
+                | EffectName::DiskDeleteDir
+                | EffectName::DiskMakeDir
+        )
+    });
+    if needs_result_unit_string {
+        let res_idx = registry
+            .result_type_idx("Result<Unit,String>")
+            .ok_or(WasmGcError::Validation(
+                "Result<Unit,String> factory required but slot not registered".into(),
+            ))?;
+        let s_idx = registry
+            .string_array_type_idx
+            .ok_or(WasmGcError::Validation(
+                "Result<Unit,String> factory requires String slot".into(),
+            ))?;
+        let s_ref = ref_null(s_idx);
+        let res_ref = ref_null(res_idx);
+
+        types.ty().function([], [res_ref.clone()]);
+        fx.result_unit_string_ok = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        types.ty().function([s_ref], [res_ref]);
+        fx.result_unit_string_err = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+    }
+
+    // Result<List<String>, String> + List<String> builders — driven by
+    // `Disk.listDir`.
+    let needs_list_string_pair = effect_registry
+        .iter()
+        .any(|e| matches!(e, EffectName::DiskListDir));
+    if needs_list_string_pair {
+        let res_idx = registry
+            .result_type_idx("Result<List<String>,String>")
+            .ok_or(WasmGcError::Validation(
+                "Result<List<String>,String> factory required but slot not registered".into(),
+            ))?;
+        let list_idx = registry
+            .list_type_idx("List<String>")
+            .ok_or(WasmGcError::Validation(
+                "Result<List<String>,String> factory requires List<String> slot".into(),
+            ))?;
+        let s_idx = registry
+            .string_array_type_idx
+            .ok_or(WasmGcError::Validation(
+                "Result<List<String>,String> factory requires String slot".into(),
+            ))?;
+        let s_ref = ref_null(s_idx);
+        let list_ref = ref_null(list_idx);
+        let res_ref = ref_null(res_idx);
+
+        types.ty().function([list_ref.clone()], [res_ref.clone()]);
+        fx.result_list_string_string_ok = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        types.ty().function([s_ref.clone()], [res_ref]);
+        fx.result_list_string_string_err = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        types
+            .ty()
+            .function([s_ref, list_ref.clone()], [list_ref.clone()]);
+        fx.list_string_cons = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        types.ty().function([], [list_ref]);
+        fx.list_string_nil = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
         });
@@ -1419,6 +1543,32 @@ impl FactoryExports {
         if let Some(s) = self.result_string_string_err {
             exports.export("__rt_result_string_string_err", ExportKind::Func, s.fn_idx);
         }
+        if let Some(s) = self.result_unit_string_ok {
+            exports.export("__rt_result_unit_string_ok", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.result_unit_string_err {
+            exports.export("__rt_result_unit_string_err", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.result_list_string_string_ok {
+            exports.export(
+                "__rt_result_list_string_string_ok",
+                ExportKind::Func,
+                s.fn_idx,
+            );
+        }
+        if let Some(s) = self.result_list_string_string_err {
+            exports.export(
+                "__rt_result_list_string_string_err",
+                ExportKind::Func,
+                s.fn_idx,
+            );
+        }
+        if let Some(s) = self.list_string_cons {
+            exports.export("__rt_list_string_cons", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.list_string_nil {
+            exports.export("__rt_list_string_nil", ExportKind::Func, s.fn_idx);
+        }
     }
 
     fn emit_bodies(
@@ -1441,6 +1591,24 @@ impl FactoryExports {
         if self.result_string_string_err.is_some() {
             codes.function(&emit_factory_result_string_string_err(registry)?);
         }
+        if self.result_unit_string_ok.is_some() {
+            codes.function(&emit_factory_result_unit_string_ok(registry)?);
+        }
+        if self.result_unit_string_err.is_some() {
+            codes.function(&emit_factory_result_unit_string_err(registry)?);
+        }
+        if self.result_list_string_string_ok.is_some() {
+            codes.function(&emit_factory_result_list_string_string_ok(registry)?);
+        }
+        if self.result_list_string_string_err.is_some() {
+            codes.function(&emit_factory_result_list_string_string_err(registry)?);
+        }
+        if self.list_string_cons.is_some() {
+            codes.function(&emit_factory_list_string_cons(registry)?);
+        }
+        if self.list_string_nil.is_some() {
+            codes.function(&emit_factory_list_string_nil(registry)?);
+        }
         Ok(())
     }
 
@@ -1451,6 +1619,12 @@ impl FactoryExports {
             self.terminal_size_make,
             self.result_string_string_ok,
             self.result_string_string_err,
+            self.result_unit_string_ok,
+            self.result_unit_string_err,
+            self.result_list_string_string_ok,
+            self.result_list_string_string_err,
+            self.list_string_cons,
+            self.list_string_nil,
         ]
         .into_iter()
         .flatten()
@@ -1538,6 +1712,111 @@ fn emit_factory_result_string_string_err(
     f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructNew(res_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `Result<Unit, String>::Ok(())` factory — Unit lowers to the i32
+/// placeholder slot in the Result struct.
+fn emit_factory_result_unit_string_ok(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let res_idx = registry
+        .result_type_idx("Result<Unit,String>")
+        .expect("checked at allocation");
+    let s_idx = registry
+        .string_array_type_idx
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    // tag=1, T=i32 placeholder, E=null
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::StructNew(res_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_result_unit_string_err(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let res_idx = registry
+        .result_type_idx("Result<Unit,String>")
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    // tag=0, T=i32 placeholder, E=arg
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructNew(res_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_result_list_string_string_ok(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let res_idx = registry
+        .result_type_idx("Result<List<String>,String>")
+        .expect("checked at allocation");
+    let s_idx = registry
+        .string_array_type_idx
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    // tag=1, T=arg (List<String> ref), E=null
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::StructNew(res_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_result_list_string_string_err(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let res_idx = registry
+        .result_type_idx("Result<List<String>,String>")
+        .expect("checked at allocation");
+    let list_idx = registry
+        .list_type_idx("List<String>")
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    // tag=0, T=null List<String>, E=arg
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(list_idx)));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructNew(res_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `__rt_list_string_cons(head, tail) -> List<String>`. Same struct
+/// shape as user-emitted Cons cells (head field, tail ref).
+fn emit_factory_list_string_cons(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let list_idx = registry
+        .list_type_idx("List<String>")
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::StructNew(list_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_list_string_nil(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let list_idx = registry
+        .list_type_idx("List<String>")
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        list_idx,
+    )));
     f.instruction(&Instruction::End);
     Ok(f)
 }
