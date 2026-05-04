@@ -18,6 +18,7 @@ mod maps;
 mod module;
 #[cfg(test)]
 mod tests;
+mod wat_helper;
 mod types;
 
 #[derive(Debug)]

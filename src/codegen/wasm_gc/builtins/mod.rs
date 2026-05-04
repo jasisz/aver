@@ -66,8 +66,7 @@ use wasm_encoder::{CodeSection, Function, Instruction, ValType};
 
 use super::WasmGcError;
 use super::types::TypeRegistry;
-
-mod wat_helper;
+use super::wat_helper;
 
 /// Curated set of pure-side builtins phase 3c+ implements. Adding a
 /// new builtin: extend this enum + `from_dotted` + `signature` +

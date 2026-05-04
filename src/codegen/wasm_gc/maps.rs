@@ -35,6 +35,7 @@ use wasm_encoder::{BlockType, CodeSection, Function, HeapType, Instruction, RefT
 
 use super::WasmGcError;
 use super::types::{MapSlots, TypeRegistry};
+use super::wat_helper;
 
 /// Initial bucket count — power of two so masking with `cap-1`
 /// instead of `i32.rem_u` works. Sized for the bench scenarios.
@@ -694,105 +695,108 @@ fn string_idx(registry: &TypeRegistry) -> Result<u32, WasmGcError> {
 /// hash used in legacy backend's `rt_hash_string` shape.
 fn emit_hash_string(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let s_idx = string_idx(registry)?;
-    let mut f = Function::new([
-        (1, ValType::I32), // local 1: h
-        (1, ValType::I32), // local 2: i
-        (1, ValType::I32), // local 3: n
-    ]);
-    // h = 5381
-    f.instruction(&Instruction::I32Const(5381));
-    f.instruction(&Instruction::LocalSet(1));
-    // n = arr.len
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::ArrayLen);
-    f.instruction(&Instruction::LocalSet(3));
-    // i = 0
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalSet(2));
-    // loop
-    f.instruction(&Instruction::Block(BlockType::Empty));
-    f.instruction(&Instruction::Loop(BlockType::Empty));
-    // if i >= n break
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::I32GeU);
-    f.instruction(&Instruction::BrIf(1)); // break out of block
-    // h = h * 33 + s[i]   (h * 33 = (h << 5) + h)
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::I32Const(5));
-    f.instruction(&Instruction::I32Shl);
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::ArrayGetU(s_idx));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalSet(1));
-    // i++
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalSet(2));
-    f.instruction(&Instruction::Br(0));
-    f.instruction(&Instruction::End); // loop
-    f.instruction(&Instruction::End); // block
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::End);
-    Ok(f)
+    let padding = wat_helper::padding_types(s_idx);
+    let wat = format!(
+        r#"
+        (module
+          {padding}
+          (type $string (array (mut i8)))
+          (func (export "helper") (param $s (ref null $string)) (result i32)
+            (local $h i32)
+            (local $i i32)
+            (local $n i32)
+            ;; DJB2: h = 5381; for each byte: h = h * 33 + byte.
+            i32.const 5381
+            local.set $h
+            local.get $s
+            array.len
+            local.set $n
+            i32.const 0
+            local.set $i
+            (block $break
+              (loop $next
+                local.get $i
+                local.get $n
+                i32.ge_u
+                br_if $break
+
+                ;; h = (h << 5) + h + s[i]
+                local.get $h
+                i32.const 5
+                i32.shl
+                local.get $h
+                i32.add
+                local.get $s
+                local.get $i
+                array.get_u $string
+                i32.add
+                local.set $h
+
+                local.get $i
+                i32.const 1
+                i32.add
+                local.set $i
+                br $next))
+            local.get $h)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
 }
 
 /// Byte-equal compare of two `(ref null $string)`. Returns 1 if equal.
 fn emit_eq_string(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let s_idx = string_idx(registry)?;
-    let mut f = Function::new([
-        (1, ValType::I32), // local 2: i
-        (1, ValType::I32), // local 3: n
-    ]);
-    // If lens differ → 0
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::ArrayLen);
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::ArrayLen);
-    f.instruction(&Instruction::I32Ne);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::Return);
-    f.instruction(&Instruction::End);
-    // n = a.len
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::ArrayLen);
-    f.instruction(&Instruction::LocalSet(3));
-    // i = 0
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalSet(2));
-    // loop: while i < n: if a[i]!=b[i] return 0; i++
-    f.instruction(&Instruction::Block(BlockType::Empty));
-    f.instruction(&Instruction::Loop(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::I32GeU);
-    f.instruction(&Instruction::BrIf(1));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::ArrayGetU(s_idx));
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::ArrayGetU(s_idx));
-    f.instruction(&Instruction::I32Ne);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::Return);
-    f.instruction(&Instruction::End);
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalSet(2));
-    f.instruction(&Instruction::Br(0));
-    f.instruction(&Instruction::End); // loop
-    f.instruction(&Instruction::End); // block
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::End);
-    Ok(f)
+    let padding = wat_helper::padding_types(s_idx);
+    let wat = format!(
+        r#"
+        (module
+          {padding}
+          (type $string (array (mut i8)))
+          (func (export "helper") (param $a (ref null $string)) (param $b (ref null $string)) (result i32)
+            (local $i i32)
+            (local $n i32)
+            ;; Length mismatch ⇒ 0.
+            local.get $a
+            array.len
+            local.get $b
+            array.len
+            i32.ne
+            (if
+              (then i32.const 0 return))
+
+            local.get $a
+            array.len
+            local.set $n
+            i32.const 0
+            local.set $i
+            (block $break
+              (loop $next
+                local.get $i
+                local.get $n
+                i32.ge_u
+                br_if $break
+
+                local.get $a
+                local.get $i
+                array.get_u $string
+                local.get $b
+                local.get $i
+                array.get_u $string
+                i32.ne
+                (if
+                  (then i32.const 0 return))
+
+                local.get $i
+                i32.const 1
+                i32.add
+                local.set $i
+                br $next))
+            i32.const 1)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
 }
 
 fn slots_for(canonical: &str, registry: &TypeRegistry) -> Result<MapSlots, WasmGcError> {

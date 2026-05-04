@@ -39,7 +39,7 @@ use super::WasmGcError;
 /// reference the wrong type.
 ///
 /// Returns a WAT fragment to inject right after `(module`.
-pub(super) fn padding_types(n: u32) -> String {
+pub(in crate::codegen::wasm_gc) fn padding_types(n: u32) -> String {
     let mut s = String::with_capacity(n as usize * 16);
     for _ in 0..n {
         s.push_str("(type (struct))\n");
@@ -62,7 +62,7 @@ pub(super) fn padding_types(n: u32) -> String {
 ///
 /// Returns the compiled Function whose locals + body bytes match the
 /// WAT helper.
-pub(super) fn compile_wat_helper(wat_source: &str) -> Result<Function, WasmGcError> {
+pub(in crate::codegen::wasm_gc) fn compile_wat_helper(wat_source: &str) -> Result<Function, WasmGcError> {
     let module_bytes = wat::parse_str(wat_source)
         .map_err(|e| WasmGcError::Validation(format!("wat parse: {e}")))?;
 
