@@ -120,15 +120,18 @@ Notes:
 
 ```bash
 aver compile file.av -o /tmp/out --module-root .
-aver compile file.av --target wasm -o /tmp/out
-aver compile file.av --target wasm --wasm-opt oz -o /tmp/out
+aver compile file.av --target wasm-gc -o /tmp/out
+aver compile file.av --target wasm-gc --optimize size -o /tmp/out
+aver compile file.av --preset cloudflare --handler handler -o /tmp/out
 aver compile file.av --emit-ir-after=PASS
 aver compile file.av --explain-passes
 ```
 
 - Default: Rust codegen, emits a modular Cargo project
-- `--target wasm`: standalone WASM module with aver/* imports
-- `--wasm-opt oz`: post-process with binaryen for ~50% size reduction
+- `--target wasm-gc`: native WebAssembly GC + tail-call output (recommended). Self-contained binary, engine handles GC/recursion, per-instantiation helpers DCE'd to what each program calls. Modern host baseline (Chrome 119+, Firefox 120+, Safari 18.2+, wasmtime 25+, Node 22+).
+- `--target wasm`: legacy fallback for pre-2024 hosts. Bundles a custom NaN-boxed runtime via `wasm-merge`.
+- `--optimize size|speed`: post-process with binaryen `-Oz` (size) or `-O3` (speed).
+- `--preset cloudflare --handler <fn>`: Cloudflare Workers pack — `--target wasm-gc --pack cloudflare`, drops `worker.js` + `wrangler.toml` next to the wasm. `<fn>` must have signature `Fn(HttpRequest) -> HttpResponse`.
 - `--emit-ir-after=PASS`: print the IR snapshot after the named pipeline stage and exit before codegen. PASS ∈ { `parse`, `tco`, `typecheck`, `interp_lower`, `buffer_build`, `resolve`, `last_use`, `analyze` }. `diff -u` between two stages shows exactly what each pass rewrote.
 - `--explain-passes`: run the full pipeline (no codegen) and print a per-pass diagnostic report — tail-call conversions, interpolations lowered, fusion sites rewritten + sinks synthesized, slots resolved, last-use markers annotated, alloc/recursion facts. Drives failable-invariant CI checks ("fail if buffer_build no longer fires on the canonical shape", "fail if hot fn loses no-alloc status"). Pair with `--json` for typed-per-stage shape: `{schema_version: 1, passes: [{stage, data: {...stage-specific fields}}, ...]}` — buffer_build's `data` exposes `rewrites`, `synthesized`, `sinks`, `rewrites_by_sink`; analyze's exposes `total_fns`, `no_alloc_fns`, `recursive_fns`, `mutual_tco_members`. `jq '.passes[] | select(.stage=="buffer_build") | .data.rewrites'` instead of regex-parsing summary strings.
 

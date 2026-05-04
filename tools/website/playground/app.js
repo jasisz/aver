@@ -41,9 +41,6 @@ const KEY_CODE_CHAR_BASE = 1024;
 const state = {
     wasmBytes: null,
     wasmName: null,
-    // Cached aver_runtime.wasm bytes (Step 1 of 0.14 Edge); populated
-    // after loadCompiler so workers can instantiate it once and reuse.
-    runtimeBytes: null,
     worker: null,
     queuedLines: [],
     rawMode: false,
@@ -339,17 +336,6 @@ async function runSelectedModule(fixedSize) {
     if (!state.wasmBytes) {
         setStatus("Load a `.wasm` file first.", "error");
         return;
-    }
-
-    // Drag-and-drop pre-built path doesn't go through compile, so the
-    // aver_runtime cache may still be empty. Pull it from the compiler
-    // module so the worker has something to instantiate.
-    if (!state.runtimeBytes) {
-        try {
-            await loadCompiler();
-        } catch (_) {
-            /* loadCompiler surfaces its own status */
-        }
     }
 
     clearOutput();
@@ -1088,9 +1074,6 @@ async function loadCompiler() {
     const mod = await import("./wasm/aver.js");
     await mod.default("./wasm/aver_bg.wasm");
     compiler = mod;
-    // wasm-gc binaries are self-contained — engine GC and tail-calls
-    // replace the legacy `aver_runtime.wasm` sidecar (heap, NaN-boxing,
-    // mutual-TCO trampoline). No runtime to fetch, no worker handoff.
     return compiler;
 }
 
@@ -1612,12 +1595,12 @@ if (contextBtn) {
 }
 
 // Compile meta: compile time + raw WASM size + hover-only footnote
-// explaining the shared-runtime split. We tried lazy-loading binaryen
-// from three CDNs (unpkg 404s, esm.sh chokes on Node-style
-// module.require, skypack's build pipeline fails on binaryen's native
-// wasm blob) — three strikes, not worth keeping the code path. CLI
-// users who want the optimized size run
-// `aver compile --target edge-wasm --optimize size` locally.
+// explaining the wasm-gc shape. We tried lazy-loading binaryen from
+// three CDNs (unpkg 404s, esm.sh chokes on Node-style module.require,
+// skypack's build pipeline fails on binaryen's native wasm blob) —
+// three strikes, not worth keeping the code path. CLI users who
+// want the optimized size run `aver compile --target wasm-gc
+// --optimize size` locally.
 function clearCompileMeta() {
     if (dom.compileMeta) dom.compileMeta.textContent = "";
 }
@@ -1640,11 +1623,12 @@ function renderPrebuiltMeta(name, rawSize) {
     footnote.textContent = "*";
     footnote.title =
         "Game binaries are compiled by the CLI with `aver compile " +
-        "--target edge-wasm --optimize size` and served as static " +
-        "files. They're thin user.wasm modules — the runtime " +
-        "(alloc, GC, hashmap, strings) is loaded once and shared " +
-        "across every game. Edit any tab to fork — next ▶ Run " +
-        "recompiles the active file in the browser.";
+        "--target wasm-gc --optimize size` and served as static " +
+        "files. Each binary is self-contained — engine GC + native " +
+        "tail-calls replace any custom runtime, and the per-instantiation " +
+        "helpers DCE down to what each game actually calls. Edit any " +
+        "tab to fork — next ▶ Run recompiles the active file in the " +
+        "browser.";
     dom.compileMeta.appendChild(footnote);
 }
 
@@ -1666,12 +1650,13 @@ function renderCompileMeta(rawSize, compileMs) {
     footnote.className = "compile-footnote";
     footnote.textContent = "*";
     footnote.title =
-        "Raw size of just the program logic — the runtime " +
-        "(alloc, GC, hashmap, strings, lists) is a separate ~10 KiB " +
-        "module loaded once and shared across every program. " +
-        "The CLI's `aver compile --target edge-wasm --optimize size` " +
-        "strips this further with metadce + `-Oz --converge`; " +
-        "trivial programs drop to ~280 B.";
+        "Raw size of the self-contained binary — engine GC + native " +
+        "tail-calls handle alloc/heap/recursion, per-instantiation " +
+        "helpers (string ops, hashmap probes, list/vector helpers) " +
+        "land only when the program actually calls them. The CLI's " +
+        "`aver compile --target wasm-gc --optimize size` runs the " +
+        "wasm-opt `-Oz --converge` size pipeline; trivial programs " +
+        "drop to ~280 B.";
     dom.compileMeta.appendChild(footnote);
 }
 
