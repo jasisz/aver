@@ -10,14 +10,12 @@ Aver's surface compiles to multiple backends, and the WASM backend itself splits
 |---|---|---|
 | **VM** (`aver run`) | bytecode interpreter | local CLI, dev loop |
 | **Rust codegen** (`aver compile`) | Cargo project + native binary | server-side Rust deployments |
-| **WASM** `--target wasm` `--bridge fetch` | single `.wasm` + JS shim ABI | Cloudflare Workers, Deno, Bun, browser playgrounds, any JS host |
-| **WASM** `--target wasm` `--bridge wasip1` | single `.wasm` + WASI preview-1 shim | standalone `wasmtime`, `wasmer`, browser shims |
-| **WASM** `--target wasm` `--bridge none` | single `.wasm`, `aver/*` imports unresolved | custom embedders that wire imports themselves |
-| **WASM** `--target edge-wasm` | thin `user.wasm` + imported `aver_runtime.wasm` | edge / browser deployments where the runtime is shared cross-program (Cloudflare CDN, etc.) |
+| **WASM** `--target wasm-gc` (recommended) | self-contained `.wasm` with engine GC + tail calls; per-instantiation helpers DCE'd to what the program calls | Cloudflare Workers, modern browsers (Chrome 119+, Firefox 120+, Safari 18.2+), wasmtime 25+, Node 22+, Deno, Bun |
+| **WASM** `--target wasm` `--bridge fetch` (legacy) | single `.wasm` + JS shim ABI; NaN-boxed runtime inlined via `wasm-merge` | pre-2024 hosts that don't speak the GC + tail-call proposals |
+| **WASM** `--target wasm` `--bridge wasip1` (legacy) | single `.wasm` + WASI preview-1 shim | older standalone `wasmtime` / `wasmer` |
+| **WASM** `--target wasm` `--bridge none` (legacy) | single `.wasm`, `aver/*` imports unresolved | custom embedders that wire imports themselves |
 | **Lean / Dafny proof export** (`aver proof`) | `.lean` / `.dfy` projects | offline verification |
 | **Self-host** (`aver run --self-host`) | Aver-in-Aver bootstrap | development sanity, replay coverage |
-
-`--target edge-wasm` runs over the same `--bridge` axis as `--target wasm` — every effect cell that's `✅` for `fetch` or `wasip1` works the same way under edge-wasm with that bridge. The two targets only differ in how `aver_runtime.*` is delivered (inlined via `wasm-merge` for `--target wasm`, imported as a separate module for `--target edge-wasm`).
 
 `Lean` / `Dafny` columns describe the **proof export** treatment, not the runtime. Effects render as Oracle-style stubs with effect-list contracts and invariant lemmas; user-side theorems carry the per-effect bounds (`Random.int` in `[min, max]`, `Time.unixMs ≥ 0`, …) as hypotheses. See `docs/oracle.md` for the full Oracle model.
 

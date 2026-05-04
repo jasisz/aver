@@ -1,105 +1,108 @@
 # WASM Backend
 
-This backend compiles Aver to standalone `.wasm` modules with a typed ABI:
+Aver has two WASM backends. The recommended target since 0.16 is `--target wasm-gc` — native WebAssembly GC + tail-call output, no custom runtime, modern-host baseline (Chrome 119+, Firefox 120+, Safari 18.2+, wasmtime 25+, Node 22+, Cloudflare Workers). The legacy `--target wasm` backend is a fallback for pre-2024 hosts; it lives in `src/codegen/wasm/` and is documented at the bottom.
 
-- `Int -> i64`
-- `Float -> f64`
-- `Bool -> i32`
-- heap-backed values (`String`, `List`, `Map`, `Vector`, records, variants, wrappers) -> `i32` pointer
+## `--target wasm-gc` (recommended)
 
-Default output uses the `aver/*` import ABI. That keeps the generated module host-neutral: the same `.wasm` can run under the built-in wasmtime host, a browser JS shim, or a custom embedder.
+```bash
+aver compile app.av --target wasm-gc -o out
+aver compile app.av --target wasm-gc --optimize size -o out
+aver compile app.av --target wasm-gc --optimize speed -o out
+aver compile app.av --preset cloudflare --handler handler -o out
+```
 
-## Bridges
+Self-contained binary. The engine handles GC, recursion, and tail calls; per-instantiation helpers (per-`Map<K,V>` probes, per-`List<T>` ops, per-(K,V) eq helpers, the `__rt_string_*` LM transport) are inlined into the same module and DCE'd by `wasm-opt -Oz` to "what this program actually calls". No shared sidecar runtime to fetch, no `wasm-merge` step, no NaN-boxing.
 
-- `aver compile app.av --target wasm`
-  Emits `aver/*` imports such as `aver/console_print`, `aver/time_unixMs`, `aver/format_value`.
-- `aver compile app.av --target wasm --optimize size`
-  Post-processes the emitted module for smaller binaries.
-- `aver compile app.av --target wasm --optimize speed`
-  Post-processes the emitted module for speed-oriented optimization.
-- `aver compile app.av --target wasm --bridge wasip1`
-  Bundles the WASI preview-1 bridge for standalone `wasmtime`.
+`aver run --wasm-gc app.av` runs the same artifact through an embedded wasmtime executor with the full effect surface (Args, Console, Time, Random, Float math, Terminal, Disk, Env, Tcp, Http). Output matches the VM byte-for-byte modulo time/randomness on every audited example + project main.
 
-`--optimize` requires `binaryen` (`wasm-metadce` and `wasm-opt`) to be installed. The toolchain passes the required WASM feature flags automatically because Aver modules use bulk-memory ops and multi-value imports.
+### Boundary types
 
-### String deduplication
+- `Int -> i64`, `Float -> f64`, `Bool -> i32`, `Unit -> nothing`.
+- `String -> (ref null $string)` — engine-managed `(array i8)` UTF-8.
+- `List<T>`, `Vector<T>`, `Map<K, V>`, records, variants, tuples — all monomorphised to engine GC structs/arrays per instantiation. The wasm-gc type registry is local to the final flattened module; cross-module calls compile to plain `call $fn` after multi-module flattening.
 
-String literals are deduplicated at compile time. Each unique string appears once in the data section regardless of how many times it is referenced in source code.
+Newtype optimisation: a single-field record over a primitive (`record UserId { raw: Int }`) and a single-payload single-variant sum (`type UserId = UserId(Int)`) lower to the underlying primitive everywhere — no `struct.new`, no `struct.get`, no `ref.cast`. Same trick rustc uses for `struct UserId(u64)`.
 
-## Built-in Host
+### Effect imports
 
-`aver run app.av --wasm` compiles with the `aver/*` ABI and executes the module with a built-in wasmtime host in [src/main/commands.rs](../src/main/commands.rs).
+Effectful imports follow the `aver/*` namespace — `aver/console_print(s: ref null $string)`, `aver/time_unix_ms()`, `aver/disk_read_text(path: ref null $string) -> ref null $string`, etc. The string transport sits behind two helpers the host calls into: `__rt_string_from_lm(written: i32) -> (ref null $string)` and `__rt_string_to_lm(s: ref null $string) -> i32`. Encoding is straight UTF-8; the host writes/reads into LM (linear memory) page 0 and exchanges a guest-managed string ref for the byte count.
 
-The built-in host currently provides:
+The exact import surface lives in [`src/codegen/wasm_gc/effects.rs`](../src/codegen/wasm_gc/effects.rs). `Console.print`/`error`/`warn` and `Terminal.print`/`setColor` all take `String` since 0.16 — stringification is the caller's job (interpolation `"{x}"` for primitives, a per-type render fn for compound shapes).
 
-- `Console.*`
-- `Terminal.*`
-- `Random.int`
-- `Time.now`, `Time.unixMs`, `Time.sleep`
-- `Print.value`, `Format.value`
-- `Float.sin`, `Float.cos`, `Float.atan2`, `Float.pow`
+### `--preset cloudflare`
 
-## Host ABI Shape
+```bash
+aver compile app.av --preset cloudflare --handler handler -o out
+# expands to: --target wasm-gc --pack cloudflare --handler handler
+```
 
-The canonical import table lives in [abi.rs](../src/codegen/wasm/abi.rs).
+Drops `app.wasm` (wasm-gc binary), `worker.js` (~140-line LM string transport adapter), and a `wrangler.toml` template into `out/`. The handler must have signature `Fn(HttpRequest) -> HttpResponse`. The compiler synthesises an `aver_http_handle()` wrapper that:
 
-A few practical rules:
+1. reads request fields via `Request.*` host imports,
+2. allocates an `HttpRequest` struct,
+3. calls the user's handler,
+4. walks the response's `headers: Map<String, List<String>>` and dispatches one `Response.setHeader(name, value)` per (key, value) pair,
+5. finalises with `Response.text(status, body)`.
 
-- strings cross the boundary as `ptr + len`
-- heap strings inside Aver memory are string objects: 8-byte header, then UTF-8 bytes
-- `Print.value` / `Format.value` take `(tag: i32, value: i64)`
-- `Terminal.readKey` returns `(ptr, len)` for `Some(String)` and `(-1, 0)` for `Option.None`
-- `Terminal.size` returns `(width: i32, height: i32)` and codegen wraps that into `Terminal.Size`
+Routing, response shape, and header semantics stay in Aver. Workerd's V8 has stable wasm-gc + tail calls, so no compat flags beyond a recent `compatibility_date` are needed.
 
-## Memory Model
+### Browser host
 
-The WASM backend uses a single bump-heap allocator (`$alloc`) with boundary compaction at function return and TCO iteration boundaries. No separate GC runtime — the full model is ~1.5 KB of emitted WASM.
+The reference browser host is [`tools/website/playground/`](../tools/website/playground/). It instantiates a wasm-gc binary with the `aver/*` imports wired against `console.log`, `Date.now()`, `crypto.getRandomValues`, etc., translates JS strings to/from `(ref null $string)` via `__rt_string_*`, and renders `Terminal.*` against a retained text grid. For interactive `Terminal.readKey()` workloads, serve with `python3 tools/website/serve.py 4173` so the page gets the cross-origin isolation headers needed for shared-memory input.
 
-**Function return**: `collect_begin(mark)` → `retain_i32(result)` deep-copies reachable objects to a temp area → `collect_end()` rebases internal pointers and copies back → `rebase_i32(result)`. Dead objects between mark and heap_ptr are reclaimed.
+A minimal embedder needs:
 
-**Self-call TCO (yard semantics)**: an `iter_mark` is saved at each loop iteration. If the iteration allocated very little (≤256 bytes), compaction is skipped entirely (O(1) — accumulator pattern like list building). Otherwise, full compaction from the function's `fn_mark` reclaims dead objects from previous iterations (replacement pattern like game loops).
+- `WebAssembly.instantiate(bytes, { aver: {...host imports...} })`
+- The `__rt_string_from_lm` / `__rt_string_to_lm` round-trip for any string-valued effect
+- A 1-page LM transport buffer for the round-trip (the wasm module exports `memory` + `__rt_memory_grow(pages)`)
 
-**Mutual TCO (watermark)**: mutual tail-call trampolines use a `gc_watermark` instead of per-iteration skip heuristics. Compaction triggers when accumulated garbage (`heap_ptr - watermark`) exceeds 16KB since the last collection, then resets the watermark. This handles nested calls that truncate back to their own boundary (which would mask per-iteration growth from `iter_mark`).
+### Policy is the host's job
 
-**Thin/parent-thin frames**: small pure functions (leaf computations, dispatch) skip boundary work entirely — no mark saved, no compaction on return.
+The WASM artifact does **not** embed `aver.toml` runtime policy:
 
-**Exported globals**: modules export `$heap_ptr` (bump allocator position) for host-side memory inspection, and `$alloc(size: i32) -> i32` so hosts can allocate guest memory safely for strings returned from host imports.
+- **What the program declares it needs** — effect imports, deterministic mocks for replay, independence-mode invariants — is build-time semantics, encoded in the WASM module.
+- **What the program is allowed to do at runtime** — URL/host whitelists, filesystem scoping, rate limits, capability tokens — is enforcement, and every wasm host already has a richer model than `aver.toml` could express portably (`wasmtime --allow-net=...`, Workers `services` bindings, browser CSP, Fastly backend allowlist).
 
-## Policy is the Host's Job
+A trap on a missing import is a free `deny`. Re-encoding allow/deny rules into the WASM artifact would duplicate what the host already enforces. `aver.toml` stays fully effective for VM and `--self-host`; under WASM the only fields with a job to do are the build-time ones (deterministic mocks, independence cancel).
 
-The WASM artifact does **not** embed `aver.toml` runtime policy, and this is deliberate — not a missing feature.
+### Limitations
 
-What lives where:
-
-- **What the program declares it needs** — effect imports, deterministic mocks for replay, independence-mode invariants. This is build-time semantics. Stays with us, encoded in the WASM module (or a sidecar manifest).
-- **What the program is allowed to do at runtime** — URL/host whitelists, filesystem scoping, rate limits, capability tokens. This is enforcement. Belongs to the host.
-
-Every wasm host already has a richer enforcement model than `aver.toml` could express portably:
-
-- **wasmtime / WASI** — `--allow-net=api.foo.com:443`, `--dir=/tmp`, capability tokens per instance
-- **Cloudflare Workers** — `services` / `fetch` bindings per domain in `wrangler.toml`
-- **Browser** — CSP `connect-src`, CORS, fetch hooks
-- **Fastly Compute** — backend whitelist in service config
-
-A trap on a missing import is a free `deny`. Re-encoding the same allow/deny rules into the WASM artifact would be at best a duplicate of what the host already enforces, at worst security theater (build-time declaration with no runtime teeth).
-
-So: `aver.toml` stays fully effective for VM and `--self-host` execution (where we own the runtime). For `--target wasm` / `--target edge-wasm`, the only fields with a job to do are the build-time ones (deterministic mocks, independence cancel) — the rest is the host's deployment config.
-
-## Limitations
-
-- **Module graph is compile-time only** — regular multi-module `depends [...]` works when the full graph resolves under the chosen `--module-root`, but the backend emits one standalone module, not separately linked WASM modules.
-- **Services** — the built-in host provides Console, Terminal, Random, Time, and math. Disk, Http, Tcp, Env, and Args are not available.
+- **Multi-module is compile-time flatten** — `depends [...]` works, but the backend emits one standalone module. The Component Model is a future separate mode.
+- **Wasmtime GC tax on alloc-heavy hot loops** — wasmtime 44's GC heap path costs ~3-22× vs V8 on `string_interp` / `map_lookup` / `fractal_seahorse` (same wasm, different engine). On V8 (Workers, browsers, Node 22+) wasm-gc wins or ties everywhere. Run alloc-heavy benchmarks under V8 before blaming the compile path.
 - **Independence mode** — `cancel` vs `complete` has no effect since WASM execution is single-threaded.
 
-## Optimized Patterns
+## `--target wasm` (legacy fallback)
 
-- `Option.withDefault(Vector.get(v, i), literal)` → inline bounds check + direct `i64.load`, no Option wrapper allocation
-- `Map.set` with unique keys → prepend only (no rebuild), O(1) insert
-- String concatenation uses `memory.copy` for bulk byte transfer
+Kept for environments that don't speak the GC + tail-call proposals — wasmtime CLI < 25, Node < 22, anything pre-2024. Programs are bundled into a single module that imports from a custom NaN-boxed runtime; the runtime is inlined via `wasm-merge` so deployment is one file.
 
-## Minimal Browser Host
+```bash
+aver compile app.av --target wasm
+aver compile app.av --target wasm --optimize size
+aver compile app.av --target wasm --bridge wasip1   # standalone WASI preview-1
+```
 
-This is enough to run console-style examples compiled with `aver compile hello.av --target wasm`:
+`--optimize` requires `binaryen` (`wasm-metadce` and `wasm-opt`) on PATH.
+
+### Boundary ABI
+
+- `Int -> i64`, `Float -> f64`, `Bool -> i32`, heap-backed values (`String`, `List`, `Map`, `Vector`, records, variants, wrappers) are NaN-boxed `i64`s carrying a tag and a 32-bit pointer into linear memory.
+- Strings cross the boundary as `(ptr, len)`; heap strings are 8-byte header + UTF-8 bytes.
+- `Print.value` / `Format.value` take `(tag: i32, value: i64)`.
+- `Terminal.readKey` returns `(ptr, len)` for `Some(String)` and `(-1, 0)` for `Option.None`.
+
+The canonical import table lives in [`src/codegen/wasm/abi.rs`](../src/codegen/wasm/abi.rs).
+
+### Memory model
+
+Single bump-heap allocator (`$alloc`) with boundary compaction at function return and TCO iteration boundaries. ~1.5 KB of emitted WASM. Function returns walk `collect_begin → retain → collect_end → rebase`; self-call TCO uses an `iter_mark` (skip-on-small-allocations heuristic, ≤256 bytes) to avoid per-iteration compaction; mutual TCO uses a 16 KB watermark. Modules export `$heap_ptr` and `$alloc(size: i32) -> i32` for host-side memory inspection.
+
+### Built-in host
+
+`aver run app.av --wasm` compiles with the legacy ABI and executes the module with a built-in wasmtime host in [`src/main/commands.rs`](../src/main/commands.rs). The built-in host covers `Console.*`, `Terminal.*`, `Random.int`, `Time.*`, `Print.value`, `Format.value`, and `Float.{sin,cos,atan2,pow}` — Disk, Http, Tcp, Env, and Args are not available; use `--wasm-gc` for those (full effect surface).
+
+### Minimal browser host
+
+Enough to run console-style examples compiled with `aver compile hello.av --target wasm`:
 
 ```html
 <pre id="out"></pre>
@@ -163,27 +166,10 @@ instance.exports._start();
 
 The same shape works in Node via `WebAssembly.instantiate(...)` with a `Buffer`.
 
-There is also a real browser host in [tools/website/playground/](../tools/website/playground/) that runs compiled Aver modules in-page. For interactive `Terminal.readKey()` workloads, serve the site with `python3 tools/website/serve.py 4173` so the page gets the isolation headers needed for shared-memory input.
-
-## Terminal In Browsers
-
-`Terminal.*` is available in the built-in wasmtime host and in the static website playground host.
-
-For browsers, the rendering policy is still host-specific:
-
-- `Terminal.print` can target a `<pre>`, DOM tree, `<canvas>`, or terminal emulator widget
-- `Terminal.moveTo` / `clear` / `setColor` / `flush` map naturally to a retained text grid
-- `Terminal.readKey` should be driven from browser keyboard events into a small queue
-- `enableRawMode` / `disableRawMode` are usually "capture keyboard events" rather than literal TTY mode
-
-The host in `tools/website/playground/` is the reference implementation for that mapping.
-
-## Playground Maintenance
-
-From the repo root:
+## Playground maintenance
 
 ```bash
 python3 tools/website/rebuild_playground.py
 ```
 
-This syncs mirrored game sources under `tools/website/playground/sources/`, rebuilds the shipped `.wasm` files with `--optimize size`, and refreshes the size labels shown on the website.
+Syncs mirrored game sources under `tools/website/playground/sources/`, rebuilds the shipped `.wasm` files with `--target wasm-gc --optimize size`, and refreshes the size labels shown on the website.
