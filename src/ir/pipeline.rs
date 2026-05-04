@@ -164,6 +164,15 @@ pub enum PassReport {
     Resolve {
         slots_resolved: usize,
         fns_with_slots: usize,
+        /// Total slot count across all fns whose resolver populated a
+        /// type (one entry per `FnResolution.local_slot_types` element).
+        slot_types_total: usize,
+        /// Slots whose type came back `Type::Invalid` — typically
+        /// wildcards / `_` patterns the resolver counted but never
+        /// produced into. Surfaces unhandled pattern shapes (e.g.
+        /// future variant kinds the slot-types pass hasn't taught
+        /// itself yet) as a non-zero counter.
+        slot_types_invalid: usize,
     },
     LastUse {
         last_use_marked: usize,
@@ -341,7 +350,7 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
     if cfg.run_resolve {
         resolve(items);
         let post = pass_diag::collect(items);
-        result.pass_diagnostics.push(diag_for_resolve(&post));
+        result.pass_diagnostics.push(diag_for_resolve(&post, items));
         fire(&mut cfg, PipelineStage::Resolve, items);
     }
 
@@ -491,14 +500,30 @@ fn diag_for_buffer_build(report: &BufferBuildPassReport) -> PassDiagnostic {
     }
 }
 
-fn diag_for_resolve(post: &CountsByFn) -> PassDiagnostic {
+fn diag_for_resolve(post: &CountsByFn, items: &[TopLevel]) -> PassDiagnostic {
     let slots_resolved = pass_diag::total(post).resolved;
     let fns_with_slots = post.values().filter(|c| c.resolved > 0).count();
+    let mut slot_types_total = 0usize;
+    let mut slot_types_invalid = 0usize;
+    for item in items {
+        if let TopLevel::FnDef(fd) = item
+            && let Some(res) = fd.resolution.as_ref()
+        {
+            slot_types_total += res.local_slot_types.len();
+            slot_types_invalid += res
+                .local_slot_types
+                .iter()
+                .filter(|t| matches!(t, crate::ast::Type::Invalid))
+                .count();
+        }
+    }
     PassDiagnostic {
         stage: PipelineStage::Resolve,
         report: PassReport::Resolve {
             slots_resolved,
             fns_with_slots,
+            slot_types_total,
+            slot_types_invalid,
         },
     }
 }

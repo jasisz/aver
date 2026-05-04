@@ -4060,9 +4060,11 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
             PassReport::Resolve {
                 slots_resolved,
                 fns_with_slots,
+                slot_types_total,
+                slot_types_invalid,
             } => {
                 out.push_str(&format!(
-                    "{label} {slots_resolved} ident(s) resolved to slot lookups across {fns_with_slots} fn(s)\n"
+                    "{label} {slots_resolved} ident(s) resolved to slot lookups across {fns_with_slots} fn(s); {slot_types_total} typed slot(s) ({slot_types_invalid} invalid)\n"
                 ));
             }
             PassReport::LastUse {
@@ -4222,10 +4224,12 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
             PassReport::Resolve {
                 slots_resolved,
                 fns_with_slots,
+                slot_types_total,
+                slot_types_invalid,
             } => {
                 out.push_str(&format!(
-                    "{{\"slots_resolved\":{},\"fns_with_slots\":{}}}",
-                    slots_resolved, fns_with_slots
+                    "{{\"slots_resolved\":{},\"fns_with_slots\":{},\"slot_types_total\":{},\"slot_types_invalid\":{}}}",
+                    slots_resolved, fns_with_slots, slot_types_total, slot_types_invalid
                 ));
             }
             PassReport::LastUse {
