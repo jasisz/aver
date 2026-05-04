@@ -354,13 +354,6 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         fire(&mut cfg, PipelineStage::Resolve, items);
     }
 
-    if cfg.run_last_use {
-        last_use(items);
-        let post = pass_diag::collect(items);
-        result.pass_diagnostics.push(diag_for_last_use(&post));
-        fire(&mut cfg, PipelineStage::LastUse, items);
-    }
-
     if cfg.run_analyze {
         // The body classifier needs a `CallLowerCtx`. When no real ctx is
         // configured we use `StubCallCtx`, which under-classifies `direct`
@@ -379,6 +372,21 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         let rewrites = crate::ir::escape::run(items);
         result.pass_diagnostics.push(diag_for_escape(rewrites));
         fire(&mut cfg, PipelineStage::Escape, items);
+    }
+
+    // `last_use` runs *after* every rewrite pass — escape duplicates
+    // `Attr(p, field)` into each use site, so a "last use" annotation
+    // computed pre-inline would become stale on the duplicated reads,
+    // and the VM's `MOVE_LOCAL` (emitted on `last_use=true`) would
+    // clear the slot before the second read sees it. Annotating once
+    // at the end keeps the pass cheap (single forward walk) and means
+    // every backend reads markers that match the IR they actually
+    // codegen against.
+    if cfg.run_last_use {
+        last_use(items);
+        let post = pass_diag::collect(items);
+        result.pass_diagnostics.push(diag_for_last_use(&post));
+        fire(&mut cfg, PipelineStage::LastUse, items);
     }
 
     result
