@@ -345,24 +345,30 @@ impl TypeChecker {
                 Some(expected_map)
             }
             ("List.prepend", 2) => {
-                let list_ty = self.infer_type(&args[1]);
-                let mut elem_ty = match &list_ty {
+                // Infer the head first so we know the element type, then
+                // walk the tail with `List<head_ty>` as the expected
+                // type. Crucial for `List.prepend(x, [])` where `[]`'s
+                // own inference would stamp `List<T>` (T unbound) and
+                // OnceLock then refuses any later overwrite — the tail
+                // would stay `List<T>` even if we computed the right
+                // shape afterwards.
+                let val_ty = self.infer_type(&args[0]);
+                let expected_list = Type::List(Box::new(val_ty.clone()));
+                let list_ty = self.infer_type_with_expected(&args[1], Some(&expected_list));
+                let elem_ty = match &list_ty {
                     Type::List(inner) => *inner.clone(),
-                    Type::Invalid => type_var("T"),
+                    Type::Invalid => val_ty.clone(),
                     other => {
                         self.error(format!(
                             "Argument 2 of 'List.prepend': expected List<...>, got {}",
                             other.display()
                         ));
-                        type_var("T")
+                        val_ty.clone()
                     }
                 };
-                let val_ty = self.infer_type(&args[0]);
-                if matches!(elem_ty, Type::Var(_)) {
-                    elem_ty = val_ty.clone();
-                    let expected_list = Type::List(Box::new(elem_ty.clone()));
-                    self.infer_type_with_expected(&args[1], Some(&expected_list));
-                } else if !Self::constraint_compatible(&val_ty, &elem_ty) {
+                if !matches!(elem_ty, Type::Var(_))
+                    && !Self::constraint_compatible(&val_ty, &elem_ty)
+                {
                     self.error(format!(
                         "Argument 1 of 'List.prepend': expected {}, got {}",
                         elem_ty.display(),

@@ -749,11 +749,14 @@ impl TypeRegistry {
             .strip_prefix("Result<")?
             .strip_suffix('>')?;
         let bytes = inner.as_bytes();
+        // Track both angle-bracket and paren depth — `Result<(A, B), E>`
+        // (T = a tuple) has a top-level comma inside the parens we
+        // need to skip past.
         let mut depth: i32 = 0;
         for (idx, b) in bytes.iter().enumerate() {
             match b {
-                b'<' => depth += 1,
-                b'>' => depth -= 1,
+                b'<' | b'(' => depth += 1,
+                b'>' | b')' => depth -= 1,
                 b',' if depth == 0 => {
                     return Some((inner[..idx].trim(), inner[idx + 1..].trim()));
                 }
@@ -1739,11 +1742,13 @@ fn collect_maps_from_str(type_str: &str, out: &mut Vec<String>) {
 pub(super) fn parse_map_kv(canonical: &str) -> Option<(&str, &str)> {
     let inner = canonical.trim().strip_prefix("Map<")?.strip_suffix('>')?;
     let bytes = inner.as_bytes();
+    // Track both angle-bracket and paren depth so `Map<(A, B), V>`
+    // (tuple key) splits at the right comma.
     let mut depth: i32 = 0;
     for (idx, b) in bytes.iter().enumerate() {
         match b {
-            b'<' => depth += 1,
-            b'>' => depth -= 1,
+            b'<' | b'(' => depth += 1,
+            b'>' | b')' => depth -= 1,
             b',' if depth == 0 => {
                 return Some((inner[..idx].trim(), inner[idx + 1..].trim()));
             }

@@ -319,6 +319,16 @@ pub(super) fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
         Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
             expr_needs_scratch(&k.node, registry) || expr_needs_scratch(&v.node, registry)
         }),
+        // `(...)?!` (unwrap=true) stashes each element's Result in the
+        // scratch slot to read its tag, fall through to the Err return
+        // path, or pull the Ok payload — same shape as `Expr::ErrorProp`,
+        // just one per element. Bare `(...)!` (unwrap=false) doesn't
+        // need scratch — elements are emitted positionally into the
+        // tuple struct.
+        Expr::IndependentProduct(items, unwrap) => {
+            *unwrap || items.iter().any(|e| expr_needs_scratch(&e.node, registry))
+        }
+        Expr::Tuple(items) => items.iter().any(|e| expr_needs_scratch(&e.node, registry)),
         _ => false,
     }
 }
