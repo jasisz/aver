@@ -85,44 +85,287 @@ pub fn resolve_program(items: &mut [TopLevel]) {
 }
 
 /// Resolve a single function definition.
+///
+/// Single-pass walk that allocates slots, stamps `slot_types`, fills
+/// `MatchArm::binding_slots`, and rewrites `Expr::Ident → Expr::
+/// Resolved` against a scope stack so pattern bindings shadow per
+/// arm — two arms with the same binding name (e.g. `deadline`
+/// appearing in both `TaskCreated.deadline: Option<String>` and
+/// `DeadlineSet.deadline: String`) get separate slots without
+/// the second one's typecheck-narrower type silently overwriting
+/// the first one's.
 fn resolve_fn(fd: &mut FnDef, type_info: &TypeInfo) {
-    let mut local_slots: HashMap<String, u16> = HashMap::new();
-    let mut next_slot: u16 = 0;
+    let mut state = ResolverState::new(type_info);
 
-    // Params get slots 0..N-1
-    for (param_name, _) in &fd.params {
-        local_slots.insert(param_name.clone(), next_slot);
-        next_slot += 1;
-    }
-
-    // Scan body for val/var bindings to pre-allocate slots
-    collect_binding_slots(fd.body.stmts(), &mut local_slots, &mut next_slot);
-
-    // Compute the per-slot Aver type. Runs *after* slot allocation
-    // (so we know how many entries we need) and *before* `resolve_stmts`
-    // rewrites `Expr::Ident` into `Expr::Resolved` (so binding-name
-    // lookups still see the raw names, though stamps survive either
-    // way). Default `Type::Invalid` marks slots the body never assigns
-    // to — backends typically skip those.
-    let mut slot_types: Vec<Type> = vec![Type::Invalid; next_slot as usize];
+    // Params live in the outermost scope and own slots 0..N-1.
+    state.scopes.push(HashMap::new());
     for (param_name, ty_str) in &fd.params {
-        if let Some(&slot) = local_slots.get(param_name) {
-            slot_types[slot as usize] =
-                crate::types::parse_type_str_strict(ty_str).unwrap_or(Type::Invalid);
-        }
+        let ty = crate::types::parse_type_str_strict(ty_str).unwrap_or(Type::Invalid);
+        let slot = state.declare(param_name, ty);
+        state.last_alloc.insert(param_name.clone(), slot);
     }
-    compute_stmts_slot_types(fd.body.stmts(), &local_slots, type_info, &mut slot_types);
 
-    // Resolve expressions in the body
+    // Walk body — clone, mutate, replace. Same Arc::make_mut cadence as
+    // before; rewriting Idents and stamping arm.binding_slots happens
+    // in one pass.
     let mut body = fd.body.as_ref().clone();
-    resolve_stmts(body.stmts_mut(), &local_slots);
+    state.walk_stmts(body.stmts_mut());
     fd.body = Rc::new(body);
+
+    let next_slot = state.next_slot;
+    let last_alloc = state.last_alloc;
+    let slot_types = state.slot_types;
+    state.scopes.pop();
 
     fd.resolution = Some(FnResolution {
         local_count: next_slot,
-        local_slots: Rc::new(local_slots),
+        local_slots: Rc::new(last_alloc),
         local_slot_types: Rc::new(slot_types),
     });
+}
+
+/// Mutable resolver state — scope stack of name→slot maps,
+/// next-slot counter, parallel `slot_types` vector. Encapsulates the
+/// shared bookkeeping the AST walk needs.
+struct ResolverState<'a> {
+    type_info: &'a TypeInfo,
+    next_slot: u16,
+    slot_types: Vec<Type>,
+    /// LIFO stack of scopes; innermost last. `walk_stmts` pushes one
+    /// scope for the function body, `walk_match_arms` pushes one per
+    /// arm (and pops on exit) so pattern bindings shadow only inside
+    /// their own arm.
+    scopes: Vec<HashMap<String, u16>>,
+    /// Mirror of the slot allocator for `FnResolution.local_slots`.
+    /// Last allocation per name wins on collision; used by external
+    /// consumers (escape analysis, debug paths) that look up a name
+    /// post-resolve. Pattern bindings live here too, but call sites
+    /// inside a match arm should prefer `MatchArm::binding_slots`
+    /// (resolver writes the actual per-arm slot there).
+    last_alloc: HashMap<String, u16>,
+}
+
+impl<'a> ResolverState<'a> {
+    fn new(type_info: &'a TypeInfo) -> Self {
+        Self {
+            type_info,
+            next_slot: 0,
+            slot_types: Vec::new(),
+            scopes: Vec::new(),
+            last_alloc: HashMap::new(),
+        }
+    }
+
+    /// Allocate a fresh slot, stamp its Aver type, return the index.
+    fn alloc(&mut self, ty: Type) -> u16 {
+        let idx = self.next_slot;
+        self.next_slot += 1;
+        self.slot_types.push(ty);
+        idx
+    }
+
+    /// Allocate a fresh slot, declare `name` in the innermost scope,
+    /// also record in `last_alloc` for post-resolve lookups. Wildcard
+    /// (`_`) returns `u16::MAX` and is *not* declared.
+    fn declare(&mut self, name: &str, ty: Type) -> u16 {
+        if name == "_" {
+            return u16::MAX;
+        }
+        let slot = self.alloc(ty);
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(name.to_string(), slot);
+        }
+        self.last_alloc.insert(name.to_string(), slot);
+        slot
+    }
+
+    /// Inner-first lookup over the scope stack. Returns the closest
+    /// enclosing slot for `name` — pattern bindings in the current arm
+    /// shadow let-bindings and parameters above.
+    fn lookup(&self, name: &str) -> Option<u16> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(&s) = scope.get(name) {
+                return Some(s);
+            }
+        }
+        None
+    }
+
+    fn walk_stmts(&mut self, stmts: &mut [Stmt]) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Binding(name, _annot, expr) => {
+                    self.walk_expr(expr);
+                    let ty = expr.ty().cloned().unwrap_or(Type::Invalid);
+                    self.declare(name, ty);
+                }
+                Stmt::Expr(expr) => self.walk_expr(expr),
+            }
+        }
+    }
+
+    fn walk_expr(&mut self, expr: &mut Spanned<Expr>) {
+        match &mut expr.node {
+            Expr::Ident(name) => {
+                if let Some(slot) = self.lookup(name) {
+                    expr.node = Expr::Resolved {
+                        slot,
+                        name: name.clone(),
+                        last_use: AnnotBool(false),
+                    };
+                }
+            }
+            Expr::Match { subject, arms } => {
+                self.walk_expr(subject);
+                let subject_ty = subject.ty().cloned();
+                for arm in arms.iter_mut() {
+                    self.scopes.push(HashMap::new());
+                    let slots = self.allocate_pattern(&arm.pattern, subject_ty.as_ref());
+                    let _ = arm.binding_slots.set(slots);
+                    self.walk_expr(&mut arm.body);
+                    self.scopes.pop();
+                }
+            }
+            Expr::FnCall(func, args) => {
+                self.walk_expr(func);
+                for arg in args {
+                    self.walk_expr(arg);
+                }
+            }
+            Expr::BinOp(_, l, r) => {
+                self.walk_expr(l);
+                self.walk_expr(r);
+            }
+            Expr::Attr(obj, _) => self.walk_expr(obj),
+            Expr::ErrorProp(inner) => self.walk_expr(inner),
+            Expr::Constructor(_, Some(inner)) => self.walk_expr(inner),
+            Expr::Constructor(_, None) => {}
+            Expr::List(items)
+            | Expr::Tuple(items)
+            | Expr::IndependentProduct(items, _) => {
+                for it in items {
+                    self.walk_expr(it);
+                }
+            }
+            Expr::MapLiteral(entries) => {
+                for (k, v) in entries {
+                    self.walk_expr(k);
+                    self.walk_expr(v);
+                }
+            }
+            Expr::InterpolatedStr(parts) => {
+                for part in parts {
+                    if let StrPart::Parsed(e) = part {
+                        self.walk_expr(e);
+                    }
+                }
+            }
+            Expr::RecordCreate { fields, .. } => {
+                for (_, e) in fields {
+                    self.walk_expr(e);
+                }
+            }
+            Expr::RecordUpdate { base, updates, .. } => {
+                self.walk_expr(base);
+                for (_, e) in updates {
+                    self.walk_expr(e);
+                }
+            }
+            Expr::TailCall(boxed) => {
+                for a in &mut boxed.args {
+                    self.walk_expr(a);
+                }
+            }
+            Expr::Literal(_) | Expr::Resolved { .. } => {}
+        }
+    }
+
+    /// Allocate fresh slots for every binding the pattern introduces,
+    /// declaring each in the innermost scope. Returns the per-pattern
+    /// slot list in pattern-position order — that's what the backend
+    /// reads via `MatchArm::binding_slots`. Wildcards are present as
+    /// `u16::MAX` so the slot list lines up with binding positions.
+    fn allocate_pattern(
+        &mut self,
+        pattern: &Pattern,
+        subject_ty: Option<&Type>,
+    ) -> Vec<u16> {
+        match pattern {
+            Pattern::Ident(name) => {
+                let ty = subject_ty.cloned().unwrap_or(Type::Invalid);
+                vec![self.declare(name, ty)]
+            }
+            Pattern::Cons(head, tail) => {
+                let elem_ty = match subject_ty {
+                    Some(Type::List(inner)) => (**inner).clone(),
+                    _ => Type::Invalid,
+                };
+                let list_ty = Type::List(Box::new(elem_ty.clone()));
+                vec![
+                    self.declare(head, elem_ty),
+                    self.declare(tail, list_ty),
+                ]
+            }
+            Pattern::Constructor(name, bindings) => {
+                let bare = name.rsplit('.').next().unwrap_or(name);
+                let parent_hint: Option<String> = match (subject_ty, name.split_once('.')) {
+                    (Some(Type::Named(parent)), _) => Some(parent.clone()),
+                    (_, Some((parent, _))) => Some(parent.to_string()),
+                    _ => self
+                        .type_info
+                        .variant_parents
+                        .get(bare)
+                        .and_then(|parents| {
+                            if parents.len() == 1 {
+                                Some(parents[0].clone())
+                            } else {
+                                None
+                            }
+                        }),
+                };
+                let field_tys: Vec<Type> = match (bare, subject_ty) {
+                    ("Ok", Some(Type::Result(t, _))) => vec![(**t).clone()],
+                    ("Err", Some(Type::Result(_, e))) => vec![(**e).clone()],
+                    ("Some", Some(Type::Option(inner))) => vec![(**inner).clone()],
+                    ("None", _) => Vec::new(),
+                    _ => parent_hint
+                        .and_then(|p| self.type_info.variants.get(&(p, bare.to_string())))
+                        .map(|fields| {
+                            fields
+                                .iter()
+                                .map(|s| {
+                                    crate::types::parse_type_str_strict(s)
+                                        .unwrap_or(Type::Invalid)
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_else(|| vec![Type::Invalid; bindings.len()]),
+                };
+                bindings
+                    .iter()
+                    .enumerate()
+                    .map(|(i, name)| {
+                        let ty = field_tys.get(i).cloned().unwrap_or(Type::Invalid);
+                        self.declare(name, ty)
+                    })
+                    .collect()
+            }
+            Pattern::Tuple(items) => {
+                let elem_tys: Vec<Type> = match subject_ty {
+                    Some(Type::Tuple(elems)) if elems.len() == items.len() => {
+                        elems.iter().cloned().collect()
+                    }
+                    _ => vec![Type::Invalid; items.len()],
+                };
+                let mut slots = Vec::new();
+                for (item, elem_ty) in items.iter().zip(elem_tys.iter()) {
+                    slots.extend(self.allocate_pattern(item, Some(elem_ty)));
+                }
+                slots
+            }
+            Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => Vec::new(),
+        }
+    }
 }
 
 /// Walk every binding-introducing site in a statement list and stamp
@@ -747,12 +990,10 @@ mod tests {
                                 "Result.Ok".to_string(),
                                 vec!["v".to_string()],
                             ),
-                            body: Box::new(Spanned::bare(Expr::Ident("v".to_string()))),
-                        },
+                            body: Box::new(Spanned::bare(Expr::Ident("v".to_string()))), binding_slots: std::sync::OnceLock::new() },
                         MatchArm {
                             pattern: Pattern::Wildcard,
-                            body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
-                        },
+                            body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))), binding_slots: std::sync::OnceLock::new() },
                     ],
                 },
                 1,
@@ -803,12 +1044,10 @@ mod tests {
                                     "Option.Some".to_string(),
                                     vec!["v".to_string()],
                                 ),
-                                body: Box::new(Spanned::bare(Expr::Ident("v".to_string()))),
-                            },
+                                body: Box::new(Spanned::bare(Expr::Ident("v".to_string()))), binding_slots: std::sync::OnceLock::new() },
                             MatchArm {
                                 pattern: Pattern::Wildcard,
-                                body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
-                            },
+                                body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))), binding_slots: std::sync::OnceLock::new() },
                         ],
                     }),
                 ),

@@ -187,6 +187,16 @@ pub(super) fn emit_fn_body(
         match stmt {
             Stmt::Binding(name, _annot, expr) => {
                 emit_expr(func, expr, &slots, &ctx)?;
+                let produces_value = aver_type_str_of(expr).trim() != "Unit";
+                if name == "_" {
+                    // `_ = expr` — sequence-only binding. Drop the
+                    // value (if any) and move on; the resolver
+                    // doesn't allocate a slot for `_`.
+                    if produces_value {
+                        func.instruction(&Instruction::Drop);
+                    }
+                    continue;
+                }
                 let slot = ctx
                     .self_local_slot(name)
                     .ok_or(WasmGcError::Validation(format!(
@@ -195,7 +205,6 @@ pub(super) fn emit_fn_body(
                 // Unit expressions push nothing — there's nothing to
                 // stash, and the slot itself is an i32 placeholder
                 // (kept around to preserve resolver slot indices).
-                let produces_value = aver_type_str_of(expr).trim() != "Unit";
                 if produces_value && (slot as usize) < slots.by_slot.len() {
                     func.instruction(&Instruction::LocalSet(slot));
                 }

@@ -1500,11 +1500,21 @@ pub(super) fn emit_list_literal(
 pub(super) fn emit_tuple_match(
     func: &mut Function,
     subject: &Spanned<Expr>,
-    pat_items: &[Pattern],
-    body: &Spanned<Expr>,
+    arm: &MatchArm,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
+    let pat_items = match &arm.pattern {
+        Pattern::Tuple(items) => items.as_slice(),
+        _ => {
+            return Err(WasmGcError::Validation(
+                "emit_tuple_match called on non-Tuple pattern".into(),
+            ));
+        }
+    };
+    let arm_slots = arm.binding_slots.get().ok_or(WasmGcError::Validation(
+        "Tuple match arm reached emit without resolver-allocated binding_slots".into(),
+    ))?;
     let subj_ty = aver_type_str_of(&subject);
     let canonical: String = subj_ty.chars().filter(|c| !c.is_whitespace()).collect();
     let tuple_idx = ctx
@@ -1518,11 +1528,11 @@ pub(super) fn emit_tuple_match(
     ))?;
     emit_expr(func, &subject, slots, ctx)?;
     func.instruction(&Instruction::LocalSet(scratch));
-    for (field_idx, pat) in pat_items.iter().enumerate() {
-        if let Pattern::Ident(name) = pat
-            && name != "_"
-            && let Some(binding_slot) = ctx.self_local_slot(name)
-        {
+    // pat_items align 1:1 with the resolver-allocated arm_slots —
+    // tuple destructure currently only supports flat `Pattern::Ident`
+    // items (multi-binding nested tuples land elsewhere).
+    for (field_idx, (pat, &slot)) in pat_items.iter().zip(arm_slots.iter()).enumerate() {
+        if matches!(pat, Pattern::Ident(_)) && slot != u16::MAX {
             func.instruction(&Instruction::LocalGet(scratch));
             func.instruction(&Instruction::RefCastNonNull(
                 wasm_encoder::HeapType::Concrete(tuple_idx),
@@ -1531,10 +1541,10 @@ pub(super) fn emit_tuple_match(
                 struct_type_index: tuple_idx,
                 field_index: field_idx as u32,
             });
-            func.instruction(&Instruction::LocalSet(binding_slot));
+            func.instruction(&Instruction::LocalSet(slot as u32));
         }
     }
-    emit_expr(func, &body, slots, ctx)?;
+    emit_expr(func, &arm.body, slots, ctx)?;
     Ok(())
 }
 
@@ -1609,12 +1619,13 @@ fn emit_tuple_constructor_arm_cascade(
     let arm = &arms[0];
     match &arm.pattern {
         Pattern::Wildcard => emit_expr(func, &arm.body, slots, ctx),
-        Pattern::Ident(name) => {
-            if name != "_"
-                && let Some(slot) = ctx.self_local_slot(name)
+        Pattern::Ident(_) => {
+            if let Some(arm_slots) = arm.binding_slots.get()
+                && let Some(&slot) = arm_slots.first()
+                && slot != u16::MAX
             {
                 func.instruction(&Instruction::LocalGet(scratch));
-                func.instruction(&Instruction::LocalSet(slot));
+                func.instruction(&Instruction::LocalSet(slot as u32));
             }
             emit_expr(func, &arm.body, slots, ctx)
         }
@@ -1679,11 +1690,21 @@ fn emit_tuple_constructor_arm_cascade(
                 func.instruction(&Instruction::I32Const(1));
             }
             func.instruction(&Instruction::If(block_ty));
-            // Bind on the success branch, then emit the body.
+            // Per-arm binding slots from the resolver — pattern bindings
+            // never sit in the function-level slot table; resolver
+            // walks tuple elements depth-first and pushes one slot per
+            // binding (Ident=1, Constructor=arity, Wildcard=0). Same
+            // walk order here so the slot index stays in sync.
+            let arm_slots = arm.binding_slots.get().ok_or(WasmGcError::Validation(
+                "tuple-of-constructors arm reached emit without binding_slots".into(),
+            ))?;
+            let mut slot_idx = 0;
             for (i, pat) in items.iter().enumerate() {
                 match pat {
-                    Pattern::Ident(name) if name != "_" => {
-                        if let Some(slot) = ctx.self_local_slot(name) {
+                    Pattern::Ident(_) => {
+                        let slot = arm_slots[slot_idx];
+                        slot_idx += 1;
+                        if slot != u16::MAX {
                             func.instruction(&Instruction::LocalGet(scratch));
                             func.instruction(&Instruction::RefCastNonNull(
                                 wasm_encoder::HeapType::Concrete(tuple_idx),
@@ -1692,43 +1713,46 @@ fn emit_tuple_constructor_arm_cascade(
                                 struct_type_index: tuple_idx,
                                 field_index: i as u32,
                             });
-                            func.instruction(&Instruction::LocalSet(slot));
+                            func.instruction(&Instruction::LocalSet(slot as u32));
                         }
                     }
                     Pattern::Constructor(name, bindings) => {
                         let bare = name.rsplit('.').next().unwrap_or(name);
                         let elem_canonical: String =
                             elems[i].chars().filter(|c| !c.is_whitespace()).collect();
-                        let Some(res_idx) = ctx.registry.result_type_idx(&elem_canonical) else {
-                            continue;
-                        };
+                        let res_idx_opt = ctx.registry.result_type_idx(&elem_canonical);
                         let payload_field = match bare {
-                            "Ok" => 1u32,
-                            "Err" => 2u32,
-                            _ => continue,
+                            "Ok" => Some(1u32),
+                            "Err" => Some(2u32),
+                            _ => None,
                         };
-                        for binding in bindings {
-                            if binding == "_" {
+                        for _binding in bindings {
+                            let slot = arm_slots[slot_idx];
+                            slot_idx += 1;
+                            if slot == u16::MAX {
                                 continue;
                             }
-                            if let Some(slot) = ctx.self_local_slot(binding) {
-                                func.instruction(&Instruction::LocalGet(scratch));
-                                func.instruction(&Instruction::RefCastNonNull(
-                                    wasm_encoder::HeapType::Concrete(tuple_idx),
-                                ));
-                                func.instruction(&Instruction::StructGet {
-                                    struct_type_index: tuple_idx,
-                                    field_index: i as u32,
-                                });
-                                func.instruction(&Instruction::RefCastNonNull(
-                                    wasm_encoder::HeapType::Concrete(res_idx),
-                                ));
-                                func.instruction(&Instruction::StructGet {
-                                    struct_type_index: res_idx,
-                                    field_index: payload_field,
-                                });
-                                func.instruction(&Instruction::LocalSet(slot));
-                            }
+                            let (Some(res_idx), Some(payload_field)) =
+                                (res_idx_opt, payload_field)
+                            else {
+                                continue;
+                            };
+                            func.instruction(&Instruction::LocalGet(scratch));
+                            func.instruction(&Instruction::RefCastNonNull(
+                                wasm_encoder::HeapType::Concrete(tuple_idx),
+                            ));
+                            func.instruction(&Instruction::StructGet {
+                                struct_type_index: tuple_idx,
+                                field_index: i as u32,
+                            });
+                            func.instruction(&Instruction::RefCastNonNull(
+                                wasm_encoder::HeapType::Concrete(res_idx),
+                            ));
+                            func.instruction(&Instruction::StructGet {
+                                struct_type_index: res_idx,
+                                field_index: payload_field,
+                            });
+                            func.instruction(&Instruction::LocalSet(slot as u32));
                         }
                     }
                     _ => {}
@@ -1809,13 +1833,12 @@ pub(super) fn emit_list_match(
     func.instruction(&Instruction::If(block_ty));
     emit_expr(func, &empty_arm.body, slots, ctx)?;
     func.instruction(&Instruction::Else);
-    if let Pattern::Cons(head_name, tail_name) = &cons_arm.pattern {
-        if head_name != "_" {
-            let slot = ctx
-                .self_local_slot(head_name)
-                .ok_or(WasmGcError::Validation(format!(
-                    "Cons head binding `{head_name}` has no resolver slot"
-                )))?;
+    if let Pattern::Cons(_head_name, _tail_name) = &cons_arm.pattern {
+        let arm_slots = cons_arm.binding_slots.get().ok_or(WasmGcError::Validation(
+            "Cons match arm reached emit without resolver-allocated binding_slots".into(),
+        ))?;
+        let head_slot = arm_slots[0];
+        if head_slot != u16::MAX {
             func.instruction(&Instruction::LocalGet(scratch));
             func.instruction(&Instruction::RefCastNonNull(
                 wasm_encoder::HeapType::Concrete(list_idx),
@@ -1824,14 +1847,10 @@ pub(super) fn emit_list_match(
                 struct_type_index: list_idx,
                 field_index: 0,
             });
-            func.instruction(&Instruction::LocalSet(slot));
+            func.instruction(&Instruction::LocalSet(head_slot as u32));
         }
-        if tail_name != "_" {
-            let slot = ctx
-                .self_local_slot(tail_name)
-                .ok_or(WasmGcError::Validation(format!(
-                    "Cons tail binding `{tail_name}` has no resolver slot"
-                )))?;
+        let tail_slot = arm_slots[1];
+        if tail_slot != u16::MAX {
             func.instruction(&Instruction::LocalGet(scratch));
             func.instruction(&Instruction::RefCastNonNull(
                 wasm_encoder::HeapType::Concrete(list_idx),
@@ -1840,7 +1859,7 @@ pub(super) fn emit_list_match(
                 struct_type_index: list_idx,
                 field_index: 1,
             });
-            func.instruction(&Instruction::LocalSet(slot));
+            func.instruction(&Instruction::LocalSet(tail_slot as u32));
         }
     }
     emit_expr(func, &cons_arm.body, slots, ctx)?;
@@ -1914,15 +1933,11 @@ pub(super) fn emit_result_match(
     func.instruction(&Instruction::I32Const(1));
     func.instruction(&Instruction::I32Eq);
     func.instruction(&Instruction::If(block_ty));
-    if let Pattern::Constructor(_, bindings) = &ok_arm.pattern
-        && let Some(name) = bindings.first()
-        && name != "_"
+    if let Pattern::Constructor(_, _) = &ok_arm.pattern
+        && let Some(arm_slots) = ok_arm.binding_slots.get()
+        && let Some(&slot) = arm_slots.first()
+        && slot != u16::MAX
     {
-        let slot = ctx
-            .self_local_slot(name)
-            .ok_or(WasmGcError::Validation(format!(
-                "Result.Ok binding `{name}` has no resolver slot"
-            )))?;
         func.instruction(&Instruction::LocalGet(scratch));
         func.instruction(&Instruction::RefCastNonNull(
             wasm_encoder::HeapType::Concrete(res_idx),
@@ -1931,19 +1946,15 @@ pub(super) fn emit_result_match(
             struct_type_index: res_idx,
             field_index: 1,
         });
-        func.instruction(&Instruction::LocalSet(slot));
+        func.instruction(&Instruction::LocalSet(slot as u32));
     }
     emit_expr(func, &ok_arm.body, slots, ctx)?;
     func.instruction(&Instruction::Else);
-    if let Pattern::Constructor(_, bindings) = &err_arm.pattern
-        && let Some(name) = bindings.first()
-        && name != "_"
+    if let Pattern::Constructor(_, _) = &err_arm.pattern
+        && let Some(arm_slots) = err_arm.binding_slots.get()
+        && let Some(&slot) = arm_slots.first()
+        && slot != u16::MAX
     {
-        let slot = ctx
-            .self_local_slot(name)
-            .ok_or(WasmGcError::Validation(format!(
-                "Result.Err binding `{name}` has no resolver slot"
-            )))?;
         func.instruction(&Instruction::LocalGet(scratch));
         func.instruction(&Instruction::RefCastNonNull(
             wasm_encoder::HeapType::Concrete(res_idx),
@@ -1952,7 +1963,7 @@ pub(super) fn emit_result_match(
             struct_type_index: res_idx,
             field_index: 2,
         });
-        func.instruction(&Instruction::LocalSet(slot));
+        func.instruction(&Instruction::LocalSet(slot as u32));
     }
     emit_expr(func, &err_arm.body, slots, ctx)?;
     func.instruction(&Instruction::End);
@@ -2021,16 +2032,12 @@ pub(super) fn emit_map_get_match_fused(
     // binding slot (if any); the value is harmlessly dead in the
     // None branch (we always pop, regardless of which arm fires —
     // wasm requires a balanced stack across the branch boundary).
-    if let Pattern::Constructor(_, bindings) = &some_arm.pattern
-        && let Some(binding_name) = bindings.first()
-        && binding_name != "_"
+    if let Pattern::Constructor(_, _) = &some_arm.pattern
+        && let Some(arm_slots) = some_arm.binding_slots.get()
+        && let Some(&slot) = arm_slots.first()
+        && slot != u16::MAX
     {
-        let slot = ctx
-            .self_local_slot(binding_name)
-            .ok_or(WasmGcError::Validation(format!(
-                "Map.get fusion: Some binding `{binding_name}` has no resolver slot"
-            )))?;
-        func.instruction(&Instruction::LocalSet(slot));
+        func.instruction(&Instruction::LocalSet(slot as u32));
     } else {
         // No binding (or wildcard) — drop the value.
         func.instruction(&Instruction::Drop);
@@ -2125,15 +2132,11 @@ pub(super) fn emit_option_match(
 
     // Some branch: extract value into the bound slot (if any), then
     // emit body.
-    if let Pattern::Constructor(_, bindings) = &some_arm.pattern
-        && let Some(binding_name) = bindings.first()
-        && binding_name != "_"
+    if let Pattern::Constructor(_, _) = &some_arm.pattern
+        && let Some(arm_slots) = some_arm.binding_slots.get()
+        && let Some(&slot) = arm_slots.first()
+        && slot != u16::MAX
     {
-        let slot = ctx
-            .self_local_slot(binding_name)
-            .ok_or(WasmGcError::Validation(format!(
-                "Option.Some binding `{binding_name}` has no resolver slot"
-            )))?;
         func.instruction(&Instruction::LocalGet(scratch));
         func.instruction(&Instruction::RefCastNonNull(
             wasm_encoder::HeapType::Concrete(opt_idx),
@@ -2142,7 +2145,7 @@ pub(super) fn emit_option_match(
             struct_type_index: opt_idx,
             field_index: 1,
         });
-        func.instruction(&Instruction::LocalSet(slot));
+        func.instruction(&Instruction::LocalSet(slot as u32));
     }
     emit_expr(func, &some_arm.body, slots, ctx)?;
 
@@ -2383,31 +2386,34 @@ pub(super) fn emit_arm_body(
             .ok_or(WasmGcError::Validation(format!(
                 "unknown variant `{name}` in match"
             )))?;
+        // Per-arm binding slots from the resolver. Pattern bindings
+        // never land in the function-level `local_slots` map; they
+        // live in `MatchArm::binding_slots` so two arms can share a
+        // binding name (e.g. `deadline` showing up in both
+        // `TaskCreated` and `DeadlineSet` with different field types)
+        // without collision.
+        let arm_slots = arm.binding_slots.get().ok_or(WasmGcError::Validation(
+            "match arm reached emit without resolver-allocated binding_slots".into(),
+        ))?;
         // Newtype: subject IS the underlying primitive — read the
         // scratch directly. (Won't happen here in practice because
         // newtype matches go through the single-arm path, but
         // handle it for symmetry.)
         if ctx.registry.newtype_underlying(&info.parent).is_some() && bindings.len() == 1 {
-            let slot = ctx
-                .self_local_slot(&bindings[0])
-                .ok_or(WasmGcError::Validation(format!(
-                    "binding `{}` has no resolver slot",
-                    bindings[0]
-                )))?;
-            func.instruction(&Instruction::LocalGet(subject_scratch));
-            func.instruction(&Instruction::LocalSet(slot));
+            let slot = arm_slots[0];
+            if slot != u16::MAX {
+                func.instruction(&Instruction::LocalGet(subject_scratch));
+                func.instruction(&Instruction::LocalSet(slot as u32));
+            }
             return emit_expr(func, &arm.body, slots, ctx);
         }
         // Extract each field into its bound slot.
-        for (i, binding_name) in bindings.iter().enumerate() {
-            if binding_name == "_" {
+        for (i, _binding_name) in bindings.iter().enumerate() {
+            let slot = arm_slots[i];
+            if slot == u16::MAX {
                 continue;
             }
-            let slot = ctx
-                .self_local_slot(binding_name)
-                .ok_or(WasmGcError::Validation(format!(
-                    "binding `{binding_name}` has no resolver slot"
-                )))?;
+            let slot = slot as u32;
             func.instruction(&Instruction::LocalGet(subject_scratch));
             func.instruction(&Instruction::RefCastNonNull(
                 wasm_encoder::HeapType::Concrete(info.type_idx),
@@ -2435,12 +2441,22 @@ pub(super) fn emit_arm_body(
 pub(super) fn emit_single_variant_match(
     func: &mut Function,
     subject: &Spanned<Expr>,
-    constructor: &str,
-    bindings: &[String],
-    body: &Spanned<Expr>,
+    arm: &MatchArm,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
+    let (constructor, bindings) = match &arm.pattern {
+        Pattern::Constructor(c, b) => (c.as_str(), b.as_slice()),
+        _ => {
+            return Err(WasmGcError::Validation(
+                "emit_single_variant_match called on non-Constructor pattern".into(),
+            ));
+        }
+    };
+    let body = arm.body.as_ref();
+    let arm_slots = arm.binding_slots.get().ok_or(WasmGcError::Validation(
+        "single-arm match reached emit without resolver-allocated binding_slots".into(),
+    ))?;
     // Constructor names in patterns are dotted (e.g. `UserId.UserId`);
     // the registry stores by the bare variant name.
     let bare = constructor.rsplit('.').next().unwrap_or(constructor);
@@ -2463,15 +2479,14 @@ pub(super) fn emit_single_variant_match(
     // pattern match is just "bind subject to the binding". No cast,
     // no struct.get.
     if ctx.registry.newtype_underlying(&info.parent).is_some() && bindings.len() == 1 {
-        let binding_name = &bindings[0];
-        let slot = ctx
-            .self_local_slot(binding_name)
-            .ok_or(WasmGcError::Validation(format!(
-                "binding `{binding_name}` has no resolver slot"
-            )))?;
+        let slot = arm_slots[0];
         emit_expr(func, &subject, slots, ctx)?;
-        func.instruction(&Instruction::LocalSet(slot));
-        emit_expr(func, &body, slots, ctx)?;
+        if slot != u16::MAX {
+            func.instruction(&Instruction::LocalSet(slot as u32));
+        } else {
+            func.instruction(&Instruction::Drop);
+        }
+        emit_expr(func, body, slots, ctx)?;
         return Ok(());
     }
 
@@ -2486,7 +2501,7 @@ pub(super) fn emit_single_variant_match(
         // effects, then dropped.
         emit_expr(func, &subject, slots, ctx)?;
         func.instruction(&Instruction::Drop);
-        emit_expr(func, &body, slots, ctx)?;
+        emit_expr(func, body, slots, ctx)?;
         return Ok(());
     }
 
@@ -2516,18 +2531,17 @@ pub(super) fn emit_single_variant_match(
     // need a real scratch slot. Phase 3a covers the single-binding
     // newtype shape and rejects the rest.
     if bindings.len() == 1 {
-        let binding_name = &bindings[0];
-        let slot = ctx
-            .self_local_slot(binding_name)
-            .ok_or(WasmGcError::Validation(format!(
-                "binding `{binding_name}` has no resolver slot"
-            )))?;
+        let slot = arm_slots[0];
         func.instruction(&Instruction::StructGet {
             struct_type_index: variant_idx,
             field_index: 0,
         });
-        func.instruction(&Instruction::LocalSet(slot));
-        emit_expr(func, &body, slots, ctx)?;
+        if slot != u16::MAX {
+            func.instruction(&Instruction::LocalSet(slot as u32));
+        } else {
+            func.instruction(&Instruction::Drop);
+        }
+        emit_expr(func, body, slots, ctx)?;
         return Ok(());
     }
 
@@ -2545,24 +2559,20 @@ pub(super) fn emit_single_variant_match(
     // that on the stack, drop it through the scratch (typed eqref via
     // upcast: every wasm-gc struct subtypes eq).
     func.instruction(&Instruction::LocalSet(scratch));
-    for (i, binding_name) in bindings.iter().enumerate() {
-        if binding_name == "_" {
+    for (i, _binding_name) in bindings.iter().enumerate() {
+        let slot = arm_slots[i];
+        if slot == u16::MAX {
             continue;
         }
-        let slot = ctx
-            .self_local_slot(binding_name)
-            .ok_or(WasmGcError::Validation(format!(
-                "binding `{binding_name}` has no resolver slot"
-            )))?;
         func.instruction(&Instruction::LocalGet(scratch));
         func.instruction(&Instruction::RefCastNonNull(cast_ty));
         func.instruction(&Instruction::StructGet {
             struct_type_index: variant_idx,
             field_index: i as u32,
         });
-        func.instruction(&Instruction::LocalSet(slot));
+        func.instruction(&Instruction::LocalSet(slot as u32));
     }
-    emit_expr(func, &body, slots, ctx)?;
+    emit_expr(func, body, slots, ctx)?;
     Ok(())
 }
 
@@ -2796,7 +2806,7 @@ pub(super) fn emit_match(
         && let Pattern::Tuple(items) = &arms[0].pattern
         && items.len() >= 2
     {
-        return emit_tuple_match(func, subject, items, &arms[0].body, slots, ctx);
+        return emit_tuple_match(func, subject, &arms[0], slots, ctx);
     }
 
     // Multi-arm tuple-of-constructors — `match flatFail() { (Result.Ok(a),
@@ -2819,9 +2829,9 @@ pub(super) fn emit_match(
     // Common in newtype-style sum types; cast + extract directly without
     // a dispatch test.
     if arms.len() == 1
-        && let Pattern::Constructor(name, bindings) = &arms[0].pattern
+        && let Pattern::Constructor(_, _) = &arms[0].pattern
     {
-        return emit_single_variant_match(func, subject, name, bindings, &arms[0].body, slots, ctx);
+        return emit_single_variant_match(func, subject, &arms[0], slots, ctx);
     }
 
     // Multi-arm Constructor patterns — emit a `ref.test` dispatch

@@ -173,20 +173,20 @@ fn try_lift_question_op_stmt(
         stmts_to_let_chain(&lifted_rest, line)
     };
 
-    let ok_arm = MatchArm {
-        pattern: Pattern::Constructor("Result.Ok".to_string(), vec![ok_value_name]),
-        body: Box::new(continuation),
-    };
-    let err_arm = MatchArm {
-        pattern: Pattern::Constructor("Result.Err".to_string(), vec![err_name.clone()]),
-        body: Box::new(spanned(
+    let ok_arm = MatchArm::new(
+        Pattern::Constructor("Result.Ok".to_string(), vec![ok_value_name]),
+        continuation,
+    );
+    let err_arm = MatchArm::new(
+        Pattern::Constructor("Result.Err".to_string(), vec![err_name.clone()]),
+        spanned(
             Expr::Constructor(
                 "Result.Err".to_string(),
                 Some(Box::new(spanned(Expr::Ident(err_name), line))),
             ),
             line,
-        )),
-    };
+        ),
+    );
 
     let match_expr = spanned(
         Expr::Match {
@@ -316,20 +316,20 @@ fn result_match_cascade(
     line: SourceLine,
 ) -> Spanned<Expr> {
     use crate::ast::{MatchArm, Pattern};
-    let err_arm = MatchArm {
-        pattern: Pattern::Constructor("Result.Err".to_string(), vec!["err_".to_string()]),
-        body: Box::new(spanned(
+    let err_arm = MatchArm::new(
+        Pattern::Constructor("Result.Err".to_string(), vec!["err_".to_string()]),
+        spanned(
             Expr::Constructor(
                 "Result.Err".to_string(),
                 Some(Box::new(spanned(Expr::Ident("err_".to_string()), line))),
             ),
             line,
-        )),
-    };
-    let ok_arm = MatchArm {
-        pattern: Pattern::Constructor("Result.Ok".to_string(), vec![binding]),
-        body: Box::new(body),
-    };
+        ),
+    );
+    let ok_arm = MatchArm::new(
+        Pattern::Constructor("Result.Ok".to_string(), vec![binding]),
+        body,
+    );
     spanned(
         Expr::Match {
             subject: Box::new(subject),
@@ -381,10 +381,7 @@ fn stmts_to_let_chain(stmts: &[Stmt], line: SourceLine) -> Spanned<Expr> {
     for stmt in bindings.iter().rev() {
         match stmt {
             Stmt::Binding(name, _, value) => {
-                let arm = MatchArm {
-                    pattern: Pattern::Ident(name.clone()),
-                    body: Box::new(acc),
-                };
+                let arm = MatchArm::new(Pattern::Ident(name.clone()), acc);
                 acc = spanned(
                     Expr::Match {
                         subject: Box::new(value.clone()),
@@ -397,10 +394,7 @@ fn stmts_to_let_chain(stmts: &[Stmt], line: SourceLine) -> Spanned<Expr> {
                 // Non-tail bare expression — sequence it before the
                 // accumulated tail by binding to `_` via a wildcard-
                 // style Match arm.
-                let arm = MatchArm {
-                    pattern: Pattern::Wildcard,
-                    body: Box::new(acc),
-                };
+                let arm = MatchArm::new(Pattern::Wildcard, acc);
                 acc = spanned(
                     Expr::Match {
                         subject: Box::new(e.clone()),
@@ -546,10 +540,10 @@ fn lift_expr(
                 // executes, but statically we don't know which). Branch
                 // lifting in a later commit gives each arm its own counter
                 // under a branch-aware path extension.
-                new_arms.push(MatchArm {
-                    pattern: arm.pattern.clone(),
-                    body: Box::new(lift_expr(&arm.body, cfg, path_expr, counter)?),
-                });
+                new_arms.push(MatchArm::new(
+                    arm.pattern.clone(),
+                    lift_expr(&arm.body, cfg, path_expr, counter)?,
+                ));
             }
             Expr::Match {
                 subject: Box::new(new_subject),

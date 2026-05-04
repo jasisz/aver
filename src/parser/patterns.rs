@@ -26,10 +26,7 @@ impl Parser {
                     ));
                 }
                 let body = self.parse_expr()?;
-                arms.push(MatchArm {
-                    pattern,
-                    body: Box::new(body),
-                });
+                arms.push(MatchArm::new(pattern, body));
                 self.skip_newlines();
             }
 

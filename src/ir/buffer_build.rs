@@ -1044,12 +1044,10 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
         BufferBuildKind::InternalReverse => vec![
             MatchArm {
                 pattern: Pattern::Literal(Literal::Bool(true)),
-                body: Box::new(buf_ident()),
-            },
+                body: Box::new(buf_ident()), binding_slots: std::sync::OnceLock::new() },
             MatchArm {
                 pattern: Pattern::Literal(Literal::Bool(false)),
-                body: Box::new(new_recursive_body),
-            },
+                body: Box::new(new_recursive_body), binding_slots: std::sync::OnceLock::new() },
         ],
         BufferBuildKind::ExternalReverse => {
             // Re-use the cons binding names from the original arm so
@@ -1065,12 +1063,10 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
             vec![
                 MatchArm {
                     pattern: Pattern::EmptyList,
-                    body: Box::new(buf_ident()),
-                },
+                    body: Box::new(buf_ident()), binding_slots: std::sync::OnceLock::new() },
                 MatchArm {
                     pattern: cons_pat,
-                    body: Box::new(new_recursive_body),
-                },
+                    body: Box::new(new_recursive_body), binding_slots: std::sync::OnceLock::new() },
             ]
         }
     };
@@ -1171,12 +1167,10 @@ mod tests {
             arms: vec![
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
-                    body: Box::new(true_body),
-                },
+                    body: Box::new(true_body), binding_slots: std::sync::OnceLock::new() },
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(false)),
-                    body: Box::new(false_body),
-                },
+                    body: Box::new(false_body), binding_slots: std::sync::OnceLock::new() },
             ],
         });
         FnDef {
@@ -1569,12 +1563,10 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
             arms: vec![
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
-                    body: Box::new(true_body),
-                },
+                    body: Box::new(true_body), binding_slots: std::sync::OnceLock::new() },
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(false)),
-                    body: Box::new(false_body),
-                },
+                    body: Box::new(false_body), binding_slots: std::sync::OnceLock::new() },
             ],
         });
         let fd = FnDef {
@@ -1683,12 +1675,10 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
             arms: vec![
                 MatchArm {
                     pattern: Pattern::EmptyList,
-                    body: Box::new(nil_body),
-                },
+                    body: Box::new(nil_body), binding_slots: std::sync::OnceLock::new() },
                 MatchArm {
                     pattern: Pattern::Cons("h".to_string(), "t".to_string()),
-                    body: Box::new(cons_body),
-                },
+                    body: Box::new(cons_body), binding_slots: std::sync::OnceLock::new() },
             ],
         });
         let sink = FnDef {

@@ -109,10 +109,64 @@ pub enum BinOp {
     Gte,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub struct MatchArm {
     pub pattern: Pattern,
     pub body: Box<Spanned<Expr>>,
+    /// Per-arm slot table for the pattern's bindings, in pattern order.
+    /// Filled by the resolver pass; backend code reads from here
+    /// instead of doing a name lookup, so two arms with the same
+    /// binding name (e.g. `deadline` showing up in both `TaskCreated`
+    /// and `DeadlineSet` with different field types) get separate
+    /// slots without colliding in the function-level slot table.
+    /// Wildcard-position bindings (`_`) are stored as `u16::MAX` and
+    /// must never be read.
+    pub binding_slots: std::sync::OnceLock<Vec<u16>>,
+}
+
+// `OnceLock` doesn't derive Clone (cell is invariant over T); copy
+// the inner manually so the resolver's allocations survive the
+// `Arc::make_mut` clones that happen during multimodule flatten.
+impl Clone for MatchArm {
+    fn clone(&self) -> Self {
+        let binding_slots = std::sync::OnceLock::new();
+        if let Some(v) = self.binding_slots.get() {
+            let _ = binding_slots.set(v.clone());
+        }
+        Self {
+            pattern: self.pattern.clone(),
+            body: self.body.clone(),
+            binding_slots,
+        }
+    }
+}
+
+impl PartialEq for MatchArm {
+    fn eq(&self, other: &Self) -> bool {
+        self.pattern == other.pattern && self.body == other.body
+    }
+}
+
+impl MatchArm {
+    /// Build a fresh arm with no binding-slot stamp yet — resolver
+    /// fills `binding_slots` after slot allocation. Use this from any
+    /// site that synthesises an arm (parser, AST rewrites, effect
+    /// lifting, tests).
+    pub fn new(pattern: Pattern, body: Spanned<Expr>) -> Self {
+        Self {
+            pattern,
+            body: Box::new(body),
+            binding_slots: std::sync::OnceLock::new(),
+        }
+    }
+
+    pub fn new_boxed(pattern: Pattern, body: Box<Spanned<Expr>>) -> Self {
+        Self {
+            pattern,
+            body,
+            binding_slots: std::sync::OnceLock::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

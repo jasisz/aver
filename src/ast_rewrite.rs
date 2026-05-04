@@ -121,19 +121,19 @@ where
                 .map(|arm| {
                     let shadowed = pattern_binding_names(&arm.pattern);
                     if shadowed.is_empty() {
-                        MatchArm {
-                            pattern: arm.pattern.clone(),
-                            body: Box::new(rewrite_inner(&arm.body, scope, rewrite)),
-                        }
+                        MatchArm::new(
+                            arm.pattern.clone(),
+                            rewrite_inner(&arm.body, scope, rewrite),
+                        )
                     } else {
                         let mut extended = scope.clone();
                         for name in shadowed {
                             extended.insert(name);
                         }
-                        MatchArm {
-                            pattern: arm.pattern.clone(),
-                            body: Box::new(rewrite_inner(&arm.body, &extended, rewrite)),
-                        }
+                        MatchArm::new(
+                            arm.pattern.clone(),
+                            rewrite_inner(&arm.body, &extended, rewrite),
+                        )
                     }
                 })
                 .collect();
@@ -278,14 +278,14 @@ mod tests {
                 Some(Box::new(int(2))),
             ))),
             arms: vec![
-                MatchArm {
-                    pattern: Pattern::Constructor("Option.Some".to_string(), vec!["x".to_string()]),
-                    body: Box::new(ident("x")),
-                },
-                MatchArm {
-                    pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
-                    body: Box::new(int(0)),
-                },
+                MatchArm::new(
+                    Pattern::Constructor("Option.Some".to_string(), vec!["x".to_string()]),
+                    ident("x"),
+                ),
+                MatchArm::new(
+                    Pattern::Constructor("Option.None".to_string(), vec![]),
+                    int(0),
+                ),
             ],
         });
         let out = rewrite_idents_scoped(&e, |n| if n == "x" { Some(int(1)) } else { None });
@@ -303,17 +303,17 @@ mod tests {
     fn tuple_pattern_shadowing() {
         let e = bare(Expr::Match {
             subject: Box::new(bare(Expr::Tuple(vec![int(1), int(2)]))),
-            arms: vec![MatchArm {
-                pattern: Pattern::Tuple(vec![
+            arms: vec![MatchArm::new(
+                Pattern::Tuple(vec![
                     Pattern::Ident("a".to_string()),
                     Pattern::Ident("b".to_string()),
                 ]),
-                body: Box::new(bare(Expr::BinOp(
+                bare(Expr::BinOp(
                     BinOp::Add,
                     Box::new(ident("a")),
                     Box::new(ident("b")),
-                ))),
-            }],
+                )),
+            )],
         });
         let out = rewrite_idents_scoped(&e, |n| if n == "a" { Some(int(99)) } else { None });
         let Expr::Match { arms, .. } = &out.node else {
@@ -333,10 +333,7 @@ mod tests {
     fn rewrites_in_non_shadowed_arm() {
         let e = bare(Expr::Match {
             subject: Box::new(int(42)),
-            arms: vec![MatchArm {
-                pattern: Pattern::Wildcard,
-                body: Box::new(ident("x")),
-            }],
+            arms: vec![MatchArm::new(Pattern::Wildcard, ident("x"))],
         });
         let out = rewrite_idents_scoped(&e, |n| if n == "x" { Some(int(7)) } else { None });
         let Expr::Match { arms, .. } = &out.node else {
@@ -349,10 +346,10 @@ mod tests {
     fn cons_pattern_shadows_head_and_tail() {
         let e = bare(Expr::Match {
             subject: Box::new(bare(Expr::List(vec![int(1), int(2)]))),
-            arms: vec![MatchArm {
-                pattern: Pattern::Cons("h".to_string(), "t".to_string()),
-                body: Box::new(bare(Expr::Tuple(vec![ident("h"), ident("t"), ident("z")]))),
-            }],
+            arms: vec![MatchArm::new(
+                Pattern::Cons("h".to_string(), "t".to_string()),
+                bare(Expr::Tuple(vec![ident("h"), ident("t"), ident("z")])),
+            )],
         });
         let out = rewrite_idents_scoped(&e, |n| match n {
             "h" => Some(int(100)),
