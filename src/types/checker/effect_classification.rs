@@ -58,7 +58,7 @@ pub struct EffectClassification {
 /// Converted into [`Type`] on demand via [`runtime_type`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeType {
-    Unknown,
+    FormattedValue,
     Unit,
     Int,
     Float,
@@ -85,7 +85,7 @@ pub enum RuntimeType {
 impl RuntimeType {
     fn as_type(self) -> Type {
         match self {
-            RuntimeType::Unknown => Type::Unknown,
+            RuntimeType::FormattedValue => Type::Var("FormattedValue".to_string()),
             RuntimeType::Unit => Type::Unit,
             RuntimeType::Int => Type::Int,
             RuntimeType::Float => Type::Float,
@@ -333,19 +333,19 @@ const CLASSIFICATIONS: &[EffectClassification] = &[
     EffectClassification {
         method: "Console.print",
         dimension: EffectDimension::Output,
-        runtime_params: &[RuntimeType::Unknown],
+        runtime_params: &[RuntimeType::FormattedValue],
         runtime_return: RuntimeType::Unit,
     },
     EffectClassification {
         method: "Console.error",
         dimension: EffectDimension::Output,
-        runtime_params: &[RuntimeType::Unknown],
+        runtime_params: &[RuntimeType::FormattedValue],
         runtime_return: RuntimeType::Unit,
     },
     EffectClassification {
         method: "Console.warn",
         dimension: EffectDimension::Output,
-        runtime_params: &[RuntimeType::Unknown],
+        runtime_params: &[RuntimeType::FormattedValue],
         runtime_return: RuntimeType::Unit,
     },
     EffectClassification {
@@ -369,7 +369,7 @@ const CLASSIFICATIONS: &[EffectClassification] = &[
     EffectClassification {
         method: "Terminal.print",
         dimension: EffectDimension::Output,
-        runtime_params: &[RuntimeType::Unknown],
+        runtime_params: &[RuntimeType::FormattedValue],
         runtime_return: RuntimeType::Unit,
     },
     EffectClassification {

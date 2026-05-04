@@ -1,20 +1,3 @@
 /playground/*
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Embedder-Policy: require-corp
-
-# Versioned runtime artifacts — pinned, immutable. Long cache + CORS so
-# external workers/edges can fetch and instantiate them cross-origin.
-/runtime/v:version/*
-  Access-Control-Allow-Origin: *
-  Cross-Origin-Resource-Policy: cross-origin
-  Cache-Control: public, max-age=31536000, immutable
-  X-Content-Type-Options: nosniff
-
-# Floating "latest" pointer — same CORS surface, short cache so a
-# release deploy is reflected within minutes for clients that pin
-# to /runtime/latest/* instead of a version.
-/runtime/latest/*
-  Access-Control-Allow-Origin: *
-  Cross-Origin-Resource-Policy: cross-origin
-  Cache-Control: public, max-age=300, must-revalidate
-  X-Content-Type-Options: nosniff

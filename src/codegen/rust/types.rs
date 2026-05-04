@@ -30,9 +30,9 @@ pub fn type_to_rust(ty: &Type) -> String {
             let ps: Vec<String> = params.iter().map(type_to_rust).collect();
             format!("fn({}) -> {}", ps.join(", "), type_to_rust(ret))
         }
-        Type::Unknown => {
+        Type::Var(_) | Type::Invalid => {
             panic!(
-                "Rust codegen: encountered Type::Unknown. \
+                "Rust codegen: encountered Type::Invalid or Type::Var. \
                  This indicates unresolved typing leaked into codegen."
             )
         }

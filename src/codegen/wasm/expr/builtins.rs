@@ -6,7 +6,7 @@ use wasm_encoder::Instruction;
 use crate::ast::{Expr, Spanned};
 use crate::types::Type;
 
-use super::super::types::WasmType;
+use super::super::types::{WasmType, aver_type_to_wasm};
 use super::super::value;
 use super::ExprEmitter;
 
@@ -52,22 +52,22 @@ impl<'a> ExprEmitter<'a> {
                 self.emit_host_move_to_import("terminal_moveTo");
             }
             "Terminal.print" if args.len() == 1 => {
-                let aver_type = self.infer_aver_type(&args[0].node);
-                let wasm_type = self.infer_expr_type(&args[0].node);
+                let aver_type = self.aver_type_of(&args[0]).clone();
+                let wasm_type = aver_type_to_wasm(&aver_type);
                 self.emit_host_string_consumer_import(
                     "terminal_print",
                     wasm_type,
-                    aver_type.as_ref(),
+                    Some(&aver_type),
                     true,
                 );
             }
             "Terminal.setColor" if args.len() == 1 => {
-                let aver_type = self.infer_aver_type(&args[0].node);
-                let wasm_type = self.infer_expr_type(&args[0].node);
+                let aver_type = self.aver_type_of(&args[0]).clone();
+                let wasm_type = aver_type_to_wasm(&aver_type);
                 self.emit_host_string_consumer_import(
                     "terminal_setColor",
                     wasm_type,
-                    aver_type.as_ref(),
+                    Some(&aver_type),
                     false,
                 );
             }
@@ -103,7 +103,7 @@ impl<'a> ExprEmitter<'a> {
             "List.contains" if args.len() == 2 => {
                 // args on stack: [list(i32), val(?)]
                 // list_contains expects (i32, i64) -- convert val to i64 if needed
-                let val_type = self.infer_expr_type(&args[1].node);
+                let val_type = self.wasm_type_of(&args[1]);
                 if val_type == WasmType::I32 {
                     self.instructions.push(Instruction::I64ExtendI32S);
                 }
@@ -141,8 +141,8 @@ impl<'a> ExprEmitter<'a> {
             "Map.set" if args.len() == 3 => {
                 // args on stack: [map(i32), key(?), value(?)]
                 // ABI: rt_map_set(map, key: i64, kind: i32, value: i64, value_ptr_flag: i32)
-                let value_is_ptr = self.expr_is_heap_ptr(&args[2].node);
-                let val_type = self.infer_expr_type(&args[2].node);
+                let value_is_ptr = self.expr_is_heap_ptr_spanned(&args[2]);
+                let val_type = self.wasm_type_of(&args[2]);
                 let value_local = self.alloc_local(WasmType::I64);
                 match val_type {
                     WasmType::I64 => {}
@@ -210,7 +210,7 @@ impl<'a> ExprEmitter<'a> {
                 // args: [option(i32), default]
                 // Check if option == NONE_SENTINEL -> return default, else unwrap
                 let opt_local = self.alloc_local(WasmType::I32);
-                let result_type = self.infer_expr_type(&args[1].node);
+                let result_type = self.wasm_type_of(&args[1]);
                 let def_local = self.alloc_local(result_type);
                 self.instructions.push(Instruction::LocalSet(def_local));
                 self.instructions.push(Instruction::LocalSet(opt_local));
@@ -239,12 +239,12 @@ impl<'a> ExprEmitter<'a> {
                 // args: [option(i32), err_value]
                 // Some(v) → Ok(v), None → Err(err_value)
                 let opt_local = self.alloc_local(WasmType::I32);
-                let inner_type = self
-                    .infer_option_inner_aver_type(&args[0])
-                    .map(|t| super::super::types::aver_type_to_wasm(&t))
-                    .unwrap_or(WasmType::I64);
-                let err_type = self.infer_expr_type(&args[1].node);
-                let err_is_ptr = self.expr_is_heap_ptr(&args[1].node);
+                let inner_type = match self.aver_type_of(&args[0]) {
+                    Type::Option(inner) => aver_type_to_wasm(inner),
+                    _ => WasmType::I64,
+                };
+                let err_type = self.wasm_type_of(&args[1]);
+                let err_is_ptr = self.expr_is_heap_ptr_spanned(&args[1]);
                 let err_local = self.alloc_local(err_type);
                 self.instructions.push(Instruction::LocalSet(err_local));
                 self.instructions.push(Instruction::LocalSet(opt_local));
@@ -308,14 +308,10 @@ impl<'a> ExprEmitter<'a> {
                 self.emit_end();
             }
             "Vector.fromList" if args.len() == 1 => {
-                let elem_is_ptr = self
-                    .infer_aver_type(&args[0].node)
-                    .as_ref()
-                    .and_then(|ty| match ty {
-                        Type::List(elem) => Some(self.is_heap_type(elem)),
-                        _ => None,
-                    })
-                    .unwrap_or(false);
+                let elem_is_ptr = match self.aver_type_of(&args[0]) {
+                    Type::List(elem) => self.is_heap_type(elem),
+                    _ => false,
+                };
                 self.instructions
                     .push(Instruction::I32Const(if elem_is_ptr { 1 } else { 0 }));
                 self.instructions
@@ -328,7 +324,7 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::Call(self.rt.vec_len));
             }
             "Vector.set" if args.len() == 3 => {
-                let val_type = self.infer_expr_type(&args[2].node);
+                let val_type = self.wasm_type_of(&args[2]);
                 match val_type {
                     WasmType::I64 => {}
                     WasmType::I32 => self.instructions.push(Instruction::I64ExtendI32S),
@@ -337,14 +333,14 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::Call(self.rt.vec_set));
             }
             "Vector.new" if args.len() == 2 => {
-                let fill_type = self.infer_expr_type(&args[1].node);
+                let fill_type = self.wasm_type_of(&args[1]);
                 match fill_type {
                     WasmType::I64 => {}
                     WasmType::I32 => self.instructions.push(Instruction::I64ExtendI32S),
                     WasmType::F64 => self.instructions.push(Instruction::I64ReinterpretF64),
                 }
                 self.instructions.push(Instruction::I32Const(
-                    if self.expr_is_heap_ptr(&args[1].node) {
+                    if self.expr_is_heap_ptr_spanned(&args[1]) {
                         1
                     } else {
                         0
@@ -833,7 +829,7 @@ impl<'a> ExprEmitter<'a> {
             }
             "Result.withDefault" if args.len() == 2 => {
                 // Same as Option.withDefault
-                let result_type = self.infer_expr_type(&args[1].node);
+                let result_type = self.wasm_type_of(&args[1]);
                 let def_local = self.alloc_local(result_type);
                 let opt_local = self.alloc_local(WasmType::I32);
                 self.instructions.push(Instruction::LocalSet(def_local));
@@ -866,18 +862,17 @@ impl<'a> ExprEmitter<'a> {
                 self.emit_end();
             }
             _ => {
-                let ret_type = self.infer_call_return_type(
-                    &crate::ast::Spanned {
-                        node: crate::ast::Expr::Ident(name.to_string()),
-                        line: 0,
-                    },
-                    args,
-                );
+                // Unknown builtin → codegen error, push a placeholder value
+                // so the wasm stack stays balanced. We can't know the real
+                // return type without a stub registered for `name`, and
+                // every known-good builtin has its own arm above. The real
+                // fix is to add the missing arm; the placeholder is just
+                // here so the rest of the body still compiles for diagnosis.
                 self.codegen_error(format!("unknown builtin `{}` in WASM backend", name));
                 for _ in args {
                     self.instructions.push(Instruction::Drop);
                 }
-                self.emit_default_value(ret_type);
+                self.emit_default_value(WasmType::I64);
             }
         }
     }
@@ -905,15 +900,15 @@ impl<'a> ExprEmitter<'a> {
         }
 
         if let Some(&print_idx) = self.host_import_indices.get("print_value") {
-            let arg_aver_type = self.infer_aver_type(&args[0].node);
-            let wt = self.infer_expr_type(&args[0].node);
+            let arg_aver_type = self.aver_type_of(&args[0]);
+            let wt = aver_type_to_wasm(arg_aver_type);
 
-            let (tag, needs_convert) = match &arg_aver_type {
-                Some(Type::Int) => (0i32, false),
-                Some(Type::Float) => (1, true), // f64 → reinterpret to i64
-                Some(Type::Bool) => (2, false), // will extend i32 to i64
-                Some(Type::Str) => (3, false),
-                Some(Type::Unit) => (5, false),
+            let (tag, needs_convert) = match arg_aver_type {
+                Type::Int => (0i32, false),
+                Type::Float => (1, true), // f64 → reinterpret to i64
+                Type::Bool => (2, false), // will extend i32 to i64
+                Type::Str => (3, false),
+                Type::Unit => (5, false),
                 _ => match wt {
                     WasmType::I64 => (0, false),
                     WasmType::F64 => (1, true),
@@ -999,15 +994,15 @@ impl<'a> ExprEmitter<'a> {
             }
         };
 
-        let arg_aver_type = self.infer_aver_type(&args[0].node);
-        let wt = self.infer_expr_type(&args[0].node);
+        let arg_aver_type = self.aver_type_of(&args[0]);
+        let wt = aver_type_to_wasm(arg_aver_type);
 
-        let (tag, needs_convert) = match &arg_aver_type {
-            Some(Type::Int) => (0i32, false),
-            Some(Type::Float) => (1, true),
-            Some(Type::Bool) => (2, false),
-            Some(Type::Str) => (3, false),
-            Some(Type::Unit) => (5, false),
+        let (tag, needs_convert) = match arg_aver_type {
+            Type::Int => (0i32, false),
+            Type::Float => (1, true),
+            Type::Bool => (2, false),
+            Type::Str => (3, false),
+            Type::Unit => (5, false),
             _ => match wt {
                 WasmType::I64 => (0, false),
                 WasmType::F64 => (1, true),
@@ -1069,8 +1064,8 @@ impl<'a> ExprEmitter<'a> {
     }
 
     pub(super) fn emit_list_prepend(&mut self, args: &[Spanned<Expr>]) {
-        let elem_type = self.infer_expr_type(&args[0].node);
-        let elem_is_ptr = self.expr_is_heap_ptr(&args[0].node);
+        let elem_type = self.wasm_type_of(&args[0]);
+        let elem_is_ptr = self.expr_is_heap_ptr_spanned(&args[0]);
         match elem_type {
             WasmType::F64 => {
                 self.instructions
@@ -1391,11 +1386,11 @@ impl<'a> ExprEmitter<'a> {
         }
     }
 
-    pub(super) fn emit_value_to_str(&mut self, expr: &Expr) {
-        let wt = self.infer_expr_type(expr);
-        let at = self.infer_aver_type(expr);
+    pub(super) fn emit_value_to_str(&mut self, expr: &Spanned<Expr>) {
+        let at = self.aver_type_of(expr).clone();
+        let wt = aver_type_to_wasm(&at);
         self.emit_expr(expr);
-        self.emit_stack_value_to_str(wt, at.as_ref());
+        self.emit_stack_value_to_str(wt, Some(&at));
     }
 
     /// Top-of-stack holds a Map key — normalize it to the i64 lane the
@@ -1413,20 +1408,15 @@ impl<'a> ExprEmitter<'a> {
         &mut self,
         list_expr: &Spanned<Expr>,
     ) -> (i32, i32) {
-        let (key_ty, value_ty) = match self.infer_aver_type(&list_expr.node) {
-            Some(Type::List(inner)) => match *inner {
-                Type::Tuple(parts) if parts.len() == 2 => {
-                    let mut it = parts.into_iter();
-                    let k = it.next().unwrap_or(Type::Unknown);
-                    let v = it.next().unwrap_or(Type::Unknown);
-                    (Some(k), Some(v))
-                }
+        let (key_ty, value_ty) = match self.aver_type_of(list_expr) {
+            Type::List(inner) => match inner.as_ref() {
+                Type::Tuple(parts) if parts.len() == 2 => (Some(&parts[0]), Some(&parts[1])),
                 _ => (None, None),
             },
             _ => (None, None),
         };
-        let key_kind = self.kind_for_aver_type(key_ty.as_ref());
-        let value_ptr_flag = self.value_is_heap_aver_type(value_ty.as_ref());
+        let key_kind = self.kind_for_aver_type(key_ty);
+        let value_ptr_flag = self.value_is_heap_aver_type(value_ty);
         (key_kind, value_ptr_flag)
     }
 
@@ -1451,13 +1441,13 @@ impl<'a> ExprEmitter<'a> {
     }
 
     pub(super) fn emit_map_key_normalize(&mut self, key: &Spanned<Expr>) -> i32 {
-        let wt = self.infer_expr_type(&key.node);
-        let at = self.infer_aver_type(&key.node);
-        let kind = match at.as_ref() {
-            Some(Type::Int) => 0,
-            Some(Type::Float) => 1,
-            Some(Type::Bool) => 2,
-            Some(Type::Str) => 3,
+        let at = self.aver_type_of(key);
+        let wt = aver_type_to_wasm(at);
+        let kind = match at {
+            Type::Int => 0,
+            Type::Float => 1,
+            Type::Bool => 2,
+            Type::Str => 3,
             _ => match wt {
                 WasmType::I64 => 0,
                 WasmType::F64 => 1,

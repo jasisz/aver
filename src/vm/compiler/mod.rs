@@ -965,6 +965,62 @@ impl<'a> FnCompiler<'a> {
         self.emit_op(DUP);
         self.bind_top_to_local(name);
     }
+
+    /// Override `local_slots` with this arm's per-arm fresh slots so
+    /// every `bind_top_to_local(name)` inside the arm writes to the
+    /// slot the resolver allocated for *this* arm (not whatever was
+    /// last allocated for the same name elsewhere). Returns the saved
+    /// prior mapping so the caller can `restore_local_slots` afterward.
+    pub(super) fn install_arm_slots(
+        &mut self,
+        arm: &crate::ast::MatchArm,
+    ) -> Vec<(String, Option<u16>)> {
+        let names = collect_pattern_binding_names(&arm.pattern);
+        let slots = arm.binding_slots.get().cloned().unwrap_or_default();
+        let mut saved = Vec::new();
+        for (i, name) in names.iter().enumerate() {
+            if name == "_" {
+                continue;
+            }
+            let Some(&slot) = slots.get(i) else { continue };
+            if slot == u16::MAX {
+                continue;
+            }
+            saved.push((name.clone(), self.local_slots.get(name).copied()));
+            self.local_slots.insert(name.clone(), slot);
+        }
+        saved
+    }
+
+    pub(super) fn restore_local_slots(&mut self, saved: Vec<(String, Option<u16>)>) {
+        for (name, prior) in saved.into_iter().rev() {
+            match prior {
+                Some(slot) => {
+                    self.local_slots.insert(name, slot);
+                }
+                None => {
+                    self.local_slots.remove(&name);
+                }
+            }
+        }
+    }
+}
+
+/// Pattern-position-ordered binding names — must mirror
+/// `resolver::ResolverState::allocate_pattern` exactly so position
+/// `i` lines up with `arm.binding_slots[i]`.
+fn collect_pattern_binding_names(pattern: &crate::ast::Pattern) -> Vec<String> {
+    use crate::ast::Pattern;
+    match pattern {
+        Pattern::Ident(name) => vec![name.clone()],
+        Pattern::Cons(head, tail) => vec![head.clone(), tail.clone()],
+        Pattern::Constructor(_, bindings) => bindings.clone(),
+        Pattern::Tuple(items) => items
+            .iter()
+            .flat_map(collect_pattern_binding_names)
+            .collect(),
+        Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => Vec::new(),
+    }
 }
 
 #[cfg(test)]

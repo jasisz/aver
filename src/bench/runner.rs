@@ -54,6 +54,7 @@ pub fn run_scenario(manifest: &Manifest, target: BenchTarget) -> Result<BenchRep
     match target {
         BenchTarget::Vm => run_vm(manifest),
         BenchTarget::WasmLocal => run_wasm_local(manifest),
+        BenchTarget::WasmGc => run_wasm_gc(manifest),
         BenchTarget::Rust => run_rust(manifest),
     }
 }
@@ -445,6 +446,202 @@ fn run_wasm_local(manifest: &Manifest) -> Result<BenchReport, RunError> {
 fn run_wasm_local(_manifest: &Manifest) -> Result<BenchReport, RunError> {
     Err(RunError::Setup(
         "wasm-local target requires the `wasm` feature; rebuild with `cargo build --features wasm`"
+            .to_string(),
+    ))
+}
+
+// ── wasm-gc target (0.15.3 probe) ──────────────────────────────────────
+
+#[cfg(feature = "wasm")]
+fn run_wasm_gc(manifest: &Manifest) -> Result<BenchReport, RunError> {
+    use wasmtime::{Config, Engine, Module, Store};
+
+    // Compile once. We shell out to `aver compile --target=wasm-gc`
+    // so the produced bytes are identical to what users get — bench
+    // measures the production codegen output, not a special path.
+    let temp = tempfile::tempdir()
+        .map_err(|e| RunError::Setup(format!("create wasm-gc bench tempdir: {}", e)))?;
+    let out_dir = temp.path().join("out");
+    let aver_bin = std::env::current_exe()
+        .map_err(|e| RunError::Setup(format!("locate current aver binary: {}", e)))?;
+
+    let status = Command::new(&aver_bin)
+        .arg("compile")
+        .arg(&manifest.entry)
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--name")
+        .arg(&manifest.name)
+        .arg("-o")
+        .arg(&out_dir)
+        .status()
+        .map_err(|e| RunError::Setup(format!("spawn aver compile --target=wasm-gc: {}", e)))?;
+    if !status.success() {
+        return Err(RunError::Compile(format!(
+            "aver compile --target=wasm-gc exited with {}",
+            status
+        )));
+    }
+
+    let wasm_path = out_dir.join(format!("{}.wasm", manifest.name));
+    let bytes = std::fs::read(&wasm_path)
+        .map_err(|e| RunError::Setup(format!("read {}: {}", wasm_path.display(), e)))?;
+
+    // Engine config: enable GC + tail calls. wasmtime defaults vary
+    // by version; pin them on so the bench doesn't depend on cwd or
+    // env vars. Multi-value, bulk memory, etc. are commonly default-
+    // on but we set them explicitly to match the CLI's `--wasm gc
+    // --wasm tail-call` shape.
+    let mut config = Config::new();
+    // Match the wasmtime CLI's `--wasm gc --wasm tail-call` runtime
+    // configuration. `wasm_gc` requires the cranelift backend to know
+    // about gc; `wasm_function_references` is a transitive dep of GC;
+    // `wasm_tail_call` enables `return_call(_indirect)` execution.
+    // `cranelift_opt_level(Speed)` matches the CLI's default which
+    // turns on the codegen paths that handle ref.cast properly.
+    config.wasm_gc(true);
+    config.wasm_tail_call(true);
+    config.wasm_function_references(true);
+    config.wasm_reference_types(true);
+    config.wasm_multi_value(true);
+    config.wasm_bulk_memory(true);
+    config.cranelift_opt_level(wasmtime::OptLevel::Speed);
+    // Be generous with wasm stack — tail-call return_call should
+    // not need extra room, but if cranelift generates a regular
+    // call we don't want to fail at 10K iterations. Default is
+    // 1MB; bump to 8MB.
+    config.max_wasm_stack(8 * 1024 * 1024);
+    let engine = Engine::new(&config)
+        .map_err(|e| RunError::Setup(format!("wasmtime engine config: {}", e)))?;
+    let module = Module::new(&engine, &bytes)
+        .map_err(|e| RunError::Setup(format!("wasmtime compile module: {}", e)))?;
+
+    let run_one = |module: &Module, engine: &Engine| -> Result<String, RunError> {
+        let mut store = Store::new(engine, ());
+        // wasm-gc effects: stub `aver/*` imports so bench mode runs
+        // silently. `Console.print(s)` becomes a no-op that drops
+        // the String ref. Real hosts (browser, workerd, wasmtime+wasi)
+        // wire these to actual stdout / stderr.
+        let mut linker = wasmtime::Linker::new(engine);
+        // Match the wasm import shape from our codegen: console_print
+        // takes a `(ref null $string)` (= `(ref null (array i8))`).
+        // The most permissive wasmtime type is `(ref null any)` —
+        // accepts any GC ref including our array. Bench-mode no-op.
+        let console_print_ty = wasmtime::FuncType::new(
+            engine,
+            std::iter::once(wasmtime::ValType::Ref(wasmtime::RefType::new(
+                true,
+                wasmtime::HeapType::Any,
+            ))),
+            std::iter::empty(),
+        );
+        linker
+            .func_new(
+                "aver",
+                "console_print",
+                console_print_ty.clone(),
+                |_caller, _params, _results| Ok(()),
+            )
+            .map_err(|e| RunError::Setup(format!("stub aver/console_print: {}", e)))?;
+        for fname in ["console_error", "console_warn"] {
+            linker
+                .func_new(
+                    "aver",
+                    fname,
+                    console_print_ty.clone(),
+                    |_caller, _params, _results| Ok(()),
+                )
+                .map_err(|e| RunError::Setup(format!("stub aver/{fname}: {e}")))?;
+        }
+        // Time.unixMs — bench mode uses a fixed value to keep runs
+        // deterministic; the production host wires this to the real
+        // `Date.now()` / `clock_gettime` equivalent.
+        let time_unix_ms_ty = wasmtime::FuncType::new(
+            engine,
+            std::iter::empty(),
+            std::iter::once(wasmtime::ValType::I64),
+        );
+        linker
+            .func_new(
+                "aver",
+                "time_unix_ms",
+                time_unix_ms_ty,
+                |_caller, _params, results| {
+                    results[0] = wasmtime::Val::I64(0);
+                    Ok(())
+                },
+            )
+            .map_err(|e| RunError::Setup(format!("stub aver/time_unix_ms: {}", e)))?;
+        let instance = linker
+            .instantiate(&mut store, module)
+            .map_err(|e| RunError::Runtime(format!("instantiate: {}", e)))?;
+        // Try `main: () -> i64` first (Int return), then `() -> f64`
+        // (Float), then `() -> ()` (Unit). The order matches the
+        // most common bench shapes.
+        if let Ok(f) = instance.get_typed_func::<(), i64>(&mut store, "main") {
+            let v = f
+                .call(&mut store, ())
+                .map_err(|e| RunError::Runtime(format!("invoke main: {}", e)))?;
+            return Ok(v.to_string());
+        }
+        if let Ok(f) = instance.get_typed_func::<(), f64>(&mut store, "main") {
+            let v = f
+                .call(&mut store, ())
+                .map_err(|e| RunError::Runtime(format!("invoke main: {}", e)))?;
+            return Ok(format!("{v}"));
+        }
+        if let Ok(f) = instance.get_typed_func::<(), ()>(&mut store, "main") {
+            f.call(&mut store, ())
+                .map_err(|e| RunError::Runtime(format!("invoke main: {}", e)))?;
+            return Ok(String::new());
+        }
+        // Reference returns (e.g. `main: () -> String`, where `String`
+        // is `(ref null $string_array)`): fall back to a dynamic call.
+        // Bench mode only needs the timing; rendering the byte content
+        // would require introspecting the array element-by-element via
+        // the wasmtime GC API. Report `[ref]` as the rendered result.
+        if let Some(f) = instance.get_func(&mut store, "main") {
+            let n_results = f.ty(&store).results().len();
+            let mut out: Vec<wasmtime::Val> = (0..n_results)
+                .map(|_| wasmtime::Val::AnyRef(None))
+                .collect();
+            f.call(&mut store, &[], &mut out)
+                .map_err(|e| RunError::Runtime(format!("invoke main: {}", e)))?;
+            return Ok(String::from("[ref]"));
+        }
+        Err(RunError::Runtime("main export must be a function".into()))
+    };
+
+    let mut samples: Vec<f64> = Vec::with_capacity(manifest.iterations);
+    for _ in 0..manifest.warmup {
+        run_one(&module, &engine)?;
+    }
+    let mut last_result = String::new();
+    for _ in 0..manifest.iterations {
+        let t = Instant::now();
+        last_result = run_one(&module, &engine)?;
+        samples.push(t.elapsed().as_secs_f64() * 1000.0);
+    }
+
+    let passes = canonical_passes();
+    let mut report = build_report(
+        manifest,
+        BenchTarget::WasmGc,
+        &samples,
+        passes,
+        compute_visible_allocs(manifest),
+    );
+    // wasm-gc invokes `main` directly. Use the same "rendered return
+    // value" semantic as the VM target: count bytes of the decimal
+    // representation.
+    report.response_bytes = Some(last_result.len());
+    Ok(report)
+}
+
+#[cfg(not(feature = "wasm"))]
+fn run_wasm_gc(_manifest: &Manifest) -> Result<BenchReport, RunError> {
+    Err(RunError::Setup(
+        "wasm-gc target requires the `wasm` feature; rebuild with `cargo build --features wasm`"
             .to_string(),
     ))
 }

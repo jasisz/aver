@@ -447,13 +447,25 @@ fn prettyPrint(t: Tree) -> Unit
     Tree.Red(l, v, r) -> printNode("", "", "R", v, l, r)
     Tree.Black(l, v, r) -> printNode("", "", "B", v, l, r)
 
+fn showListIntInner(xs: List<Int>) -> String
+  ? "Comma-separated body of a List<Int> render."
+  match xs
+    [] -> ""
+    [head, ..tail] -> match tail
+      [] -> "{head}"
+      _  -> "{head}, {showListIntInner(tail)}"
+
+fn showListInt(xs: List<Int>) -> String
+  ? "Render a List<Int> as `[1, 2, 3]`. Aver doesn't have map/Show; the helper sits at the call site."
+  "[{showListIntInner(xs)}]"
+
 fn main()
   ! [Console.print]
   t = fromList([5, 3, 7, 1, 4, 6, 8, 2])
   Console.print("Red-Black Tree")
   Console.print("Size: {size(t)}")
   Console.print("Black depth: {blackDepth(t)}")
-  Console.print("Sorted: {toSorted(t)}")
+  Console.print("Sorted: {showListInt(toSorted(t))}")
   Console.print("Contains 4: {member(4, t)}")
   Console.print("Contains 9: {member(9, t)}")
   Console.print("")
@@ -462,7 +474,7 @@ fn main()
   t2 = delete(3, t)
   Console.print("After deleting 3:")
   Console.print("Size: {size(t2)}")
-  Console.print("Sorted: {toSorted(t2)}")
+  Console.print("Sorted: {showListInt(toSorted(t2))}")
   Console.print("Contains 3: {member(3, t2)}")
   Console.print("")
   prettyPrint(t2)

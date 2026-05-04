@@ -1,4 +1,8 @@
-# tools/edge — project configuration
+# tools/edge — Cloudflare Workers reference deployment on top of the
+# wasm-gc backend. Compiles via `--target wasm-gc` (the recommended
+# WASM target from 0.16); the dispatch surface narrows down to a
+# single export `handle(query: String) -> String` so the JS host can
+# call it via the LM bridge.
 
 [[check.suppress]]
 slug = "missing-verify"
@@ -6,7 +10,6 @@ files = ["fractal.av"]
 fns = ["page"]
 reason = """
 Fractal.page is a fixed HTML template — pure string assembly with no \
-branching logic, parameterised only by a pre-rendered fractal body and \
-a millisecond count. Verifying the full HTML literal would add ~2 KB \
-of test fixture without exercising any decision; the fractal body it \
+branching logic. Verifying the full HTML literal would add ~2 KB of \
+test fixture without exercising any decision; the fractal body it \
 wraps is verified through render() coverage."""

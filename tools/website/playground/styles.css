@@ -95,11 +95,6 @@ body {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.memory-label {
-    font-family: var(--mono, monospace);
-    opacity: 0.7;
-}
-
 .isolation-note {
     padding: 0.45rem 1rem;
     border-bottom: 1px solid var(--border);

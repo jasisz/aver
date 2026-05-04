@@ -289,7 +289,13 @@ fn collect_named_type_refs(ty: &Type, out: &mut Vec<String>) {
             }
             collect_named_type_refs(ret, out);
         }
-        Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit | Type::Unknown => {}
+        Type::Int
+        | Type::Float
+        | Type::Str
+        | Type::Bool
+        | Type::Unit
+        | Type::Invalid
+        | Type::Var(_) => {}
     }
 }
 

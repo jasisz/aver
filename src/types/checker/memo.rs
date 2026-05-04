@@ -8,7 +8,10 @@ impl TypeChecker {
             && let Some(module) = Self::module_decl(items)
         {
             match crate::source::load_module_tree(&module.depends, base) {
-                Ok(modules) => self.integrate_loaded_modules(&modules),
+                Ok(modules) => {
+                    self.integrate_loaded_modules(&modules);
+                    self.check_loaded_module_bodies(&modules);
+                }
                 Err(e) => self.error(e),
             }
         }
@@ -27,6 +30,7 @@ impl TypeChecker {
     ) {
         self.build_signatures(items);
         self.integrate_loaded_modules(loaded);
+        self.check_loaded_module_bodies(loaded);
         self.check_body(items);
     }
 
@@ -38,6 +42,46 @@ impl TypeChecker {
         let registry = crate::visibility::SymbolRegistry::from_modules(&pairs);
         if let Err(e) = self.integrate_registry(&registry) {
             self.error(e);
+        }
+    }
+
+    /// Visit every function body in each loaded dependency module so the
+    /// per-`Spanned<Expr>` type slot gets populated. Without this, the
+    /// downstream codegen consumers (Step 2 legacy WASM, Step 1 Rust,
+    /// future wasm-gc) would see `Spanned::ty() == None` for everything in
+    /// dependent modules — which used to be patched over by per-backend
+    /// ad-hoc inference; the typed pipeline closes that gap properly.
+    ///
+    /// Each module gets its own short-lived `TypeChecker` so unqualified
+    /// references inside the module resolve against that module's own
+    /// signatures (the parent checker only sees the qualified canonical
+    /// names from `integrate_loaded_modules`). `Spanned::set_ty` writes
+    /// straight to the shared AST node, so the type stamps survive the
+    /// sub-checker dropping. Diagnostics from the sub-check are folded
+    /// back into the parent so a real type bug in `combat.av` still
+    /// surfaces alongside any error in `main.av`.
+    fn check_loaded_module_bodies(&mut self, modules: &[crate::source::LoadedModule]) {
+        for (idx, module) in modules.iter().enumerate() {
+            let mut sub = TypeChecker::new();
+            sub.build_signatures(&module.items);
+            // Pull in the OTHER modules' canonical (qualified) signatures —
+            // skip self so the module sees its own types as transparent
+            // (opaque enforcement only applies cross-module).
+            let others: Vec<_> = modules
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != idx)
+                .map(|(_, m)| m.clone())
+                .collect();
+            sub.integrate_loaded_modules(&others);
+            sub.check_top_level_stmts(&module.items);
+            sub.check_verify_blocks(&module.items);
+            for item in &module.items {
+                if let TopLevel::FnDef(f) = item {
+                    sub.check_fn(f);
+                }
+            }
+            self.errors.append(&mut sub.errors);
         }
     }
 
@@ -66,7 +110,8 @@ impl TypeChecker {
             | Type::Vector(_)
             | Type::Map(_, _)
             | Type::Fn(_, _, _)
-            | Type::Unknown => false,
+            | Type::Invalid
+            | Type::Var(_) => false,
             Type::Result(_, _) | Type::Option(_) => false,
             Type::Named(name) => {
                 // Prevent infinite recursion for cyclic type defs

@@ -286,7 +286,8 @@ impl<'a> ExprEmitter<'a> {
             | Type::Bool
             | Type::Unit
             | Type::Fn(_, _, _)
-            | Type::Unknown => false,
+            | Type::Invalid
+            | Type::Var(_) => false,
             Type::Str
             | Type::Result(_, _)
             | Type::Option(_)
@@ -296,12 +297,6 @@ impl<'a> ExprEmitter<'a> {
             | Type::Vector(_)
             | Type::Named(_) => true,
         }
-    }
-
-    pub(super) fn expr_is_heap_ptr(&self, expr: &crate::ast::Expr) -> bool {
-        self.infer_aver_type(expr)
-            .as_ref()
-            .is_some_and(|ty| self.is_heap_type(ty))
     }
 
     pub(super) fn ptr_mask_for_types(&self, tys: &[Type]) -> u16 {
@@ -322,7 +317,7 @@ impl<'a> ExprEmitter<'a> {
             .into_iter()
             .enumerate()
             .fold(0u16, |mask, (idx, expr)| {
-                if idx < 16 && self.expr_is_heap_ptr(&expr.node) {
+                if idx < 16 && self.expr_is_heap_ptr_spanned(expr) {
                     mask | (1u16 << idx)
                 } else {
                     mask

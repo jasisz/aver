@@ -232,7 +232,7 @@ fn type_default(ty: &Type, ctx: &CodegenContext, visiting: &mut HashSet<String>)
             format!("({})", parts.join(", "))
         }
         Type::Named(name) => named_type_default(name, ctx, visiting)?,
-        Type::Fn(_, _, _) | Type::Unknown => return None,
+        Type::Fn(_, _, _) | Type::Var(_) | Type::Invalid => return None,
     })
 }
 

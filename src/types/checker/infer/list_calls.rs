@@ -9,7 +9,7 @@ impl TypeChecker {
         let list_inner = |tc: &mut Self, arg_ty: &Type, arg_idx: usize| -> Type {
             match arg_ty {
                 Type::List(inner) => *inner.clone(),
-                Type::Unknown => Type::Unknown,
+                Type::Invalid => Type::Invalid,
                 other => {
                     tc.error(format!(
                         "Argument {} of '{}': expected List<...>, got {}",
@@ -17,7 +17,7 @@ impl TypeChecker {
                         name,
                         other.display()
                     ));
-                    Type::Unknown
+                    Type::Invalid
                 }
             }
         };
@@ -45,12 +45,12 @@ impl TypeChecker {
                 Some(Type::Int)
             }
             "List.prepend" => {
-                if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Unknown))) {
+                if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Invalid))) {
                     return Some(fallback);
                 }
                 let mut elem_ty = list_inner(self, &arg_types[1], 2);
                 let val_ty = arg_types[0].clone();
-                if matches!(elem_ty, Type::Unknown) {
+                if matches!(elem_ty, Type::Var(_)) {
                     elem_ty = val_ty;
                 } else if !Self::constraint_compatible(&val_ty, &elem_ty) {
                     self.error(format!(
@@ -63,11 +63,11 @@ impl TypeChecker {
                 Some(Type::List(Box::new(elem_ty)))
             }
             "List.take" | "List.drop" => {
-                if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Unknown))) {
+                if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Invalid))) {
                     return Some(fallback);
                 }
                 let elem_ty = list_inner(self, &arg_types[0], 1);
-                if !matches!(arg_types[1], Type::Int | Type::Unknown) {
+                if !matches!(arg_types[1], Type::Int | Type::Invalid) {
                     self.error(format!(
                         "Argument 2 of '{}': expected Int, got {}",
                         name,
@@ -77,14 +77,14 @@ impl TypeChecker {
                 Some(Type::List(Box::new(elem_ty)))
             }
             "List.concat" => {
-                if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Unknown))) {
+                if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Invalid))) {
                     return Some(fallback);
                 }
                 let left_ty = list_inner(self, &arg_types[0], 1);
                 let right_ty = list_inner(self, &arg_types[1], 2);
                 let out_ty = match (&left_ty, &right_ty) {
-                    (Type::Unknown, _) => right_ty,
-                    (_, Type::Unknown) => left_ty,
+                    (Type::Var(_), _) => right_ty,
+                    (_, Type::Var(_)) => left_ty,
                     _ if left_ty.compatible(&right_ty) => left_ty,
                     _ => {
                         self.error(format!(
@@ -93,13 +93,13 @@ impl TypeChecker {
                             left_ty.display(),
                             right_ty.display()
                         ));
-                        Type::Unknown
+                        Type::Invalid
                     }
                 };
                 Some(Type::List(Box::new(out_ty)))
             }
             "List.reverse" => {
-                if let Err(fallback) = expect_arity(self, 1, Type::List(Box::new(Type::Unknown))) {
+                if let Err(fallback) = expect_arity(self, 1, Type::List(Box::new(Type::Invalid))) {
                     return Some(fallback);
                 }
                 let elem_ty = list_inner(self, &arg_types[0], 1);
@@ -111,8 +111,8 @@ impl TypeChecker {
                 }
                 let elem_ty = list_inner(self, &arg_types[0], 1);
                 let needle_ty = arg_types[1].clone();
-                if !matches!(elem_ty, Type::Unknown)
-                    && !matches!(needle_ty, Type::Unknown)
+                if !matches!(elem_ty, Type::Var(_) | Type::Invalid)
+                    && !matches!(needle_ty, Type::Var(_) | Type::Invalid)
                     && !Self::constraint_compatible(&needle_ty, &elem_ty)
                 {
                     self.error(format!(
@@ -125,7 +125,7 @@ impl TypeChecker {
                 Some(Type::Bool)
             }
             "List.zip" => {
-                if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Unknown))) {
+                if let Err(fallback) = expect_arity(self, 2, Type::List(Box::new(Type::Invalid))) {
                     return Some(fallback);
                 }
                 let a_ty = list_inner(self, &arg_types[0], 1);

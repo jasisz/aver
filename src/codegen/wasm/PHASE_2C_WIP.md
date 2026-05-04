@@ -67,7 +67,7 @@ until Phase 2c lands.
 
 Pick **(C')** — option (C) with the following corrections that
 came out of follow-up review. The original (C) sketch had a real
-correctness bug and a `Type::Unknown` echo of a foot-gun the type
+correctness bug and an unresolved-type echo of a foot-gun the type
 checker just got fixed for in commits `6450dd1` and `cf443d0`.
 
 ### Critical correction: buffer threading
@@ -103,8 +103,8 @@ same way as the discard case.
 
 ### Typed internal intrinsics, not magic strings
 
-Don't add `__buf_append` to the type checker as `Type::Unknown ->
-Type::Unknown`. That's exactly the loophole pattern that just got
+Don't add `__buf_append` to the type checker as an unresolved generic
+fallback. That's exactly the loophole pattern that just got
 fixed for `Result.withDefault` etc. Instead introduce them as
 typed internal intrinsics in the resolver:
 

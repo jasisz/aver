@@ -41,16 +41,24 @@ impl TypeChecker {
                 ty.clone(),
             );
         }
-        // Oracle v1: EffectEvent = { method: String, args: List<Unknown> }.
+        let effect_arg_var = || Type::Var("EffectArg".to_string());
+        // `printable_var` retired in 0.16: Console.print/error/warn now
+        // take String. Stringification of non-String values is the
+        // caller's job (interpolation `"{x}"` or explicit
+        // `Int.toString` / `Float.toString` / record-field-by-field
+        // formatting). Effect ABI stays trivial across backends.
+        let context_var = || Type::Var("Context".to_string());
+
+        // Oracle v1: EffectEvent = { method: String, args: List<EffectArg> }.
         // `args` element type is heterogeneous across effects (Int for
         // Random.int, Str for Console.print<T=Str>, etc.) — v0 types it
-        // as `List<Unknown>` so users can inspect events without the
+        // as a named element type variable so users can inspect events without the
         // checker blocking on a polymorphic arg element type. Richer
         // typing ties args to the effect method's runtime_params once
         // we thread method-dispatch-driven arg types into the checker.
         let effect_event_fields: &[(&str, Type)] = &[
             ("method", Type::Str),
-            ("args", Type::List(Box::new(Type::Unknown))),
+            ("args", Type::List(Box::new(effect_arg_var()))),
             ("path", Type::Str),
         ];
         for (field, ty) in effect_event_fields {
@@ -146,7 +154,7 @@ impl TypeChecker {
         };
         let http_handler_with_context = || {
             Type::Fn(
-                vec![Type::Unknown, Type::Named("HttpRequest".to_string())],
+                vec![context_var(), Type::Named("HttpRequest".to_string())],
                 Box::new(Type::Named("HttpResponse".to_string())),
                 server_handler_effects(),
             )
@@ -158,24 +166,27 @@ impl TypeChecker {
                 Type::List(Box::new(Type::Str)),
                 &["Args.get"],
             ),
+            // Console.print/error/warn take String. Stringification of
+            // non-String values is the caller's job (use interpolation
+            // `"{x}"` or explicit `Int.toString` / `Float.toString` /
+            // record-field-by-field formatting). Keeps the effect ABI
+            // trivial across backends and makes value→string
+            // conversion explicit at the call site, which the AI-
+            // reading-code-as-letter principle of Aver wants over
+            // implicit Show/Display dispatch.
             (
                 "Console.print",
-                &[Type::Unknown],
+                &[Type::Str],
                 Type::Unit,
                 &["Console.print"],
             ),
             (
                 "Console.error",
-                &[Type::Unknown],
+                &[Type::Str],
                 Type::Unit,
                 &["Console.error"],
             ),
-            (
-                "Console.warn",
-                &[Type::Unknown],
-                Type::Unit,
-                &["Console.warn"],
-            ),
+            ("Console.warn", &[Type::Str], Type::Unit, &["Console.warn"]),
             (
                 "Console.readLine",
                 &[],
@@ -211,7 +222,7 @@ impl TypeChecker {
             ),
             (
                 "HttpServer.listenWith",
-                &[Type::Int, Type::Unknown, http_handler_with_context()],
+                &[Type::Int, context_var(), http_handler_with_context()],
                 Type::Unit,
                 &["HttpServer.listenWith"],
             ),
@@ -223,7 +234,7 @@ impl TypeChecker {
             ),
             (
                 "SelfHostRuntime.httpServerListenWith",
-                &[Type::Int, Type::Unknown, http_handler_with_context()],
+                &[Type::Int, context_var(), http_handler_with_context()],
                 disk_unit(),
                 &["HttpServer.listenWith"],
             ),
@@ -344,7 +355,7 @@ impl TypeChecker {
                 ),
                 (
                     "Terminal.print",
-                    &[Type::Unknown],
+                    &[Type::Str],
                     Type::Unit,
                     &["Terminal.print"],
                 ),
@@ -495,50 +506,31 @@ impl TypeChecker {
             self.insert_sig(name, params, ret.clone(), effects);
         }
 
-        // List namespace
-        let any = || Type::Unknown;
+        // List namespace — polymorphic over T (or A, B for List.zip).
+        // `Var("T")` is a named type parameter; instantiated at the call
+        // site from the expected return type or arg types. Treated as
+        // "any" by `compatible()` until Etap 3 wires up bidirectional
+        // instantiation.
+        let t_var = || Type::Var("T".to_string());
+        let list_t = || Type::List(Box::new(t_var()));
         let list_sigs: &[(&str, &[Type], Type, &[&str])] = &[
-            ("List.len", &[Type::List(Box::new(any()))], Type::Int, &[]),
-            (
-                "List.prepend",
-                &[Type::Unknown, Type::Unknown],
-                Type::List(Box::new(any())),
-                &[],
-            ),
-            (
-                "List.take",
-                &[Type::Unknown, Type::Int],
-                Type::List(Box::new(any())),
-                &[],
-            ),
-            (
-                "List.drop",
-                &[Type::Unknown, Type::Int],
-                Type::List(Box::new(any())),
-                &[],
-            ),
-            (
-                "List.concat",
-                &[Type::Unknown, Type::Unknown],
-                Type::List(Box::new(any())),
-                &[],
-            ),
-            (
-                "List.reverse",
-                &[Type::Unknown],
-                Type::List(Box::new(any())),
-                &[],
-            ),
-            (
-                "List.contains",
-                &[Type::Unknown, Type::Unknown],
-                Type::Bool,
-                &[],
-            ),
+            ("List.len", &[list_t()], Type::Int, &[]),
+            ("List.prepend", &[t_var(), list_t()], list_t(), &[]),
+            ("List.take", &[list_t(), Type::Int], list_t(), &[]),
+            ("List.drop", &[list_t(), Type::Int], list_t(), &[]),
+            ("List.concat", &[list_t(), list_t()], list_t(), &[]),
+            ("List.reverse", &[list_t()], list_t(), &[]),
+            ("List.contains", &[list_t(), t_var()], Type::Bool, &[]),
             (
                 "List.zip",
-                &[Type::Unknown, Type::Unknown],
-                Type::List(Box::new(Type::Tuple(vec![any(), any()]))),
+                &[
+                    Type::List(Box::new(Type::Var("A".to_string()))),
+                    Type::List(Box::new(Type::Var("B".to_string()))),
+                ],
+                Type::List(Box::new(Type::Tuple(vec![
+                    Type::Var("A".to_string()),
+                    Type::Var("B".to_string()),
+                ]))),
                 &[],
             ),
         ];
@@ -546,56 +538,39 @@ impl TypeChecker {
             self.insert_sig(name, params, ret.clone(), effects);
         }
 
-        // Map namespace
+        // Map namespace — polymorphic over K (key) and V (value).
+        let k_var = || Type::Var("K".to_string());
+        let v_var = || Type::Var("V".to_string());
+        let map_kv = || Type::Map(Box::new(k_var()), Box::new(v_var()));
         let map_sigs: &[(&str, &[Type], Type, &[&str])] = &[
-            (
-                "Map.empty",
-                &[],
-                Type::Map(Box::new(any()), Box::new(any())),
-                &[],
-            ),
-            (
-                "Map.set",
-                &[Type::Unknown, Type::Unknown, Type::Unknown],
-                Type::Map(Box::new(any()), Box::new(any())),
-                &[],
-            ),
+            ("Map.empty", &[], map_kv(), &[]),
+            ("Map.set", &[map_kv(), k_var(), v_var()], map_kv(), &[]),
             (
                 "Map.get",
-                &[Type::Unknown, Type::Unknown],
-                Type::Option(Box::new(any())),
+                &[map_kv(), k_var()],
+                Type::Option(Box::new(v_var())),
                 &[],
             ),
-            (
-                "Map.remove",
-                &[Type::Unknown, Type::Unknown],
-                Type::Map(Box::new(any()), Box::new(any())),
-                &[],
-            ),
-            ("Map.has", &[Type::Unknown, Type::Unknown], Type::Bool, &[]),
-            (
-                "Map.keys",
-                &[Type::Unknown],
-                Type::List(Box::new(any())),
-                &[],
-            ),
+            ("Map.remove", &[map_kv(), k_var()], map_kv(), &[]),
+            ("Map.has", &[map_kv(), k_var()], Type::Bool, &[]),
+            ("Map.keys", &[map_kv()], Type::List(Box::new(k_var())), &[]),
             (
                 "Map.values",
-                &[Type::Unknown],
-                Type::List(Box::new(any())),
+                &[map_kv()],
+                Type::List(Box::new(v_var())),
                 &[],
             ),
             (
                 "Map.entries",
-                &[Type::Unknown],
-                Type::List(Box::new(Type::Tuple(vec![any(), any()]))),
+                &[map_kv()],
+                Type::List(Box::new(Type::Tuple(vec![k_var(), v_var()]))),
                 &[],
             ),
-            ("Map.len", &[Type::Unknown], Type::Int, &[]),
+            ("Map.len", &[map_kv()], Type::Int, &[]),
             (
                 "Map.fromList",
-                &[Type::Unknown],
-                Type::Map(Box::new(any()), Box::new(any())),
+                &[Type::List(Box::new(Type::Tuple(vec![k_var(), v_var()])))],
+                map_kv(),
                 &[],
             ),
         ];
@@ -603,37 +578,33 @@ impl TypeChecker {
             self.insert_sig(name, params, ret.clone(), effects);
         }
 
-        // Vector namespace
+        // Vector namespace — polymorphic over T.
+        let vec_t = || Type::Vector(Box::new(t_var()));
         let vector_sigs: &[(&str, &[Type], Type, &[&str])] = &[
-            (
-                "Vector.new",
-                &[Type::Int, Type::Unknown],
-                Type::Vector(Box::new(any())),
-                &[],
-            ),
+            ("Vector.new", &[Type::Int, t_var()], vec_t(), &[]),
             (
                 "Vector.get",
-                &[Type::Unknown, Type::Int],
-                Type::Option(Box::new(any())),
+                &[vec_t(), Type::Int],
+                Type::Option(Box::new(t_var())),
                 &[],
             ),
             (
                 "Vector.set",
-                &[Type::Unknown, Type::Int, Type::Unknown],
-                Type::Option(Box::new(Type::Vector(Box::new(any())))),
+                &[vec_t(), Type::Int, t_var()],
+                Type::Option(Box::new(vec_t())),
                 &[],
             ),
-            ("Vector.len", &[Type::Unknown], Type::Int, &[]),
+            ("Vector.len", &[vec_t()], Type::Int, &[]),
             (
                 "Vector.fromList",
-                &[Type::Unknown],
-                Type::Vector(Box::new(any())),
+                &[Type::List(Box::new(t_var()))],
+                vec_t(),
                 &[],
             ),
             (
                 "Vector.toList",
-                &[Type::Unknown],
-                Type::List(Box::new(any())),
+                &[vec_t()],
+                Type::List(Box::new(t_var())),
                 &[],
             ),
         ];
@@ -695,51 +666,23 @@ impl TypeChecker {
             self.insert_sig(name, params, ret.clone(), effects);
         }
 
-        // Result.Ok / Result.Err / Option.Some — constructor signatures
-        self.insert_sig(
-            "Result.Ok",
-            &[Type::Unknown],
-            Type::Result(Box::new(Type::Unknown), Box::new(Type::Unknown)),
-            &[],
-        );
-        self.insert_sig(
-            "Result.Err",
-            &[Type::Unknown],
-            Type::Result(Box::new(Type::Unknown), Box::new(Type::Unknown)),
-            &[],
-        );
-        self.insert_sig(
-            "Option.Some",
-            &[Type::Unknown],
-            Type::Option(Box::new(Type::Unknown)),
-            &[],
-        );
+        // Result.Ok / Result.Err / Option.Some — constructor signatures.
+        // Polymorphic over T (ok/some) and E (err).
+        let e_var = || Type::Var("E".to_string());
+        let result_te = || Type::Result(Box::new(t_var()), Box::new(e_var()));
+        let option_t = || Type::Option(Box::new(t_var()));
+        self.insert_sig("Result.Ok", &[t_var()], result_te(), &[]);
+        self.insert_sig("Result.Err", &[e_var()], result_te(), &[]);
+        self.insert_sig("Option.Some", &[t_var()], option_t(), &[]);
         // Option.None — zero-arg value, not a function
-        self.value_members.insert(
-            "Option.None".to_string(),
-            Type::Option(Box::new(Type::Unknown)),
-        );
+        self.value_members
+            .insert("Option.None".to_string(), option_t());
 
         // Result combinators
-        self.insert_sig(
-            "Result.withDefault",
-            &[Type::Unknown, Type::Unknown],
-            Type::Unknown,
-            &[],
-        );
+        self.insert_sig("Result.withDefault", &[result_te(), t_var()], t_var(), &[]);
 
         // Option combinators
-        self.insert_sig(
-            "Option.withDefault",
-            &[Type::Unknown, Type::Unknown],
-            Type::Unknown,
-            &[],
-        );
-        self.insert_sig(
-            "Option.toResult",
-            &[Type::Unknown, Type::Unknown],
-            Type::Result(Box::new(Type::Unknown), Box::new(Type::Unknown)),
-            &[],
-        );
+        self.insert_sig("Option.withDefault", &[option_t(), t_var()], t_var(), &[]);
+        self.insert_sig("Option.toResult", &[option_t(), e_var()], result_te(), &[]);
     }
 }

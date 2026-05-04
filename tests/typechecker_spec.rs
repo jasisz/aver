@@ -558,18 +558,18 @@ fn error_arg_type_mismatch_string_for_int() {
 }
 
 #[test]
-fn error_unknown_does_not_satisfy_declared_return_type() {
+fn error_unsolved_type_var_does_not_satisfy_declared_return_type() {
     let src = concat!(
         "fn bad() -> Int\n",
         "    match []\n",
         "        [h, ..t] -> h\n",
         "        []       -> 0\n",
     );
-    assert_error_containing(src, "body returns Unknown but declared return type is Int");
+    assert_error_containing(src, "body returns T but declared return type is Int");
 }
 
 #[test]
-fn error_unknown_does_not_satisfy_call_argument_type() {
+fn error_unsolved_type_var_does_not_satisfy_call_argument_type() {
     let src = concat!(
         "fn takesInt(x: Int) -> Int\n",
         "    x + 1\n",
@@ -579,7 +579,7 @@ fn error_unknown_does_not_satisfy_call_argument_type() {
         "        []       -> 0\n",
         "    takesInt(n)\n",
     );
-    assert_error_containing(src, "Argument 1 of 'takesInt': expected Int, got Unknown");
+    assert_error_containing(src, "Argument 1 of 'takesInt': expected Int, got T");
 }
 
 #[test]
@@ -618,7 +618,10 @@ fn error_map_from_list_requires_tuple_pairs() {
         "fn bad() -> Map<String, Int>\n",
         "    Map.fromList([[\"a\", 1]])\n",
     );
-    assert_error_containing(src, "expected List<(K, V)>");
+    assert_error_containing(
+        src,
+        "List element 1: expected (String, Int), got List<String>",
+    );
 }
 
 #[test]
@@ -772,6 +775,12 @@ fn valid_error_prop_in_result_fn() {
 }
 
 #[test]
+fn error_prop_accepts_unconstrained_ok_constructor_err_type() {
+    let src = "fn safe() -> Result<Int, String>\n    x = Result.Ok(5)?\n    Result.Ok(x)\n";
+    assert_no_errors(src);
+}
+
+#[test]
 fn error_prop_in_non_result_fn() {
     // ? used inside a function that returns Int — type error.
     let src = "fn bad(r: Result<Int, String>) -> Int\n    r?\n";
@@ -863,11 +872,11 @@ fn named_types_are_incompatible_with_different_names() {
 }
 
 #[test]
-fn named_type_compatible_with_unknown_fallback() {
+fn named_type_is_not_compatible_with_invalid_recovery() {
     use aver::types::Type;
     let named = Type::Named("Shape".to_string());
-    assert!(named.compatible(&Type::Unknown));
-    assert!(Type::Unknown.compatible(&named));
+    assert!(!named.compatible(&Type::Invalid));
+    assert!(!Type::Invalid.compatible(&named));
 }
 
 #[test]
@@ -1287,7 +1296,7 @@ fn valid_http_server_listen_with_context() {
 }
 
 #[test]
-fn error_http_server_listen_with_bad_handler_signature_uses_any_in_message() {
+fn error_http_server_listen_with_bad_handler_signature_uses_context_var_in_message() {
     let src = concat!(
         "fn bad(ctx: Int, req: Int) -> HttpResponse\n",
         "    HttpResponse(status = 200, body = \"ok\", headers = {})\n",
@@ -1295,7 +1304,7 @@ fn error_http_server_listen_with_bad_handler_signature_uses_any_in_message() {
         "    ! [HttpServer.listenWith]\n",
         "    HttpServer.listenWith(8080, \"ok\", bad)\n",
     );
-    assert_error_containing(src, "expected Fn(Any, HttpRequest) -> HttpResponse");
+    assert_error_containing(src, "expected Fn(Context, HttpRequest) -> HttpResponse");
 }
 
 #[test]

@@ -22,7 +22,13 @@ verify doubleParsed
     doubleParsed("21") => Result.Ok(42)
     doubleParsed("oops") => Result.Err("not a number: oops")
 
+fn show(r: Result<Int, String>) -> String
+    ? "Render a Result<Int, String> for display."
+    match r
+        Result.Ok(n)   -> "Result.Ok({n})"
+        Result.Err(msg) -> "Result.Err({msg})"
+
 fn main() -> Unit
     ! [Console.print]
-    Console.print(doubleParsed("21"))
-    Console.print(doubleParsed("oops"))
+    Console.print(show(doubleParsed("21")))
+    Console.print(show(doubleParsed("oops")))

@@ -5,9 +5,8 @@
 ///   Phase 2 — check top-level statements, then each FnDef for call-site
 ///              argument types, return type, BinOp compatibility, and effects.
 ///
-/// The checker keeps gradual typing for nested placeholders, but applies
-/// stricter rules for checker constraints: a bare `Unknown` does not satisfy
-/// a concrete expected type in argument/return/ascription checks.
+/// The checker resolves named generic variables at call sites. Error recovery
+/// uses `Type::Invalid`, which never satisfies a concrete expected type.
 use std::collections::{HashMap, HashSet};
 
 use super::{Type, parse_type_str_strict};
@@ -344,16 +343,147 @@ impl TypeChecker {
             .cloned()
     }
 
-    /// Compatibility used for checker constraints (call args, returns, ascriptions).
-    ///
-    /// We keep gradual typing for nested placeholders (`Result<Int, Unknown>` can
-    /// still fit `Result<Int, String>`), but reject *bare* `Unknown` when a
-    /// concrete type is required. This closes common false negatives where an
-    /// unresolved expression silently passes a concrete signature.
+    /// Compatibility used for checker constraints (returns, ascriptions, and
+    /// simple non-polymorphic call args). Variables in the expected type may bind
+    /// to the actual type; variables in the actual type only satisfy the exact
+    /// same expected variable and never satisfy concrete requirements.
     pub(super) fn constraint_compatible(actual: &Type, expected: &Type) -> bool {
-        if matches!(actual, Type::Unknown) && !matches!(expected, Type::Unknown) {
-            return false;
+        let mut subst = HashMap::new();
+        Self::match_expected_type(actual, expected, &mut subst)
+    }
+
+    pub(super) fn match_expected_type(
+        actual: &Type,
+        expected: &Type,
+        subst: &mut HashMap<String, Type>,
+    ) -> bool {
+        match expected {
+            Type::Var(name) => Self::bind_expected_var(name, actual, subst),
+            Type::Invalid => false,
+            Type::Int => matches!(actual, Type::Int),
+            Type::Float => matches!(actual, Type::Float),
+            Type::Str => matches!(actual, Type::Str),
+            Type::Bool => matches!(actual, Type::Bool),
+            Type::Unit => matches!(actual, Type::Unit),
+            Type::Named(expected_name) => match actual {
+                Type::Named(actual_name) => {
+                    actual_name == expected_name
+                        || actual_name.ends_with(&format!(".{}", expected_name))
+                        || expected_name.ends_with(&format!(".{}", actual_name))
+                }
+                _ => false,
+            },
+            Type::Option(expected_inner) => match actual {
+                Type::Option(actual_inner) => {
+                    Self::match_expected_type(actual_inner, expected_inner, subst)
+                }
+                _ => false,
+            },
+            Type::List(expected_inner) => match actual {
+                Type::List(actual_inner) => {
+                    Self::match_expected_type(actual_inner, expected_inner, subst)
+                }
+                _ => false,
+            },
+            Type::Vector(expected_inner) => match actual {
+                Type::Vector(actual_inner) => {
+                    Self::match_expected_type(actual_inner, expected_inner, subst)
+                }
+                _ => false,
+            },
+            Type::Result(expected_ok, expected_err) => match actual {
+                Type::Result(actual_ok, actual_err) => {
+                    Self::match_expected_type(actual_ok, expected_ok, subst)
+                        && Self::match_expected_type(actual_err, expected_err, subst)
+                }
+                _ => false,
+            },
+            Type::Map(expected_k, expected_v) => match actual {
+                Type::Map(actual_k, actual_v) => {
+                    Self::match_expected_type(actual_k, expected_k, subst)
+                        && Self::match_expected_type(actual_v, expected_v, subst)
+                }
+                _ => false,
+            },
+            Type::Tuple(expected_items) => match actual {
+                Type::Tuple(actual_items) if actual_items.len() == expected_items.len() => {
+                    actual_items.iter().zip(expected_items.iter()).all(
+                        |(actual_item, expected_item)| {
+                            Self::match_expected_type(actual_item, expected_item, subst)
+                        },
+                    )
+                }
+                _ => false,
+            },
+            Type::Fn(expected_params, expected_ret, expected_effects) => match actual {
+                Type::Fn(actual_params, actual_ret, actual_effects)
+                    if actual_params.len() == expected_params.len() =>
+                {
+                    actual_params.iter().zip(expected_params.iter()).all(
+                        |(actual_param, expected_param)| {
+                            Self::match_expected_type(actual_param, expected_param, subst)
+                        },
+                    ) && Self::match_expected_type(actual_ret, expected_ret, subst)
+                        && actual_effects.iter().all(|actual| {
+                            expected_effects
+                                .iter()
+                                .any(|expected| crate::effects::effect_satisfies(expected, actual))
+                        })
+                }
+                _ => false,
+            },
         }
-        actual.compatible(expected)
+    }
+
+    fn bind_expected_var(name: &str, actual: &Type, subst: &mut HashMap<String, Type>) -> bool {
+        match actual {
+            Type::Var(actual_name) => return actual_name == name,
+            Type::Invalid => return false,
+            _ => {}
+        }
+        if let Some(bound) = subst.get(name).cloned() {
+            return Self::match_expected_type(actual, &bound, subst)
+                && Self::match_expected_type(&bound, actual, subst);
+        }
+        subst.insert(name.to_string(), actual.clone());
+        true
+    }
+
+    pub(super) fn instantiate_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
+        match ty {
+            Type::Var(name) => subst.get(name).cloned().unwrap_or_else(|| ty.clone()),
+            Type::Result(ok, err) => Type::Result(
+                Box::new(Self::instantiate_type(ok, subst)),
+                Box::new(Self::instantiate_type(err, subst)),
+            ),
+            Type::Option(inner) => Type::Option(Box::new(Self::instantiate_type(inner, subst))),
+            Type::List(inner) => Type::List(Box::new(Self::instantiate_type(inner, subst))),
+            Type::Vector(inner) => Type::Vector(Box::new(Self::instantiate_type(inner, subst))),
+            Type::Map(k, v) => Type::Map(
+                Box::new(Self::instantiate_type(k, subst)),
+                Box::new(Self::instantiate_type(v, subst)),
+            ),
+            Type::Tuple(items) => Type::Tuple(
+                items
+                    .iter()
+                    .map(|item| Self::instantiate_type(item, subst))
+                    .collect(),
+            ),
+            Type::Fn(params, ret, effects) => Type::Fn(
+                params
+                    .iter()
+                    .map(|param| Self::instantiate_type(param, subst))
+                    .collect(),
+                Box::new(Self::instantiate_type(ret, subst)),
+                effects.clone(),
+            ),
+            Type::Int
+            | Type::Float
+            | Type::Str
+            | Type::Bool
+            | Type::Unit
+            | Type::Invalid
+            | Type::Named(_) => ty.clone(),
+        }
     }
 }

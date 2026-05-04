@@ -2843,6 +2843,7 @@ verify mirror law involutive
                                     sbb(Expr::Literal(Literal::Int(1))),
                                 )),
                             )),
+                            binding_slots: std::sync::OnceLock::new(),
                         },
                         MatchArm {
                             pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
@@ -2851,6 +2852,7 @@ verify mirror law involutive
                                 sb(Expr::Ident("word".to_string())),
                                 sb(Expr::Literal(Literal::Int(1))),
                             )),
+                            binding_slots: std::sync::OnceLock::new(),
                         },
                     ],
                 })),
@@ -3172,6 +3174,7 @@ verify mirror law involutive
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Int(0)),
                         body: sbb(Expr::Literal(Literal::Int(0))),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
@@ -3183,6 +3186,7 @@ verify mirror law involutive
                                 sbb(Expr::Literal(Literal::Int(1))),
                             ))],
                         )))),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                 ],
             }))),
@@ -3233,6 +3237,7 @@ verify mirror law involutive
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(true)),
                         body: sbb(Expr::List(vec![])),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(false)),
@@ -3247,6 +3252,7 @@ verify mirror law involutive
                                 )),
                             ],
                         )))),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                 ],
             }))),
@@ -3301,10 +3307,12 @@ verify mirror law involutive
                                 sbb(Expr::Literal(Literal::Int(360))),
                             ))],
                         )))),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(false)),
                         body: sbb(Expr::Ident("angle".to_string())),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                 ],
             }))),
@@ -3347,6 +3355,7 @@ verify mirror law involutive
                     MatchArm {
                         pattern: Pattern::EmptyList,
                         body: sbb(Expr::Literal(Literal::Int(0))),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                     MatchArm {
                         pattern: Pattern::Cons("h".to_string(), "t".to_string()),
@@ -3354,6 +3363,7 @@ verify mirror law involutive
                             "len".to_string(),
                             vec![sb(Expr::Ident("t".to_string()))],
                         )))),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                 ],
             }))),
@@ -3390,6 +3400,7 @@ verify mirror law involutive
                     MatchArm {
                         pattern: Pattern::EmptyList,
                         body: sbb(Expr::Ident("count".to_string())),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                     MatchArm {
                         pattern: Pattern::Cons("h".to_string(), "t".to_string()),
@@ -3404,6 +3415,7 @@ verify mirror law involutive
                                 sb(Expr::Ident("t".to_string())),
                             ],
                         )))),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                 ],
             }))),
@@ -3454,6 +3466,7 @@ verify mirror law involutive
                     MatchArm {
                         pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
                         body: sbb(Expr::Ident("pos".to_string())),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
@@ -3468,6 +3481,7 @@ verify mirror law involutive
                                 )),
                             ],
                         )))),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                 ],
             }))),
@@ -3506,6 +3520,7 @@ verify mirror law involutive
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Int(0)),
                         body: sbb(Expr::Literal(Literal::Bool(true))),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
@@ -3517,6 +3532,7 @@ verify mirror law involutive
                                 sbb(Expr::Literal(Literal::Int(1))),
                             ))],
                         )))),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                 ],
             }))),
@@ -3535,6 +3551,7 @@ verify mirror law involutive
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Int(0)),
                         body: sbb(Expr::Literal(Literal::Bool(false))),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
@@ -3546,6 +3563,7 @@ verify mirror law involutive
                                 sbb(Expr::Literal(Literal::Int(1))),
                             ))],
                         )))),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                 ],
             }))),
@@ -3595,6 +3613,7 @@ verify mirror law involutive
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(true)),
                         body: sbb(Expr::Ident("pos".to_string())),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
@@ -3605,6 +3624,7 @@ verify mirror law involutive
                                 sb(Expr::Ident("pos".to_string())),
                             ],
                         )))),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                 ],
             }))),
@@ -3630,6 +3650,7 @@ verify mirror law involutive
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(true)),
                         body: sbb(Expr::Ident("pos".to_string())),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                     MatchArm {
                         pattern: Pattern::Wildcard,
@@ -3644,6 +3665,7 @@ verify mirror law involutive
                                 )),
                             ],
                         )))),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                 ],
             }))),
@@ -3706,6 +3728,7 @@ verify mirror law involutive
                     MatchArm {
                         pattern: Pattern::EmptyList,
                         body: sbb(Expr::Literal(Literal::Int(0))),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                     MatchArm {
                         pattern: Pattern::Cons("h".to_string(), "t".to_string()),
@@ -3713,6 +3736,7 @@ verify mirror law involutive
                             "f".to_string(),
                             vec![sb(Expr::Ident("t".to_string()))],
                         )))),
+                        binding_slots: std::sync::OnceLock::new(),
                     },
                 ],
             }))),

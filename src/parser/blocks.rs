@@ -353,20 +353,14 @@ impl Parser {
                         None => next,
                         Some(prev) => {
                             let line = prev.line;
-                            let bool_and = Spanned {
-                                node: Expr::Attr(
-                                    Box::new(Spanned {
-                                        node: Expr::Ident("Bool".to_string()),
-                                        line,
-                                    }),
+                            let bool_and = Spanned::new(
+                                Expr::Attr(
+                                    Box::new(Spanned::new(Expr::Ident("Bool".to_string()), line)),
                                     "and".to_string(),
                                 ),
                                 line,
-                            };
-                            Spanned {
-                                node: Expr::FnCall(Box::new(bool_and), vec![prev, next]),
-                                line,
-                            }
+                            );
+                            Spanned::new(Expr::FnCall(Box::new(bool_and), vec![prev, next]), line)
                         }
                     });
                 }
@@ -991,10 +985,12 @@ mod tests {
                 MatchArm {
                     pattern: Pattern::Constructor("Option.Some".to_string(), vec!["x".to_string()]),
                     body: Box::new(ident("x")),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
                     body: Box::new(int(0)),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
             ],
         });
@@ -1025,10 +1021,12 @@ mod tests {
                 MatchArm {
                     pattern: Pattern::Wildcard,
                     body: Box::new(ident("x")),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
                     body: Box::new(ident("x")),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
             ],
         });
@@ -1061,6 +1059,7 @@ mod tests {
                     Box::new(ident("a")),
                     Box::new(ident("b")),
                 ))),
+                binding_slots: std::sync::OnceLock::new(),
             }],
         });
         let mut bindings = std::collections::HashMap::new();

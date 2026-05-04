@@ -589,16 +589,44 @@ pub fn synthesize_buffered_variants(
 /// won't be source-located by the user, but having a non-zero line
 /// keeps downstream visitors happy).
 fn sp_at(line: usize, expr: Expr) -> Spanned<Expr> {
-    Spanned { node: expr, line }
+    Spanned::new(expr, line)
+}
+
+fn sp_at_typed(line: usize, expr: Expr, ty: crate::types::Type) -> Spanned<Expr> {
+    let s = Spanned::new(expr, line);
+    s.set_ty(ty);
+    s
 }
 
 /// Build `<intrinsic>(args...)` as a Spanned<Expr>. Intrinsic names
 /// are bare identifiers (no module dot) — `__buf_append`,
 /// `__buf_append_sep_unless_first`. The WASM emitter recognises them
 /// in the builtin dispatch.
+///
+/// This pass runs *after* the type checker, so synthesized nodes never
+/// see `infer_type`. Callers that want the result `Spanned` to carry a
+/// type for downstream readers (Rust codegen reads `expr.ty()` to gate
+/// owned-mutable `Buffer` hoists) should use [`buffer_intrinsic_call`]
+/// or [`finalize_intrinsic_call`].
 fn intrinsic_call(line: usize, name: &str, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
     let callee = sp_at(line, Expr::Ident(name.to_string()));
     sp_at(line, Expr::FnCall(Box::new(callee), args))
+}
+
+/// Same as [`intrinsic_call`] but stamps the result with `Buffer` —
+/// every `__buf_new` / `__buf_append` / `__buf_append_sep_unless_first`
+/// returns the (possibly-grown) owned buffer.
+fn buffer_intrinsic_call(line: usize, name: &str, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
+    let call = intrinsic_call(line, name, args);
+    call.set_ty(crate::types::Type::Named("Buffer".to_string()));
+    call
+}
+
+/// `__buf_finalize` consumes the buffer and yields the final `String`.
+fn finalize_intrinsic_call(line: usize, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
+    let call = intrinsic_call(line, "__buf_finalize", args);
+    call.set_ty(crate::types::Type::Str);
+    call
 }
 
 /// Run the full buffer-build deforestation pass on a program: detect
@@ -863,10 +891,14 @@ fn try_rewrite_fusion_site(
     //     )
     //   )
     let sep_expr = outer_args[1].clone();
-    let buf_new = intrinsic_call(
+    let buf_new = buffer_intrinsic_call(
         line,
         "__buf_new",
-        vec![sp_at(line, Expr::Literal(Literal::Int(8192)))],
+        vec![sp_at_typed(
+            line,
+            Expr::Literal(Literal::Int(8192)),
+            crate::types::Type::Int,
+        )],
     );
     let mut buffered_args: Vec<Spanned<Expr>> = inner_args
         .iter()
@@ -875,14 +907,17 @@ fn try_rewrite_fusion_site(
         .collect();
     buffered_args.push(buf_new);
     buffered_args.push(sep_expr);
-    let buffered_call = sp_at(
+    // `<sink>__buffered` returns `String` (the buffered variant signature
+    // in `synthesize_buffered_fn` types it that way).
+    let buffered_call = sp_at_typed(
         line,
         Expr::FnCall(
             Box::new(sp_at(line, Expr::Ident(format!("{}__buffered", sink_name)))),
             buffered_args,
         ),
+        crate::types::Type::Str,
     );
-    Some(intrinsic_call(line, "__buf_finalize", vec![buffered_call]))
+    Some(finalize_intrinsic_call(line, vec![buffered_call]))
 }
 
 /// Construct the buffered FnDef for a single matched fn. Returns
@@ -957,14 +992,21 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
     // returning the possibly-grown buffer. The outer intrinsic appends
     // the user's element. The result is what gets passed as the
     // buffered variant's `__buf` arg in the recursive call.
-    let buf_ident = || sp_at(line, Expr::Ident(buf_name.to_string()));
-    let sep_ident = || sp_at(line, Expr::Ident(sep_name.to_string()));
-    let sep_then_buf = intrinsic_call(
+    let buffer_ty = crate::types::Type::Named("Buffer".to_string());
+    let buf_ident = || sp_at_typed(line, Expr::Ident(buf_name.to_string()), buffer_ty.clone());
+    let sep_ident = || {
+        sp_at_typed(
+            line,
+            Expr::Ident(sep_name.to_string()),
+            crate::types::Type::Str,
+        )
+    };
+    let sep_then_buf = buffer_intrinsic_call(
         line,
         "__buf_append_sep_unless_first",
         vec![buf_ident(), sep_ident()],
     );
-    let final_buf = intrinsic_call(line, "__buf_append", vec![sep_then_buf, elem_expr]);
+    let final_buf = buffer_intrinsic_call(line, "__buf_append", vec![sep_then_buf, elem_expr]);
 
     // Build new tail-call args: original args with acc-pos replaced by
     // the threaded buffer expression, then `__sep` appended at end.
@@ -982,12 +1024,16 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
         .collect();
     new_args.push(sep_ident());
 
-    let new_recursive_body = sp_at(
+    // The recursive tail-call lands on `<fn>__buffered`, which returns
+    // Buffer; stamp the type so the typed WASM emitter doesn't have to
+    // re-derive it from the call target.
+    let new_recursive_body = sp_at_typed(
         line,
         Expr::TailCall(Box::new(TailCallData {
             target: buffered_target.clone(),
             args: new_args,
         })),
+        buffer_ty.clone(),
     );
 
     // Terminating arm body: just return `__buf` — the buffer IS the result.
@@ -999,10 +1045,12 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
             MatchArm {
                 pattern: Pattern::Literal(Literal::Bool(true)),
                 body: Box::new(buf_ident()),
+                binding_slots: std::sync::OnceLock::new(),
             },
             MatchArm {
                 pattern: Pattern::Literal(Literal::Bool(false)),
                 body: Box::new(new_recursive_body),
+                binding_slots: std::sync::OnceLock::new(),
             },
         ],
         BufferBuildKind::ExternalReverse => {
@@ -1020,21 +1068,29 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
                 MatchArm {
                     pattern: Pattern::EmptyList,
                     body: Box::new(buf_ident()),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: cons_pat,
                     body: Box::new(new_recursive_body),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
             ]
         }
     };
 
-    let new_match = sp_at(
+    // Synthesised Match returns Buffer — both arms produce one
+    // (terminating arm: bare `__buf` ident; recursive arm: a
+    // `<fn>__buffered` tail-call returning Buffer). Stamp it so the
+    // Step 2 type-driven WASM emitter can read the type without a
+    // fallback.
+    let new_match = sp_at_typed(
         line,
         Expr::Match {
             subject: subject_orig.clone(),
             arms: new_arms,
         },
+        crate::types::Type::Named("Buffer".to_string()),
     );
 
     let new_body = FnBody::Block(vec![Stmt::Expr(new_match)]);
@@ -1078,10 +1134,7 @@ mod tests {
     use std::sync::Arc;
 
     fn sp<T>(value: T) -> Spanned<T> {
-        Spanned {
-            node: value,
-            line: 1,
-        }
+        Spanned::new(value, 1)
     }
 
     fn ident(name: &str) -> Spanned<Expr> {
@@ -1123,10 +1176,12 @@ mod tests {
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
                     body: Box::new(true_body),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(false)),
                     body: Box::new(false_body),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
             ],
         });
@@ -1521,10 +1576,12 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
                     body: Box::new(true_body),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(false)),
                     body: Box::new(false_body),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
             ],
         });
@@ -1635,10 +1692,12 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
                 MatchArm {
                     pattern: Pattern::EmptyList,
                     body: Box::new(nil_body),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Cons("h".to_string(), "t".to_string()),
                     body: Box::new(cons_body),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
             ],
         });

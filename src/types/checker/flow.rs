@@ -226,8 +226,8 @@ impl TypeChecker {
         // "test failed" rather than error propagation.
         let prev_ret = self.current_fn_ret.take();
         self.current_fn_ret = Some(Type::Result(
-            Box::new(Type::Unknown),
-            Box::new(Type::Unknown),
+            Box::new(Type::Var("VerifyOk".to_string())),
+            Box::new(Type::Var("VerifyErr".to_string())),
         ));
         // Oracle v1: identify recursive functions once. A `verify fn trace law`
         // targeting an effectful recursive function is rejected because the
@@ -577,7 +577,15 @@ impl TypeChecker {
                                 name
                             ));
                         }
-                        let inferred = self.infer_type(expr);
+                        // Bidirectional: if the binding is annotated, parse
+                        // the annotation first and pass it as the expected
+                        // type so generic constructor RHS (`Map.empty()`,
+                        // `Option.None`, `[]`) picks up T from the
+                        // annotation rather than stamping `Unknown`.
+                        let parsed_ann = type_ann
+                            .as_ref()
+                            .and_then(|src| crate::types::parse_type_str_strict(src).ok());
+                        let inferred = self.infer_type_with_expected(expr, parsed_ann.as_ref());
                         let ty = if let Some(ann_src) = type_ann {
                             match crate::types::parse_type_str_strict(ann_src) {
                                 Ok(annotated) => {
@@ -613,7 +621,12 @@ impl TypeChecker {
                     last = Type::Unit;
                 }
                 Stmt::Expr(expr) => {
-                    last = self.infer_type(expr);
+                    // Bidirectional: pass fn return type as expected so
+                    // generic constructors in tail position (last stmt of
+                    // body) pick up T. Match arms inside also propagate
+                    // via current_fn_ret already.
+                    let expected = self.current_fn_ret.clone();
+                    last = self.infer_type_with_expected(expr, expected.as_ref());
                     self.check_effects_in_expr(expr, fn_name, caller_effects);
                 }
             }

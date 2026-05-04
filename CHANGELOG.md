@@ -4,6 +4,35 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
+## 0.16 "Anneal" (unreleased)
+
+> _Heat-treat the internals — every backend now agrees what `Console.print` is, what's a type, and that engine GC beats hand-rolling._
+
+### Breaking changes
+- **`Console.print` / `Console.error` / `Console.warn` / `Terminal.print` / `Terminal.setColor` now take `String`.** The previous polymorphic signature (a `Printable` type variable that accepted any value and let the runtime stringify per-type) is gone. Stringification is the caller's job — use interpolation `"{x}"` for primitives, write a per-type render helper for compound shapes. Programs that called `Console.print(record)` / `Console.print(some_list)` will fail typecheck with `Argument 1 of 'Console.print': expected String, got <Type>` and the message points at the call site to migrate. Every backend (VM, legacy wasm, wasm-gc, Rust, self-host) loses its per-type format dispatch; replay/record stores plain string bytes per call; the effect ABI becomes trivial across hosts.
+
+### Added
+- **`--target wasm-gc`** — native WebAssembly GC + tail-call output, the recommended WASM target. No NaN-boxing, no boundary GC framing, no inline runtime. Per-instantiation monomorphisation for `Vector<T>`, `List<T>`, `Map<K, V>`, `Option<T>`, `Result<T, E>`, `Tuple<A, B>` (incl. nested paren tuples like `(Int, (Int, Int))`). Full Aver type parity: tuples, cross-collection nesting, sum-type and record map keys, all 12 `Terminal.*` effects, multi-binding variant patterns, `?` / `?!` / Result-Unit / Tuple-Unit shapes, generic constructors driven by bidirectional inference. Wasm-gc wins V8 microbenches on alloc / recursion / collection workloads (vector_ops 269×, map_build 5.67×, record_access 3.37×); `--optimize size` wins 19-32 % across the example games.
+- **`aver run --wasm-gc`** — embedded wasmtime executor with engine GC + tail calls. Full effect surface wired against `aver_rt::*`: Args, Console (incl. `readLine`), Time, Random, Float math, Terminal, Disk (read/write/append/exists/delete/listDir/makeDir), Env, Tcp (connect/writeLine/readLine/close/send/ping), Http (get/head/delete/post/put/patch). Multi-module entries auto-resolve their module root from the entry file's `depends [...]`, so `aver run --wasm-gc projects/payment_ops/main.av` works without `cd` or `--module-root`. Output matches the VM byte-for-byte modulo time/randomness on every audited core / data / games / services / apps / modules / playground sample.
+- **Browser playground migrated to `--target wasm-gc`.** Engine GC replaces the `aver_runtime.wasm` sidecar; binaries are self-contained. Modern-browser baseline (Chrome 119+ / Firefox 120+ / Safari 18.2+).
+- **`--target wasm-gc --optimize size`** — wasm-opt pipeline passes `--enable-gc --enable-reference-types`, factory exports + LM transport survive `wasm-metadce`, per-program binaries shrink 19-32 %.
+- **`--preset cloudflare` migrated to wasm-gc.** Expands to `--target wasm-gc --pack cloudflare` and requires `--handler <fn>`. Smaller wasm + smaller `worker.js` than the legacy `--target wasm` bundle, no `wasm-merge` dependency.
+
+### Changed
+- **Soundier internals across the type system.** `Type::Unknown` / `Type::Any` removed from the static type enum: generic builtin positions use named `Type::Var(K|V|T|E)` resolved per call site by `match_expected_type` substitution; error recovery uses `Type::Invalid` (never compatible with concrete types). Bidirectional inference drives expected types into generic constructors and collection literals — `Map.empty`, `Option.None`, `Result.Ok/Err`, empty list literals all type without backend recovery shims, including in tail-call argument position. `Char.fromCode` accepts the full Unicode range (Doom Braille, etc.).
+- **Resolver is arm-scoped.** Pattern bindings live per arm (`MatchArm.binding_slots`) instead of a function-flat name → slot map. Two arms can share a binding name with different field types — `recordedAt(event: TaskEvent)` reuses `at` across `TaskCreated.at: String` / `CommentAdded` (where `at` projects from a record), `serializeTaskEvent` reuses `deadline` across `TaskCreated.deadline: Option<String>` and `DeadlineSet.deadline: String` — and each arm's slot is allocated independently. The resolver runs as a single-pass walk with a scope stack so ident lookup respects shadowing.
+- **Slot types lifted into IR** as `FnResolution.local_slot_types` — every backend that needs typed locals consumes the same table instead of re-walking patterns. Sibling sumtypes sharing a bare variant name (e.g. `Query.ProviderSummary` vs `QueryOutput.ProviderSummary` in payment_ops) are disambiguated by `(parent, bare)` keys throughout resolver and wasm-gc registry. Multi-arm tuple-of-Constructors matches and chained-Attr value access (`Domain.Types.TaskStatus.Blocked`) flatten through one shared rewrite path used by both VM and wasm-gc.
+
+### Coverage
+- Of the 71 single-file or entry-point examples + project mains, 68 run identically to the VM under `aver run --wasm-gc` (every `examples/{core, data, games, formal, wasm, services, apps, modules}` and `projects/*` plus 13 of 14 playground samples). The remaining 3 are intentionally bad code that *show* compile errors (`examples/diagnostics/{lint_demo, test_errors}.av`, `tools/website/playground/sources/examples/effect-violation.av`).
+
+### Removed
+- **Per-version runtime artifacts (`tools/website/runtime/`, `averlang.dev/runtime/`).** Wasm-gc binaries are self-contained — there's no shared `aver_runtime.wasm` to fetch and cache, so the versioned CDN tree, the `latest/` pointer, and the `release.py` builder that emitted them all go. The legacy `--target wasm` bundle inlines its own runtime via `wasm-merge` and doesn't rely on the CDN either.
+- **`--bridge` rejected under `--target wasm-gc`.** The legacy `--bridge fetch | wasip1 | none` axis is bound to the legacy NaN-boxed backend. Mixing it with wasm-gc was previously silently ignored — now the compiler errors with a hint pointing at the correct shape: `--handler <fn>` (and `--preset cloudflare --handler <fn>`) for HTTP, the planned `--target wasip2` for standalone-WASI deployments. wasm-gc skips preview 1 by design — porting the legacy `aver_to_wasi.wasm` shim to GC string types would re-implement an ABI we want to leave behind.
+
+### Roadmap
+- **`--target wasip2`** (Component Model output, `wasi:http/proxy` + `wasi:filesystem` + `wasi:sockets`) is the modern wasm-gc companion for standalone-runtime deployments. Lands in 0.17. Once shipped, `Http.*` / `HttpServer.listen` / `Disk.*` / `Tcp.*` all become ✅ on the standalone-WASI side instead of stubbing.
+
 ## 0.15.2 "Traversal" — observability lands, regression gate closes (unreleased)
 
 > _Every pipeline pass exposes its decisions through one typed shape; bench reports gain the metrics that make regressions catchable; CI gates them per-host without per-runner branching._

@@ -541,10 +541,7 @@ mod tests {
     use crate::ast::{FnBody, Literal, MatchArm, SourceLine, Spanned, TailCallData};
 
     fn spanned(node: Expr) -> Spanned<Expr> {
-        Spanned {
-            node,
-            line: 1 as SourceLine,
-        }
+        Spanned::new(node, 1 as SourceLine)
     }
 
     fn ident(name: &str) -> Expr {
@@ -707,10 +704,12 @@ mod tests {
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
                     body: Box::new(spanned(true_body)),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(false)),
                     body: Box::new(spanned(false_body)),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
             ],
         }
@@ -858,10 +857,12 @@ mod tests {
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
                     body: Box::new(spanned(Expr::Literal(Literal::Str("one".to_string())))),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
                     body: Box::new(spanned(Expr::Literal(Literal::Str("other".to_string())))),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
             ],
         };
@@ -871,10 +872,12 @@ mod tests {
                 MatchArm {
                     pattern: Pattern::Literal(Literal::Bool(true)),
                     body: Box::new(spanned(Expr::Literal(Literal::Str("zero".to_string())))),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: Pattern::Wildcard,
                     body: Box::new(spanned(inner)),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
             ],
         };

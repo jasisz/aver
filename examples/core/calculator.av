@@ -39,11 +39,15 @@ verify safeRoot
     safeRoot(-1)  => Result.Err("Cannot take root of negative number")
     safeRoot(-99) => Result.Err("Cannot take root of negative number")
 
+fn showResult(r: Result<Int, String>) -> Unit
+    ? "Render a Result<Int, String> as `Result.Ok(N)` or `Result.Err(\"...\")`. Lives at the call site so Console.print's ABI stays trivial (String only)."
+    ! [Console.print]
+    match r
+        Result.Ok(n) -> Console.print("Result.Ok({n})")
+        Result.Err(msg) -> Console.print("Result.Err(\"{msg}\")")
+
 fn main() -> Unit
     ! [Console.print]
-    r1 = safeDivide(10, 2)
-    Console.print(r1)
-    r2 = safeDivide(7, 0)
-    Console.print(r2)
-    r3 = safeDivide(9, 3)
-    Console.print(r3)
+    showResult(safeDivide(10, 2))
+    showResult(safeDivide(7, 0))
+    showResult(safeDivide(9, 3))

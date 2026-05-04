@@ -12,7 +12,7 @@ impl TypeChecker {
         let vector_elem = |tc: &mut Self, arg_ty: &Type, arg_idx: usize| -> Type {
             match arg_ty {
                 Type::Vector(inner) => *inner.clone(),
-                Type::Unknown => Type::Unknown,
+                Type::Invalid => Type::Invalid,
                 other => {
                     tc.error(format!(
                         "Argument {} of '{}': expected Vector<...>, got {}",
@@ -20,7 +20,7 @@ impl TypeChecker {
                         name,
                         other.display()
                     ));
-                    Type::Unknown
+                    Type::Invalid
                 }
             }
         };
@@ -40,10 +40,10 @@ impl TypeChecker {
 
         match name {
             "Vector.new" => {
-                if let Err(fallback) = expect_arity(self, 2, vector_ty(Type::Unknown)) {
+                if let Err(fallback) = expect_arity(self, 2, vector_ty(Type::Invalid)) {
                     return Some(fallback);
                 }
-                if !matches!(arg_types[0], Type::Int | Type::Unknown) {
+                if !matches!(arg_types[0], Type::Int | Type::Invalid) {
                     self.error(format!(
                         "Argument 1 of '{}': expected Int, got {}",
                         name,
@@ -54,11 +54,11 @@ impl TypeChecker {
                 Some(vector_ty(elem_ty))
             }
             "Vector.get" => {
-                if let Err(fallback) = expect_arity(self, 2, option_ty(Type::Unknown)) {
+                if let Err(fallback) = expect_arity(self, 2, option_ty(Type::Invalid)) {
                     return Some(fallback);
                 }
                 let elem = vector_elem(self, &arg_types[0], 1);
-                if !matches!(arg_types[1], Type::Int | Type::Unknown) {
+                if !matches!(arg_types[1], Type::Int | Type::Invalid) {
                     self.error(format!(
                         "Argument 2 of '{}': expected Int, got {}",
                         name,
@@ -68,11 +68,11 @@ impl TypeChecker {
                 Some(option_ty(elem))
             }
             "Vector.set" => {
-                if let Err(fallback) = expect_arity(self, 3, option_ty(vector_ty(Type::Unknown))) {
+                if let Err(fallback) = expect_arity(self, 3, option_ty(vector_ty(Type::Invalid))) {
                     return Some(fallback);
                 }
                 let mut elem = vector_elem(self, &arg_types[0], 1);
-                if !matches!(arg_types[1], Type::Int | Type::Unknown) {
+                if !matches!(arg_types[1], Type::Int | Type::Invalid) {
                     self.error(format!(
                         "Argument 2 of '{}': expected Int, got {}",
                         name,
@@ -80,7 +80,7 @@ impl TypeChecker {
                     ));
                 }
                 let val_ty = arg_types[2].clone();
-                if matches!(elem, Type::Unknown) {
+                if matches!(elem, Type::Var(_)) {
                     elem = val_ty.clone();
                 } else if !Self::constraint_compatible(&val_ty, &elem) {
                     self.error(format!(
@@ -100,25 +100,25 @@ impl TypeChecker {
                 Some(Type::Int)
             }
             "Vector.fromList" => {
-                if let Err(fallback) = expect_arity(self, 1, vector_ty(Type::Unknown)) {
+                if let Err(fallback) = expect_arity(self, 1, vector_ty(Type::Invalid)) {
                     return Some(fallback);
                 }
                 let elem = match &arg_types[0] {
                     Type::List(inner) => *inner.clone(),
-                    Type::Unknown => Type::Unknown,
+                    Type::Invalid => Type::Invalid,
                     other => {
                         self.error(format!(
                             "Argument 1 of '{}': expected List<...>, got {}",
                             name,
                             other.display()
                         ));
-                        Type::Unknown
+                        Type::Invalid
                     }
                 };
                 Some(vector_ty(elem))
             }
             "Vector.toList" => {
-                if let Err(fallback) = expect_arity(self, 1, list_ty(Type::Unknown)) {
+                if let Err(fallback) = expect_arity(self, 1, list_ty(Type::Invalid)) {
                     return Some(fallback);
                 }
                 let elem = vector_elem(self, &arg_types[0], 1);

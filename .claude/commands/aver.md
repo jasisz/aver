@@ -267,11 +267,11 @@ Key `Map` API:
 - `Map.empty()`, `Map.fromList(pairs)`, `Map.get(m, k) -> Option<V>`, `Map.set(m, k, v)`, `Map.has(m, k)`, `Map.remove(m, k)`, `Map.keys(m)`, `Map.len(m)`
 
 Effectful namespaces:
-- `Console`: print, error, warn, readLine
+- `Console`: print, error, warn, readLine — **`print`/`error`/`warn` take `String`**, not arbitrary values. Stringify at the call site: interpolation `"{x}"` for primitives, a per-type render fn (`fn show(r: Result<T, E>) -> String`) for compound shapes.
 - `Http`: get, post, put, patch, delete, head
 - `Disk`: readText, writeText, appendText, exists, delete, deleteDir, listDir, makeDir
 - `Tcp`: connect, writeLine, readLine, close, send, ping
-- `Terminal`: enableRawMode, readKey, setCursor, print, clear, size
+- `Terminal`: enableRawMode, readKey, setCursor, print, clear, size — `Terminal.print` and `Terminal.setColor` also take `String`.
 - `Time`: now, unixMs, sleep
 - `Env`: get, set
 - `Args`: get

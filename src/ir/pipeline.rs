@@ -37,6 +37,7 @@ pub enum PipelineStage {
     Resolve,
     LastUse,
     Analyze,
+    Escape,
 }
 
 impl PipelineStage {
@@ -49,6 +50,7 @@ impl PipelineStage {
             Self::Resolve => "resolve",
             Self::LastUse => "last_use",
             Self::Analyze => "analyze",
+            Self::Escape => "escape",
         }
     }
 }
@@ -86,6 +88,15 @@ pub struct PipelineConfig<'a> {
     /// per-fn body shape, thin-kind, locals count, and (when an
     /// `alloc_policy` is configured) policy-parametrized alloc info.
     pub run_analyze: bool,
+    /// Whether to run the escape-analysis rewriting pass after
+    /// `analyze`. Detects `FnCall(f, [RecordCreate{…}])` where `f`
+    /// only accesses the record via `Attr` and inlines `f`'s body
+    /// with field substitution — eliminates the fresh struct alloc
+    /// per call. Backend-agnostic: every backend benefits because
+    /// the `RecordCreate` simply disappears from the IR.
+    /// Proof exporters (Lean / Dafny) want the source-level shape
+    /// preserved and skip this stage.
+    pub run_escape: bool,
     /// Allocation policy used by `analyze`. `None` skips the alloc-info
     /// computation; every other analysis fact is still produced.
     /// Backends should pass their own policy (`VmAllocPolicy`,
@@ -112,6 +123,7 @@ impl<'a> Default for PipelineConfig<'a> {
             run_resolve: true,
             run_last_use: true,
             run_analyze: true,
+            run_escape: true,
             alloc_policy: None,
             call_ctx: None,
             on_after_pass: None,
@@ -152,6 +164,15 @@ pub enum PassReport {
     Resolve {
         slots_resolved: usize,
         fns_with_slots: usize,
+        /// Total slot count across all fns whose resolver populated a
+        /// type (one entry per `FnResolution.local_slot_types` element).
+        slot_types_total: usize,
+        /// Slots whose type came back `Type::Invalid` — typically
+        /// wildcards / `_` patterns the resolver counted but never
+        /// produced into. Surfaces unhandled pattern shapes (e.g.
+        /// future variant kinds the slot-types pass hasn't taught
+        /// itself yet) as a non-zero counter.
+        slot_types_invalid: usize,
     },
     LastUse {
         last_use_marked: usize,
@@ -165,6 +186,11 @@ pub enum PassReport {
         /// Fns whose `allocates` is `None` because no `alloc_policy` was
         /// configured. Surfaces a misconfigured pipeline run.
         unknown_alloc: usize,
+    },
+    Escape {
+        /// How many `FnCall(callee, [RecordCreate{…}])` sites the
+        /// pass rewrote into the inlined-and-substituted body.
+        rewrites: usize,
     },
 }
 
@@ -324,7 +350,7 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
     if cfg.run_resolve {
         resolve(items);
         let post = pass_diag::collect(items);
-        result.pass_diagnostics.push(diag_for_resolve(&post));
+        result.pass_diagnostics.push(diag_for_resolve(&post, items));
         fire(&mut cfg, PipelineStage::Resolve, items);
     }
 
@@ -347,6 +373,12 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         result.pass_diagnostics.push(diag_for_analyze(&analysis));
         result.analysis = Some(analysis);
         fire(&mut cfg, PipelineStage::Analyze, items);
+    }
+
+    if cfg.run_escape {
+        let rewrites = crate::ir::escape::run(items);
+        result.pass_diagnostics.push(diag_for_escape(rewrites));
+        fire(&mut cfg, PipelineStage::Escape, items);
     }
 
     result
@@ -468,14 +500,30 @@ fn diag_for_buffer_build(report: &BufferBuildPassReport) -> PassDiagnostic {
     }
 }
 
-fn diag_for_resolve(post: &CountsByFn) -> PassDiagnostic {
+fn diag_for_resolve(post: &CountsByFn, items: &[TopLevel]) -> PassDiagnostic {
     let slots_resolved = pass_diag::total(post).resolved;
     let fns_with_slots = post.values().filter(|c| c.resolved > 0).count();
+    let mut slot_types_total = 0usize;
+    let mut slot_types_invalid = 0usize;
+    for item in items {
+        if let TopLevel::FnDef(fd) = item
+            && let Some(res) = fd.resolution.as_ref()
+        {
+            slot_types_total += res.local_slot_types.len();
+            slot_types_invalid += res
+                .local_slot_types
+                .iter()
+                .filter(|t| matches!(t, crate::ast::Type::Invalid))
+                .count();
+        }
+    }
     PassDiagnostic {
         stage: PipelineStage::Resolve,
         report: PassReport::Resolve {
             slots_resolved,
             fns_with_slots,
+            slot_types_total,
+            slot_types_invalid,
         },
     }
 }
@@ -488,6 +536,13 @@ fn diag_for_last_use(post: &CountsByFn) -> PassDiagnostic {
             last_use_marked: totals.last_use_resolved,
             total_resolved: totals.resolved,
         },
+    }
+}
+
+fn diag_for_escape(rewrites: usize) -> PassDiagnostic {
+    PassDiagnostic {
+        stage: PipelineStage::Escape,
+        report: PassReport::Escape { rewrites },
     }
 }
 
@@ -555,6 +610,7 @@ fn id(n: Int) -> Int
                 PipelineStage::Resolve,
                 PipelineStage::LastUse,
                 PipelineStage::Analyze,
+                PipelineStage::Escape,
             ]
         );
     }
@@ -580,6 +636,7 @@ fn id(n: Int) -> Int
                 run_buffer_build: false,
                 run_last_use: false,
                 run_analyze: false,
+                run_escape: false,
                 on_after_pass: Some(Box::new(|stage, _| fired.push(stage))),
                 ..Default::default()
             },
@@ -785,6 +842,7 @@ fn id(n: Int) -> Int
                 PipelineStage::InterpLower,
                 PipelineStage::BufferBuild,
                 PipelineStage::LastUse, // fires even without Resolve — a no-op pass
+                PipelineStage::Escape,
             ]
         );
     }
@@ -821,6 +879,7 @@ fn factorial(n: Int, acc: Int) -> Int
                 PipelineStage::Resolve,
                 PipelineStage::LastUse,
                 PipelineStage::Analyze,
+                PipelineStage::Escape,
             ]
         );
 

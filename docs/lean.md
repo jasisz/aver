@@ -164,5 +164,5 @@ Lean snippets, but are not currently listed here as end-to-end smoke cases.
 Lean codegen does not silently mask unresolved compiler internals:
 
 - `Expr::Resolved` in codegen input is a hard codegen error
-- `Type::Unknown` in codegen input is a hard codegen error
+- `Type::Invalid` in codegen input is a hard codegen error
 - `sorry` can be emitted only when explicitly requested with `--verify-mode sorry`

@@ -1,8 +1,15 @@
 use super::*;
 
+fn type_var(name: &str) -> Type {
+    Type::Var(name.to_string())
+}
+
 fn display_type_for_expected(ty: &Type) -> String {
     match ty {
-        Type::Unknown => "Any".to_string(),
+        // Named vars (`Var("K")`, `Var("T")`, ...) display as their name.
+        Type::Var(name) => name.clone(),
+        // Recovery after an earlier error. It is not a top type.
+        Type::Invalid => "Invalid".to_string(),
         Type::Int => "Int".to_string(),
         Type::Float => "Float".to_string(),
         Type::Str => "String".to_string(),
@@ -53,6 +60,28 @@ fn display_type_for_expected(ty: &Type) -> String {
     }
 }
 
+/// True iff `ty` contains no `Type::Invalid` or `Type::Var(_)` anywhere in
+/// its structure. Used to gate expected-type
+/// propagation: a formal param like `Map<Var("K"), Var("V")>` must
+/// NOT be passed as expected into arg inference, otherwise the
+/// recogniser stamps the arg with the bare Var-bearing type and
+/// breaks downstream backends. Same for `Type::Invalid` recovery nodes.
+fn type_is_fully_concrete(ty: &Type) -> bool {
+    match ty {
+        Type::Var(_) | Type::Invalid => false,
+        Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit | Type::Named(_) => true,
+        Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
+            type_is_fully_concrete(inner)
+        }
+        Type::Result(ok, err) => type_is_fully_concrete(ok) && type_is_fully_concrete(err),
+        Type::Map(k, v) => type_is_fully_concrete(k) && type_is_fully_concrete(v),
+        Type::Tuple(items) => items.iter().all(type_is_fully_concrete),
+        Type::Fn(params, ret, _) => {
+            params.iter().all(type_is_fully_concrete) && type_is_fully_concrete(ret)
+        }
+    }
+}
+
 fn const_int_expr(expr: &Spanned<Expr>) -> Option<i64> {
     match &expr.node {
         Expr::Literal(crate::ast::Literal::Int(i)) => Some(*i),
@@ -72,7 +101,287 @@ fn const_int_expr(expr: &Spanned<Expr>) -> Option<i64> {
 }
 
 impl TypeChecker {
+    /// Infer the type of `expr` and record it on the `Spanned` node so later
+    /// passes can read the result without re-running inference. The actual
+    /// inference logic lives in `infer_type_inner`; this wrapper exists only
+    /// to keep the `set_ty` step in one place.
     pub(in super::super) fn infer_type(&mut self, expr: &Spanned<Expr>) -> Type {
+        let t = self.infer_type_inner(expr);
+        expr.set_ty(t.clone());
+        t
+    }
+
+    /// Bidirectional companion to `infer_type`. When `expected` is `Some(T)`
+    /// and `expr` is a generic constructor (`Option.None`, `Map.empty()`,
+    /// empty `[]`, `Result.Ok(v)`, etc.) whose result type would otherwise
+    /// contain unresolved named variables, propagates `T` into those positions.
+    /// Falls back to plain `infer_type` for anything that doesn't need
+    /// the hint.
+    pub(in super::super) fn infer_type_with_expected(
+        &mut self,
+        expr: &Spanned<Expr>,
+        expected: Option<&Type>,
+    ) -> Type {
+        if let Some(exp) = expected
+            && let Some(ty) = self.try_infer_with_expected(expr, exp)
+        {
+            expr.set_ty(ty.clone());
+            return ty;
+        }
+        self.infer_type(expr)
+    }
+
+    /// Recogniser for the generic-constructor shapes that need an expected
+    /// type to produce a precise stamp. Returns `Some(concrete_type)` when
+    /// the shape matches and the expected type aligns; `None` otherwise
+    /// (caller falls back to plain `infer_type`).
+    fn try_infer_with_expected(&mut self, expr: &Spanned<Expr>, expected: &Type) -> Option<Type> {
+        match &expr.node {
+            // List literals adopt expected `List<T>`. This matters even for
+            // non-empty lists whose elements are generic constructors, e.g.
+            // `[Option.None]` under `List<Option<PieceKind>>`.
+            Expr::List(items) => match expected {
+                Type::List(inner) => {
+                    for (idx, item) in items.iter().enumerate() {
+                        let item_ty = self.infer_type_with_expected(item, Some(inner));
+                        if !Self::constraint_compatible(&item_ty, inner) {
+                            self.error(format!(
+                                "List element {}: expected {}, got {}",
+                                idx + 1,
+                                inner.display(),
+                                item_ty.display()
+                            ));
+                        }
+                    }
+                    Some(expected.clone())
+                }
+                _ => None,
+            },
+
+            // Empty map literal `{}` adopts expected `Map<K, V>`.
+            Expr::MapLiteral(entries) if entries.is_empty() => match expected {
+                Type::Map(_, _) => Some(expected.clone()),
+                _ => None,
+            },
+
+            // Bare `None` constructor.
+            Expr::Constructor(name, None) if name == "None" => match expected {
+                Type::Option(_) => Some(expected.clone()),
+                _ => None,
+            },
+
+            // `Some(v)` / `Ok(v)` / `Err(e)` — propagate inner expected.
+            Expr::Constructor(name, Some(arg_box)) => match (name.as_str(), expected) {
+                ("Some", Type::Option(inner)) => {
+                    let inferred = self.infer_type_with_expected(arg_box, Some(inner));
+                    Some(Type::Option(Box::new(inferred)))
+                }
+                ("Ok", Type::Result(ok, err)) => {
+                    let inferred = self.infer_type_with_expected(arg_box, Some(ok));
+                    Some(Type::Result(Box::new(inferred), err.clone()))
+                }
+                ("Err", Type::Result(ok, err)) => {
+                    let inferred = self.infer_type_with_expected(arg_box, Some(err));
+                    Some(Type::Result(ok.clone(), Box::new(inferred)))
+                }
+                _ => None,
+            },
+
+            // `Option.None` as bare attr access — value, not call.
+            Expr::Attr(obj, field)
+                if field == "None" && matches!(&obj.node, Expr::Ident(n) if n == "Option") =>
+            {
+                match expected {
+                    Type::Option(_) => Some(expected.clone()),
+                    _ => None,
+                }
+            }
+
+            // `Foo.bar(...)` — handle generic-constructor calls.
+            Expr::FnCall(callee, args) => {
+                let key = Self::callee_key(&callee.node)?;
+                match (key.as_str(), args.len(), expected) {
+                    // Map.empty() — no args, expected must be Map<K, V>.
+                    ("Map.empty", 0, Type::Map(_, _)) => Some(expected.clone()),
+
+                    // Map.fromList(xs) — expected Map<K, V> gives xs the
+                    // concrete List<(K, V)> element type.
+                    ("Map.fromList", 1, Type::Map(k, v)) => {
+                        let expected_pairs =
+                            Type::List(Box::new(Type::Tuple(vec![*k.clone(), *v.clone()])));
+                        let list_ty =
+                            self.infer_type_with_expected(&args[0], Some(&expected_pairs));
+                        if !Self::constraint_compatible(&list_ty, &expected_pairs) {
+                            self.error(format!(
+                                "Argument 1 of 'Map.fromList': expected {}, got {}",
+                                expected_pairs.display(),
+                                list_ty.display()
+                            ));
+                        }
+                        Some(expected.clone())
+                    }
+
+                    // Vector.fromList(xs) — expected Vector<T> gives xs
+                    // the concrete List<T> element type.
+                    ("Vector.fromList", 1, Type::Vector(inner)) => {
+                        let expected_list = Type::List(inner.clone());
+                        let list_ty = self.infer_type_with_expected(&args[0], Some(&expected_list));
+                        if !Self::constraint_compatible(&list_ty, &expected_list) {
+                            self.error(format!(
+                                "Argument 1 of 'Vector.fromList': expected {}, got {}",
+                                expected_list.display(),
+                                list_ty.display()
+                            ));
+                        }
+                        Some(expected.clone())
+                    }
+
+                    // Map.set(m, k, v) — expected Map<K, V> gives precise
+                    // context to all three args, including nested Map.empty().
+                    ("Map.set", 3, Type::Map(k, v)) => {
+                        let expected_map = expected.clone();
+                        let map_ty = self.infer_type_with_expected(&args[0], Some(&expected_map));
+                        let key_ty = self.infer_type_with_expected(&args[1], Some(k));
+                        let val_ty = self.infer_type_with_expected(&args[2], Some(v));
+                        if !Self::constraint_compatible(&map_ty, &expected_map) {
+                            self.error(format!(
+                                "Argument 1 of 'Map.set': expected {}, got {}",
+                                expected_map.display(),
+                                map_ty.display()
+                            ));
+                        }
+                        if !Self::constraint_compatible(&key_ty, k) {
+                            self.error(format!(
+                                "Argument 2 of 'Map.set': expected {}, got {}",
+                                k.display(),
+                                key_ty.display()
+                            ));
+                        }
+                        if !Self::constraint_compatible(&val_ty, v) {
+                            self.error(format!(
+                                "Argument 3 of 'Map.set': expected {}, got {}",
+                                v.display(),
+                                val_ty.display()
+                            ));
+                        }
+                        Some(expected_map)
+                    }
+
+                    // Option.None — accidentally written as zero-arg call.
+                    ("Option.None", 0, Type::Option(_)) => Some(expected.clone()),
+
+                    // Option.Some(v) — propagate inner T.
+                    ("Option.Some", 1, Type::Option(inner)) => {
+                        let inferred = self.infer_type_with_expected(&args[0], Some(inner));
+                        Some(Type::Option(Box::new(inferred)))
+                    }
+
+                    // Result.Ok(v) — propagate ok side.
+                    ("Result.Ok", 1, Type::Result(ok, err)) => {
+                        let inferred = self.infer_type_with_expected(&args[0], Some(ok));
+                        Some(Type::Result(Box::new(inferred), err.clone()))
+                    }
+
+                    // Result.Err(e) — propagate err side.
+                    ("Result.Err", 1, Type::Result(ok, err)) => {
+                        let inferred = self.infer_type_with_expected(&args[0], Some(err));
+                        Some(Type::Result(ok.clone(), Box::new(inferred)))
+                    }
+
+                    _ => None,
+                }
+            }
+
+            _ => None,
+        }
+    }
+
+    fn try_infer_special_call_without_expected(
+        &mut self,
+        fn_expr: &Spanned<Expr>,
+        args: &[Spanned<Expr>],
+    ) -> Option<Type> {
+        let display_name = Self::callee_key(&fn_expr.node)?;
+        match (display_name.as_str(), args.len()) {
+            // Infer K/V from the key and value first, then push that concrete
+            // Map<K,V> expectation into the receiver. This stamps nested
+            // Map.empty() at the source instead of relying on backend recovery.
+            ("Map.set", 3) => {
+                let key_ty = self.infer_type(&args[1]);
+                let val_ty = self.infer_type(&args[2]);
+                let key_value_map = Type::Map(Box::new(key_ty.clone()), Box::new(val_ty.clone()));
+                let map_ty = self.infer_type_with_expected(&args[0], Some(&key_value_map));
+                let (mut k, mut v) = match &map_ty {
+                    Type::Map(k, v) => (*k.clone(), *v.clone()),
+                    Type::Invalid => (type_var("K"), type_var("V")),
+                    other => {
+                        self.error(format!(
+                            "Argument 1 of 'Map.set': expected Map<...>, got {}",
+                            other.display()
+                        ));
+                        (type_var("K"), type_var("V"))
+                    }
+                };
+                if matches!(k, Type::Var(_)) {
+                    k = key_ty.clone();
+                } else if !Self::constraint_compatible(&key_ty, &k) {
+                    self.error(format!(
+                        "Argument 2 of 'Map.set': expected {}, got {}",
+                        k.display(),
+                        key_ty.display()
+                    ));
+                }
+                if matches!(v, Type::Var(_)) {
+                    v = val_ty.clone();
+                } else if !Self::constraint_compatible(&val_ty, &v) {
+                    self.error(format!(
+                        "Argument 3 of 'Map.set': expected {}, got {}",
+                        v.display(),
+                        val_ty.display()
+                    ));
+                }
+                let expected_map = Type::Map(Box::new(k), Box::new(v));
+                self.infer_type_with_expected(&args[0], Some(&expected_map));
+                Some(expected_map)
+            }
+            ("List.prepend", 2) => {
+                // Infer the head first so we know the element type, then
+                // walk the tail with `List<head_ty>` as the expected
+                // type. Crucial for `List.prepend(x, [])` where `[]`'s
+                // own inference would stamp `List<T>` (T unbound) and
+                // OnceLock then refuses any later overwrite — the tail
+                // would stay `List<T>` even if we computed the right
+                // shape afterwards.
+                let val_ty = self.infer_type(&args[0]);
+                let expected_list = Type::List(Box::new(val_ty.clone()));
+                let list_ty = self.infer_type_with_expected(&args[1], Some(&expected_list));
+                let elem_ty = match &list_ty {
+                    Type::List(inner) => *inner.clone(),
+                    Type::Invalid => val_ty.clone(),
+                    other => {
+                        self.error(format!(
+                            "Argument 2 of 'List.prepend': expected List<...>, got {}",
+                            other.display()
+                        ));
+                        val_ty.clone()
+                    }
+                };
+                if !matches!(elem_ty, Type::Var(_))
+                    && !Self::constraint_compatible(&val_ty, &elem_ty)
+                {
+                    self.error(format!(
+                        "Argument 1 of 'List.prepend': expected {}, got {}",
+                        elem_ty.display(),
+                        val_ty.display()
+                    ));
+                }
+                Some(Type::List(Box::new(elem_ty)))
+            }
+            _ => None,
+        }
+    }
+
+    fn infer_type_inner(&mut self, expr: &Spanned<Expr>) -> Type {
         match &expr.node {
             Expr::Literal(lit) => match lit {
                 crate::ast::Literal::Int(_) => Type::Int,
@@ -99,11 +408,14 @@ impl TypeChecker {
                     Self::fn_type_from_sig(sig)
                 } else {
                     self.error(format!("Unknown identifier '{}'", name));
-                    Type::Unknown
+                    Type::Invalid
                 }
             }
 
             Expr::FnCall(fn_expr, args) => {
+                if let Some(ty) = self.try_infer_special_call_without_expected(fn_expr, args) {
+                    return ty;
+                }
                 // Use call-site line for errors when available, else fall back to fn header.
                 let err_line = if expr.line > 0 {
                     expr.line
@@ -111,8 +423,30 @@ impl TypeChecker {
                     self.current_fn_line.unwrap_or(1)
                 };
 
-                // Infer arg types
-                let arg_types: Vec<Type> = args.iter().map(|a| self.infer_type(a)).collect();
+                // Bidirectional: if we can resolve the callee's signature
+                // up front, infer each arg WITH its formal param type as
+                // expected. Lets generic constructors in arg position
+                // (`genRooms(seed, 6, 0, [])` — last arg is List<Room>)
+                // pick up T from the signature instead of stamping
+                // List<T>. Falls back to standalone inference when
+                // the callee is unresolvable (eg. dotted-builtin without
+                // a fn_sig, or callable values).
+                let formal_params: Option<Vec<Type>> = match &fn_expr.node {
+                    Expr::Ident(name) => self.find_fn_sig(name).map(|s| s.params.clone()),
+                    _ => Self::callee_key(&fn_expr.node)
+                        .and_then(|key| self.find_fn_sig(&key).map(|s| s.params.clone())),
+                };
+                let arg_types: Vec<Type> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(i, a)| {
+                        let expected = formal_params
+                            .as_ref()
+                            .and_then(|p| p.get(i))
+                            .filter(|t| type_is_fully_concrete(t));
+                        self.infer_type_with_expected(a, expected)
+                    })
+                    .collect();
 
                 // Helper: check arity + arg types against a sig, return sig.ret
                 let check_call = |tc: &mut Self, display_name: &str, sig: FnSig| -> Type {
@@ -126,11 +460,13 @@ impl TypeChecker {
                                 arg_types.len()
                             ),
                         );
+                        Type::Invalid
                     } else {
+                        let mut subst = HashMap::new();
                         for (i, (arg_ty, param_ty)) in
                             arg_types.iter().zip(sig.params.iter()).enumerate()
                         {
-                            if !Self::constraint_compatible(arg_ty, param_ty) {
+                            if !Self::match_expected_type(arg_ty, param_ty, &mut subst) {
                                 tc.error_at_line(
                                     err_line,
                                     format!(
@@ -143,8 +479,8 @@ impl TypeChecker {
                                 );
                             }
                         }
+                        Self::instantiate_type(&sig.ret, &subst)
                     }
-                    sig.ret
                 };
                 let validate_special_call =
                     |tc: &mut Self, display_name: &str, call_args: &[Spanned<Expr>]| {
@@ -179,10 +515,10 @@ impl TypeChecker {
                                 binding_ty.display()
                             ),
                         );
-                        return Type::Unknown;
+                        return Type::Invalid;
                     }
                     self.error_at_line(err_line, format!("Call to unknown function '{}'", name));
-                    return Type::Unknown;
+                    return Type::Invalid;
                 }
 
                 if let Some(display_name) = Self::callee_key(&fn_expr.node) {
@@ -200,11 +536,11 @@ impl TypeChecker {
                     match display_name.as_str() {
                         "Result.Ok" => {
                             let inner = arg_types.first().cloned().unwrap_or(Type::Unit);
-                            return Type::Result(Box::new(inner), Box::new(Type::Unknown));
+                            return Type::Result(Box::new(inner), Box::new(type_var("E")));
                         }
                         "Result.Err" => {
                             let inner = arg_types.first().cloned().unwrap_or(Type::Unit);
-                            return Type::Result(Box::new(Type::Unknown), Box::new(inner));
+                            return Type::Result(Box::new(type_var("T")), Box::new(inner));
                         }
                         "Option.Some" => {
                             let inner = arg_types.first().cloned().unwrap_or(Type::Unit);
@@ -214,7 +550,7 @@ impl TypeChecker {
                         "Option.withDefault"
                             // (Option<T>, T) -> T
                             if arg_types.len() == 2 => {
-                                if !matches!(&arg_types[0], Type::Option(_) | Type::Unknown) {
+                                if !matches!(&arg_types[0], Type::Option(_) | Type::Invalid) {
                                     self.error_at_line(
                                         err_line,
                                         format!(
@@ -228,7 +564,7 @@ impl TypeChecker {
                         "Result.withDefault"
                             // (Result<T, E>, T) -> T
                             if arg_types.len() == 2 => {
-                                if !matches!(&arg_types[0], Type::Result(_, _) | Type::Unknown) {
+                                if !matches!(&arg_types[0], Type::Result(_, _) | Type::Invalid) {
                                     self.error_at_line(
                                         err_line,
                                         format!(
@@ -242,7 +578,7 @@ impl TypeChecker {
                         "Option.toResult"
                             // (Option<T>, E) -> Result<T, E>
                             if arg_types.len() == 2 => {
-                                if !matches!(&arg_types[0], Type::Option(_) | Type::Unknown) {
+                                if !matches!(&arg_types[0], Type::Option(_) | Type::Invalid) {
                                     self.error_at_line(
                                         err_line,
                                         format!(
@@ -253,7 +589,7 @@ impl TypeChecker {
                                 }
                                 let t = match &arg_types[0] {
                                     Type::Option(inner) => *inner.clone(),
-                                    _ => Type::Unknown,
+                                    _ => type_var("T"),
                                 };
                                 let e = arg_types[1].clone();
                                 return Type::Result(Box::new(t), Box::new(e));
@@ -265,7 +601,7 @@ impl TypeChecker {
                         validate_special_call(self, &display_name, args);
                         // Cross-arg validation for `listenWith` family: the
                         // context arg (#2) must match the handler's first
-                        // parameter type. Builtin sigs use `Type::Unknown`
+                        // parameter type. Builtin sigs use `Type::Invalid`
                         // for context to allow any user-defined type, so
                         // this linkage is enforced here rather than via
                         // standard arg-type matching.
@@ -277,8 +613,8 @@ impl TypeChecker {
                             && let Some(expected_ctx) = handler_params.first()
                         {
                             let actual_ctx = &arg_types[1];
-                            if !matches!(expected_ctx, Type::Unknown)
-                                && !matches!(actual_ctx, Type::Unknown)
+                            if !matches!(expected_ctx, Type::Invalid)
+                                && !matches!(actual_ctx, Type::Invalid)
                                 && !Self::constraint_compatible(actual_ctx, expected_ctx)
                             {
                                 self.error_at_line(
@@ -301,13 +637,13 @@ impl TypeChecker {
                     return check_call(self, "<fn value>", sig);
                 }
 
-                if !matches!(callee_ty, Type::Unknown) {
+                if !matches!(callee_ty, Type::Invalid) {
                     self.error_at_line(
                         err_line,
                         format!("Cannot call value of type {}", callee_ty.display()),
                     );
                 }
-                Type::Unknown
+                Type::Invalid
             }
 
             Expr::BinOp(op, left, right) => {
@@ -335,7 +671,7 @@ impl TypeChecker {
                         {
                             Type::Str
                         } else {
-                            Type::Unknown
+                            Type::Invalid
                         }
                     }
                 }
@@ -347,14 +683,14 @@ impl TypeChecker {
                         .as_ref()
                         .map(|a| self.infer_type(a))
                         .unwrap_or(Type::Unit);
-                    Type::Result(Box::new(inner), Box::new(Type::Unknown))
+                    Type::Result(Box::new(inner), Box::new(type_var("E")))
                 }
                 "Err" => {
                     let inner = arg
                         .as_ref()
                         .map(|a| self.infer_type(a))
                         .unwrap_or(Type::Unit);
-                    Type::Result(Box::new(Type::Unknown), Box::new(inner))
+                    Type::Result(Box::new(type_var("T")), Box::new(inner))
                 }
                 "Some" => {
                     let inner = arg
@@ -363,8 +699,8 @@ impl TypeChecker {
                         .unwrap_or(Type::Unit);
                     Type::Option(Box::new(inner))
                 }
-                "None" => Type::Option(Box::new(Type::Unknown)),
-                _ => Type::Unknown,
+                "None" => Type::Option(Box::new(type_var("T"))),
+                _ => Type::Invalid,
             },
 
             Expr::List(elems) => {
@@ -376,7 +712,7 @@ impl TypeChecker {
                     }
                     ty
                 } else {
-                    Type::Unknown
+                    type_var("T")
                 };
                 Type::List(Box::new(inner))
             }
@@ -425,7 +761,10 @@ impl TypeChecker {
                             Type::Result(ok_ty, err_ty) => {
                                 match self.current_fn_ret.clone() {
                                     Some(Type::Result(_, fn_err_ty)) => {
-                                        if !err_ty.compatible(&fn_err_ty) {
+                                        let mut subst = HashMap::new();
+                                        if !Self::match_expected_type(
+                                            &err_ty, &fn_err_ty, &mut subst,
+                                        ) {
                                             self.error_at_line(prop_line, format!(
                                                 "Independent product '?!': Err type {} is incompatible with function's Err type {}",
                                                 err_ty.display(),
@@ -433,7 +772,7 @@ impl TypeChecker {
                                             ));
                                         }
                                     }
-                                    Some(Type::Unknown) => {}
+                                    Some(Type::Invalid) => {}
                                     Some(other) => {
                                         self.error_at_line(prop_line, format!(
                                             "Independent product '?!' used in function returning {}, which is not Result",
@@ -450,8 +789,8 @@ impl TypeChecker {
                                 }
                                 ok_types.push(*ok_ty);
                             }
-                            Type::Unknown => {
-                                ok_types.push(Type::Unknown);
+                            Type::Invalid => {
+                                ok_types.push(Type::Invalid);
                             }
                             other => {
                                 self.error_at_line(
@@ -461,7 +800,7 @@ impl TypeChecker {
                                         other.display()
                                     ),
                                 );
-                                ok_types.push(Type::Unknown);
+                                ok_types.push(Type::Invalid);
                             }
                         }
                     }
@@ -474,8 +813,8 @@ impl TypeChecker {
             }
 
             Expr::MapLiteral(entries) => {
-                let mut key_ty = Type::Unknown;
-                let mut val_ty = Type::Unknown;
+                let mut key_ty = type_var("K");
+                let mut val_ty = type_var("V");
 
                 for (key_expr, value_expr) in entries {
                     let current_key = self.infer_type(key_expr);
@@ -488,9 +827,9 @@ impl TypeChecker {
                         ));
                     }
 
-                    if matches!(key_ty, Type::Unknown) {
+                    if matches!(key_ty, Type::Var(_)) {
                         key_ty = current_key.clone();
-                    } else if !matches!(current_key, Type::Unknown)
+                    } else if !matches!(current_key, Type::Invalid)
                         && !Self::constraint_compatible(&current_key, &key_ty)
                     {
                         self.error(format!(
@@ -500,9 +839,9 @@ impl TypeChecker {
                         ));
                     }
 
-                    if matches!(val_ty, Type::Unknown) {
+                    if matches!(val_ty, Type::Var(_)) {
                         val_ty = current_val.clone();
-                    } else if !matches!(current_val, Type::Unknown)
+                    } else if !matches!(current_val, Type::Invalid)
                         && !Self::constraint_compatible(&current_val, &val_ty)
                     {
                         self.error(format!(
@@ -524,23 +863,31 @@ impl TypeChecker {
                 };
                 let subject_ty = self.infer_type(subject);
                 self.check_match_exhaustiveness(&subject_ty, arms, match_line);
+                // Bidirectional: propagate the enclosing fn's declared
+                // return type into each arm body. Lets generic constructors
+                // in arm positions (`[] -> Option.None`) pick up T without
+                // requiring per-arm annotation.
+                let arm_expected = self.current_fn_ret.clone();
+                let arm_expected_ref = arm_expected.as_ref();
                 // Infer from first arm; check remaining arms for consistency
                 if let Some(first_arm) = arms.first() {
-                    let first_ty = self.infer_type_with_pattern_bindings(
+                    let first_ty = self.infer_type_with_pattern_bindings_expected(
                         &first_arm.pattern,
                         &subject_ty,
                         &first_arm.body,
+                        arm_expected_ref,
                     );
                     for arm in arms.iter().skip(1) {
-                        let arm_ty = self.infer_type_with_pattern_bindings(
+                        let arm_ty = self.infer_type_with_pattern_bindings_expected(
                             &arm.pattern,
                             &subject_ty,
                             &arm.body,
+                            arm_expected_ref,
                         );
                         // Only report mismatch when both types are concrete
                         if !first_ty.compatible(&arm_ty)
-                            && !matches!(first_ty, Type::Unknown)
-                            && !matches!(arm_ty, Type::Unknown)
+                            && !matches!(first_ty, Type::Invalid)
+                            && !matches!(arm_ty, Type::Invalid)
                         {
                             self.error(format!(
                                 "Match arms return incompatible types: {} vs {}",
@@ -551,7 +898,7 @@ impl TypeChecker {
                     }
                     first_ty
                 } else {
-                    Type::Unknown
+                    Type::Invalid
                 }
             }
 
@@ -567,10 +914,10 @@ impl TypeChecker {
                     Type::Result(ok_ty, err_ty) => {
                         match self.current_fn_ret.clone() {
                             Some(Type::Result(_, fn_err_ty)) => {
-                                // Use compatible() (not constraint_compatible) so that
-                                // Unknown err types from generic combinators (e.g.
-                                // Option.toResult) are accepted without error.
-                                if !err_ty.compatible(&fn_err_ty) {
+                                let mut subst = HashMap::new();
+                                let err_matches = matches!(err_ty.as_ref(), Type::Var(_))
+                                    || Self::match_expected_type(&err_ty, &fn_err_ty, &mut subst);
+                                if !err_matches {
                                     self.error_at_line(prop_line, format!(
                                         "Operator '?': Err type {} is incompatible with function's Err type {}",
                                         err_ty.display(),
@@ -578,7 +925,7 @@ impl TypeChecker {
                                     ));
                                 }
                             }
-                            Some(Type::Unknown) => {} // gradual typing — skip check
+                            Some(Type::Invalid) => {}
                             Some(other) => {
                                 self.error_at_line(prop_line, format!(
                                     "Operator '?' used in function returning {}, which is not Result",
@@ -594,7 +941,7 @@ impl TypeChecker {
                         }
                         *ok_ty
                     }
-                    Type::Unknown => Type::Unknown,
+                    Type::Invalid => Type::Invalid,
                     other => {
                         self.error_at_line(
                             prop_line,
@@ -603,7 +950,7 @@ impl TypeChecker {
                                 other.display()
                             ),
                         );
-                        Type::Unknown
+                        Type::Invalid
                     }
                 }
             }
@@ -621,14 +968,14 @@ impl TypeChecker {
                     }
                     if self.has_namespace_prefix(&key) {
                         // Intermediate namespace (e.g. Models.User in Models.User.findById)
-                        return Type::Unknown;
+                        return Type::Invalid;
                     }
                     if self.has_namespace_prefix(&obj_key) {
                         self.error(format!(
                             "Unknown member '{}.{}' (not exposed or missing)",
                             obj_key, field
                         ));
-                        return Type::Unknown;
+                        return Type::Invalid;
                     }
                 }
                 // Oracle v1: `.result` / `.trace` projections on a
@@ -646,7 +993,7 @@ impl TypeChecker {
                              the expression into a verify-trace block.",
                             field
                         ));
-                        return Type::Unknown;
+                        return Type::Invalid;
                     }
                     if field == "result" {
                         return self.infer_type(obj);
@@ -662,7 +1009,11 @@ impl TypeChecker {
                             return Type::Fn(vec![], Box::new(Type::Int), vec![]);
                         }
                         "contains" => {
-                            return Type::Fn(vec![Type::Unknown], Box::new(Type::Bool), vec![]);
+                            return Type::Fn(
+                                vec![type_var("TraceNeedle")],
+                                Box::new(Type::Bool),
+                                vec![],
+                            );
                         }
                         // 0.13 Limit nail #3: `.count(M)` returns the number
                         // of events whose method matches `M`. Same argument
@@ -671,7 +1022,11 @@ impl TypeChecker {
                         // users write quantitative trace laws like
                         // `result.trace.count(Http.get) == 1`.
                         "count" => {
-                            return Type::Fn(vec![Type::Unknown], Box::new(Type::Int), vec![]);
+                            return Type::Fn(
+                                vec![type_var("TraceNeedle")],
+                                Box::new(Type::Int),
+                                vec![],
+                            );
                         }
                         "event" => {
                             return Type::Fn(
@@ -716,7 +1071,7 @@ impl TypeChecker {
                                 "Cannot access field '{}' of opaque type '{}'",
                                 field, type_name
                             ));
-                            return Type::Unknown;
+                            return Type::Invalid;
                         }
                         let key = crate::visibility::member_key(type_name, field);
                         if let Some(field_ty) = self.find_record_field_type(&key) {
@@ -733,16 +1088,16 @@ impl TypeChecker {
                                     type_name, field
                                 ));
                             }
-                            Type::Unknown
+                            Type::Invalid
                         }
                     }
-                    Type::Unknown => Type::Unknown,
+                    Type::Invalid => Type::Invalid,
                     other => {
                         self.error(format!(
                             "Field access on non-record type {}",
                             other.display()
                         ));
-                        Type::Unknown
+                        Type::Invalid
                     }
                 }
             }
@@ -759,20 +1114,32 @@ impl TypeChecker {
 
             Expr::TailCall(boxed) => {
                 let TailCallData { target, args, .. } = boxed.as_ref();
-                for arg in args {
-                    let _ = self.infer_type(arg);
+                // Bidirectional: propagate the target fn's formal params into
+                // arg inference so generic constructors in tail-call position
+                // (`parseListItems(s, pos, [])`, `loop(acc, [])`) pick up T
+                // from the signature instead of stamping `List<T>` /
+                // `Option<T>`. Mirrors the `Expr::FnCall` handler — TailCall
+                // is the same call, just rewritten by tail-check.
+                let formal_params: Option<Vec<Type>> =
+                    self.find_fn_sig(target).map(|s| s.params.clone());
+                for (i, arg) in args.iter().enumerate() {
+                    let expected = formal_params
+                        .as_ref()
+                        .and_then(|p| p.get(i))
+                        .filter(|t| type_is_fully_concrete(t));
+                    let _ = self.infer_type_with_expected(arg, expected);
                 }
                 // Return type is the same as the target function's return type
                 if let Some(sig) = self.find_fn_sig(target).cloned() {
                     sig.ret
                 } else {
-                    Type::Unknown
+                    Type::Invalid
                 }
             }
 
             // Resolved nodes are produced after type-checking, so should not appear here.
             // If they do (e.g. in a test), treat as Unknown.
-            Expr::Resolved { .. } => Type::Unknown,
+            Expr::Resolved { .. } => Type::Invalid,
         }
     }
 }

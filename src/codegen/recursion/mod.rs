@@ -132,6 +132,7 @@ pub fn rewrite_recursive_calls_expr(
                 .map(|arm| MatchArm {
                     pattern: arm.pattern.clone(),
                     body: Box::new(rewrite_recursive_calls_expr(&arm.body, targets, fuel_var)),
+                    binding_slots: std::sync::OnceLock::new(),
                 })
                 .collect(),
         },

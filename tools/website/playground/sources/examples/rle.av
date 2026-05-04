@@ -29,6 +29,15 @@ verify rleEncode
     rleEncode("aaa") => [RlePair.Pair("a", 3)]
     rleEncode("aab") => [RlePair.Pair("a", 2), RlePair.Pair("b", 1)]
 
+fn renderPairs(pairs: List<RlePair>) -> String
+    ? "Render a list of RlePairs for display: '(a,3) (b,3) ...'"
+    match pairs
+        [] -> ""
+        [p, ..rest] -> match p
+            RlePair.Pair(c, n) -> match rest
+                [] -> "({c},{n})"
+                _  -> "({c},{n}) {renderPairs(rest)}"
+
 fn main() -> Unit
     ! [Console.print]
-    Console.print(rleEncode("aaabbbccddddee"))
+    Console.print(renderPairs(rleEncode("aaabbbccddddee")))

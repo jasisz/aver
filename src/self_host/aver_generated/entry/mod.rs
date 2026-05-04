@@ -39,7 +39,7 @@ fn __mutual_tco_trampoline_1(
         __state = match __state {
             __MutualTco1::LoadModules(mut deps, mut moduleRoot, mut acc, mut loaded) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(deps, [] => { return Ok((acc, loaded)) }, [dep, rest] => if loaded.contains_key(&dep) { __MutualTco1::LoadModules(rest, moduleRoot, acc, loaded) } else { __MutualTco1::LoadOneModule(dep, rest, moduleRoot, acc, loaded) })
+                aver_list_match!(deps, [] => return Ok((acc, loaded)), [dep, rest] => if loaded.contains_key(&dep) { __MutualTco1::LoadModules(rest, moduleRoot, acc, loaded) } else { __MutualTco1::LoadOneModule(dep, rest, moduleRoot, acc, loaded) })
             }
             __MutualTco1::LoadOneModule(mut dep, mut rest, mut moduleRoot, mut acc, mut loaded) => {
                 crate::cancel_checkpoint();
@@ -126,7 +126,7 @@ fn __mutual_tco_trampoline_2(mut __state: __MutualTco2) -> aver_rt::AverList<FnD
         __state = match __state {
             __MutualTco2::QualifyFns(mut fns, mut prefix, mut acc) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(fns, [] => { return acc.reverse() }, [f, rest] => __MutualTco2::QualifyFnsOne(f, rest, prefix, acc))
+                aver_list_match!(fns, [] => return acc.reverse(), [f, rest] => __MutualTco2::QualifyFnsOne(f, rest, prefix, acc))
             }
             __MutualTco2::QualifyFnsOne(mut f, mut rest, mut prefix, mut acc) => {
                 crate::cancel_checkpoint();

@@ -160,7 +160,7 @@ def build_wasm(aver_bin: str) -> None:
             "compile",
             str(source),
             "--target",
-            "edge-wasm",
+            "wasm-gc",
             "--optimize",
             "size",
             "--name",
@@ -190,12 +190,11 @@ def replace_once(pattern: str, replacement: str, text: str, *, flags: int = 0) -
 
 def update_main_index(text: str, sizes: dict[str, str]) -> str:
     summary = (
-        "Seven games compiled directly from Aver. The runtime — alloc, "
-        "GC, hashmap, string ops — is one ~10 KiB module loaded once. "
-        "Every game ships just its program logic: "
-        f"Snake {sizes['snake']}, full roguelike {sizes['rogue']}. "
-        "Browser caches the runtime; the second game you click downloads "
-        'only the program. <a href="runtime/">Pinned runtime versions →</a>'
+        "Seven games compiled directly from Aver to WebAssembly GC. "
+        "Engine handles GC and tail calls — no NaN-boxing, no custom heap. "
+        f"Snake ships at {sizes['snake']}; a full roguelike with "
+        f"procedural generation is {sizes['rogue']}. "
+        "Modern browsers only (Chrome 119+ / Firefox 120+ / Safari 18.2+)."
     )
     text = replace_once(
         r'(<section class="games" id="demo">.*?<p class="section-sub">)(.*?)(</p>)',
@@ -216,7 +215,7 @@ def update_playground_index(text: str, sizes: dict[str, str]) -> str:
         f"Snake ships at {sizes['snake']}. "
         f"Tetris is {sizes['tetris']}. "
         f"A full roguelike with procedural generation is {sizes['rogue']}. "
-        "Built with <code>--target edge-wasm --optimize size</code> — runtime is shared across games, second load is just the thin user.wasm."
+        "Built with <code>--target wasm-gc --optimize size</code> — engine GC + native tail-calls; per-program binary, no shared runtime to fetch."
     )
 
     for game in GAMES:
@@ -251,7 +250,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Rebuild the playground: compiler (wasm-pack), game WASM (aver compile "
-            "--target edge-wasm --optimize size), mirrored sources, and website size labels."
+            "--target wasm-gc --optimize size), mirrored sources, and website size labels."
         )
     )
     parser.add_argument(

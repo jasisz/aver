@@ -40,6 +40,6 @@ pub fn aver_type_to_wasm(ty: &Type) -> WasmType {
         Type::Result(..) | Type::Option(..) | Type::List(..) => WasmType::I32,
         Type::Named(..) | Type::Tuple(..) | Type::Map(..) | Type::Vector(..) => WasmType::I32,
         Type::Fn(..) => WasmType::I32,
-        Type::Unknown => WasmType::I64, // fallback
+        Type::Var(_) | Type::Invalid => WasmType::I64, // fallback
     }
 }

@@ -1,3 +1,10 @@
+// `Value` carries `OnceLock<…>` (typed-AST stamps + per-arm pattern
+// binding slots) deep in its substructure, which is interior mutability
+// — but those cells are write-once and never reach the hash code path,
+// so HashMap<Value, …> is safe in practice. Silence the clippy lint at
+// the crate level rather than papering over every `HashMap::new()` site.
+#![allow(clippy::mutable_key_type)]
+
 extern crate self as aver;
 
 pub mod ast;

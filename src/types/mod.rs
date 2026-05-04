@@ -27,100 +27,10 @@ pub mod trace;
 #[cfg(feature = "runtime")]
 pub mod vector;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Type {
-    Int,
-    Float,
-    Str,
-    Bool,
-    Unit,
-    Result(Box<Type>, Box<Type>),
-    Option(Box<Type>),
-    List(Box<Type>),
-    Tuple(Vec<Type>),
-    Map(Box<Type>, Box<Type>),
-    Vector(Box<Type>),
-    Fn(Vec<Type>, Box<Type>, Vec<String>),
-    Unknown,       // internal fallback when checker cannot infer a precise type
-    Named(String), // user-defined type: Shape, User, etc.
-}
-
-impl Type {
-    /// `a.compatible(b)` — can a value of type `self` be used where `other` is expected?
-    /// `Unknown` is compatible with everything (internal fallback).
-    /// Two concrete types must be equal (structurally) to be compatible.
-    pub fn compatible(&self, other: &Type) -> bool {
-        if matches!(self, Type::Unknown) || matches!(other, Type::Unknown) {
-            return true;
-        }
-        match (self, other) {
-            (Type::Int, Type::Int) => true,
-            (Type::Float, Type::Float) => true,
-            (Type::Str, Type::Str) => true,
-            (Type::Bool, Type::Bool) => true,
-            (Type::Unit, Type::Unit) => true,
-            (Type::Result(a1, b1), Type::Result(a2, b2)) => a1.compatible(a2) && b1.compatible(b2),
-            (Type::Option(a), Type::Option(b)) => a.compatible(b),
-            (Type::List(a), Type::List(b)) => a.compatible(b),
-            (Type::Tuple(a), Type::Tuple(b)) => {
-                a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.compatible(y))
-            }
-            (Type::Map(k1, v1), Type::Map(k2, v2)) => k1.compatible(k2) && v1.compatible(v2),
-            (Type::Vector(a), Type::Vector(b)) => a.compatible(b),
-            (Type::Fn(p1, r1, e1), Type::Fn(p2, r2, e2)) => {
-                p1.len() == p2.len()
-                    && p1.iter().zip(p2.iter()).all(|(a, b)| a.compatible(b))
-                    && r1.compatible(r2)
-                    && e1.iter().all(|actual| {
-                        e2.iter()
-                            .any(|expected| crate::effects::effect_satisfies(expected, actual))
-                    })
-            }
-            (Type::Named(a), Type::Named(b)) => {
-                a == b || a.ends_with(&format!(".{}", b)) || b.ends_with(&format!(".{}", a))
-            }
-            _ => false,
-        }
-    }
-
-    pub fn display(&self) -> String {
-        match self {
-            Type::Int => "Int".to_string(),
-            Type::Float => "Float".to_string(),
-            Type::Str => "String".to_string(),
-            Type::Bool => "Bool".to_string(),
-            Type::Unit => "Unit".to_string(),
-            Type::Result(ok, err) => format!("Result<{}, {}>", ok.display(), err.display()),
-            Type::Option(inner) => format!("Option<{}>", inner.display()),
-            Type::List(inner) => format!("List<{}>", inner.display()),
-            Type::Tuple(items) => format!(
-                "({})",
-                items
-                    .iter()
-                    .map(Type::display)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            Type::Map(key, value) => format!("Map<{}, {}>", key.display(), value.display()),
-            Type::Vector(inner) => format!("Vector<{}>", inner.display()),
-            Type::Fn(params, ret, effects) => {
-                let ps: Vec<String> = params.iter().map(|p| p.display()).collect();
-                if effects.is_empty() {
-                    format!("Fn({}) -> {}", ps.join(", "), ret.display())
-                } else {
-                    format!(
-                        "Fn({}) -> {} ! [{}]",
-                        ps.join(", "),
-                        ret.display(),
-                        effects.join(", ")
-                    )
-                }
-            }
-            Type::Unknown => "Unknown".to_string(),
-            Type::Named(n) => n.clone(),
-        }
-    }
-}
+// `Type` lives in `crate::ast::types` so that `Spanned<T>` can carry an
+// optional `Type` annotation without a cycle through `crate::types`. This
+// re-export preserves the historical `crate::types::Type` path.
+pub use crate::ast::Type;
 
 /// Parse a type annotation string strictly.
 /// Returns `Err(unknown_name)` if the string is a non-empty identifier
@@ -202,7 +112,7 @@ pub fn parse_type_str_strict(s: &str) -> Result<Type, String> {
 }
 
 /// Parse an Aver type annotation string into a `Type`.
-/// Returns `Type::Unknown` for unknown identifiers (internal fallback).
+/// Returns `Type::Invalid` for malformed or unknown type strings (internal recovery).
 /// Prefer `parse_type_str_strict` for user-facing type annotations.
 pub fn parse_type_str(s: &str) -> Type {
     let s = s.trim();
@@ -210,7 +120,7 @@ pub fn parse_type_str(s: &str) -> Type {
         if let Ok(Some(fn_ty)) = parse_fn_type_strict(s) {
             return fn_ty;
         }
-        return Type::Unknown;
+        return Type::Invalid;
     }
     if s.starts_with('(') && s.ends_with(')') {
         let inner = &s[1..s.len() - 1];
@@ -219,7 +129,7 @@ pub fn parse_type_str(s: &str) -> Type {
         {
             return Type::Tuple(parts.into_iter().map(parse_type_str).collect());
         }
-        return Type::Unknown;
+        return Type::Invalid;
     }
     match s {
         "Int" => Type::Int,
@@ -227,7 +137,7 @@ pub fn parse_type_str(s: &str) -> Type {
         "String" | "Str" => Type::Str,
         "Bool" => Type::Bool,
         "Unit" => Type::Unit,
-        "" => Type::Unknown,
+        "" => Type::Invalid,
         _ => {
             // Try generic forms: Result<A, B>, Option<A>, List<A>
             if let Some(inner) = strip_wrapper(s, "Result<", ">") {
@@ -265,8 +175,8 @@ pub fn parse_type_str(s: &str) -> Type {
             {
                 return Type::Named(s.to_string());
             }
-            // Unknown — internal fallback
-            Type::Unknown
+            // Invalid — internal recovery fallback
+            Type::Invalid
         }
     }
 }
@@ -510,16 +420,16 @@ mod tests {
             parse_type_str("SomeUnknownType"),
             Type::Named("SomeUnknownType".to_string())
         );
-        // Lowercase non-keyword identifiers and empty strings become Unknown fallback
-        assert_eq!(parse_type_str(""), Type::Unknown);
+        // Lowercase non-keyword identifiers and empty strings become invalid recovery.
+        assert_eq!(parse_type_str(""), Type::Invalid);
     }
 
     #[test]
     fn test_compatible() {
         assert!(Type::Int.compatible(&Type::Int));
         assert!(!Type::Int.compatible(&Type::Str));
-        assert!(Type::Unknown.compatible(&Type::Int));
-        assert!(Type::Int.compatible(&Type::Unknown));
+        assert!(!Type::Invalid.compatible(&Type::Int));
+        assert!(!Type::Int.compatible(&Type::Invalid));
         assert!(!Type::Int.compatible(&Type::Float)); // no implicit widening
         assert!(
             Type::Result(Box::new(Type::Int), Box::new(Type::Str))

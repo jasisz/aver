@@ -129,8 +129,15 @@ verify calculateTotal law equalsStepByStep
     given t: TaxRate = [TaxRate(percent = 0.0), TaxRate(percent = 10.0)]
     calculateTotal(items, d, t) => applyTax(applyDiscount(sumItems(items), d), t)
 
+fn showDiscount(r: Result<Discount, String>) -> String
+    ? "Render mkDiscount Result for printing."
+    match r
+        Result.Ok(d)    -> "Discount({d.percent})"
+        Result.Err(msg) -> "Err(\"{msg}\")"
+
 fn main() -> Unit
     ! [Console.print]
     Console.print("--- Order Total Demo ---")
-    Console.print(mkDiscount(-5.0))
-    Console.print(calculateTotal([Item(price = 10.0, quantity = 2)], Discount(percent = 50.0), TaxRate(percent = 10.0)))
+    Console.print("mkDiscount(-5.0): {showDiscount(mkDiscount(-5.0))}")
+    total = calculateTotal([Item(price = 10.0, quantity = 2)], Discount(percent = 50.0), TaxRate(percent = 10.0))
+    Console.print("total: {total}")

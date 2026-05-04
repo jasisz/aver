@@ -727,7 +727,7 @@ fn log(x: Int) -> Unit
             r#"
 fn log(x: Int) -> Unit
     ! [Console.print, Http.get]
-    Console.print(x)
+    Console.print("{x}")
 "#,
         );
         let tc = crate::ir::pipeline::typecheck(
@@ -758,7 +758,7 @@ fn log(x: Int) -> Unit
             r#"
 fn log(x: Int) -> Unit
     ! [Console.print]
-    Console.print(x)
+    Console.print("{x}")
 "#,
         );
         let tc = crate::ir::pipeline::typecheck(

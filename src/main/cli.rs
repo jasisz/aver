@@ -81,21 +81,22 @@ pub(super) enum DeployPack {
     Cloudflare,
 }
 
-/// One-flag UX shortcut that expands to a `(target, bridge, pack)`
-/// preset. `--preset cloudflare` ≡ `--target wasm --bridge fetch
-/// --pack cloudflare`. Equivalent CLI surface, fewer keystrokes.
+/// One-flag UX shortcut that expands to a `(target, pack)` preset.
+/// `--preset cloudflare` ≡ `--target wasm-gc --pack cloudflare`.
+/// Requires `--handler <fn>` (the Aver fn with signature
+/// `Fn(HttpRequest) -> HttpResponse` to expose as the worker's
+/// request handler). Equivalent CLI surface, fewer keystrokes.
 ///
-/// Cloudflare Workers reject `WebAssembly.instantiate(bytes, …)` from
-/// runtime-fetched bytes (sandbox security). Only statically imported
-/// wasm modules are accepted, so `--target edge-wasm`'s "thin
-/// user.wasm + imported runtime from CDN" architecture doesn't apply
-/// on this host — the preset uses `--target wasm` (wasm-merge inlines
-/// the runtime into a single bundled module that worker.js imports
-/// statically). Browsers / Deno / Bun keep the edge-wasm shape via
-/// the runtime CDN at averlang.dev/runtime/.
+/// wasm-gc replaces the legacy `--target wasm` + wasm-merge bundle
+/// from prior releases. Workerd's V8 ships stable wasm-gc + tail
+/// calls, the runtime is inlined as per-instantiation `__rt_*`
+/// helpers (no `WebAssembly.instantiate(bytes, …)` from runtime-
+/// fetched bytes — that's the path Cloudflare Workers reject), and
+/// the emitted binary is ~20% smaller than the legacy bundle on
+/// representative handlers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub(super) enum DeployPreset {
-    /// wasm + fetch bridge + Cloudflare worker.js/wrangler.toml.
+    /// wasm-gc + Cloudflare worker.js/wrangler.toml. Requires --handler.
     Cloudflare,
 }
 
@@ -133,23 +134,42 @@ pub(super) enum CompileTarget {
     #[default]
     #[value(name = "rust")]
     Rust,
-    /// Generate a single bundled .wasm binary (data-structure runtime
-    /// inlined, effects merged via wasm-merge). Requires --features wasm
-    /// and `wasm-merge` (binaryen) in PATH if the program uses effects.
+    /// Legacy fallback (`--target wasm`) — bundled .wasm with the
+    /// custom Aver runtime inlined via `wasm-merge`. Recommended only
+    /// for pre-2024 hosts that don't speak the WebAssembly GC + tail-
+    /// call proposals (wasmtime CLI < 25, Node < 22, etc.). For
+    /// modern targets prefer `--target wasm-gc` — same source, same
+    /// `--handler X` shape, faster on most workloads (8.4× on `fib`,
+    /// 182× on `vector_ops`, ~ tied on f64-heavy renderers like the
+    /// fractal demo), and a 35 % smaller binary because there's no
+    /// custom runtime to ship.
     #[value(name = "wasm")]
     Wasm,
-    /// Generate a thin .wasm that imports the data-structure runtime and
-    /// effect host as separate modules (zero external tooling required).
-    /// Designed for browser playgrounds, edge runtimes (Cloudflare Workers,
-    /// Fastly Compute@Edge), and dev workflows where the runtime is shared
-    /// between programs.
+    /// Legacy edge variant — thin .wasm that imports the runtime as a
+    /// separate module instead of inlining it. Same fallback role as
+    /// `--target wasm`; pick this for browser playgrounds / dev
+    /// workflows where one shared runtime serves many programs.
+    /// Modern targets should prefer `--target wasm-gc`.
     #[value(name = "edge-wasm")]
     EdgeWasm,
+    /// Native WebAssembly GC + tail-call output — no custom runtime,
+    /// no NaN-boxing, no boundary GC framing. The recommended target
+    /// from 0.16 onward. Pairs with `--handler X` to synthesise a
+    /// JS-callable `aver_http_handle` wrapper for fetch-bridge
+    /// deployments (see `tools/edge/`). Requires Chrome 119+ /
+    /// Firefox 120+ / Safari 18.2+ / wasmtime 25+ / Node 22+ /
+    /// Cloudflare Workers. See `src/codegen/wasm_gc/README.md` for
+    /// the design notes and the cross-engine bench matrix.
+    #[value(name = "wasm-gc")]
+    WasmGc,
 }
 
 impl CompileTarget {
     pub(super) fn needs_wasm_pipeline(self) -> bool {
-        !matches!(self, CompileTarget::Rust)
+        matches!(
+            self,
+            CompileTarget::Wasm | CompileTarget::EdgeWasm | CompileTarget::WasmGc
+        )
     }
 }
 
@@ -237,8 +257,13 @@ pub(super) enum Commands {
         #[arg(long)]
         profile: bool,
         /// Compile to WASM and execute with built-in host (aver/* import ABI)
-        #[arg(long, conflicts_with_all = ["self_host", "profile"])]
+        #[arg(long, conflicts_with_all = ["self_host", "profile", "wasm_gc"])]
         wasm: bool,
+        /// Compile via the wasm-gc backend (engine GC + tail calls) and
+        /// execute with built-in host. Same `aver/*` effect surface as
+        /// `--wasm`, different ABI (GC structs, factory exports).
+        #[arg(long = "wasm-gc", conflicts_with_all = ["self_host", "profile", "wasm"])]
+        wasm_gc: bool,
         /// Arguments passed to the Aver program (available via Args.get()), after --
         #[arg(last = true)]
         program_args: Vec<String>,
@@ -402,9 +427,9 @@ pub(super) enum Commands {
         /// `--target` and `--bridge`.
         #[arg(long, value_enum)]
         pack: Option<DeployPack>,
-        /// One-flag preset that expands to a `(target, bridge, pack)`
-        /// triple. `cloudflare` ≡ `--target edge-wasm --bridge fetch
-        /// --pack cloudflare`. Mutually exclusive with explicit
+        /// One-flag preset that expands to a `(target, pack)` pair.
+        /// `cloudflare` ≡ `--target wasm-gc --pack cloudflare` (also
+        /// requires `--handler <fn>`). Mutually exclusive with explicit
         /// `--target` / `--bridge` / `--pack` — pick one shape of UX.
         #[arg(long, value_enum, conflicts_with_all = &["target", "bridge", "pack"])]
         preset: Option<DeployPreset>,

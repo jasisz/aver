@@ -54,6 +54,6 @@ verify refreshIfStale trace
 
 fn main() -> Unit
     ! [Console.print]
-    Console.print(isExpired(0, 1000))
-    Console.print(isExpired(2000, 1000))
-    Console.print(secondsUntil(0, 5000))
+    Console.print("isExpired(0, 1000) = {String.fromBool(isExpired(0, 1000))}")
+    Console.print("isExpired(2000, 1000) = {String.fromBool(isExpired(2000, 1000))}")
+    Console.print("secondsUntil(0, 5000) = {secondsUntil(0, 5000)}")

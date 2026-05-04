@@ -472,10 +472,9 @@ pub(crate) fn rewrite_effectful_calls_in_law(
         .iter()
         .filter_map(|g| {
             let arg_expr = match &mode {
-                OracleInjectionMode::LemmaBinding => Spanned {
-                    node: Expr::Ident(g.name.clone()),
-                    line: expr.line,
-                },
+                OracleInjectionMode::LemmaBinding => {
+                    Spanned::new(Expr::Ident(g.name.clone()), expr.line)
+                }
                 OracleInjectionMode::LemmaBindingProjected => {
                     // Inject the bare oracle name; the post-rewrite pass
                     // `project_oracle_direct_calls` walks the whole
@@ -484,10 +483,7 @@ pub(crate) fn rewrite_effectful_calls_in_law(
                     // LHS, ...) through `.val`. Doing the projection
                     // here as well would compound — `Attr(Attr(rng,
                     // val), val)` for refs the injection wraps.
-                    Spanned {
-                        node: Expr::Ident(g.name.clone()),
-                        line: expr.line,
-                    }
+                    Spanned::new(Expr::Ident(g.name.clone()), expr.line)
                 }
                 OracleInjectionMode::SampleValue => match &g.domain {
                     VerifyGivenDomain::Explicit(vals) => vals.first().cloned()?,
@@ -553,16 +549,13 @@ fn project_oracle_direct_calls(
     use crate::ast::Spanned;
     let line = expr.line;
     let project_ident = |name: &str, line: usize| -> Spanned<Expr> {
-        Spanned {
-            node: Expr::Attr(
-                Box::new(Spanned {
-                    node: Expr::Ident(name.to_string()),
-                    line,
-                }),
+        Spanned::new(
+            Expr::Attr(
+                Box::new(Spanned::new(Expr::Ident(name.to_string()), line)),
                 "val".to_string(),
             ),
             line,
-        }
+        )
     };
     let new_node = match &expr.node {
         // Bare ident reference to a subtype-carried oracle — project.
@@ -601,10 +594,7 @@ fn project_oracle_direct_calls(
         ),
         other => other.clone(),
     };
-    Spanned {
-        node: new_node,
-        line,
-    }
+    Spanned::new(new_node, line)
 }
 
 fn rewrite_effectful_call(
@@ -646,19 +636,19 @@ fn rewrite_effectful_call(
                     )
                 });
                 if needs_path {
-                    injected.push(Spanned {
+                    injected.push(Spanned::new(
                         // `BranchPath.Root` — nullary value
                         // constructor (PascalCase, no parens),
                         // symmetric with `Option.None`.
-                        node: Expr::Attr(
-                            Box::new(Spanned {
-                                node: Expr::Ident("BranchPath".to_string()),
-                                line: expr.line,
-                            }),
+                        Expr::Attr(
+                            Box::new(Spanned::new(
+                                Expr::Ident("BranchPath".to_string()),
+                                expr.line,
+                            )),
                             "Root".to_string(),
                         ),
-                        line: expr.line,
-                    });
+                        expr.line,
+                    ));
                 }
                 let mut seen = std::collections::HashSet::new();
                 for e in &fd.effects {
@@ -674,34 +664,28 @@ fn rewrite_effectful_call(
                     }
                 }
                 injected.extend(rewritten_args);
-                return Spanned {
-                    node: Expr::FnCall(rewritten_callee, injected),
-                    line: expr.line,
-                };
+                return Spanned::new(Expr::FnCall(rewritten_callee, injected), expr.line);
             }
 
-            Spanned {
-                node: Expr::FnCall(rewritten_callee, rewritten_args),
-                line: expr.line,
-            }
+            Spanned::new(Expr::FnCall(rewritten_callee, rewritten_args), expr.line)
         }
-        Expr::BinOp(op, l, r) => Spanned {
-            node: Expr::BinOp(
+        Expr::BinOp(op, l, r) => Spanned::new(
+            Expr::BinOp(
                 *op,
                 Box::new(rewrite_effectful_call(l, injection_by_effect, ctx)),
                 Box::new(rewrite_effectful_call(r, injection_by_effect, ctx)),
             ),
-            line: expr.line,
-        },
-        Expr::Tuple(items) => Spanned {
-            node: Expr::Tuple(
+            expr.line,
+        ),
+        Expr::Tuple(items) => Spanned::new(
+            Expr::Tuple(
                 items
                     .iter()
                     .map(|i| rewrite_effectful_call(i, injection_by_effect, ctx))
                     .collect(),
             ),
-            line: expr.line,
-        },
+            expr.line,
+        ),
         _ => expr.clone(),
     }
 }

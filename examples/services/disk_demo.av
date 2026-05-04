@@ -85,7 +85,7 @@ fn main() -> Unit
     // List directory
     lsResult = listWorkdir(tmp)
     match lsResult
-        Result.Ok(entries) -> Console.print(entries)
+        Result.Ok(entries) -> Console.print("entries: {List.len(entries)} found")
         Result.Err(msg)    -> Console.print("listDir failed: {msg}")
 
     // Delete the file (not the directory — that needs deleteDir)

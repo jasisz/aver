@@ -16,34 +16,48 @@ use super::super::value;
 use super::ExprEmitter;
 
 impl<'a> ExprEmitter<'a> {
-    pub(super) fn emit_match(&mut self, subject: &Spanned<crate::ast::Expr>, arms: &[MatchArm]) {
+    pub(super) fn emit_match(
+        &mut self,
+        outer: &Spanned<crate::ast::Expr>,
+        subject: &Spanned<crate::ast::Expr>,
+        arms: &[MatchArm],
+    ) {
         let ir_ctx = self.ir_ctx();
         let plan = classify_match_dispatch_plan(arms, &ir_ctx);
 
         match plan {
             Some(MatchDispatchPlan::Bool(shape)) => {
-                self.emit_bool_match(subject, arms, &shape);
+                self.emit_bool_match(outer, subject, arms, &shape);
             }
             Some(MatchDispatchPlan::List(shape)) => {
-                self.emit_list_match(subject, arms, &shape);
+                self.emit_list_match(outer, subject, arms, &shape);
             }
             Some(MatchDispatchPlan::Table(table)) => {
-                self.emit_dispatch_table(subject, arms, &table);
+                self.emit_dispatch_table(outer, subject, arms, &table);
             }
             None => {
                 // Fallback: generic match via old pattern approach
-                self.emit_generic_match(subject, arms);
+                self.emit_generic_match(outer, subject, arms);
             }
         }
     }
 
+    /// Inferred WASM type for a match expression's result. The outer
+    /// `Spanned<Expr>` carries the type the type checker computed for the
+    /// match (the join of the arms), so we read it directly instead of
+    /// re-inferring per arm.
+    fn match_result_type(&self, outer: &Spanned<crate::ast::Expr>) -> WasmType {
+        self.wasm_type_of(outer)
+    }
+
     fn emit_bool_match(
         &mut self,
+        outer: &Spanned<crate::ast::Expr>,
         subject: &Spanned<crate::ast::Expr>,
         arms: &[MatchArm],
         shape: &ir::BoolMatchShape,
     ) {
-        let result_type = self.infer_match_result_type(arms);
+        let result_type = self.match_result_type(outer);
         let result_local = self.alloc_local(result_type);
         self.emit_default_init(result_local, result_type);
 
@@ -57,9 +71,9 @@ impl<'a> ExprEmitter<'a> {
                 invert,
             } => {
                 // Emit comparison directly
-                let lhs_type = self.infer_expr_type(&lhs.node);
-                let rhs_type = self.infer_expr_type(&rhs.node);
-                let lhs_aver_type = self.infer_aver_type(&lhs.node);
+                let lhs_type = self.wasm_type_of(lhs);
+                let rhs_type = self.wasm_type_of(rhs);
+                let lhs_aver_type = self.aver_type_of(lhs);
                 let cmp_type = if lhs_type == WasmType::F64 || rhs_type == WasmType::F64 {
                     WasmType::F64
                 } else {
@@ -68,27 +82,27 @@ impl<'a> ExprEmitter<'a> {
 
                 if matches!(op, ir::BoolCompareOp::Eq)
                     && cmp_type == WasmType::I32
-                    && matches!(lhs_aver_type, Some(Type::Str))
+                    && matches!(lhs_aver_type, Type::Str)
                 {
-                    self.emit_expr(&lhs.node);
-                    self.emit_expr(&rhs.node);
+                    self.emit_expr(lhs);
+                    self.emit_expr(rhs);
                     self.instructions.push(Instruction::Call(self.rt.str_eq));
                 } else if matches!(op, ir::BoolCompareOp::Eq)
                     && cmp_type != WasmType::F64
                     && !matches!(
                         lhs_aver_type,
-                        Some(Type::Int) | Some(Type::Bool) | Some(Type::Float) | Some(Type::Str)
+                        Type::Int | Type::Bool | Type::Float | Type::Str
                     )
                 {
                     // Heap object equality: compare headers (ptr OR header match).
                     let a_local = self.alloc_local(WasmType::I32);
                     let b_local = self.alloc_local(WasmType::I32);
-                    self.emit_expr(&lhs.node);
+                    self.emit_expr(lhs);
                     if lhs_type != WasmType::I32 {
                         self.instructions.push(Instruction::I32WrapI64);
                     }
                     self.instructions.push(Instruction::LocalSet(a_local));
-                    self.emit_expr(&rhs.node);
+                    self.emit_expr(rhs);
                     if rhs_type != WasmType::I32 {
                         self.instructions.push(Instruction::I32WrapI64);
                     }
@@ -113,11 +127,11 @@ impl<'a> ExprEmitter<'a> {
                     self.instructions.push(Instruction::I64Eq);
                     self.instructions.push(Instruction::I32Or);
                 } else {
-                    self.emit_expr(&lhs.node);
+                    self.emit_expr(lhs);
                     if cmp_type == WasmType::F64 && lhs_type == WasmType::I64 {
                         self.instructions.push(Instruction::F64ConvertI64S);
                     }
-                    self.emit_expr(&rhs.node);
+                    self.emit_expr(rhs);
                     if cmp_type == WasmType::F64 && rhs_type == WasmType::I64 {
                         self.instructions.push(Instruction::F64ConvertI64S);
                     }
@@ -149,20 +163,20 @@ impl<'a> ExprEmitter<'a> {
                 };
 
                 self.emit_if(wasm_encoder::BlockType::Empty);
-                self.emit_expr(&arms[true_arm].body.node);
+                self.emit_expr(&arms[true_arm].body);
                 self.instructions.push(Instruction::LocalSet(result_local));
                 self.emit_else();
-                self.emit_expr(&arms[false_arm].body.node);
+                self.emit_expr(&arms[false_arm].body);
                 self.instructions.push(Instruction::LocalSet(result_local));
                 self.emit_end();
             }
             BoolSubjectPlan::Expr(_) => {
-                self.emit_expr(&subject.node);
+                self.emit_expr(subject);
                 self.emit_if(wasm_encoder::BlockType::Empty);
-                self.emit_expr(&arms[shape.true_arm_index].body.node);
+                self.emit_expr(&arms[shape.true_arm_index].body);
                 self.instructions.push(Instruction::LocalSet(result_local));
                 self.emit_else();
-                self.emit_expr(&arms[shape.false_arm_index].body.node);
+                self.emit_expr(&arms[shape.false_arm_index].body);
                 self.instructions.push(Instruction::LocalSet(result_local));
                 self.emit_end();
             }
@@ -173,21 +187,21 @@ impl<'a> ExprEmitter<'a> {
 
     fn emit_list_match(
         &mut self,
+        outer: &Spanned<crate::ast::Expr>,
         subject: &Spanned<crate::ast::Expr>,
         arms: &[MatchArm],
         shape: &ir::ListMatchShape,
     ) {
-        let result_type = self.infer_match_result_type(arms);
+        let result_type = self.match_result_type(outer);
         let result_local = self.alloc_local(result_type);
         self.emit_default_init(result_local, result_type);
 
-        let subj_type = self.infer_expr_type(&subject.node);
-        let subj_aver_type = self.infer_aver_type(&subject.node);
-        self.emit_expr(&subject.node);
+        let subj_aver_type = self.aver_type_of(subject).clone();
+        let subj_type = aver_type_to_wasm(&subj_aver_type);
+        self.emit_expr(subject);
         let subj_local = self.alloc_local(subj_type);
-        if let Some(at) = &subj_aver_type {
-            self.local_aver_types.insert(subj_local, at.clone());
-        }
+        self.local_aver_types
+            .insert(subj_local, subj_aver_type.clone());
         self.instructions.push(Instruction::LocalSet(subj_local));
 
         // Check ptr == 0 (empty)
@@ -196,23 +210,17 @@ impl<'a> ExprEmitter<'a> {
         self.emit_if(wasm_encoder::BlockType::Empty);
 
         // Empty arm
-        self.emit_expr(&arms[shape.empty_arm_index].body.node);
+        self.emit_expr(&arms[shape.empty_arm_index].body);
         self.instructions.push(Instruction::LocalSet(result_local));
         self.emit_else();
 
         // Cons arm -- bind head and tail
         let cons_arm = &arms[shape.cons_arm_index];
         if let Pattern::Cons(head_name, tail_name) = &cons_arm.pattern {
-            let elem_aver_type = subj_aver_type
-                .as_ref()
-                .and_then(|t| {
-                    if let Type::List(inner) = t {
-                        Some(inner.as_ref().clone())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(Type::Int);
+            let elem_aver_type = match &subj_aver_type {
+                Type::List(inner) => inner.as_ref().clone(),
+                _ => Type::Int,
+            };
             let elem_wasm_type = aver_type_to_wasm(&elem_aver_type);
 
             let head_local = self.alloc_local(elem_wasm_type);
@@ -243,12 +251,11 @@ impl<'a> ExprEmitter<'a> {
             self.instructions
                 .push(Instruction::Call(self.rt.obj_field_i32));
             self.instructions.push(Instruction::LocalSet(tail_local));
-            if let Some(at) = &subj_aver_type {
-                self.local_aver_types.insert(tail_local, at.clone());
-            }
+            self.local_aver_types
+                .insert(tail_local, subj_aver_type.clone());
         }
 
-        self.emit_expr(&cons_arm.body.node);
+        self.emit_expr(&cons_arm.body);
         self.instructions.push(Instruction::LocalSet(result_local));
         self.emit_end();
 
@@ -257,21 +264,21 @@ impl<'a> ExprEmitter<'a> {
 
     fn emit_dispatch_table(
         &mut self,
+        outer: &Spanned<crate::ast::Expr>,
         subject: &Spanned<crate::ast::Expr>,
         arms: &[MatchArm],
         table: &ir::DispatchTableShape,
     ) {
-        let result_type = self.infer_match_result_type(arms);
+        let result_type = self.match_result_type(outer);
         let result_local = self.alloc_local(result_type);
         self.emit_default_init(result_local, result_type);
 
-        let subj_type = self.infer_expr_type(&subject.node);
-        self.emit_expr(&subject.node);
+        let subj_aver_type = self.aver_type_of(subject).clone();
+        let subj_type = aver_type_to_wasm(&subj_aver_type);
+        self.emit_expr(subject);
         let subj_local = self.alloc_local(subj_type);
-        let subj_aver_type = self.infer_aver_type(&subject.node);
-        if let Some(at) = &subj_aver_type {
-            self.local_aver_types.insert(subj_local, at.clone());
-        }
+        self.local_aver_types
+            .insert(subj_local, subj_aver_type.clone());
         self.instructions.push(Instruction::LocalSet(subj_local));
 
         // Emit nested if/else chain for dispatch entries
@@ -287,7 +294,7 @@ impl<'a> ExprEmitter<'a> {
                 self.emit_wrapper_binding(subj_local, *kind, binding_name);
             }
 
-            self.emit_expr(&arms[entry.arm_index].body.node);
+            self.emit_expr(&arms[entry.arm_index].body);
             self.instructions.push(Instruction::LocalSet(result_local));
 
             // Open else for next entry or default
@@ -304,11 +311,10 @@ impl<'a> ExprEmitter<'a> {
                 self.locals.insert(binding_name.clone(), bind_local);
                 self.instructions.push(Instruction::LocalGet(subj_local));
                 self.instructions.push(Instruction::LocalSet(bind_local));
-                if let Some(at) = &subj_aver_type {
-                    self.local_aver_types.insert(bind_local, at.clone());
-                }
+                self.local_aver_types
+                    .insert(bind_local, subj_aver_type.clone());
             }
-            self.emit_expr(&arms[default.arm_index].body.node);
+            self.emit_expr(&arms[default.arm_index].body);
             self.instructions.push(Instruction::LocalSet(result_local));
         }
 
@@ -456,19 +462,18 @@ impl<'a> ExprEmitter<'a> {
     /// Handles variant patterns (Shape.Circle(r)), constructor patterns with user types.
     pub(super) fn emit_generic_match(
         &mut self,
+        outer: &Spanned<crate::ast::Expr>,
         subject: &Spanned<crate::ast::Expr>,
         arms: &[MatchArm],
     ) {
-        let subj_type = self.infer_expr_type(&subject.node);
-        let subj_aver_type = self.infer_aver_type(&subject.node);
-        self.emit_expr(&subject.node);
+        let subj_aver_type = self.aver_type_of(subject).clone();
+        let subj_type = aver_type_to_wasm(&subj_aver_type);
+        self.emit_expr(subject);
         let subj_local = self.alloc_local(subj_type);
-        if let Some(at) = subj_aver_type {
-            self.local_aver_types.insert(subj_local, at);
-        }
+        self.local_aver_types.insert(subj_local, subj_aver_type);
         self.instructions.push(Instruction::LocalSet(subj_local));
 
-        let result_type = self.infer_match_result_type(arms);
+        let result_type = self.match_result_type(outer);
         let result_local = self.alloc_local(result_type);
         self.emit_default_init(result_local, result_type);
 
@@ -493,7 +498,7 @@ impl<'a> ExprEmitter<'a> {
 
         match &arm.pattern {
             Pattern::Wildcard => {
-                self.emit_expr(&arm.body.node);
+                self.emit_expr(&arm.body);
                 self.instructions.push(Instruction::LocalSet(result_local));
             }
             Pattern::Ident(name) => {
@@ -504,7 +509,7 @@ impl<'a> ExprEmitter<'a> {
                 if let Some(at) = self.local_aver_types.get(&subj_local).cloned() {
                     self.local_aver_types.insert(bind_local, at);
                 }
-                self.emit_expr(&arm.body.node);
+                self.emit_expr(&arm.body);
                 self.instructions.push(Instruction::LocalSet(result_local));
             }
             Pattern::Literal(lit) => {
@@ -526,7 +531,7 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalGet(subj_local));
                 self.instructions.push(Instruction::I32Eqz);
                 self.emit_if(wasm_encoder::BlockType::Empty);
-                self.emit_expr(&arm.body.node);
+                self.emit_expr(&arm.body);
                 self.instructions.push(Instruction::LocalSet(result_local));
                 if !is_last {
                     self.emit_else();
@@ -585,7 +590,7 @@ impl<'a> ExprEmitter<'a> {
                     None
                 }
             })
-            .unwrap_or(Type::Unknown);
+            .unwrap_or(Type::Invalid);
         let elem_wasm_type = aver_type_to_wasm(&elem_aver_type);
         let expected_kind = match elem_wasm_type {
             WasmType::F64 => value::OBJ_LIST_CONS_F64,
@@ -635,7 +640,7 @@ impl<'a> ExprEmitter<'a> {
             self.local_aver_types.insert(tail_local, at);
         }
 
-        self.emit_expr(&arm.body.node);
+        self.emit_expr(&arm.body);
         self.instructions.push(Instruction::LocalSet(result_local));
 
         if !is_last {
@@ -659,7 +664,7 @@ impl<'a> ExprEmitter<'a> {
         let is_last = idx == arms.len() - 1;
         let tuple_types = match self.local_aver_types.get(&subj_local) {
             Some(Type::Tuple(types)) => types.clone(),
-            _ => vec![Type::Unknown; items.len()],
+            _ => vec![Type::Invalid; items.len()],
         };
         self.emit_tuple_shape_check(subj_local, items.len());
         self.emit_if(wasm_encoder::BlockType::Empty);
@@ -669,7 +674,7 @@ impl<'a> ExprEmitter<'a> {
         self.instructions.push(Instruction::LocalSet(matched_local));
 
         for (i, pattern) in items.iter().enumerate() {
-            let aver_ty = tuple_types.get(i).cloned().unwrap_or(Type::Unknown);
+            let aver_ty = tuple_types.get(i).cloned().unwrap_or(Type::Invalid);
             let (field_local, field_wasm_type) = self.emit_tuple_item_local(subj_local, i, aver_ty);
             self.instructions.push(Instruction::LocalGet(matched_local));
             self.emit_pattern_match_flag(field_local, field_wasm_type, pattern);
@@ -679,7 +684,7 @@ impl<'a> ExprEmitter<'a> {
 
         self.instructions.push(Instruction::LocalGet(matched_local));
         self.emit_if(wasm_encoder::BlockType::Empty);
-        self.emit_expr(&arm.body.node);
+        self.emit_expr(&arm.body);
         self.instructions.push(Instruction::LocalSet(result_local));
 
         if !is_last {
@@ -803,7 +808,7 @@ impl<'a> ExprEmitter<'a> {
                         Type::List(inner) => Some(inner.as_ref().clone()),
                         _ => None,
                     })
-                    .unwrap_or(Type::Unknown);
+                    .unwrap_or(Type::Invalid);
                 let elem_wasm_type = aver_type_to_wasm(&elem_aver_type);
                 let expected_kind = match elem_wasm_type {
                     WasmType::F64 => value::OBJ_LIST_CONS_F64,
@@ -997,7 +1002,7 @@ impl<'a> ExprEmitter<'a> {
             Pattern::Tuple(items) => {
                 let tuple_types = match self.local_aver_types.get(&subj_local) {
                     Some(Type::Tuple(types)) => types.clone(),
-                    _ => vec![Type::Unknown; items.len()],
+                    _ => vec![Type::Invalid; items.len()],
                 };
                 self.emit_tuple_shape_check(subj_local, items.len());
                 self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32));
@@ -1006,7 +1011,7 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::LocalSet(matched_local));
 
                 for (i, pattern) in items.iter().enumerate() {
-                    let aver_ty = tuple_types.get(i).cloned().unwrap_or(Type::Unknown);
+                    let aver_ty = tuple_types.get(i).cloned().unwrap_or(Type::Invalid);
                     let (field_local, field_wasm_type) =
                         self.emit_tuple_item_local(subj_local, i, aver_ty);
                     self.instructions.push(Instruction::LocalGet(matched_local));
@@ -1061,7 +1066,7 @@ impl<'a> ExprEmitter<'a> {
             }
         }
         self.emit_if(wasm_encoder::BlockType::Empty);
-        self.emit_expr(&arm.body.node);
+        self.emit_expr(&arm.body);
         self.instructions.push(Instruction::LocalSet(result_local));
         if !is_last {
             self.emit_else();
@@ -1107,7 +1112,7 @@ impl<'a> ExprEmitter<'a> {
                     .push(Instruction::I32Const(value::NONE_SENTINEL));
                 self.instructions.push(Instruction::I32Eq);
                 self.emit_if(wasm_encoder::BlockType::Empty);
-                self.emit_expr(&arm.body.node);
+                self.emit_expr(&arm.body);
                 self.instructions.push(Instruction::LocalSet(result_local));
                 if !is_last {
                     self.emit_else();
@@ -1153,7 +1158,7 @@ impl<'a> ExprEmitter<'a> {
                 if let Some(binding_name) = bindings.first() {
                     self.emit_wrapper_binding(subj_local, kind, binding_name);
                 }
-                self.emit_expr(&arm.body.node);
+                self.emit_expr(&arm.body);
                 self.instructions.push(Instruction::LocalSet(result_local));
                 if !is_last {
                     self.emit_else();
@@ -1244,7 +1249,7 @@ impl<'a> ExprEmitter<'a> {
             self.instructions.push(Instruction::LocalSet(bind_local));
         }
 
-        self.emit_expr(&arm.body.node);
+        self.emit_expr(&arm.body);
         self.instructions.push(Instruction::LocalSet(result_local));
 
         if !is_last {

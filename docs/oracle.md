@@ -207,7 +207,7 @@ Indices are 0-based in source order.
 ## EffectEvent
 
 ```aver
-EffectEvent(method: String, args: List<Unknown>, path: String)
+EffectEvent(method: String, args: List<EffectArg>, path: String)
 ```
 
 `path` is the structural branch position:

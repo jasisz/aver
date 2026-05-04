@@ -17,18 +17,31 @@ pub fn build_aver_runtime_wasm() -> Result<Vec<u8>, String> {
     codegen::wasm::build_runtime_wasm()
 }
 
-/// Compile Aver source text to WASM bytes.
+/// Compile Aver source text to WASM bytes via the wasm-gc backend.
+///
+/// Playground migrated from `--target edge-wasm` to `--target wasm-gc`
+/// in 0.16; the browser host (`tools/website/playground/wasm_host.js`)
+/// expects wasm-gc binaries with engine GC + tail calls + per-type
+/// factory exports for structured effect returns. The legacy
+/// `codegen::wasm::emit_wasm` path is no longer reachable from this
+/// entry point.
 pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
     let mut items = parse_source(source)?;
 
-    // Full pipeline — matches CLI `aver compile --target wasm`. Pre-0.15
-    // the playground bypassed interp_lower + buffer_build by accident
-    // (the deforestation work landed without a playground update). Bytes
-    // shifting compared to old cached artifacts is a fix, not a regression.
     let pipeline_result = crate::ir::pipeline::run(
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            // wasm-gc backend lowers `Expr::InterpolatedStr` natively
+            // (`array.new_fixed` + variadic concat helper). The
+            // `__buf_*` pipeline that `interp_lower` produces targets
+            // bump-allocator backends; wasm-gc would have to emulate
+            // a mutable buffer over `(struct len array)` with
+            // grow-on-append, while `array.copy` x2 is the idiomatic
+            // shape. Skip both lowering passes — same as the CLI
+            // `--target wasm-gc` path in `cmd_compile_wasm_gc`.
+            run_interp_lower: false,
+            run_buffer_build: false,
             ..Default::default()
         },
     );
@@ -37,15 +50,8 @@ pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
         return Err(format_tc_errors(&tc_result.errors));
     }
 
-    let ctx = codegen::build_context(
-        items,
-        &tc_result,
-        pipeline_result.analysis.as_ref(),
-        HashSet::new(),
-        "playground".to_string(),
-        vec![],
-    );
-    codegen::wasm::emit_wasm(&ctx)
+    codegen::wasm_gc::compile_to_wasm_gc(&items, pipeline_result.analysis.as_ref())
+        .map_err(|e| format!("{e}"))
 }
 
 /// Compile a multi-file Aver project from an in-memory file map.
@@ -72,12 +78,15 @@ pub fn compile_project_to_wasm(
     let root_depends = module_depends(&entry_items);
     let loaded = load_module_tree_from_map(&root_depends, files)?;
 
-    // Full pipeline — matches CLI `aver compile --target wasm` for multi-file
-    // projects. Same legacy gap as `compile_to_wasm`; same fix.
+    // Full wasm-gc pipeline — matches CLI `aver compile --target wasm-gc`
+    // for multi-file projects. Keep interpolation/buffer lowering off because
+    // wasm-gc lowers strings natively.
     let pipeline_result = crate::ir::pipeline::run(
         &mut entry_items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
+            run_interp_lower: false,
+            run_buffer_build: false,
             ..Default::default()
         },
     );
@@ -88,18 +97,13 @@ pub fn compile_project_to_wasm(
 
     let modules: Vec<codegen::ModuleInfo> = loaded
         .into_iter()
-        .map(|m| loaded_to_module_info(m, true))
+        .map(|m| loaded_to_module_info(m, false))
         .collect();
 
-    let ctx = codegen::build_context(
-        entry_items,
-        &tc_result,
-        pipeline_result.analysis.as_ref(),
-        HashSet::new(),
-        "playground".to_string(),
-        modules,
-    );
-    codegen::wasm::emit_wasm(&ctx)
+    codegen::wasm_gc::flatten_multimodule(&mut entry_items, &modules);
+    crate::ir::pipeline::resolve(&mut entry_items);
+    codegen::wasm_gc::compile_to_wasm_gc(&entry_items, pipeline_result.analysis.as_ref())
+        .map_err(|e| format!("{e}"))
 }
 
 // ── Proof export & Rust compile entry points ────────────────────────
@@ -1218,6 +1222,54 @@ mod tests {
             bytes.len() > 1000,
             "emitted wasm looks too small: {}",
             bytes.len()
+        );
+    }
+
+    #[test]
+    fn compiles_multi_file_wasm_gc_with_imported_type_in_record_field() {
+        let mut files = HashMap::new();
+        files.insert(
+            "tmpreviewb.av".to_string(),
+            r#"module TmpReviewB
+    intent = "dependency with a sum type"
+    exposes [Status, open]
+
+type Status
+    Open
+    Closed
+
+fn open() -> Status
+    Status.Open
+"#
+            .to_string(),
+        );
+        files.insert(
+            "main.av".to_string(),
+            r#"module Main
+    intent = "entry record stores an imported sum type"
+    depends [TmpReviewB]
+
+record Wrapper
+    status: TmpReviewB.Status
+
+fn make() -> Wrapper
+    Wrapper(status = TmpReviewB.open())
+
+fn main() -> Int
+    match make().status
+        TmpReviewB.Status.Open -> 1
+        TmpReviewB.Status.Closed -> 0
+"#
+            .to_string(),
+        );
+
+        let bytes = compile_project_to_wasm(&files, "main.av")
+            .expect("multi-file wasm-gc project should compile");
+        let wat = wasmprinter::print_bytes(&bytes).expect("wasm-gc bytes should print");
+        assert!(
+            wat.contains("(struct"),
+            "playground project compile should use wasm-gc, got:\n{}",
+            wat
         );
     }
 

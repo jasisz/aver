@@ -83,6 +83,7 @@ fn main() -> Int
             "resolve",
             "last_use",
             "analyze",
+            "escape",
         ]
     );
 }

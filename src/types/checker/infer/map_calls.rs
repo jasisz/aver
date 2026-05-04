@@ -10,6 +10,8 @@ impl TypeChecker {
         let option_ty = |v: Type| Type::Option(Box::new(v));
         let list_ty = |v: Type| Type::List(Box::new(v));
         let tuple2 = |k: Type, v: Type| Type::Tuple(vec![k, v]);
+        let k_var = || Type::Var("K".to_string());
+        let v_var = || Type::Var("V".to_string());
         let is_hashable_key_type = |ty: &Type| {
             // The Map runtime hashes any heap value through rt_deep_hash,
             // so user-defined types (variants/records/tuples/lists) are
@@ -29,7 +31,7 @@ impl TypeChecker {
         let map_parts = |tc: &mut Self, arg_ty: &Type, arg_idx: usize| -> (Type, Type) {
             match arg_ty {
                 Type::Map(k, v) => ((*k.clone()), (*v.clone())),
-                Type::Unknown => (Type::Unknown, Type::Unknown),
+                Type::Invalid => (Type::Invalid, Type::Invalid),
                 other => {
                     tc.error(format!(
                         "Argument {} of '{}': expected Map<...>, got {}",
@@ -37,7 +39,7 @@ impl TypeChecker {
                         name,
                         other.display()
                     ));
-                    (Type::Unknown, Type::Unknown)
+                    (Type::Invalid, Type::Invalid)
                 }
             }
         };
@@ -57,10 +59,10 @@ impl TypeChecker {
 
         match name {
             "Map.empty" => {
-                if let Err(fallback) = expect_arity(self, 0, map_ty(Type::Unknown, Type::Unknown)) {
+                if let Err(fallback) = expect_arity(self, 0, map_ty(Type::Invalid, Type::Invalid)) {
                     return Some(fallback);
                 }
-                Some(map_ty(Type::Unknown, Type::Unknown))
+                Some(map_ty(k_var(), v_var()))
             }
             "Map.len" => {
                 if let Err(fallback) = expect_arity(self, 1, Type::Int) {
@@ -70,7 +72,7 @@ impl TypeChecker {
                 Some(Type::Int)
             }
             "Map.keys" => {
-                if let Err(fallback) = expect_arity(self, 1, list_ty(Type::Unknown)) {
+                if let Err(fallback) = expect_arity(self, 1, list_ty(Type::Invalid)) {
                     return Some(fallback);
                 }
                 let (k, _) = map_parts(self, &arg_types[0], 1);
@@ -78,7 +80,7 @@ impl TypeChecker {
                 Some(list_ty(k))
             }
             "Map.values" => {
-                if let Err(fallback) = expect_arity(self, 1, list_ty(Type::Unknown)) {
+                if let Err(fallback) = expect_arity(self, 1, list_ty(Type::Invalid)) {
                     return Some(fallback);
                 }
                 let (_, v) = map_parts(self, &arg_types[0], 1);
@@ -86,7 +88,7 @@ impl TypeChecker {
             }
             "Map.entries" => {
                 if let Err(fallback) =
-                    expect_arity(self, 1, list_ty(tuple2(Type::Unknown, Type::Unknown)))
+                    expect_arity(self, 1, list_ty(tuple2(Type::Invalid, Type::Invalid)))
                 {
                     return Some(fallback);
                 }
@@ -95,12 +97,12 @@ impl TypeChecker {
                 Some(list_ty(tuple2(k, v)))
             }
             "Map.get" => {
-                if let Err(fallback) = expect_arity(self, 2, option_ty(Type::Unknown)) {
+                if let Err(fallback) = expect_arity(self, 2, option_ty(Type::Invalid)) {
                     return Some(fallback);
                 }
                 let (mut k, v) = map_parts(self, &arg_types[0], 1);
                 let key_ty = arg_types[1].clone();
-                if matches!(k, Type::Unknown) {
+                if matches!(k, Type::Var(_)) {
                     k = key_ty.clone();
                 } else if !Self::constraint_compatible(&key_ty, &k) {
                     self.error(format!(
@@ -120,7 +122,7 @@ impl TypeChecker {
                 }
                 let (mut k, _) = map_parts(self, &arg_types[0], 1);
                 let key_ty = arg_types[1].clone();
-                if matches!(k, Type::Unknown) {
+                if matches!(k, Type::Var(_)) {
                     k = key_ty.clone();
                 } else if !Self::constraint_compatible(&key_ty, &k) {
                     self.error(format!(
@@ -135,12 +137,12 @@ impl TypeChecker {
                 Some(Type::Bool)
             }
             "Map.remove" => {
-                if let Err(fallback) = expect_arity(self, 2, map_ty(Type::Unknown, Type::Unknown)) {
+                if let Err(fallback) = expect_arity(self, 2, map_ty(Type::Invalid, Type::Invalid)) {
                     return Some(fallback);
                 }
                 let (mut k, v) = map_parts(self, &arg_types[0], 1);
                 let key_ty = arg_types[1].clone();
-                if matches!(k, Type::Unknown) {
+                if matches!(k, Type::Var(_)) {
                     k = key_ty.clone();
                 } else if !Self::constraint_compatible(&key_ty, &k) {
                     self.error(format!(
@@ -155,14 +157,14 @@ impl TypeChecker {
                 Some(map_ty(k, v))
             }
             "Map.set" => {
-                if let Err(fallback) = expect_arity(self, 3, map_ty(Type::Unknown, Type::Unknown)) {
+                if let Err(fallback) = expect_arity(self, 3, map_ty(Type::Invalid, Type::Invalid)) {
                     return Some(fallback);
                 }
                 let (mut k, mut v) = map_parts(self, &arg_types[0], 1);
                 let key_ty = arg_types[1].clone();
                 let val_ty = arg_types[2].clone();
 
-                if matches!(k, Type::Unknown) {
+                if matches!(k, Type::Var(_)) {
                     k = key_ty.clone();
                 } else if !Self::constraint_compatible(&key_ty, &k) {
                     self.error(format!(
@@ -172,7 +174,7 @@ impl TypeChecker {
                         key_ty.display()
                     ));
                 }
-                if matches!(v, Type::Unknown) {
+                if matches!(v, Type::Var(_)) {
                     v = val_ty.clone();
                 } else if !Self::constraint_compatible(&val_ty, &v) {
                     self.error(format!(
@@ -187,7 +189,7 @@ impl TypeChecker {
                 Some(map_ty(k, v))
             }
             "Map.fromList" => {
-                if let Err(fallback) = expect_arity(self, 1, map_ty(Type::Unknown, Type::Unknown)) {
+                if let Err(fallback) = expect_arity(self, 1, map_ty(Type::Invalid, Type::Invalid)) {
                     return Some(fallback);
                 }
                 let (k, v) = match &arg_types[0] {
@@ -195,24 +197,24 @@ impl TypeChecker {
                         Type::Tuple(elems) if elems.len() == 2 => {
                             (elems[0].clone(), elems[1].clone())
                         }
-                        Type::Unknown => (Type::Unknown, Type::Unknown),
+                        Type::Invalid => (Type::Invalid, Type::Invalid),
                         other => {
                             self.error(format!(
                                 "Argument 1 of '{}': expected List<(K, V)>, got List<{}>",
                                 name,
                                 other.display()
                             ));
-                            (Type::Unknown, Type::Unknown)
+                            (Type::Invalid, Type::Invalid)
                         }
                     },
-                    Type::Unknown => (Type::Unknown, Type::Unknown),
+                    Type::Invalid => (Type::Invalid, Type::Invalid),
                     other => {
                         self.error(format!(
                             "Argument 1 of '{}': expected List<(K, V)>, got {}",
                             name,
                             other.display()
                         ));
-                        (Type::Unknown, Type::Unknown)
+                        (Type::Invalid, Type::Invalid)
                     }
                 };
                 ensure_hashable_key(self, &k, name, 1);

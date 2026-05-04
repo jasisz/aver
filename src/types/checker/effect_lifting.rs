@@ -173,20 +173,20 @@ fn try_lift_question_op_stmt(
         stmts_to_let_chain(&lifted_rest, line)
     };
 
-    let ok_arm = MatchArm {
-        pattern: Pattern::Constructor("Result.Ok".to_string(), vec![ok_value_name]),
-        body: Box::new(continuation),
-    };
-    let err_arm = MatchArm {
-        pattern: Pattern::Constructor("Result.Err".to_string(), vec![err_name.clone()]),
-        body: Box::new(spanned(
+    let ok_arm = MatchArm::new(
+        Pattern::Constructor("Result.Ok".to_string(), vec![ok_value_name]),
+        continuation,
+    );
+    let err_arm = MatchArm::new(
+        Pattern::Constructor("Result.Err".to_string(), vec![err_name.clone()]),
+        spanned(
             Expr::Constructor(
                 "Result.Err".to_string(),
                 Some(Box::new(spanned(Expr::Ident(err_name), line))),
             ),
             line,
-        )),
-    };
+        ),
+    );
 
     let match_expr = spanned(
         Expr::Match {
@@ -316,20 +316,20 @@ fn result_match_cascade(
     line: SourceLine,
 ) -> Spanned<Expr> {
     use crate::ast::{MatchArm, Pattern};
-    let err_arm = MatchArm {
-        pattern: Pattern::Constructor("Result.Err".to_string(), vec!["err_".to_string()]),
-        body: Box::new(spanned(
+    let err_arm = MatchArm::new(
+        Pattern::Constructor("Result.Err".to_string(), vec!["err_".to_string()]),
+        spanned(
             Expr::Constructor(
                 "Result.Err".to_string(),
                 Some(Box::new(spanned(Expr::Ident("err_".to_string()), line))),
             ),
             line,
-        )),
-    };
-    let ok_arm = MatchArm {
-        pattern: Pattern::Constructor("Result.Ok".to_string(), vec![binding]),
-        body: Box::new(body),
-    };
+        ),
+    );
+    let ok_arm = MatchArm::new(
+        Pattern::Constructor("Result.Ok".to_string(), vec![binding]),
+        body,
+    );
     spanned(
         Expr::Match {
             subject: Box::new(subject),
@@ -381,10 +381,7 @@ fn stmts_to_let_chain(stmts: &[Stmt], line: SourceLine) -> Spanned<Expr> {
     for stmt in bindings.iter().rev() {
         match stmt {
             Stmt::Binding(name, _, value) => {
-                let arm = MatchArm {
-                    pattern: Pattern::Ident(name.clone()),
-                    body: Box::new(acc),
-                };
+                let arm = MatchArm::new(Pattern::Ident(name.clone()), acc);
                 acc = spanned(
                     Expr::Match {
                         subject: Box::new(value.clone()),
@@ -397,10 +394,7 @@ fn stmts_to_let_chain(stmts: &[Stmt], line: SourceLine) -> Spanned<Expr> {
                 // Non-tail bare expression — sequence it before the
                 // accumulated tail by binding to `_` via a wildcard-
                 // style Match arm.
-                let arm = MatchArm {
-                    pattern: Pattern::Wildcard,
-                    body: Box::new(acc),
-                };
+                let arm = MatchArm::new(Pattern::Wildcard, acc);
                 acc = spanned(
                     Expr::Match {
                         subject: Box::new(e.clone()),
@@ -415,7 +409,7 @@ fn stmts_to_let_chain(stmts: &[Stmt], line: SourceLine) -> Spanned<Expr> {
 }
 
 fn spanned(node: Expr, line: SourceLine) -> Spanned<Expr> {
-    Spanned { node, line }
+    Spanned::new(node, line)
 }
 
 /// Build the AST expression `BranchPath.child(parent_path, idx)`.
@@ -546,10 +540,10 @@ fn lift_expr(
                 // executes, but statically we don't know which). Branch
                 // lifting in a later commit gives each arm its own counter
                 // under a branch-aware path extension.
-                new_arms.push(MatchArm {
-                    pattern: arm.pattern.clone(),
-                    body: Box::new(lift_expr(&arm.body, cfg, path_expr, counter)?),
-                });
+                new_arms.push(MatchArm::new(
+                    arm.pattern.clone(),
+                    lift_expr(&arm.body, cfg, path_expr, counter)?,
+                ));
             }
             Expr::Match {
                 subject: Box::new(new_subject),
@@ -640,10 +634,7 @@ fn lift_expr(
             }))
         }
     };
-    Ok(Spanned {
-        node: new_node,
-        line: expr.line,
-    })
+    Ok(Spanned::new(new_node, expr.line))
 }
 
 fn lift_args(
@@ -713,10 +704,10 @@ fn lift_classified_call(
                     })?;
             let new_args = lift_args(args, cfg, path_expr, counter)?;
             Ok(Expr::FnCall(
-                Box::new(Spanned {
-                    node: Expr::Ident(oracle_name.clone()),
-                    line: original.line,
-                }),
+                Box::new(Spanned::new(
+                    Expr::Ident(oracle_name.clone()),
+                    original.line,
+                )),
                 new_args,
             ))
         }
@@ -730,17 +721,17 @@ fn lift_classified_call(
             let current_counter = *counter;
             *counter += 1;
             let path_arg = path_expr.clone();
-            let counter_arg = Spanned {
-                node: Expr::Literal(Literal::Int(current_counter as i64)),
-                line: original.line,
-            };
+            let counter_arg = Spanned::new(
+                Expr::Literal(Literal::Int(current_counter as i64)),
+                original.line,
+            );
             let mut new_args = vec![path_arg, counter_arg];
             new_args.extend(lift_args(args, cfg, path_expr, counter)?);
             Ok(Expr::FnCall(
-                Box::new(Spanned {
-                    node: Expr::Ident(oracle_name.clone()),
-                    line: original.line,
-                }),
+                Box::new(Spanned::new(
+                    Expr::Ident(oracle_name.clone()),
+                    original.line,
+                )),
                 new_args,
             ))
         }
@@ -846,7 +837,7 @@ pub fn type_to_annotation(ty: &Type) -> String {
                 format!("Fn({}) -> {} ! [{}]", ps, r, effects.join(", "))
             }
         }
-        Type::Unknown => "_".to_string(),
+        Type::Invalid => "_".to_string(),
         // These shapes don't appear in v1 oracle/capability signatures —
         // if they show up we fall back to a legible-but-inexact rendering
         // rather than panicking.
@@ -1024,16 +1015,13 @@ fn rebuild_dotted_callee(full_name: &str, from: &Spanned<Expr>) -> Spanned<Expr>
         Some((h, t)) => (h, t),
         None => (full_name, ""),
     };
-    Spanned {
-        node: Expr::Attr(
-            Box::new(Spanned {
-                node: Expr::Ident(head.to_string()),
-                line: from.line,
-            }),
+    Spanned::new(
+        Expr::Attr(
+            Box::new(Spanned::new(Expr::Ident(head.to_string()), from.line)),
             tail.to_string(),
         ),
-        line: from.line,
-    }
+        from.line,
+    )
 }
 
 #[cfg(test)]

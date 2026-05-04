@@ -189,17 +189,26 @@ verify fibSpec
     fibSpec(5)  => 5
     fibSpec(10) => 55
 
+fn showListIntInner(xs: List<Int>) -> String
+    ? "Comma-separated body of a List<Int> render. Recursive — Aver stdlib has no map."
+    match xs
+        [] -> ""
+        [head, ..tail] -> match tail
+            [] -> "{head}"
+            _  -> "{head}, {showListIntInner(tail)}"
+
+fn showListInt(xs: List<Int>) -> String
+    ? "Render List<Int> as `[1, 2, 3]`."
+    "[{showListIntInner(xs)}]"
+
 fn printStats(s: FibStats) -> Unit
     ? "Print all fields of a FibStats record to stdout."
     ! [Console.print]
     Console.print("Fibonacci [0..{List.len(s.fibs) - 1}]:")
-    Console.print(s.fibs)
-    Console.print("Sum:")
-    Console.print(s.sum)
-    Console.print("Max:")
-    Console.print(s.mx)
-    Console.print("Even Fibonacci numbers:")
-    Console.print(s.evens)
+    Console.print(showListInt(s.fibs))
+    Console.print("Sum: {s.sum}")
+    Console.print("Max: {s.mx}")
+    Console.print("Even Fibonacci numbers: {showListInt(s.evens)}")
 
 fn absF(x: Float) -> Float
     ? "Absolute value for Float using comparison and negation."
@@ -233,15 +242,18 @@ verify goldenApprox
     approxEq(goldenApprox(2)?, 2.0, 0.000001) => true
     approxEq(goldenApprox(10)?, 1.618181818, 0.00001) => true
 
+fn showGolden(r: Result<Float, String>) -> String
+    ? "Render the goldenApprox Result as `Ok(N)` or `Err(\"...\")`."
+    match r
+        Result.Ok(x)    -> "Ok({x})"
+        Result.Err(msg) -> "Err(\"{msg}\")"
+
 fn main() -> Unit
     ! [Console.print]
     result = buildFibStats(12)
     match result
         Result.Ok(stats) -> printStats(stats)
         Result.Err(msg)  -> Console.print(msg)
-    Console.print("Golden ratio approx (n=5):")
-    Console.print(goldenApprox(5))
-    Console.print("Golden ratio approx (n=10):")
-    Console.print(goldenApprox(10))
-    Console.print("Golden ratio approx (n=12):")
-    Console.print(goldenApprox(12))
+    Console.print("Golden ratio approx (n=5): {showGolden(goldenApprox(5))}")
+    Console.print("Golden ratio approx (n=10): {showGolden(goldenApprox(10))}")
+    Console.print("Golden ratio approx (n=12): {showGolden(goldenApprox(12))}")

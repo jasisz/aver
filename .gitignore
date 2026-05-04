@@ -20,3 +20,4 @@ editors/vscode/*.vsix
 
 # wrangler local cache (per-deploy artifacts, not portable)
 .wrangler/
+.claude/worktrees/

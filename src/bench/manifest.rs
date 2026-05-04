@@ -60,6 +60,12 @@ pub enum BenchTarget {
     /// Native Rust binary produced by `aver compile --target rust` +
     /// `cargo build --release`. Subprocess spawn per iteration.
     Rust,
+    /// EXPERIMENTAL (0.15.3+ probe). In-process wasm-gc backend via
+    /// wasmtime with the GC + tail-call proposals enabled. Compiles
+    /// once with `aver compile --target wasm-gc`, instantiates +
+    /// invokes per iteration. Same pipeline as `wasm-local`; the
+    /// difference is the codegen backend that produced the bytes.
+    WasmGc,
 }
 
 impl BenchTarget {
@@ -67,9 +73,10 @@ impl BenchTarget {
         match s {
             "vm" => Ok(Self::Vm),
             "wasm-local" => Ok(Self::WasmLocal),
+            "wasm-gc" => Ok(Self::WasmGc),
             "rust" => Ok(Self::Rust),
             other => Err(format!(
-                "unknown bench target '{}'; expected one of: vm, wasm-local, rust",
+                "unknown bench target '{}'; expected one of: vm, wasm-local, wasm-gc, rust",
                 other
             )),
         }
@@ -79,6 +86,7 @@ impl BenchTarget {
         match self {
             Self::Vm => "vm",
             Self::WasmLocal => "wasm-local",
+            Self::WasmGc => "wasm-gc",
             Self::Rust => "rust",
         }
     }

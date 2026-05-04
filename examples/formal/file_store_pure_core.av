@@ -30,9 +30,15 @@ verify read
     read(write(write([], "a.txt", "old"), "a.txt", "new"), "a.txt") => Option.Some("new")
     read(write(write([], "a.txt", "x"), "b.txt", "y"), "a.txt") => Option.Some("x")
 
+fn show(o: Option<String>) -> String
+    ? "Render Option<String> for display."
+    match o
+        Option.Some(v) -> "Option.Some({v})"
+        Option.None    -> "Option.None"
+
 fn main() -> Unit
     ! [Console.print]
     store = write(write([], "config.toml", "x = 1"), "log.txt", "ok")
-    Console.print(read(store, "config.toml"))
-    Console.print(read(store, "log.txt"))
-    Console.print(read(store, "missing"))
+    Console.print(show(read(store, "config.toml")))
+    Console.print(show(read(store, "log.txt")))
+    Console.print(show(read(store, "missing")))

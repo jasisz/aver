@@ -39,8 +39,16 @@ verify quicksort
     quicksort([3, 1, 2]) => [1, 2, 3]
     quicksort([5, 5, 5]) => [5, 5, 5]
 
+fn renderInts(xs: List<Int>) -> String
+    ? "Render List<Int> for Console.print: '38, 27, 43'."
+    match xs
+        [] -> ""
+        [h, ..rest] -> match rest
+            [] -> "{h}"
+            _  -> "{h}, {renderInts(rest)}"
+
 fn main() -> Unit
     ! [Console.print]
     input = [38, 27, 43, 3, 9, 82, 10]
-    Console.print("input:  {input}")
-    Console.print("sorted: {quicksort(input)}")
+    Console.print("input:  {renderInts(input)}")
+    Console.print("sorted: {renderInts(quicksort(input))}")

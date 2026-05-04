@@ -29,7 +29,7 @@
 //! resolver (the desugared form contains bare `Expr::Ident` callees
 //! the resolver later annotates).
 
-use crate::ast::{Expr, Literal, Spanned, Stmt, StrPart, TopLevel};
+use crate::ast::{Expr, Literal, Spanned, Stmt, StrPart, TopLevel, Type};
 
 /// Walk every fn body / stmt / expression in `items` and replace each
 /// `Expr::InterpolatedStr` in place with the buffer pipeline above.
@@ -147,25 +147,51 @@ fn build_buffer_pipeline(line: usize, parts: &[StrPart]) -> Spanned<Expr> {
         .sum::<i64>()
         .max(16);
 
+    // Type stamps mirror the typecheck pass: this synthesised IR runs
+    // *after* the checker, so the type slot on each new node has to be
+    // populated by the synthesiser itself for downstream backends (Rust
+    // codegen reads `expr.ty()` to gate hoists on owned-mutable
+    // `Buffer`s, see `src/codegen/rust/toplevel.rs`).
+    let buffer_ty = Type::Named("Buffer".to_string());
     let mut buf = intrinsic_call(
         line,
         "__buf_new",
-        vec![sp_at(line, Expr::Literal(Literal::Int(cap_hint)))],
+        vec![sp_at_typed(
+            line,
+            Expr::Literal(Literal::Int(cap_hint)),
+            Type::Int,
+        )],
     );
+    buf.set_ty(buffer_ty.clone());
 
     for part in parts {
         let part_str = match part {
-            StrPart::Literal(s) => sp_at(line, Expr::Literal(Literal::Str(s.clone()))),
-            StrPart::Parsed(inner) => intrinsic_call(line, "__to_str", vec![(**inner).clone()]),
+            StrPart::Literal(s) => {
+                sp_at_typed(line, Expr::Literal(Literal::Str(s.clone())), Type::Str)
+            }
+            StrPart::Parsed(inner) => {
+                let call = intrinsic_call(line, "__to_str", vec![(**inner).clone()]);
+                call.set_ty(Type::Str);
+                call
+            }
         };
         buf = intrinsic_call(line, "__buf_append", vec![buf, part_str]);
+        buf.set_ty(buffer_ty.clone());
     }
 
-    intrinsic_call(line, "__buf_finalize", vec![buf])
+    let finalized = intrinsic_call(line, "__buf_finalize", vec![buf]);
+    finalized.set_ty(Type::Str);
+    finalized
 }
 
 fn sp_at(line: usize, node: Expr) -> Spanned<Expr> {
-    Spanned { node, line }
+    Spanned::new(node, line)
+}
+
+fn sp_at_typed(line: usize, node: Expr, ty: Type) -> Spanned<Expr> {
+    let s = Spanned::new(node, line);
+    s.set_ty(ty);
+    s
 }
 
 fn intrinsic_call(line: usize, name: &str, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {

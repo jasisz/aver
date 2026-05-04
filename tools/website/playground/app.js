@@ -22,7 +22,6 @@ const dom = {
     console: document.querySelector("[data-console]"),
     lineInput: document.querySelector("[data-line-input]"),
     lineButton: document.querySelector("[data-line-button]"),
-    memory: document.querySelector("[data-memory]"),
     isolationNote: document.querySelector("[data-isolation-note]"),
     isolationCopy: document.querySelector("[data-isolation-copy]"),
 };
@@ -42,9 +41,6 @@ const KEY_CODE_CHAR_BASE = 1024;
 const state = {
     wasmBytes: null,
     wasmName: null,
-    // Cached aver_runtime.wasm bytes (Step 1 of 0.14 Edge); populated
-    // after loadCompiler so workers can instantiate it once and reuse.
-    runtimeBytes: null,
     worker: null,
     queuedLines: [],
     rawMode: false,
@@ -108,18 +104,10 @@ function formatBytes(bytes) {
     return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
 
-let lastMemUpdate = 0;
-function updateMemoryDisplay(heapBytes, pageBytes) {
-    if (!dom.memory) return;
-    const now = performance.now();
-    if (now - lastMemUpdate < 500) return;
-    lastMemUpdate = now;
-    if (pageBytes) {
-        dom.memory.textContent = "heap " + formatBytes(heapBytes) + " / " + formatBytes(pageBytes);
-    } else {
-        dom.memory.textContent = "mem " + formatBytes(heapBytes);
-    }
-}
+// Heap reporting was a legacy `--target edge-wasm` feature: the bump
+// allocator's `$heap_ptr` global gave the host a real watermark of
+// program-owned memory. Under wasm-gc the engine owns the heap and
+// nothing meaningful crosses the host boundary — drop the display.
 
 function setRawMode(enabled) {
     state.rawMode = enabled;
@@ -196,11 +184,6 @@ function spawnWorker(fixedSize) {
         lineBuffer: state.sharedLineBuffer,
     });
 
-    if (state.runtimeBytes) {
-        const buf = state.runtimeBytes.slice(0);
-        worker.postMessage({ type: "runtime-bytes", runtimeBytes: buf }, [buf]);
-    }
-
     autoSizeTerminalSurface();
     const { cols, rows } = fixedSize || terminalMetrics();
     worker.postMessage({ type: "resize", cols, rows });
@@ -220,9 +203,6 @@ function handleWorkerMessage(event) {
             break;
         case "terminal":
             queueTerminalFrame(message);
-            if (message.memoryBytes != null) {
-                updateMemoryDisplay(message.memoryBytes, message.memoryPages);
-            }
             break;
         case "status":
             setStatus(message.text, message.level);
@@ -358,20 +338,8 @@ async function runSelectedModule(fixedSize) {
         return;
     }
 
-    // Drag-and-drop pre-built path doesn't go through compile, so the
-    // aver_runtime cache may still be empty. Pull it from the compiler
-    // module so the worker has something to instantiate.
-    if (!state.runtimeBytes) {
-        try {
-            await loadCompiler();
-        } catch (_) {
-            /* loadCompiler surfaces its own status */
-        }
-    }
-
     clearOutput();
     setRawMode(false);
-    if (dom.memory) dom.memory.textContent = "";
     dom.runButton.disabled = true;
     dom.stopButton.disabled = false;
     dom.stopButton.hidden = false;
@@ -923,6 +891,7 @@ const codeEditor = document.querySelector("[data-code-editor]");
 // `codeEditor.value` directly, so the same flow works for a single
 // freshly-typed file or a dropped folder.
 function getActiveSource() {
+    syncActiveEditorToFiles();
     if (state.activeFile && state.files.has(state.activeFile)) {
         return state.files.get(state.activeFile);
     }
@@ -932,6 +901,7 @@ function getActiveName() {
     return state.activeFile || "playground.av";
 }
 function getProjectFiles() {
+    syncActiveEditorToFiles();
     // Return a plain object {path: source} for multi-file consumers.
     // Single-file fallback: use whatever's in the editor.
     if (state.files.size === 0) {
@@ -940,6 +910,12 @@ function getProjectFiles() {
     const out = {};
     for (const [k, v] of state.files) out[k] = v;
     return out;
+}
+
+function syncActiveEditorToFiles() {
+    if (codeEditor && state.activeFile && state.files.has(state.activeFile)) {
+        state.files.set(state.activeFile, codeEditor.value);
+    }
 }
 
 function renderTabs() {
@@ -1106,19 +1082,15 @@ async function loadCompiler() {
     const mod = await import("./wasm/aver.js");
     await mod.default("./wasm/aver_bg.wasm");
     compiler = mod;
-    // Step 1 of the 0.14 Edge runtime split: user.wasm imports memory,
-    // heap_ptr, and rt_alloc from a separate `aver_runtime` module.
-    // Pull its bytes once and hand them to the worker; the worker
-    // caches the instance so subsequent runs reuse it.
-    if (typeof compiler.aver_runtime_wasm === "function") {
-        const rtBytes = compiler.aver_runtime_wasm();
-        state.runtimeBytes = rtBytes.buffer;
-        if (state.worker) {
-            const buf = state.runtimeBytes.slice(0);
-            state.worker.postMessage({ type: "runtime-bytes", runtimeBytes: buf }, [buf]);
-        }
-    }
     return compiler;
+}
+
+function cacheCompiledWasm(bytes, name = "playground.wasm") {
+    const copy = bytes instanceof Uint8Array ? bytes.slice() : new Uint8Array(bytes).slice();
+    state.wasmBytes = copy.buffer;
+    state.wasmName = name;
+    dom.runButton.disabled = false;
+    return copy;
 }
 
 // Dispatch check/verify/why/context/audit to the multi-file binding
@@ -1128,7 +1100,7 @@ async function loadCompiler() {
 function runAnalysis(comp, kind, fallbackSource) {
     const entry = pickEntryFile();
     if (state.files.size > 1 && entry && typeof comp[`aver_${kind}_project`] === "function") {
-        const filesObj = Object.fromEntries(state.files);
+        const filesObj = getProjectFiles();
         return comp[`aver_${kind}_project`](JSON.stringify(filesObj), entry);
     }
     return comp[`aver_${kind}`](fallbackSource);
@@ -1151,6 +1123,7 @@ if (compileRunBtn) {
             runSelectedModule(fixed);
             return;
         }
+        syncActiveEditorToFiles();
         const entry = pickEntryFile();
         const source = entry ? state.files.get(entry) : getActiveSource();
         if (!source || !source.trim()) return;
@@ -1177,7 +1150,7 @@ if (compileRunBtn) {
             // fs instead of erroring on "unknown module".
             if (state.files.size > 1 && entry) {
                 setStatus(`Compiling project (entry: ${entry})…`, "info");
-                const filesObj = Object.fromEntries(state.files);
+                const filesObj = getProjectFiles();
                 wasmBytes = comp.aver_compile_project(JSON.stringify(filesObj), entry);
             } else {
                 setStatus("Compiling…", "info");
@@ -1185,10 +1158,8 @@ if (compileRunBtn) {
             }
             const ms = (performance.now() - t0).toFixed(0);
 
-            state.wasmBytes = wasmBytes.buffer;
-            state.wasmName = "playground.wasm";
-            renderCompileMeta(wasmBytes.length, ms);
-            dom.runButton.disabled = false;
+            const compiledBytes = cacheCompiledWasm(wasmBytes);
+            renderCompileMeta(compiledBytes.length, ms);
             runSelectedModule();
         } catch (e) {
             const msg = e.message || String(e);
@@ -1639,12 +1610,12 @@ if (contextBtn) {
 }
 
 // Compile meta: compile time + raw WASM size + hover-only footnote
-// explaining the shared-runtime split. We tried lazy-loading binaryen
-// from three CDNs (unpkg 404s, esm.sh chokes on Node-style
-// module.require, skypack's build pipeline fails on binaryen's native
-// wasm blob) — three strikes, not worth keeping the code path. CLI
-// users who want the optimized size run
-// `aver compile --target edge-wasm --optimize size` locally.
+// explaining the wasm-gc shape. We tried lazy-loading binaryen from
+// three CDNs (unpkg 404s, esm.sh chokes on Node-style module.require,
+// skypack's build pipeline fails on binaryen's native wasm blob) —
+// three strikes, not worth keeping the code path. CLI users who
+// want the optimized size run `aver compile --target wasm-gc
+// --optimize size` locally.
 function clearCompileMeta() {
     if (dom.compileMeta) dom.compileMeta.textContent = "";
 }
@@ -1667,11 +1638,12 @@ function renderPrebuiltMeta(name, rawSize) {
     footnote.textContent = "*";
     footnote.title =
         "Game binaries are compiled by the CLI with `aver compile " +
-        "--target edge-wasm --optimize size` and served as static " +
-        "files. They're thin user.wasm modules — the runtime " +
-        "(alloc, GC, hashmap, strings) is loaded once and shared " +
-        "across every game. Edit any tab to fork — next ▶ Run " +
-        "recompiles the active file in the browser.";
+        "--target wasm-gc --optimize size` and served as static " +
+        "files. Each binary is self-contained — engine GC + native " +
+        "tail-calls replace any custom runtime, and the per-instantiation " +
+        "helpers DCE down to what each game actually calls. Edit any " +
+        "tab to fork — next ▶ Run recompiles the active file in the " +
+        "browser.";
     dom.compileMeta.appendChild(footnote);
 }
 
@@ -1693,12 +1665,13 @@ function renderCompileMeta(rawSize, compileMs) {
     footnote.className = "compile-footnote";
     footnote.textContent = "*";
     footnote.title =
-        "Raw size of just the program logic — the runtime " +
-        "(alloc, GC, hashmap, strings, lists) is a separate ~10 KiB " +
-        "module loaded once and shared across every program. " +
-        "The CLI's `aver compile --target edge-wasm --optimize size` " +
-        "strips this further with metadce + `-Oz --converge`; " +
-        "trivial programs drop to ~280 B.";
+        "Raw size of the self-contained binary — engine GC + native " +
+        "tail-calls handle alloc/heap/recursion, per-instantiation " +
+        "helpers (string ops, hashmap probes, list/vector helpers) " +
+        "land only when the program actually calls them. The CLI's " +
+        "`aver compile --target wasm-gc --optimize size` runs the " +
+        "wasm-opt `-Oz --converge` size pipeline; trivial programs " +
+        "drop to ~280 B.";
     dom.compileMeta.appendChild(footnote);
 }
 
@@ -1724,7 +1697,7 @@ async function downloadContextMarkdown(ctx) {
         const md =
             state.files.size > 1 && entry
                 ? comp.aver_context_md_project(
-                      JSON.stringify(Object.fromEntries(state.files)),
+                      JSON.stringify(getProjectFiles()),
                       entry
                   )
                 : comp.aver_context_md(getActiveSource());
@@ -1849,6 +1822,7 @@ function downloadProject() {
         setTimeout(() => URL.revokeObjectURL(url), 100);
         return;
     }
+    syncActiveEditorToFiles();
     if (state.files.size === 0) {
         setStatus("Nothing to download.", "info");
         return;
@@ -1927,14 +1901,19 @@ async function downloadAs(format) {
     if (format === "wasm") {
         try {
             const comp = await loadCompiler();
+            syncActiveEditorToFiles();
             const entry = pickEntryFile();
             const source = entry ? state.files.get(entry) : getActiveSource();
             if (!source || !source.trim()) { setStatus("Nothing to compile.", "info"); return; }
+            const t0 = performance.now();
             setStatus("Compiling to WASM…", "info");
             const wasmBytes = state.files.size > 1 && entry
-                ? comp.aver_compile_project(JSON.stringify(Object.fromEntries(state.files)), entry)
+                ? comp.aver_compile_project(JSON.stringify(getProjectFiles()), entry)
                 : comp.aver_compile(source);
-            const blob = new Blob([wasmBytes], { type: "application/wasm" });
+            const compiledBytes = cacheCompiledWasm(wasmBytes, `${name}.wasm`);
+            const ms = (performance.now() - t0).toFixed(0);
+            renderCompileMeta(compiledBytes.length, ms);
+            const blob = new Blob([compiledBytes], { type: "application/wasm" });
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = url;
@@ -1960,6 +1939,7 @@ async function downloadAs(format) {
 
     try {
         const comp = await loadCompiler();
+        syncActiveEditorToFiles();
         const entry = pickEntryFile();
         const source = entry ? state.files.get(entry) : getActiveSource();
         if (!source || !source.trim()) { setStatus("Nothing to compile.", "info"); return; }
@@ -1968,7 +1948,7 @@ async function downloadAs(format) {
         // the project binding so dependencies resolve against the
         // virtual fs instead of erroring on "Unknown identifier".
         const json = state.files.size > 1 && entry
-            ? comp[fnName.project](JSON.stringify(Object.fromEntries(state.files)), entry)
+            ? comp[fnName.project](JSON.stringify(getProjectFiles()), entry)
             : comp[fnName.single](source);
         const filesObj = JSON.parse(json);
         downloadFilesAsZip(filesObj, `${name}-${format}`);
@@ -2753,9 +2733,7 @@ function escapeHtml(str) {
 }
 
 function currentProjectFiles() {
-    return state.files.size > 0
-        ? Object.fromEntries(state.files)
-        : { "playground.av": getActiveSource() };
+    return getProjectFiles();
 }
 
 async function doRecord(skipDownload = true, entryExpr = null) {

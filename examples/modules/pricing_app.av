@@ -16,6 +16,12 @@ verify applyDiscount
     applyDiscount(200.0, 0.0)   => Result.Ok(200.0)
     applyDiscount(100.0, -1.0)  => Result.Err("Discount cannot be negative")
 
+fn show(r: Result<Float, String>) -> String
+    ? "Render Result<Float, String> for display."
+    match r
+        Result.Ok(p)    -> "Result.Ok({p})"
+        Result.Err(msg) -> "Result.Err({msg})"
+
 fn main() -> Unit
     ! [Console.print]
-    Console.print(applyDiscount(200.0, 15.0))
+    Console.print(show(applyDiscount(200.0, 15.0)))

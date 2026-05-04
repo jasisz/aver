@@ -3,7 +3,7 @@ module Quicksort
         "Quicksort in direct recursive style."
         "Partition around the pivot into smaller-or-equal and greater lists."
         "No loops, no mutation, just pattern matching and list recursion."
-    effects []
+    effects [Console]
 
 fn sort(xs: List<Int>) -> List<Int>
     ? "Sorts integers with recursive quicksort."
@@ -86,3 +86,20 @@ verify isOrderedFrom
     isOrderedFrom(1, []) => true
     isOrderedFrom(1, [1, 2, 3]) => true
     isOrderedFrom(2, [1, 3]) => false
+
+fn showListIntInner(xs: List<Int>) -> String
+    ? "Comma-separated body of a List<Int> render."
+    match xs
+        [] -> ""
+        [head, ..tail] -> match tail
+            [] -> "{head}"
+            _  -> "{head}, {showListIntInner(tail)}"
+
+fn showListInt(xs: List<Int>) -> String
+    ? "Render List<Int> as `[1, 2, 3]`."
+    "[{showListIntInner(xs)}]"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("input:  {showListInt([9, 4, 7, 1, 3, 8, 2])}")
+    Console.print("sorted: {showListInt(sort([9, 4, 7, 1, 3, 8, 2]))}")

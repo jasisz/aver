@@ -19,6 +19,8 @@ mod format_cmd;
 mod repl;
 #[path = "main/replay_cmd.rs"]
 mod replay_cmd;
+#[path = "main/run_wasm_gc.rs"]
+mod run_wasm_gc;
 #[path = "main/shared.rs"]
 mod shared;
 #[path = "main/why_cmd.rs"]
@@ -42,6 +44,7 @@ fn main() {
             self_host,
             profile,
             wasm,
+            wasm_gc,
             program_args,
         } => {
             let expressions = match shared::collect_entry_expressions(expr, input_file.as_deref()) {
@@ -53,11 +56,11 @@ fn main() {
                 }
             };
 
-            if !expressions.is_empty() && (*wasm || *self_host) {
+            if !expressions.is_empty() && (*wasm || *wasm_gc || *self_host) {
                 use colored::Colorize;
                 eprintln!(
                     "{}",
-                    "--expr / --input-file are not supported with --wasm or --self-host in this release"
+                    "--expr / --input-file are not supported with --wasm / --wasm-gc / --self-host in this release"
                         .red()
                 );
                 std::process::exit(1);
@@ -65,6 +68,8 @@ fn main() {
 
             if *wasm {
                 commands::cmd_run_wasm(file, module_root.as_deref(), program_args.clone());
+            } else if *wasm_gc {
+                run_wasm_gc::cmd_run_wasm_gc(file, module_root.as_deref(), program_args.clone());
             } else if *self_host {
                 commands::cmd_run_self_hosted(
                     file,
@@ -198,23 +203,66 @@ fn main() {
             // stands for. Clap's `conflicts_with_all` already rejects
             // mixing --preset with explicit axes.
             let (effective_target, effective_bridge, effective_pack) = match preset {
-                // Cloudflare Workers reject `WebAssembly.instantiate(bytes, ...)`
-                // from runtime-fetched bytes, so the "thin user.wasm + imported
-                // runtime from CDN" shape of `--target edge-wasm` doesn't fly
-                // here — the runtime would have to be either bundled or bundle-
-                // imported anyway. Single bundled wasm via `--target wasm`
-                // (wasm-merge inlines aver_runtime.*) is the cleaner shape:
-                // worker.js statically imports one file, no two-instance dance.
-                // wasm-merge becomes a hard dep, but anyone shipping to CF
-                // already has the npm/Node toolchain — `brew install binaryen`
-                // is the same tier.
+                // wasm-gc + the synthesised `aver_http_handle` wrapper is
+                // the production shape on Cloudflare Workers: workerd
+                // ships a stable wasm-gc + tail-call V8, the runtime is
+                // inlined as per-instantiation `__rt_*` helpers (no
+                // `WebAssembly.instantiate(bytes, …)` from runtime-fetched
+                // bytes — that's the path Workers reject), and the
+                // emitted binary is ~20% smaller than the legacy
+                // `--target wasm` + wasm-merge bundle. The bridge axis
+                // does not apply: `--handler <fn>` synthesises a thin
+                // wrapper that reads request fields via `Request.*` host
+                // imports and writes the response via `Response.*`, no
+                // separate fetch shim. The accompanying worker.js
+                // template is the LM string transport plus a 138-line
+                // request adapter — no JSPI, no NaN-box dance. User must
+                // pass `--handler <fn>` (validated below).
                 Some(cli::DeployPreset::Cloudflare) => (
-                    cli::CompileTarget::Wasm,
-                    Some(cli::WasmBridge::Fetch),
+                    cli::CompileTarget::WasmGc,
+                    None,
                     Some(cli::DeployPack::Cloudflare),
                 ),
                 None => (*target, *bridge, *pack),
             };
+            if matches!(preset, Some(cli::DeployPreset::Cloudflare)) && handler.is_none() {
+                use colored::Colorize;
+                eprintln!(
+                    "{}",
+                    "--preset cloudflare requires --handler <fn> (the Aver fn with signature \
+                     `Fn(HttpRequest) -> HttpResponse` to expose as the request handler)"
+                        .red()
+                );
+                std::process::exit(1);
+            }
+            // `--bridge` is a legacy concept tied to `--target wasm` —
+            // wasm-gc has its own shape for both axes the legacy bridges
+            // covered: HTTP via `--handler <fn>` (synth `aver_http_handle`
+            // wrapper, no separate fetch shim) and standalone runtime via
+            // the planned `--target wasip2` Component Model output. Reject
+            // up front rather than silently ignoring the flag.
+            if matches!(effective_target, cli::CompileTarget::WasmGc) && effective_bridge.is_some()
+            {
+                use colored::Colorize;
+                let hint = match effective_bridge {
+                    Some(cli::WasmBridge::Fetch) => {
+                        "use `--handler <fn>` (HTTP synth wrapper) or `--preset cloudflare \
+                         --handler <fn>` (full Workers pack) instead"
+                    }
+                    Some(cli::WasmBridge::Wasip1) => {
+                        "wasm-gc skips preview 1 by design — `--target wasm --bridge wasip1` \
+                         is the legacy standalone-WASI path; `--target wasip2` (Component \
+                         Model, `wasi:http/proxy` + `wasi:filesystem` + `wasi:sockets`) is \
+                         planned as the modern wasm-gc companion"
+                    }
+                    Some(cli::WasmBridge::None) | None => "drop `--bridge` (wasm-gc default)",
+                };
+                eprintln!(
+                    "{}",
+                    format!("--bridge is not supported with --target wasm-gc; {hint}").red()
+                );
+                std::process::exit(1);
+            }
             // `--emit-ir-after=PASS` short-circuits before codegen — print
             // the IR snapshot for the named stage and exit. Drives observability
             // in 0.15.1 without touching the compile path otherwise.

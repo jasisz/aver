@@ -103,7 +103,19 @@ fn main() -> Unit
 
     // Recursive fan-out [1,2,3,4,5] -> [1,4,9,16,25]
     match processAll([1, 2, 3, 4, 5])
-        Result.Ok(results) -> Console.print("fanout: {results}")
+        Result.Ok(results) -> Console.print("fanout: {showListInt(results)}")
         Result.Err(e) -> Console.print("fanout FAILED: {e}")
 
     Console.print("done")
+
+fn showListIntInner(xs: List<Int>) -> String
+    ? "Comma-separated body of a List<Int> render."
+    match xs
+        [] -> ""
+        [head, ..tail] -> match tail
+            [] -> "{head}"
+            _  -> "{head}, {showListIntInner(tail)}"
+
+fn showListInt(xs: List<Int>) -> String
+    ? "Render a List<Int> as `[1, 2, 3]`. Aver doesn't have map/Show; the helper sits at the call site."
+    "[{showListIntInner(xs)}]"

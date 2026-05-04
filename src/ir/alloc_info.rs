@@ -324,10 +324,7 @@ mod tests {
     }
 
     fn sp<T>(value: T) -> Spanned<T> {
-        Spanned {
-            node: value,
-            line: 1,
-        }
+        Spanned::new(value, 1)
     }
 
     fn lit_int(n: i64) -> Spanned<Expr> {

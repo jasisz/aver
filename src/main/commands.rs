@@ -535,7 +535,13 @@ fn mark_type_uses(
             }
             mark_type_uses(ret, dep_targets, unique_type_owner, used_by_target);
         }
-        Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit | Type::Unknown => {}
+        Type::Int
+        | Type::Float
+        | Type::Str
+        | Type::Bool
+        | Type::Unit
+        | Type::Invalid
+        | Type::Var(_) => {}
     }
 }
 
@@ -1009,7 +1015,7 @@ pub(super) fn cmd_run_vm(
         process::exit(1);
     }
 
-    let module_root = super::shared::resolve_module_root(module_root_override);
+    let module_root = super::shared::resolve_module_root_for_entry(file, module_root_override);
     let source = match super::shared::read_file(file) {
         Ok(s) => s,
         Err(e) => {
@@ -3818,12 +3824,13 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
         "resolve" => Some(PipelineStage::Resolve),
         "last_use" => Some(PipelineStage::LastUse),
         "analyze" => Some(PipelineStage::Analyze),
+        "escape" => Some(PipelineStage::Escape),
         other => {
             eprintln!(
                 "{}",
                 format!(
                     "unknown --emit-ir-after stage '{}'; expected one of: \
-                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze",
+                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze, escape",
                     other
                 )
                 .red()
@@ -4053,9 +4060,11 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
             PassReport::Resolve {
                 slots_resolved,
                 fns_with_slots,
+                slot_types_total,
+                slot_types_invalid,
             } => {
                 out.push_str(&format!(
-                    "{label} {slots_resolved} ident(s) resolved to slot lookups across {fns_with_slots} fn(s)\n"
+                    "{label} {slots_resolved} ident(s) resolved to slot lookups across {fns_with_slots} fn(s); {slot_types_total} typed slot(s) ({slot_types_invalid} invalid)\n"
                 ));
             }
             PassReport::LastUse {
@@ -4079,6 +4088,17 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                 if *unknown_alloc > 0 {
                     out.push_str(&format!(
                         "  • {unknown_alloc} fn(s) skipped alloc classification (no policy supplied)\n"
+                    ));
+                }
+            }
+            PassReport::Escape { rewrites } => {
+                if *rewrites == 0 {
+                    out.push_str(&format!(
+                        "{label} no fresh-alloc-immediate-consume sites detected\n"
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "{label} {rewrites} call site(s) rewritten — record/variant alloc eliminated\n"
                     ));
                 }
             }
@@ -4204,10 +4224,12 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
             PassReport::Resolve {
                 slots_resolved,
                 fns_with_slots,
+                slot_types_total,
+                slot_types_invalid,
             } => {
                 out.push_str(&format!(
-                    "{{\"slots_resolved\":{},\"fns_with_slots\":{}}}",
-                    slots_resolved, fns_with_slots
+                    "{{\"slots_resolved\":{},\"fns_with_slots\":{},\"slot_types_total\":{},\"slot_types_invalid\":{}}}",
+                    slots_resolved, fns_with_slots, slot_types_total, slot_types_invalid
                 ));
             }
             PassReport::LastUse {
@@ -4230,6 +4252,9 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
                     "{{\"total_fns\":{},\"no_alloc_fns\":{},\"recursive_fns\":{},\"mutual_tco_members\":{},\"unknown_alloc\":{}}}",
                     total_fns, no_alloc_fns, recursive_fns, mutual_tco_members, unknown_alloc
                 ));
+            }
+            PassReport::Escape { rewrites } => {
+                out.push_str(&format!("{{\"rewrites\":{}}}", rewrites));
             }
         }
         out.push('}');
@@ -4364,6 +4389,22 @@ fn cmd_compile_wasm(
 
     #[cfg(feature = "wasm")]
     {
+        // 0.16 wasm-gc probe: parallel backend, type-direct lowering,
+        // native tail calls, no custom runtime. Short-circuits before
+        // the legacy adapter dance.
+        if matches!(target, super::cli::CompileTarget::WasmGc) {
+            cmd_compile_wasm_gc(
+                file,
+                output_dir,
+                project_name,
+                module_root_override,
+                handler,
+                optimize,
+                pack,
+            );
+            return;
+        }
+
         let (ctx, _module_root) = build_codegen_context(
             file,
             project_name,
@@ -4623,6 +4664,140 @@ fn cmd_compile_wasm(
                 process::exit(1);
             }
         }
+    }
+}
+
+/// `aver compile FILE --target=wasm-gc` — 0.16 probe backend.
+/// Type-direct lowering, no custom runtime, native tail calls. Phase-1:
+/// only `fn main() -> Int <int_literal>` compiles; everything else
+/// surfaces an `Unimplemented` error pointing at the relevant phase
+/// in the README.
+#[cfg(feature = "wasm")]
+fn cmd_compile_wasm_gc(
+    file: &str,
+    output_dir: &str,
+    project_name: Option<&str>,
+    module_root_override: Option<&str>,
+    handler: Option<&str>,
+    optimize: Option<super::cli::WasmOptMode>,
+    pack: Option<super::cli::DeployPack>,
+) {
+    use aver::codegen::wasm_gc;
+
+    let module_root = resolve_module_root(module_root_override);
+    let source = match read_file(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+    let mut items = match parse_file(&source) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+
+    use aver::ir::{PipelineConfig, TypecheckMode};
+    let neutral_policy = aver::ir::NeutralAllocPolicy;
+    let result = aver::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full {
+                base_dir: Some(&module_root),
+            }),
+            alloc_policy: Some(&neutral_policy),
+            // wasm-gc backend lowers `Expr::InterpolatedStr` natively
+            // to a `String.concat` chain (immutable arrays match the
+            // engine's GC primitives). The `__buf_*` pipeline that
+            // `interp_lower` produces targets bump-allocator backends
+            // (legacy wasm, VM); for wasm-gc it would force us to
+            // emulate a mutable buffer over `(struct len array)` with
+            // grow-on-append, when `array.copy` x2 is the idiomatic
+            // shape. Keep the source InterpolatedStr in the IR.
+            run_interp_lower: false,
+            run_buffer_build: false,
+            ..Default::default()
+        },
+    );
+    if let Some(tc) = &result.typecheck
+        && !tc.errors.is_empty()
+    {
+        eprintln!("{}", super::shared::format_type_errors(&tc.errors).red());
+        process::exit(1);
+    }
+
+    // Multi-module: load `depends [...]` modules and flatten them
+    // into a single item list with module-prefixed fn names. Single-
+    // binary linking — every reachable fn from every module ends up
+    // in the same wasm module, so cross-module calls are plain
+    // `call $fn` after rewriting `Attr(Ident("Fractal"), "render")`
+    // call sites to `Ident("Fractal_render")`. Component Model is a
+    // future separate mode (see `project_wasm_gc_multimodule.md`).
+    let dep_modules = load_compile_deps(
+        &items,
+        &module_root,
+        false, /* run_interp_lower */
+        false, /* run_buffer_build */
+    );
+    flatten_multimodule(&mut items, &dep_modules);
+    // Re-run resolver after flatten so dep fns get a FnResolution
+    // (slot_types). Entry items already had one from `pipeline::run`
+    // above; this picks up the newly appended dep FnDefs.
+    aver::ir::pipeline::resolve(&mut items);
+
+    let bytes =
+        match wasm_gc::compile_to_wasm_gc_with_handler(&items, result.analysis.as_ref(), handler) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("{}", format!("{e}").red());
+                process::exit(1);
+            }
+        };
+
+    let out_path = Path::new(output_dir);
+    if let Err(e) = std::fs::create_dir_all(out_path) {
+        eprintln!(
+            "{}",
+            format!("Failed to create output directory: {}", e).red()
+        );
+        process::exit(1);
+    }
+    let wasm_name = project_name.map(|s| s.to_string()).unwrap_or_else(|| {
+        Path::new(file)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("program")
+            .to_string()
+    });
+    let wasm_file = out_path.join(format!("{}.wasm", wasm_name));
+    if let Err(e) = std::fs::write(&wasm_file, &bytes) {
+        eprintln!("{}", format!("Failed to write WASM file: {}", e).red());
+        process::exit(1);
+    }
+    // Optional `--optimize` post-pass: wasm-metadce skipped (factory
+    // exports + `__rt_*` LM transport helpers are host-callable roots,
+    // metadce graph would have to enumerate every conditional export
+    // by hand). `wasm-opt -Oz` keeps the export surface and converges
+    // on a smaller body — that's where the per-instantiation helpers
+    // (Map probes, List ops, eq helpers) shrink when unreachable.
+    let (final_size, opt_suffix) =
+        finalize_wasm_artifact(&wasm_file, optimize, MetadceMode::HostCallable);
+    println!(
+        "{} wasm-gc → {} ({} bytes{})",
+        "•".cyan(),
+        wasm_file.display().to_string().cyan(),
+        final_size,
+        opt_suffix
+    );
+    // Deployment pack — drops platform-specific bootstrap files
+    // next to the wasm-gc artifact. Same call site as the legacy
+    // backend; the worker.js template is wasm-gc-aware (LM string
+    // transport + `aver_http_handle` synth wrapper).
+    if let Some(super::cli::DeployPack::Cloudflare) = pack {
+        emit_cloudflare_pack(out_path, &wasm_name, &wasm_file);
     }
 }
 
@@ -5009,6 +5184,8 @@ fn run_optimize_pipeline_inner(
                 .arg("--enable-bulk-memory")
                 .arg("--enable-multivalue")
                 .arg("--enable-tail-call")
+                .arg("--enable-gc")
+                .arg("--enable-reference-types")
                 .arg(wasm_file)
                 .arg("-o")
                 .arg(&stage1_file)
@@ -5047,6 +5224,8 @@ fn run_optimize_pipeline_inner(
         .arg("--enable-bulk-memory")
         .arg("--enable-multivalue")
         .arg("--enable-tail-call")
+        .arg("--enable-gc")
+        .arg("--enable-reference-types")
         .arg(&stage1_file)
         .arg("-o")
         .arg(&optimized_file)
@@ -5243,6 +5422,12 @@ fn cmd_proof_dafny(file: &str, output_dir: &str, ctx: &codegen::CodegenContext) 
     write_codegen_output(file, output_dir, "Dafny", &build_hint, &output);
 }
 
+/// CLI shim around the library-level wasm-gc multi-module flattener.
+#[cfg(feature = "wasm")]
+pub(super) fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[ModuleInfo]) {
+    aver::codegen::wasm_gc::flatten_multimodule(items, dep_modules);
+}
+
 /// Load dependent modules for codegen (recursive, with circular import detection).
 ///
 /// `run_interp_lower` and `run_buffer_build` mirror the entry-module decision —
@@ -5251,7 +5436,7 @@ fn cmd_proof_dafny(file: &str, output_dir: &str, ctx: &codegen::CodegenContext) 
 /// so the buffer-build pass fires on sinks living in dep modules too. Split
 /// per-stage rather than a bundled flag so this matches the pipeline gates
 /// 1-to-1 with no magic translation in between.
-fn load_compile_deps(
+pub(super) fn load_compile_deps(
     items: &[TopLevel],
     module_root: &str,
     run_interp_lower: bool,
@@ -5332,22 +5517,47 @@ fn load_module_recursive(
         process::exit(1);
     }
 
-    // Dep modules go through the same pipeline shape as the entry. Typecheck
-    // runs at the entry-module level via `build_codegen_context`, so we skip
-    // it here. The `analyze` stage runs on the dep module's items so the
-    // ModuleInfo we publish carries per-module mutual_tco_members /
-    // recursive_fns / FnAnalysis facts; codegen builds its global view by
-    // unioning per-module sets (sound under Aver's module DAG invariant).
+    // Dep modules go through the same pipeline shape as the entry, AND
+    // they typecheck against the same on-disk module tree. Typecheck
+    // here populates `Spanned::ty()` on this module's expressions so
+    // type-driven codegen (legacy WASM Step 2, Rust Step 1) can read
+    // them without per-backend ad-hoc inference. The entry-level
+    // typecheck only validates cross-module references — it visits the
+    // entry's items, not dep bodies, because the items it sees are a
+    // separate parse from the ones flowing into ModuleInfo. Errors are
+    // surfaced as fatal — a dep module that fails to typecheck means
+    // the program is incoherent and codegen would emit broken output.
     let neutral_policy = aver::ir::NeutralAllocPolicy;
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
+            typecheck: Some(aver::ir::TypecheckMode::Full {
+                base_dir: Some(module_root),
+            }),
             run_interp_lower,
             run_buffer_build,
             alloc_policy: Some(&neutral_policy),
             ..Default::default()
         },
     );
+    if let Some(tc) = pipeline_result.typecheck.as_ref()
+        && !tc.errors.is_empty()
+    {
+        eprintln!(
+            "{}",
+            format!(
+                "Type errors in dependency module '{}':\n{}",
+                name,
+                tc.errors
+                    .iter()
+                    .map(|e| format!("  {}:{}: {}", e.line, e.col, e.message))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+            .red()
+        );
+        process::exit(1);
+    }
 
     let depends = items
         .iter()

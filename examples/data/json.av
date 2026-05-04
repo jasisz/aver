@@ -143,8 +143,10 @@ verify toString law parseRoundtrip
     fromString(toString(j)) => Result.Ok(j)
 
 fn floatRoundtripSafe(f: Float) -> Bool
-    ? "Precondition for JSON float serializer round-tripping through decimal text."
-    Float.fromString(String.fromFloat(f)) == Result.Ok(f)
+    ? "Precondition for JSON float serializer round-tripping through decimal text. Match (rather than `==`) so the parsed Result's E binds to the concrete signature — Aver's type inference doesn't yet propagate Result type args across BinOp::Eq into a bare `Result.Ok(f)` literal on the RHS."
+    match Float.fromString(String.fromFloat(f))
+        Result.Ok(g)  -> g == f
+        Result.Err(_) -> false
 
 verify floatRoundtripSafe
     floatRoundtripSafe(3.5) => true

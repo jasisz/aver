@@ -59,7 +59,7 @@
             <a href="playground/" class="btn btn-primary">Try in browser</a>
             <a href="#start" class="btn btn-secondary">Install</a>
         </div>
-        <p class="hero-proof">MIT licensed &middot; Written in Rust &middot; v0.15 &middot; <a href="https://crates.io/crates/aver-lang" target="_blank">crates.io</a></p>
+        <p class="hero-proof">MIT licensed &middot; Written in Rust &middot; v0.16 &middot; <a href="https://crates.io/crates/aver-lang" target="_blank">crates.io</a></p>
     </div>
     <div class="hero-code">
         <div class="hero-window">
@@ -172,7 +172,7 @@ paths = [<span class="hl-string">"./data/**"</span>]</pre>
             <p>VM for dev, native Rust for production, WASM for browsers. Same source.</p>
             <pre class="code-block code-sm"><span class="hl-muted">$</span> aver run hello.av
 <span class="hl-muted">$</span> aver compile hello.av --target rust
-<span class="hl-muted">$</span> aver compile hello.av --target wasm</pre>
+<span class="hl-muted">$</span> aver compile hello.av --target wasm-gc</pre>
         </div>
     </div>
 </section>
@@ -220,42 +220,42 @@ paths = [<span class="hl-string">"./data/**"</span>]</pre>
 <!-- ── Demo ─────────────────────────────────────────────────────────── -->
 <section class="games" id="demo">
     <h2>Native WASM, shared runtime</h2>
-    <p class="section-sub">Seven games compiled directly from Aver. The runtime — alloc, GC, hashmap, string ops — is one ~10 KiB module loaded once. Every game ships just its program logic: Snake 5.1 KiB, full roguelike 28.3 KiB. Browser caches the runtime; the second game you click downloads only the program. <a href="runtime/">Pinned runtime versions →</a></p>
+    <p class="section-sub">Seven games compiled directly from Aver to WebAssembly GC. Engine handles GC and tail calls — no NaN-boxing, no custom heap. Snake ships at 4.0 KiB; a full roguelike with procedural generation is 25.0 KiB. Modern browsers only (Chrome 119+ / Firefox 120+ / Safari 18.2+).</p>
     <div class="games-grid">
         <a href="playground/?game=life" class="game-card">
             <div class="game-icon">🧬</div>
             <span>Game of Life</span>
-            <small>8.8 KiB</small>
+            <small>6.4 KiB</small>
         </a>
         <a href="playground/?game=snake" class="game-card">
             <div class="game-icon">🐍</div>
             <span>Snake</span>
-            <small>5.1 KiB</small>
+            <small>4.0 KiB</small>
         </a>
         <a href="playground/?game=tetris" class="game-card">
             <div class="game-icon">🧱</div>
             <span>Tetris</span>
-            <small>9.7 KiB</small>
+            <small>7.8 KiB</small>
         </a>
         <a href="playground/?game=checkers" class="game-card">
             <div class="game-icon">🏁</div>
             <span>Checkers</span>
-            <small>21.1 KiB</small>
+            <small>19.6 KiB</small>
         </a>
         <a href="playground/?game=rogue" class="game-card">
             <div class="game-icon">🗡️</div>
             <span>Roguelike</span>
-            <small>28.3 KiB</small>
+            <small>25.0 KiB</small>
         </a>
         <a href="playground/?game=doom" class="game-card">
             <div class="game-icon">👹</div>
             <span>Doom</span>
-            <small>21.0 KiB</small>
+            <small>18.9 KiB</small>
         </a>
         <a href="playground/?game=wumpus" class="game-card">
             <div class="game-icon">🦇</div>
             <span>Wumpus</span>
-            <small>6.2 KiB</small>
+            <small>4.9 KiB</small>
         </a>
     </div>
 </section>

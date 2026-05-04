@@ -67,6 +67,7 @@ fn simplify_identity_expr(expr: &Spanned<Expr>) -> Spanned<Expr> {
                 .map(|arm| crate::ast::MatchArm {
                     pattern: arm.pattern.clone(),
                     body: Box::new(simplify_identity_expr(&arm.body)),
+                    binding_slots: std::sync::OnceLock::new(),
                 })
                 .collect(),
         },

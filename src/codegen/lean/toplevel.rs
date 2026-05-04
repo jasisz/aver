@@ -1300,22 +1300,12 @@ fn emit_verify_trace_block_proofs(
         name: String::new(),
         givens: vb.cases_givens.clone(),
         when: None,
-        lhs: vb
-            .cases
-            .first()
-            .map(|(l, _)| l.clone())
-            .unwrap_or_else(|| crate::ast::Spanned {
-                node: Expr::Literal(crate::ast::Literal::Unit),
-                line: vb.line,
-            }),
-        rhs: vb
-            .cases
-            .first()
-            .map(|(_, r)| r.clone())
-            .unwrap_or_else(|| crate::ast::Spanned {
-                node: Expr::Literal(crate::ast::Literal::Unit),
-                line: vb.line,
-            }),
+        lhs: vb.cases.first().map(|(l, _)| l.clone()).unwrap_or_else(|| {
+            crate::ast::Spanned::new(Expr::Literal(crate::ast::Literal::Unit), vb.line)
+        }),
+        rhs: vb.cases.first().map(|(_, r)| r.clone()).unwrap_or_else(|| {
+            crate::ast::Spanned::new(Expr::Literal(crate::ast::Literal::Unit), vb.line)
+        }),
         sample_guards: Vec::new(),
     };
 

@@ -433,17 +433,11 @@ mod tests {
     use crate::ast::{Literal, SourceLine, Spanned};
 
     fn spanned(node: Expr) -> Spanned<Expr> {
-        Spanned {
-            node,
-            line: 1 as SourceLine,
-        }
+        Spanned::new(node, 1 as SourceLine)
     }
 
     fn spanned_at(node: Expr, line: usize) -> Spanned<Expr> {
-        Spanned {
-            node,
-            line: line as SourceLine,
-        }
+        Spanned::new(node, line as SourceLine)
     }
 
     fn int(i: i64) -> Expr {
@@ -473,10 +467,12 @@ mod tests {
                 MatchArm {
                     pattern: crate::ast::Pattern::Literal(Literal::Bool(true)),
                     body: Box::new(spanned(body)),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: crate::ast::Pattern::Literal(Literal::Bool(false)),
                     body: Box::new(spanned(ident("i"))),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
             ],
         };
@@ -516,10 +512,12 @@ mod tests {
                 MatchArm {
                     pattern: crate::ast::Pattern::Literal(Literal::Bool(true)),
                     body: Box::new(spanned(body)),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: crate::ast::Pattern::Literal(Literal::Bool(false)),
                     body: Box::new(spanned(ident("x"))),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
             ],
         };
@@ -556,10 +554,12 @@ mod tests {
                 MatchArm {
                     pattern: crate::ast::Pattern::Literal(Literal::Bool(true)),
                     body: Box::new(spanned(ident("x"))),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
                 MatchArm {
                     pattern: crate::ast::Pattern::Literal(Literal::Bool(false)),
                     body: Box::new(spanned(ident("x"))),
+                    binding_slots: std::sync::OnceLock::new(),
                 },
             ],
         };
@@ -634,10 +634,7 @@ mod tests {
             line: 1,
             params: vec![("x".to_string(), "String".to_string())],
             return_type: "Unit".to_string(),
-            effects: vec![crate::ast::Spanned {
-                node: "Console.print".to_string(),
-                line: 0,
-            }],
+            effects: vec![crate::ast::Spanned::new("Console.print".to_string(), 0)],
             desc: None,
             body: std::sync::Arc::new(crate::ast::FnBody::Block(vec![
                 Stmt::Expr(spanned(print_call.clone())),
