@@ -2516,9 +2516,39 @@ pub(super) fn emit_single_variant_match(
         return Ok(());
     }
 
-    Err(WasmGcError::Unimplemented(
-        "phase 3b — multi-binding variant patterns (need a scratch slot)",
-    ))
+    // Multi-binding case: stash the cast subject in the SlotTable's
+    // subject_scratch slot, then `struct.get + local.set` once per
+    // binding. The scratch slot is `(ref null eq)`, so we re-cast on
+    // every read — wasm-gc has no `local.tee` shortcut for refs that
+    // would skip this.
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "multi-binding variant pattern needs subject_scratch but none was reserved \
+         (slots::expr_needs_scratch must opt in for any Constructor pattern)"
+            .into(),
+    ))?;
+    // We're already past `subject → ref.cast (ref variant_idx)` — keep
+    // that on the stack, drop it through the scratch (typed eqref via
+    // upcast: every wasm-gc struct subtypes eq).
+    func.instruction(&Instruction::LocalSet(scratch));
+    for (i, binding_name) in bindings.iter().enumerate() {
+        if binding_name == "_" {
+            continue;
+        }
+        let slot = ctx
+            .self_local_slot(binding_name)
+            .ok_or(WasmGcError::Validation(format!(
+                "binding `{binding_name}` has no resolver slot"
+            )))?;
+        func.instruction(&Instruction::LocalGet(scratch));
+        func.instruction(&Instruction::RefCastNonNull(cast_ty));
+        func.instruction(&Instruction::StructGet {
+            struct_type_index: variant_idx,
+            field_index: i as u32,
+        });
+        func.instruction(&Instruction::LocalSet(slot));
+    }
+    emit_expr(func, &body, slots, ctx)?;
+    Ok(())
 }
 
 pub(super) fn emit_constructor_with_args(

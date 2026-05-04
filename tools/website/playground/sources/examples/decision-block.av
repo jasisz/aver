@@ -21,4 +21,4 @@ verify createTransaction
 
 fn main() -> Unit
     ! [Console.print]
-    Console.print(createTransaction(100))
+    Console.print("{createTransaction(100)}")

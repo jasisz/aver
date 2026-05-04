@@ -13,4 +13,4 @@ verify add
 
 fn main() -> Unit
     ! [Console.print]
-    Console.print(add(2, 3))
+    Console.print("{add(2, 3)}")

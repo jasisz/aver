@@ -1309,10 +1309,11 @@ fn collect_tuples_from_expr(
                 stamped
             })
             .collect();
-        let canonical: String = format!("Tuple<{}>", elem_tys.join(","))
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect();
+        // Use `normalize_compound` so nested paren-tuples like
+        // `(Int, (Int, Int))` collapse to `Tuple<Int,Tuple<Int,Int>>`
+        // — the same canonical the registry-lookup path
+        // (`tuple_type_idx`) normalizes to.
+        let canonical: String = normalize_compound(&format!("Tuple<{}>", elem_tys.join(",")));
         if !canonical.contains("Invalid") && !out.contains_key(&canonical) {
             for elem in &elem_tys {
                 collect_tuples_from_str(elem, out, order, next_idx);

@@ -69,7 +69,14 @@ impl SlotTable {
                 // binding would let the next slot read the wrong
                 // wasm type and trip validator with `expected eqref,
                 // found i32` (and friends).
-                let v = aver_to_wasm(&aver_str, Some(registry))?.unwrap_or(ValType::I32);
+                //
+                // `Invalid` shows up for unused / never-assigned
+                // resolver slots and for the typecheck's gradual
+                // recovery path — same i32 placeholder so the slot
+                // is reserved and indices stay aligned.
+                let v = aver_to_wasm(&aver_str, Some(registry))
+                    .unwrap_or(None)
+                    .unwrap_or(ValType::I32);
                 by_slot.push(v);
             }
         } else {
@@ -78,7 +85,9 @@ impl SlotTable {
             // body that touches anything beyond the parameters will
             // surface the gap as a wasm validation error.
             for (_, ty) in &fd.params {
-                let v = aver_to_wasm(ty, Some(registry))?.unwrap_or(ValType::I32);
+                let v = aver_to_wasm(ty, Some(registry))
+                    .unwrap_or(None)
+                    .unwrap_or(ValType::I32);
                 by_slot.push(v);
             }
         }
@@ -310,6 +319,16 @@ pub(super) fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
             if let Expr::Attr(parent, member) = &callee.node
                 && let Expr::Ident(p) = &parent.node
                 && ((p == "Option" || p == "Result") && member == "withDefault")
+            {
+                return true;
+            }
+            // `Option.toResult(opt, err)` inspects the Option's tag
+            // and re-uses the value field on the Some arm — same
+            // scratch-slot story as withDefault.
+            if let Expr::Attr(parent, member) = &callee.node
+                && let Expr::Ident(p) = &parent.node
+                && p == "Option"
+                && member == "toResult"
             {
                 return true;
             }
