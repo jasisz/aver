@@ -540,9 +540,10 @@ impl EffectName {
                 "Result<List<String>,String>",
             )?]),
             Self::DiskExists => Ok(vec![ValType::I32]),
-            Self::TcpConnect => {
-                Ok(vec![result_ref_ty(registry, "Result<Tcp.Connection,String>")?])
-            }
+            Self::TcpConnect => Ok(vec![result_ref_ty(
+                registry,
+                "Result<Tcp.Connection,String>",
+            )?]),
             Self::TcpReadLine | Self::TcpSend => {
                 Ok(vec![result_ref_ty(registry, "Result<String,String>")?])
             }

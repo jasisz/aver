@@ -40,7 +40,13 @@ pub(super) fn resolve_module_root_for_entry(file: &str, override_: Option<&str>)
     let entry = std::path::Path::new(file);
     let parent = entry
         .parent()
-        .and_then(|p| if p.as_os_str().is_empty() { None } else { Some(p) })
+        .and_then(|p| {
+            if p.as_os_str().is_empty() {
+                None
+            } else {
+                Some(p)
+            }
+        })
         .unwrap_or_else(|| std::path::Path::new("."));
 
     // Read & parse the entry to learn its declared deps. Skip if the
@@ -63,9 +69,9 @@ pub(super) fn resolve_module_root_for_entry(file: &str, override_: Option<&str>)
     let mut candidate = Some(parent);
     while let Some(dir) = candidate {
         let dir_str = dir.to_string_lossy();
-        let all_ok = deps.iter().all(|dep| {
-            aver::source::find_module_file(dep, dir_str.as_ref()).is_some()
-        });
+        let all_ok = deps
+            .iter()
+            .all(|dep| aver::source::find_module_file(dep, dir_str.as_ref()).is_some());
         if all_ok {
             return dir_str.into_owned();
         }

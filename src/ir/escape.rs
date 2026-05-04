@@ -741,10 +741,7 @@ mod tests {
             resolution: Some(FnResolution {
                 local_count: (1 + extra_slots.len()) as u16,
                 local_slots: Arc::new(slots),
-                local_slot_types: Arc::new(vec![
-                    crate::ast::Type::Invalid;
-                    1 + extra_slots.len()
-                ]),
+                local_slot_types: Arc::new(vec![crate::ast::Type::Invalid; 1 + extra_slots.len()]),
             }),
         }
     }

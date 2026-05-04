@@ -27,11 +27,11 @@ use wasm_encoder::{
 use super::WasmGcError;
 use super::body::eq_helpers::{EqHelperRegistry, EqKind};
 use super::body::{FnEntry, FnMap, emit_fn_body};
-use super::wat_helper;
 use super::builtins::{BuiltinName, BuiltinRegistry};
 use super::effects::{EffectName, EffectRegistry};
 use super::maps::MapHelperRegistry;
 use super::types::{TypeRegistry, param_types, record_struct_type, return_results};
+use super::wat_helper;
 use crate::types::Type as AverType;
 
 use crate::ast::{Expr, FnDef, Stmt, TopLevel, TypeDef};
@@ -683,12 +683,13 @@ fn emit_user_types(
                     // type idx with their own field shape — instead of
                     // both nadpisując the same entry under the `bare`
                     // key.
-                    let info = registry.variant_in(parent, &v.name).ok_or(
-                        WasmGcError::Validation(format!(
-                            "variant `{parent}.{}` not registered",
-                            v.name
-                        )),
-                    )?;
+                    let info =
+                        registry
+                            .variant_in(parent, &v.name)
+                            .ok_or(WasmGcError::Validation(format!(
+                                "variant `{parent}.{}` not registered",
+                                v.name
+                            )))?;
                     entries.push((info.type_idx, mk_struct(fields)));
                 }
             }
@@ -935,8 +936,8 @@ fn emit_user_types(
             // Unit tuple element → i32 placeholder slot (same logic as
             // Result<Unit, E>): keeps the struct shape uniform; the
             // slot is never read because Unit has no observable value.
-            let elem_val = super::types::aver_to_wasm(elem_aver, Some(registry))?
-                .unwrap_or(ValType::I32);
+            let elem_val =
+                super::types::aver_to_wasm(elem_aver, Some(registry))?.unwrap_or(ValType::I32);
             fields.push(wasm_encoder::FieldType {
                 element_type: wasm_encoder::StorageType::Val(elem_val),
                 mutable: true,
@@ -1077,7 +1078,12 @@ fn discover_builtins_in_expr(
             {
                 if type_registry.record_fields.contains_key(name) {
                     eq_helpers.register(name, EqKind::Record);
-                } else if type_registry.variants.values().flat_map(|v| v.iter()).any(|v| &v.parent == name) {
+                } else if type_registry
+                    .variants
+                    .values()
+                    .flat_map(|v| v.iter())
+                    .any(|v| &v.parent == name)
+                {
                     eq_helpers.register(name, EqKind::Sum);
                 }
             }
@@ -1385,16 +1391,17 @@ fn allocate_factory_exports(
     }
 
     // Terminal.Size record factory — driven by `Terminal.size`.
-    if effect_registry.iter().any(|e| e == EffectName::TerminalSize) {
+    if effect_registry
+        .iter()
+        .any(|e| e == EffectName::TerminalSize)
+    {
         let rec_idx = registry
             .record_type_idx("Terminal.Size")
             .ok_or(WasmGcError::Validation(
                 "Terminal.size factory requires Terminal.Size record slot".into(),
             ))?;
         let rec_ref = ref_null(rec_idx);
-        types
-            .ty()
-            .function([ValType::I64, ValType::I64], [rec_ref]);
+        types.ty().function([ValType::I64, ValType::I64], [rec_ref]);
         fx.terminal_size_make = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
@@ -1415,11 +1422,12 @@ fn allocate_factory_exports(
         )
     });
     if needs_result_string_string {
-        let res_idx = registry
-            .result_type_idx("Result<String,String>")
-            .ok_or(WasmGcError::Validation(
-                "Result<String,String> factory required but slot not registered".into(),
-            ))?;
+        let res_idx =
+            registry
+                .result_type_idx("Result<String,String>")
+                .ok_or(WasmGcError::Validation(
+                    "Result<String,String> factory required but slot not registered".into(),
+                ))?;
         let s_idx = registry
             .string_array_type_idx
             .ok_or(WasmGcError::Validation(
@@ -1462,11 +1470,12 @@ fn allocate_factory_exports(
         )
     });
     if needs_result_unit_string {
-        let res_idx = registry
-            .result_type_idx("Result<Unit,String>")
-            .ok_or(WasmGcError::Validation(
-                "Result<Unit,String> factory required but slot not registered".into(),
-            ))?;
+        let res_idx =
+            registry
+                .result_type_idx("Result<Unit,String>")
+                .ok_or(WasmGcError::Validation(
+                    "Result<Unit,String> factory required but slot not registered".into(),
+                ))?;
         let s_idx = registry
             .string_array_type_idx
             .ok_or(WasmGcError::Validation(
@@ -1517,9 +1526,10 @@ fn allocate_factory_exports(
         let s_ref = ref_null(s_idx);
         let rec_ref = ref_null(rec_idx);
 
-        types
-            .ty()
-            .function([s_ref.clone(), s_ref.clone(), ValType::I64], [rec_ref.clone()]);
+        types.ty().function(
+            [s_ref.clone(), s_ref.clone(), ValType::I64],
+            [rec_ref.clone()],
+        );
         fx.tcp_connection_make = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
@@ -1603,11 +1613,12 @@ fn allocate_factory_exports(
             .ok_or(WasmGcError::Validation(
                 "Http.* requires String slot".into(),
             ))?;
-        let map_slots = registry
-            .map_slots("Map<String,List<String>>")
-            .ok_or(WasmGcError::Validation(
-                "Http.* requires Map<String,List<String>> slot".into(),
-            ))?;
+        let map_slots =
+            registry
+                .map_slots("Map<String,List<String>>")
+                .ok_or(WasmGcError::Validation(
+                    "Http.* requires Map<String,List<String>> slot".into(),
+                ))?;
         let s_ref = ref_null(s_idx);
         let rec_ref = ref_null(rec_idx);
         let res_ref = ref_null(res_idx);
@@ -1616,9 +1627,10 @@ fn allocate_factory_exports(
         let values_ref = ref_null(map_slots.values_array);
         let _ = (keys_ref, values_ref);
 
-        types
-            .ty()
-            .function([ValType::I64, s_ref.clone(), map_ref.clone()], [rec_ref.clone()]);
+        types.ty().function(
+            [ValType::I64, s_ref.clone(), map_ref.clone()],
+            [rec_ref.clone()],
+        );
         fx.http_response_make = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
@@ -1771,7 +1783,11 @@ impl FactoryExports {
             exports.export("__rt_list_string_nil", ExportKind::Func, s.fn_idx);
         }
         if let Some(s) = self.tcp_connection_make {
-            exports.export("__rt_record_tcp_connection_make", ExportKind::Func, s.fn_idx);
+            exports.export(
+                "__rt_record_tcp_connection_make",
+                ExportKind::Func,
+                s.fn_idx,
+            );
         }
         if let Some(s) = self.tcp_connection_id {
             exports.export("__rt_tcp_connection_id", ExportKind::Func, s.fn_idx);
@@ -1933,7 +1949,9 @@ fn emit_factory_option_string_none(
         .expect("checked at allocation");
     let mut f = Function::new([]);
     f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        s_idx,
+    )));
     f.instruction(&Instruction::StructNew(opt_idx));
     f.instruction(&Instruction::End);
     Ok(f)
@@ -1968,7 +1986,9 @@ fn emit_factory_result_string_string_ok(
     // Ok: tag=1, payload=arg, E=null.
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        s_idx,
+    )));
     f.instruction(&Instruction::StructNew(res_idx));
     f.instruction(&Instruction::End);
     Ok(f)
@@ -1986,7 +2006,9 @@ fn emit_factory_result_string_string_err(
     let mut f = Function::new([]);
     // Err: tag=0, T=null, payload=arg.
     f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        s_idx,
+    )));
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructNew(res_idx));
     f.instruction(&Instruction::End);
@@ -2008,7 +2030,9 @@ fn emit_factory_result_unit_string_ok(
     // tag=1, T=i32 placeholder, E=null
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        s_idx,
+    )));
     f.instruction(&Instruction::StructNew(res_idx));
     f.instruction(&Instruction::End);
     Ok(f)
@@ -2043,7 +2067,9 @@ fn emit_factory_result_list_string_string_ok(
     // tag=1, T=arg (List<String> ref), E=null
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        s_idx,
+    )));
     f.instruction(&Instruction::StructNew(res_idx));
     f.instruction(&Instruction::End);
     Ok(f)
@@ -2061,7 +2087,9 @@ fn emit_factory_result_list_string_string_err(
     let mut f = Function::new([]);
     // tag=0, T=null List<String>, E=arg
     f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(list_idx)));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        list_idx,
+    )));
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructNew(res_idx));
     f.instruction(&Instruction::End);
@@ -2124,9 +2152,9 @@ fn emit_factory_tcp_connection_id(
         .expect("checked at allocation");
     let mut f = Function::new([]);
     f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::RefCastNonNull(wasm_encoder::HeapType::Concrete(
-        rec_idx,
-    )));
+    f.instruction(&Instruction::RefCastNonNull(
+        wasm_encoder::HeapType::Concrete(rec_idx),
+    ));
     f.instruction(&Instruction::StructGet {
         struct_type_index: rec_idx,
         field_index: 0,
@@ -2147,7 +2175,9 @@ fn emit_factory_result_tcp_connection_string_ok(
     let mut f = Function::new([]);
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        s_idx,
+    )));
     f.instruction(&Instruction::StructNew(res_idx));
     f.instruction(&Instruction::End);
     Ok(f)
@@ -2164,7 +2194,9 @@ fn emit_factory_result_tcp_connection_string_err(
         .expect("checked at allocation");
     let mut f = Function::new([]);
     f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(rec_idx)));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        rec_idx,
+    )));
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructNew(res_idx));
     f.instruction(&Instruction::End);
@@ -2199,7 +2231,9 @@ fn emit_factory_result_http_response_string_ok(
     let mut f = Function::new([]);
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        s_idx,
+    )));
     f.instruction(&Instruction::StructNew(res_idx));
     f.instruction(&Instruction::End);
     Ok(f)
@@ -2216,7 +2250,9 @@ fn emit_factory_result_http_response_string_err(
         .expect("checked at allocation");
     let mut f = Function::new([]);
     f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(rec_idx)));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        rec_idx,
+    )));
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructNew(res_idx));
     f.instruction(&Instruction::End);

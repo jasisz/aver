@@ -1575,10 +1575,12 @@ fn rewrite_expr_with_hoists(expr: &Expr, hoisted_exprs: &HashMap<usize, String>)
             subject: Box::new(rewrite_spanned(subject, hoisted_exprs)),
             arms: arms
                 .iter()
-                .map(|arm| MatchArm::new(
-                    arm.pattern.clone(),
-                    rewrite_spanned(&arm.body, hoisted_exprs),
-                ))
+                .map(|arm| {
+                    MatchArm::new(
+                        arm.pattern.clone(),
+                        rewrite_spanned(&arm.body, hoisted_exprs),
+                    )
+                })
                 .collect(),
         },
         Expr::Constructor(name, inner) => Expr::Constructor(
@@ -2991,10 +2993,14 @@ mod tests {
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Int(1)),
-                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(10)))), binding_slots: std::sync::OnceLock::new() },
+                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(10)))),
+                        binding_slots: std::sync::OnceLock::new(),
+                    },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(20)))), binding_slots: std::sync::OnceLock::new() },
+                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(20)))),
+                        binding_slots: std::sync::OnceLock::new(),
+                    },
                 ],
             }))),
             resolution: None,
@@ -3029,7 +3035,9 @@ mod tests {
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Int(0)),
-                        body: Box::new(Spanned::bare(Expr::Ident("acc".to_string()))), binding_slots: std::sync::OnceLock::new() },
+                        body: Box::new(Spanned::bare(Expr::Ident("acc".to_string()))),
+                        binding_slots: std::sync::OnceLock::new(),
+                    },
                     MatchArm {
                         pattern: Pattern::Wildcard,
                         body: Box::new(Spanned::bare(Expr::TailCall(Box::new(TailCallData::new(
@@ -3053,7 +3061,9 @@ mod tests {
                                 )),
                                 Spanned::bare(Expr::Ident("pick".to_string())),
                             ],
-                        ))))), binding_slots: std::sync::OnceLock::new() },
+                        ))))),
+                        binding_slots: std::sync::OnceLock::new(),
+                    },
                 ],
             }))),
             resolution: None,
@@ -3150,10 +3160,14 @@ mod tests {
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Constructor("Tree.Empty".to_string(), vec![]),
-                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Bool(false)))), binding_slots: std::sync::OnceLock::new() },
+                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Bool(false)))),
+                        binding_slots: std::sync::OnceLock::new(),
+                    },
                     MatchArm {
                         pattern: Pattern::Wildcard,
-                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Bool(true)))), binding_slots: std::sync::OnceLock::new() },
+                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Bool(true)))),
+                        binding_slots: std::sync::OnceLock::new(),
+                    },
                 ],
             }))),
             resolution: None,
@@ -3190,7 +3204,9 @@ mod tests {
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(true)),
-                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Bool(true)))), binding_slots: std::sync::OnceLock::new() },
+                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Bool(true)))),
+                        binding_slots: std::sync::OnceLock::new(),
+                    },
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(false)),
                         body: Box::new(Spanned::bare(Expr::TailCall(Box::new(TailCallData::new(
@@ -3200,7 +3216,9 @@ mod tests {
                                 Box::new(Spanned::bare(Expr::Ident("n".to_string()))),
                                 Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
                             ))],
-                        ))))), binding_slots: std::sync::OnceLock::new() },
+                        ))))),
+                        binding_slots: std::sync::OnceLock::new(),
+                    },
                 ],
             }))),
             resolution: None,
@@ -3222,7 +3240,9 @@ mod tests {
                 arms: vec![
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(true)),
-                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Bool(false)))), binding_slots: std::sync::OnceLock::new() },
+                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Bool(false)))),
+                        binding_slots: std::sync::OnceLock::new(),
+                    },
                     MatchArm {
                         pattern: Pattern::Literal(Literal::Bool(false)),
                         body: Box::new(Spanned::bare(Expr::TailCall(Box::new(TailCallData::new(
@@ -3232,7 +3252,9 @@ mod tests {
                                 Box::new(Spanned::bare(Expr::Ident("n".to_string()))),
                                 Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
                             ))],
-                        ))))), binding_slots: std::sync::OnceLock::new() },
+                        ))))),
+                        binding_slots: std::sync::OnceLock::new(),
+                    },
                 ],
             }))),
             resolution: None,

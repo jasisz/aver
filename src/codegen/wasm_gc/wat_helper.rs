@@ -62,7 +62,9 @@ pub(in crate::codegen::wasm_gc) fn padding_types(n: u32) -> String {
 ///
 /// Returns the compiled Function whose locals + body bytes match the
 /// WAT helper.
-pub(in crate::codegen::wasm_gc) fn compile_wat_helper(wat_source: &str) -> Result<Function, WasmGcError> {
+pub(in crate::codegen::wasm_gc) fn compile_wat_helper(
+    wat_source: &str,
+) -> Result<Function, WasmGcError> {
     let module_bytes = wat::parse_str(wat_source)
         .map_err(|e| WasmGcError::Validation(format!("wat parse: {e}")))?;
 

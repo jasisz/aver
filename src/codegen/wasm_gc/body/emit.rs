@@ -233,14 +233,14 @@ pub(super) fn emit_expr(
                 // `__wasmgc_string_compare` builtin (returns -1 / 0 / 1).
                 // Then post-compose with the right i32 op so the BinOp
                 // returns 0/1 like every other comparison.
-                let cmp_idx =
-                    ctx.fn_map
-                        .builtins
-                        .get("__wasmgc_string_compare")
-                        .copied()
-                        .ok_or(WasmGcError::Validation(
-                            "String comparison requires __wasmgc_string_compare builtin".into(),
-                        ))?;
+                let cmp_idx = ctx
+                    .fn_map
+                    .builtins
+                    .get("__wasmgc_string_compare")
+                    .copied()
+                    .ok_or(WasmGcError::Validation(
+                        "String comparison requires __wasmgc_string_compare builtin".into(),
+                    ))?;
                 emit_expr(func, l, slots, ctx)?;
                 emit_expr(func, r, slots, ctx)?;
                 func.instruction(&Instruction::Call(cmp_idx));
@@ -552,7 +552,12 @@ fn sum_or_record_eq_fn(operand: &Spanned<Expr>, ctx: &EmitCtx<'_>) -> Option<u32
         return None;
     }
     let is_record = ctx.registry.record_fields.contains_key(name);
-    let is_sum = ctx.registry.variants.values().flat_map(|v| v.iter()).any(|v| &v.parent == name);
+    let is_sum = ctx
+        .registry
+        .variants
+        .values()
+        .flat_map(|v| v.iter())
+        .any(|v| &v.parent == name);
     if !is_record && !is_sum {
         return None;
     }
@@ -717,11 +722,9 @@ pub(super) fn emit_error_prop(
     let block_ty = if unit_ok {
         wasm_encoder::BlockType::Empty
     } else {
-        let ok_wasm = aver_to_wasm(t_aver, Some(ctx.registry))?.ok_or(
-            WasmGcError::Validation(format!(
-                "ErrorProp: Ok type `{t_aver}` has no wasm representation"
-            )),
-        )?;
+        let ok_wasm = aver_to_wasm(t_aver, Some(ctx.registry))?.ok_or(WasmGcError::Validation(
+            format!("ErrorProp: Ok type `{t_aver}` has no wasm representation"),
+        ))?;
         wasm_encoder::BlockType::Result(ok_wasm)
     };
 
@@ -737,18 +740,17 @@ pub(super) fn emit_error_prop(
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect();
-    let enclosing_idx = ctx
-        .registry
-        .result_type_idx(&enclosing_canonical)
-        .ok_or(WasmGcError::Validation(format!(
-            "ErrorProp: enclosing fn return `{}` is not a registered Result<T,E>",
-            ctx.return_type
-        )))?;
-    let (enclosing_t_aver, _) = TypeRegistry::result_te(&enclosing_canonical).ok_or(
-        WasmGcError::Validation(format!(
+    let enclosing_idx =
+        ctx.registry
+            .result_type_idx(&enclosing_canonical)
+            .ok_or(WasmGcError::Validation(format!(
+                "ErrorProp: enclosing fn return `{}` is not a registered Result<T,E>",
+                ctx.return_type
+            )))?;
+    let (enclosing_t_aver, _) =
+        TypeRegistry::result_te(&enclosing_canonical).ok_or(WasmGcError::Validation(format!(
             "ErrorProp: enclosing Result canonical `{enclosing_canonical}` malformed"
-        )),
-    )?;
+        )))?;
 
     // Push subject and stash in scratch so we can read tag and either
     // unwrap field 1 or rebuild the Err arm.
@@ -1385,60 +1387,59 @@ pub(super) fn emit_list_literal(
     // return type), which is more reliable than the per-item /
     // per-fn-return heuristics below.
     let stamped = aver_type_canonical(outer, ctx.return_type, ctx.registry);
-    let canonical = if stamped.starts_with("List<")
-        && ctx.registry.list_type_idx(&stamped).is_some()
-    {
-        stamped
-    } else if let Some(first) = items.first() {
-        // `[Option.None, Option.None, ...]` is a common shape for
-        // building filled rows; `infer_aver_type(Option.None)`
-        // falls back to `ctx.return_type` and produces a doubly-
-        // wrapped `List<List<Option<X>>>` canonical that's never
-        // registered. Same trap for empty-list elements. Prefer
-        // the enclosing fn's return type when it parses as
-        // `List<T>` and the first item lacks its own resolvable
-        // type — this gives the correct T for both shapes.
-        let needs_hint = matches!(&first.node, Expr::List(xs) if xs.is_empty())
-            || is_option_none_expr(&first.node);
-        let elem_ty = if needs_hint {
+    let canonical =
+        if stamped.starts_with("List<") && ctx.registry.list_type_idx(&stamped).is_some() {
+            stamped
+        } else if let Some(first) = items.first() {
+            // `[Option.None, Option.None, ...]` is a common shape for
+            // building filled rows; `infer_aver_type(Option.None)`
+            // falls back to `ctx.return_type` and produces a doubly-
+            // wrapped `List<List<Option<X>>>` canonical that's never
+            // registered. Same trap for empty-list elements. Prefer
+            // the enclosing fn's return type when it parses as
+            // `List<T>` and the first item lacks its own resolvable
+            // type — this gives the correct T for both shapes.
+            let needs_hint = matches!(&first.node, Expr::List(xs) if xs.is_empty())
+                || is_option_none_expr(&first.node);
+            let elem_ty = if needs_hint {
+                let ret: String = ctx
+                    .return_type
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                if let Some(inner) = ret.strip_prefix("List<").and_then(|s| s.strip_suffix('>')) {
+                    inner.to_string()
+                } else {
+                    aver_type_str_of(&first)
+                }
+            } else {
+                aver_type_str_of(&first)
+            };
+            format!("List<{elem_ty}>")
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>()
+        } else if ctx.registry.list_order.len() == 1 {
+            ctx.registry.list_order[0].clone()
+        } else {
+            // Empty literal in a context we can't pin down (verify
+            // expressions, fn returning a non-List type that wraps `[]`
+            // somewhere). Prefer fn return type when it parses as a
+            // List, otherwise fall back to the first registered List —
+            // a deterministic non-failing choice.
             let ret: String = ctx
                 .return_type
                 .chars()
                 .filter(|c| !c.is_whitespace())
                 .collect();
-            if let Some(inner) = ret.strip_prefix("List<").and_then(|s| s.strip_suffix('>')) {
-                inner.to_string()
+            if ret.starts_with("List<") {
+                ret
+            } else if let Some(first) = ctx.registry.list_order.first() {
+                first.clone()
             } else {
-                aver_type_str_of(&first)
+                ret
             }
-        } else {
-            aver_type_str_of(&first)
         };
-        format!("List<{elem_ty}>")
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect::<String>()
-    } else if ctx.registry.list_order.len() == 1 {
-        ctx.registry.list_order[0].clone()
-    } else {
-        // Empty literal in a context we can't pin down (verify
-        // expressions, fn returning a non-List type that wraps `[]`
-        // somewhere). Prefer fn return type when it parses as a
-        // List, otherwise fall back to the first registered List —
-        // a deterministic non-failing choice.
-        let ret: String = ctx
-            .return_type
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect();
-        if ret.starts_with("List<") {
-            ret
-        } else if let Some(first) = ctx.registry.list_order.first() {
-            first.clone()
-        } else {
-            ret
-        }
-    };
     let list_idx = ctx
         .registry
         .list_type_idx(&canonical)
@@ -1602,7 +1603,14 @@ pub(super) fn emit_tuple_constructor_match(
     func.instruction(&Instruction::LocalSet(scratch));
 
     emit_tuple_constructor_arm_cascade(
-        func, scratch, tuple_idx, &elems_owned, arms, block_ty, slots, ctx,
+        func,
+        scratch,
+        tuple_idx,
+        &elems_owned,
+        arms,
+        block_ty,
+        slots,
+        ctx,
     )
 }
 
@@ -1740,8 +1748,7 @@ fn emit_tuple_constructor_arm_cascade(
                             if slot == u16::MAX {
                                 continue;
                             }
-                            let (Some(res_idx), Some(payload_field)) =
-                                (res_idx_opt, payload_field)
+                            let (Some(res_idx), Some(payload_field)) = (res_idx_opt, payload_field)
                             else {
                                 continue;
                             };

@@ -4800,7 +4800,6 @@ fn cmd_compile_wasm_gc(
     );
 }
 
-
 /// True if `bytes` declares any import whose module name is exactly
 /// `module`. Used to detect effect imports without false positives from
 /// data sections that happen to spell `aver_rt`.
@@ -5638,21 +5637,14 @@ pub(super) fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[Modu
                         let prefix_dotted = segments[..split].join(".");
                         let middle_count = segments.len() - split - 1;
                         Some(if middle_count == 0 {
-                            Expr::Ident(prefixed(
-                                &prefix_dotted,
-                                segments[segments.len() - 1],
-                            ))
+                            Expr::Ident(prefixed(&prefix_dotted, segments[segments.len() - 1]))
                         } else {
                             // Variant constructor — keep the type name
                             // bare so the registry's `variant(member)`
                             // lookup (parent=type name) succeeds.
-                            let type_name =
-                                segments[split..segments.len() - 1].join("_");
+                            let type_name = segments[split..segments.len() - 1].join("_");
                             let last = segments[segments.len() - 1].to_string();
-                            Expr::Attr(
-                                Box::new(Spanned::bare(Expr::Ident(type_name))),
-                                last,
-                            )
+                            Expr::Attr(Box::new(Spanned::bare(Expr::Ident(type_name))), last)
                         })
                     })
                 };
@@ -5661,12 +5653,7 @@ pub(super) fn flatten_multimodule(items: &mut Vec<TopLevel>, dep_modules: &[Modu
                     return;
                 }
                 if let Expr::Attr(obj, _) = expr {
-                    rewrite_expr(
-                        &mut obj.node,
-                        prefixes,
-                        same_module_prefix,
-                        same_module_fns,
-                    );
+                    rewrite_expr(&mut obj.node, prefixes, same_module_prefix, same_module_fns);
                 }
             }
             Expr::Constructor(_, payload) => {

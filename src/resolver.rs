@@ -48,10 +48,13 @@ fn build_type_info(items: &[TopLevel]) -> TypeInfo {
     let mut records: HashMap<String, Vec<(String, String)>> = HashMap::new();
     for item in items {
         match item {
-            TopLevel::TypeDef(TypeDef::Sum { name: parent, variants: vs, .. }) => {
+            TopLevel::TypeDef(TypeDef::Sum {
+                name: parent,
+                variants: vs,
+                ..
+            }) => {
                 for v in vs {
-                    variants
-                        .insert((parent.clone(), v.name.clone()), v.fields.clone());
+                    variants.insert((parent.clone(), v.name.clone()), v.fields.clone());
                     variant_parents
                         .entry(v.name.clone())
                         .or_default()
@@ -240,9 +243,7 @@ impl<'a> ResolverState<'a> {
             Expr::ErrorProp(inner) => self.walk_expr(inner),
             Expr::Constructor(_, Some(inner)) => self.walk_expr(inner),
             Expr::Constructor(_, None) => {}
-            Expr::List(items)
-            | Expr::Tuple(items)
-            | Expr::IndependentProduct(items, _) => {
+            Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
                 for it in items {
                     self.walk_expr(it);
                 }
@@ -285,11 +286,7 @@ impl<'a> ResolverState<'a> {
     /// slot list in pattern-position order — that's what the backend
     /// reads via `MatchArm::binding_slots`. Wildcards are present as
     /// `u16::MAX` so the slot list lines up with binding positions.
-    fn allocate_pattern(
-        &mut self,
-        pattern: &Pattern,
-        subject_ty: Option<&Type>,
-    ) -> Vec<u16> {
+    fn allocate_pattern(&mut self, pattern: &Pattern, subject_ty: Option<&Type>) -> Vec<u16> {
         match pattern {
             Pattern::Ident(name) => {
                 let ty = subject_ty.cloned().unwrap_or(Type::Invalid);
@@ -301,10 +298,7 @@ impl<'a> ResolverState<'a> {
                     _ => Type::Invalid,
                 };
                 let list_ty = Type::List(Box::new(elem_ty.clone()));
-                vec![
-                    self.declare(head, elem_ty),
-                    self.declare(tail, list_ty),
-                ]
+                vec![self.declare(head, elem_ty), self.declare(tail, list_ty)]
             }
             Pattern::Constructor(name, bindings) => {
                 let bare = name.rsplit('.').next().unwrap_or(name);
@@ -334,8 +328,7 @@ impl<'a> ResolverState<'a> {
                             fields
                                 .iter()
                                 .map(|s| {
-                                    crate::types::parse_type_str_strict(s)
-                                        .unwrap_or(Type::Invalid)
+                                    crate::types::parse_type_str_strict(s).unwrap_or(Type::Invalid)
                                 })
                                 .collect()
                         })
@@ -511,12 +504,7 @@ fn walk_pattern_bindings(
             // `[head, ..tail]` — head: T, tail: List<T>.
             if let Some(Type::List(inner)) = subject_ty {
                 store(head, (**inner).clone(), local_slots, slot_types);
-                store(
-                    tail,
-                    Type::List(inner.clone()),
-                    local_slots,
-                    slot_types,
-                );
+                store(tail, Type::List(inner.clone()), local_slots, slot_types);
             }
         }
         Pattern::Tuple(items) => {
@@ -562,19 +550,16 @@ fn walk_pattern_bindings(
                     let parent_hint: Option<String> = match (subject_ty, name.split_once('.')) {
                         (Some(Type::Named(parent)), _) => Some(parent.clone()),
                         (_, Some((parent, _))) => Some(parent.to_string()),
-                        _ => type_info
-                            .variant_parents
-                            .get(bare)
-                            .and_then(|parents| {
-                                if parents.len() == 1 {
-                                    Some(parents[0].clone())
-                                } else {
-                                    None
-                                }
-                            }),
+                        _ => type_info.variant_parents.get(bare).and_then(|parents| {
+                            if parents.len() == 1 {
+                                Some(parents[0].clone())
+                            } else {
+                                None
+                            }
+                        }),
                     };
-                    let fields = parent_hint
-                        .and_then(|p| type_info.variants.get(&(p, bare.to_string())));
+                    let fields =
+                        parent_hint.and_then(|p| type_info.variants.get(&(p, bare.to_string())));
                     if let Some(fields) = fields {
                         for (binding, field_ty_str) in bindings.iter().zip(fields.iter()) {
                             let field_ty = crate::types::parse_type_str_strict(field_ty_str)
@@ -843,7 +828,14 @@ mod tests {
             )))),
             resolution: None,
         };
-        resolve_fn(&mut fd, &TypeInfo { variants: HashMap::new(), variant_parents: HashMap::new(), records: HashMap::new() });
+        resolve_fn(
+            &mut fd,
+            &TypeInfo {
+                variants: HashMap::new(),
+                variant_parents: HashMap::new(),
+                records: HashMap::new(),
+            },
+        );
         let res = fd.resolution.as_ref().unwrap();
         assert_eq!(res.local_slots["a"], 0);
         assert_eq!(res.local_slots["b"], 1);
@@ -890,7 +882,14 @@ mod tests {
             )))),
             resolution: None,
         };
-        resolve_fn(&mut fd, &TypeInfo { variants: HashMap::new(), variant_parents: HashMap::new(), records: HashMap::new() });
+        resolve_fn(
+            &mut fd,
+            &TypeInfo {
+                variants: HashMap::new(),
+                variant_parents: HashMap::new(),
+                records: HashMap::new(),
+            },
+        );
         match fd.body.tail_expr() {
             Some(Spanned {
                 node: Expr::FnCall(func, args),
@@ -933,7 +932,14 @@ mod tests {
             ])),
             resolution: None,
         };
-        resolve_fn(&mut fd, &TypeInfo { variants: HashMap::new(), variant_parents: HashMap::new(), records: HashMap::new() });
+        resolve_fn(
+            &mut fd,
+            &TypeInfo {
+                variants: HashMap::new(),
+                variant_parents: HashMap::new(),
+                records: HashMap::new(),
+            },
+        );
         let res = fd.resolution.as_ref().unwrap();
         assert_eq!(res.local_slots["x"], 0);
         assert_eq!(res.local_slots["y"], 1);
@@ -990,17 +996,28 @@ mod tests {
                                 "Result.Ok".to_string(),
                                 vec!["v".to_string()],
                             ),
-                            body: Box::new(Spanned::bare(Expr::Ident("v".to_string()))), binding_slots: std::sync::OnceLock::new() },
+                            body: Box::new(Spanned::bare(Expr::Ident("v".to_string()))),
+                            binding_slots: std::sync::OnceLock::new(),
+                        },
                         MatchArm {
                             pattern: Pattern::Wildcard,
-                            body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))), binding_slots: std::sync::OnceLock::new() },
+                            body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                            binding_slots: std::sync::OnceLock::new(),
+                        },
                     ],
                 },
                 1,
             ))),
             resolution: None,
         };
-        resolve_fn(&mut fd, &TypeInfo { variants: HashMap::new(), variant_parents: HashMap::new(), records: HashMap::new() });
+        resolve_fn(
+            &mut fd,
+            &TypeInfo {
+                variants: HashMap::new(),
+                variant_parents: HashMap::new(),
+                records: HashMap::new(),
+            },
+        );
         let res = fd.resolution.as_ref().unwrap();
         // x=0, v=1
         assert_eq!(res.local_slots["v"], 1);
@@ -1044,10 +1061,14 @@ mod tests {
                                     "Option.Some".to_string(),
                                     vec!["v".to_string()],
                                 ),
-                                body: Box::new(Spanned::bare(Expr::Ident("v".to_string()))), binding_slots: std::sync::OnceLock::new() },
+                                body: Box::new(Spanned::bare(Expr::Ident("v".to_string()))),
+                                binding_slots: std::sync::OnceLock::new(),
+                            },
                             MatchArm {
                                 pattern: Pattern::Wildcard,
-                                body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))), binding_slots: std::sync::OnceLock::new() },
+                                body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
+                                binding_slots: std::sync::OnceLock::new(),
+                            },
                         ],
                     }),
                 ),
@@ -1056,7 +1077,14 @@ mod tests {
             resolution: None,
         };
 
-        resolve_fn(&mut fd, &TypeInfo { variants: HashMap::new(), variant_parents: HashMap::new(), records: HashMap::new() });
+        resolve_fn(
+            &mut fd,
+            &TypeInfo {
+                variants: HashMap::new(),
+                variant_parents: HashMap::new(),
+                records: HashMap::new(),
+            },
+        );
         let res = fd.resolution.as_ref().unwrap();
         assert_eq!(res.local_slots["x"], 0);
         assert_eq!(res.local_slots["result"], 1);

@@ -214,12 +214,11 @@ pub(super) fn emit_dotted_builtin(
             // unfused shape — emit a real `Result<Int, String>`
             // struct so downstream pattern matching sees the canonical
             // tagged carrier instead of a raw i64.
-            let res_idx = ctx
-                .registry
-                .result_type_idx("Result<Int,String>")
-                .ok_or(WasmGcError::Validation(
+            let res_idx = ctx.registry.result_type_idx("Result<Int,String>").ok_or(
+                WasmGcError::Validation(
                     "Int.mod requires Result<Int,String> slot to be registered".into(),
-                ))?;
+                ),
+            )?;
             let s_idx = ctx
                 .registry
                 .string_array_type_idx
@@ -245,12 +244,12 @@ pub(super) fn emit_dotted_builtin(
             // Build the error string literal via the runtime LM bridge.
             let err_literal = "Division by zero";
             let bytes = err_literal.as_bytes();
-            let seg_idx = ctx
-                .registry
-                .string_literal_segment(bytes)
-                .ok_or(WasmGcError::Validation(format!(
-                    "Int.mod error literal `{err_literal}` not in segment table"
-                )))?;
+            let seg_idx =
+                ctx.registry
+                    .string_literal_segment(bytes)
+                    .ok_or(WasmGcError::Validation(format!(
+                        "Int.mod error literal `{err_literal}` not in segment table"
+                    )))?;
             func.instruction(&Instruction::I32Const(0));
             func.instruction(&Instruction::I32Const(bytes.len() as i32));
             func.instruction(&Instruction::ArrayNewData {
@@ -264,7 +263,9 @@ pub(super) fn emit_dotted_builtin(
             emit_expr(func, &args[0], slots, ctx)?;
             emit_expr(func, &args[1], slots, ctx)?;
             func.instruction(&Instruction::I64RemS);
-            func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
+            func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+                s_idx,
+            )));
             func.instruction(&Instruction::StructNew(res_idx));
             func.instruction(&Instruction::End);
             Ok(())
@@ -305,14 +306,9 @@ pub(super) fn emit_dotted_builtin(
             Ok(())
         }
         "String.fromFloat" if args.len() == 1 => {
-            let to_string_idx =
-                ctx.fn_map
-                    .builtins
-                    .get("Float.toString")
-                    .copied()
-                    .ok_or(WasmGcError::Validation(
-                        "String.fromFloat requires Float.toString builtin".into(),
-                    ))?;
+            let to_string_idx = ctx.fn_map.builtins.get("Float.toString").copied().ok_or(
+                WasmGcError::Validation("String.fromFloat requires Float.toString builtin".into()),
+            )?;
             emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::Call(to_string_idx));
             Ok(())

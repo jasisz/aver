@@ -371,7 +371,6 @@ pub(super) fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
     }
 }
 
-
 pub(super) fn count_value_params(params: &[(String, String)]) -> usize {
     params.iter().filter(|(_, ty)| ty.trim() != "Unit").count()
 }

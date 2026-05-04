@@ -186,12 +186,7 @@ impl TypeChecker {
                 Type::Unit,
                 &["Console.error"],
             ),
-            (
-                "Console.warn",
-                &[Type::Str],
-                Type::Unit,
-                &["Console.warn"],
-            ),
+            ("Console.warn", &[Type::Str], Type::Unit, &["Console.warn"]),
             (
                 "Console.readLine",
                 &[],

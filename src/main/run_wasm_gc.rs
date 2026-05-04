@@ -465,12 +465,7 @@ fn dispatch_aver_import(
                 Ok(conn) => {
                     let id_ref = lm_string_from_host(caller, conn.id.as_ref())?;
                     let host_ref = lm_string_from_host(caller, conn.host.as_ref())?;
-                    let rec_ref = host_tcp_connection_make(
-                        caller,
-                        id_ref,
-                        host_ref,
-                        conn.port,
-                    )?;
+                    let rec_ref = host_tcp_connection_make(caller, id_ref, host_ref, conn.port)?;
                     host_result_tcp_connection_ok(caller, rec_ref)?
                 }
                 Err(e) => host_result_tcp_connection_err(caller, &e)?,
@@ -648,7 +643,9 @@ fn host_print(
         Some(Val::AnyRef(r)) => r.clone(),
         _ => return Ok(()),
     };
-    let Some(any_ref) = any_ref else { return Ok(()) };
+    let Some(any_ref) = any_ref else {
+        return Ok(());
+    };
     let to_lm = caller
         .get_export("__rt_string_to_lm")
         .and_then(|e| e.into_func());
@@ -783,11 +780,7 @@ fn host_terminal_size_make(
         return Ok(None);
     };
     let mut out = [Val::AnyRef(None)];
-    factory.call(
-        &mut *caller,
-        &[Val::I64(width), Val::I64(height)],
-        &mut out,
-    )?;
+    factory.call(&mut *caller, &[Val::I64(width), Val::I64(height)], &mut out)?;
     Ok(match &out[0] {
         Val::AnyRef(r) => r.clone(),
         _ => None,
@@ -813,11 +806,7 @@ fn host_http_response_make(
     let mut out = [Val::AnyRef(None)];
     factory.call(
         &mut *caller,
-        &[
-            Val::I64(status),
-            Val::AnyRef(body),
-            Val::AnyRef(headers),
-        ],
+        &[Val::I64(status), Val::AnyRef(body), Val::AnyRef(headers)],
         &mut out,
     )?;
     Ok(match &out[0] {
@@ -1217,4 +1206,3 @@ fn lm_string_from_host<T: 'static>(
     };
     Ok(r)
 }
-

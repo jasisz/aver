@@ -18,8 +18,8 @@ mod maps;
 mod module;
 #[cfg(test)]
 mod tests;
-mod wat_helper;
 mod types;
+mod wat_helper;
 
 #[derive(Debug)]
 pub enum WasmGcError {

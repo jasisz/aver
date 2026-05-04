@@ -715,7 +715,12 @@ fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
                 } else {
                     None
                 }
-            } else if registry.variants.values().flat_map(|v| v.iter()).any(|v| v.parent == other) {
+            } else if registry
+                .variants
+                .values()
+                .flat_map(|v| v.iter())
+                .any(|v| v.parent == other)
+            {
                 let all_simple = registry
                     .variants
                     .values()

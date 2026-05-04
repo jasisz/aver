@@ -694,13 +694,11 @@ impl TypeRegistry {
         });
         if int_mod_used {
             let bytes = b"Division by zero".to_vec();
-            string_literal_idx
-                .entry(bytes.clone())
-                .or_insert_with(|| {
-                    let idx = string_literals.len() as u32;
-                    string_literals.push(bytes);
-                    idx
-                });
+            string_literal_idx.entry(bytes.clone()).or_insert_with(|| {
+                let idx = string_literals.len() as u32;
+                string_literals.push(bytes);
+                idx
+            });
         }
 
         // Mark every record/variant used as a `Map<K, *>` key as
@@ -713,7 +711,10 @@ impl TypeRegistry {
             if let Some((k, _)) = parse_map_kv(canonical) {
                 let k_trim = k.trim();
                 if record_fields.contains_key(k_trim)
-                    || variants.values().flat_map(|v| v.iter()).any(|v| v.parent == k_trim)
+                    || variants
+                        .values()
+                        .flat_map(|v| v.iter())
+                        .any(|v| v.parent == k_trim)
                 {
                     non_newtypable_keys.insert(k_trim.to_string());
                 }
@@ -972,15 +973,8 @@ impl TypeRegistry {
     /// `Pattern::Constructor` / dotted-Attr / dotted FnCall callee)
     /// so the same bare variant name in a sibling sumtype doesn't
     /// silently shadow the right one.
-    pub(super) fn variant_in(
-        &self,
-        parent: &str,
-        name: &str,
-    ) -> Option<&VariantInfo> {
-        self.variants
-            .get(name)?
-            .iter()
-            .find(|v| v.parent == parent)
+    pub(super) fn variant_in(&self, parent: &str, name: &str) -> Option<&VariantInfo> {
+        self.variants.get(name)?.iter().find(|v| v.parent == parent)
     }
 
     pub(super) fn record_field_index(&self, record: &str, field: &str) -> Option<u32> {
@@ -1035,7 +1029,11 @@ impl TypeRegistry {
         }
         // Sum case: parent has exactly one variant, that variant has
         // exactly one field, that field is primitive.
-        let mut variants_of_parent = self.variants.values().flat_map(|v| v.iter()).filter(|v| v.parent == type_name);
+        let mut variants_of_parent = self
+            .variants
+            .values()
+            .flat_map(|v| v.iter())
+            .filter(|v| v.parent == type_name);
         if let Some(only) = variants_of_parent.next()
             && variants_of_parent.next().is_none()
             && only.fields.len() == 1
@@ -1136,22 +1134,13 @@ fn collect_results_from_builtin_uses(
                         "Byte.toHex" | "Console.readLine" | "Disk.readText" => {
                             intern("Result<String,String>")
                         }
-                        "Disk.writeText"
-                        | "Disk.appendText"
-                        | "Disk.delete"
-                        | "Disk.deleteDir"
+                        "Disk.writeText" | "Disk.appendText" | "Disk.delete" | "Disk.deleteDir"
                         | "Disk.makeDir" => intern("Result<Unit,String>"),
                         "Disk.listDir" => intern("Result<List<String>,String>"),
                         "Tcp.connect" => intern("Result<Tcp.Connection,String>"),
                         "Tcp.readLine" | "Tcp.send" => intern("Result<String,String>"),
-                        "Tcp.writeLine" | "Tcp.close" | "Tcp.ping" => {
-                            intern("Result<Unit,String>")
-                        }
-                        "Http.get"
-                        | "Http.head"
-                        | "Http.delete"
-                        | "Http.post"
-                        | "Http.put"
+                        "Tcp.writeLine" | "Tcp.close" | "Tcp.ping" => intern("Result<Unit,String>"),
+                        "Http.get" | "Http.head" | "Http.delete" | "Http.post" | "Http.put"
                         | "Http.patch" => intern("Result<HttpResponse,String>"),
                         _ => {}
                     }
@@ -2130,7 +2119,12 @@ pub(super) fn aver_to_wasm(
         // variant constructor's type idx still emits a concrete
         // struct.new; the parent ref shape is what params/locals
         // declare.
-        if reg.variants.values().flat_map(|v| v.iter()).any(|v| v.parent == trimmed) {
+        if reg
+            .variants
+            .values()
+            .flat_map(|v| v.iter())
+            .any(|v| v.parent == trimmed)
+        {
             // Phase-3a: use `(ref null eq)` as the carrier — every
             // wasm-gc struct is a subtype of `eq`. Real subtype
             // hierarchies (where pattern matching tests `ref.test`
@@ -2429,19 +2423,13 @@ fn effect_implies_builtin_record(effect: &str, record_name: &str) -> bool {
         // *consume* one through their first parameter, so even a
         // program that only reads / writes / closes still needs the
         // slot allocated.
-        "Tcp.connect"
-        | "Tcp.writeLine"
-        | "Tcp.readLine"
-        | "Tcp.close" => "Tcp.Connection",
+        "Tcp.connect" | "Tcp.writeLine" | "Tcp.readLine" | "Tcp.close" => "Tcp.Connection",
         // HTTP verb effects all return Result<HttpResponse, String> —
         // ensure the response record slot is allocated even when no
         // user fn signature mentions it.
-        "Http.get"
-        | "Http.head"
-        | "Http.delete"
-        | "Http.post"
-        | "Http.put"
-        | "Http.patch" => "HttpResponse",
+        "Http.get" | "Http.head" | "Http.delete" | "Http.post" | "Http.put" | "Http.patch" => {
+            "HttpResponse"
+        }
         // Request / Response surface comes via the user's
         // `! [Request.method]` etc. The Aver type checker already
         // requires HttpRequest / HttpResponse in the handler's
