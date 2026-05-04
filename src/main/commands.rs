@@ -4395,6 +4395,7 @@ fn cmd_compile_wasm(
                 project_name,
                 module_root_override,
                 handler,
+                optimize,
             );
             return;
         }
@@ -4673,6 +4674,7 @@ fn cmd_compile_wasm_gc(
     project_name: Option<&str>,
     module_root_override: Option<&str>,
     handler: Option<&str>,
+    optimize: Option<super::cli::WasmOptMode>,
 ) {
     use aver::codegen::wasm_gc;
 
@@ -4773,11 +4775,20 @@ fn cmd_compile_wasm_gc(
         eprintln!("{}", format!("Failed to write WASM file: {}", e).red());
         process::exit(1);
     }
+    // Optional `--optimize` post-pass: wasm-metadce skipped (factory
+    // exports + `__rt_*` LM transport helpers are host-callable roots,
+    // metadce graph would have to enumerate every conditional export
+    // by hand). `wasm-opt -Oz` keeps the export surface and converges
+    // on a smaller body — that's where the per-instantiation helpers
+    // (Map probes, List ops, eq helpers) shrink when unreachable.
+    let (final_size, opt_suffix) =
+        finalize_wasm_artifact(&wasm_file, optimize, MetadceMode::HostCallable);
     println!(
-        "{} wasm-gc → {} ({} bytes)",
+        "{} wasm-gc → {} ({} bytes{})",
         "•".cyan(),
         wasm_file.display().to_string().cyan(),
-        bytes.len()
+        final_size,
+        opt_suffix
     );
 }
 
@@ -5164,6 +5175,8 @@ fn run_optimize_pipeline_inner(
                 .arg("--enable-bulk-memory")
                 .arg("--enable-multivalue")
                 .arg("--enable-tail-call")
+                .arg("--enable-gc")
+                .arg("--enable-reference-types")
                 .arg(wasm_file)
                 .arg("-o")
                 .arg(&stage1_file)
@@ -5202,6 +5215,8 @@ fn run_optimize_pipeline_inner(
         .arg("--enable-bulk-memory")
         .arg("--enable-multivalue")
         .arg("--enable-tail-call")
+        .arg("--enable-gc")
+        .arg("--enable-reference-types")
         .arg(&stage1_file)
         .arg("-o")
         .arg(&optimized_file)
