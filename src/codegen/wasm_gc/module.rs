@@ -657,7 +657,11 @@ fn emit_user_types(
                     )))?;
                 entries.push((idx, mk_struct(st.fields.to_vec())));
             }
-            TopLevel::TypeDef(TypeDef::Sum { variants, .. }) => {
+            TopLevel::TypeDef(TypeDef::Sum {
+                name: parent,
+                variants,
+                ..
+            }) => {
                 for v in variants {
                     let mut fields = Vec::new();
                     for ty in &v.fields {
@@ -672,13 +676,19 @@ fn emit_user_types(
                             mutable: false,
                         });
                     }
-                    let info =
-                        registry
-                            .variant(&v.name)
-                            .ok_or(WasmGcError::Validation(format!(
-                                "variant `{}` not registered",
-                                v.name
-                            )))?;
+                    // Look up by (parent, variant) so two sumtypes
+                    // sharing a bare variant name (e.g. payment_ops's
+                    // `Query.ProviderSummary` and `QueryOutput.
+                    // ProviderSummary`) each emit their own struct
+                    // type idx with their own field shape — instead of
+                    // both nadpisując the same entry under the `bare`
+                    // key.
+                    let info = registry.variant_in(parent, &v.name).ok_or(
+                        WasmGcError::Validation(format!(
+                            "variant `{parent}.{}` not registered",
+                            v.name
+                        )),
+                    )?;
                     entries.push((info.type_idx, mk_struct(fields)));
                 }
             }
@@ -1067,7 +1077,7 @@ fn discover_builtins_in_expr(
             {
                 if type_registry.record_fields.contains_key(name) {
                     eq_helpers.register(name, EqKind::Record);
-                } else if type_registry.variants.values().any(|v| &v.parent == name) {
+                } else if type_registry.variants.values().flat_map(|v| v.iter()).any(|v| &v.parent == name) {
                     eq_helpers.register(name, EqKind::Sum);
                 }
             }

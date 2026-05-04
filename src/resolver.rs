@@ -19,12 +19,21 @@ use crate::ast::*;
 /// user-declared variant or record so pattern bindings get a precise
 /// `Type` per slot.
 struct TypeInfo {
-    /// `variant_name -> (parent_sum_name, field type strings)`. Variant
-    /// names are stored bare (the part after the last `.`), matching
-    /// what `Pattern::Constructor`'s `rsplit('.').next()` produces at
-    /// match sites — so `Lambda.Abs` and `Abs` both look up the same
-    /// entry.
-    variants: HashMap<String, Vec<String>>,
+    /// `(parent_sum_name, variant_name) -> field type strings`. Variant
+    /// names are stored bare; the parent disambiguates when the same
+    /// bare name appears across multiple sumtypes (for example
+    /// `Query.ProviderSummary(String)` and `QueryOutput.ProviderSummary
+    /// (ProviderSummary)` both expose a `ProviderSummary` variant —
+    /// without the parent key, one would silently shadow the other and
+    /// the resolver would stamp pattern bindings with the wrong field
+    /// type).
+    variants: HashMap<(String, String), Vec<String>>,
+    /// `variant_name -> [parent sumtypes]`. Used when the match-site's
+    /// subject type isn't carried (older callers or wildcard subjects);
+    /// falls back to the unique parent if there's exactly one, or
+    /// returns the first registered for backward compatibility with
+    /// monomorphic programs.
+    variant_parents: HashMap<String, Vec<String>>,
     /// `record_name -> [(field_name, field_type_string)]`. Records that
     /// reach a binding via record-update or pattern destructure are
     /// looked up here when the slot-types pass needs to know a field's
@@ -34,13 +43,19 @@ struct TypeInfo {
 }
 
 fn build_type_info(items: &[TopLevel]) -> TypeInfo {
-    let mut variants: HashMap<String, Vec<String>> = HashMap::new();
+    let mut variants: HashMap<(String, String), Vec<String>> = HashMap::new();
+    let mut variant_parents: HashMap<String, Vec<String>> = HashMap::new();
     let mut records: HashMap<String, Vec<(String, String)>> = HashMap::new();
     for item in items {
         match item {
-            TopLevel::TypeDef(TypeDef::Sum { variants: vs, .. }) => {
+            TopLevel::TypeDef(TypeDef::Sum { name: parent, variants: vs, .. }) => {
                 for v in vs {
-                    variants.insert(v.name.clone(), v.fields.clone());
+                    variants
+                        .insert((parent.clone(), v.name.clone()), v.fields.clone());
+                    variant_parents
+                        .entry(v.name.clone())
+                        .or_default()
+                        .push(parent.clone());
                 }
             }
             TopLevel::TypeDef(TypeDef::Product { name, fields, .. }) => {
@@ -49,7 +64,11 @@ fn build_type_info(items: &[TopLevel]) -> TypeInfo {
             _ => {}
         }
     }
-    TypeInfo { variants, records }
+    TypeInfo {
+        variants,
+        variant_parents,
+        records,
+    }
 }
 
 /// Run the resolver on all top-level function definitions. Stops after
@@ -293,7 +312,27 @@ fn walk_pattern_bindings(
                 _ => {
                     // User-declared variant — look up the parent sum's
                     // declared field types via the cross-fn registry.
-                    if let Some(fields) = type_info.variants.get(bare) {
+                    // Disambiguate by subject type when the same bare
+                    // variant name is shared across multiple sumtypes
+                    // (e.g. `Query.ProviderSummary(String)` vs
+                    // `QueryOutput.ProviderSummary(ProviderSummary)`).
+                    let parent_hint: Option<String> = match (subject_ty, name.split_once('.')) {
+                        (Some(Type::Named(parent)), _) => Some(parent.clone()),
+                        (_, Some((parent, _))) => Some(parent.to_string()),
+                        _ => type_info
+                            .variant_parents
+                            .get(bare)
+                            .and_then(|parents| {
+                                if parents.len() == 1 {
+                                    Some(parents[0].clone())
+                                } else {
+                                    None
+                                }
+                            }),
+                    };
+                    let fields = parent_hint
+                        .and_then(|p| type_info.variants.get(&(p, bare.to_string())));
+                    if let Some(fields) = fields {
                         for (binding, field_ty_str) in bindings.iter().zip(fields.iter()) {
                             let field_ty = crate::types::parse_type_str_strict(field_ty_str)
                                 .unwrap_or(Type::Invalid);
@@ -561,7 +600,7 @@ mod tests {
             )))),
             resolution: None,
         };
-        resolve_fn(&mut fd, &TypeInfo { variants: HashMap::new(), records: HashMap::new() });
+        resolve_fn(&mut fd, &TypeInfo { variants: HashMap::new(), variant_parents: HashMap::new(), records: HashMap::new() });
         let res = fd.resolution.as_ref().unwrap();
         assert_eq!(res.local_slots["a"], 0);
         assert_eq!(res.local_slots["b"], 1);
@@ -608,7 +647,7 @@ mod tests {
             )))),
             resolution: None,
         };
-        resolve_fn(&mut fd, &TypeInfo { variants: HashMap::new(), records: HashMap::new() });
+        resolve_fn(&mut fd, &TypeInfo { variants: HashMap::new(), variant_parents: HashMap::new(), records: HashMap::new() });
         match fd.body.tail_expr() {
             Some(Spanned {
                 node: Expr::FnCall(func, args),
@@ -651,7 +690,7 @@ mod tests {
             ])),
             resolution: None,
         };
-        resolve_fn(&mut fd, &TypeInfo { variants: HashMap::new(), records: HashMap::new() });
+        resolve_fn(&mut fd, &TypeInfo { variants: HashMap::new(), variant_parents: HashMap::new(), records: HashMap::new() });
         let res = fd.resolution.as_ref().unwrap();
         assert_eq!(res.local_slots["x"], 0);
         assert_eq!(res.local_slots["y"], 1);
@@ -720,7 +759,7 @@ mod tests {
             ))),
             resolution: None,
         };
-        resolve_fn(&mut fd, &TypeInfo { variants: HashMap::new(), records: HashMap::new() });
+        resolve_fn(&mut fd, &TypeInfo { variants: HashMap::new(), variant_parents: HashMap::new(), records: HashMap::new() });
         let res = fd.resolution.as_ref().unwrap();
         // x=0, v=1
         assert_eq!(res.local_slots["v"], 1);
@@ -778,7 +817,7 @@ mod tests {
             resolution: None,
         };
 
-        resolve_fn(&mut fd, &TypeInfo { variants: HashMap::new(), records: HashMap::new() });
+        resolve_fn(&mut fd, &TypeInfo { variants: HashMap::new(), variant_parents: HashMap::new(), records: HashMap::new() });
         let res = fd.resolution.as_ref().unwrap();
         assert_eq!(res.local_slots["x"], 0);
         assert_eq!(res.local_slots["result"], 1);

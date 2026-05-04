@@ -189,17 +189,68 @@ pub(super) fn emit_dotted_builtin(
             Ok(())
         }
         "Int.mod" if args.len() == 2 => {
-            // Aver `Int.mod` returns `Result<Int, Error>` for div-by-
-            // zero; common surface shape is `Result.withDefault(Int
-            // .mod(a, b), default)` which collapses to the i64.rem_s
-            // result on success or the default on b==0. We emit the
-            // raw rem_s here and let the wrapping Result.withDefault
-            // (or pattern match) handle the error path. Bare Int.mod
-            // not wrapped in withDefault will trap on b==0 — the type
-            // checker accepts that surface form regardless.
+            // Aver `Int.mod` returns `Result<Int, Error>` — Aver
+            // surface code can match on `Result.Ok(n)` / `Result.Err(_)`
+            // or feed the call into `Result.withDefault`. The fused
+            // `Result.withDefault(Int.mod(a, b), default)` form collapses
+            // to a bare `i64.rem_s` (or the default on b==0) inside
+            // `emit_result_with_default`; reaching here means the
+            // unfused shape — emit a real `Result<Int, String>`
+            // struct so downstream pattern matching sees the canonical
+            // tagged carrier instead of a raw i64.
+            let res_idx = ctx
+                .registry
+                .result_type_idx("Result<Int,String>")
+                .ok_or(WasmGcError::Validation(
+                    "Int.mod requires Result<Int,String> slot to be registered".into(),
+                ))?;
+            let s_idx = ctx
+                .registry
+                .string_array_type_idx
+                .ok_or(WasmGcError::Validation(
+                    "Int.mod requires String slot to be registered".into(),
+                ))?;
+            // tag = 0 if b == 0 else 1
+            // ok = (a rem b) on success, 0 placeholder on error
+            // err = "Division by zero" String on error, null placeholder on success
+            let block_ty_struct = wasm_encoder::BlockType::Result(wasm_encoder::ValType::Ref(
+                wasm_encoder::RefType {
+                    nullable: true,
+                    heap_type: wasm_encoder::HeapType::Concrete(res_idx),
+                },
+            ));
+            emit_expr(func, &args[1], slots, ctx)?;
+            func.instruction(&Instruction::I64Const(0));
+            func.instruction(&Instruction::I64Eq);
+            func.instruction(&Instruction::If(block_ty_struct));
+            // Err: tag=0, T=0 (Int placeholder), E="Division by zero"
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::I64Const(0));
+            // Build the error string literal via the runtime LM bridge.
+            let err_literal = "Division by zero";
+            let bytes = err_literal.as_bytes();
+            let seg_idx = ctx
+                .registry
+                .string_literal_segment(bytes)
+                .ok_or(WasmGcError::Validation(format!(
+                    "Int.mod error literal `{err_literal}` not in segment table"
+                )))?;
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::I32Const(bytes.len() as i32));
+            func.instruction(&Instruction::ArrayNewData {
+                array_type_index: s_idx,
+                array_data_index: seg_idx,
+            });
+            func.instruction(&Instruction::StructNew(res_idx));
+            func.instruction(&Instruction::Else);
+            // Ok: tag=1, T=a rem b, E=null
+            func.instruction(&Instruction::I32Const(1));
             emit_expr(func, &args[0], slots, ctx)?;
             emit_expr(func, &args[1], slots, ctx)?;
             func.instruction(&Instruction::I64RemS);
+            func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
+            func.instruction(&Instruction::StructNew(res_idx));
+            func.instruction(&Instruction::End);
             Ok(())
         }
         // Bool ops: Aver Bool == wasm i32. and/or/not are bitwise

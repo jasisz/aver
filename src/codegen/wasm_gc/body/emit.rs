@@ -407,19 +407,27 @@ pub(super) fn emit_expr(
                 {
                     return emit_list_empty(func, ctx);
                 }
-                if let Some(info) = ctx.registry.variant(member).cloned() {
+                // `Foo.Bar(args...)` — sum-type variant constructor.
+                // Disambiguate by parent so two sumtypes sharing a
+                // bare variant name (e.g. `Query.ProviderSummary` vs
+                // `QueryOutput.ProviderSummary`) pick up their own
+                // concrete struct idx.
+                let parent_ident = match &parent.node {
+                    Expr::Ident(n) => Some(n.as_str()),
+                    Expr::Resolved { name, .. } => Some(name.as_str()),
+                    _ => None,
+                };
+                let info = parent_ident
+                    .and_then(|p| ctx.registry.variant_in(p, member))
+                    .or_else(|| ctx.registry.variant(member))
+                    .cloned();
+                if let Some(info) = info {
                     return emit_constructor_with_args(func, &info, args, slots, ctx);
                 }
                 // Builtins: `Type.method(args...)` shape. We support
                 // a curated set today (the ones bench scenarios use);
                 // anything else surfaces as Unimplemented.
-                if let Expr::Ident(parent_name) = &parent.node {
-                    return emit_dotted_builtin(func, parent_name, member, args, slots, ctx);
-                }
-                if let Expr::Resolved {
-                    name: parent_name, ..
-                } = &parent.node
-                {
+                if let Some(parent_name) = parent_ident {
                     return emit_dotted_builtin(func, parent_name, member, args, slots, ctx);
                 }
             }
@@ -480,8 +488,7 @@ pub(super) fn emit_expr(
                 };
                 emit_option_constructor(func, None, Some(&hint), slots, ctx)?;
             } else if let Expr::Ident(parent) = &obj.node
-                && let Some(info) = ctx.registry.variant(field).cloned()
-                && info.parent == *parent
+                && let Some(info) = ctx.registry.variant_in(parent, field).cloned()
                 && info.fields.is_empty()
             {
                 // `Tag.Red` etc. — Attr access on a user-defined sum
@@ -537,7 +544,7 @@ fn sum_or_record_eq_fn(operand: &Spanned<Expr>, ctx: &EmitCtx<'_>) -> Option<u32
         return None;
     }
     let is_record = ctx.registry.record_fields.contains_key(name);
-    let is_sum = ctx.registry.variants.values().any(|v| &v.parent == name);
+    let is_sum = ctx.registry.variants.values().flat_map(|v| v.iter()).any(|v| &v.parent == name);
     if !is_record && !is_sum {
         return None;
     }
@@ -2322,9 +2329,15 @@ pub(super) fn emit_variant_arm_cascade(
     match &arm.pattern {
         Pattern::Constructor(name, _) => {
             let bare = name.rsplit('.').next().unwrap_or(name);
-            let info = ctx
-                .registry
-                .variant(bare)
+            let parent_hint = name.rsplit_once('.').map(|(p, _)| p);
+            // Prefer the parent-disambiguated lookup so two sumtypes
+            // sharing a bare variant name (e.g. `Query.ProviderSummary`
+            // and `QueryOutput.ProviderSummary` in payment_ops) pick
+            // up their own concrete struct idx instead of whichever
+            // sumtype's TypeDef appeared first.
+            let info = parent_hint
+                .and_then(|p| ctx.registry.variant_in(p, bare))
+                .or_else(|| ctx.registry.variant(bare))
                 .ok_or(WasmGcError::Validation(format!(
                     "unknown variant `{name}` in match"
                 )))?;
@@ -2363,9 +2376,10 @@ pub(super) fn emit_arm_body(
 ) -> Result<(), WasmGcError> {
     if let Pattern::Constructor(name, bindings) = &arm.pattern {
         let bare = name.rsplit('.').next().unwrap_or(name);
-        let info = ctx
-            .registry
-            .variant(bare)
+        let parent_hint = name.rsplit_once('.').map(|(p, _)| p);
+        let info = parent_hint
+            .and_then(|p| ctx.registry.variant_in(p, bare))
+            .or_else(|| ctx.registry.variant(bare))
             .ok_or(WasmGcError::Validation(format!(
                 "unknown variant `{name}` in match"
             )))?;
@@ -2430,9 +2444,10 @@ pub(super) fn emit_single_variant_match(
     // Constructor names in patterns are dotted (e.g. `UserId.UserId`);
     // the registry stores by the bare variant name.
     let bare = constructor.rsplit('.').next().unwrap_or(constructor);
-    let info = ctx
-        .registry
-        .variant(bare)
+    let parent_hint = constructor.rsplit_once('.').map(|(p, _)| p);
+    let info = parent_hint
+        .and_then(|p| ctx.registry.variant_in(p, bare))
+        .or_else(|| ctx.registry.variant(bare))
         .ok_or(WasmGcError::Validation(format!(
             "unknown variant `{constructor}` in match pattern"
         )))?;
@@ -2617,9 +2632,15 @@ pub(super) fn emit_constructor(
     if name == "Result.Err" || (bare == "Err" && name.starts_with("Result")) {
         return emit_result_constructor(func, "Err", payload, slots, ctx);
     }
-    let info = ctx
-        .registry
-        .variant(name)
+    // Constructor names can be dotted (`Foo.Bar`) or bare (`Bar`).
+    // Prefer the parent-disambiguated lookup when the dotted form is
+    // available so two sumtypes sharing a bare variant name don't
+    // collide.
+    let bare = name.rsplit('.').next().unwrap_or(name);
+    let parent_hint = name.rsplit_once('.').map(|(p, _)| p);
+    let info = parent_hint
+        .and_then(|p| ctx.registry.variant_in(p, bare))
+        .or_else(|| ctx.registry.variant(bare))
         .ok_or(WasmGcError::Validation(format!(
             "unknown variant constructor `{name}`"
         )))?;

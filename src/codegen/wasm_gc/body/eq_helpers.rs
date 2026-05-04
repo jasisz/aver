@@ -166,6 +166,7 @@ fn type_has_string_field(
         EqKind::Sum => registry
             .variants
             .values()
+            .flat_map(|vs| vs.iter())
             .filter(|v| v.parent == name)
             .any(|v| v.fields.iter().any(|t| t.trim() == "String")),
     }

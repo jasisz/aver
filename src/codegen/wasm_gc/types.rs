@@ -36,7 +36,13 @@ pub(super) struct TypeRegistry {
     /// `variant_constructor_name → (parent_type_name, type_idx, fields)`.
     /// `fields` are the type strings of the constructor's positional
     /// fields (Aver variants use positional fields, not named ones).
-    pub(super) variants: HashMap<String, VariantInfo>,
+    /// Bare variant name → every registered variant with that name
+    /// (one per parent sumtype). Two sumtypes can share a variant
+    /// name (e.g. `Query.ProviderSummary` and `QueryOutput.
+    /// ProviderSummary` in payment_ops); without the parent in the
+    /// key, one would silently shadow the other and emit would pick
+    /// the wrong concrete struct type.
+    pub(super) variants: HashMap<String, Vec<VariantInfo>>,
     /// `record_name → field list` so `Attr` can resolve a field name
     /// to its struct field index + type.
     pub(super) record_fields: HashMap<String, Vec<(String, String)>>,
@@ -147,7 +153,7 @@ impl TypeRegistry {
         // unchanged.
         let handler_active = _handler_active;
         let mut records = HashMap::new();
-        let mut variants = HashMap::new();
+        let mut variants: HashMap<String, Vec<VariantInfo>> = HashMap::new();
         let mut record_fields = HashMap::new();
         let mut next_idx: u32 = 0;
         for item in items {
@@ -161,14 +167,14 @@ impl TypeRegistry {
                     name, variants: vs, ..
                 }) => {
                     for v in vs {
-                        variants.insert(
-                            v.name.clone(),
-                            VariantInfo {
+                        variants
+                            .entry(v.name.clone())
+                            .or_default()
+                            .push(VariantInfo {
                                 parent: name.clone(),
                                 type_idx: next_idx,
                                 fields: v.fields.clone(),
-                            },
-                        );
+                            });
                         next_idx += 1;
                     }
                 }
@@ -674,6 +680,28 @@ impl TypeRegistry {
                 collect_string_literals_in_fn(fd, &mut string_literals, &mut string_literal_idx);
             }
         }
+        // `Int.mod` lowers to a boxed `Result<Int, String>` whose Err
+        // arm carries a fixed "Division by zero" message — register
+        // its bytes as a passive segment so the emitter has an idx
+        // to pull at struct.new time, regardless of whether user
+        // source ever spells the literal.
+        let int_mod_used = items.iter().any(|item| {
+            if let TopLevel::FnDef(fd) = item {
+                fn_body_calls_int_mod(fd)
+            } else {
+                false
+            }
+        });
+        if int_mod_used {
+            let bytes = b"Division by zero".to_vec();
+            string_literal_idx
+                .entry(bytes.clone())
+                .or_insert_with(|| {
+                    let idx = string_literals.len() as u32;
+                    string_literals.push(bytes);
+                    idx
+                });
+        }
 
         // Mark every record/variant used as a `Map<K, *>` key as
         // non-newtypable so it stays a struct ref in the type
@@ -685,7 +713,7 @@ impl TypeRegistry {
             if let Some((k, _)) = parse_map_kv(canonical) {
                 let k_trim = k.trim();
                 if record_fields.contains_key(k_trim)
-                    || variants.values().any(|v| v.parent == k_trim)
+                    || variants.values().flat_map(|v| v.iter()).any(|v| v.parent == k_trim)
                 {
                     non_newtypable_keys.insert(k_trim.to_string());
                 }
@@ -931,8 +959,28 @@ impl TypeRegistry {
         None
     }
 
+    /// Look up a variant by bare name. Returns the first registered
+    /// entry — fine when the name is unambiguous across the whole
+    /// program (the common case). Callers that know the parent
+    /// sumtype should use `variant_in` to disambiguate.
     pub(super) fn variant(&self, name: &str) -> Option<&VariantInfo> {
-        self.variants.get(name)
+        self.variants.get(name).and_then(|v| v.first())
+    }
+
+    /// Look up a variant in a specific parent sumtype. Use this when
+    /// the call site has the full `ParentType.VariantName` shape (a
+    /// `Pattern::Constructor` / dotted-Attr / dotted FnCall callee)
+    /// so the same bare variant name in a sibling sumtype doesn't
+    /// silently shadow the right one.
+    pub(super) fn variant_in(
+        &self,
+        parent: &str,
+        name: &str,
+    ) -> Option<&VariantInfo> {
+        self.variants
+            .get(name)?
+            .iter()
+            .find(|v| v.parent == parent)
     }
 
     pub(super) fn record_field_index(&self, record: &str, field: &str) -> Option<u32> {
@@ -987,7 +1035,7 @@ impl TypeRegistry {
         }
         // Sum case: parent has exactly one variant, that variant has
         // exactly one field, that field is primitive.
-        let mut variants_of_parent = self.variants.values().filter(|v| v.parent == type_name);
+        let mut variants_of_parent = self.variants.values().flat_map(|v| v.iter()).filter(|v| v.parent == type_name);
         if let Some(only) = variants_of_parent.next()
             && variants_of_parent.next().is_none()
             && only.fields.len() == 1
@@ -1911,6 +1959,44 @@ fn expr_uses_string(expr: &crate::ast::Expr) -> bool {
 /// table. Both `Literal::Str` and the `Literal` parts of an
 /// `InterpolatedStr` count — each unique byte sequence gets a passive
 /// data segment.
+fn fn_body_calls_int_mod(fd: &crate::ast::FnDef) -> bool {
+    use crate::ast::{Expr, FnBody, Stmt};
+    fn walk(e: &Expr) -> bool {
+        match e {
+            Expr::FnCall(callee, args) => {
+                let hit = if let Expr::Attr(parent, member) = &callee.node
+                    && let Expr::Ident(p) = &parent.node
+                {
+                    p == "Int" && member == "mod"
+                } else {
+                    false
+                };
+                hit || walk(&callee.node) || args.iter().any(|a| walk(&a.node))
+            }
+            Expr::Match { subject, arms } => {
+                walk(&subject.node) || arms.iter().any(|a| walk(&a.body.node))
+            }
+            Expr::BinOp(_, l, r) => walk(&l.node) || walk(&r.node),
+            Expr::Attr(o, _) => walk(&o.node),
+            Expr::ErrorProp(i) => walk(&i.node),
+            Expr::TailCall(b) => b.args.iter().any(|a| walk(&a.node)),
+            Expr::List(xs) | Expr::Tuple(xs) | Expr::IndependentProduct(xs, _) => {
+                xs.iter().any(|x| walk(&x.node))
+            }
+            Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| walk(&e.node)),
+            Expr::RecordUpdate { base, updates, .. } => {
+                walk(&base.node) || updates.iter().any(|(_, e)| walk(&e.node))
+            }
+            Expr::Constructor(_, p) => p.as_deref().is_some_and(|x| walk(&x.node)),
+            _ => false,
+        }
+    }
+    let FnBody::Block(stmts) = fd.body.as_ref();
+    stmts.iter().any(|stmt| match stmt {
+        Stmt::Binding(_, _, e) | Stmt::Expr(e) => walk(&e.node),
+    })
+}
+
 fn collect_string_literals_in_fn(
     fd: &crate::ast::FnDef,
     out: &mut Vec<Vec<u8>>,
@@ -2044,7 +2130,7 @@ pub(super) fn aver_to_wasm(
         // variant constructor's type idx still emits a concrete
         // struct.new; the parent ref shape is what params/locals
         // declare.
-        if reg.variants.values().any(|v| v.parent == trimmed) {
+        if reg.variants.values().flat_map(|v| v.iter()).any(|v| v.parent == trimmed) {
             // Phase-3a: use `(ref null eq)` as the carrier — every
             // wasm-gc struct is a subtype of `eq`. Real subtype
             // hierarchies (where pattern matching tests `ref.test`

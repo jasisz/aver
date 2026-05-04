@@ -715,10 +715,11 @@ fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
                 } else {
                     None
                 }
-            } else if registry.variants.values().any(|v| v.parent == other) {
+            } else if registry.variants.values().flat_map(|v| v.iter()).any(|v| v.parent == other) {
                 let all_simple = registry
                     .variants
                     .values()
+                    .flat_map(|vs| vs.iter())
                     .filter(|v| v.parent == other)
                     .all(|v| {
                         v.fields
@@ -1686,8 +1687,8 @@ pub(super) fn emit_sum_eq_inline(
     let mut variants: Vec<(String, super::types::VariantInfo)> = registry
         .variants
         .iter()
+        .flat_map(|(n, vs)| vs.iter().map(move |v| (n.clone(), v.clone())))
         .filter(|(_, v)| v.parent == parent_name)
-        .map(|(n, v)| (n.clone(), v.clone()))
         .collect();
     variants.sort_by(|a, b| a.0.cmp(&b.0));
     if variants.is_empty() {

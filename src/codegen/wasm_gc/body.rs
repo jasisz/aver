@@ -284,6 +284,7 @@ impl<'a> CallLowerCtx for EmitCtx<'a> {
                 .registry
                 .variants
                 .values()
+                .flat_map(|vs| vs.iter())
                 .any(|info| info.parent == name)
     }
 

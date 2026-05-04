@@ -4741,6 +4741,10 @@ fn cmd_compile_wasm_gc(
         false, /* run_buffer_build */
     );
     flatten_multimodule(&mut items, &dep_modules);
+    // Re-run resolver after flatten so dep fns get a FnResolution
+    // (slot_types). Entry items already had one from `pipeline::run`
+    // above; this picks up the newly appended dep FnDefs.
+    aver::ir::pipeline::resolve(&mut items);
 
     let bytes = match wasm_gc::compile_to_wasm_gc_with_handler(
         &items,

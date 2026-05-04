@@ -139,10 +139,11 @@ impl MapHelperRegistry {
             if let Some(fs) = registry.record_fields.get(k_aver) {
                 needs_string |= fs.iter().any(|(_, t)| t.trim() == "String");
             }
-            if registry.variants.values().any(|v| v.parent == k_aver) {
+            if registry.variants.values().flat_map(|v| v.iter()).any(|v| v.parent == k_aver) {
                 needs_string |= registry
                     .variants
                     .values()
+                    .flat_map(|vs| vs.iter())
                     .filter(|v| v.parent == k_aver)
                     .any(|v| v.fields.iter().any(|t| t.trim() == "String"));
             }
@@ -163,7 +164,7 @@ impl MapHelperRegistry {
             .iter()
             .filter(|n| {
                 registry.record_type_idx(n).is_some()
-                    || registry.variants.values().any(|v| v.parent == *n.as_str())
+                    || registry.variants.values().flat_map(|v| v.iter()).any(|v| v.parent == *n.as_str())
             })
             .cloned()
             .collect();
@@ -177,14 +178,14 @@ impl MapHelperRegistry {
                     field_types.push(t.trim().to_string());
                 }
             }
-            for variant in registry.variants.values().filter(|v| v.parent == parent) {
+            for variant in registry.variants.values().flat_map(|v| v.iter()).filter(|v| v.parent == parent) {
                 for t in &variant.fields {
                     field_types.push(t.trim().to_string());
                 }
             }
             for ft in field_types {
                 let is_record = registry.record_type_idx(&ft).is_some();
-                let is_sum = registry.variants.values().any(|v| v.parent == ft);
+                let is_sum = registry.variants.values().flat_map(|v| v.iter()).any(|v| v.parent == ft);
                 if (is_record || is_sum) && k_seen.insert(ft.clone()) {
                     k_names.push(ft.clone());
                     to_visit.push(ft.clone());
@@ -198,6 +199,7 @@ impl MapHelperRegistry {
                         nested_needs_string |= registry
                             .variants
                             .values()
+                            .flat_map(|vs| vs.iter())
                             .filter(|v| v.parent == ft)
                             .any(|v| v.fields.iter().any(|t| t.trim() == "String"));
                     }
@@ -293,7 +295,7 @@ impl MapHelperRegistry {
                 WasmGcError::Validation(format!("bad map canonical `{canonical}`")),
             )?;
             let is_primitive_k = super::types::TypeRegistry::is_primitive_map_key(k_aver);
-            let is_sum_k = registry.variants.values().any(|v| v.parent == k_aver);
+            let is_sum_k = registry.variants.values().flat_map(|v| v.iter()).any(|v| v.parent == k_aver);
             if k_aver != "String"
                 && registry.record_type_idx(k_aver).is_none()
                 && !is_primitive_k
@@ -560,7 +562,7 @@ fn emit_hash_for(
     if super::types::TypeRegistry::is_primitive_map_key(k_aver) {
         return emit_hash_primitive(k_aver);
     }
-    if registry.variants.values().any(|v| v.parent == k_aver) {
+    if registry.variants.values().flat_map(|v| v.iter()).any(|v| v.parent == k_aver) {
         return emit_hash_sum(k_aver, registry, string_key_helpers);
     }
     Err(WasmGcError::Unimplemented(
@@ -583,7 +585,7 @@ fn emit_eq_for(
     if super::types::TypeRegistry::is_primitive_map_key(k_aver) {
         return emit_eq_primitive(k_aver);
     }
-    if registry.variants.values().any(|v| v.parent == k_aver) {
+    if registry.variants.values().flat_map(|v| v.iter()).any(|v| v.parent == k_aver) {
         return emit_eq_sum(k_aver, registry, string_key_helpers);
     }
     Err(WasmGcError::Unimplemented(
@@ -1411,7 +1413,7 @@ fn emit_hash_record(
                     other.to_string()
                 };
                 let is_compound = other.starts_with("List<") || other.starts_with("Vector<");
-                let is_sum = registry.variants.values().any(|v| v.parent == other);
+                let is_sum = registry.variants.values().flat_map(|v| v.iter()).any(|v| v.parent == other);
                 if registry.record_type_idx(other).is_some() || is_compound || is_sum {
                     let inner = all_key_helpers
                         .get(&lookup_key)
@@ -1485,7 +1487,7 @@ fn emit_eq_record(
                     other.to_string()
                 };
                 let is_compound = other.starts_with("List<") || other.starts_with("Vector<");
-                let is_sum = registry.variants.values().any(|v| v.parent == other);
+                let is_sum = registry.variants.values().flat_map(|v| v.iter()).any(|v| v.parent == other);
                 if registry.record_type_idx(other).is_some() || is_compound || is_sum {
                     let inner = all_key_helpers
                         .get(&lookup_key)
@@ -2125,8 +2127,8 @@ fn emit_hash_sum(
     let mut variants: Vec<(String, super::types::VariantInfo)> = registry
         .variants
         .iter()
+        .flat_map(|(n, vs)| vs.iter().map(move |v| (n.clone(), v.clone())))
         .filter(|(_, v)| v.parent == parent_name)
-        .map(|(n, v)| (n.clone(), v.clone()))
         .collect();
     variants.sort_by(|a, b| a.0.cmp(&b.0));
     if variants.is_empty() {
@@ -2206,8 +2208,8 @@ fn emit_eq_sum(
     let mut variants: Vec<(String, super::types::VariantInfo)> = registry
         .variants
         .iter()
+        .flat_map(|(n, vs)| vs.iter().map(move |v| (n.clone(), v.clone())))
         .filter(|(_, v)| v.parent == parent_name)
-        .map(|(n, v)| (n.clone(), v.clone()))
         .collect();
     variants.sort_by(|a, b| a.0.cmp(&b.0));
     if variants.is_empty() {
