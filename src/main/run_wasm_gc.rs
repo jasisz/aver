@@ -260,31 +260,19 @@ fn dispatch_aver_import(
             Ok(true)
         }
         "random_int" => {
-            use std::collections::hash_map::RandomState;
-            use std::hash::{BuildHasher, Hasher};
             let (min, max) = match (params.first(), params.get(1)) {
                 (Some(Val::I64(a)), Some(Val::I64(b))) => (*a, *b),
                 _ => (0, 0),
             };
-            let s = RandomState::new();
-            let mut h = s.build_hasher();
-            h.write_u64(min as u64 ^ max as u64);
-            let range = (max - min + 1) as u64;
-            let v = if range == 0 {
-                min
-            } else {
-                min + (h.finish() % range) as i64
-            };
+            // aver_rt::random_int returns Result, but the wasm import
+            // contract is a plain i64. The host falls back to `min` on
+            // an inverted range — same surface the VM exposes.
+            let v = aver_rt::random::random_int(min, max).unwrap_or(min);
             results[0] = Val::I64(v);
             Ok(true)
         }
         "random_float" => {
-            use std::collections::hash_map::RandomState;
-            use std::hash::{BuildHasher, Hasher};
-            let s = RandomState::new();
-            let mut h = s.build_hasher();
-            h.write_u64(0xdeadbeef_cafef00d);
-            results[0] = Val::F64(((h.finish() as f64) / (u64::MAX as f64)).to_bits());
+            results[0] = Val::F64(aver_rt::random::random_float().to_bits());
             Ok(true)
         }
         "float_sin" => {
