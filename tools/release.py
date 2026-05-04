@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import json
 import re
@@ -894,6 +895,36 @@ def publish(new_versions: dict[str, str], old_versions: dict[str, str], dry_run:
             run(cmd)
 
 
+def stamp_changelog_release_date(new_version: str, dry_run: bool) -> None:
+    """Replace `## {new_version} "{codename}" (unreleased)` (or the no-
+    codename variant) with `## {new_version} "{codename}" — YYYY-MM-DD`.
+
+    Idempotent: if the header already carries a date instead of
+    `(unreleased)`, this is a no-op so re-running the release script
+    after a partial failure doesn't double-stamp. The codename (if any)
+    is preserved verbatim — the regex captures whatever sits between
+    the version and `(unreleased)`.
+    """
+    path = REPO_ROOT / "CHANGELOG.md"
+    text = path.read_text()
+    today = datetime.date.today().isoformat()
+    pattern = rf'^(## {re.escape(new_version)}(?: "[^"]+")?) \(unreleased\)$'
+    new_text, n = re.subn(
+        pattern, rf"\1 — {today}", text, count=1, flags=re.MULTILINE
+    )
+    if n == 0:
+        # Either already stamped or the section header wasn't found in
+        # the expected shape — both are harmless to skip; verify() runs
+        # right before publish and would catch a missing section anyway.
+        print(f"  CHANGELOG: no `## {new_version} ... (unreleased)` line — skipping")
+        return
+    if dry_run:
+        print(f"  [dry-run] would stamp CHANGELOG `## {new_version}` with {today}")
+        return
+    path.write_text(new_text)
+    print(f"  CHANGELOG: stamped `## {new_version}` with {today}")
+
+
 def codename_for(version: str, changelog: str) -> str | None:
     """Find the codename declared on this version's CHANGELOG header.
 
@@ -1005,6 +1036,13 @@ def main() -> int:
 
     # 5. Verify
     verify(dry_run)
+    print()
+
+    # 5.5 Stamp the CHANGELOG header for this release with today's date.
+    #     Done after verify so a failed verification doesn't dirty the
+    #     working tree with a half-finished release commit.
+    print("Stamping CHANGELOG release date...")
+    stamp_changelog_release_date(new_version, dry_run)
     print()
 
     # 6. Publish
