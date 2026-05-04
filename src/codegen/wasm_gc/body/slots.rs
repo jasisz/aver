@@ -58,10 +58,18 @@ impl SlotTable {
                 by_slot.push(v);
             }
         }
-        // Walk body to collect binding slots (resolver order).
+        // Walk body to collect binding slots in resolver-assignment
+        // order. The resolver allocates one slot per *unique* binding
+        // name (subsequent occurrences of the same name reuse the
+        // first slot), so we track which names we've already pushed
+        // a type for and skip duplicates — otherwise multi-match
+        // bodies that reuse names like `a` / `e` across arms shift the
+        // slot table out of alignment with the resolver's indices.
         let FnBody::Block(stmts) = fd.body.as_ref();
+        let mut seen: std::collections::HashSet<String> =
+            fd.params.iter().map(|(n, _)| n.clone()).collect();
         for stmt in stmts {
-            collect_binding_slots(stmt, &mut by_slot, registry)?;
+            collect_binding_slots(stmt, &mut by_slot, registry, &mut seen)?;
         }
         // If this fn has any multi-arm Constructor match, reserve a
         // scratch slot at the end for stashing the subject. (ref null eq)
@@ -337,22 +345,25 @@ pub(super) fn collect_binding_slots(
     stmt: &Stmt,
     out: &mut Vec<ValType>,
     registry: &TypeRegistry,
+    seen: &mut std::collections::HashSet<String>,
 ) -> Result<(), WasmGcError> {
     match stmt {
-        Stmt::Binding(_name, annot, expr) => {
+        Stmt::Binding(name, annot, expr) => {
             // Annotation wins (matches resolver behavior); otherwise
             // pull the type straight from the typed AST.
-            let ty = if let Some(t) = annot.as_deref() {
-                aver_to_wasm(t, Some(registry))?
-            } else {
-                wasm_type_of(expr, registry)?
-            };
-            if let Some(v) = ty {
-                out.push(v);
+            if seen.insert(name.clone()) {
+                let ty = if let Some(t) = annot.as_deref() {
+                    aver_to_wasm(t, Some(registry))?
+                } else {
+                    wasm_type_of(expr, registry)?
+                };
+                if let Some(v) = ty {
+                    out.push(v);
+                }
             }
-            collect_expr_binding_slots(expr, out, registry)?;
+            collect_expr_binding_slots(expr, out, registry, seen)?;
         }
-        Stmt::Expr(spanned) => collect_expr_binding_slots(spanned, out, registry)?,
+        Stmt::Expr(spanned) => collect_expr_binding_slots(spanned, out, registry, seen)?,
     }
     Ok(())
 }
@@ -361,10 +372,31 @@ pub(super) fn collect_expr_binding_slots(
     expr: &Spanned<Expr>,
     out: &mut Vec<ValType>,
     registry: &TypeRegistry,
+    seen: &mut std::collections::HashSet<String>,
 ) -> Result<(), WasmGcError> {
+    // Helper: push a slot type for `binding_name` only on the first
+    // occurrence — the resolver allocates one slot per unique name and
+    // reuses it on later occurrences, so duplicate pushes here would
+    // shift every subsequent slot index out of alignment.
+    fn push_binding(
+        out: &mut Vec<ValType>,
+        seen: &mut std::collections::HashSet<String>,
+        name: &str,
+        ty: Option<ValType>,
+    ) {
+        if name == "_" {
+            return;
+        }
+        if !seen.insert(name.to_string()) {
+            return;
+        }
+        if let Some(v) = ty {
+            out.push(v);
+        }
+    }
     match &expr.node {
         Expr::Match { subject, arms } => {
-            collect_expr_binding_slots(subject, out, registry)?;
+            collect_expr_binding_slots(subject, out, registry, seen)?;
             // Built-in Option arms — `Option.Some(v)` binds v to T
             // (read off the subject's stamped Option<T> type).
             let is_option = arms.iter().any(arm_is_option_pattern);
@@ -385,12 +417,15 @@ pub(super) fn collect_expr_binding_slots(
                                  subject's Aver type must reduce to Option<T>"
                                     .into(),
                             ))?;
-                            if let Some(v) = aver_to_wasm(inner_ty, Some(registry))? {
-                                out.push(v);
-                            }
+                            push_binding(
+                                out,
+                                seen,
+                                binding_name,
+                                aver_to_wasm(inner_ty, Some(registry))?,
+                            );
                         }
                     }
-                    collect_expr_binding_slots(&arm.body, out, registry)?;
+                    collect_expr_binding_slots(&arm.body, out, registry, seen)?;
                 }
                 return Ok(());
             }
@@ -413,15 +448,15 @@ pub(super) fn collect_expr_binding_slots(
                         let bare = name.rsplit('.').next().unwrap_or(name);
                         let inner_ty = if bare == "Ok" { t_aver } else { e_aver };
                         for binding_name in bindings {
-                            if binding_name == "_" {
-                                continue;
-                            }
-                            if let Some(v) = aver_to_wasm(inner_ty, Some(registry))? {
-                                out.push(v);
-                            }
+                            push_binding(
+                                out,
+                                seen,
+                                binding_name,
+                                aver_to_wasm(inner_ty, Some(registry))?,
+                            );
                         }
                     }
-                    collect_expr_binding_slots(&arm.body, out, registry)?;
+                    collect_expr_binding_slots(&arm.body, out, registry, seen)?;
                 }
                 return Ok(());
             }
@@ -431,19 +466,15 @@ pub(super) fn collect_expr_binding_slots(
                     if let Some(info) = registry.variant(bare).cloned() {
                         let is_newtype = registry.newtype_underlying(&info.parent).is_some();
                         for (binding_name, field_ty) in bindings.iter().zip(info.fields.iter()) {
-                            if binding_name != "_" {
-                                // Newtype: binding gets the underlying
-                                // primitive directly. Otherwise, the
-                                // field type from the variant decl.
-                                let target_ty = if is_newtype && bindings.len() == 1 {
-                                    aver_to_wasm(&info.parent, Some(registry))?
-                                } else {
-                                    aver_to_wasm(field_ty, Some(registry))?
-                                };
-                                if let Some(v) = target_ty {
-                                    out.push(v);
-                                }
-                            }
+                            // Newtype: binding gets the underlying
+                            // primitive directly. Otherwise, the
+                            // field type from the variant decl.
+                            let target_ty = if is_newtype && bindings.len() == 1 {
+                                aver_to_wasm(&info.parent, Some(registry))?
+                            } else {
+                                aver_to_wasm(field_ty, Some(registry))?
+                            };
+                            push_binding(out, seen, binding_name, target_ty);
                         }
                     }
                 }
@@ -457,12 +488,46 @@ pub(super) fn collect_expr_binding_slots(
                         && elems.len() == items.len()
                     {
                         for (pat, ty) in items.iter().zip(elems.iter()) {
-                            if let Pattern::Ident(name) = pat
-                                && name != "_"
-                                && let Some(v) = aver_to_wasm(ty, Some(registry))?
-                            {
-                                let _ = name;
-                                out.push(v);
+                            match pat {
+                                Pattern::Ident(name) => {
+                                    push_binding(
+                                        out,
+                                        seen,
+                                        name,
+                                        aver_to_wasm(ty, Some(registry))?,
+                                    );
+                                }
+                                // Multi-arm tuple-of-constructors:
+                                // `(Result.Ok(a), Result.Err(e), ...) -> body`.
+                                // Bindings extract from the per-element
+                                // variant struct, so push a slot per
+                                // non-wildcard binding with the variant
+                                // field's type.
+                                Pattern::Constructor(name, bindings) => {
+                                    let bare = name.rsplit('.').next().unwrap_or(name);
+                                    let canonical_elem: String =
+                                        ty.chars().filter(|c| !c.is_whitespace()).collect();
+                                    if let Some((t_aver, e_aver)) =
+                                        TypeRegistry::result_te(&canonical_elem)
+                                    {
+                                        let target = match bare {
+                                            "Ok" => Some(t_aver),
+                                            "Err" => Some(e_aver),
+                                            _ => None,
+                                        };
+                                        if let Some(target) = target {
+                                            for binding in bindings {
+                                                push_binding(
+                                                    out,
+                                                    seen,
+                                                    binding,
+                                                    aver_to_wasm(target, Some(registry))?,
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -478,46 +543,38 @@ pub(super) fn collect_expr_binding_slots(
                     if let Some(elem) = TypeRegistry::list_element_type(&canonical) {
                         let elem_ty = aver_to_wasm(elem, Some(registry))?;
                         let tail_ty = aver_to_wasm(&canonical, Some(registry))?;
-                        if let Some(et) = elem_ty {
-                            if head_name != "_" {
-                                out.push(et);
-                            }
-                            if tail_name != "_"
-                                && let Some(tt) = tail_ty
-                            {
-                                out.push(tt);
-                            }
-                        }
+                        push_binding(out, seen, head_name, elem_ty);
+                        push_binding(out, seen, tail_name, tail_ty);
                     }
                 }
-                collect_expr_binding_slots(&arm.body, out, registry)?;
+                collect_expr_binding_slots(&arm.body, out, registry, seen)?;
             }
         }
         Expr::BinOp(_, l, r) => {
-            collect_expr_binding_slots(l, out, registry)?;
-            collect_expr_binding_slots(r, out, registry)?;
+            collect_expr_binding_slots(l, out, registry, seen)?;
+            collect_expr_binding_slots(r, out, registry, seen)?;
         }
         Expr::FnCall(callee, args) => {
-            collect_expr_binding_slots(callee, out, registry)?;
+            collect_expr_binding_slots(callee, out, registry, seen)?;
             for arg in args {
-                collect_expr_binding_slots(arg, out, registry)?;
+                collect_expr_binding_slots(arg, out, registry, seen)?;
             }
         }
         Expr::TailCall(boxed) => {
             for arg in &boxed.args {
-                collect_expr_binding_slots(arg, out, registry)?;
+                collect_expr_binding_slots(arg, out, registry, seen)?;
             }
         }
-        Expr::Attr(obj, _) => collect_expr_binding_slots(obj, out, registry)?,
-        Expr::ErrorProp(inner) => collect_expr_binding_slots(inner, out, registry)?,
+        Expr::Attr(obj, _) => collect_expr_binding_slots(obj, out, registry, seen)?,
+        Expr::ErrorProp(inner) => collect_expr_binding_slots(inner, out, registry, seen)?,
         Expr::Constructor(_, payload) => {
             if let Some(p) = payload.as_deref() {
-                collect_expr_binding_slots(p, out, registry)?;
+                collect_expr_binding_slots(p, out, registry, seen)?;
             }
         }
         Expr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
-                collect_expr_binding_slots(e, out, registry)?;
+                collect_expr_binding_slots(e, out, registry, seen)?;
             }
         }
         _ => {}

@@ -1470,6 +1470,223 @@ pub(super) fn emit_tuple_match(
     Ok(())
 }
 
+/// Multi-arm tuple match where the per-element patterns include
+/// `Pattern::Constructor` (e.g. `Result.Ok` / `Result.Err`) — emits a
+/// nested `if`/`else` cascade. For each arm: AND together each
+/// element's tag check, branch on the verdict, extract bindings from
+/// the per-element variant struct on the success branch, recurse on
+/// the failure branch. The trailing wildcard / catch-all is the base
+/// case that closes the cascade.
+///
+/// Currently supports `Result<T, E>` variants inside the tuple
+/// (Ok = tag 1, payload at field 1; Err = tag 0, payload at field 2).
+/// `Pattern::Ident` and `Pattern::Wildcard` per-element are treated as
+/// "always matches" — slots get bound to the raw element ref / value.
+/// Other variant kinds (Option, user sums) fall through to an
+/// `Unimplemented` so the failure surfaces obvious next steps rather
+/// than silently mis-emitting.
+pub(super) fn emit_tuple_constructor_match(
+    func: &mut Function,
+    subject: &Spanned<Expr>,
+    arms: &[MatchArm],
+    block_ty: wasm_encoder::BlockType,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "multi-arm tuple match needs a subject scratch slot but none was reserved".into(),
+    ))?;
+    let subject_ty = aver_type_str_of(&subject);
+    let canonical: String = subject_ty.chars().filter(|c| !c.is_whitespace()).collect();
+    let tuple_idx = ctx
+        .registry
+        .tuple_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "multi-arm tuple match: subject type `{subject_ty}` is not a registered Tuple<...>"
+        )))?;
+    let elems_owned: Vec<String> = TypeRegistry::tuple_elements(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "multi-arm tuple match: cannot extract tuple element types from `{canonical}`"
+        )))?
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect();
+
+    emit_expr(func, &subject, slots, ctx)?;
+    func.instruction(&Instruction::LocalSet(scratch));
+
+    emit_tuple_constructor_arm_cascade(
+        func, scratch, tuple_idx, &elems_owned, arms, block_ty, slots, ctx,
+    )
+}
+
+fn emit_tuple_constructor_arm_cascade(
+    func: &mut Function,
+    scratch: u32,
+    tuple_idx: u32,
+    elems: &[String],
+    arms: &[MatchArm],
+    block_ty: wasm_encoder::BlockType,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    if arms.is_empty() {
+        // Type-checker has proven exhaustiveness; reaching here means
+        // every arm was already emitted. Emit `unreachable` so the
+        // validator's stack-shape inference treats this branch as
+        // polymorphic.
+        func.instruction(&Instruction::Unreachable);
+        return Ok(());
+    }
+    let arm = &arms[0];
+    match &arm.pattern {
+        Pattern::Wildcard => emit_expr(func, &arm.body, slots, ctx),
+        Pattern::Ident(name) => {
+            if name != "_"
+                && let Some(slot) = ctx.self_local_slot(name)
+            {
+                func.instruction(&Instruction::LocalGet(scratch));
+                func.instruction(&Instruction::LocalSet(slot));
+            }
+            emit_expr(func, &arm.body, slots, ctx)
+        }
+        Pattern::Tuple(items) => {
+            if items.len() != elems.len() {
+                return Err(WasmGcError::Validation(format!(
+                    "tuple match arm has {} sub-patterns, subject is a {}-tuple",
+                    items.len(),
+                    elems.len()
+                )));
+            }
+            // Build the verdict: AND of each element's tag check.
+            // Pattern::Ident / Pattern::Wildcard contribute nothing
+            // (always match) and the cascade short-circuits to "1"
+            // when no constructor tests are present.
+            let mut tests_emitted = 0u32;
+            for (i, pat) in items.iter().enumerate() {
+                if let Pattern::Constructor(name, _) = pat {
+                    let bare = name.rsplit('.').next().unwrap_or(name);
+                    let elem_canonical: String =
+                        elems[i].chars().filter(|c| !c.is_whitespace()).collect();
+                    let res_idx = ctx.registry.result_type_idx(&elem_canonical).ok_or(
+                        WasmGcError::Unimplemented(
+                            "tuple-of-constructors match supports Result<T,E> elements only \
+                             today (Option / user variants land separately)",
+                        ),
+                    )?;
+                    let expected_tag: i32 = match bare {
+                        "Ok" => 1,
+                        "Err" => 0,
+                        _ => {
+                            return Err(WasmGcError::Unimplemented(
+                                "tuple-of-constructors match: unknown Result variant \
+                                 (expected Ok or Err)",
+                            ));
+                        }
+                    };
+                    func.instruction(&Instruction::LocalGet(scratch));
+                    func.instruction(&Instruction::RefCastNonNull(
+                        wasm_encoder::HeapType::Concrete(tuple_idx),
+                    ));
+                    func.instruction(&Instruction::StructGet {
+                        struct_type_index: tuple_idx,
+                        field_index: i as u32,
+                    });
+                    func.instruction(&Instruction::RefCastNonNull(
+                        wasm_encoder::HeapType::Concrete(res_idx),
+                    ));
+                    func.instruction(&Instruction::StructGet {
+                        struct_type_index: res_idx,
+                        field_index: 0,
+                    });
+                    func.instruction(&Instruction::I32Const(expected_tag));
+                    func.instruction(&Instruction::I32Eq);
+                    if tests_emitted > 0 {
+                        func.instruction(&Instruction::I32And);
+                    }
+                    tests_emitted += 1;
+                }
+            }
+            if tests_emitted == 0 {
+                func.instruction(&Instruction::I32Const(1));
+            }
+            func.instruction(&Instruction::If(block_ty));
+            // Bind on the success branch, then emit the body.
+            for (i, pat) in items.iter().enumerate() {
+                match pat {
+                    Pattern::Ident(name) if name != "_" => {
+                        if let Some(slot) = ctx.self_local_slot(name) {
+                            func.instruction(&Instruction::LocalGet(scratch));
+                            func.instruction(&Instruction::RefCastNonNull(
+                                wasm_encoder::HeapType::Concrete(tuple_idx),
+                            ));
+                            func.instruction(&Instruction::StructGet {
+                                struct_type_index: tuple_idx,
+                                field_index: i as u32,
+                            });
+                            func.instruction(&Instruction::LocalSet(slot));
+                        }
+                    }
+                    Pattern::Constructor(name, bindings) => {
+                        let bare = name.rsplit('.').next().unwrap_or(name);
+                        let elem_canonical: String =
+                            elems[i].chars().filter(|c| !c.is_whitespace()).collect();
+                        let Some(res_idx) = ctx.registry.result_type_idx(&elem_canonical) else {
+                            continue;
+                        };
+                        let payload_field = match bare {
+                            "Ok" => 1u32,
+                            "Err" => 2u32,
+                            _ => continue,
+                        };
+                        for binding in bindings {
+                            if binding == "_" {
+                                continue;
+                            }
+                            if let Some(slot) = ctx.self_local_slot(binding) {
+                                func.instruction(&Instruction::LocalGet(scratch));
+                                func.instruction(&Instruction::RefCastNonNull(
+                                    wasm_encoder::HeapType::Concrete(tuple_idx),
+                                ));
+                                func.instruction(&Instruction::StructGet {
+                                    struct_type_index: tuple_idx,
+                                    field_index: i as u32,
+                                });
+                                func.instruction(&Instruction::RefCastNonNull(
+                                    wasm_encoder::HeapType::Concrete(res_idx),
+                                ));
+                                func.instruction(&Instruction::StructGet {
+                                    struct_type_index: res_idx,
+                                    field_index: payload_field,
+                                });
+                                func.instruction(&Instruction::LocalSet(slot));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            emit_expr(func, &arm.body, slots, ctx)?;
+            func.instruction(&Instruction::Else);
+            emit_tuple_constructor_arm_cascade(
+                func,
+                scratch,
+                tuple_idx,
+                elems,
+                &arms[1..],
+                block_ty,
+                slots,
+                ctx,
+            )?;
+            func.instruction(&Instruction::End);
+            Ok(())
+        }
+        _ => Err(WasmGcError::Unimplemented(
+            "tuple-of-constructors match: arm pattern must be Tuple/Ident/Wildcard",
+        )),
+    }
+}
+
 /// `match list { [] -> a; [head, ..tail] -> b }` — null check on the
 /// list ref selects the empty branch; otherwise cast + struct.get
 /// the head and tail. Subject must be a registered `List<T>`.
@@ -2468,6 +2685,22 @@ pub(super) fn emit_match(
         && items.len() >= 2
     {
         return emit_tuple_match(func, subject, items, &arms[0].body, slots, ctx);
+    }
+
+    // Multi-arm tuple-of-constructors — `match flatFail() { (Result.Ok(a),
+    // Result.Err(e), Result.Ok(c)) -> ...; _ -> ... }`. Per-element tag
+    // tests AND'd into one verdict; bindings extract from the
+    // per-element variant struct on the matching branch.
+    if arms.iter().any(|a| {
+        matches!(&a.pattern, Pattern::Tuple(items)
+            if items.iter().any(|i| matches!(i, Pattern::Constructor(_, _))))
+    }) && arms.last().is_some_and(|a| {
+        matches!(
+            &a.pattern,
+            Pattern::Wildcard | Pattern::Ident(_) | Pattern::Tuple(_)
+        )
+    }) {
+        return emit_tuple_constructor_match(func, subject, arms, block_ty, slots, ctx);
     }
 
     // Single-arm Constructor pattern — `match obj { Foo.Bar(n) -> body }`.
