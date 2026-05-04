@@ -163,10 +163,14 @@ fn classify_bool_and_list_match_shapes() {
     let bool_arms = vec![
         MatchArm {
             pattern: Pattern::Literal(Literal::Bool(false)),
-            body: sbb(Expr::Literal(Literal::Int(0))), binding_slots: std::sync::OnceLock::new() },
+            body: sbb(Expr::Literal(Literal::Int(0))),
+            binding_slots: std::sync::OnceLock::new(),
+        },
         MatchArm {
             pattern: Pattern::Literal(Literal::Bool(true)),
-            body: sbb(Expr::Literal(Literal::Int(1))), binding_slots: std::sync::OnceLock::new() },
+            body: sbb(Expr::Literal(Literal::Int(1))),
+            binding_slots: std::sync::OnceLock::new(),
+        },
     ];
     assert_eq!(
         classify_bool_match_shape(&bool_arms),
@@ -179,10 +183,14 @@ fn classify_bool_and_list_match_shapes() {
     let list_arms = vec![
         MatchArm {
             pattern: Pattern::Cons("h".to_string(), "t".to_string()),
-            body: sbb(Expr::Literal(Literal::Int(1))), binding_slots: std::sync::OnceLock::new() },
+            body: sbb(Expr::Literal(Literal::Int(1))),
+            binding_slots: std::sync::OnceLock::new(),
+        },
         MatchArm {
             pattern: Pattern::EmptyList,
-            body: sbb(Expr::Literal(Literal::Int(0))), binding_slots: std::sync::OnceLock::new() },
+            body: sbb(Expr::Literal(Literal::Int(0))),
+            binding_slots: std::sync::OnceLock::new(),
+        },
     ];
     assert_eq!(
         classify_list_match_shape(&list_arms),
@@ -222,13 +230,19 @@ fn classify_dispatch_table_shape_with_default_arm() {
     let arms = vec![
         MatchArm {
             pattern: Pattern::Constructor("Option.None".to_string(), vec![]),
-            body: sbb(Expr::Literal(Literal::Int(0))), binding_slots: std::sync::OnceLock::new() },
+            body: sbb(Expr::Literal(Literal::Int(0))),
+            binding_slots: std::sync::OnceLock::new(),
+        },
         MatchArm {
             pattern: Pattern::Constructor("Option.Some".to_string(), vec!["x".to_string()]),
-            body: sbb(Expr::Literal(Literal::Int(1))), binding_slots: std::sync::OnceLock::new() },
+            body: sbb(Expr::Literal(Literal::Int(1))),
+            binding_slots: std::sync::OnceLock::new(),
+        },
         MatchArm {
             pattern: Pattern::Wildcard,
-            body: sbb(Expr::Literal(Literal::Int(2))), binding_slots: std::sync::OnceLock::new() },
+            body: sbb(Expr::Literal(Literal::Int(2))),
+            binding_slots: std::sync::OnceLock::new(),
+        },
     ];
 
     assert_eq!(
@@ -565,13 +579,17 @@ fn classify_thin_body_plan_for_dispatch_function() {
                             "Result.Ok".to_string(),
                             vec!["n".to_string()],
                         ),
-                        body: sbb(Expr::Ident("n".to_string())), binding_slots: std::sync::OnceLock::new() },
+                        body: sbb(Expr::Ident("n".to_string())),
+                        binding_slots: std::sync::OnceLock::new(),
+                    },
                     MatchArm {
                         pattern: Pattern::Constructor(
                             "Result.Err".to_string(),
                             vec!["_".to_string()],
                         ),
-                        body: sbb(Expr::Literal(Literal::Int(0))), binding_slots: std::sync::OnceLock::new() },
+                        body: sbb(Expr::Literal(Literal::Int(0))),
+                        binding_slots: std::sync::OnceLock::new(),
+                    },
                 ],
             }))
             .into(),
