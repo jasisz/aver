@@ -28,6 +28,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Removed
 - **Per-version runtime artifacts (`tools/website/runtime/`, `averlang.dev/runtime/`).** Wasm-gc binaries are self-contained — there's no shared `aver_runtime.wasm` to fetch and cache, so the versioned CDN tree, the `latest/` pointer, and the `release.py` builder that emitted them all go. The legacy `--target wasm` bundle inlines its own runtime via `wasm-merge` and doesn't rely on the CDN either.
+- **`--bridge` rejected under `--target wasm-gc`.** The legacy `--bridge fetch | wasip1 | none` axis is bound to the legacy NaN-boxed backend. Mixing it with wasm-gc was previously silently ignored — now the compiler errors with a hint pointing at the correct shape: `--handler <fn>` (and `--preset cloudflare --handler <fn>`) for HTTP, the planned `--target wasip2` for standalone-WASI deployments. wasm-gc skips preview 1 by design — porting the legacy `aver_to_wasi.wasm` shim to GC string types would re-implement an ABI we want to leave behind.
+
+### Roadmap
+- **`--target wasip2`** (Component Model output, `wasi:http/proxy` + `wasi:filesystem` + `wasi:sockets`) is the modern wasm-gc companion for standalone-runtime deployments. Lands in 0.17. Once shipped, `Http.*` / `HttpServer.listen` / `Disk.*` / `Tcp.*` all become ✅ on the standalone-WASI side instead of stubbing.
 
 ## 0.15.2 "Traversal" — observability lands, regression gate closes (unreleased)
 

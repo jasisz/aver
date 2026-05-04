@@ -235,6 +235,35 @@ fn main() {
                 );
                 std::process::exit(1);
             }
+            // `--bridge` is a legacy concept tied to `--target wasm` —
+            // wasm-gc has its own shape for both axes the legacy bridges
+            // covered: HTTP via `--handler <fn>` (synth `aver_http_handle`
+            // wrapper, no separate fetch shim) and standalone runtime via
+            // the planned `--target wasip2` Component Model output. Reject
+            // up front rather than silently ignoring the flag.
+            if matches!(effective_target, cli::CompileTarget::WasmGc)
+                && effective_bridge.is_some()
+            {
+                use colored::Colorize;
+                let hint = match effective_bridge {
+                    Some(cli::WasmBridge::Fetch) => {
+                        "use `--handler <fn>` (HTTP synth wrapper) or `--preset cloudflare \
+                         --handler <fn>` (full Workers pack) instead"
+                    }
+                    Some(cli::WasmBridge::Wasip1) => {
+                        "wasm-gc skips preview 1 by design — `--target wasm --bridge wasip1` \
+                         is the legacy standalone-WASI path; `--target wasip2` (Component \
+                         Model, `wasi:http/proxy` + `wasi:filesystem` + `wasi:sockets`) is \
+                         planned as the modern wasm-gc companion"
+                    }
+                    Some(cli::WasmBridge::None) | None => "drop `--bridge` (wasm-gc default)",
+                };
+                eprintln!(
+                    "{}",
+                    format!("--bridge is not supported with --target wasm-gc; {hint}").red()
+                );
+                std::process::exit(1);
+            }
             // `--emit-ir-after=PASS` short-circuits before codegen — print
             // the IR snapshot for the named stage and exit. Drives observability
             // in 0.15.1 without touching the compile path otherwise.
