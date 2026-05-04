@@ -219,6 +219,33 @@ pub(super) fn emit_expr(
                 emit_string_concat2(func, l, r, slots, ctx)?;
             } else if matches!(op, BinOp::Eq | BinOp::Neq) && lhs_aver_trim == "String" {
                 emit_string_eq(func, l, r, slots, ctx, matches!(op, BinOp::Neq))?;
+            } else if matches!(op, BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte)
+                && lhs_aver_trim == "String"
+            {
+                // Lexicographic byte compare via the
+                // `__wasmgc_string_compare` builtin (returns -1 / 0 / 1).
+                // Then post-compose with the right i32 op so the BinOp
+                // returns 0/1 like every other comparison.
+                let cmp_idx =
+                    ctx.fn_map
+                        .builtins
+                        .get("__wasmgc_string_compare")
+                        .copied()
+                        .ok_or(WasmGcError::Validation(
+                            "String comparison requires __wasmgc_string_compare builtin".into(),
+                        ))?;
+                emit_expr(func, l, slots, ctx)?;
+                emit_expr(func, r, slots, ctx)?;
+                func.instruction(&Instruction::Call(cmp_idx));
+                func.instruction(&Instruction::I32Const(0));
+                let post = match op {
+                    BinOp::Lt => Instruction::I32LtS,
+                    BinOp::Gt => Instruction::I32GtS,
+                    BinOp::Lte => Instruction::I32LeS,
+                    BinOp::Gte => Instruction::I32GeS,
+                    _ => unreachable!(),
+                };
+                func.instruction(&post);
             } else if matches!(op, BinOp::Eq | BinOp::Neq)
                 && let Some(variant_idx) = nullary_variant_idx(r, ctx)
             {

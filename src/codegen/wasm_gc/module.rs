@@ -1053,6 +1053,9 @@ fn discover_builtins_in_expr(
                 match op {
                     Op::Add => builtins.register(BuiltinName::StringConcatN),
                     Op::Eq | Op::Neq => builtins.register(BuiltinName::StringEq),
+                    Op::Lt | Op::Gt | Op::Lte | Op::Gte => {
+                        builtins.register(BuiltinName::StringCompare);
+                    }
                     _ => {}
                 }
             }

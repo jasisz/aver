@@ -101,6 +101,10 @@ pub(super) enum BuiltinName {
     /// (not addressable from Aver source); registry registers it
     /// explicitly when discovery finds a String-subject match.
     StringEq,
+    /// `__wasmgc_string_compare(a, b) -> i32` — lexicographic byte
+    /// compare. Returns -1 / 0 / 1. Used by String `<` / `>` / `<=`
+    /// / `>=` BinOps.
+    StringCompare,
     StringEndsWith,
     StringFromBool,
     StringCharAt,
@@ -162,6 +166,7 @@ impl BuiltinName {
             Self::FloatFromString => "Float.fromString",
             Self::FloatToString => "Float.toString",
             Self::StringEq => "__wasmgc_string_eq",
+            Self::StringCompare => "__wasmgc_string_compare",
             Self::StringEndsWith => "String.endsWith",
             Self::StringFromBool => "String.fromBool",
             Self::StringCharAt => "String.charAt",
@@ -189,6 +194,7 @@ impl BuiltinName {
             Self::FloatFromString => Ok(vec![string_ref_ty(registry)?]),
             Self::FloatToString => Ok(vec![ValType::F64]),
             Self::StringEq => Ok(vec![string_ref_ty(registry)?, string_ref_ty(registry)?]),
+            Self::StringCompare => Ok(vec![string_ref_ty(registry)?, string_ref_ty(registry)?]),
             Self::StringEndsWith => Ok(vec![string_ref_ty(registry)?, string_ref_ty(registry)?]),
             Self::StringFromBool => Ok(vec![ValType::I32]),
             Self::StringCharAt => Ok(vec![string_ref_ty(registry)?, ValType::I64]),
@@ -218,6 +224,7 @@ impl BuiltinName {
             Self::IntFromString => Ok(vec![result_ref_ty(registry, "Result<Int,String>")?]),
             Self::FloatFromString => Ok(vec![result_ref_ty(registry, "Result<Float,String>")?]),
             Self::StringEq => Ok(vec![ValType::I32]),
+            Self::StringCompare => Ok(vec![ValType::I32]),
             Self::StringFromBool => Ok(vec![string_ref_ty(registry)?]),
             Self::StringEndsWith => Ok(vec![ValType::I32]),
             Self::StringCharAt | Self::CharFromCode => {
@@ -248,6 +255,7 @@ impl BuiltinName {
             Self::FloatFromString => emit_float_from_string(registry),
             Self::FloatToString => emit_float_to_string(registry),
             Self::StringEq => emit_string_eq(registry),
+            Self::StringCompare => emit_string_compare(registry),
             Self::StringEndsWith => emit_string_ends_with(registry),
             Self::StringFromBool => emit_string_from_bool(registry),
             Self::StringCharAt => emit_string_char_at(registry),
@@ -1858,6 +1866,91 @@ fn emit_string_eq(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
                 br $cmp))
 
             i32.const 1)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `__wasmgc_string_compare(a, b) -> i32`. Lexicographic byte compare.
+/// Returns -1 / 0 / 1. Used by String `<` / `>` / `<=` / `>=` BinOps.
+/// Iterates byte-by-byte; on first mismatch returns -1 or 1; if one
+/// string is a prefix of the other, the shorter compares less.
+fn emit_string_compare(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let (_, preamble) = string_module_preamble(registry)?;
+    let wat = format!(
+        r#"
+        (module
+          {preamble}
+          (func (export "helper")
+                (param $a (ref null $string))
+                (param $b (ref null $string))
+                (result i32)
+            (local $alen i32)
+            (local $blen i32)
+            (local $minlen i32)
+            (local $i i32)
+            (local $ab i32)
+            (local $bb i32)
+
+            local.get $a array.len
+            local.set $alen
+            local.get $b array.len
+            local.set $blen
+
+            ;; min(alen, blen)
+            local.get $alen
+            local.get $blen
+            i32.lt_u
+            (if (result i32)
+              (then local.get $alen)
+              (else local.get $blen))
+            local.set $minlen
+
+            i32.const 0
+            local.set $i
+
+            (block $done
+              (loop $cmp
+                local.get $i
+                local.get $minlen
+                i32.ge_u
+                br_if $done
+
+                local.get $a local.get $i array.get_u $string
+                local.set $ab
+                local.get $b local.get $i array.get_u $string
+                local.set $bb
+
+                local.get $ab
+                local.get $bb
+                i32.lt_u
+                (if (then i32.const -1 return))
+
+                local.get $ab
+                local.get $bb
+                i32.gt_u
+                (if (then i32.const 1 return))
+
+                local.get $i
+                i32.const 1
+                i32.add
+                local.set $i
+                br $cmp))
+
+            ;; All compared bytes equal — shorter side wins.
+            local.get $alen
+            local.get $blen
+            i32.lt_u
+            (if (result i32)
+              (then i32.const -1)
+              (else
+                local.get $alen
+                local.get $blen
+                i32.gt_u
+                (if (result i32)
+                  (then i32.const 1)
+                  (else i32.const 0)))))
         )
     "#
     );

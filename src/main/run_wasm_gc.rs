@@ -115,11 +115,14 @@ fn run_wasm_gc_with_host(wasm_bytes: &[u8], program_args: &[String]) -> Result<(
         },
     );
     let mut linker: Linker<RunWasmGcHost> = Linker::new(&engine);
-    linker.allow_shadowing(true);
 
-    // Auto-stub every import — return the zero value for each declared
-    // result type. Real impls below (Console.*, Args.*, Random, Time,
-    // Float math) shadow the stubs for effects we actually support.
+    // One walk over imports — for every `(module, name)` declared by
+    // the wasm module, register a host fn that uses the import's own
+    // FuncType (so engine-side type identity matches without manual
+    // sub-typing) and dispatches per name. Defaults to a typed-zero
+    // stub when we don't have a real impl. Programs that declare an
+    // effect but never call it instantiate cleanly; programs that do
+    // call it get real semantics.
     for import in module.imports() {
         let ExternType::Func(ft) = import.ty() else {
             continue;
@@ -128,92 +131,42 @@ fn run_wasm_gc_with_host(wasm_bytes: &[u8], program_args: &[String]) -> Result<(
         let field_name = import.name().to_string();
         let result_tys: Vec<ValType> = ft.results().collect();
         let func_ty = FuncType::new(&engine, ft.params(), ft.results());
-        let _ = linker.func_new(
-            &module_name,
-            &field_name,
-            func_ty,
-            move |_caller, _params, results| {
-                for (slot, ty) in results.iter_mut().zip(result_tys.iter()) {
-                    *slot = match ty {
-                        ValType::I32 => Val::I32(0),
-                        ValType::I64 => Val::I64(0),
-                        ValType::F32 => Val::F32(0),
-                        ValType::F64 => Val::F64(0),
-                        ValType::V128 => Val::V128(0u128.into()),
-                        ValType::Ref(_) => Val::AnyRef(None),
-                    };
-                }
-                Ok(())
-            },
-        );
+        let module_name_for_closure = module_name.clone();
+        let field_name_for_closure = field_name.clone();
+        linker
+            .func_new(
+                &module_name,
+                &field_name,
+                func_ty,
+                move |mut caller: Caller<'_, RunWasmGcHost>,
+                      params: &[Val],
+                      results: &mut [Val]|
+                      -> Result<(), wasmtime::Error> {
+                    if module_name_for_closure == "aver"
+                        && dispatch_aver_import(
+                            &field_name_for_closure,
+                            &mut caller,
+                            params,
+                            results,
+                        )?
+                    {
+                        return Ok(());
+                    }
+                    for (slot, ty) in results.iter_mut().zip(result_tys.iter()) {
+                        *slot = match ty {
+                            ValType::I32 => Val::I32(0),
+                            ValType::I64 => Val::I64(0),
+                            ValType::F32 => Val::F32(0),
+                            ValType::F64 => Val::F64(0),
+                            ValType::V128 => Val::V128(0u128.into()),
+                            ValType::Ref(_) => Val::AnyRef(None),
+                        };
+                    }
+                    Ok(())
+                },
+            )
+            .map_err(|e| format!("link {module_name}.{field_name}: {e:#}"))?;
     }
-
-    linker
-        .func_wrap(
-            "aver",
-            "args_len",
-            |caller: Caller<'_, RunWasmGcHost>| -> i64 { caller.data().program_args.len() as i64 },
-        )
-        .map_err(|e| format!("link args_len: {e:#}"))?;
-
-    linker
-        .func_wrap("aver", "random_int", |min: i64, max: i64| -> i64 {
-            use std::collections::hash_map::RandomState;
-            use std::hash::{BuildHasher, Hasher};
-            let s = RandomState::new();
-            let mut h = s.build_hasher();
-            h.write_u64(min as u64 ^ max as u64);
-            let range = (max - min + 1) as u64;
-            if range == 0 {
-                return min;
-            }
-            min + (h.finish() % range) as i64
-        })
-        .map_err(|e| format!("link random_int: {e:#}"))?;
-
-    linker
-        .func_wrap("aver", "random_float", || -> f64 {
-            use std::collections::hash_map::RandomState;
-            use std::hash::{BuildHasher, Hasher};
-            let s = RandomState::new();
-            let mut h = s.build_hasher();
-            h.write_u64(0xdeadbeef_cafef00d);
-            (h.finish() as f64) / (u64::MAX as f64)
-        })
-        .map_err(|e| format!("link random_float: {e:#}"))?;
-
-    linker
-        .func_wrap("aver", "time_unix_ms", || -> i64 {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(0)
-        })
-        .map_err(|e| format!("link time_unix_ms: {e:#}"))?;
-
-    linker
-        .func_wrap("aver", "time_sleep", |millis: i64| {
-            std::thread::sleep(std::time::Duration::from_millis(millis.max(0) as u64));
-        })
-        .map_err(|e| format!("link time_sleep: {e:#}"))?;
-
-    linker
-        .func_wrap("aver", "float_sin", |x: f64| -> f64 { x.sin() })
-        .map_err(|e| format!("link float_sin: {e:#}"))?;
-    linker
-        .func_wrap("aver", "float_cos", |x: f64| -> f64 { x.cos() })
-        .map_err(|e| format!("link float_cos: {e:#}"))?;
-    linker
-        .func_wrap("aver", "float_atan2", |y: f64, x: f64| -> f64 { y.atan2(x) })
-        .map_err(|e| format!("link float_atan2: {e:#}"))?;
-    linker
-        .func_wrap("aver", "float_pow", |b: f64, e: f64| -> f64 { b.powf(e) })
-        .map_err(|e| format!("link float_pow: {e:#}"))?;
-
-    register_aver_string_consumer(&mut linker, "console_print", true)?;
-    register_aver_string_consumer(&mut linker, "console_error", false)?;
-    register_aver_string_consumer(&mut linker, "console_warn", false)?;
 
     let instance = linker
         .instantiate(&mut store, &module)
@@ -234,64 +187,220 @@ fn run_wasm_gc_with_host(wasm_bytes: &[u8], program_args: &[String]) -> Result<(
     Ok(())
 }
 
+/// Per-effect-name dispatch — returns true if we provided a real
+/// implementation, false if the caller should fall back to the
+/// typed-zero stub.
 #[cfg(feature = "wasm")]
-fn register_aver_string_consumer(
-    linker: &mut wasmtime::Linker<RunWasmGcHost>,
-    name: &'static str,
+fn dispatch_aver_import(
+    name: &str,
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    params: &[wasmtime::Val],
+    results: &mut [wasmtime::Val],
+) -> Result<bool, wasmtime::Error> {
+    use wasmtime::Val;
+    match name {
+        "args_len" => {
+            results[0] = Val::I64(caller.data().program_args.len() as i64);
+            Ok(true)
+        }
+        "args_get" => {
+            let idx = match params[0] {
+                Val::I64(n) => n,
+                _ => 0,
+            };
+            let text = caller
+                .data()
+                .program_args
+                .get(idx.max(0) as usize)
+                .cloned()
+                .unwrap_or_default();
+            let r = lm_string_from_host(caller, &text)?;
+            results[0] = Val::AnyRef(r);
+            Ok(true)
+        }
+        "console_print" => host_print(caller, params, true).map(|()| true),
+        "console_error" | "console_warn" => host_print(caller, params, false).map(|()| true),
+        "time_now" => {
+            let text = aver_rt::time_now();
+            let r = lm_string_from_host(caller, &text)?;
+            results[0] = Val::AnyRef(r);
+            Ok(true)
+        }
+        "time_unix_ms" => {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            results[0] = Val::I64(ms);
+            Ok(true)
+        }
+        "time_sleep" => {
+            if let Some(Val::I64(ms)) = params.first() {
+                std::thread::sleep(std::time::Duration::from_millis(ms.max(&0).unsigned_abs()));
+            }
+            Ok(true)
+        }
+        "random_int" => {
+            use std::collections::hash_map::RandomState;
+            use std::hash::{BuildHasher, Hasher};
+            let (min, max) = match (params.first(), params.get(1)) {
+                (Some(Val::I64(a)), Some(Val::I64(b))) => (*a, *b),
+                _ => (0, 0),
+            };
+            let s = RandomState::new();
+            let mut h = s.build_hasher();
+            h.write_u64(min as u64 ^ max as u64);
+            let range = (max - min + 1) as u64;
+            let v = if range == 0 {
+                min
+            } else {
+                min + (h.finish() % range) as i64
+            };
+            results[0] = Val::I64(v);
+            Ok(true)
+        }
+        "random_float" => {
+            use std::collections::hash_map::RandomState;
+            use std::hash::{BuildHasher, Hasher};
+            let s = RandomState::new();
+            let mut h = s.build_hasher();
+            h.write_u64(0xdeadbeef_cafef00d);
+            results[0] = Val::F64(((h.finish() as f64) / (u64::MAX as f64)).to_bits());
+            Ok(true)
+        }
+        "float_sin" => {
+            if let Some(Val::F64(b)) = params.first() {
+                results[0] = Val::F64(f64::from_bits(*b).sin().to_bits());
+            }
+            Ok(true)
+        }
+        "float_cos" => {
+            if let Some(Val::F64(b)) = params.first() {
+                results[0] = Val::F64(f64::from_bits(*b).cos().to_bits());
+            }
+            Ok(true)
+        }
+        "float_atan2" => {
+            if let (Some(Val::F64(y)), Some(Val::F64(x))) = (params.first(), params.get(1)) {
+                results[0] = Val::F64(f64::from_bits(*y).atan2(f64::from_bits(*x)).to_bits());
+            }
+            Ok(true)
+        }
+        "float_pow" => {
+            if let (Some(Val::F64(b)), Some(Val::F64(e))) = (params.first(), params.get(1)) {
+                results[0] = Val::F64(f64::from_bits(*b).powf(f64::from_bits(*e)).to_bits());
+            }
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// Print one Aver string to stdout/stderr via the LM transport bridge.
+#[cfg(feature = "wasm")]
+fn host_print(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    params: &[wasmtime::Val],
     to_stdout: bool,
-) -> Result<(), String> {
-    use wasmtime::*;
-    // Signature: param `(ref null any)`, no result. The host pulls the
-    // LM-transport bridge and reads bytes back. Engine subtyping turns
-    // any concrete `(ref null $string)` the wasm side passes us into a
-    // valid AnyRef value.
-    let string_ref_ty = ValType::Ref(RefType::new(true, HeapType::Any));
-    let func_ty = FuncType::new(&linker.engine().clone(), vec![string_ref_ty], vec![]);
-    linker
-        .func_new(
-            "aver",
-            name,
-            func_ty,
-            move |mut caller: Caller<'_, RunWasmGcHost>,
-                  params: &[Val],
-                  _results: &mut [Val]|
-                  -> Result<(), wasmtime::Error> {
-                let any_ref = match &params[0] {
-                    Val::AnyRef(r) => r.clone(),
-                    _ => return Ok(()),
-                };
-                let Some(any_ref) = any_ref else { return Ok(()) };
-                let to_lm = caller
-                    .get_export("__rt_string_to_lm")
-                    .and_then(|e| e.into_func());
-                let memory = caller.get_export("memory").and_then(|e| e.into_memory());
-                if let (Some(to_lm), Some(memory)) = (to_lm, memory) {
-                    let mut out = [Val::I32(0)];
-                    if to_lm
-                        .call(&mut caller, &[Val::AnyRef(Some(any_ref))], &mut out)
-                        .is_ok()
-                    {
-                        let len = match out[0] {
-                            Val::I32(n) => n,
-                            _ => 0,
-                        };
-                        if len > 0 {
-                            let mut buf = vec![0u8; len as usize];
-                            let _ = memory.read(&caller, 0, &mut buf);
-                            // Match VM semantics — Console.print appends a
-                            // newline, see `src/services/console.rs`.
-                            let text = String::from_utf8_lossy(&buf);
-                            if to_stdout {
-                                println!("{}", text);
-                            } else {
-                                eprintln!("{}", text);
-                            }
-                        }
-                    }
-                }
-                Ok(())
-            },
-        )
-        .map_err(|e| format!("link {name}: {e:#}"))?;
+) -> Result<(), wasmtime::Error> {
+    use wasmtime::Val;
+    let any_ref = match params.first() {
+        Some(Val::AnyRef(r)) => r.clone(),
+        _ => return Ok(()),
+    };
+    let Some(any_ref) = any_ref else { return Ok(()) };
+    let to_lm = caller
+        .get_export("__rt_string_to_lm")
+        .and_then(|e| e.into_func());
+    let memory = caller.get_export("memory").and_then(|e| e.into_memory());
+    let (Some(to_lm), Some(memory)) = (to_lm, memory) else {
+        return Ok(());
+    };
+    let mut out = [Val::I32(0)];
+    if to_lm
+        .call(&mut *caller, &[Val::AnyRef(Some(any_ref))], &mut out)
+        .is_ok()
+    {
+        let len = match out[0] {
+            Val::I32(n) => n,
+            _ => 0,
+        };
+        if len > 0 {
+            let mut buf = vec![0u8; len as usize];
+            let _ = memory.read(&caller, 0, &mut buf);
+            let text = String::from_utf8_lossy(&buf);
+            if to_stdout {
+                println!("{}", text);
+            } else {
+                eprintln!("{}", text);
+            }
+        } else {
+            // Empty string still emits a newline in VM semantics.
+            if to_stdout {
+                println!();
+            } else {
+                eprintln!();
+            }
+        }
+    }
     Ok(())
 }
+
+/// Materialise a host-supplied UTF-8 string as an Aver string ref via
+/// the LM transport bridge: write bytes into linear memory at offset 0,
+/// call `__rt_string_from_lm(len)` to wrap them in an `(array i8)`.
+/// Returns the resulting AnyRef so the caller can hand it back as a
+/// host import result.
+#[cfg(feature = "wasm")]
+fn lm_string_from_host<T: 'static>(
+    caller: &mut wasmtime::Caller<'_, T>,
+    text: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::*;
+    let bytes = text.as_bytes();
+    let from_lm = caller
+        .get_export("__rt_string_from_lm")
+        .and_then(|e| e.into_func());
+    let memory = caller.get_export("memory").and_then(|e| e.into_memory());
+    let grow = caller
+        .get_export("__rt_memory_grow")
+        .and_then(|e| e.into_func());
+    let pages = caller
+        .get_export("__rt_memory_pages")
+        .and_then(|e| e.into_func());
+    let (Some(from_lm), Some(memory), Some(grow), Some(pages)) = (from_lm, memory, grow, pages)
+    else {
+        return Ok(None);
+    };
+    // Grow LM if the string doesn't fit. One page = 64 KiB; small
+    // strings fit by default since the bridge ships with `(memory 1)`.
+    let needed_pages = ((bytes.len() + 65535) >> 16) as i32;
+    let mut current_out = [Val::I32(0)];
+    pages.call(&mut *caller, &[], &mut current_out)?;
+    let current_pages = match current_out[0] {
+        Val::I32(n) => n,
+        _ => 0,
+    };
+    if needed_pages > current_pages {
+        let mut grow_out = [Val::I32(0)];
+        grow.call(
+            &mut *caller,
+            &[Val::I32(needed_pages - current_pages)],
+            &mut grow_out,
+        )?;
+    }
+    memory.write(&mut *caller, 0, bytes)?;
+    let mut from_lm_out = [Val::AnyRef(None)];
+    from_lm.call(
+        &mut *caller,
+        &[Val::I32(bytes.len() as i32)],
+        &mut from_lm_out,
+    )?;
+    let r = match &from_lm_out[0] {
+        Val::AnyRef(r) => r.clone(),
+        _ => None,
+    };
+    Ok(r)
+}
+

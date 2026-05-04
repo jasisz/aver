@@ -1120,7 +1120,8 @@ pub(super) fn emit_interpolated_str(
                             )?;
                         func.instruction(&Instruction::Call(to_string_idx));
                     }
-                    _ => {
+                    other => {
+                        eprintln!("[wasm-gc DEBUG] interpolation compound type: `{other}`");
                         return Err(WasmGcError::Unimplemented(
                             "phase 3c — interpolation of compound type",
                         ));
