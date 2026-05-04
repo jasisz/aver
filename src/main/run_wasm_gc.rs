@@ -429,6 +429,19 @@ fn dispatch_aver_import(
             results[0] = Val::AnyRef(result_ref);
             Ok(true)
         }
+        "env_get" => {
+            let name = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            let value = aver_rt::env_get(&name).unwrap_or_default();
+            let r = lm_string_from_host(caller, &value)?;
+            results[0] = Val::AnyRef(r);
+            Ok(true)
+        }
+        "env_set" => {
+            let name = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            let value = lm_string_to_host(caller, params.get(1))?.unwrap_or_default();
+            let _ = aver_rt::env_set(&name, &value);
+            Ok(true)
+        }
         "disk_make_dir" => {
             let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
             let result_ref = match aver_rt::make_dir(&path) {
@@ -438,7 +451,172 @@ fn dispatch_aver_import(
             results[0] = Val::AnyRef(result_ref);
             Ok(true)
         }
+        "tcp_connect" => {
+            let host = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            let port = params.get(1).and_then(val_i64).unwrap_or(0);
+            let result_ref = match aver_rt::tcp::connect(&host, port) {
+                Ok(conn) => {
+                    let id_ref = lm_string_from_host(caller, conn.id.as_ref())?;
+                    let host_ref = lm_string_from_host(caller, conn.host.as_ref())?;
+                    let rec_ref = host_tcp_connection_make(
+                        caller,
+                        id_ref,
+                        host_ref,
+                        conn.port,
+                    )?;
+                    host_result_tcp_connection_ok(caller, rec_ref)?
+                }
+                Err(e) => host_result_tcp_connection_err(caller, &e)?,
+            };
+            results[0] = Val::AnyRef(result_ref);
+            Ok(true)
+        }
+        "tcp_write_line" => {
+            let id = host_tcp_connection_id(caller, params.first())?.unwrap_or_default();
+            let line = lm_string_to_host(caller, params.get(1))?.unwrap_or_default();
+            let conn = aver_rt::TcpConnection {
+                id: aver_rt::AverStr::from(id.as_str()),
+                host: aver_rt::AverStr::from(""),
+                port: 0,
+            };
+            let result_ref = match aver_rt::tcp::write_line(&conn, &line) {
+                Ok(()) => host_result_ok_unit(caller)?,
+                Err(e) => host_result_err_unit_string(caller, &e)?,
+            };
+            results[0] = Val::AnyRef(result_ref);
+            Ok(true)
+        }
+        "tcp_read_line" => {
+            let id = host_tcp_connection_id(caller, params.first())?.unwrap_or_default();
+            let conn = aver_rt::TcpConnection {
+                id: aver_rt::AverStr::from(id.as_str()),
+                host: aver_rt::AverStr::from(""),
+                port: 0,
+            };
+            let result_ref = match aver_rt::tcp::read_line(&conn) {
+                Ok(text) => host_result_ok_string(caller, &text)?,
+                Err(e) => host_result_err_string(caller, &e)?,
+            };
+            results[0] = Val::AnyRef(result_ref);
+            Ok(true)
+        }
+        "tcp_close" => {
+            let id = host_tcp_connection_id(caller, params.first())?.unwrap_or_default();
+            let conn = aver_rt::TcpConnection {
+                id: aver_rt::AverStr::from(id.as_str()),
+                host: aver_rt::AverStr::from(""),
+                port: 0,
+            };
+            let result_ref = match aver_rt::tcp::close(&conn) {
+                Ok(()) => host_result_ok_unit(caller)?,
+                Err(e) => host_result_err_unit_string(caller, &e)?,
+            };
+            results[0] = Val::AnyRef(result_ref);
+            Ok(true)
+        }
+        "tcp_send" => {
+            let host = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            let port = params.get(1).and_then(val_i64).unwrap_or(0);
+            let msg = lm_string_to_host(caller, params.get(2))?.unwrap_or_default();
+            let result_ref = match aver_rt::tcp::send(&host, port, &msg) {
+                Ok(text) => host_result_ok_string(caller, &text)?,
+                Err(e) => host_result_err_string(caller, &e)?,
+            };
+            results[0] = Val::AnyRef(result_ref);
+            Ok(true)
+        }
+        "tcp_ping" => {
+            let host = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            let port = params.get(1).and_then(val_i64).unwrap_or(0);
+            let result_ref = match aver_rt::tcp::ping(&host, port) {
+                Ok(()) => host_result_ok_unit(caller)?,
+                Err(e) => host_result_err_unit_string(caller, &e)?,
+            };
+            results[0] = Val::AnyRef(result_ref);
+            Ok(true)
+        }
+        "http_get" => http_simple_dispatch(caller, params, results, HttpVerb::Get),
+        "http_head" => http_simple_dispatch(caller, params, results, HttpVerb::Head),
+        "http_delete" => http_simple_dispatch(caller, params, results, HttpVerb::Delete),
+        "http_post" => http_body_dispatch(caller, params, results, HttpVerb::Post),
+        "http_put" => http_body_dispatch(caller, params, results, HttpVerb::Put),
+        "http_patch" => http_body_dispatch(caller, params, results, HttpVerb::Patch),
         _ => Ok(false),
+    }
+}
+
+#[cfg(feature = "wasm")]
+#[derive(Clone, Copy)]
+enum HttpVerb {
+    Get,
+    Head,
+    Delete,
+    Post,
+    Put,
+    Patch,
+}
+
+#[cfg(feature = "wasm")]
+fn http_simple_dispatch(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    params: &[wasmtime::Val],
+    results: &mut [wasmtime::Val],
+    verb: HttpVerb,
+) -> Result<bool, wasmtime::Error> {
+    use wasmtime::Val;
+    let url = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+    let outcome = match verb {
+        HttpVerb::Get => aver_rt::http::get(&url),
+        HttpVerb::Head => aver_rt::http::head(&url),
+        HttpVerb::Delete => aver_rt::http::delete(&url),
+        _ => unreachable!(),
+    };
+    let result_ref = http_outcome_to_result(caller, outcome)?;
+    results[0] = Val::AnyRef(result_ref);
+    Ok(true)
+}
+
+#[cfg(feature = "wasm")]
+fn http_body_dispatch(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    params: &[wasmtime::Val],
+    results: &mut [wasmtime::Val],
+    verb: HttpVerb,
+) -> Result<bool, wasmtime::Error> {
+    use wasmtime::Val;
+    let url = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+    let body = lm_string_to_host(caller, params.get(1))?.unwrap_or_default();
+    let content_type = lm_string_to_host(caller, params.get(2))?.unwrap_or_default();
+    // Headers map (params[3]) is opaque to us today — aver_rt::http::*
+    // takes empty headers; the user's map crosses but the host doesn't
+    // unpack it yet. Verbs whose status / body we report back are still
+    // useful even without forwarding extra request headers, and the
+    // common Authorization-via-URL or body-encoded payload paths work.
+    let _ = params.get(3);
+    let outcome = match verb {
+        HttpVerb::Post => aver_rt::http::post(&url, &body, &content_type, &Default::default()),
+        HttpVerb::Put => aver_rt::http::put(&url, &body, &content_type, &Default::default()),
+        HttpVerb::Patch => aver_rt::http::patch(&url, &body, &content_type, &Default::default()),
+        _ => unreachable!(),
+    };
+    let result_ref = http_outcome_to_result(caller, outcome)?;
+    results[0] = Val::AnyRef(result_ref);
+    Ok(true)
+}
+
+#[cfg(feature = "wasm")]
+fn http_outcome_to_result(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    outcome: Result<aver_rt::HttpResponse, String>,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    match outcome {
+        Ok(resp) => {
+            let body_ref = lm_string_from_host(caller, resp.body.as_ref())?;
+            let headers_ref = host_map_string_list_string_empty(caller)?;
+            let rec_ref = host_http_response_make(caller, resp.status, body_ref, headers_ref)?;
+            host_result_http_response_ok(caller, rec_ref)
+        }
+        Err(e) => host_result_http_response_err(caller, &e),
     }
 }
 
@@ -603,6 +781,198 @@ fn host_terminal_size_make(
         &[Val::I64(width), Val::I64(height)],
         &mut out,
     )?;
+    Ok(match &out[0] {
+        Val::AnyRef(r) => r.clone(),
+        _ => None,
+    })
+}
+
+/// Build an `HttpResponse(status, body, headers)` ref via the matching
+/// factory export.
+#[cfg(feature = "wasm")]
+fn host_http_response_make(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    status: i64,
+    body: Option<wasmtime::Rooted<wasmtime::AnyRef>>,
+    headers: Option<wasmtime::Rooted<wasmtime::AnyRef>>,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let factory = caller
+        .get_export("__rt_record_http_response_make")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(
+        &mut *caller,
+        &[
+            Val::I64(status),
+            Val::AnyRef(body),
+            Val::AnyRef(headers),
+        ],
+        &mut out,
+    )?;
+    Ok(match &out[0] {
+        Val::AnyRef(r) => r.clone(),
+        _ => None,
+    })
+}
+
+#[cfg(feature = "wasm")]
+fn host_result_http_response_ok(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    resp: Option<wasmtime::Rooted<wasmtime::AnyRef>>,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let factory = caller
+        .get_export("__rt_result_http_response_string_ok")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(resp)], &mut out)?;
+    Ok(match &out[0] {
+        Val::AnyRef(r) => r.clone(),
+        _ => None,
+    })
+}
+
+#[cfg(feature = "wasm")]
+fn host_result_http_response_err(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    text: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let s = match lm_string_from_host(caller, text)? {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    let factory = caller
+        .get_export("__rt_result_http_response_string_err")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
+    Ok(match &out[0] {
+        Val::AnyRef(r) => r.clone(),
+        _ => None,
+    })
+}
+
+#[cfg(feature = "wasm")]
+fn host_map_string_list_string_empty(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let factory = caller
+        .get_export("__rt_map_string_list_string_empty")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[], &mut out)?;
+    Ok(match &out[0] {
+        Val::AnyRef(r) => r.clone(),
+        _ => None,
+    })
+}
+
+/// Build a `Tcp.Connection` record from host-side primitives via the
+/// `__rt_record_tcp_connection_make(id, host, port)` factory.
+#[cfg(feature = "wasm")]
+fn host_tcp_connection_make(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    id: Option<wasmtime::Rooted<wasmtime::AnyRef>>,
+    host: Option<wasmtime::Rooted<wasmtime::AnyRef>>,
+    port: i64,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let factory = caller
+        .get_export("__rt_record_tcp_connection_make")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(
+        &mut *caller,
+        &[Val::AnyRef(id), Val::AnyRef(host), Val::I64(port)],
+        &mut out,
+    )?;
+    Ok(match &out[0] {
+        Val::AnyRef(r) => r.clone(),
+        _ => None,
+    })
+}
+
+/// Read the `id` field of a `Tcp.Connection` record via
+/// `__rt_tcp_connection_id`. Returns `None` when the record ref is
+/// null (shouldn't happen for a successful connect, but bail safely).
+#[cfg(feature = "wasm")]
+fn host_tcp_connection_id(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    val: Option<&wasmtime::Val>,
+) -> Result<Option<String>, wasmtime::Error> {
+    use wasmtime::Val;
+    let any_ref = match val {
+        Some(Val::AnyRef(r)) => r.clone(),
+        _ => return Ok(None),
+    };
+    let Some(_) = any_ref else { return Ok(None) };
+    let getter = caller
+        .get_export("__rt_tcp_connection_id")
+        .and_then(|e| e.into_func());
+    let Some(getter) = getter else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    getter.call(&mut *caller, &[Val::AnyRef(any_ref)], &mut out)?;
+    lm_string_to_host(caller, Some(&out[0]))
+}
+
+#[cfg(feature = "wasm")]
+fn host_result_tcp_connection_ok(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    conn: Option<wasmtime::Rooted<wasmtime::AnyRef>>,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let factory = caller
+        .get_export("__rt_result_tcp_connection_string_ok")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(conn)], &mut out)?;
+    Ok(match &out[0] {
+        Val::AnyRef(r) => r.clone(),
+        _ => None,
+    })
+}
+
+#[cfg(feature = "wasm")]
+fn host_result_tcp_connection_err(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    text: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
+    use wasmtime::Val;
+    let s = match lm_string_from_host(caller, text)? {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    let factory = caller
+        .get_export("__rt_result_tcp_connection_string_err")
+        .and_then(|e| e.into_func());
+    let Some(factory) = factory else {
+        return Ok(None);
+    };
+    let mut out = [Val::AnyRef(None)];
+    factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
     Ok(match &out[0] {
         Val::AnyRef(r) => r.clone(),
         _ => None,

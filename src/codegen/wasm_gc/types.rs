@@ -1094,6 +1094,17 @@ fn collect_results_from_builtin_uses(
                         | "Disk.deleteDir"
                         | "Disk.makeDir" => intern("Result<Unit,String>"),
                         "Disk.listDir" => intern("Result<List<String>,String>"),
+                        "Tcp.connect" => intern("Result<Tcp.Connection,String>"),
+                        "Tcp.readLine" | "Tcp.send" => intern("Result<String,String>"),
+                        "Tcp.writeLine" | "Tcp.close" | "Tcp.ping" => {
+                            intern("Result<Unit,String>")
+                        }
+                        "Http.get"
+                        | "Http.head"
+                        | "Http.delete"
+                        | "Http.post"
+                        | "Http.put"
+                        | "Http.patch" => intern("Result<HttpResponse,String>"),
                         _ => {}
                     }
                 }
@@ -2290,7 +2301,24 @@ fn items_reference_name(items: &[crate::ast::TopLevel], name: &str) -> bool {
 fn effect_implies_builtin_record(effect: &str, record_name: &str) -> bool {
     let needed = match effect {
         "Terminal.size" => "Terminal.Size",
-        "Tcp.connect" => "Tcp.Connection",
+        // Any Tcp.* effect that takes or returns a connection forces
+        // the record slot. Tcp.connect *returns* one; the rest
+        // *consume* one through their first parameter, so even a
+        // program that only reads / writes / closes still needs the
+        // slot allocated.
+        "Tcp.connect"
+        | "Tcp.writeLine"
+        | "Tcp.readLine"
+        | "Tcp.close" => "Tcp.Connection",
+        // HTTP verb effects all return Result<HttpResponse, String> —
+        // ensure the response record slot is allocated even when no
+        // user fn signature mentions it.
+        "Http.get"
+        | "Http.head"
+        | "Http.delete"
+        | "Http.post"
+        | "Http.put"
+        | "Http.patch" => "HttpResponse",
         // Request / Response surface comes via the user's
         // `! [Request.method]` etc. The Aver type checker already
         // requires HttpRequest / HttpResponse in the handler's

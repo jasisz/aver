@@ -142,6 +142,24 @@ pub(super) enum EffectName {
     DiskDeleteDir,
     DiskListDir,
     DiskMakeDir,
+    // ── TCP surface — sessions backed by a thread-local socket pool
+    //   in `aver_rt::tcp`. Connection records cross the boundary as
+    //   `Tcp.Connection` struct refs.
+    TcpConnect,
+    TcpWriteLine,
+    TcpReadLine,
+    TcpClose,
+    TcpSend,
+    TcpPing,
+    // ── Outgoing HTTP verbs. `Http.send` already exists for the
+    //   Workers handler path; the surface verbs (`Http.get` etc.)
+    //   route through the same `aver_rt::http` impl.
+    HttpGet,
+    HttpHead,
+    HttpDelete,
+    HttpPost,
+    HttpPut,
+    HttpPatch,
 }
 
 impl EffectName {
@@ -201,6 +219,18 @@ impl EffectName {
             "Disk.deleteDir" => Some(Self::DiskDeleteDir),
             "Disk.listDir" => Some(Self::DiskListDir),
             "Disk.makeDir" => Some(Self::DiskMakeDir),
+            "Tcp.connect" => Some(Self::TcpConnect),
+            "Tcp.writeLine" => Some(Self::TcpWriteLine),
+            "Tcp.readLine" => Some(Self::TcpReadLine),
+            "Tcp.close" => Some(Self::TcpClose),
+            "Tcp.send" => Some(Self::TcpSend),
+            "Tcp.ping" => Some(Self::TcpPing),
+            "Http.get" => Some(Self::HttpGet),
+            "Http.head" => Some(Self::HttpHead),
+            "Http.delete" => Some(Self::HttpDelete),
+            "Http.post" => Some(Self::HttpPost),
+            "Http.put" => Some(Self::HttpPut),
+            "Http.patch" => Some(Self::HttpPatch),
             _ => None,
         }
     }
@@ -259,6 +289,18 @@ impl EffectName {
             Self::DiskDeleteDir => "Disk.deleteDir",
             Self::DiskListDir => "Disk.listDir",
             Self::DiskMakeDir => "Disk.makeDir",
+            Self::TcpConnect => "Tcp.connect",
+            Self::TcpWriteLine => "Tcp.writeLine",
+            Self::TcpReadLine => "Tcp.readLine",
+            Self::TcpClose => "Tcp.close",
+            Self::TcpSend => "Tcp.send",
+            Self::TcpPing => "Tcp.ping",
+            Self::HttpGet => "Http.get",
+            Self::HttpHead => "Http.head",
+            Self::HttpDelete => "Http.delete",
+            Self::HttpPost => "Http.post",
+            Self::HttpPut => "Http.put",
+            Self::HttpPatch => "Http.patch",
         }
     }
 
@@ -313,6 +355,18 @@ impl EffectName {
             Self::DiskDeleteDir => ("aver", "disk_delete_dir"),
             Self::DiskListDir => ("aver", "disk_list_dir"),
             Self::DiskMakeDir => ("aver", "disk_make_dir"),
+            Self::TcpConnect => ("aver", "tcp_connect"),
+            Self::TcpWriteLine => ("aver", "tcp_write_line"),
+            Self::TcpReadLine => ("aver", "tcp_read_line"),
+            Self::TcpClose => ("aver", "tcp_close"),
+            Self::TcpSend => ("aver", "tcp_send"),
+            Self::TcpPing => ("aver", "tcp_ping"),
+            Self::HttpGet => ("aver", "http_get"),
+            Self::HttpHead => ("aver", "http_head"),
+            Self::HttpDelete => ("aver", "http_delete"),
+            Self::HttpPost => ("aver", "http_post"),
+            Self::HttpPut => ("aver", "http_put"),
+            Self::HttpPatch => ("aver", "http_patch"),
         }
     }
 
@@ -322,7 +376,7 @@ impl EffectName {
     /// idx. The headers Map crossing uses the registered concrete
     /// `Map<String, List<String>>` ref so the host bridge has a
     /// type-safe handle.
-    pub(super) fn params(self, _registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
+    pub(super) fn params(self, registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
         match self {
             Self::ConsolePrint | Self::ConsoleError | Self::ConsoleWarn => Ok(vec![any_ref_ty()]),
             Self::TimeUnixMs => Ok(vec![]),
@@ -367,6 +421,28 @@ impl EffectName {
             | Self::DiskListDir
             | Self::DiskMakeDir => Ok(vec![any_ref_ty()]),
             Self::DiskWriteText | Self::DiskAppendText => Ok(vec![any_ref_ty(), any_ref_ty()]),
+            // Tcp.connect: (host, port). Returns Result<Tcp.Connection, String>.
+            Self::TcpConnect => Ok(vec![any_ref_ty(), ValType::I64]),
+            // Tcp.writeLine / readLine / close all take a Connection as
+            // first arg. Carrying it as `any_ref` lets the host
+            // `struct.get` the id field directly without us having to
+            // mention the concrete record type idx in the import sig.
+            Self::TcpClose | Self::TcpReadLine => Ok(vec![any_ref_ty()]),
+            Self::TcpWriteLine => Ok(vec![any_ref_ty(), any_ref_ty()]),
+            Self::TcpSend => Ok(vec![any_ref_ty(), ValType::I64, any_ref_ty()]),
+            Self::TcpPing => Ok(vec![any_ref_ty(), ValType::I64]),
+            // HTTP verbs all take a URL. `Http.get` / `Http.head` /
+            // `Http.delete` are arity-1; the body verbs add (body,
+            // contentType, headersMap). The headers map crosses as
+            // the registered `Map<String, List<String>>` ref so the
+            // host can iterate (key, values) pairs.
+            Self::HttpGet | Self::HttpHead | Self::HttpDelete => Ok(vec![any_ref_ty()]),
+            Self::HttpPost | Self::HttpPut | Self::HttpPatch => Ok(vec![
+                any_ref_ty(),
+                any_ref_ty(),
+                any_ref_ty(),
+                map_string_list_string_ref_ty(registry)?,
+            ]),
         }
     }
 
@@ -464,6 +540,24 @@ impl EffectName {
                 "Result<List<String>,String>",
             )?]),
             Self::DiskExists => Ok(vec![ValType::I32]),
+            Self::TcpConnect => {
+                Ok(vec![result_ref_ty(registry, "Result<Tcp.Connection,String>")?])
+            }
+            Self::TcpReadLine | Self::TcpSend => {
+                Ok(vec![result_ref_ty(registry, "Result<String,String>")?])
+            }
+            Self::TcpWriteLine | Self::TcpClose | Self::TcpPing => {
+                Ok(vec![result_ref_ty(registry, "Result<Unit,String>")?])
+            }
+            Self::HttpGet
+            | Self::HttpHead
+            | Self::HttpDelete
+            | Self::HttpPost
+            | Self::HttpPut
+            | Self::HttpPatch => Ok(vec![result_ref_ty(
+                registry,
+                "Result<HttpResponse,String>",
+            )?]),
         }
     }
 }

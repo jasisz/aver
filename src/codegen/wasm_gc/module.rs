@@ -1297,6 +1297,31 @@ struct FactoryExports {
     /// only case so far is `Disk.listDir`'s success arm).
     list_string_cons: Option<FactorySlot>,
     list_string_nil: Option<FactorySlot>,
+    /// `__rt_record_tcp_connection_make(id, host, port)` — emitted
+    /// when any `Tcp.*` effect is registered. The host hands the
+    /// resulting record back as a Connection handle; subsequent
+    /// `Tcp.writeLine / readLine / close` calls extract the `id`
+    /// field on the host side to look up the underlying socket.
+    tcp_connection_make: Option<FactorySlot>,
+    /// `__rt_tcp_connection_id(c) -> String` — getter the host uses
+    /// to recover the socket-pool key when dispatching writeLine /
+    /// readLine / close.
+    tcp_connection_id: Option<FactorySlot>,
+    /// `__rt_result_tcp_connection_string_ok(c)` /
+    /// `__rt_result_tcp_connection_string_err(e)` — emitted when
+    /// `Tcp.connect` is registered.
+    result_tcp_connection_string_ok: Option<FactorySlot>,
+    result_tcp_connection_string_err: Option<FactorySlot>,
+    /// `__rt_record_http_response_make(status, body, headers)` — emitted
+    /// when any `Http.*` verb effect is registered.
+    http_response_make: Option<FactorySlot>,
+    /// `__rt_result_http_response_string_ok(r)` /
+    /// `__rt_result_http_response_string_err(e)` — same gate.
+    result_http_response_string_ok: Option<FactorySlot>,
+    result_http_response_string_err: Option<FactorySlot>,
+    /// `__rt_map_string_list_string_empty()` — empty headers map for
+    /// the host to attach to its synthesised HttpResponse refs.
+    map_string_list_string_empty: Option<FactorySlot>,
 }
 
 #[derive(Clone, Copy)]
@@ -1373,7 +1398,10 @@ fn allocate_factory_exports(
     let needs_result_string_string = effect_registry.iter().any(|e| {
         matches!(
             e,
-            EffectName::ConsoleReadLine | EffectName::DiskReadText
+            EffectName::ConsoleReadLine
+                | EffectName::DiskReadText
+                | EffectName::TcpReadLine
+                | EffectName::TcpSend
         )
     });
     if needs_result_string_string {
@@ -1408,7 +1436,8 @@ fn allocate_factory_exports(
     }
 
     // Result<Unit, String> factories — Disk.{writeText, appendText,
-    // delete, deleteDir, makeDir} all yield this shape.
+    // delete, deleteDir, makeDir} all yield this shape; same for the
+    // shape-equivalent Tcp.{writeLine, close, ping} effects.
     let needs_result_unit_string = effect_registry.iter().any(|e| {
         matches!(
             e,
@@ -1417,6 +1446,9 @@ fn allocate_factory_exports(
                 | EffectName::DiskDelete
                 | EffectName::DiskDeleteDir
                 | EffectName::DiskMakeDir
+                | EffectName::TcpWriteLine
+                | EffectName::TcpClose
+                | EffectName::TcpPing
         )
     });
     if needs_result_unit_string {
@@ -1443,6 +1475,165 @@ fn allocate_factory_exports(
 
         types.ty().function([s_ref], [res_ref]);
         fx.result_unit_string_err = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+    }
+
+    // Tcp.Connection record + Result<Tcp.Connection, String> — driven
+    // by any Tcp.* effect (connect returns one; the rest consume one).
+    let needs_tcp_connection = effect_registry.iter().any(|e| {
+        matches!(
+            e,
+            EffectName::TcpConnect
+                | EffectName::TcpWriteLine
+                | EffectName::TcpReadLine
+                | EffectName::TcpClose
+        )
+    });
+    if needs_tcp_connection {
+        let rec_idx = registry
+            .record_type_idx("Tcp.Connection")
+            .ok_or(WasmGcError::Validation(
+                "Tcp.connect factory requires Tcp.Connection record slot".into(),
+            ))?;
+        let s_idx = registry
+            .string_array_type_idx
+            .ok_or(WasmGcError::Validation(
+                "Tcp.connect factory requires String slot".into(),
+            ))?;
+        let s_ref = ref_null(s_idx);
+        let rec_ref = ref_null(rec_idx);
+
+        types
+            .ty()
+            .function([s_ref.clone(), s_ref.clone(), ValType::I64], [rec_ref.clone()]);
+        fx.tcp_connection_make = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        types.ty().function([rec_ref], [s_ref]);
+        fx.tcp_connection_id = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+    }
+    if effect_registry
+        .iter()
+        .any(|e| matches!(e, EffectName::TcpConnect))
+    {
+        let res_idx = registry
+            .result_type_idx("Result<Tcp.Connection,String>")
+            .ok_or(WasmGcError::Validation(
+                "Tcp.connect requires Result<Tcp.Connection,String> slot".into(),
+            ))?;
+        let rec_idx = registry
+            .record_type_idx("Tcp.Connection")
+            .ok_or(WasmGcError::Validation(
+                "Tcp.connect requires Tcp.Connection record slot".into(),
+            ))?;
+        let s_idx = registry
+            .string_array_type_idx
+            .ok_or(WasmGcError::Validation(
+                "Tcp.connect requires String slot".into(),
+            ))?;
+        let s_ref = ref_null(s_idx);
+        let rec_ref = ref_null(rec_idx);
+        let res_ref = ref_null(res_idx);
+
+        types.ty().function([rec_ref], [res_ref.clone()]);
+        fx.result_tcp_connection_string_ok = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        types.ty().function([s_ref], [res_ref]);
+        fx.result_tcp_connection_string_err = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+    }
+
+    // HTTP response factories — driven by any verb effect.
+    let needs_http_response = effect_registry.iter().any(|e| {
+        matches!(
+            e,
+            EffectName::HttpGet
+                | EffectName::HttpHead
+                | EffectName::HttpDelete
+                | EffectName::HttpPost
+                | EffectName::HttpPut
+                | EffectName::HttpPatch
+        )
+    });
+    if needs_http_response {
+        let res_idx = registry
+            .result_type_idx("Result<HttpResponse,String>")
+            .ok_or(WasmGcError::Validation(
+                "Http.* requires Result<HttpResponse,String> slot".into(),
+            ))?;
+        let rec_idx = registry
+            .record_type_idx("HttpResponse")
+            .ok_or(WasmGcError::Validation(
+                "Http.* requires HttpResponse record slot".into(),
+            ))?;
+        let s_idx = registry
+            .string_array_type_idx
+            .ok_or(WasmGcError::Validation(
+                "Http.* requires String slot".into(),
+            ))?;
+        let map_slots = registry
+            .map_slots("Map<String,List<String>>")
+            .ok_or(WasmGcError::Validation(
+                "Http.* requires Map<String,List<String>> slot".into(),
+            ))?;
+        let s_ref = ref_null(s_idx);
+        let rec_ref = ref_null(rec_idx);
+        let res_ref = ref_null(res_idx);
+        let map_ref = ref_null(map_slots.map);
+        let keys_ref = ref_null(map_slots.keys_array);
+        let values_ref = ref_null(map_slots.values_array);
+        let _ = (keys_ref, values_ref);
+
+        types
+            .ty()
+            .function([ValType::I64, s_ref.clone(), map_ref.clone()], [rec_ref.clone()]);
+        fx.http_response_make = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        types.ty().function([rec_ref], [res_ref.clone()]);
+        fx.result_http_response_string_ok = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        types.ty().function([s_ref], [res_ref]);
+        fx.result_http_response_string_err = Some(FactorySlot {
+            type_idx: *next_type_idx,
+            fn_idx: *next_fn_idx,
+        });
+        *next_type_idx += 1;
+        *next_fn_idx += 1;
+
+        types.ty().function([], [map_ref]);
+        fx.map_string_list_string_empty = Some(FactorySlot {
             type_idx: *next_type_idx,
             fn_idx: *next_fn_idx,
         });
@@ -1569,6 +1760,50 @@ impl FactoryExports {
         if let Some(s) = self.list_string_nil {
             exports.export("__rt_list_string_nil", ExportKind::Func, s.fn_idx);
         }
+        if let Some(s) = self.tcp_connection_make {
+            exports.export("__rt_record_tcp_connection_make", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.tcp_connection_id {
+            exports.export("__rt_tcp_connection_id", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.result_tcp_connection_string_ok {
+            exports.export(
+                "__rt_result_tcp_connection_string_ok",
+                ExportKind::Func,
+                s.fn_idx,
+            );
+        }
+        if let Some(s) = self.result_tcp_connection_string_err {
+            exports.export(
+                "__rt_result_tcp_connection_string_err",
+                ExportKind::Func,
+                s.fn_idx,
+            );
+        }
+        if let Some(s) = self.http_response_make {
+            exports.export("__rt_record_http_response_make", ExportKind::Func, s.fn_idx);
+        }
+        if let Some(s) = self.result_http_response_string_ok {
+            exports.export(
+                "__rt_result_http_response_string_ok",
+                ExportKind::Func,
+                s.fn_idx,
+            );
+        }
+        if let Some(s) = self.result_http_response_string_err {
+            exports.export(
+                "__rt_result_http_response_string_err",
+                ExportKind::Func,
+                s.fn_idx,
+            );
+        }
+        if let Some(s) = self.map_string_list_string_empty {
+            exports.export(
+                "__rt_map_string_list_string_empty",
+                ExportKind::Func,
+                s.fn_idx,
+            );
+        }
     }
 
     fn emit_bodies(
@@ -1609,6 +1844,30 @@ impl FactoryExports {
         if self.list_string_nil.is_some() {
             codes.function(&emit_factory_list_string_nil(registry)?);
         }
+        if self.tcp_connection_make.is_some() {
+            codes.function(&emit_factory_tcp_connection_make(registry)?);
+        }
+        if self.tcp_connection_id.is_some() {
+            codes.function(&emit_factory_tcp_connection_id(registry)?);
+        }
+        if self.result_tcp_connection_string_ok.is_some() {
+            codes.function(&emit_factory_result_tcp_connection_string_ok(registry)?);
+        }
+        if self.result_tcp_connection_string_err.is_some() {
+            codes.function(&emit_factory_result_tcp_connection_string_err(registry)?);
+        }
+        if self.http_response_make.is_some() {
+            codes.function(&emit_factory_http_response_make(registry)?);
+        }
+        if self.result_http_response_string_ok.is_some() {
+            codes.function(&emit_factory_result_http_response_string_ok(registry)?);
+        }
+        if self.result_http_response_string_err.is_some() {
+            codes.function(&emit_factory_result_http_response_string_err(registry)?);
+        }
+        if self.map_string_list_string_empty.is_some() {
+            codes.function(&emit_factory_map_string_list_string_empty(registry)?);
+        }
         Ok(())
     }
 
@@ -1625,6 +1884,14 @@ impl FactoryExports {
             self.result_list_string_string_err,
             self.list_string_cons,
             self.list_string_nil,
+            self.tcp_connection_make,
+            self.tcp_connection_id,
+            self.result_tcp_connection_string_ok,
+            self.result_tcp_connection_string_err,
+            self.http_response_make,
+            self.result_http_response_string_ok,
+            self.result_http_response_string_err,
+            self.map_string_list_string_empty,
         ]
         .into_iter()
         .flatten()
@@ -1817,6 +2084,154 @@ fn emit_factory_list_string_nil(
     f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
         list_idx,
     )));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `Tcp.Connection { id, host, port }` factory. Field order must
+/// match the declaration in `builtin_records::TCP_CONNECTION`.
+fn emit_factory_tcp_connection_make(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let rec_idx = registry
+        .record_type_idx("Tcp.Connection")
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::StructNew(rec_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `__rt_tcp_connection_id(c)` — read field 0 of the record.
+fn emit_factory_tcp_connection_id(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let rec_idx = registry
+        .record_type_idx("Tcp.Connection")
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefCastNonNull(wasm_encoder::HeapType::Concrete(
+        rec_idx,
+    )));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: rec_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_result_tcp_connection_string_ok(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let res_idx = registry
+        .result_type_idx("Result<Tcp.Connection,String>")
+        .expect("checked at allocation");
+    let s_idx = registry
+        .string_array_type_idx
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::StructNew(res_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_result_tcp_connection_string_err(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let res_idx = registry
+        .result_type_idx("Result<Tcp.Connection,String>")
+        .expect("checked at allocation");
+    let rec_idx = registry
+        .record_type_idx("Tcp.Connection")
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(rec_idx)));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructNew(res_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `HttpResponse { status, body, headers }` factory.
+fn emit_factory_http_response_make(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let rec_idx = registry
+        .record_type_idx("HttpResponse")
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::StructNew(rec_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_result_http_response_string_ok(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let res_idx = registry
+        .result_type_idx("Result<HttpResponse,String>")
+        .expect("checked at allocation");
+    let s_idx = registry
+        .string_array_type_idx
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(s_idx)));
+    f.instruction(&Instruction::StructNew(res_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+fn emit_factory_result_http_response_string_err(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let res_idx = registry
+        .result_type_idx("Result<HttpResponse,String>")
+        .expect("checked at allocation");
+    let rec_idx = registry
+        .record_type_idx("HttpResponse")
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(rec_idx)));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructNew(res_idx));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// Empty `Map<String, List<String>>`. The map struct layout is `(size:
+/// i32, cap: i32, keys_ref, values_ref)` per `MapSlots` — produce an
+/// all-zero / null-ref map.
+fn emit_factory_map_string_list_string_empty(
+    registry: &TypeRegistry,
+) -> Result<wasm_encoder::Function, WasmGcError> {
+    let slots = registry
+        .map_slots("Map<String,List<String>>")
+        .expect("checked at allocation");
+    let mut f = Function::new([]);
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        slots.keys_array,
+    )));
+    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        slots.values_array,
+    )));
+    f.instruction(&Instruction::StructNew(slots.map));
     f.instruction(&Instruction::End);
     Ok(f)
 }
