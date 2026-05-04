@@ -440,16 +440,24 @@ pub(super) fn emit_expr(
                     ));
                 }
             };
+            // Resolve before evaluating args — if `name` is a local
+            // (binding/param of a `Fn(...) -> _` shape, only ever
+            // reachable through verify-only fns) the wasm-gc backend
+            // doesn't emit a higher-order call. Emit `unreachable`,
+            // which wasm validation treats as polymorphic — the
+            // surrounding block's result type can be anything. Body is
+            // dead from a `_start` perspective so the trap never fires.
+            let entry = ctx.fn_map.by_name.get(name);
+            if entry.is_none() && ctx.self_local_slot(name).is_some() {
+                func.instruction(&Instruction::Unreachable);
+                return Ok(());
+            }
             for arg in args {
                 emit_expr(func, &arg, slots, ctx)?;
             }
-            let entry = ctx
-                .fn_map
-                .by_name
-                .get(name)
-                .ok_or(WasmGcError::Validation(format!(
-                    "call to unknown fn `{name}`"
-                )))?;
+            let entry = entry.ok_or(WasmGcError::Validation(format!(
+                "call to unknown fn `{name}`"
+            )))?;
             func.instruction(&Instruction::Call(entry.wasm_idx));
         }
         Expr::Match { subject, arms } => emit_match(func, subject, arms, slots, ctx)?,

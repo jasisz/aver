@@ -2291,6 +2291,25 @@ pub(super) fn aver_to_wasm(
         })));
     }
 
+    // First-class Fn types reach the wasm-gc backend only through
+    // verify / oracle givens (`fn pairSpec(rnd: Fn(BranchPath, Int,
+    // Int, Int) -> Int) -> ...`). The body is dead from `_start` —
+    // verify blocks never execute in runtime — so the param slot just
+    // needs *some* representable carrier. `(ref null eq)` works the
+    // same way it does for `BranchPath`. Higher-order calls in real
+    // runtime code aren't supported on wasm-gc yet; if they reach
+    // here through `_start`, the validator will reject them at the
+    // call site and the user gets a clear error.
+    if trimmed.starts_with("Fn(") {
+        return Ok(Some(ValType::Ref(RefType {
+            nullable: true,
+            heap_type: HeapType::Abstract {
+                shared: false,
+                ty: AbstractHeapType::Eq,
+            },
+        })));
+    }
+
     // Compound types not yet lowered.
     Err(WasmGcError::Validation(format!(
         "aver_to_wasm: cannot lower type `{trimmed}` to a wasm representation"

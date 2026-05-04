@@ -63,6 +63,22 @@ pub(super) fn emit_dotted_builtin(
         return Ok(());
     }
 
+    // `BranchPath.*` and `Trace.*` reach the wasm-gc backend only
+    // through verify / oracle givens; their bodies are dead from a
+    // `_start` perspective. Emit a no-op that returns the universal
+    // eqref carrier so the fn signature stays representable. The
+    // verify executor (when it runs on wasm-gc — followup) will dispatch
+    // these through real impls; bare `aver run --wasm-gc` on a
+    // verify-only file can still build and instantiate without a
+    // runtime call ever reaching here.
+    if parent == "BranchPath" || parent == "Trace" {
+        // Verify-only oracle / tracing methods. Their bodies are dead
+        // from `_start`; emit `unreachable` and let wasm validation
+        // treat the rest as polymorphic.
+        func.instruction(&Instruction::Unreachable);
+        return Ok(());
+    }
+
     match dotted.as_str() {
         // Float.fromInt(Int) -> Float
         "Float.fromInt" => {
