@@ -192,9 +192,11 @@ pub(super) fn emit_fn_body(
                     .ok_or(WasmGcError::Validation(format!(
                         "binding `{name}` has no resolver slot"
                     )))?;
-                // Skip the local.set for Unit-typed bindings — they
-                // produce no stack value.
-                if (slot as usize) < slots.by_slot.len() {
+                // Unit expressions push nothing — there's nothing to
+                // stash, and the slot itself is an i32 placeholder
+                // (kept around to preserve resolver slot indices).
+                let produces_value = aver_type_str_of(expr).trim() != "Unit";
+                if produces_value && (slot as usize) < slots.by_slot.len() {
                     func.instruction(&Instruction::LocalSet(slot));
                 }
             }

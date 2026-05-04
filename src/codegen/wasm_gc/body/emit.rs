@@ -694,13 +694,49 @@ pub(super) fn emit_error_prop(
     let (t_aver, _e_aver) = TypeRegistry::result_te(&canonical).ok_or(WasmGcError::Validation(
         format!("ErrorProp: Result canonical `{canonical}` malformed"),
     ))?;
-    // Unit Ok-payload uses the i32 placeholder slot (see Result struct
-    // shape in module.rs).
-    let ok_wasm = aver_to_wasm(t_aver, Some(ctx.registry))?.unwrap_or(ValType::I32);
-    let block_ty = wasm_encoder::BlockType::Result(ok_wasm);
+    // Result<Unit, E>?: the Ok arm has no observable value to surface.
+    // Use an empty block type and skip the `struct.get field 1` push so
+    // the trailing stmt sees a true zero-value expression — matches the
+    // Aver-side `? : Unit` typing.
+    let unit_ok = t_aver.trim() == "Unit";
+    let block_ty = if unit_ok {
+        wasm_encoder::BlockType::Empty
+    } else {
+        let ok_wasm = aver_to_wasm(t_aver, Some(ctx.registry))?.ok_or(
+            WasmGcError::Validation(format!(
+                "ErrorProp: Ok type `{t_aver}` has no wasm representation"
+            )),
+        )?;
+        wasm_encoder::BlockType::Result(ok_wasm)
+    };
+
+    // Resolve the enclosing fn's return Result<EnclosingT, E> so the
+    // Err arm can build a fresh Result of the *enclosing* shape. The
+    // subject's Result<T, E> may be a different T than the enclosing
+    // (e.g. `String.toInt(...)?` inside `fn parseUser(...) ->
+    // Result<User, String>` — subject is Result<Int, String>, enclosing
+    // is Result<User, String>); returning the subject ref directly
+    // would be a type mismatch.
+    let enclosing_canonical: String = ctx
+        .return_type
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let enclosing_idx = ctx
+        .registry
+        .result_type_idx(&enclosing_canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "ErrorProp: enclosing fn return `{}` is not a registered Result<T,E>",
+            ctx.return_type
+        )))?;
+    let (enclosing_t_aver, _) = TypeRegistry::result_te(&enclosing_canonical).ok_or(
+        WasmGcError::Validation(format!(
+            "ErrorProp: enclosing Result canonical `{enclosing_canonical}` malformed"
+        )),
+    )?;
 
     // Push subject and stash in scratch so we can read tag and either
-    // unwrap field 1 or return the whole struct on the Err arm.
+    // unwrap field 1 or rebuild the Err arm.
     emit_expr(func, inner, slots, ctx)?;
     func.instruction(&Instruction::LocalSet(scratch));
 
@@ -716,24 +752,33 @@ pub(super) fn emit_error_prop(
     func.instruction(&Instruction::I32Const(1));
     func.instruction(&Instruction::I32Eq);
     func.instruction(&Instruction::If(block_ty));
-    // Ok arm — push field 1 (the T payload).
+    // Ok arm — push field 1 (the T payload). Unit-typed T produces
+    // no observable value, so the Ok arm stays empty.
+    if !unit_ok {
+        func.instruction(&Instruction::LocalGet(scratch));
+        func.instruction(&Instruction::RefCastNonNull(
+            wasm_encoder::HeapType::Concrete(res_idx),
+        ));
+        func.instruction(&Instruction::StructGet {
+            struct_type_index: res_idx,
+            field_index: 1,
+        });
+    }
+    func.instruction(&Instruction::Else);
+    // Err arm — extract the err field from the subject and wrap it
+    // in a fresh Result<EnclosingT, E>::Err so the return type lines
+    // up with what the enclosing fn declared.
+    func.instruction(&Instruction::I32Const(0)); // tag=0 (Err)
+    emit_default_value(func, enclosing_t_aver, ctx.registry)?;
     func.instruction(&Instruction::LocalGet(scratch));
     func.instruction(&Instruction::RefCastNonNull(
         wasm_encoder::HeapType::Concrete(res_idx),
     ));
     func.instruction(&Instruction::StructGet {
         struct_type_index: res_idx,
-        field_index: 1,
+        field_index: 2,
     });
-    func.instruction(&Instruction::Else);
-    // Err arm — push the whole subject (cast back to the concrete
-    // Result heap type since the scratch slot stores it as eqref) and
-    // return. Type checker guarantees the enclosing fn returns
-    // Result<_, E> with the same E.
-    func.instruction(&Instruction::LocalGet(scratch));
-    func.instruction(&Instruction::RefCastNonNull(
-        wasm_encoder::HeapType::Concrete(res_idx),
-    ));
+    func.instruction(&Instruction::StructNew(enclosing_idx));
     func.instruction(&Instruction::Return);
     func.instruction(&Instruction::End);
     Ok(())

@@ -61,9 +61,16 @@ impl SlotTable {
         if let Some(resolution) = fd.resolution.as_ref() {
             for ty in resolution.local_slot_types.iter() {
                 let aver_str = ty.display();
-                if let Some(v) = aver_to_wasm(&aver_str, Some(registry))? {
-                    by_slot.push(v);
-                }
+                // `Unit` (and any other type without a wasm
+                // representation) still occupies a slot index in the
+                // resolver's `local_slots` map — pushing an `i32`
+                // placeholder keeps `by_slot[i]` aligned with the
+                // resolver's `i`. Otherwise a `_data: Unit = …?`
+                // binding would let the next slot read the wrong
+                // wasm type and trip validator with `expected eqref,
+                // found i32` (and friends).
+                let v = aver_to_wasm(&aver_str, Some(registry))?.unwrap_or(ValType::I32);
+                by_slot.push(v);
             }
         } else {
             // Resolution absent — fall back to params-only slots so
@@ -71,9 +78,8 @@ impl SlotTable {
             // body that touches anything beyond the parameters will
             // surface the gap as a wasm validation error.
             for (_, ty) in &fd.params {
-                if let Some(v) = aver_to_wasm(ty, Some(registry))? {
-                    by_slot.push(v);
-                }
+                let v = aver_to_wasm(ty, Some(registry))?.unwrap_or(ValType::I32);
+                by_slot.push(v);
             }
         }
         // If this fn has any multi-arm Constructor match, reserve a
