@@ -1022,14 +1022,6 @@ fn expr_is_loop_invariant(
     }
 }
 
-/// `Buffer` (alias for the runtime `aver_rt::Buffer` type) is what every
-/// `__buf_*` builder synthesizes. Buffers are mutable-owned scratch
-/// storage that gets consumed exactly once — perfect candidate for the
-/// "do not hoist" rule below.
-fn type_is_owned_mut_buffer(ty: &Type) -> bool {
-    matches!(ty, Type::Named(name) if name == "Buffer")
-}
-
 fn expr_is_hoistable_invariant(
     expr: &Spanned<Expr>,
     stable_names: &HashSet<String>,
