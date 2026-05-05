@@ -23,7 +23,7 @@ use super::imports::{
     host_terminal_size_make, lm_string_from_host,
 };
 
-pub(super) fn decode_main_return_typed(
+pub(crate) fn decode_main_return_typed(
     store: &mut wasmtime::Store<RunWasmGcHost>,
     instance: &wasmtime::Instance,
     out: &[wasmtime::Val],
@@ -62,7 +62,7 @@ pub(super) fn wrap_marker(
     aver::replay::JsonValue::Object(obj)
 }
 
-pub(super) fn decode_val_typed(
+pub(crate) fn decode_val_typed(
     store: &mut wasmtime::Store<RunWasmGcHost>,
     instance: &wasmtime::Instance,
     val: &wasmtime::Val,
@@ -193,7 +193,7 @@ pub(super) fn lm_string_from_host_via_store(
 /// String AnyRef into host bytes. Mirrors `lm_string_to_host` but
 /// takes a `Store` instead of a `Caller` (we're past the import
 /// dispatch by the time `main` returns).
-pub(super) fn decode_string_via_export(
+pub(crate) fn decode_string_via_export(
     store: &mut wasmtime::Store<RunWasmGcHost>,
     instance: &wasmtime::Instance,
     val: &wasmtime::Val,
@@ -230,7 +230,7 @@ pub(super) fn decode_string_via_export(
 /// Decode the active payload via the matching arm type and wrap in
 /// the same `$ok`/`$err` marker the VM recorder writes, so VM and
 /// wasm-gc traces stay byte-compatible.
-pub(super) fn decode_result_struct(
+pub(crate) fn decode_result_struct(
     store: &mut wasmtime::Store<RunWasmGcHost>,
     instance: &wasmtime::Instance,
     val: &wasmtime::Val,
@@ -256,7 +256,7 @@ pub(super) fn decode_result_struct(
 /// `Option<T>` is a 2-field struct: `(i32 tag, anyref payload)`,
 /// tag=1 → Some, tag=0 → None. The recorder marker shape is
 /// `{"$some": <inner>}` / `{"$none": true}`, matching the VM trace.
-pub(super) fn decode_option_struct(
+pub(crate) fn decode_option_struct(
     store: &mut wasmtime::Store<RunWasmGcHost>,
     instance: &wasmtime::Instance,
     val: &wasmtime::Val,
@@ -279,7 +279,7 @@ pub(super) fn decode_option_struct(
 }
 
 /// Tuple ref: positional struct, one field per element type.
-pub(super) fn decode_tuple_struct(
+pub(crate) fn decode_tuple_struct(
     store: &mut wasmtime::Store<RunWasmGcHost>,
     instance: &wasmtime::Instance,
     val: &wasmtime::Val,
@@ -349,7 +349,7 @@ pub(super) fn read_struct(
 /// LM transport. Returns `Err` for any other JSON shape — the caller
 /// already knows what shape the trace should hold from the effect's
 /// declared return type.
-pub(super) fn decode_string<T: 'static>(
+pub(crate) fn decode_string<T: 'static>(
     caller: &mut wasmtime::Caller<'_, T>,
     json: &aver::replay::JsonValue,
 ) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
@@ -366,7 +366,7 @@ pub(super) fn decode_string<T: 'static>(
 /// Decode a `Result<String, String>` value from the trace to the
 /// wasm-gc Result-of-string ref. Recognises the `{"$ok": <string>}`
 /// and `{"$err": <string>}` markers `replay::value_to_json` emits.
-pub(super) fn decode_result_string(
+pub(crate) fn decode_result_string(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     json: &aver::replay::JsonValue,
 ) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
@@ -382,7 +382,7 @@ pub(super) fn decode_result_string(
 
 /// Decode a `Result<Unit, String>` value. `Result.Ok(())` lands as
 /// `{"$ok": null}` in the trace (Unit serialises to `null`).
-pub(super) fn decode_result_unit(
+pub(crate) fn decode_result_unit(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     json: &aver::replay::JsonValue,
 ) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
@@ -397,7 +397,7 @@ pub(super) fn decode_result_unit(
 }
 
 /// Decode a `Result<List<String>, String>` value.
-pub(super) fn decode_result_list_string(
+pub(crate) fn decode_result_list_string(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     json: &aver::replay::JsonValue,
 ) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
@@ -425,7 +425,7 @@ pub(super) fn decode_result_list_string(
 
 /// Decode an `Option<String>` value. Markers: `{"$some": <string>}` /
 /// `{"$none": true}`.
-pub(super) fn decode_option_string(
+pub(crate) fn decode_option_string(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     json: &aver::replay::JsonValue,
 ) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
@@ -443,7 +443,7 @@ pub(super) fn decode_option_string(
 /// `$record` with `status: Int`, `body: String`, `headers: Map<…>`.
 /// Headers cross as an empty map — the recording path emits the same
 /// shape today.
-pub(super) fn decode_result_http_response(
+pub(crate) fn decode_result_http_response(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     json: &aver::replay::JsonValue,
 ) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
@@ -475,7 +475,7 @@ pub(super) fn decode_result_http_response(
 }
 
 /// Decode a `Result<Tcp.Connection, String>` value.
-pub(super) fn decode_result_tcp_connection(
+pub(crate) fn decode_result_tcp_connection(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     json: &aver::replay::JsonValue,
 ) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
@@ -511,7 +511,7 @@ pub(super) fn decode_result_tcp_connection(
 }
 
 /// Decode a `Terminal.Size` record.
-pub(super) fn decode_terminal_size(
+pub(crate) fn decode_terminal_size(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     json: &aver::replay::JsonValue,
 ) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
