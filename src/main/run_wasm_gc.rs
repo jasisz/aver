@@ -50,12 +50,23 @@ pub(super) fn cmd_run_wasm_gc(
     module_root_override: Option<&str>,
     program_args: Vec<String>,
     record_dir: Option<&str>,
+    entry_expr: Option<&str>,
 ) {
     let mode = match record_dir {
         Some(dir) => EffectMode::Recording(dir),
         None => EffectMode::Normal,
     };
-    cmd_run_wasm_gc_with_mode(file, module_root_override, program_args, mode);
+    let entry_info = match entry_expr {
+        Some(src) => match super::shared::parse_call_expression(src) {
+            Ok(info) => Some(info),
+            Err(e) => {
+                eprintln!("{}", format!("--expr: {}", e).red());
+                process::exit(1);
+            }
+        },
+        None => None,
+    };
+    cmd_run_wasm_gc_with_mode(file, module_root_override, program_args, mode, entry_info);
 }
 
 pub(super) fn cmd_run_wasm_gc_with_mode(
@@ -63,8 +74,16 @@ pub(super) fn cmd_run_wasm_gc_with_mode(
     module_root_override: Option<&str>,
     program_args: Vec<String>,
     mode: EffectMode<'_>,
+    entry_info: Option<(String, Vec<aver::value::Value>)>,
 ) {
-    cmd_run_wasm_gc_with_mode_capturing(file, module_root_override, program_args, mode, None);
+    cmd_run_wasm_gc_with_mode_capturing(
+        file,
+        module_root_override,
+        program_args,
+        mode,
+        entry_info,
+        None,
+    );
 }
 
 /// Same as `cmd_run_wasm_gc_with_mode` but optionally captures the
@@ -78,11 +97,19 @@ pub(super) fn cmd_run_wasm_gc_with_mode_capturing(
     module_root_override: Option<&str>,
     program_args: Vec<String>,
     mode: EffectMode<'_>,
+    entry_info: Option<(String, Vec<aver::value::Value>)>,
     out_json: Option<&mut Option<aver::replay::JsonValue>>,
 ) {
     #[cfg(not(feature = "wasm"))]
     {
-        let _ = (file, module_root_override, program_args, mode, out_json);
+        let _ = (
+            file,
+            module_root_override,
+            program_args,
+            mode,
+            entry_info,
+            out_json,
+        );
         eprintln!("{}", "WASM requires --features wasm".red());
         process::exit(1);
     }
@@ -144,14 +171,19 @@ pub(super) fn cmd_run_wasm_gc_with_mode_capturing(
             }
         };
 
-        let main_return_ty = find_main_return_type(&items);
+        let entry_fn_name: &str = entry_info
+            .as_ref()
+            .map(|(n, _)| n.as_str())
+            .unwrap_or("main");
+        let return_ty = find_fn_return_type(&items, entry_fn_name);
         match run_wasm_gc_with_host(
             &bytes,
             &program_args,
             &mode,
             file,
             &module_root,
-            &main_return_ty,
+            entry_info.as_ref(),
+            &return_ty,
         ) {
             Ok(decoded) => {
                 if let Some(slot) = out_json {
@@ -177,17 +209,18 @@ struct RunWasmGcHost {
     recorder: Option<aver::replay::EffectReplayState>,
 }
 
-/// Walk the parsed AST for a `fn main(...) -> T` definition and return
-/// `T` as a structured `Type`. Falls back to `Type::Unit` when no
-/// `main` is declared (the program will run via `_start` and produce
-/// no output to compare). Multi-module loading appends dep fns to
-/// `items`, so we filter on name only.
+/// Walk the parsed AST for a `fn <name>(...) -> T` definition and
+/// return `T` as a structured `Type`. Falls back to `Type::Unit` when
+/// the function isn't declared at module level (e.g. `_start`-only
+/// shapes, or a user-supplied entry that doesn't match anything).
+/// Multi-module loading appends dep fns to `items`, so we filter on
+/// name only.
 #[cfg(feature = "wasm")]
-fn find_main_return_type(items: &[aver::ast::TopLevel]) -> aver::ast::Type {
+fn find_fn_return_type(items: &[aver::ast::TopLevel], name: &str) -> aver::ast::Type {
     use aver::ast::TopLevel;
     for item in items {
         if let TopLevel::FnDef(fn_def) = item
-            && fn_def.name == "main"
+            && fn_def.name == name
         {
             return aver::types::parse_type_str(&fn_def.return_type);
         }
@@ -196,13 +229,15 @@ fn find_main_return_type(items: &[aver::ast::TopLevel]) -> aver::ast::Type {
 }
 
 #[cfg(feature = "wasm")]
+#[allow(clippy::too_many_arguments)]
 fn run_wasm_gc_with_host(
     wasm_bytes: &[u8],
     program_args: &[String],
     mode: &EffectMode<'_>,
     source_file: &str,
     module_root: &str,
-    main_return_ty: &aver::ast::Type,
+    entry_info: Option<&(String, Vec<aver::value::Value>)>,
+    return_ty: &aver::ast::Type,
 ) -> Result<aver::replay::JsonValue, String> {
     use wasmtime::*;
 
@@ -296,28 +331,47 @@ fn run_wasm_gc_with_host(
         .instantiate(&mut store, &module)
         .map_err(|e| format!("instantiate: {e:#}"))?;
 
-    // Prefer `main` over `_start` when both are exported. The wasm-gc
-    // codegen synthesises `_start` as a thin `call $main; drop`
-    // wrapper (void return), so calling `_start` would lose the user
-    // `main`'s return value — and that value is what the recorder
-    // persists as `output` and what the replayer compares against.
-    // `_start` remains the fallback for WASI/synth-handler shapes
-    // where the program has no Aver-level `main` export.
-    let main_output: aver::replay::JsonValue =
-        if let Some(main) = instance.get_func(&mut store, "main") {
-            let n = main.ty(&store).results().len();
-            let mut out: Vec<Val> = (0..n).map(|_| Val::I32(0)).collect();
-            main.call(&mut store, &[], &mut out)
-                .map_err(|e| format!("main trap: {e:#}"))?;
-            decode_main_return_typed(&mut store, &instance, &out, main_return_ty)?
-        } else if let Some(start) = instance.get_func(&mut store, "_start") {
-            start
-                .call(&mut store, &[], &mut [])
-                .map_err(|e| format!("_start trap: {e:#}"))?;
-            aver::replay::JsonValue::Null
-        } else {
-            return Err("module exports neither _start nor main".into());
-        };
+    // Two entry shapes:
+    //
+    // - `entry_info = Some((fn_name, args))` — `aver run --wasm-gc -e
+    //   'add(7, 35)'` or replay of an `--expr` recording. Look the
+    //   named export up directly, convert the literal `Value` args to
+    //   `wasmtime::Val`, decode the return through the typed decoder.
+    // - `entry_info = None` — the default whole-program flow. Prefer
+    //   `main` over `_start` when both are exported. The wasm-gc
+    //   codegen synthesises `_start` as a thin `call $main; drop`
+    //   wrapper (void return), so calling it would discard the user
+    //   `main`'s return value — and that value is what the recorder
+    //   persists as `output` and what the replayer compares against.
+    //   `_start` remains the fallback for WASI / synth-handler shapes
+    //   where there is no Aver-level `main` export.
+    let main_output: aver::replay::JsonValue = if let Some((fn_name, args)) = entry_info {
+        let func = instance.get_func(&mut store, fn_name).ok_or_else(|| {
+            format!(
+                "entry function '{}' not exported by wasm-gc module",
+                fn_name
+            )
+        })?;
+        let arg_vals = encode_entry_args_for_wasm_gc(&mut store, &instance, args)?;
+        let n = func.ty(&store).results().len();
+        let mut out: Vec<Val> = (0..n).map(|_| Val::I32(0)).collect();
+        func.call(&mut store, &arg_vals, &mut out)
+            .map_err(|e| format!("entry '{}' trap: {e:#}", fn_name))?;
+        decode_main_return_typed(&mut store, &instance, &out, return_ty)?
+    } else if let Some(main) = instance.get_func(&mut store, "main") {
+        let n = main.ty(&store).results().len();
+        let mut out: Vec<Val> = (0..n).map(|_| Val::I32(0)).collect();
+        main.call(&mut store, &[], &mut out)
+            .map_err(|e| format!("main trap: {e:#}"))?;
+        decode_main_return_typed(&mut store, &instance, &out, return_ty)?
+    } else if let Some(start) = instance.get_func(&mut store, "_start") {
+        start
+            .call(&mut store, &[], &mut [])
+            .map_err(|e| format!("_start trap: {e:#}"))?;
+        aver::replay::JsonValue::Null
+    } else {
+        return Err("module exports neither _start nor main".into());
+    };
 
     // Persist the trace. Same JSON shape the VM recorder writes, so
     // existing `aver replay <file>` consumers (CLI, tests, agent
@@ -329,16 +383,32 @@ fn run_wasm_gc_with_host(
         let timestamp = super::commands::generate_timestamp();
         let (record_program_file, record_module_root) =
             super::commands::recording_paths(source_file, module_root);
-        let out_path = super::commands::prepare_recording_path(dir, &request_id)
+        // For `--expr` runs use the readable `add-7-35` style stem;
+        // default `main` runs keep the timestamped request id. Same
+        // shape the VM recorder writes, so existing tooling that
+        // looks up traces by filename works either way.
+        let file_stem = match entry_info {
+            Some((fn_name, args)) => aver::replay::recording_stem(fn_name, args),
+            None => request_id.clone(),
+        };
+        let out_path = super::commands::prepare_recording_path(dir, &file_stem)
             .map_err(|e| format!("prepare recording path: {}", e))?;
+        let entry_fn_label = entry_info
+            .map(|(n, _)| n.clone())
+            .unwrap_or_else(|| "main".to_string());
+        let input = match entry_info {
+            Some((_, args)) => aver::replay::encode_entry_args(args)
+                .map_err(|e| format!("encode entry args: {}", e))?,
+            None => aver::replay::JsonValue::Null,
+        };
         let recording = aver::replay::SessionRecording {
             schema_version: 1,
             request_id,
             timestamp,
             program_file: record_program_file,
             module_root: record_module_root,
-            entry_fn: "main".to_string(),
-            input: aver::replay::JsonValue::Null,
+            entry_fn: entry_fn_label,
+            input,
             effects: rec.take_recorded_effects(),
             output: aver::replay::RecordedOutcome::Value(main_output.clone()),
         };
@@ -450,6 +520,94 @@ fn decode_val_typed(
             other
         )),
     }
+}
+
+/// Convert literal `--expr` argument values (already parsed by
+/// `parse_call_expression`) into `wasmtime::Val`s suitable for
+/// passing as parameters to a wasm-gc-exported entry function.
+/// Coverage matches the entry-call grammar's "literal-only" rule:
+/// `Int` / `Float` / `Bool` / `Str` / `Unit`. Compound shapes
+/// (`List`, `Tuple`, `Variant`, `Ok` / `Err` / `Some` / `None`) are
+/// rejected with a clear error rather than silently coerced — the
+/// wasm-gc lowering for those depends on registry state we don't
+/// reconstruct from the host side.
+#[cfg(feature = "wasm")]
+fn encode_entry_args_for_wasm_gc(
+    store: &mut wasmtime::Store<RunWasmGcHost>,
+    instance: &wasmtime::Instance,
+    args: &[aver::value::Value],
+) -> Result<Vec<wasmtime::Val>, String> {
+    use aver::value::Value;
+    use wasmtime::Val;
+    let mut out = Vec::with_capacity(args.len());
+    for (idx, value) in args.iter().enumerate() {
+        let val = match value {
+            Value::Int(n) => Val::I64(*n),
+            Value::Float(f) => Val::F64(f.to_bits()),
+            Value::Bool(b) => Val::I32(if *b { 1 } else { 0 }),
+            Value::Unit => continue, // Unit-typed param: no slot.
+            Value::Str(s) => {
+                let any_ref = lm_string_from_host_via_store(store, instance, s)?;
+                Val::AnyRef(any_ref)
+            }
+            other => {
+                return Err(format!(
+                    "wasm-gc entry arg #{}: unsupported shape `{}` (entry args support \
+                     Int / Float / Bool / String / Unit; nest compound values inside a \
+                     helper fn and point --expr at that)",
+                    idx + 1,
+                    aver::value::aver_repr(other)
+                ));
+            }
+        };
+        out.push(val);
+    }
+    Ok(out)
+}
+
+/// `Store`-based mirror of the import-side `lm_string_from_host`:
+/// copies a Rust `&str` into the LM transport region of the wasm-gc
+/// module's `memory` and turns it into an Aver `String` ref via the
+/// `__rt_string_from_lm` export. Used when we need to materialise
+/// strings outside of an effect import callback (here: entry args
+/// for `--expr` runs of `aver run --wasm-gc`).
+#[cfg(feature = "wasm")]
+fn lm_string_from_host_via_store(
+    store: &mut wasmtime::Store<RunWasmGcHost>,
+    instance: &wasmtime::Instance,
+    text: &str,
+) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, String> {
+    use wasmtime::Val;
+    let from_lm = instance
+        .get_func(&mut *store, "__rt_string_from_lm")
+        .ok_or_else(|| "missing __rt_string_from_lm export".to_string())?;
+    let memory = instance
+        .get_memory(&mut *store, "memory")
+        .ok_or_else(|| "missing memory export".to_string())?;
+    let bytes = text.as_bytes();
+    // Grow memory if the LM transport region is shorter than the
+    // string. The transport region starts at offset 0 and the
+    // module's own runtime allocates above 64 KiB, so the first page
+    // is normally enough — but a literal entry arg larger than that
+    // is conceivable.
+    let needed_pages = (bytes.len() + 65535) >> 16;
+    let cur_pages = memory.size(&store) as usize;
+    if needed_pages > cur_pages {
+        memory
+            .grow(&mut *store, (needed_pages - cur_pages) as u64)
+            .map_err(|e| format!("memory.grow for entry arg: {e:#}"))?;
+    }
+    memory
+        .write(&mut *store, 0, bytes)
+        .map_err(|e| format!("memory write for entry arg: {e:#}"))?;
+    let mut out = [Val::AnyRef(None)];
+    from_lm
+        .call(&mut *store, &[Val::I32(bytes.len() as i32)], &mut out)
+        .map_err(|e| format!("__rt_string_from_lm trap: {e:#}"))?;
+    Ok(match &out[0] {
+        Val::AnyRef(r) => *r,
+        _ => None,
+    })
 }
 
 /// Reuse the existing `__rt_string_to_lm` export to copy a wasm-gc

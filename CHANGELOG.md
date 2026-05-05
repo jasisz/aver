@@ -4,6 +4,12 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
+## 0.16.1 — wasm-gc record/replay parity (2026-05-05)
+
+### Added
+- **`aver run --wasm-gc --record <dir>`** + **`aver replay <recording.json> --wasm-gc`** — wasm-gc joins the VM and self-host as a first-class record/replay backend. Replay short-circuits real I/O on every effect, compares the entry-fn return against the recorded `output` with the same `MATCH` / `DIFFERS` shape the VM replayer prints. Recordings are interchangeable across all three backends — a trace written by any one of them replays cleanly under any of the three.
+- **`aver run --wasm-gc -e 'fn(args)' --record`** — record a specific function call instead of `main`, parity with the VM `--expr` flow. Literal args (Int / Float / Bool / String / Unit) are encoded into `recording.input` and re-fed at replay; the recorded `output` carries the actual decoded return value.
+
 ## 0.16.0 "Anneal" — 2026-05-05
 
 > _Heat-treat the internals — every backend now agrees what `Console.print` is, what's a type, and that engine GC beats hand-rolling._

@@ -56,11 +56,11 @@ fn main() {
                 }
             };
 
-            if !expressions.is_empty() && (*wasm || *wasm_gc || *self_host) {
+            if !expressions.is_empty() && (*wasm || *self_host) {
                 use colored::Colorize;
                 eprintln!(
                     "{}",
-                    "--expr / --input-file are not supported with --wasm / --wasm-gc / --self-host in this release"
+                    "--expr / --input-file are not supported with --wasm / --self-host in this release"
                         .red()
                 );
                 std::process::exit(1);
@@ -69,12 +69,28 @@ fn main() {
             if *wasm {
                 commands::cmd_run_wasm(file, module_root.as_deref(), program_args.clone());
             } else if *wasm_gc {
-                run_wasm_gc::cmd_run_wasm_gc(
-                    file,
-                    module_root.as_deref(),
-                    program_args.clone(),
-                    record.as_deref(),
-                );
+                if expressions.is_empty() {
+                    run_wasm_gc::cmd_run_wasm_gc(
+                        file,
+                        module_root.as_deref(),
+                        program_args.clone(),
+                        record.as_deref(),
+                        None,
+                    );
+                } else {
+                    // Batch: each --expr gets its own fresh wasmtime
+                    // instance so recording state / module globals
+                    // start clean per expression.
+                    for expr_src in &expressions {
+                        run_wasm_gc::cmd_run_wasm_gc(
+                            file,
+                            module_root.as_deref(),
+                            program_args.clone(),
+                            record.as_deref(),
+                            Some(expr_src.as_str()),
+                        );
+                    }
+                }
             } else if *self_host {
                 commands::cmd_run_self_hosted(
                     file,

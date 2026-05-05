@@ -316,6 +316,19 @@ fn replay_recording_file_wasm_gc(
 
     #[cfg(feature = "wasm")]
     {
+        // Re-materialise the entry call from the recording: fn name +
+        // decoded literal args. For default `main` recordings the
+        // entry_fn is "main" and input is JSON `null`, so the entry
+        // info stays `None` — same shape `cmd_run_wasm_gc` receives
+        // when the user runs without `--expr`. For `--expr` recordings
+        // the entry info reproduces the original call.
+        let entry_info: Option<(String, Vec<Value>)> =
+            if recording.entry_fn == "main" && matches!(&recording.input, JsonValue::Null) {
+                None
+            } else {
+                let args = decode_entry_args(&recording.input)?;
+                Some((recording.entry_fn.clone(), args))
+            };
         let mode =
             super::run_wasm_gc::EffectMode::Replaying(Box::new(recording.clone()), check_args);
         let mut actual_output: Option<aver::replay::JsonValue> = None;
@@ -324,6 +337,7 @@ fn replay_recording_file_wasm_gc(
             Some(&replay_module_root),
             Vec::new(),
             mode,
+            entry_info,
             Some(&mut actual_output),
         );
         let actual = RecordedOutcome::Value(actual_output.unwrap_or(JsonValue::Null));

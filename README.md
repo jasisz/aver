@@ -109,10 +109,14 @@ aver proof    examples/formal/law_auto.av -o proof/
 (cd proof && lake build)
 aver run      examples/services/console_demo.av --record recordings/
 aver run      examples/core/calculator.av -e 'safeDivide(10, 2)' --record recordings/
+aver run      examples/services/console_demo.av --wasm-gc --record recordings/
 aver replay   recordings/ --test --diff
 aver replay   recordings/ --test --check-args
 aver replay   recordings/ --test --json
+aver replay   recordings/rec-…json --wasm-gc
 ```
+
+Recordings are byte-compatible across the VM, self-host, and wasm-gc backends — a trace written by any one of them replays cleanly under any of the three.
 
 Requires: Rust stable toolchain.
 
@@ -441,6 +445,11 @@ Use deterministic replay for stateful, interactive, or external effectful code:
 aver run    examples/services/console_demo.av --record recordings/
 aver replay recordings/rec-123.json --diff
 aver replay recordings/ --test --diff
+
+# Same flow under wasm-gc — recordings are interchangeable across the
+# VM, self-host, and wasm-gc backends.
+aver run    examples/services/console_demo.av --wasm-gc --record recordings/
+aver replay recordings/rec-123.json --wasm-gc
 ```
 
 Use Oracle laws when classified effects should become proof obligations over explicit stubs. Use `verify <fn> trace` when you need runtime assertions over `.result` or `.trace.*`. Use replay when the flow depends on ambient state, persistent TCP sessions, terminal modes, or server callbacks.

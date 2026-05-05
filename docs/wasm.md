@@ -65,6 +65,14 @@ The WASM artifact does **not** embed `aver.toml` runtime policy:
 
 A trap on a missing import is a free `deny`. Re-encoding allow/deny rules into the WASM artifact would duplicate what the host already enforces. `aver.toml` stays fully effective for VM and `--self-host`; under WASM the only fields with a job to do are the build-time ones (deterministic mocks, independence cancel).
 
+### Record / replay
+
+`aver run --wasm-gc --record <dir>` and `aver replay --wasm-gc <recording.json>` cover the same effect surface as the VM and self-host recorders — Args, Console, Time, Random, Terminal (all 12), Disk (all 8), Env, Tcp, Http, 29 effects total. Trace JSON is byte-compatible across the three backends: a recording made by `aver run --record` (VM) replays cleanly under `--wasm-gc` and vice versa. Marker shapes (`$ok`, `$err`, `$some`, `$none`, `$record`, `$tuple`) are emitted identically.
+
+The `output` field in the recording captures the actual `main` return via a type-driven decoder that reads the wasm-gc value through `wasmtime`'s GC API. Coverage today: `Unit`, `Int`, `Float`, `Bool`, `String`, `Result<T, E>`, `Option<T>`, `Tuple<…>` (every common `main` signature in real programs). Unsupported main return types (`List`, `Map`, `Vector`, user records) emit a hard error rather than silently claiming `MATCH` — the user finds out the decoder cannot prove value equality, instead of trusting a recording that always claims success.
+
+Replay short-circuits real I/O: each host import pulls its outcome from the trace via `try_replay`, no real disk write / network call / RNG draw / clock read happens. `Console.print` is also suppressed so a re-run is observation-equivalent to the original.
+
 ### Limitations
 
 - **Multi-module is compile-time flatten** — `depends [...]` works, but the backend emits one standalone module. The Component Model is a future separate mode.
