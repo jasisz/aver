@@ -24,10 +24,11 @@ pub(super) fn cmd_run_wasm_gc(
     file: &str,
     module_root_override: Option<&str>,
     program_args: Vec<String>,
+    record_dir: Option<&str>,
 ) {
     #[cfg(not(feature = "wasm"))]
     {
-        let _ = (file, module_root_override, program_args);
+        let _ = (file, module_root_override, program_args, record_dir);
         eprintln!("{}", "WASM requires --features wasm".red());
         process::exit(1);
     }
@@ -89,7 +90,8 @@ pub(super) fn cmd_run_wasm_gc(
             }
         };
 
-        if let Err(e) = run_wasm_gc_with_host(&bytes, &program_args) {
+        if let Err(e) = run_wasm_gc_with_host(&bytes, &program_args, record_dir, file, &module_root)
+        {
             eprintln!("{}", format!("WASM execution error: {}", e).red());
             process::exit(1);
         }
@@ -99,10 +101,22 @@ pub(super) fn cmd_run_wasm_gc(
 #[cfg(feature = "wasm")]
 struct RunWasmGcHost {
     program_args: Vec<String>,
+    /// Recording state. `Some` only when the user passed `--record <dir>`;
+    /// every effect call routes through `record_effect` before returning,
+    /// so the resulting trace is identical in shape to the VM recorder's
+    /// output. `None` is the production path — zero overhead beyond the
+    /// `Option::is_some` check per effect call.
+    recorder: Option<aver::replay::EffectReplayState>,
 }
 
 #[cfg(feature = "wasm")]
-fn run_wasm_gc_with_host(wasm_bytes: &[u8], program_args: &[String]) -> Result<(), String> {
+fn run_wasm_gc_with_host(
+    wasm_bytes: &[u8],
+    program_args: &[String],
+    record_dir: Option<&str>,
+    source_file: &str,
+    module_root: &str,
+) -> Result<(), String> {
     use wasmtime::*;
 
     let mut config = Config::new();
@@ -117,10 +131,18 @@ fn run_wasm_gc_with_host(wasm_bytes: &[u8], program_args: &[String]) -> Result<(
     let engine = Engine::new(&config).map_err(|e| format!("engine: {e:#}"))?;
     let module = Module::new(&engine, wasm_bytes).map_err(|e| format!("module: {e:#}"))?;
 
+    let mut recorder = if record_dir.is_some() {
+        let mut r = aver::replay::EffectReplayState::default();
+        r.start_recording();
+        Some(r)
+    } else {
+        None
+    };
     let mut store = Store::new(
         &engine,
         RunWasmGcHost {
             program_args: program_args.to_vec(),
+            recorder: recorder.take(),
         },
     );
     let mut linker: Linker<RunWasmGcHost> = Linker::new(&engine);
@@ -193,7 +215,58 @@ fn run_wasm_gc_with_host(wasm_bytes: &[u8], program_args: &[String]) -> Result<(
     } else {
         return Err("module exports neither _start nor main".into());
     }
+
+    // Persist the trace. Same JSON shape the VM recorder writes, so
+    // existing `aver replay <file>` consumers (CLI, tests, agent
+    // tooling) handle wasm-gc traces identically.
+    if let Some(dir) = record_dir
+        && let Some(mut rec) = store.data_mut().recorder.take()
+    {
+        let request_id = super::commands::generate_request_id();
+        let timestamp = super::commands::generate_timestamp();
+        let (record_program_file, record_module_root) =
+            super::commands::recording_paths(source_file, module_root);
+        let out_path = super::commands::prepare_recording_path(dir, &request_id)
+            .map_err(|e| format!("prepare recording path: {}", e))?;
+        let recording = aver::replay::SessionRecording {
+            schema_version: 1,
+            request_id,
+            timestamp,
+            program_file: record_program_file,
+            module_root: record_module_root,
+            entry_fn: "main".to_string(),
+            input: aver::replay::JsonValue::Null,
+            effects: rec.take_recorded_effects(),
+            output: aver::replay::RecordedOutcome::Value(aver::replay::JsonValue::Null),
+        };
+        let json = aver::replay::session_recording_to_string_pretty(&recording);
+        std::fs::write(&out_path, json)
+            .map_err(|e| format!("write recording {}: {}", out_path.display(), e))?;
+        eprintln!("Recorded → {}", out_path.display());
+    }
     Ok(())
+}
+
+/// Append one entry to the trace iff recording is on. Args + outcome
+/// land as `aver::replay::JsonValue` so the wasm-gc trace is
+/// byte-compatible with the VM's — `aver replay <file>` consumes
+/// either without branching on backend.
+#[cfg(feature = "wasm")]
+fn record_effect_if_recording(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    effect_type: &str,
+    args: Vec<aver::replay::JsonValue>,
+    outcome: aver::replay::JsonValue,
+) {
+    if let Some(rec) = caller.data_mut().recorder.as_mut() {
+        rec.record_effect(
+            effect_type,
+            args,
+            aver::replay::RecordedOutcome::Value(outcome),
+            "main",
+            0,
+        );
+    }
 }
 
 /// Per-effect-name dispatch — returns true if we provided a real
@@ -227,8 +300,39 @@ fn dispatch_aver_import(
             results[0] = Val::AnyRef(r);
             Ok(true)
         }
-        "console_print" => host_print(caller, params, true).map(|()| true),
-        "console_error" | "console_warn" => host_print(caller, params, false).map(|()| true),
+        "console_print" => {
+            let text = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            host_print(caller, params, true)?;
+            record_effect_if_recording(
+                caller,
+                "Console.print",
+                vec![aver::replay::JsonValue::String(text)],
+                aver::replay::JsonValue::Null,
+            );
+            Ok(true)
+        }
+        "console_error" => {
+            let text = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            host_print(caller, params, false)?;
+            record_effect_if_recording(
+                caller,
+                "Console.error",
+                vec![aver::replay::JsonValue::String(text)],
+                aver::replay::JsonValue::Null,
+            );
+            Ok(true)
+        }
+        "console_warn" => {
+            let text = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            host_print(caller, params, false)?;
+            record_effect_if_recording(
+                caller,
+                "Console.warn",
+                vec![aver::replay::JsonValue::String(text)],
+                aver::replay::JsonValue::Null,
+            );
+            Ok(true)
+        }
         "console_read_line" => {
             // Read one line from stdin. EOF / IO error → Result.Err("EOF").
             // Trailing '\n' / '\r\n' is stripped to match VM semantics.
@@ -260,6 +364,12 @@ fn dispatch_aver_import(
                 .map(|d| d.as_millis() as i64)
                 .unwrap_or(0);
             results[0] = Val::I64(ms);
+            record_effect_if_recording(
+                caller,
+                "Time.unixMs",
+                vec![],
+                aver::replay::JsonValue::Int(ms),
+            );
             Ok(true)
         }
         "time_sleep" => {
@@ -278,10 +388,26 @@ fn dispatch_aver_import(
             // an inverted range — same surface the VM exposes.
             let v = aver_rt::random::random_int(min, max).unwrap_or(min);
             results[0] = Val::I64(v);
+            record_effect_if_recording(
+                caller,
+                "Random.int",
+                vec![
+                    aver::replay::JsonValue::Int(min),
+                    aver::replay::JsonValue::Int(max),
+                ],
+                aver::replay::JsonValue::Int(v),
+            );
             Ok(true)
         }
         "random_float" => {
-            results[0] = Val::F64(aver_rt::random::random_float().to_bits());
+            let f = aver_rt::random::random_float();
+            results[0] = Val::F64(f.to_bits());
+            record_effect_if_recording(
+                caller,
+                "Random.float",
+                vec![],
+                aver::replay::JsonValue::Float(f),
+            );
             Ok(true)
         }
         "float_sin" => {

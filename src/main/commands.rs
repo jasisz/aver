@@ -131,7 +131,7 @@ fn relativize_to_canonical(base: &Path, path: &Path) -> Option<String> {
     relativize_to(&base_canon, &path_canon)
 }
 
-fn recording_paths(file: &str, module_root: &str) -> (String, String) {
+pub(super) fn recording_paths(file: &str, module_root: &str) -> (String, String) {
     let cwd = std::env::current_dir().ok();
     let module_root_path = Path::new(module_root);
     let file_path = Path::new(file);

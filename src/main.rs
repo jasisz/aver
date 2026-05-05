@@ -69,7 +69,12 @@ fn main() {
             if *wasm {
                 commands::cmd_run_wasm(file, module_root.as_deref(), program_args.clone());
             } else if *wasm_gc {
-                run_wasm_gc::cmd_run_wasm_gc(file, module_root.as_deref(), program_args.clone());
+                run_wasm_gc::cmd_run_wasm_gc(
+                    file,
+                    module_root.as_deref(),
+                    program_args.clone(),
+                    record.as_deref(),
+                );
             } else if *self_host {
                 commands::cmd_run_self_hosted(
                     file,
