@@ -269,6 +269,30 @@ fn record_effect_if_recording(
     }
 }
 
+/// Build the recorder-side JSON for an Aver `Result.Ok(inner)`. Marker
+/// shape (`{"$ok": <inner>}`) matches `replay::value_to_json` so VM
+/// and wasm-gc traces stay byte-identical for the same effect.
+#[cfg(feature = "wasm")]
+fn json_ok(inner: aver::replay::JsonValue) -> aver::replay::JsonValue {
+    let mut obj = std::collections::BTreeMap::new();
+    obj.insert("$ok".to_string(), inner);
+    aver::replay::JsonValue::Object(obj)
+}
+
+/// Build the recorder-side JSON for an Aver `Result.Err(message)`.
+/// Always wraps a `String` payload — every host-side `Result` we
+/// emit today carries `String` errors, matching the
+/// `aver_rt::*` Rust signatures.
+#[cfg(feature = "wasm")]
+fn json_err(msg: &str) -> aver::replay::JsonValue {
+    let mut obj = std::collections::BTreeMap::new();
+    obj.insert(
+        "$err".to_string(),
+        aver::replay::JsonValue::String(msg.to_string()),
+    );
+    aver::replay::JsonValue::Object(obj)
+}
+
 /// Per-effect-name dispatch — returns true if we provided a real
 /// implementation, false if the caller should fall back to the
 /// typed-zero stub.
@@ -282,7 +306,9 @@ fn dispatch_aver_import(
     use wasmtime::Val;
     match name {
         "args_len" => {
-            results[0] = Val::I64(caller.data().program_args.len() as i64);
+            let n = caller.data().program_args.len() as i64;
+            results[0] = Val::I64(n);
+            record_effect_if_recording(caller, "Args.len", vec![], aver::replay::JsonValue::Int(n));
             Ok(true)
         }
         "args_get" => {
@@ -298,6 +324,12 @@ fn dispatch_aver_import(
                 .unwrap_or_default();
             let r = lm_string_from_host(caller, &text)?;
             results[0] = Val::AnyRef(r);
+            record_effect_if_recording(
+                caller,
+                "Args.get",
+                vec![aver::replay::JsonValue::Int(idx)],
+                aver::replay::JsonValue::String(text),
+            );
             Ok(true)
         }
         "console_print" => {
@@ -339,22 +371,32 @@ fn dispatch_aver_import(
             use std::io::BufRead;
             let mut line = String::new();
             let read = std::io::stdin().lock().read_line(&mut line);
-            let result_ref = match read {
-                Ok(0) | Err(_) => host_result_err_string(caller, "EOF")?,
+            let (result_ref, outcome) = match read {
+                Ok(0) | Err(_) => (host_result_err_string(caller, "EOF")?, json_err("EOF")),
                 Ok(_) => {
                     while line.ends_with('\n') || line.ends_with('\r') {
                         line.pop();
                     }
-                    host_result_ok_string(caller, &line)?
+                    (
+                        host_result_ok_string(caller, &line)?,
+                        json_ok(aver::replay::JsonValue::String(line.clone())),
+                    )
                 }
             };
             results[0] = Val::AnyRef(result_ref);
+            record_effect_if_recording(caller, "Console.readLine", vec![], outcome);
             Ok(true)
         }
         "time_now" => {
             let text = aver_rt::time_now();
             let r = lm_string_from_host(caller, &text)?;
             results[0] = Val::AnyRef(r);
+            record_effect_if_recording(
+                caller,
+                "Time.now",
+                vec![],
+                aver::replay::JsonValue::String(text),
+            );
             Ok(true)
         }
         "time_unix_ms" => {
@@ -502,66 +544,137 @@ fn dispatch_aver_import(
         }
         "disk_read_text" => {
             let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-            let result_ref = match aver_rt::read_text(&path) {
-                Ok(text) => host_result_ok_string(caller, &text)?,
-                Err(e) => host_result_err_string(caller, &e)?,
+            let (result_ref, outcome) = match aver_rt::read_text(&path) {
+                Ok(text) => (
+                    host_result_ok_string(caller, &text)?,
+                    json_ok(aver::replay::JsonValue::String(text)),
+                ),
+                Err(e) => (host_result_err_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
+            record_effect_if_recording(
+                caller,
+                "Disk.readText",
+                vec![aver::replay::JsonValue::String(path)],
+                outcome,
+            );
             Ok(true)
         }
         "disk_write_text" => {
             let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
             let content = lm_string_to_host(caller, params.get(1))?.unwrap_or_default();
-            let result_ref = match aver_rt::write_text(&path, &content) {
-                Ok(()) => host_result_ok_unit(caller)?,
-                Err(e) => host_result_err_unit_string(caller, &e)?,
+            let (result_ref, outcome) = match aver_rt::write_text(&path, &content) {
+                Ok(()) => (
+                    host_result_ok_unit(caller)?,
+                    json_ok(aver::replay::JsonValue::Null),
+                ),
+                Err(e) => (host_result_err_unit_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
+            record_effect_if_recording(
+                caller,
+                "Disk.writeText",
+                vec![
+                    aver::replay::JsonValue::String(path),
+                    aver::replay::JsonValue::String(content),
+                ],
+                outcome,
+            );
             Ok(true)
         }
         "disk_append_text" => {
             let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
             let content = lm_string_to_host(caller, params.get(1))?.unwrap_or_default();
-            let result_ref = match aver_rt::append_text(&path, &content) {
-                Ok(()) => host_result_ok_unit(caller)?,
-                Err(e) => host_result_err_unit_string(caller, &e)?,
+            let (result_ref, outcome) = match aver_rt::append_text(&path, &content) {
+                Ok(()) => (
+                    host_result_ok_unit(caller)?,
+                    json_ok(aver::replay::JsonValue::Null),
+                ),
+                Err(e) => (host_result_err_unit_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
+            record_effect_if_recording(
+                caller,
+                "Disk.appendText",
+                vec![
+                    aver::replay::JsonValue::String(path),
+                    aver::replay::JsonValue::String(content),
+                ],
+                outcome,
+            );
             Ok(true)
         }
         "disk_exists" => {
             let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-            results[0] = Val::I32(if aver_rt::path_exists(&path) { 1 } else { 0 });
+            let exists = aver_rt::path_exists(&path);
+            results[0] = Val::I32(if exists { 1 } else { 0 });
+            record_effect_if_recording(
+                caller,
+                "Disk.exists",
+                vec![aver::replay::JsonValue::String(path)],
+                aver::replay::JsonValue::Bool(exists),
+            );
             Ok(true)
         }
         "disk_delete" => {
             let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-            let result_ref = match aver_rt::delete_file(&path) {
-                Ok(()) => host_result_ok_unit(caller)?,
-                Err(e) => host_result_err_unit_string(caller, &e)?,
+            let (result_ref, outcome) = match aver_rt::delete_file(&path) {
+                Ok(()) => (
+                    host_result_ok_unit(caller)?,
+                    json_ok(aver::replay::JsonValue::Null),
+                ),
+                Err(e) => (host_result_err_unit_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
+            record_effect_if_recording(
+                caller,
+                "Disk.delete",
+                vec![aver::replay::JsonValue::String(path)],
+                outcome,
+            );
             Ok(true)
         }
         "disk_delete_dir" => {
             let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-            let result_ref = match aver_rt::delete_dir(&path) {
-                Ok(()) => host_result_ok_unit(caller)?,
-                Err(e) => host_result_err_unit_string(caller, &e)?,
+            let (result_ref, outcome) = match aver_rt::delete_dir(&path) {
+                Ok(()) => (
+                    host_result_ok_unit(caller)?,
+                    json_ok(aver::replay::JsonValue::Null),
+                ),
+                Err(e) => (host_result_err_unit_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
+            record_effect_if_recording(
+                caller,
+                "Disk.deleteDir",
+                vec![aver::replay::JsonValue::String(path)],
+                outcome,
+            );
             Ok(true)
         }
         "disk_list_dir" => {
             let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-            let result_ref = match aver_rt::list_dir(&path) {
+            let (result_ref, outcome) = match aver_rt::list_dir(&path) {
                 Ok(list) => {
                     let names: Vec<String> = list.iter().cloned().collect();
-                    host_result_ok_list_string(caller, &names)?
+                    let arr: Vec<aver::replay::JsonValue> = names
+                        .iter()
+                        .map(|s| aver::replay::JsonValue::String(s.clone()))
+                        .collect();
+                    (
+                        host_result_ok_list_string(caller, &names)?,
+                        json_ok(aver::replay::JsonValue::Array(arr)),
+                    )
                 }
-                Err(e) => host_result_err_list_string(caller, &e)?,
+                Err(e) => (host_result_err_list_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
+            record_effect_if_recording(
+                caller,
+                "Disk.listDir",
+                vec![aver::replay::JsonValue::String(path)],
+                outcome,
+            );
             Ok(true)
         }
         "env_get" => {
@@ -569,21 +682,45 @@ fn dispatch_aver_import(
             let value = aver_rt::env_get(&name).unwrap_or_default();
             let r = lm_string_from_host(caller, &value)?;
             results[0] = Val::AnyRef(r);
+            record_effect_if_recording(
+                caller,
+                "Env.get",
+                vec![aver::replay::JsonValue::String(name)],
+                aver::replay::JsonValue::String(value),
+            );
             Ok(true)
         }
         "env_set" => {
             let name = lm_string_to_host(caller, params.first())?.unwrap_or_default();
             let value = lm_string_to_host(caller, params.get(1))?.unwrap_or_default();
             let _ = aver_rt::env_set(&name, &value);
+            record_effect_if_recording(
+                caller,
+                "Env.set",
+                vec![
+                    aver::replay::JsonValue::String(name),
+                    aver::replay::JsonValue::String(value),
+                ],
+                aver::replay::JsonValue::Null,
+            );
             Ok(true)
         }
         "disk_make_dir" => {
             let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-            let result_ref = match aver_rt::make_dir(&path) {
-                Ok(()) => host_result_ok_unit(caller)?,
-                Err(e) => host_result_err_unit_string(caller, &e)?,
+            let (result_ref, outcome) = match aver_rt::make_dir(&path) {
+                Ok(()) => (
+                    host_result_ok_unit(caller)?,
+                    json_ok(aver::replay::JsonValue::Null),
+                ),
+                Err(e) => (host_result_err_unit_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
+            record_effect_if_recording(
+                caller,
+                "Disk.makeDir",
+                vec![aver::replay::JsonValue::String(path)],
+                outcome,
+            );
             Ok(true)
         }
         "tcp_connect" => {
