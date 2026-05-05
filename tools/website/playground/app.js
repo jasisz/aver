@@ -2847,6 +2847,11 @@ async function doRecord(skipDownload = true, entryExpr = null) {
         state.worker = worker;
         const result = await new Promise((resolve) => {
             state.recordResolve = resolve;
+            // `aver_compile_project` returns a Uint8Array view; the
+            // underlying ArrayBuffer is what `postMessage` accepts as
+            // a transferable. Passing the Uint8Array itself as a
+            // transferable item raises `invalid transferable array
+            // for structured clone`.
             worker.postMessage(
                 {
                     type: "record",
@@ -2855,7 +2860,7 @@ async function doRecord(skipDownload = true, entryExpr = null) {
                     programFile: entry,
                     moduleRoot: ".",
                 },
-                [wasmBytes],
+                [wasmBytes.buffer],
             );
         });
         if (!result.ok) {
@@ -2911,6 +2916,8 @@ async function doReplay() {
         state.worker = worker;
         const result = await new Promise((resolve) => {
             state.replayResolve = resolve;
+            // Transfer the ArrayBuffer, not the Uint8Array view —
+            // see the matching note in `doRecord`.
             worker.postMessage(
                 {
                     type: "replay",
@@ -2919,7 +2926,7 @@ async function doReplay() {
                     checkArgs: false,
                     programArgs: state.programArgs ?? [],
                 },
-                [wasmBytes],
+                [wasmBytes.buffer],
             );
         });
         let kind, summary;
