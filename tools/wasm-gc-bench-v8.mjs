@@ -130,6 +130,7 @@ if (!isCompare) {
 const SCENARIOS = [
   ['fib(15)',              'bench/scenarios/fib.av'],
   ['countdown(20k)',       'bench/scenarios/countdown.av'],
+  ['factorial(10)',        'bench/scenarios/factorial.av'],
   ['record access 20k',    'bench/scenarios/record.av'],
   ['map build 5k',         'bench/scenarios/map_build.av'],
   ['map lookup 20k/2k',    'bench/scenarios/map_lookup.av'],
@@ -139,6 +140,9 @@ const SCENARIOS = [
   ['newtype baseline 20k', 'bench/scenarios/newtype_bare.av'],
   ['newtype record 20k',   'bench/scenarios/newtype_record.av'],
   ['newtype variant 20k',  'bench/scenarios/newtype_variant.av'],
+  // fractal_seahorse lives under tools/edge/ with `depends [Fractal]`;
+  // the multi-module entry resolves against tools/edge as its root.
+  ['fractal_seahorse',     'tools/edge/bench.av'],
 ];
 
 function compile(scenario, target) {
@@ -149,6 +153,11 @@ function compile(scenario, target) {
     '--name', 'main',
     '-o', tmp,
   ];
+  // Pass --module-root so depends-resolved scenarios (anything outside
+  // bench/scenarios/) compile cleanly. Same shape `aver bench` uses
+  // for VM/wasm-local/wasm-gc targets.
+  const moduleRoot = path.dirname(scenario);
+  args_.push('--module-root', moduleRoot);
   if (target === 'wasm') {
     // Legacy WASM wants a bridge for non-handler programs. wasip1
     // matches what the in-process wasmtime harness uses in
