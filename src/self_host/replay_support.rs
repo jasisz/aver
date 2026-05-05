@@ -1071,9 +1071,21 @@ pub mod aver_replay {
                             session.effects.len().saturating_sub(*position)
                         );
                     }
-                    let actual = RecordedOutcome::Value {
-                        value: value.to_replay_json(),
-                    };
+                    let actual_json = value.to_replay_json();
+                    // Surface the live return value to the parent
+                    // process via a stdout marker so the host
+                    // (`run_self_host_replay` in
+                    // `src/main/replay_cmd/backends.rs`) can fill
+                    // `BackendReplayOutcome.actual` with the real
+                    // JSON. Without this the host had no way to
+                    // recover what the subprocess returned and
+                    // hardcoded `actual = recording.output.clone()`,
+                    // forcing every replay to claim MATCH even when
+                    // the underlying value diverged. Marker is
+                    // emitted on every replay (matched or not) so
+                    // the host has a uniform path.
+                    println!("__aver_return__: {}", actual_json);
+                    let actual = RecordedOutcome::Value { value: actual_json };
                     if actual != session.output {
                         panic!(
                             "Replay output mismatch for '{}': expected {:?}, got {:?}",

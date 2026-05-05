@@ -435,6 +435,105 @@ fn wasm_gc_records_independent_product_with_group_annotations() {
 }
 
 #[test]
+fn self_host_replay_compares_main_return_value() {
+    // Self-host previously dropped the user `main()` return value
+    // inside `runGuestCliProgram`'s Unit-mapping wrapper, so every
+    // replay claimed `Output: MATCH` regardless of what the
+    // subprocess returned. The Step 3 fix surfaces the live `Val`
+    // up the call stack so the replay scope's `finish_scope_success`
+    // serialises the actual value into `recording.output`. Tampering
+    // a recorded `42` → `999` must now flip replay to a panic-driven
+    // failure with a structured `expected ... got ...` diagnostic.
+    let work = temp_dir("aver-self-host-output");
+    let prog = write_program(
+        &work,
+        "main.av",
+        "module SelfHostOutput\n    intent = \"self-host output value comparison\"\n\n\
+         fn main() -> Int\n    ! [Console.print, Time.unixMs]\n    \
+         _ = Time.unixMs()\n    Console.print(\"self-host out\")\n    42\n",
+    );
+    let rec_dir = temp_dir("aver-self-host-output-rec");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let record = Command::new(aver_bin)
+        .arg("run")
+        .arg("--self-host")
+        .arg("--record")
+        .arg(&rec_dir)
+        .arg(&prog)
+        .output()
+        .expect("spawn self-host record");
+    assert!(
+        record.status.success(),
+        "self-host record failed:\n{}",
+        format_output(&record)
+    );
+    let rec_path: PathBuf = fs::read_dir(&rec_dir)
+        .expect("read rec dir")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .find(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
+        .expect("one self-host recording");
+    let raw = fs::read_to_string(&rec_path).expect("read recording");
+    // The user's `42` reaches `recording.output` as a `Val::ValInt(42)`
+    // ADT — that's how self-host serialises its interpreter's value
+    // type. Pre-Step-3 the field would have been `null`.
+    assert!(
+        raw.contains("\"name\": \"ValInt\"") && raw.contains("42"),
+        "self-host recording must capture the live user main return value, got:\n{raw}"
+    );
+
+    // Clean replay: matches.
+    let clean = Command::new(aver_bin)
+        .arg("replay")
+        .arg("--self-host")
+        .arg(&rec_path)
+        .output()
+        .expect("spawn clean self-host replay");
+    let clean_stdout = String::from_utf8_lossy(&clean.stdout);
+    assert!(
+        clean.status.success() && clean_stdout.contains("Output:  MATCH"),
+        "clean self-host replay must MATCH, got:\n{}",
+        format_output(&clean)
+    );
+
+    // Tamper the recorded ValInt payload `42` → `999`. Replay-mode
+    // self-host runtime compares actual against recording.output,
+    // panics on mismatch, subprocess exits non-zero; the host turns
+    // it into a `ReplayError::Generic`. Use a structurally-anchored
+    // replacement so we only touch the ValInt payload — `42` could
+    // appear in tempdir paths or other parts of the JSON.
+    let tampered = raw.replace(
+        "\"fields\": [\n          42\n        ]",
+        "\"fields\": [\n          999\n        ]",
+    );
+    let tampered_path = work.join("tampered.json");
+    fs::write(&tampered_path, &tampered).expect("write tampered recording");
+    // Run with `--test` so a tampered recording flips `aver replay`
+    // to a non-zero exit (CI gate semantics) on top of surfacing the
+    // self-host runtime's `Replay output mismatch` diagnostic.
+    let strict = Command::new(aver_bin)
+        .arg("replay")
+        .arg("--self-host")
+        .arg("--test")
+        .arg(&tampered_path)
+        .output()
+        .expect("spawn tampered self-host replay");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&strict.stdout),
+        String::from_utf8_lossy(&strict.stderr)
+    );
+    assert!(
+        !strict.status.success() && combined.contains("Replay output mismatch"),
+        "tampered self-host replay must surface a Replay-output-mismatch diagnostic and exit non-zero under --test, got:\n{}",
+        format_output(&strict)
+    );
+
+    let _ = fs::remove_dir_all(&work);
+    let _ = fs::remove_dir_all(&rec_dir);
+}
+
+#[test]
 fn wasm_gc_replays_a_vm_recorded_trace() {
     // Record under VM, replay under wasm-gc. Both backends share the
     // same JSON shape (markers + outcome enum); the wasm-gc replayer

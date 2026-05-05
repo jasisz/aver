@@ -36,8 +36,8 @@ fn runGuestProgram(prog: Program, moduleFns: List<FnDef>, guestArgs: List<String
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     Domain.Eval.evalProgramWithFns(shiftFnIdsInProgram(prog, List.len(moduleFns)), moduleFns)
 
-fn runGuestCliProgram(prog: Program, moduleFns: List<FnDef>, localFns: List<FnDef>, guestArgs: List<String>) -> Result<Unit, String>
-    ? "Execute a loaded guest program with CLI-compatible main semantics inside the guest boundary."
+fn runGuestCliProgram(prog: Program, moduleFns: List<FnDef>, localFns: List<FnDef>, guestArgs: List<String>) -> Result<Val, String>
+    ? "Execute a loaded guest program with CLI-compatible main semantics inside the guest boundary. Returns the user main()'s return Val so the replay scope can serialise it as recording.output (and replay-mode output comparison sees the live value), instead of dropping it to Unit before the wrapping aver_replay scope captures the result."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match runGuestProgram(prog, moduleFns, guestArgs)
         Result.Ok(result) -> finishCliRun(localFns, result)
@@ -287,41 +287,44 @@ fn main() -> Result<Unit, String>
     args = Args.get()
     match args
         [] -> runDemo()
-        [path, ..rest] -> runFromFileWithRest(path, rest)
+        [path, ..rest] -> match runFromFileWithRest(path, rest)
+            Result.Ok(_) -> Result.Ok(Unit)
+            Result.Err(e) -> Result.Err(e)
 
-fn runFromFileWithRest(path: String, rest: List<String>) -> Result<Unit, String>
-    ? "Dispatch normalized CLI args: path, module root, then guest args."
+fn runFromFileWithRest(path: String, rest: List<String>) -> Result<Val, String>
+    ? "Dispatch normalized CLI args: path, module root, then guest args. Carries the user main()'s return Val up so the wrapping replay scope serialises it as recording.output."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match rest
         [moduleRoot, ..guestArgs] -> runCliFile(path, moduleRoot, guestArgs)
         [] -> runCliFile(path, ".", [])
 
-fn runCliFile(path: String, moduleRoot: String, guestArgs: List<String>) -> Result<Unit, String>
-    ? "Load a guest file outside scope, then execute the guest program inside the guest boundary."
+fn runCliFile(path: String, moduleRoot: String, guestArgs: List<String>) -> Result<Val, String>
+    ? "Load a guest file outside scope, then execute the guest program inside the guest boundary. Propagates the user main()'s return Val unchanged."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     prepared = loadProgramFromFile(path, moduleRoot)?
     match prepared
         (prog, moduleFns) -> runGuestCliProgram(prog, moduleFns, prog.fns, guestArgs)
 
-fn finishCliRun(localFns: List<FnDef>, result: Val) -> Result<Unit, String>
-    ? "Mirror host CLI semantics: ignore successful return values, but surface main() Result.Err as process failure."
+fn finishCliRun(localFns: List<FnDef>, result: Val) -> Result<Val, String>
+    ? "Mirror host CLI semantics: surface user main() Result.Err as process failure, but otherwise propagate the live return Val so replay-mode output comparison sees the actual value (recording.output stores the serialised Val, replay re-serialises and compares — dropping to Unit here would force every recording to claim Unit-output, masking real divergence)."
     match hasLocalMain(localFns)
         true -> finishCliMainResult(result)
-        false -> Result.Ok(Unit)
+        false -> Result.Ok(result)
 
 verify finishCliRun
-    finishCliRun([], Val.ValInt(7)) => Result.Ok(Unit)
+    finishCliRun([], Val.ValInt(7)) => Result.Ok(Val.ValInt(7))
     finishCliRun([FnDef(name = "main", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)], Val.ValErr(Val.ValInt(9))) => Result.Err("Main returned error: 9")
 
-fn finishCliMainResult(result: Val) -> Result<Unit, String>
-    ? "Convert a guest main() return value into CLI success or failure."
+fn finishCliMainResult(result: Val) -> Result<Val, String>
+    ? "Convert a guest main() return value into CLI success or failure. Successful returns propagate the live Val so the replay scope can serialise it as recording.output."
     match result
         Val.ValErr(err) -> Result.Err("Main returned error: " + Domain.Value.valRepr(err))
-        _ -> Result.Ok(Unit)
+        _ -> Result.Ok(result)
 
 verify finishCliMainResult
     finishCliMainResult(Val.ValErr(Val.ValInt(5))) => Result.Err("Main returned error: 5")
-    finishCliMainResult(Val.ValUnit) => Result.Ok(Unit)
+    finishCliMainResult(Val.ValUnit) => Result.Ok(Val.ValUnit)
+    finishCliMainResult(Val.ValInt(42)) => Result.Ok(Val.ValInt(42))
 
 fn hasLocalMain(fns: List<FnDef>) -> Bool
     ? "Check whether the entry program defines its own main()."

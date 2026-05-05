@@ -306,12 +306,22 @@ pub(super) fn run_self_host_replay(
         )
     })?;
 
+    let stdout_text = String::from_utf8_lossy(&output.stdout);
+    // Self-host runtime prints `__aver_return__: <json>` right
+    // before its own internal output comparison. Pulling it out
+    // here lets `build_replay_result` do the `actual ==
+    // recording.output` check via the unified shape instead of us
+    // relying on the subprocess exit code as a proxy for "matched"
+    // (which previously hardcoded `actual = recording.output.clone()`
+    // and reported `MATCH` even when the underlying value diverged).
+    let parsed_actual = parse_self_host_return_marker(&stdout_text);
+
     if !output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         let mut msg = "Self-host replay failed".to_string();
-        if !stdout.is_empty() {
-            msg.push_str(&format!("\nstdout:\n{}", stdout));
+        let trimmed_stdout = stdout_text.trim();
+        if !trimmed_stdout.is_empty() {
+            msg.push_str(&format!("\nstdout:\n{}", trimmed_stdout));
         }
         if !stderr.is_empty() {
             msg.push_str(&format!("\nstderr:\n{}", stderr));
@@ -320,12 +330,34 @@ pub(super) fn run_self_host_replay(
     }
 
     let n = recording.effects.len();
+    let actual = parsed_actual.unwrap_or_else(|| recording.output.clone());
     Ok(BackendReplayOutcome {
-        actual: recording.output.clone(),
+        actual,
         effects_consumed: n,
         effects_total: n,
         args_diff_count: 0,
     })
+}
+
+/// Extract the recorded return value from the self-host subprocess'
+/// stdout. The runtime emits `__aver_return__: <json>` (one line,
+/// JSON value only) right before its replay-mode output comparison,
+/// so scanning the output for the prefix and parsing the rest of
+/// the line through `aver::replay::parse_json` recovers the live
+/// `actual` value. Returns `None` if the subprocess never emitted
+/// the marker (e.g. a self-host binary built before this contract
+/// landed) so callers can fall back to the previous behaviour.
+fn parse_self_host_return_marker(stdout: &str) -> Option<RecordedOutcome> {
+    const MARKER: &str = "__aver_return__:";
+    for line in stdout.lines() {
+        if let Some(rest) = line.strip_prefix(MARKER) {
+            let json_str = rest.trim();
+            if let Ok(json) = aver::replay::parse_json(json_str) {
+                return Some(RecordedOutcome::Value(json));
+            }
+        }
+    }
+    None
 }
 
 pub(super) fn decode_self_host_guest_args(input: &JsonValue) -> Result<Vec<String>, String> {
