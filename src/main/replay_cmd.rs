@@ -293,14 +293,13 @@ fn replay_recording_file_vm(
 /// Replay a recording through the wasm-gc backend. Phase 4a — wires
 /// the trace into the wasm-gc host's `EffectReplayState::Replay` mode
 /// so each `aver/*` host import pulls its outcome from the trace
-/// instead of running the real effect. Only the effects whose return
-/// shape is decodable from `JsonValue` without a full reverse decoder
-/// (`Time.unixMs`, `Random.int`, `Random.float`, `Console.print` /
-/// `error` / `warn`) bypass real I/O today; the rest fall through to
-/// the real call. That's enough to verify the *sequence* of effects
-/// in a trace replays cleanly, which is the original determinism
-/// guarantee. Output-value comparison and full effect coverage land
-/// in 4b once the wasm-gc → JsonValue return-value decoder ships.
+/// instead of running the real effect. All 29 effects route through
+/// `try_replay` → per-type `decode_*` (phase 4b), so a recorded trace
+/// replays without touching disk / network / clock / RNG. The decoded
+/// `main` return value is compared against `recording.output` —
+/// scalar / Unit returns get exact equality, ref returns hit an
+/// opaque `<wasm-gc:ref>` marker on both sides (see
+/// `decode_main_return` for the coverage matrix).
 fn replay_recording_file_wasm_gc(
     path: &Path,
     _diff: bool,
@@ -318,32 +317,41 @@ fn replay_recording_file_wasm_gc(
     #[cfg(feature = "wasm")]
     {
         let mode = super::run_wasm_gc::EffectMode::Replaying(recording.clone(), check_args);
-        super::run_wasm_gc::cmd_run_wasm_gc_with_mode(
+        let mut actual_output: Option<aver::replay::JsonValue> = None;
+        super::run_wasm_gc::cmd_run_wasm_gc_with_mode_capturing(
             &replay_program_file,
             Some(&replay_module_root),
             Vec::new(),
             mode,
+            Some(&mut actual_output),
         );
+        let actual = RecordedOutcome::Value(actual_output.unwrap_or(JsonValue::Null));
+        let matched = actual == recording.output;
+        let output_diff = if !matched {
+            build_output_diff(&recording.output, &actual)
+        } else {
+            None
+        };
+        let recording_output_line = find_json_line(&raw, "output");
+        Ok(ReplayResult {
+            recording_path: path.display().to_string(),
+            program_file: replay_program_file,
+            entry_fn: recording.entry_fn.clone(),
+            entry_line: 0,
+            matched,
+            effects_consumed: total,
+            effects_total: total,
+            error: None,
+            output_diff,
+            args_diffs: 0,
+            recording_output_line,
+        })
     }
     #[cfg(not(feature = "wasm"))]
     {
-        let _ = (recording, check_args);
-        return Err("--wasm-gc replay requires building aver with --features wasm".to_string());
+        let _ = (recording, check_args, total);
+        Err("--wasm-gc replay requires building aver with --features wasm".to_string())
     }
-
-    Ok(ReplayResult {
-        recording_path: path.display().to_string(),
-        program_file: replay_program_file,
-        entry_fn: recording.entry_fn.clone(),
-        entry_line: 0,
-        matched: true,
-        effects_consumed: total,
-        effects_total: total,
-        error: None,
-        output_diff: None,
-        args_diffs: 0,
-        recording_output_line: 0,
-    })
 }
 
 fn replay_recording_file_self_host(

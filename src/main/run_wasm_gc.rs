@@ -58,9 +58,25 @@ pub(super) fn cmd_run_wasm_gc_with_mode(
     program_args: Vec<String>,
     mode: EffectMode<'_>,
 ) {
+    cmd_run_wasm_gc_with_mode_capturing(file, module_root_override, program_args, mode, None);
+}
+
+/// Same as `cmd_run_wasm_gc_with_mode` but optionally captures the
+/// decoded `main` return value into `out_json`. Used by the replayer
+/// so it can compare the live run's output against `recording.output`
+/// after replay finishes — the regular `aver run --wasm-gc` path
+/// passes `None` and ignores the return value.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn cmd_run_wasm_gc_with_mode_capturing(
+    file: &str,
+    module_root_override: Option<&str>,
+    program_args: Vec<String>,
+    mode: EffectMode<'_>,
+    out_json: Option<&mut Option<aver::replay::JsonValue>>,
+) {
     #[cfg(not(feature = "wasm"))]
     {
-        let _ = (file, module_root_override, program_args, mode);
+        let _ = (file, module_root_override, program_args, mode, out_json);
         eprintln!("{}", "WASM requires --features wasm".red());
         process::exit(1);
     }
@@ -122,9 +138,16 @@ pub(super) fn cmd_run_wasm_gc_with_mode(
             }
         };
 
-        if let Err(e) = run_wasm_gc_with_host(&bytes, &program_args, &mode, file, &module_root) {
-            eprintln!("{}", format!("WASM execution error: {}", e).red());
-            process::exit(1);
+        match run_wasm_gc_with_host(&bytes, &program_args, &mode, file, &module_root) {
+            Ok(decoded) => {
+                if let Some(slot) = out_json {
+                    *slot = Some(decoded);
+                }
+            }
+            Err(e) => {
+                eprintln!("{}", format!("WASM execution error: {}", e).red());
+                process::exit(1);
+            }
         }
     }
 }
@@ -147,7 +170,7 @@ fn run_wasm_gc_with_host(
     mode: &EffectMode<'_>,
     source_file: &str,
     module_root: &str,
-) -> Result<(), String> {
+) -> Result<aver::replay::JsonValue, String> {
     use wasmtime::*;
 
     let mut config = Config::new();
@@ -240,18 +263,28 @@ fn run_wasm_gc_with_host(
         .instantiate(&mut store, &module)
         .map_err(|e| format!("instantiate: {e:#}"))?;
 
-    if let Some(start) = instance.get_func(&mut store, "_start") {
-        start
-            .call(&mut store, &[], &mut [])
-            .map_err(|e| format!("_start trap: {e:#}"))?;
-    } else if let Some(main) = instance.get_func(&mut store, "main") {
-        let n = main.ty(&store).results().len();
-        let mut out: Vec<Val> = (0..n).map(|_| Val::I32(0)).collect();
-        main.call(&mut store, &[], &mut out)
-            .map_err(|e| format!("main trap: {e:#}"))?;
-    } else {
-        return Err("module exports neither _start nor main".into());
-    }
+    // Prefer `main` over `_start` when both are exported. The wasm-gc
+    // codegen synthesises `_start` as a thin `call $main; drop`
+    // wrapper (void return), so calling `_start` would lose the user
+    // `main`'s return value — and that value is what the recorder
+    // persists as `output` and what the replayer compares against.
+    // `_start` remains the fallback for WASI/synth-handler shapes
+    // where the program has no Aver-level `main` export.
+    let main_output: aver::replay::JsonValue =
+        if let Some(main) = instance.get_func(&mut store, "main") {
+            let n = main.ty(&store).results().len();
+            let mut out: Vec<Val> = (0..n).map(|_| Val::I32(0)).collect();
+            main.call(&mut store, &[], &mut out)
+                .map_err(|e| format!("main trap: {e:#}"))?;
+            decode_main_return(&out)
+        } else if let Some(start) = instance.get_func(&mut store, "_start") {
+            start
+                .call(&mut store, &[], &mut [])
+                .map_err(|e| format!("_start trap: {e:#}"))?;
+            aver::replay::JsonValue::Null
+        } else {
+            return Err("module exports neither _start nor main".into());
+        };
 
     // Persist the trace. Same JSON shape the VM recorder writes, so
     // existing `aver replay <file>` consumers (CLI, tests, agent
@@ -274,14 +307,54 @@ fn run_wasm_gc_with_host(
             entry_fn: "main".to_string(),
             input: aver::replay::JsonValue::Null,
             effects: rec.take_recorded_effects(),
-            output: aver::replay::RecordedOutcome::Value(aver::replay::JsonValue::Null),
+            output: aver::replay::RecordedOutcome::Value(main_output.clone()),
         };
         let json = aver::replay::session_recording_to_string_pretty(&recording);
         std::fs::write(&out_path, json)
             .map_err(|e| format!("write recording {}: {}", out_path.display(), e))?;
         eprintln!("Recorded → {}", out_path.display());
     }
-    Ok(())
+    Ok(main_output)
+}
+
+/// Decode the `Vec<Val>` returned from a wasm-gc `main` call into the
+/// JSON shape the recorder uses for `output`. Coverage today:
+///
+/// - empty (Unit return) → `JsonValue::Null`
+/// - `Val::I32` / `Val::I64` → `JsonValue::Int`
+/// - `Val::F32` / `Val::F64` → `JsonValue::Float`
+/// - `Val::AnyRef(None)` → `JsonValue::Null`
+/// - `Val::AnyRef(Some(_))` → `JsonValue::String("<wasm-gc:ref>")`
+///
+/// The opaque `<wasm-gc:ref>` marker is deliberate: without the source
+/// type at this call site we can't know whether the ref is a string,
+/// record, sum variant, or something else. Both record and replay
+/// runs hit the same branch for ref returns, so a recording of a
+/// `main` that returns a ref still round-trips as `MATCH` on a clean
+/// re-run — the comparison just doesn't *prove* deep value equality.
+/// Programs whose `main` returns `Unit` / `Int` / `Float` (the common
+/// cases in tests and examples) get exact comparison.
+#[cfg(feature = "wasm")]
+fn decode_main_return(out: &[wasmtime::Val]) -> aver::replay::JsonValue {
+    use aver::replay::JsonValue;
+    use wasmtime::Val;
+    match out {
+        [] => JsonValue::Null,
+        [single] => match single {
+            Val::I32(n) => JsonValue::Int(*n as i64),
+            Val::I64(n) => JsonValue::Int(*n),
+            Val::F32(bits) => JsonValue::Float(f32::from_bits(*bits) as f64),
+            Val::F64(bits) => JsonValue::Float(f64::from_bits(*bits)),
+            Val::AnyRef(None) => JsonValue::Null,
+            Val::AnyRef(Some(_)) => JsonValue::String("<wasm-gc:ref>".to_string()),
+            _ => JsonValue::Null,
+        },
+        many => JsonValue::Array(
+            many.iter()
+                .map(|v| decode_main_return(&[v.clone()]))
+                .collect(),
+        ),
+    }
 }
 
 /// Append one entry to the trace iff recording is on. Args + outcome
