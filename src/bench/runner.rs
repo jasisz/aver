@@ -182,7 +182,8 @@ fn run_wasm_local(manifest: &Manifest) -> Result<BenchReport, RunError> {
     let aver_bin = std::env::current_exe()
         .map_err(|e| RunError::Setup(format!("locate current aver binary: {}", e)))?;
 
-    let status = Command::new(&aver_bin)
+    let mut compile = Command::new(&aver_bin);
+    compile
         .arg("compile")
         .arg(&manifest.entry)
         .arg("--target")
@@ -192,7 +193,11 @@ fn run_wasm_local(manifest: &Manifest) -> Result<BenchReport, RunError> {
         .arg("--name")
         .arg(&manifest.name)
         .arg("-o")
-        .arg(&out_dir)
+        .arg(&out_dir);
+    if let Some(root) = manifest.entry.parent() {
+        compile.arg("--module-root").arg(root);
+    }
+    let status = compile
         .status()
         .map_err(|e| RunError::Setup(format!("spawn aver compile --target wasm: {}", e)))?;
     if !status.success() {
@@ -465,7 +470,8 @@ fn run_wasm_gc(manifest: &Manifest) -> Result<BenchReport, RunError> {
     let aver_bin = std::env::current_exe()
         .map_err(|e| RunError::Setup(format!("locate current aver binary: {}", e)))?;
 
-    let status = Command::new(&aver_bin)
+    let mut compile = Command::new(&aver_bin);
+    compile
         .arg("compile")
         .arg(&manifest.entry)
         .arg("--target")
@@ -473,7 +479,11 @@ fn run_wasm_gc(manifest: &Manifest) -> Result<BenchReport, RunError> {
         .arg("--name")
         .arg(&manifest.name)
         .arg("-o")
-        .arg(&out_dir)
+        .arg(&out_dir);
+    if let Some(root) = manifest.entry.parent() {
+        compile.arg("--module-root").arg(root);
+    }
+    let status = compile
         .status()
         .map_err(|e| RunError::Setup(format!("spawn aver compile --target=wasm-gc: {}", e)))?;
     if !status.success() {
@@ -669,6 +679,9 @@ fn run_rust(manifest: &Manifest) -> Result<BenchReport, RunError> {
         .arg(&manifest.name)
         .arg("-o")
         .arg(&out_dir);
+    if let Some(root) = manifest.entry.parent() {
+        compile_cmd.arg("--module-root").arg(root);
+    }
     if let Some(root) = manifest_dir.as_ref() {
         compile_cmd.env("AVER_RUNTIME_PATH", root.join("aver-rt"));
     }
@@ -719,6 +732,59 @@ fn run_rust(manifest: &Manifest) -> Result<BenchReport, RunError> {
         Ok(output.stdout.len())
     };
 
+    // Build a no-op companion binary in the same temp tree so we can
+    // measure subprocess-spawn overhead and subtract it from the user
+    // numbers. Rust spawn cost on macOS is ~2-3 ms — without this
+    // baseline every fast scenario (`fib`, `factorial`, `record`)
+    // would be reported as "2.7 ms" regardless of what the program
+    // actually computes. Separate compile keeps the user binary
+    // identical to what `aver compile --target rust` produces today.
+    let baseline_src = temp.path().join("__bench_baseline.av");
+    std::fs::write(
+        &baseline_src,
+        "module BenchBaseline\n    intent = \"spawn-overhead probe\"\n\nfn main() -> Unit\n    Unit\n",
+    )
+    .map_err(|e| RunError::Setup(format!("write baseline source: {}", e)))?;
+    let baseline_out = temp.path().join("baseline_out");
+    let mut baseline_compile = Command::new(&aver_bin);
+    baseline_compile
+        .arg("compile")
+        .arg(&baseline_src)
+        .arg("--name")
+        .arg("__bench_baseline")
+        .arg("-o")
+        .arg(&baseline_out);
+    if let Some(root) = manifest_dir.as_ref() {
+        baseline_compile.env("AVER_RUNTIME_PATH", root.join("aver-rt"));
+    }
+    let _ = baseline_compile
+        .status()
+        .map_err(|e| RunError::Setup(format!("spawn baseline compile: {}", e)))?;
+    let _ = Command::new("cargo")
+        .arg("build")
+        .arg("--release")
+        .current_dir(&baseline_out)
+        .status()
+        .map_err(|e| RunError::Setup(format!("baseline cargo build: {}", e)))?;
+    let baseline_binary = baseline_out.join("target/release/__bench_baseline");
+
+    let mut baseline_samples: Vec<f64> = Vec::with_capacity(manifest.iterations);
+    if baseline_binary.exists() {
+        for _ in 0..manifest.warmup.max(3) {
+            let _ = run_one(&baseline_binary, &[]);
+        }
+        for _ in 0..manifest.iterations {
+            let t = Instant::now();
+            let _ = run_one(&baseline_binary, &[])?;
+            baseline_samples.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+    }
+    let baseline_mean: f64 = if baseline_samples.is_empty() {
+        0.0
+    } else {
+        baseline_samples.iter().sum::<f64>() / baseline_samples.len() as f64
+    };
+
     let mut samples: Vec<f64> = Vec::with_capacity(manifest.iterations);
     for _ in 0..manifest.warmup {
         run_one(&binary, &manifest.args)?;
@@ -728,6 +794,14 @@ fn run_rust(manifest: &Manifest) -> Result<BenchReport, RunError> {
         let t = Instant::now();
         last_bytes = run_one(&binary, &manifest.args)?;
         samples.push(t.elapsed().as_secs_f64() * 1000.0);
+    }
+    // Subtract per-iter spawn cost so the reported number reflects
+    // actual native compute time. Clamp to ≥ 0.001 ms so a scenario
+    // that's faster than the baseline noise floor still reports a
+    // positive number (the alternative — zeros — would mask
+    // regressions on the fastest workloads).
+    for s in samples.iter_mut() {
+        *s = (*s - baseline_mean).max(0.001);
     }
 
     let passes = canonical_passes();
