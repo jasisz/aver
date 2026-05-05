@@ -2891,14 +2891,6 @@ async function doRecord(skipDownload = true, entryExpr = null) {
             setStatus("Compile failed", "error");
             return;
         }
-        if (state.worker) {
-            state.worker.terminate();
-        }
-        const worker = new Worker(new URL("./worker.js", import.meta.url), {
-            type: "module",
-        });
-        worker.onmessage = handleWorkerMessage;
-        state.worker = worker;
         // Live-trace mirror in main thread. Recordings used to live
         // only inside the worker, so a Stop click (which terminates
         // the worker) lost the in-flight trace. Now every
@@ -2918,6 +2910,13 @@ async function doRecord(skipDownload = true, entryExpr = null) {
         dom.stopButton.hidden = false;
         dom.terminal.dataset.empty = "false";
         dom.terminal.focus({ preventScroll: true });
+        // Reuse `spawnWorker` so the worker gets the same init
+        // sequence Run uses — `init-input` ships the SharedArrayBuffer
+        // key + line queues, `resize` reports current terminal cols
+        // /rows. Without those games never see keypresses and the
+        // terminal stays at the 80×35 default no matter what the
+        // playground UI shows.
+        const worker = spawnWorker();
         const result = await new Promise((resolve) => {
             state.recordResolve = resolve;
             // `aver_compile_project` returns a Uint8Array view; the
@@ -2979,14 +2978,13 @@ async function doReplay() {
             typeof state.lastRecording === "string"
                 ? JSON.parse(state.lastRecording)
                 : state.lastRecording;
-        if (state.worker) {
-            state.worker.terminate();
-        }
-        const worker = new Worker(new URL("./worker.js", import.meta.url), {
-            type: "module",
-        });
-        worker.onmessage = handleWorkerMessage;
-        state.worker = worker;
+        // Same init sequence Run uses (see the comment in `doRecord`)
+        // — without `init-input` + `resize` the worker has no key
+        // buffer or terminal dimensions and replays of interactive
+        // programs come up blank.
+        dom.terminal.dataset.empty = "false";
+        dom.terminal.focus({ preventScroll: true });
+        const worker = spawnWorker();
         const result = await new Promise((resolve) => {
             state.replayResolve = resolve;
             // Transfer the ArrayBuffer, not the Uint8Array view —
