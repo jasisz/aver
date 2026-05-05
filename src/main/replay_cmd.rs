@@ -316,7 +316,8 @@ fn replay_recording_file_wasm_gc(
 
     #[cfg(feature = "wasm")]
     {
-        let mode = super::run_wasm_gc::EffectMode::Replaying(recording.clone(), check_args);
+        let mode =
+            super::run_wasm_gc::EffectMode::Replaying(Box::new(recording.clone()), check_args);
         let mut actual_output: Option<aver::replay::JsonValue> = None;
         super::run_wasm_gc::cmd_run_wasm_gc_with_mode_capturing(
             &replay_program_file,
@@ -349,7 +350,7 @@ fn replay_recording_file_wasm_gc(
     }
     #[cfg(not(feature = "wasm"))]
     {
-        let _ = (recording, check_args, total);
+        let _ = (recording, check_args, total, replay_program_file);
         Err("--wasm-gc replay requires building aver with --features wasm".to_string())
     }
 }

@@ -21,19 +21,25 @@ use super::shared::{parse_file, read_file, resolve_module_root_for_entry};
 use super::commands::{flatten_multimodule, load_compile_deps};
 
 /// What the recorder/replayer should do for this run.
+///
+/// `Replaying` carries a heap-allocated `SessionRecording` (kilobytes
+/// of effect trace) so the enum stays small enough to pass by value
+/// through the run pipeline without inflating every `Normal` /
+/// `Recording` call to recording size — clippy's `large_enum_variant`
+/// would otherwise flag the size mismatch.
 pub(super) enum EffectMode<'a> {
     /// Production path — real effects run, no recording, no replay.
     Normal,
     /// `aver run --wasm-gc --record <dir>` — real effects run, every
     /// call appended to the trace, persisted to `<dir>/<request>.json`.
-    Recording(&'a str),
+    Recording(#[allow(dead_code)] &'a str),
     /// `aver replay <file> --wasm-gc` — effects bypass real I/O, values
     /// come from the trace via `EffectReplayState::replay_effect`.
     /// `bool` is `--check-args`: when true the recorded args must match
     /// the args the program supplies, else only effect type + sequence.
     #[cfg(feature = "wasm")]
     #[allow(dead_code)]
-    Replaying(aver::replay::SessionRecording, bool),
+    Replaying(Box<aver::replay::SessionRecording>, bool),
     #[cfg(not(feature = "wasm"))]
     #[allow(dead_code)]
     Replaying((), bool),
@@ -176,6 +182,7 @@ struct RunWasmGcHost {
 /// `main` is declared (the program will run via `_start` and produce
 /// no output to compare). Multi-module loading appends dep fns to
 /// `items`, so we filter on name only.
+#[cfg(feature = "wasm")]
 fn find_main_return_type(items: &[aver::ast::TopLevel]) -> aver::ast::Type {
     use aver::ast::TopLevel;
     for item in items {
@@ -663,9 +670,9 @@ fn decode_result_string(
     match (marker, inner) {
         ("$ok", aver::replay::JsonValue::String(s)) => host_result_ok_string(caller, s),
         ("$err", aver::replay::JsonValue::String(s)) => host_result_err_string(caller, s),
-        _ => Err(wasmtime::Error::msg(format!(
-            "replay decode Result<String, String>: unexpected payload"
-        ))),
+        _ => Err(wasmtime::Error::msg(
+            "replay decode Result<String, String>: unexpected payload",
+        )),
     }
 }
 
