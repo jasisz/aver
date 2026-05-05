@@ -1,4 +1,5 @@
 import { TerminalBuffer } from "./browser_terminal.js";
+import { EffectReplayState, REPLAY_MODE } from "./replay_state.js";
 
 const COLOR_NAMES = new Set([
     "default",
@@ -94,6 +95,10 @@ export class AverBrowserHost {
         this.encoder = new TextEncoder();
         this.decoder = new TextDecoder();
         this.terminal = new TerminalBuffer(80, 35);
+        // Recording / replay state — drives the Step 4 native wasm-gc
+        // record/replay path so the playground can record under V8
+        // wasm-gc directly (instead of bouncing through VM-in-wasm32).
+        this.recorder = new EffectReplayState();
         this.keyQueue = [];
         this.keyQueueView = null;
         this.lineQueue = [];
@@ -220,76 +225,370 @@ export class AverBrowserHost {
         }, [snapshot.chars.buffer, snapshot.colors.buffer]);
     }
 
+    /// Run `realCall()` if the recorder is in Normal or Recording
+    /// mode, returning its native result. In Replay mode the cached
+    /// outcome is decoded via `decodeOutcome(json)` instead and the
+    /// real call is skipped — same shape the wasm-gc executor's
+    /// `try_replay` enforces. Recording mode appends the live result
+    /// (translated through `encodeOutcome(value)`) to the trace
+    /// before returning. Effects that don't carry a return value
+    /// pass null encoders / decoders.
+    recordOrDispatch(effectType, args, realCall, decodeOutcome, encodeOutcome) {
+        const r = this.recorder;
+        if (r.mode === REPLAY_MODE.REPLAYING) {
+            const replayResult = r.replayEffect(effectType, args);
+            if (!replayResult.skip) {
+                const outcome = replayResult.outcome ?? { kind: "value", value: null };
+                if (outcome.kind === "runtime_error") {
+                    throw new Error(outcome.message ?? `replay runtime error in ${effectType}`);
+                }
+                return decodeOutcome
+                    ? decodeOutcome(outcome.value ?? null)
+                    : undefined;
+            }
+        }
+        const live = realCall();
+        if (r.mode === REPLAY_MODE.RECORDING) {
+            const outcomeJson = encodeOutcome
+                ? encodeOutcome(live)
+                : null;
+            r.recordEffect(effectType, args, {
+                kind: "value",
+                value: outcomeJson,
+            });
+        }
+        return live;
+    }
+
     createImports() {
         return {
             aver: {
-                args_len: () => BigInt(this.programArgs.length),
+                args_len: () =>
+                    this.recordOrDispatch(
+                        "Args.len",
+                        [],
+                        () => BigInt(this.programArgs.length),
+                        (json) => BigInt(json ?? 0),
+                        (v) => Number(v),
+                    ),
                 args_get: (index) => {
                     const idx = Number(index);
-                    const value =
-                        idx >= 0 && idx < this.programArgs.length ? this.programArgs[idx] : "";
-                    return this.jsToAver(value);
+                    return this.recordOrDispatch(
+                        "Args.get",
+                        [idx],
+                        () => {
+                            const value =
+                                idx >= 0 && idx < this.programArgs.length
+                                    ? this.programArgs[idx]
+                                    : "";
+                            return this.jsToAver(value);
+                        },
+                        (json) => this.jsToAver(json ?? ""),
+                        () =>
+                            idx >= 0 && idx < this.programArgs.length
+                                ? this.programArgs[idx]
+                                : "",
+                    );
                 },
                 console_print: (sref) => {
-                    this.postConsole("stdout", this.averToJs(sref));
+                    const text = this.averToJs(sref);
+                    this.recordOrDispatch(
+                        "Console.print",
+                        [text],
+                        () => this.postConsole("stdout", text),
+                        () => undefined,
+                        () => null,
+                    );
                 },
                 console_error: (sref) => {
-                    this.postConsole("stderr", this.averToJs(sref));
+                    const text = this.averToJs(sref);
+                    this.recordOrDispatch(
+                        "Console.error",
+                        [text],
+                        () => this.postConsole("stderr", text),
+                        () => undefined,
+                        () => null,
+                    );
                 },
                 console_warn: (sref) => {
-                    this.postConsole("stderr", this.averToJs(sref));
+                    const text = this.averToJs(sref);
+                    this.recordOrDispatch(
+                        "Console.warn",
+                        [text],
+                        () => this.postConsole("stderr", text),
+                        () => undefined,
+                        () => null,
+                    );
                 },
                 console_read_line: () => {
                     const exports = this.instance.exports;
-                    try {
-                        const line = this.blockingReadLine();
-                        return exports.__rt_result_string_string_ok(this.jsToAver(line));
-                    } catch (err) {
-                        const msg = err instanceof Error ? err.message : String(err);
-                        return exports.__rt_result_string_string_err(this.jsToAver(msg));
-                    }
+                    return this.recordOrDispatch(
+                        "Console.readLine",
+                        [],
+                        () => {
+                            try {
+                                const line = this.blockingReadLine();
+                                return exports.__rt_result_string_string_ok(
+                                    this.jsToAver(line),
+                                );
+                            } catch (err) {
+                                const msg =
+                                    err instanceof Error ? err.message : String(err);
+                                return exports.__rt_result_string_string_err(
+                                    this.jsToAver(msg),
+                                );
+                            }
+                        },
+                        (json) => this.decodeResultStringMarker(json),
+                        (_ref) => {
+                            // Recording side has no easy reverse path
+                            // wasm-gc ref → JSON without round-tripping
+                            // through `__rt_string_to_lm` for either
+                            // arm; until we wire that, capture the
+                            // text-only success branch from the queue
+                            // input. `runtime_error` arms from the
+                            // catch above are recorded as `$err`.
+                            const peek = this.lineQueue.length
+                                ? this.lineQueue[0]
+                                : "";
+                            return { $ok: peek };
+                        },
+                    );
                 },
-                random_int: (min, max) => chooseRandomInt(min, max),
-                random_float: () => Math.random(),
-                time_unix_ms: () => BigInt(Date.now()),
-                time_now: () => this.jsToAver(new Date().toISOString()),
-                time_sleep: (millis) => sleepMillis(millis),
+                random_int: (min, max) =>
+                    this.recordOrDispatch(
+                        "Random.int",
+                        [Number(min), Number(max)],
+                        () => chooseRandomInt(min, max),
+                        (json) => BigInt(json ?? 0),
+                        (v) => Number(v),
+                    ),
+                random_float: () =>
+                    this.recordOrDispatch(
+                        "Random.float",
+                        [],
+                        () => Math.random(),
+                        (json) => Number(json ?? 0),
+                        (v) => Number(v),
+                    ),
+                time_unix_ms: () =>
+                    this.recordOrDispatch(
+                        "Time.unixMs",
+                        [],
+                        () => BigInt(Date.now()),
+                        (json) => BigInt(json ?? 0),
+                        (v) => Number(v),
+                    ),
+                time_now: () =>
+                    this.recordOrDispatch(
+                        "Time.now",
+                        [],
+                        () => this.jsToAver(new Date().toISOString()),
+                        (json) => this.jsToAver(json ?? ""),
+                        () => new Date().toISOString(),
+                    ),
+                time_sleep: (millis) =>
+                    this.recordOrDispatch(
+                        "Time.sleep",
+                        [Number(millis)],
+                        () => sleepMillis(millis),
+                        () => undefined,
+                        () => null,
+                    ),
+                // Float math is pure — no recording, no replay. The
+                // wasm-gc imports list these because the engine
+                // doesn't expose `f64.sin` directly; treating them as
+                // host effects would explode every numeric trace
+                // unnecessarily.
                 float_sin: (x) => Math.sin(x),
                 float_cos: (x) => Math.cos(x),
                 float_atan2: (y, x) => Math.atan2(y, x),
                 float_pow: (b, e) => Math.pow(b, e),
-                terminal_enable_raw_mode: () => {
-                    this.rawMode = true;
-                    this.post({ type: "raw-mode", enabled: true });
-                },
-                terminal_disable_raw_mode: () => {
-                    this.rawMode = false;
-                    this.post({ type: "raw-mode", enabled: false });
-                },
-                terminal_clear: () => this.terminal.clear(),
-                terminal_move_to: (x, y) => this.terminal.moveTo(Number(x), Number(y)),
-                terminal_print: (sref) => this.terminal.print(this.averToJs(sref)),
-                terminal_set_color: (sref) => {
-                    const color = this.averToJs(sref);
-                    this.terminal.setColor(COLOR_NAMES.has(color) ? color : "default");
-                },
-                terminal_reset_color: () => this.terminal.resetColor(),
-                terminal_read_key: () => {
-                    const key = this.dequeueKey();
-                    const exports = this.instance.exports;
-                    if (!key) return exports.__rt_option_string_none();
-                    return exports.__rt_option_string_some(this.jsToAver(key));
-                },
-                terminal_size: () => {
-                    return this.instance.exports.__rt_record_terminal_size_make(
-                        BigInt(this.terminal.cols),
-                        BigInt(this.terminal.rows),
+                terminal_enable_raw_mode: () =>
+                    this.recordOrDispatch(
+                        "Terminal.enableRawMode",
+                        [],
+                        () => {
+                            this.rawMode = true;
+                            this.post({ type: "raw-mode", enabled: true });
+                        },
+                        () => undefined,
+                        () => null,
+                    ),
+                terminal_disable_raw_mode: () =>
+                    this.recordOrDispatch(
+                        "Terminal.disableRawMode",
+                        [],
+                        () => {
+                            this.rawMode = false;
+                            this.post({ type: "raw-mode", enabled: false });
+                        },
+                        () => undefined,
+                        () => null,
+                    ),
+                terminal_clear: () =>
+                    this.recordOrDispatch(
+                        "Terminal.clear",
+                        [],
+                        () => this.terminal.clear(),
+                        () => undefined,
+                        () => null,
+                    ),
+                terminal_move_to: (x, y) => {
+                    const xi = Number(x);
+                    const yi = Number(y);
+                    this.recordOrDispatch(
+                        "Terminal.moveTo",
+                        [xi, yi],
+                        () => this.terminal.moveTo(xi, yi),
+                        () => undefined,
+                        () => null,
                     );
                 },
-                terminal_hide_cursor: () => this.terminal.hideCursor(),
-                terminal_show_cursor: () => this.terminal.showCursor(),
-                terminal_flush: () => this.postTerminalSnapshot(),
+                terminal_print: (sref) => {
+                    const text = this.averToJs(sref);
+                    this.recordOrDispatch(
+                        "Terminal.print",
+                        [text],
+                        () => this.terminal.print(text),
+                        () => undefined,
+                        () => null,
+                    );
+                },
+                terminal_set_color: (sref) => {
+                    const color = this.averToJs(sref);
+                    this.recordOrDispatch(
+                        "Terminal.setColor",
+                        [color],
+                        () =>
+                            this.terminal.setColor(
+                                COLOR_NAMES.has(color) ? color : "default",
+                            ),
+                        () => undefined,
+                        () => null,
+                    );
+                },
+                terminal_reset_color: () =>
+                    this.recordOrDispatch(
+                        "Terminal.resetColor",
+                        [],
+                        () => this.terminal.resetColor(),
+                        () => undefined,
+                        () => null,
+                    ),
+                terminal_read_key: () => {
+                    const exports = this.instance.exports;
+                    return this.recordOrDispatch(
+                        "Terminal.readKey",
+                        [],
+                        () => {
+                            const key = this.dequeueKey();
+                            if (!key) return exports.__rt_option_string_none();
+                            return exports.__rt_option_string_some(this.jsToAver(key));
+                        },
+                        (json) => {
+                            if (json && typeof json === "object" && "$some" in json) {
+                                return exports.__rt_option_string_some(
+                                    this.jsToAver(json.$some ?? ""),
+                                );
+                            }
+                            return exports.__rt_option_string_none();
+                        },
+                        (_ref) => {
+                            // Same constraint as console_read_line —
+                            // we record the next-in-queue snapshot.
+                            const head = this.keyQueue[0];
+                            return head
+                                ? { $some: head }
+                                : { $none: true };
+                        },
+                    );
+                },
+                terminal_size: () => {
+                    const exports = this.instance.exports;
+                    const cols = this.terminal.cols;
+                    const rows = this.terminal.rows;
+                    return this.recordOrDispatch(
+                        "Terminal.size",
+                        [],
+                        () =>
+                            exports.__rt_record_terminal_size_make(
+                                BigInt(cols),
+                                BigInt(rows),
+                            ),
+                        (json) => {
+                            const fields = json?.$record?.fields ?? {};
+                            return exports.__rt_record_terminal_size_make(
+                                BigInt(fields.width ?? cols),
+                                BigInt(fields.height ?? rows),
+                            );
+                        },
+                        () => ({
+                            $record: {
+                                type: "Terminal.Size",
+                                fields: { width: cols, height: rows },
+                            },
+                        }),
+                    );
+                },
+                terminal_hide_cursor: () =>
+                    this.recordOrDispatch(
+                        "Terminal.hideCursor",
+                        [],
+                        () => this.terminal.hideCursor(),
+                        () => undefined,
+                        () => null,
+                    ),
+                terminal_show_cursor: () =>
+                    this.recordOrDispatch(
+                        "Terminal.showCursor",
+                        [],
+                        () => this.terminal.showCursor(),
+                        () => undefined,
+                        () => null,
+                    ),
+                terminal_flush: () =>
+                    this.recordOrDispatch(
+                        "Terminal.flush",
+                        [],
+                        () => this.postTerminalSnapshot(),
+                        () => undefined,
+                        () => null,
+                    ),
+                // Independent-product structural-scope markers — same
+                // contract the wasm-gc CLI host enforces. Programs
+                // without `?!` / `!` never call these (the compiler
+                // only emits the calls when discovery sees an
+                // independent product), so the no-op shape costs
+                // nothing.
+                record_enter_group: () => {
+                    this.recorder.enterGroup();
+                },
+                record_set_branch: (i) => {
+                    this.recorder.setBranch(Number(i));
+                },
+                record_exit_group: () => {
+                    this.recorder.exitGroup();
+                },
             },
         };
+    }
+
+    /// Decode a `Result<String, String>` marker JSON into the wasm-gc
+    /// engine value via the module's factory exports. Mirrors the
+    /// Rust-side `decode_result_string` helper.
+    decodeResultStringMarker(json) {
+        const exports = this.instance.exports;
+        if (json && typeof json === "object" && "$ok" in json) {
+            return exports.__rt_result_string_string_ok(this.jsToAver(json.$ok ?? ""));
+        }
+        if (json && typeof json === "object" && "$err" in json) {
+            return exports.__rt_result_string_string_err(
+                this.jsToAver(json.$err ?? ""),
+            );
+        }
+        // Fallback: empty Ok (defensively, when the trace is
+        // malformed at this position).
+        return exports.__rt_result_string_string_ok(this.jsToAver(""));
     }
 }

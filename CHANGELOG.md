@@ -4,6 +4,18 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
+## 0.16.2 (unreleased)
+
+> _Record/replay correctness across all three backends — and a tidier wasm-gc imports tree along the way._
+
+### Added
+- **wasm-gc independent products (`?!` / `!`) record/replay parity.** Codegen now emits `enter_group` / `set_branch(i)` / `exit_group` host calls around independent-product literals, so contained effects pick up the same `(group_id, branch_path, effect_occurrence)` tuple the VM annotates. Cross-backend replay (VM → wasm-gc and wasm-gc → VM) round-trips cleanly on `?!` programs. Previously wasm-gc traces were flat and group-tagged VM recordings broke under wasm-gc replay.
+- **Self-host real output value comparison.** Self-host's CLI plumbing (`runFromFileWithRest` / `runCliFile` / `runGuestCliProgram` / `finishCliRun`) now propagates the user `main()`'s `Val` up to the wrapping replay scope instead of dropping it to Unit, and the replay-template runtime emits a `__aver_return__:` stdout marker for the host to parse. `aver replay --self-host` now reports a real `MATCH` / `DIFFERS` instead of always claiming MATCH.
+- **Playground record/replay runs natively under V8 wasm-gc.** Trace capture and replay used to bounce through the VM-in-wasm32 bridge; the playground now compiles user source to wasm-gc bytes and drives `--record` / `--replay` on a WebWorker via a JS-side `EffectReplayState` mirror of the CLI host. Trace JSON is byte-compatible with `aver run --record`, so a downloaded `.replay.json` from the playground replays under the CLI replayer (and vice versa). Independent-product (`?!`) markers are wired so cross-backend traces match end-to-end. `--expr` per-fn recordings still go through the VM-in-wasm32 path until the compiler exposes a wasm-bindgen entry-call wrapper.
+
+### Changed
+- **`run_wasm_gc/imports.rs` split into 13 per-domain submodules** (`args.rs` / `console.rs` / `disk.rs` / `env.rs` / `factories.rs` / `groups.rs` / `http.rs` / `lm.rs` / `numeric.rs` / `replay_glue.rs` / `tcp.rs` / `terminal.rs` / `time.rs`). The 1711-line dispatch monolith is now a 101-line chain that hands off to per-namespace `dispatch(...)` functions; new effects live next to their decoders and factories.
+
 ## 0.16.1 — wasm-gc record/replay parity (2026-05-05)
 
 ### Added

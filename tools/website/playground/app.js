@@ -242,6 +242,46 @@ function handleWorkerMessage(event) {
                 setStatus("Game ended.", "idle");
             }
             break;
+        case "record-finished":
+            if (state.worker) {
+                state.worker.terminate();
+                state.worker = null;
+            }
+            setRawMode(false);
+            if (!message.ok) {
+                setStatus("Record failed", "error");
+                appendConsole("stderr", message.error || "unknown error");
+                if (state.recordResolve) {
+                    state.recordResolve({ ok: false, error: message.error });
+                    state.recordResolve = null;
+                }
+            } else if (state.recordResolve) {
+                state.recordResolve({
+                    ok: true,
+                    recording: message.recording,
+                    effect_count: message.effect_count,
+                });
+                state.recordResolve = null;
+            }
+            break;
+        case "replay-finished":
+            if (state.worker) {
+                state.worker.terminate();
+                state.worker = null;
+            }
+            setRawMode(false);
+            if (state.replayResolve) {
+                state.replayResolve({
+                    ok: !!message.ok,
+                    matched: !!message.matched,
+                    replayed: message.replayed,
+                    total: message.total,
+                    args_diffs: message.args_diffs,
+                    error: message.error || null,
+                });
+                state.replayResolve = null;
+            }
+            break;
         default:
             break;
     }
@@ -2747,43 +2787,83 @@ async function doRecord(skipDownload = true, entryExpr = null) {
         setStatus("Nothing to record.", "error");
         return;
     }
-    // Remember the entry expression so ↻ Re-record runs the same call instead
-    // of silently falling back to main(). Cleared when Record (main) is used.
+    // Per-fn entry recording (`-e 'fn(args)'`) under the native
+    // wasm-gc playground path needs the compiler to expose a
+    // `--expr` wasm-bindgen wrapper that returns the entry's
+    // `(fn_name, decoded_args)` shape — not wired yet for the
+    // browser. Falls back to the legacy VM-in-wasm32 path so the
+    // feature stays available in the meantime; `main` recordings
+    // go straight through native wasm-gc.
     state.lastEntryExpr = entryExpr || null;
-    try {
-        const comp = await loadCompiler();
-        setStatus(entryExpr ? `Recording ${entryExpr}…` : "Recording…", "info");
-        const json = entryExpr
-            ? comp.aver_run_record_entry(JSON.stringify(filesObj), entry, entryExpr)
-            : comp.aver_run_record(JSON.stringify(filesObj), entry);
-        const res = JSON.parse(json);
-        if (!res.ok) {
-            setStatus("Record failed", "error");
-            appendConsole("stderr", res.error || "unknown error");
-            return;
-        }
-        let parsed;
+    if (entryExpr) {
         try {
-            parsed = JSON.parse(res.recording);
-        } catch (e) {
-            setStatus("Recording parse failed", "error");
-            appendConsole("stderr", e.message);
-            return;
-        }
-        setRecording(parsed);
-        // Cap-hit is a soft stop: we still keep everything recorded
-        // before the cap. Surface it as info instead of error so the
-        // user reads it as "you can still work with this prefix".
-        const capped = /record cap reached/i.test(res.runtime_error || "");
-        if (capped) {
-            setStatus(
-                `Recorded ${res.effect_count} effects (capped — program was still running, trace is a prefix)`,
-                "info"
+            const comp = await loadCompiler();
+            setStatus(`Recording ${entryExpr}…`, "info");
+            const json = comp.aver_run_record_entry(
+                JSON.stringify(filesObj),
+                entry,
+                entryExpr,
             );
-        } else {
+            const res = JSON.parse(json);
+            if (!res.ok) {
+                setStatus("Record failed", "error");
+                appendConsole("stderr", res.error || "unknown error");
+                return;
+            }
+            const parsed = JSON.parse(res.recording);
+            setRecording(parsed);
             const note = res.runtime_error ? ` (main threw: ${res.runtime_error})` : "";
             setStatus(`Recorded ${res.effect_count} effect(s)${note}`, "success");
+        } catch (e) {
+            appendConsole("stderr", e.message || String(e));
+            setStatus("Record failed", "error");
         }
+        return;
+    }
+    try {
+        const comp = await loadCompiler();
+        setStatus("Recording…", "info");
+        // Compile the source to wasm-gc bytes via `aver_compile_project`,
+        // then drive a record session on the WebWorker so the program
+        // runs natively under V8 wasm-gc instead of the VM-in-wasm32
+        // bridge. Effect outcomes flow through the worker's
+        // `AverBrowserHost.recordOrDispatch`, which appends to the
+        // trace as the wasm-gc CLI host does.
+        let wasmBytes;
+        try {
+            wasmBytes = comp.aver_compile_project(JSON.stringify(filesObj), entry);
+        } catch (e) {
+            appendConsole("stderr", e.message || String(e));
+            setStatus("Compile failed", "error");
+            return;
+        }
+        if (state.worker) {
+            state.worker.terminate();
+        }
+        const worker = new Worker(new URL("./worker.js", import.meta.url), {
+            type: "module",
+        });
+        worker.onmessage = handleWorkerMessage;
+        state.worker = worker;
+        const result = await new Promise((resolve) => {
+            state.recordResolve = resolve;
+            worker.postMessage(
+                {
+                    type: "record",
+                    wasmBytes,
+                    programArgs: state.programArgs ?? [],
+                    programFile: entry,
+                    moduleRoot: ".",
+                },
+                [wasmBytes],
+            );
+        });
+        if (!result.ok) {
+            setStatus("Record failed", "error");
+            return;
+        }
+        setRecording(result.recording);
+        setStatus(`Recorded ${result.effect_count} effect(s)`, "success");
     } catch (e) {
         appendConsole("stderr", e.message || String(e));
         setStatus("Record failed", "error");
@@ -2804,36 +2884,71 @@ async function doReplay() {
     try {
         const comp = await loadCompiler();
         setStatus("Replaying…", "info");
-        const json = comp.aver_replay_run(
-            JSON.stringify(filesObj),
-            entry,
-            state.lastRecording
-        );
-        const res = JSON.parse(json);
-        if (!res.ok) {
-            setStatus("Replay failed", "error");
-            appendConsole("stderr", res.error || "unknown error");
+        // Compile to wasm-gc bytes, then drive a replay session on
+        // the WebWorker. Native wasm-gc + AverBrowserHost.recordOrDispatch
+        // pulls every effect outcome from the trace via the worker's
+        // primed EffectReplayState — same contract `aver replay
+        // --wasm-gc` uses on the CLI.
+        let wasmBytes;
+        try {
+            wasmBytes = comp.aver_compile_project(JSON.stringify(filesObj), entry);
+        } catch (e) {
+            appendConsole("stderr", e.message || String(e));
+            setStatus("Compile failed", "error");
             return;
         }
-        const exhausted =
-            /Replay exhausted/i.test(res.error || "") && res.replayed === res.total;
+        const recordingObj =
+            typeof state.lastRecording === "string"
+                ? JSON.parse(state.lastRecording)
+                : state.lastRecording;
+        if (state.worker) {
+            state.worker.terminate();
+        }
+        const worker = new Worker(new URL("./worker.js", import.meta.url), {
+            type: "module",
+        });
+        worker.onmessage = handleWorkerMessage;
+        state.worker = worker;
+        const result = await new Promise((resolve) => {
+            state.replayResolve = resolve;
+            worker.postMessage(
+                {
+                    type: "replay",
+                    wasmBytes,
+                    recording: recordingObj,
+                    checkArgs: false,
+                    programArgs: state.programArgs ?? [],
+                },
+                [wasmBytes],
+            );
+        });
         let kind, summary;
-        if (res.matched) {
+        if (result.matched) {
             kind = "match";
-            summary = `Replay matched · ${res.replayed}/${res.total} effects`;
-        } else if (exhausted) {
+            summary = `Replay matched · ${result.replayed}/${result.total} effects`;
+            if (result.args_diffs > 0) {
+                summary += ` · ${result.args_diffs} arg-diff warning(s)`;
+            }
+        } else if (
+            result.error &&
+            /Replay exhausted/i.test(result.error) &&
+            result.replayed === result.total
+        ) {
             kind = "prefix";
-            summary = `Prefix replayed · ${res.replayed}/${res.total} · program continued past the recorded trace`;
+            summary = `Prefix replayed · ${result.replayed}/${result.total} · program continued past the recorded trace`;
         } else {
             kind = "diverge";
-            const short = (res.error || "divergence").replace(
+            const short = (result.error || "divergence").replace(
                 /^Runtime error \[line \d+\]:\s*/i,
-                ""
+                "",
             );
-            summary = `Replay diverged at ${res.replayed}/${res.total} · ${short}`;
+            summary = `Replay diverged at ${result.replayed}/${result.total} · ${short}`;
         }
         state.lastReplayResult = { kind, summary };
-        setStatus(summary, kind === "diverge" ? "error" : kind === "prefix" ? "info" : "success");
+        setStatus(
+            summary,
+            kind === "diverge" ? "error" : kind === "prefix" ? "info" : "success",
+        );
         renderRecordingPanel();
     } catch (e) {
         appendConsole("stderr", e.message || String(e));
