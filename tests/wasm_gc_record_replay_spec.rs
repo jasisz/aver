@@ -280,6 +280,56 @@ fn wasm_gc_records_and_replays_per_function_entry() {
 }
 
 #[test]
+fn wasm_gc_replay_rejects_recording_with_trailing_effect() {
+    // A recording whose effect prefix matches the program but holds
+    // one extra event past the program's last replay_effect call
+    // must fail replay — the live run is a strict prefix of the
+    // recording, so the comparison can't claim MATCH even if the
+    // return value happens to line up. Mirrors the VM replayer's
+    // `ensure_replay_consumed` contract.
+    let work = temp_dir("aver-wasm-gc-rec-unconsumed");
+    let prog = write_program(
+        &work,
+        "main.av",
+        "module SmokeUnconsumed\n    intent = \"ensure_replay_consumed smoke\"\n\n\
+         fn main() -> Unit\n    ! [Console.print, Time.unixMs]\n    \
+         _ = Time.unixMs()\n    Console.print(\"only one print\")\n",
+    );
+    let rec_dir = temp_dir("aver-wasm-gc-rec-unconsumed-traces");
+    let rec_path = record_via_cli(&prog, &rec_dir);
+
+    // Append a Console.print event the program never makes. The
+    // replay should drive the program to completion (consuming the
+    // first two events), then fail because the recording has one
+    // event left.
+    let raw = fs::read_to_string(&rec_path).expect("read recording");
+    let last_close = raw
+        .rfind("    }\n  ]")
+        .expect("recording missing effects array close");
+    let extra = ",\n    {\n      \"seq\": 99,\n      \"type\": \"Console.print\",\n      \"args\": [\"ghost\"],\n      \"outcome\": { \"kind\": \"value\", \"value\": null },\n      \"caller_fn\": \"main\"\n    }";
+    let mut tampered = String::with_capacity(raw.len() + extra.len());
+    tampered.push_str(&raw[..last_close + 5]); // up to "    }\n"
+    tampered.push_str(extra);
+    tampered.push_str(&raw[last_close + 5..]);
+    let tampered_path = work.join("tampered.json");
+    fs::write(&tampered_path, &tampered).expect("write tampered recording");
+
+    let replay = replay_via_cli(&tampered_path);
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&replay.stdout),
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    assert!(
+        combined.contains("Unconsumed") || combined.contains("replay incomplete"),
+        "trailing-effect recording should fail with an `Unconsumed` diagnostic, got:\n{combined}"
+    );
+
+    let _ = fs::remove_dir_all(&work);
+    let _ = fs::remove_dir_all(&rec_dir);
+}
+
+#[test]
 fn wasm_gc_replays_a_vm_recorded_trace() {
     // Record under VM, replay under wasm-gc. Both backends share the
     // same JSON shape (markers + outcome enum); the wasm-gc replayer

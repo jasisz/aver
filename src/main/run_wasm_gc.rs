@@ -91,6 +91,10 @@ pub(super) fn cmd_run_wasm_gc_with_mode(
 /// so it can compare the live run's output against `recording.output`
 /// after replay finishes — the regular `aver run --wasm-gc` path
 /// passes `None` and ignores the return value.
+///
+/// CLI wrapper: pretty-prints any error and exits 1. Internal callers
+/// that need to keep going (e.g. `aver replay <dir>` iterating over
+/// files) should use `try_run_wasm_gc` directly.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn cmd_run_wasm_gc_with_mode_capturing(
     file: &str,
@@ -100,18 +104,63 @@ pub(super) fn cmd_run_wasm_gc_with_mode_capturing(
     entry_info: Option<(String, Vec<aver::value::Value>)>,
     out_json: Option<&mut Option<aver::replay::JsonValue>>,
 ) {
+    match try_run_wasm_gc(file, module_root_override, program_args, mode, entry_info) {
+        Ok(outcome) => {
+            if let Some(slot) = out_json {
+                *slot = Some(outcome.output);
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    }
+}
+
+/// Result of one `aver run --wasm-gc` invocation, surfaced to callers
+/// that drive replay (which need to compare the decoded entry-fn
+/// return against the recording's `output`, raise unconsumed-trace
+/// failures, and surface arg-diff warnings) without `process::exit`.
+#[allow(dead_code)]
+pub(super) struct RunOutcome {
+    pub output: aver::replay::JsonValue,
+    /// `replay_pos` after the entry fn returns — for replay this is
+    /// the number of effects the program actually consumed; for
+    /// recording it's the count appended.
+    pub effects_consumed: usize,
+    /// `replay_effects.len()` for replay, `effects_consumed` for
+    /// recording. Same value the `Effects: N replayed (M matched)`
+    /// summary reads.
+    pub effects_total: usize,
+    /// How many `replay_effect` calls saw mismatched args without
+    /// `--check-args`. Surfaces as a soft warning even when the
+    /// sequence + outcomes line up.
+    pub args_diff_count: usize,
+    /// Effects left in the recording past the program's last
+    /// `replay_effect` call. Non-zero means the program was a
+    /// proper prefix of the recording — replay must report failure
+    /// even if the prefix matched and the return value matched.
+    pub replay_remaining: usize,
+}
+
+/// Pure `Result`-returning sibling of
+/// `cmd_run_wasm_gc_with_mode_capturing`. Compiles, instantiates,
+/// runs the entry fn, persists the trace (record mode), and returns
+/// progress info — all without `process::exit`. Errors from any
+/// stage (parse, typecheck, codegen, instantiate, trap, replay
+/// failure) come back as a single `Err(String)` so batch callers
+/// (`aver replay <dir>`) can keep iterating.
+pub(super) fn try_run_wasm_gc(
+    file: &str,
+    module_root_override: Option<&str>,
+    program_args: Vec<String>,
+    mode: EffectMode<'_>,
+    entry_info: Option<(String, Vec<aver::value::Value>)>,
+) -> Result<RunOutcome, String> {
     #[cfg(not(feature = "wasm"))]
     {
-        let _ = (
-            file,
-            module_root_override,
-            program_args,
-            mode,
-            entry_info,
-            out_json,
-        );
-        eprintln!("{}", "WASM requires --features wasm".red());
-        process::exit(1);
+        let _ = (file, module_root_override, program_args, mode, entry_info);
+        Err("WASM requires --features wasm".to_string())
     }
 
     #[cfg(feature = "wasm")]
@@ -120,20 +169,8 @@ pub(super) fn cmd_run_wasm_gc_with_mode_capturing(
         use aver::ir::{NeutralAllocPolicy, PipelineConfig, TypecheckMode};
 
         let module_root = resolve_module_root_for_entry(file, module_root_override);
-        let source = match read_file(file) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("{}", e.red());
-                process::exit(1);
-            }
-        };
-        let mut items = match parse_file(&source) {
-            Ok(i) => i,
-            Err(e) => {
-                eprintln!("{}", e.red());
-                process::exit(1);
-            }
-        };
+        let source = read_file(file)?;
+        let mut items = parse_file(&source)?;
         let neutral_policy = NeutralAllocPolicy;
         let result = aver::ir::pipeline::run(
             &mut items,
@@ -150,8 +187,7 @@ pub(super) fn cmd_run_wasm_gc_with_mode_capturing(
         if let Some(tc) = &result.typecheck
             && !tc.errors.is_empty()
         {
-            eprintln!("{}", shared::format_type_errors(&tc.errors).red());
-            process::exit(1);
+            return Err(shared::format_type_errors(&tc.errors));
         }
         let dep_modules = load_compile_deps(&items, &module_root, false, false);
         flatten_multimodule(&mut items, &dep_modules);
@@ -163,20 +199,15 @@ pub(super) fn cmd_run_wasm_gc_with_mode_capturing(
         // validator with a slot-type mismatch.
         aver::ir::pipeline::resolve(&mut items);
 
-        let bytes = match wasm_gc::compile_to_wasm_gc(&items, result.analysis.as_ref()) {
-            Ok(b) => b,
-            Err(e) => {
-                eprintln!("{}", format!("{e}").red());
-                process::exit(1);
-            }
-        };
+        let bytes = wasm_gc::compile_to_wasm_gc(&items, result.analysis.as_ref())
+            .map_err(|e| format!("{e}"))?;
 
         let entry_fn_name: &str = entry_info
             .as_ref()
             .map(|(n, _)| n.as_str())
             .unwrap_or("main");
         let return_ty = find_fn_return_type(&items, entry_fn_name);
-        match run_wasm_gc_with_host(
+        run_wasm_gc_with_host(
             &bytes,
             &program_args,
             &mode,
@@ -184,17 +215,8 @@ pub(super) fn cmd_run_wasm_gc_with_mode_capturing(
             &module_root,
             entry_info.as_ref(),
             &return_ty,
-        ) {
-            Ok(decoded) => {
-                if let Some(slot) = out_json {
-                    *slot = Some(decoded);
-                }
-            }
-            Err(e) => {
-                eprintln!("{}", format!("WASM execution error: {}", e).red());
-                process::exit(1);
-            }
-        }
+        )
+        .map_err(|e| format!("WASM execution error: {}", e))
     }
 }
 
@@ -238,7 +260,7 @@ fn run_wasm_gc_with_host(
     module_root: &str,
     entry_info: Option<&(String, Vec<aver::value::Value>)>,
     return_ty: &aver::ast::Type,
-) -> Result<aver::replay::JsonValue, String> {
+) -> Result<RunOutcome, String> {
     use wasmtime::*;
 
     let mut config = Config::new();
@@ -373,6 +395,37 @@ fn run_wasm_gc_with_host(
         return Err("module exports neither _start nor main".into());
     };
 
+    // Snapshot replay/record progress + arg-diff count from the
+    // recorder before any further consumption. We need these for
+    // `RunOutcome` regardless of whether we also persist a trace
+    // below (record path) or surface the values to the replay
+    // caller (replay path).
+    let (effects_consumed, effects_total, args_diff_count, replay_remaining) =
+        match store.data().recorder.as_ref() {
+            Some(r) if r.mode() == aver::replay::EffectReplayMode::Replay => {
+                let (consumed, total) = r.replay_progress();
+                let remaining = total.saturating_sub(consumed);
+                (consumed, total, r.args_diff_count(), remaining)
+            }
+            Some(r) if r.mode() == aver::replay::EffectReplayMode::Record => {
+                let n = r.recorded_effects().len();
+                (n, n, 0, 0)
+            }
+            _ => (0, 0, 0, 0),
+        };
+
+    // In replay mode, fail if the program didn't consume the whole
+    // trace. A prefix-match with the recorded `output` would
+    // otherwise pass as MATCH even though the original run produced
+    // strictly more effects than this re-run did. Mirrors what the
+    // VM replayer does with `machine.ensure_replay_consumed()`.
+    if matches!(mode, EffectMode::Replaying(_, _))
+        && let Some(r) = store.data().recorder.as_ref()
+        && let Err(e) = r.ensure_replay_consumed()
+    {
+        return Err(format!("replay incomplete: {:?}", e));
+    }
+
     // Persist the trace. Same JSON shape the VM recorder writes, so
     // existing `aver replay <file>` consumers (CLI, tests, agent
     // tooling) handle wasm-gc traces identically.
@@ -417,7 +470,14 @@ fn run_wasm_gc_with_host(
             .map_err(|e| format!("write recording {}: {}", out_path.display(), e))?;
         eprintln!("Recorded → {}", out_path.display());
     }
-    Ok(main_output)
+
+    Ok(RunOutcome {
+        output: main_output,
+        effects_consumed,
+        effects_total,
+        args_diff_count,
+        replay_remaining,
+    })
 }
 
 /// Decode the `Vec<Val>` returned from a wasm-gc `main` call into the
