@@ -196,15 +196,27 @@ pub(super) fn emit_expr(
             // wasm-gc has no parallelism (no `std::thread::scope`
             // analogue), so both `(a, b, c)!` and `(a, b, c)?!` lower
             // as sequential evaluation. `!` (unwrap=false) is just a
-            // tuple. `?!` (unwrap=true) requires every element to be
+            // tuple; `?!` (unwrap=true) requires every element to be
             // `Result<T_i, E>` — unwrap each Ok value into the tuple,
             // early-return a freshly-built `Result<EnclosingT, E>::Err`
             // on the first Err.
+            //
+            // Around either lowering, emit the structural-scope
+            // markers (`enter_group`, `set_branch(i)` per element,
+            // `exit_group`) so the recorder annotates contained
+            // effects with the same `(group_id, branch_path,
+            // effect_occurrence)` tuple the VM does. Replay across
+            // backends matches by those, not by strict sequence
+            // position. The three host imports get registered by the
+            // discovery walker as soon as it sees an independent
+            // product anywhere in the program.
+            emit_group_call(func, ctx, "__record_enter_group");
             if *unwrap {
                 emit_independent_product_unwrap(func, items, slots, ctx)?;
             } else {
-                emit_tuple_literal(func, items, slots, ctx)?;
+                emit_tuple_literal_with_branch_markers(func, items, slots, ctx)?;
             }
+            emit_group_call(func, ctx, "__record_exit_group");
         }
         Expr::Ident(_) => {
             return Err(WasmGcError::Unimplemented(
@@ -1207,7 +1219,8 @@ pub(super) fn emit_independent_product_unwrap(
             ))
         })?;
 
-    for item in items {
+    for (idx, item) in items.iter().enumerate() {
+        emit_branch_marker(func, ctx, idx as u32);
         // Each element's stamped type must be `Result<T_i, E>`.
         let elem_aver = aver_type_str_of(item);
         let elem_canonical: String = elem_aver.chars().filter(|c| !c.is_whitespace()).collect();
@@ -1296,6 +1309,62 @@ pub(super) fn emit_independent_product_unwrap(
                 "`?!` result tuple `{tuple_canonical}` not registered"
             ))
         })?;
+    func.instruction(&Instruction::StructNew(tuple_idx));
+    Ok(())
+}
+
+/// Emit `call $aver/<group_op>` if the program registered the
+/// structural-scope marker imports (i.e. discovery saw any `?!` /
+/// `!`). No-op otherwise — programs that never use independent
+/// products don't pay the import slot.
+fn emit_group_call(func: &mut Function, ctx: &EmitCtx<'_>, op: &str) {
+    if let Some(idx) = ctx.effect_idx_lookup.get(op) {
+        func.instruction(&Instruction::Call(*idx));
+    }
+}
+
+/// Emit `i64.const i; call $aver/__record_set_branch` if the markers
+/// are registered. Used inside `?!` / `!` lowering to switch the
+/// recorder's active branch before evaluating each element.
+fn emit_branch_marker(func: &mut Function, ctx: &EmitCtx<'_>, branch_idx: u32) {
+    if let Some(idx) = ctx.effect_idx_lookup.get("__record_set_branch") {
+        func.instruction(&Instruction::I64Const(branch_idx as i64));
+        func.instruction(&Instruction::Call(*idx));
+    }
+}
+
+/// `!`-tuple lowering with per-element `set_branch(i)` markers. Same
+/// shape as `emit_tuple_literal` but each `emit_expr(item)` is
+/// preceded by `emit_branch_marker(i)` so contained effects pick up
+/// the right branch index from the recorder. The enclosing
+/// `enter_group` / `exit_group` are emitted by the caller arm.
+fn emit_tuple_literal_with_branch_markers(
+    func: &mut Function,
+    items: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    if items.len() < 2 {
+        return Err(WasmGcError::Validation(format!(
+            "Independent-product `!` tuple needs at least 2 elements; got {}",
+            items.len()
+        )));
+    }
+    let elem_tys: Vec<String> = items.iter().map(aver_type_str_of).collect();
+    let canonical = format!("Tuple<{}>", elem_tys.join(","))
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>();
+    let tuple_idx = ctx
+        .registry
+        .tuple_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "`!` tuple: `{canonical}` slot not registered"
+        )))?;
+    for (idx, item) in items.iter().enumerate() {
+        emit_branch_marker(func, ctx, idx as u32);
+        emit_expr(func, item, slots, ctx)?;
+    }
     func.instruction(&Instruction::StructNew(tuple_idx));
     Ok(())
 }

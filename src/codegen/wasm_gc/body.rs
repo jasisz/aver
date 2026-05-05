@@ -22,7 +22,7 @@
 //! `wasm_type_of`). Missing `ty()` panics — that's a typecheck or
 //! synthesizer bug, not a recoverable codegen condition.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use wasm_encoder::{Function, Instruction, ValType};
 
@@ -157,6 +157,7 @@ pub(super) fn emit_fn_body(
     fn_map: &FnMap,
     self_wasm_idx: u32,
     registry: &TypeRegistry,
+    effect_idx_lookup: &HashMap<String, u32>,
 ) -> Result<Vec<ValType>, WasmGcError> {
     let slots = SlotTable::build_for_fn(fd, registry, fn_map)?;
     let FnBody::Block(stmts) = fd.body.as_ref();
@@ -185,6 +186,7 @@ pub(super) fn emit_fn_body(
         resolution: fd.resolution.as_ref(),
         params: &fd.params,
         binding_names: &binding_names,
+        effect_idx_lookup,
     };
 
     for (i, stmt) in stmts.iter().enumerate() {
@@ -267,6 +269,13 @@ pub(super) struct EmitCtx<'a> {
     /// `CallLowerCtx::is_local_value` for the shared IR-level shape
     /// recognition.
     pub(super) binding_names: &'a HashSet<String>,
+    /// Effect canonical name → wasm fn idx. Body emit reaches into
+    /// this for the structural-scope markers around `?!` /
+    /// `!` (`__record_enter_group`, `__record_set_branch`,
+    /// `__record_exit_group`). Empty when the program declares no
+    /// independent product anywhere — discovery only registers the
+    /// three host imports if it sees one.
+    pub(super) effect_idx_lookup: &'a HashMap<String, u32>,
 }
 
 impl<'a> EmitCtx<'a> {

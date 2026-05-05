@@ -435,7 +435,7 @@ pub(super) fn emit_module(
     let fn_map = FnMap {
         by_name,
         builtins: builtin_idx_lookup,
-        effects: effect_idx_lookup,
+        effects: effect_idx_lookup.clone(),
         map_helpers: map_helpers_lookup,
         list_ops: list_ops_lookup,
         vfl_ops: vfl_ops_lookup,
@@ -513,11 +513,25 @@ pub(super) fn emit_module(
         // Dry run: discover extra locals by emitting into a throwaway
         // fn. Cheaper than threading a separate pre-pass.
         let mut probe = Function::new([]);
-        let extra_locals_dry = emit_fn_body(&mut probe, fd, &fn_map, self_wasm_idx, &registry)?;
+        let extra_locals_dry = emit_fn_body(
+            &mut probe,
+            fd,
+            &fn_map,
+            self_wasm_idx,
+            &registry,
+            &effect_idx_lookup,
+        )?;
 
         let local_groups: Vec<(u32, ValType)> = extra_locals_dry.iter().map(|v| (1, *v)).collect();
         let mut func = Function::new(local_groups);
-        let _ = emit_fn_body(&mut func, fd, &fn_map, self_wasm_idx, &registry)?;
+        let _ = emit_fn_body(
+            &mut func,
+            fd,
+            &fn_map,
+            self_wasm_idx,
+            &registry,
+            &effect_idx_lookup,
+        )?;
         codes.function(&func);
     }
 
@@ -1174,7 +1188,23 @@ fn discover_builtins_in_expr(
                 discover_builtins_in_expr(&item.node, builtins, effects, eq_helpers, type_registry);
             }
         }
-        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+        Expr::Tuple(items) => {
+            for item in items {
+                discover_builtins_in_expr(&item.node, builtins, effects, eq_helpers, type_registry);
+            }
+        }
+        Expr::IndependentProduct(items, _) => {
+            // `?!` and `!` lower as sequential evaluation in wasm-gc,
+            // but the recorder still needs the structural-scope
+            // markers (`enter_group`, `set_branch`, `exit_group`) so
+            // cross-backend traces from VM/self-host (which annotate
+            // group_id / branch_path / effect_occurrence per effect)
+            // line up with what wasm-gc emits. Eagerly register the
+            // three host imports as soon as discovery sees an
+            // independent product anywhere in the program.
+            effects.register(EffectName::RecordEnterGroup);
+            effects.register(EffectName::RecordSetBranch);
+            effects.register(EffectName::RecordExitGroup);
             for item in items {
                 discover_builtins_in_expr(&item.node, builtins, effects, eq_helpers, type_registry);
             }
