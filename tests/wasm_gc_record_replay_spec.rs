@@ -494,11 +494,19 @@ fn wasm_gc_replay_args_mismatch_warns_without_check_args_and_fails_with() {
 #[test]
 fn wasm_gc_batch_replay_keeps_going_past_a_bad_recording() {
     // `aver replay --wasm-gc <dir>` iterates over every .json in the
-    // directory. A single bad recording must not `process::exit` and
-    // skip the rest — the bug review #3 from the unified-shape patch.
-    // The directory holds one valid recording and one structurally
-    // garbage file; the run should report on both and exit, not
-    // bail on the broken one before reaching the good one.
+    // directory. A single failure must not `process::exit` and skip
+    // the rest — the bug review #3 from the unified-shape patch.
+    //
+    // Critical detail: the bad recording must be *structurally
+    // valid* JSON that parses cleanly into a `SessionRecording` and
+    // then fails inside `try_run_wasm_gc` (which is the path the
+    // review actually touched). Using malformed JSON would only
+    // exercise the outer parse-error early-return, not the wasm-gc
+    // runner's no-exit contract. We achieve this by recording two
+    // programs, then mutating the *second* recording to hold a
+    // trailing effect the program never produces — replay parses
+    // fine, executes the program through wasm-gc, then trips
+    // `ensure_replay_consumed` on the way out.
     let work = temp_dir("aver-wasm-gc-rec-batch");
     let prog = write_program(
         &work,
@@ -508,14 +516,59 @@ fn wasm_gc_batch_replay_keeps_going_past_a_bad_recording() {
          _ = Time.unixMs()\n    Console.print(\"batch ok\")\n",
     );
     let rec_dir = temp_dir("aver-wasm-gc-rec-batch-traces");
-    let _ok_path = record_via_cli(&prog, &rec_dir);
-    // Put a deliberately broken recording next to the good one. The
-    // backend should fail to parse it, return a `ReplayResult` with
-    // `error: Some(...)`, then keep iterating to the good one.
-    let bad_path = rec_dir.join("000-broken.json");
-    fs::write(&bad_path, "{not valid json at all").expect("write bad recording");
 
+    // Two recordings: the second one will get a trailing-effect
+    // tamper so it fails inside wasm-gc replay.
     let aver_bin = env!("CARGO_BIN_EXE_aver");
+    for _ in 0..2 {
+        let out = Command::new(aver_bin)
+            .arg("run")
+            .arg("--wasm-gc")
+            .arg("--record")
+            .arg(&rec_dir)
+            .arg(&prog)
+            .output()
+            .expect("spawn record");
+        assert!(
+            out.status.success(),
+            "record failed:\n{}",
+            format_output(&out)
+        );
+        // Sleep 2ms so the timestamp-based stem differs between runs.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let mut entries: Vec<PathBuf> = fs::read_dir(&rec_dir)
+        .expect("read rec dir")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
+        .collect();
+    entries.sort();
+    assert_eq!(entries.len(), 2, "expected two recordings, got {entries:?}");
+
+    // Tamper the lexicographically-earlier recording so the runner
+    // hits the failure first — the assertion below proves the
+    // *second* file was still processed afterward.
+    let bad_path = &entries[0];
+    let bad_raw = fs::read_to_string(bad_path).expect("read bad recording");
+    let mut bad = aver::replay::parse_session_recording(&bad_raw).expect("parse bad recording");
+    let next_seq = bad.effects.last().map(|e| e.seq + 1).unwrap_or(1);
+    bad.effects.push(aver::replay::EffectRecord {
+        seq: next_seq,
+        effect_type: "Console.print".to_string(),
+        args: vec![aver::replay::JsonValue::String("ghost".to_string())],
+        outcome: aver::replay::RecordedOutcome::Value(aver::replay::JsonValue::Null),
+        caller_fn: "main".to_string(),
+        source_line: 0,
+        group_id: None,
+        branch_path: None,
+        effect_occurrence: None,
+    });
+    fs::write(
+        bad_path,
+        aver::replay::session_recording_to_string_pretty(&bad),
+    )
+    .expect("rewrite bad recording");
+
     let replay = Command::new(aver_bin)
         .arg("replay")
         .arg("--wasm-gc")
@@ -528,17 +581,29 @@ fn wasm_gc_batch_replay_keeps_going_past_a_bad_recording() {
         String::from_utf8_lossy(&replay.stdout),
         String::from_utf8_lossy(&replay.stderr)
     );
-    // The output must reference both files — proves the runner saw
-    // the bad one (failed) and still produced output for the good
-    // one (succeeded), instead of `process::exit`-ing after the
-    // first failure.
+    let bad_name = bad_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .expect("bad rec filename utf-8");
+    let good_name = entries[1]
+        .file_name()
+        .and_then(|s| s.to_str())
+        .expect("good rec filename utf-8");
+    // Both files must appear in the summary: the bad one as a
+    // failure, the good one with a clean outcome. If wasm-gc still
+    // `process::exit`-ed on the bad one we'd never see the good
+    // one's section.
     assert!(
-        combined.contains("000-broken.json"),
-        "batch summary should mention the broken recording, got:\n{combined}"
+        combined.contains(bad_name),
+        "batch summary should mention the bad recording {bad_name}, got:\n{combined}"
     );
     assert!(
-        combined.contains("batch ok") || combined.contains("Output:  MATCH"),
-        "batch summary should also include the good recording's outcome, got:\n{combined}"
+        combined.contains(good_name),
+        "batch summary should mention the good recording {good_name}, got:\n{combined}"
+    );
+    assert!(
+        combined.contains("Unconsumed") || combined.contains("replay incomplete"),
+        "bad recording should surface the wasm-gc unconsumed-trace failure, got:\n{combined}"
     );
 
     let _ = fs::remove_dir_all(&work);
