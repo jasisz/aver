@@ -354,8 +354,14 @@ pub(super) enum Commands {
         #[arg(long = "check-args")]
         check_args: bool,
         /// Replay using the self-hosted Aver interpreter compiled to Rust
-        #[arg(long)]
+        #[arg(long, conflicts_with = "wasm_gc")]
         self_host: bool,
+        /// Replay through the wasm-gc backend (engine GC + tail calls).
+        /// Same trace shape as VM/self-host — every backend reads the
+        /// JSON recording the VM, self-host, or `aver run --wasm-gc
+        /// --record` produced.
+        #[arg(long = "wasm-gc")]
+        wasm_gc: bool,
         /// Output results as JSON (NDJSON, one object per line)
         #[arg(long)]
         json: bool,

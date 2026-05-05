@@ -20,15 +20,47 @@ use super::shared::{parse_file, read_file, resolve_module_root_for_entry};
 #[cfg(feature = "wasm")]
 use super::commands::{flatten_multimodule, load_compile_deps};
 
+/// What the recorder/replayer should do for this run.
+pub(super) enum EffectMode<'a> {
+    /// Production path — real effects run, no recording, no replay.
+    Normal,
+    /// `aver run --wasm-gc --record <dir>` — real effects run, every
+    /// call appended to the trace, persisted to `<dir>/<request>.json`.
+    Recording(&'a str),
+    /// `aver replay <file> --wasm-gc` — effects bypass real I/O, values
+    /// come from the trace via `EffectReplayState::replay_effect`.
+    /// `bool` is `--check-args`: when true the recorded args must match
+    /// the args the program supplies, else only effect type + sequence.
+    #[cfg(feature = "wasm")]
+    #[allow(dead_code)]
+    Replaying(aver::replay::SessionRecording, bool),
+    #[cfg(not(feature = "wasm"))]
+    #[allow(dead_code)]
+    Replaying((), bool),
+}
+
 pub(super) fn cmd_run_wasm_gc(
     file: &str,
     module_root_override: Option<&str>,
     program_args: Vec<String>,
     record_dir: Option<&str>,
 ) {
+    let mode = match record_dir {
+        Some(dir) => EffectMode::Recording(dir),
+        None => EffectMode::Normal,
+    };
+    cmd_run_wasm_gc_with_mode(file, module_root_override, program_args, mode);
+}
+
+pub(super) fn cmd_run_wasm_gc_with_mode(
+    file: &str,
+    module_root_override: Option<&str>,
+    program_args: Vec<String>,
+    mode: EffectMode<'_>,
+) {
     #[cfg(not(feature = "wasm"))]
     {
-        let _ = (file, module_root_override, program_args, record_dir);
+        let _ = (file, module_root_override, program_args, mode);
         eprintln!("{}", "WASM requires --features wasm".red());
         process::exit(1);
     }
@@ -90,8 +122,7 @@ pub(super) fn cmd_run_wasm_gc(
             }
         };
 
-        if let Err(e) = run_wasm_gc_with_host(&bytes, &program_args, record_dir, file, &module_root)
-        {
+        if let Err(e) = run_wasm_gc_with_host(&bytes, &program_args, &mode, file, &module_root) {
             eprintln!("{}", format!("WASM execution error: {}", e).red());
             process::exit(1);
         }
@@ -113,7 +144,7 @@ struct RunWasmGcHost {
 fn run_wasm_gc_with_host(
     wasm_bytes: &[u8],
     program_args: &[String],
-    record_dir: Option<&str>,
+    mode: &EffectMode<'_>,
     source_file: &str,
     module_root: &str,
 ) -> Result<(), String> {
@@ -131,12 +162,18 @@ fn run_wasm_gc_with_host(
     let engine = Engine::new(&config).map_err(|e| format!("engine: {e:#}"))?;
     let module = Module::new(&engine, wasm_bytes).map_err(|e| format!("module: {e:#}"))?;
 
-    let mut recorder = if record_dir.is_some() {
-        let mut r = aver::replay::EffectReplayState::default();
-        r.start_recording();
-        Some(r)
-    } else {
-        None
+    let mut recorder = match mode {
+        EffectMode::Normal => None,
+        EffectMode::Recording(_) => {
+            let mut r = aver::replay::EffectReplayState::default();
+            r.start_recording();
+            Some(r)
+        }
+        EffectMode::Replaying(recording, check_args) => {
+            let mut r = aver::replay::EffectReplayState::default();
+            r.start_replay(recording.effects.clone(), *check_args);
+            Some(r)
+        }
     };
     let mut store = Store::new(
         &engine,
@@ -219,7 +256,7 @@ fn run_wasm_gc_with_host(
     // Persist the trace. Same JSON shape the VM recorder writes, so
     // existing `aver replay <file>` consumers (CLI, tests, agent
     // tooling) handle wasm-gc traces identically.
-    if let Some(dir) = record_dir
+    if let EffectMode::Recording(dir) = mode
         && let Some(mut rec) = store.data_mut().recorder.take()
     {
         let request_id = super::commands::generate_request_id();
@@ -250,7 +287,8 @@ fn run_wasm_gc_with_host(
 /// Append one entry to the trace iff recording is on. Args + outcome
 /// land as `aver::replay::JsonValue` so the wasm-gc trace is
 /// byte-compatible with the VM's — `aver replay <file>` consumes
-/// either without branching on backend.
+/// either without branching on backend. No-op in Replay mode (the
+/// `EffectReplayState::replay_effect` path already advances position).
 #[cfg(feature = "wasm")]
 fn record_effect_if_recording(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
@@ -258,7 +296,9 @@ fn record_effect_if_recording(
     args: Vec<aver::replay::JsonValue>,
     outcome: aver::replay::JsonValue,
 ) {
-    if let Some(rec) = caller.data_mut().recorder.as_mut() {
+    if let Some(rec) = caller.data_mut().recorder.as_mut()
+        && rec.mode() == aver::replay::EffectReplayMode::Record
+    {
         rec.record_effect(
             effect_type,
             args,
@@ -266,6 +306,42 @@ fn record_effect_if_recording(
             "main",
             0,
         );
+    }
+}
+
+/// Pull the next outcome from the replay trace if the host is in
+/// Replay mode. Returns `Ok(Some(outcome))` when the trace had a
+/// matching entry, `Ok(None)` when not in Replay mode (caller falls
+/// back to running the real effect), and `Err(...)` when replay
+/// rejects the call (sequence mismatch, exhausted trace, args
+/// diverge under `--check-args`).
+#[cfg(feature = "wasm")]
+fn try_replay(
+    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
+    effect_type: &str,
+    args: Vec<aver::replay::JsonValue>,
+) -> Result<Option<aver::replay::JsonValue>, wasmtime::Error> {
+    let in_replay = caller
+        .data()
+        .recorder
+        .as_ref()
+        .is_some_and(|r| r.mode() == aver::replay::EffectReplayMode::Replay);
+    if !in_replay {
+        return Ok(None);
+    }
+    let outcome = caller
+        .data_mut()
+        .recorder
+        .as_mut()
+        .expect("checked above")
+        .replay_effect(effect_type, Some(args))
+        .map_err(|e| wasmtime::Error::msg(format!("replay {}: {:?}", effect_type, e)))?;
+    match outcome {
+        aver::replay::RecordedOutcome::Value(json) => Ok(Some(json)),
+        aver::replay::RecordedOutcome::RuntimeError(msg) => Err(wasmtime::Error::msg(format!(
+            "replay {}: trace recorded a runtime error ({})",
+            effect_type, msg
+        ))),
     }
 }
 
@@ -379,6 +455,21 @@ fn dispatch_aver_import(
         }
         "console_print" => {
             let text = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            // Replay mode swallows the output too — replays are
+            // observation-equivalent to the original run, including
+            // suppressing host-side side effects so a re-run doesn't
+            // double-print or hit external state. The `replay_effect`
+            // call still advances trace position, so a sequence
+            // mismatch with the recording surfaces here.
+            if try_replay(
+                caller,
+                "Console.print",
+                vec![aver::replay::JsonValue::String(text.clone())],
+            )?
+            .is_some()
+            {
+                return Ok(true);
+            }
             host_print(caller, params, true)?;
             record_effect_if_recording(
                 caller,
@@ -390,6 +481,15 @@ fn dispatch_aver_import(
         }
         "console_error" => {
             let text = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            if try_replay(
+                caller,
+                "Console.error",
+                vec![aver::replay::JsonValue::String(text.clone())],
+            )?
+            .is_some()
+            {
+                return Ok(true);
+            }
             host_print(caller, params, false)?;
             record_effect_if_recording(
                 caller,
@@ -401,6 +501,15 @@ fn dispatch_aver_import(
         }
         "console_warn" => {
             let text = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            if try_replay(
+                caller,
+                "Console.warn",
+                vec![aver::replay::JsonValue::String(text.clone())],
+            )?
+            .is_some()
+            {
+                return Ok(true);
+            }
             host_print(caller, params, false)?;
             record_effect_if_recording(
                 caller,
@@ -445,6 +554,15 @@ fn dispatch_aver_import(
             Ok(true)
         }
         "time_unix_ms" => {
+            if let Some(cached) = try_replay(caller, "Time.unixMs", vec![])? {
+                let aver::replay::JsonValue::Int(ms) = cached else {
+                    return Err(wasmtime::Error::msg(
+                        "replay Time.unixMs: trace value is not an Int",
+                    ));
+                };
+                results[0] = Val::I64(ms);
+                return Ok(true);
+            }
             use std::time::{SystemTime, UNIX_EPOCH};
             let ms = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -470,6 +588,22 @@ fn dispatch_aver_import(
                 (Some(Val::I64(a)), Some(Val::I64(b))) => (*a, *b),
                 _ => (0, 0),
             };
+            if let Some(cached) = try_replay(
+                caller,
+                "Random.int",
+                vec![
+                    aver::replay::JsonValue::Int(min),
+                    aver::replay::JsonValue::Int(max),
+                ],
+            )? {
+                let aver::replay::JsonValue::Int(v) = cached else {
+                    return Err(wasmtime::Error::msg(
+                        "replay Random.int: trace value is not an Int",
+                    ));
+                };
+                results[0] = Val::I64(v);
+                return Ok(true);
+            }
             // aver_rt::random_int returns Result, but the wasm import
             // contract is a plain i64. The host falls back to `min` on
             // an inverted range — same surface the VM exposes.
@@ -487,6 +621,15 @@ fn dispatch_aver_import(
             Ok(true)
         }
         "random_float" => {
+            if let Some(cached) = try_replay(caller, "Random.float", vec![])? {
+                let aver::replay::JsonValue::Float(f) = cached else {
+                    return Err(wasmtime::Error::msg(
+                        "replay Random.float: trace value is not a Float",
+                    ));
+                };
+                results[0] = Val::F64(f.to_bits());
+                return Ok(true);
+            }
             let f = aver_rt::random::random_float();
             results[0] = Val::F64(f.to_bits());
             record_effect_if_recording(

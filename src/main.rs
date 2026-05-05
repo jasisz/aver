@@ -152,9 +152,18 @@ fn main() {
             test,
             check_args,
             self_host,
+            wasm_gc,
             json,
         } => {
-            replay_cmd::cmd_replay(recording, *diff, *test, *check_args, *self_host, *json);
+            replay_cmd::cmd_replay(
+                recording,
+                *diff,
+                *test,
+                *check_args,
+                *self_host,
+                *wasm_gc,
+                *json,
+            );
         }
         Commands::Repl => {
             repl::cmd_repl();

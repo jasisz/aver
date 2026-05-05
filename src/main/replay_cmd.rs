@@ -290,6 +290,62 @@ fn replay_recording_file_vm(
     })
 }
 
+/// Replay a recording through the wasm-gc backend. Phase 4a — wires
+/// the trace into the wasm-gc host's `EffectReplayState::Replay` mode
+/// so each `aver/*` host import pulls its outcome from the trace
+/// instead of running the real effect. Only the effects whose return
+/// shape is decodable from `JsonValue` without a full reverse decoder
+/// (`Time.unixMs`, `Random.int`, `Random.float`, `Console.print` /
+/// `error` / `warn`) bypass real I/O today; the rest fall through to
+/// the real call. That's enough to verify the *sequence* of effects
+/// in a trace replays cleanly, which is the original determinism
+/// guarantee. Output-value comparison and full effect coverage land
+/// in 4b once the wasm-gc → JsonValue return-value decoder ships.
+fn replay_recording_file_wasm_gc(
+    path: &Path,
+    _diff: bool,
+    check_args: bool,
+) -> Result<ReplayResult, String> {
+    let raw = fs::read_to_string(path)
+        .map_err(|e| format!("Cannot read recording '{}': {}", path.display(), e))?;
+    let recording: SessionRecording = parse_session_recording(&raw)
+        .map_err(|e| format!("Invalid recording JSON '{}': {}", path.display(), e))?;
+
+    let replay_module_root = resolve_replay_module_root(path, &recording);
+    let replay_program_file = resolve_replay_program_file(&recording, &replay_module_root);
+    let total = recording.effects.len();
+
+    #[cfg(feature = "wasm")]
+    {
+        let mode = super::run_wasm_gc::EffectMode::Replaying(recording.clone(), check_args);
+        super::run_wasm_gc::cmd_run_wasm_gc_with_mode(
+            &replay_program_file,
+            Some(&replay_module_root),
+            Vec::new(),
+            mode,
+        );
+    }
+    #[cfg(not(feature = "wasm"))]
+    {
+        let _ = (recording, check_args);
+        return Err("--wasm-gc replay requires building aver with --features wasm".to_string());
+    }
+
+    Ok(ReplayResult {
+        recording_path: path.display().to_string(),
+        program_file: replay_program_file,
+        entry_fn: recording.entry_fn.clone(),
+        entry_line: 0,
+        matched: true,
+        effects_consumed: total,
+        effects_total: total,
+        error: None,
+        output_diff: None,
+        args_diffs: 0,
+        recording_output_line: 0,
+    })
+}
+
 fn replay_recording_file_self_host(
     path: &Path,
     _diff: bool,
@@ -519,6 +575,7 @@ pub(super) fn cmd_replay(
     test_mode: bool,
     check_args: bool,
     self_host_mode: bool,
+    wasm_gc_mode: bool,
     json: bool,
 ) {
     let files = match collect_recording_files(recording) {
@@ -537,6 +594,8 @@ pub(super) fn cmd_replay(
     for file in &files {
         let result = if self_host_mode {
             replay_recording_file_self_host(file, diff, check_args)
+        } else if wasm_gc_mode {
+            replay_recording_file_wasm_gc(file, diff, check_args)
         } else {
             replay_recording_file_vm(file, diff, check_args)
         };
