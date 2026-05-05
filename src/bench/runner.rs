@@ -732,77 +732,44 @@ fn run_rust(manifest: &Manifest) -> Result<BenchReport, RunError> {
         Ok(output.stdout.len())
     };
 
-    // Build a no-op companion binary in the same temp tree so we can
-    // measure subprocess-spawn overhead and subtract it from the user
-    // numbers. Rust spawn cost on macOS is ~2-3 ms — without this
-    // baseline every fast scenario (`fib`, `factorial`, `record`)
-    // would be reported as "2.7 ms" regardless of what the program
-    // actually computes. Separate compile keeps the user binary
-    // identical to what `aver compile --target rust` produces today.
-    let baseline_src = temp.path().join("__bench_baseline.av");
-    std::fs::write(
-        &baseline_src,
-        "module BenchBaseline\n    intent = \"spawn-overhead probe\"\n\nfn main() -> Unit\n    Unit\n",
-    )
-    .map_err(|e| RunError::Setup(format!("write baseline source: {}", e)))?;
-    let baseline_out = temp.path().join("baseline_out");
-    let mut baseline_compile = Command::new(&aver_bin);
-    baseline_compile
-        .arg("compile")
-        .arg(&baseline_src)
-        .arg("--name")
-        .arg("__bench_baseline")
-        .arg("-o")
-        .arg(&baseline_out);
-    if let Some(root) = manifest_dir.as_ref() {
-        baseline_compile.env("AVER_RUNTIME_PATH", root.join("aver-rt"));
+    // In-process bench loop: one spawn, the generated binary calls
+    // `aver_generated::entry::main` N times under `AVER_BENCH_ITER` and
+    // emits one `__bench_iter_ms__: <ms>` line per iter on stderr. The
+    // alternative — spawn the binary N times from here — bottoms out at
+    // ~2–3 ms macOS process-spawn cost and reports noise on anything
+    // under 1 ms (`fib`, `factorial`, `record`). The codegen-side
+    // dispatch is gated on the env var, so production builds pay one
+    // env-var read at process start and nothing else.
+    let output = Command::new(&binary)
+        .args(&manifest.args)
+        .env("AVER_BENCH_ITER", manifest.iterations.to_string())
+        .env("AVER_BENCH_WARMUP", manifest.warmup.to_string())
+        .output()
+        .map_err(|e| RunError::Runtime(format!("spawn {}: {}", binary.display(), e)))?;
+    if !output.status.success() {
+        return Err(RunError::Runtime(format!(
+            "{} exited with {}: {}",
+            binary.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        )));
     }
-    let _ = baseline_compile
-        .status()
-        .map_err(|e| RunError::Setup(format!("spawn baseline compile: {}", e)))?;
-    let _ = Command::new("cargo")
-        .arg("build")
-        .arg("--release")
-        .current_dir(&baseline_out)
-        .status()
-        .map_err(|e| RunError::Setup(format!("baseline cargo build: {}", e)))?;
-    let baseline_binary = baseline_out.join("target/release/__bench_baseline");
-
-    let mut baseline_samples: Vec<f64> = Vec::with_capacity(manifest.iterations);
-    if baseline_binary.exists() {
-        for _ in 0..manifest.warmup.max(3) {
-            let _ = run_one(&baseline_binary, &[]);
-        }
-        for _ in 0..manifest.iterations {
-            let t = Instant::now();
-            let _ = run_one(&baseline_binary, &[])?;
-            baseline_samples.push(t.elapsed().as_secs_f64() * 1000.0);
-        }
-    }
-    let baseline_mean: f64 = if baseline_samples.is_empty() {
-        0.0
-    } else {
-        baseline_samples.iter().sum::<f64>() / baseline_samples.len() as f64
-    };
-
+    let stderr_text = String::from_utf8_lossy(&output.stderr);
     let mut samples: Vec<f64> = Vec::with_capacity(manifest.iterations);
-    for _ in 0..manifest.warmup {
-        run_one(&binary, &manifest.args)?;
+    for line in stderr_text.lines() {
+        if let Some(rest) = line.strip_prefix("__bench_iter_ms__: ")
+            && let Ok(ms) = rest.trim().parse::<f64>()
+        {
+            samples.push(ms);
+        }
     }
-    let mut last_bytes: usize = 0;
-    for _ in 0..manifest.iterations {
-        let t = Instant::now();
-        last_bytes = run_one(&binary, &manifest.args)?;
-        samples.push(t.elapsed().as_secs_f64() * 1000.0);
+    if samples.is_empty() {
+        return Err(RunError::Runtime(format!(
+            "rust target produced no `__bench_iter_ms__` lines (stderr: {})",
+            &stderr_text[..stderr_text.len().min(200)]
+        )));
     }
-    // Subtract per-iter spawn cost so the reported number reflects
-    // actual native compute time. Clamp to ≥ 0.001 ms so a scenario
-    // that's faster than the baseline noise floor still reports a
-    // positive number (the alternative — zeros — would mask
-    // regressions on the fastest workloads).
-    for s in samples.iter_mut() {
-        *s = (*s - baseline_mean).max(0.001);
-    }
+    let last_bytes = output.stdout.len();
 
     let passes = canonical_passes();
     let mut report = build_report(

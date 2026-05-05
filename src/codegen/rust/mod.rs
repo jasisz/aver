@@ -268,9 +268,40 @@ fn render_root_main(
     let returns_result = main_fn.is_some_and(|fd| fd.return_type.starts_with("Result<"));
     let result_unit_string =
         main_fn.is_some_and(|fd| fd.return_type.replace(' ', "") == "Result<Unit,String>");
+    // `aver bench --target rust` sets `AVER_BENCH_ITER` (and optionally
+    // `AVER_BENCH_WARMUP`) to drive an in-process benchmark loop that
+    // calls `aver_generated::entry::main` N times under one process.
+    // Spawning the binary per-iter from the host harness floors at
+    // ~2–3 ms macOS process-spawn cost and reports pure noise on any
+    // workload below ~1 ms (`fib`, `factorial`, `record`). One env-var
+    // read on process start when unset; zero generated complexity in
+    // the user's main body.
+    let bench_dispatch_lines = |has_replay: bool| -> Vec<String> {
+        let user_call = if has_replay {
+            "aver_replay::with_guest_scope(\"main\", serde_json::Value::Null, aver_generated::entry::main)"
+        } else {
+            "aver_generated::entry::main()"
+        };
+        vec![
+            "    if let Ok(n_str) = std::env::var(\"AVER_BENCH_ITER\") {".to_string(),
+            "        let n: usize = n_str.parse().unwrap_or(0);".to_string(),
+            "        let warmup: usize = std::env::var(\"AVER_BENCH_WARMUP\").ok().and_then(|s| s.parse().ok()).unwrap_or(0);".to_string(),
+            "        for _ in 0..warmup {".to_string(),
+            format!("            let _ = std::hint::black_box({});", user_call),
+            "        }".to_string(),
+            "        for _ in 0..n {".to_string(),
+            "            let t = std::time::Instant::now();".to_string(),
+            format!("            let _ = std::hint::black_box({});", user_call),
+            "            eprintln!(\"__bench_iter_ms__: {}\", t.elapsed().as_secs_f64() * 1000.0);".to_string(),
+            "        }".to_string(),
+            "        std::process::exit(0);".to_string(),
+            "    }".to_string(),
+        ]
+    };
     if returns_result {
         if result_unit_string {
             sections.push("fn main() {".to_string());
+            sections.extend(bench_dispatch_lines(has_replay && guest_entry.is_none()));
             sections.push("    let child = std::thread::Builder::new()".to_string());
             sections.push("        .stack_size(256 * 1024 * 1024)".to_string());
             if has_replay && guest_entry.is_none() {
@@ -296,6 +327,7 @@ fn render_root_main(
         } else {
             let ret_type = types::type_annotation_to_rust(&main_fn.unwrap().return_type);
             sections.push(format!("fn main() -> {} {{", ret_type));
+            sections.extend(bench_dispatch_lines(has_replay && guest_entry.is_none()));
             if has_replay && guest_entry.is_none() {
                 sections.push(
                     "    aver_replay::with_guest_scope(\"main\", serde_json::Value::Null, aver_generated::entry::main)"
@@ -308,6 +340,7 @@ fn render_root_main(
     } else {
         sections.push("fn main() {".to_string());
         if main_fn.is_some() {
+            sections.extend(bench_dispatch_lines(has_replay && guest_entry.is_none()));
             sections.push("    let child = std::thread::Builder::new()".to_string());
             sections.push("        .stack_size(256 * 1024 * 1024)".to_string());
             if has_replay && guest_entry.is_none() {
