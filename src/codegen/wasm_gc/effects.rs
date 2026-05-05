@@ -399,7 +399,23 @@ impl EffectName {
     /// idx. The headers Map crossing uses the registered concrete
     /// `Map<String, List<String>>` ref so the host bridge has a
     /// type-safe handle.
+    ///
+    /// **Trailing `caller_fn: any_ref`.** Every host import gains a
+    /// trailing String-ref param identifying the Aver fn that
+    /// emitted the call. The codegen pushes the current fn name
+    /// right before `call`, the host pulls it via `lm_string_to_host`
+    /// and stamps the resulting record's `caller_fn` field with it.
+    /// Without this surface, `caller_fn` was always `"main"` because
+    /// wasm-gc executes natively and the host has no other way to
+    /// recover the originating Aver fn — VM/self-host get it from
+    /// their interpreter stack frames, wasm-gc has to be told.
     pub(super) fn params(self, registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
+        let mut p = self.params_without_caller(registry)?;
+        p.push(any_ref_ty());
+        Ok(p)
+    }
+
+    fn params_without_caller(self, registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
         match self {
             Self::ConsolePrint | Self::ConsoleError | Self::ConsoleWarn => Ok(vec![any_ref_ty()]),
             Self::TimeUnixMs => Ok(vec![]),

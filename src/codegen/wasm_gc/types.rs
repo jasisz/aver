@@ -217,14 +217,23 @@ impl TypeRegistry {
         // so any `Vector<String>` registered below sits at a higher
         // index than `$string` and can reference it without crossing
         // the rec-group boundary.
-        let needs_string = items.iter().any(|item| match item {
-            TopLevel::FnDef(fd) => {
-                fd.return_type.contains("String")
-                    || fd.params.iter().any(|(_, t)| t.contains("String"))
-                    || fn_body_produces_string(fd)
-            }
-            _ => false,
-        });
+        // Force the String type slot whenever the program has any
+        // fn defs at all — `body/builtins.rs` now pushes the
+        // current fn name as a String literal before every effect
+        // import call (the `caller_fn` trailing arg). Without the
+        // slot, `emit_string_literal_bytes` can't materialise the
+        // ref and validation fails for trivially-Stringless programs
+        // like `fn main() -> Int { _ = Time.unixMs(); 42 }`.
+        let has_fn_defs = items.iter().any(|item| matches!(item, TopLevel::FnDef(_)));
+        let needs_string = has_fn_defs
+            || items.iter().any(|item| match item {
+                TopLevel::FnDef(fd) => {
+                    fd.return_type.contains("String")
+                        || fd.params.iter().any(|(_, t)| t.contains("String"))
+                        || fn_body_produces_string(fd)
+                }
+                _ => false,
+            });
         let string_array_type_idx = if needs_string {
             let idx = next_idx;
             next_idx += 1;
@@ -678,6 +687,24 @@ impl TypeRegistry {
         for item in items {
             if let TopLevel::FnDef(fd) = item {
                 collect_string_literals_in_fn(fd, &mut string_literals, &mut string_literal_idx);
+            }
+        }
+        // Pre-register every fn name as a passive String literal so
+        // the body emitter can push the current fn's identifier
+        // before each effect-import call (it materialises the
+        // `caller_fn` trailing arg every effect import now declares).
+        // Without this any fn that doesn't already use its own name
+        // as a string literal would fail validation when
+        // `emit_string_literal_bytes` looks up an unregistered byte
+        // sequence — every effect-emitting fn needs the segment.
+        for item in items {
+            if let TopLevel::FnDef(fd) = item {
+                let bytes = fd.name.as_bytes().to_vec();
+                string_literal_idx.entry(bytes.clone()).or_insert_with(|| {
+                    let idx = string_literals.len() as u32;
+                    string_literals.push(bytes);
+                    idx
+                });
             }
         }
         // `Int.mod` lowers to a boxed `Result<Int, String>` whose Err

@@ -14,6 +14,7 @@ pub(super) fn dispatch(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     params: &[wasmtime::Val],
     results: &mut [wasmtime::Val],
+    caller_fn: &str,
 ) -> Result<bool, wasmtime::Error> {
     use wasmtime::Val;
     match name {
@@ -27,6 +28,7 @@ pub(super) fn dispatch(
                 "Terminal.enableRawMode",
                 vec![],
                 aver::replay::JsonValue::Null,
+                caller_fn,
             );
             Ok(true)
         }
@@ -40,6 +42,7 @@ pub(super) fn dispatch(
                 "Terminal.disableRawMode",
                 vec![],
                 aver::replay::JsonValue::Null,
+                caller_fn,
             );
             Ok(true)
         }
@@ -53,6 +56,7 @@ pub(super) fn dispatch(
                 "Terminal.clear",
                 vec![],
                 aver::replay::JsonValue::Null,
+                caller_fn,
             );
             Ok(true)
         }
@@ -72,6 +76,7 @@ pub(super) fn dispatch(
                 "Terminal.moveTo",
                 args,
                 aver::replay::JsonValue::Null,
+                caller_fn,
             );
             Ok(true)
         }
@@ -90,6 +95,7 @@ pub(super) fn dispatch(
                 "Terminal.print",
                 args,
                 aver::replay::JsonValue::Null,
+                caller_fn,
             );
             Ok(true)
         }
@@ -105,6 +111,7 @@ pub(super) fn dispatch(
                 "Terminal.setColor",
                 args,
                 aver::replay::JsonValue::Null,
+                caller_fn,
             );
             Ok(true)
         }
@@ -118,6 +125,7 @@ pub(super) fn dispatch(
                 "Terminal.resetColor",
                 vec![],
                 aver::replay::JsonValue::Null,
+                caller_fn,
             );
             Ok(true)
         }
@@ -131,6 +139,7 @@ pub(super) fn dispatch(
                 "Terminal.hideCursor",
                 vec![],
                 aver::replay::JsonValue::Null,
+                caller_fn,
             );
             Ok(true)
         }
@@ -144,6 +153,7 @@ pub(super) fn dispatch(
                 "Terminal.showCursor",
                 vec![],
                 aver::replay::JsonValue::Null,
+                caller_fn,
             );
             Ok(true)
         }
@@ -157,6 +167,7 @@ pub(super) fn dispatch(
                 "Terminal.flush",
                 vec![],
                 aver::replay::JsonValue::Null,
+                caller_fn,
             );
             Ok(true)
         }
@@ -175,7 +186,7 @@ pub(super) fn dispatch(
                 None => (host_option_string_none(caller)?, json_none()),
             };
             results[0] = Val::AnyRef(opt_ref);
-            record_effect_if_recording(caller, "Terminal.readKey", vec![], outcome);
+            record_effect_if_recording(caller, "Terminal.readKey", vec![], outcome, caller_fn);
             Ok(true)
         }
         "terminal_size" => {
@@ -198,6 +209,7 @@ pub(super) fn dispatch(
                         ("height", aver::replay::JsonValue::Int(h)),
                     ],
                 ),
+                caller_fn,
             );
             Ok(true)
         }

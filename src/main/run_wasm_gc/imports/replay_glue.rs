@@ -16,6 +16,7 @@ pub(crate) fn record_effect_if_recording(
     effect_type: &str,
     args: Vec<aver::replay::JsonValue>,
     outcome: aver::replay::JsonValue,
+    caller_fn: &str,
 ) {
     if let Some(rec) = caller.data_mut().recorder.as_mut()
         && rec.mode() == aver::replay::EffectReplayMode::Record
@@ -24,7 +25,7 @@ pub(crate) fn record_effect_if_recording(
             effect_type,
             args,
             aver::replay::RecordedOutcome::Value(outcome),
-            "main",
+            caller_fn,
             0,
         );
     }

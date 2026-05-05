@@ -40,6 +40,7 @@ async function runModule(wasmBytes) {
 async function recordModule(wasmBytes, programArgs, programFile, moduleRoot) {
     try {
         host.recorder.startRecording();
+        host.capNotified = false;
         host.post({ type: "status", level: "info", text: "Recording…" });
         host.postTerminalSnapshot();
         await instantiateAndCallEntry(wasmBytes);

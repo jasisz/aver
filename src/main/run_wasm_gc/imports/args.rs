@@ -11,6 +11,7 @@ pub(super) fn dispatch(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     params: &[wasmtime::Val],
     results: &mut [wasmtime::Val],
+    caller_fn: &str,
 ) -> Result<bool, wasmtime::Error> {
     use wasmtime::Val;
     match name {
@@ -24,7 +25,13 @@ pub(super) fn dispatch(
             }
             let n = caller.data().program_args.len() as i64;
             results[0] = Val::I64(n);
-            record_effect_if_recording(caller, "Args.len", vec![], aver::replay::JsonValue::Int(n));
+            record_effect_if_recording(
+                caller,
+                "Args.len",
+                vec![],
+                aver::replay::JsonValue::Int(n),
+                caller_fn,
+            );
             Ok(true)
         }
         "args_get" => {
@@ -52,6 +59,7 @@ pub(super) fn dispatch(
                 "Args.get",
                 vec![aver::replay::JsonValue::Int(idx)],
                 aver::replay::JsonValue::String(text),
+                caller_fn,
             );
             Ok(true)
         }

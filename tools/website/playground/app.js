@@ -249,13 +249,23 @@ function handleWorkerMessage(event) {
             // effect captured up to that point.
             if (state.recordingBuffer && message.effect) {
                 state.recordingBuffer.push(message.effect);
-                if (state.recordingMeta) {
+                // Coarse status update so we don't repaint the line on
+                // every effect for high-throughput traces (rogue can
+                // emit thousands per second).
+                if (state.recordingMeta && state.recordingBuffer.length % 25 === 0) {
                     setStatus(
                         `Recording: ${state.recordingBuffer.length} effect(s)… (click Stop to finish)`,
                         "info"
                     );
                 }
             }
+            break;
+        case "trace-cap":
+            state.recordingCapped = true;
+            setStatus(
+                `Trace cap reached at ${message.count} effect(s); program keeps running but new effects aren't recorded. Click Stop to finalise.`,
+                "info"
+            );
             break;
         case "record-finished":
             if (state.worker) {
@@ -2898,13 +2908,27 @@ async function doRecord(skipDownload = true, entryExpr = null) {
         // a recording from this buffer instead of waiting for
         // record-finished to ship the full trace.
         state.recordingBuffer = [];
+        state.recordingCapped = false;
         state.recordingMeta = {
             program_file: entry,
             module_root: ".",
         };
-        // Surface the same Run-style controls so the user can play
-        // through interactive programs and click Stop to end the
-        // recording on their own terms — same as games + Run.
+        // Surface the same Run-style UI affordances: clear the
+        // previous output, switch the output pane to terminal vs
+        // console (so TUI games actually render — without
+        // `setOutputMode` the terminal element is hidden and snake
+        // looks like nothing's happening), enable Stop, focus the
+        // terminal so keypresses route into the worker.
+        clearOutput();
+        setRawMode(false);
+        const usesTerminal = Array.from(Object.values(filesObj)).some((s) =>
+            s.includes("Terminal."),
+        );
+        setOutputMode(usesTerminal ? "terminal" : "console");
+        const readlineBar = document.querySelector("[data-readline-bar]");
+        if (readlineBar) {
+            readlineBar.style.display = usesTerminal ? "none" : "flex";
+        }
         dom.runButton.disabled = true;
         dom.stopButton.disabled = false;
         dom.stopButton.hidden = false;
@@ -2982,6 +3006,12 @@ async function doReplay() {
         // — without `init-input` + `resize` the worker has no key
         // buffer or terminal dimensions and replays of interactive
         // programs come up blank.
+        clearOutput();
+        setRawMode(false);
+        const usesTerminalReplay = Array.from(Object.values(filesObj)).some((s) =>
+            s.includes("Terminal."),
+        );
+        setOutputMode(usesTerminalReplay ? "terminal" : "console");
         dom.terminal.dataset.empty = "false";
         dom.terminal.focus({ preventScroll: true });
         const worker = spawnWorker();

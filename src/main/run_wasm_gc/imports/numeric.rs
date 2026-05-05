@@ -13,6 +13,7 @@ pub(super) fn dispatch(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     params: &[wasmtime::Val],
     results: &mut [wasmtime::Val],
+    caller_fn: &str,
 ) -> Result<bool, wasmtime::Error> {
     use wasmtime::Val;
     match name {
@@ -50,6 +51,7 @@ pub(super) fn dispatch(
                     aver::replay::JsonValue::Int(max),
                 ],
                 aver::replay::JsonValue::Int(v),
+                caller_fn,
             );
             Ok(true)
         }
@@ -70,6 +72,7 @@ pub(super) fn dispatch(
                 "Random.float",
                 vec![],
                 aver::replay::JsonValue::Float(f),
+                caller_fn,
             );
             Ok(true)
         }

@@ -19,10 +19,21 @@ export const REPLAY_MODE = Object.freeze({
     REPLAYING: "replaying",
 });
 
+/// Soft ceiling on recorded effects per session. Open-loop programs
+/// (TUI games, REPLs) easily generate hundreds of thousands of
+/// effects per minute; once we hit the cap we stop appending new
+/// entries (and stop streaming `trace-effect` postMessages) so
+/// neither the worker's heap nor the main thread's per-effect
+/// rerender tank the tab. The user can still click Stop at any
+/// moment to finalise whatever the recorder accumulated up to that
+/// point.
+export const RECORDING_CAP = 10_000;
+
 export class EffectReplayState {
     constructor() {
         this.mode = REPLAY_MODE.NORMAL;
         this.recordedEffects = [];
+        this.recordingCapped = false;
         // Replay-only state.
         this.replayEffects = [];
         this.replayPos = 0;
@@ -45,6 +56,7 @@ export class EffectReplayState {
     startRecording() {
         this.mode = REPLAY_MODE.RECORDING;
         this.recordedEffects = [];
+        this.recordingCapped = false;
         this.replayEffects = [];
         this.replayPos = 0;
         this.argsDiffCount = 0;
@@ -118,6 +130,17 @@ export class EffectReplayState {
     /// would otherwise evict everything held inside the worker).
     recordEffect(effectType, args, outcome, callerFn = "main", sourceLine = 0) {
         if (this.mode !== REPLAY_MODE.RECORDING) return null;
+        if (this.recordedEffects.length >= RECORDING_CAP) {
+            // Cap reached. Subsequent effects fall through unrecorded —
+            // the program continues to run normally, but the recorder
+            // turns into a no-op so the trace stays bounded. Caller
+            // (`recordOrDispatch`) detects the null return and skips
+            // the per-effect `trace-effect` postMessage, which is what
+            // actually drove the perf cliff (each post copies the
+            // payload across the worker boundary).
+            this.recordingCapped = true;
+            return null;
+        }
         const groupId = this.currentGroupId();
         const branchPath = this.currentBranchPath();
         const effectOccurrence =

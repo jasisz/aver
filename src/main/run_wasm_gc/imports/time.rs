@@ -10,6 +10,7 @@ pub(super) fn dispatch(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     params: &[wasmtime::Val],
     results: &mut [wasmtime::Val],
+    caller_fn: &str,
 ) -> Result<bool, wasmtime::Error> {
     use wasmtime::Val;
     match name {
@@ -27,6 +28,7 @@ pub(super) fn dispatch(
                 "Time.now",
                 vec![],
                 aver::replay::JsonValue::String(text),
+                caller_fn,
             );
             Ok(true)
         }
@@ -51,6 +53,7 @@ pub(super) fn dispatch(
                 "Time.unixMs",
                 vec![],
                 aver::replay::JsonValue::Int(ms),
+                caller_fn,
             );
             Ok(true)
         }
@@ -67,6 +70,7 @@ pub(super) fn dispatch(
                 "Time.sleep",
                 vec![aver::replay::JsonValue::Int(ms)],
                 aver::replay::JsonValue::Null,
+                caller_fn,
             );
             Ok(true)
         }

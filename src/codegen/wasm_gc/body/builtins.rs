@@ -52,13 +52,14 @@ pub(super) fn emit_dotted_builtin(
         return Ok(());
     }
 
-    // Registered effect import? Same shape — push args, call by idx.
-    // Effects return Unit; the trailing instruction sequence works
-    // identically to a Unit-returning user fn call.
+    // Registered effect import? Same shape — push args, push the
+    // current fn name (as a String literal) so the host can stamp
+    // `caller_fn` on the recorded effect, then call by idx.
     if let Some(&wasm_idx) = ctx.fn_map.effects.get(&dotted) {
         for arg in args {
             emit_expr(func, arg, slots, ctx)?;
         }
+        super::emit::emit_string_literal_bytes(func, ctx.self_fn_name.as_bytes(), ctx)?;
         func.instruction(&Instruction::Call(wasm_idx));
         return Ok(());
     }
