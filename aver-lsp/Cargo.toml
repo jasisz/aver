@@ -16,7 +16,7 @@ name = "aver-lsp"
 path = "src/main.rs"
 
 [dependencies]
-aver = { path = "..", version = "=0.16.0", package = "aver-lang" }
+aver = { path = "..", version = "=0.16.1", package = "aver-lang" }
 tower-lsp-server = "0.23"
 tokio = { version = "1", features = ["full"] }
 serde_json = "1"

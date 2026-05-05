@@ -28,6 +28,22 @@ mod self_host_support;
 pub mod aver_generated;
 
 fn main() {
+    if let Ok(n_str) = std::env::var("AVER_BENCH_ITER") {
+        let n: usize = n_str.parse().unwrap_or(0);
+        let warmup: usize = std::env::var("AVER_BENCH_WARMUP")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        for _ in 0..warmup {
+            let _ = std::hint::black_box(aver_generated::entry::main());
+        }
+        for _ in 0..n {
+            let t = std::time::Instant::now();
+            let _ = std::hint::black_box(aver_generated::entry::main());
+            eprintln!("__bench_iter_ms__: {}", t.elapsed().as_secs_f64() * 1000.0);
+        }
+        std::process::exit(0);
+    }
     let child = std::thread::Builder::new()
         .stack_size(256 * 1024 * 1024)
         .spawn(|| {
