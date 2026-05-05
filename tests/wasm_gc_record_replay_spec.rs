@@ -16,8 +16,16 @@
 //! - Tampering the recorded `output` value flips replay to
 //!   `Output: DIFFERS` with a non-zero exit shape that the JSON
 //!   diagnostic surfaces (`expected: …, actual: …`).
+//! - Trailing effect (recording strictly longer than what the
+//!   program produces) → `Unconsumed` failure, not silent MATCH.
+//! - Mismatched effect args without `--check-args` → soft warning
+//!   (`args_diffs > 0`); with `--check-args` → hard failure.
+//! - Per-function `--expr` recordings replay cleanly through the
+//!   wasm-gc backend, mirroring the VM `--expr` flow.
 //! - VM-recorded trace replays cleanly under `--wasm-gc` (cross-
 //!   backend JSON shape parity).
+//! - Batch replay (`aver replay --wasm-gc <dir>`) keeps iterating
+//!   past a bad recording instead of `process::exit`-ing.
 
 use std::fs;
 use std::path::PathBuf;
@@ -298,21 +306,31 @@ fn wasm_gc_replay_rejects_recording_with_trailing_effect() {
     let rec_dir = temp_dir("aver-wasm-gc-rec-unconsumed-traces");
     let rec_path = record_via_cli(&prog, &rec_dir);
 
-    // Append a Console.print event the program never makes. The
-    // replay should drive the program to completion (consuming the
-    // first two events), then fail because the recording has one
-    // event left.
+    // Parse the recording, push a synthetic effect onto the end,
+    // serialise it back. Mechanical (no fragile substring slicing
+    // against the pretty-printer's spacing) and survives any future
+    // change in `session_recording_to_string_pretty` formatting.
     let raw = fs::read_to_string(&rec_path).expect("read recording");
-    let last_close = raw
-        .rfind("    }\n  ]")
-        .expect("recording missing effects array close");
-    let extra = ",\n    {\n      \"seq\": 99,\n      \"type\": \"Console.print\",\n      \"args\": [\"ghost\"],\n      \"outcome\": { \"kind\": \"value\", \"value\": null },\n      \"caller_fn\": \"main\"\n    }";
-    let mut tampered = String::with_capacity(raw.len() + extra.len());
-    tampered.push_str(&raw[..last_close + 5]); // up to "    }\n"
-    tampered.push_str(extra);
-    tampered.push_str(&raw[last_close + 5..]);
+    let mut recording =
+        aver::replay::parse_session_recording(&raw).expect("parse recorded session");
+    let next_seq = recording.effects.last().map(|e| e.seq + 1).unwrap_or(1);
+    recording.effects.push(aver::replay::EffectRecord {
+        seq: next_seq,
+        effect_type: "Console.print".to_string(),
+        args: vec![aver::replay::JsonValue::String("ghost".to_string())],
+        outcome: aver::replay::RecordedOutcome::Value(aver::replay::JsonValue::Null),
+        caller_fn: "main".to_string(),
+        source_line: 0,
+        group_id: None,
+        branch_path: None,
+        effect_occurrence: None,
+    });
     let tampered_path = work.join("tampered.json");
-    fs::write(&tampered_path, &tampered).expect("write tampered recording");
+    fs::write(
+        &tampered_path,
+        aver::replay::session_recording_to_string_pretty(&recording),
+    )
+    .expect("write tampered recording");
 
     let replay = replay_via_cli(&tampered_path);
     let combined = format!(
@@ -377,6 +395,150 @@ fn wasm_gc_replays_a_vm_recorded_trace() {
         replay.status.success() && stdout.contains("Output:  MATCH"),
         "wasm-gc should accept a VM-recorded trace, got:\n{}",
         format_output(&replay)
+    );
+
+    let _ = fs::remove_dir_all(&work);
+    let _ = fs::remove_dir_all(&rec_dir);
+}
+
+#[test]
+fn wasm_gc_replay_args_mismatch_warns_without_check_args_and_fails_with() {
+    // Mutating a recorded effect's `args` should:
+    //  - replay clean (sequence matches, output decodes the same) but
+    //    bump `args_diffs` to N>0 — the renderer surfaces this as a
+    //    soft warning regardless of `--check-args`,
+    //  - hard-fail under `--check-args` (each `replay_effect` call
+    //    raises a `ReplayFailure::ArgMismatch`).
+    let work = temp_dir("aver-wasm-gc-rec-argsdiff");
+    let prog = write_program(
+        &work,
+        "main.av",
+        "module SmokeArgsDiff\n    intent = \"args_diffs warning smoke\"\n\n\
+         fn main() -> Unit\n    ! [Console.print, Time.unixMs]\n    \
+         _ = Time.unixMs()\n    Console.print(\"hello\")\n",
+    );
+    let rec_dir = temp_dir("aver-wasm-gc-rec-argsdiff-traces");
+    let rec_path = record_via_cli(&prog, &rec_dir);
+
+    // Swap "hello" → "changed" inside the recorded effect args. Done
+    // structurally via `parse_session_recording` so the test isn't
+    // tied to the pretty-printer's exact whitespace.
+    let raw = fs::read_to_string(&rec_path).expect("read recording");
+    let mut recording =
+        aver::replay::parse_session_recording(&raw).expect("parse recorded session");
+    let print = recording
+        .effects
+        .iter_mut()
+        .find(|e| e.effect_type == "Console.print")
+        .expect("recording must have a Console.print effect");
+    print.args = vec![aver::replay::JsonValue::String("changed".to_string())];
+    let tampered_path = work.join("argsdiff.json");
+    fs::write(
+        &tampered_path,
+        aver::replay::session_recording_to_string_pretty(&recording),
+    )
+    .expect("write tampered recording");
+
+    // Without --check-args: replay should still complete cleanly with
+    // a non-zero `Args diff` count surfaced in the renderer line.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let lenient = Command::new(aver_bin)
+        .arg("replay")
+        .arg("--wasm-gc")
+        .arg(&tampered_path)
+        .output()
+        .expect("spawn lenient replay");
+    let lenient_combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&lenient.stdout),
+        String::from_utf8_lossy(&lenient.stderr)
+    );
+    assert!(
+        lenient.status.success(),
+        "args-mismatch replay without --check-args should still exit 0:\n{}",
+        format_output(&lenient)
+    );
+    // The renderer prints `N effect(s) had different args (use
+    // --check-args to enforce)` when `args_diffs` is non-zero.
+    assert!(
+        lenient_combined.contains("had different args"),
+        "renderer should surface an args-diff warning when args_diffs > 0, got:\n{lenient_combined}"
+    );
+
+    // With --check-args: each replay_effect call with mismatched args
+    // raises a hard failure — replay must fail.
+    let strict = Command::new(aver_bin)
+        .arg("replay")
+        .arg("--wasm-gc")
+        .arg("--check-args")
+        .arg(&tampered_path)
+        .output()
+        .expect("spawn strict replay");
+    let strict_combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&strict.stdout),
+        String::from_utf8_lossy(&strict.stderr)
+    );
+    assert!(
+        strict_combined.contains("fail")
+            || strict_combined.contains("error")
+            || strict_combined.contains("ArgMismatch")
+            || !strict.status.success(),
+        "args-mismatch replay with --check-args should report a failure, got:\n{strict_combined}"
+    );
+
+    let _ = fs::remove_dir_all(&work);
+    let _ = fs::remove_dir_all(&rec_dir);
+}
+
+#[test]
+fn wasm_gc_batch_replay_keeps_going_past_a_bad_recording() {
+    // `aver replay --wasm-gc <dir>` iterates over every .json in the
+    // directory. A single bad recording must not `process::exit` and
+    // skip the rest — the bug review #3 from the unified-shape patch.
+    // The directory holds one valid recording and one structurally
+    // garbage file; the run should report on both and exit, not
+    // bail on the broken one before reaching the good one.
+    let work = temp_dir("aver-wasm-gc-rec-batch");
+    let prog = write_program(
+        &work,
+        "main.av",
+        "module SmokeBatch\n    intent = \"batch replay no-exit smoke\"\n\n\
+         fn main() -> Unit\n    ! [Console.print, Time.unixMs]\n    \
+         _ = Time.unixMs()\n    Console.print(\"batch ok\")\n",
+    );
+    let rec_dir = temp_dir("aver-wasm-gc-rec-batch-traces");
+    let _ok_path = record_via_cli(&prog, &rec_dir);
+    // Put a deliberately broken recording next to the good one. The
+    // backend should fail to parse it, return a `ReplayResult` with
+    // `error: Some(...)`, then keep iterating to the good one.
+    let bad_path = rec_dir.join("000-broken.json");
+    fs::write(&bad_path, "{not valid json at all").expect("write bad recording");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let replay = Command::new(aver_bin)
+        .arg("replay")
+        .arg("--wasm-gc")
+        .arg("--test")
+        .arg(&rec_dir)
+        .output()
+        .expect("spawn batch replay");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&replay.stdout),
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    // The output must reference both files — proves the runner saw
+    // the bad one (failed) and still produced output for the good
+    // one (succeeded), instead of `process::exit`-ing after the
+    // first failure.
+    assert!(
+        combined.contains("000-broken.json"),
+        "batch summary should mention the broken recording, got:\n{combined}"
+    );
+    assert!(
+        combined.contains("batch ok") || combined.contains("Output:  MATCH"),
+        "batch summary should also include the good recording's outcome, got:\n{combined}"
     );
 
     let _ = fs::remove_dir_all(&work);
