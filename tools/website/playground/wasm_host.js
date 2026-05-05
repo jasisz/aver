@@ -252,10 +252,18 @@ export class AverBrowserHost {
             const outcomeJson = encodeOutcome
                 ? encodeOutcome(live)
                 : null;
-            r.recordEffect(effectType, args, {
+            const record = r.recordEffect(effectType, args, {
                 kind: "value",
                 value: outcomeJson,
             });
+            // Stream the freshly-recorded effect to the main thread
+            // so it can mirror the trace incrementally. Lets the
+            // user click Stop mid-game and still walk away with
+            // every effect captured before the worker terminate'd.
+            // No-op when the recorder rejected the entry (mode race).
+            if (record !== null) {
+                this.post({ type: "trace-effect", effect: record });
+            }
         }
         return live;
     }

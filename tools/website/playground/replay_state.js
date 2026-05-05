@@ -111,13 +111,18 @@ export class EffectReplayState {
     /// Append an effect to the trace if we're in Recording mode.
     /// `outcome` is `{ kind: "value", value: <JSON> }` or
     /// `{ kind: "runtime_error", message: <string> }`.
+    /// Returns the effect record for the worker to stream live —
+    /// the playground UX hands it to `postMessage` so the main
+    /// thread keeps a per-effect mirror, which lets the user click
+    /// Stop mid-game without losing the trace (worker.terminate()
+    /// would otherwise evict everything held inside the worker).
     recordEffect(effectType, args, outcome, callerFn = "main", sourceLine = 0) {
-        if (this.mode !== REPLAY_MODE.RECORDING) return;
+        if (this.mode !== REPLAY_MODE.RECORDING) return null;
         const groupId = this.currentGroupId();
         const branchPath = this.currentBranchPath();
         const effectOccurrence =
             groupId !== null ? this.bumpEffectOccurrence() : null;
-        this.recordedEffects.push({
+        const record = {
             seq: this.recordedEffects.length + 1,
             type: effectType,
             args: args ?? [],
@@ -129,7 +134,9 @@ export class EffectReplayState {
             ...(effectOccurrence !== null
                 ? { effect_occurrence: effectOccurrence }
                 : {}),
-        });
+        };
+        this.recordedEffects.push(record);
+        return record;
     }
 
     /// Pull the next outcome from the trace if we're in Replay mode.

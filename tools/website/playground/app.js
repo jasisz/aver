@@ -242,12 +242,30 @@ function handleWorkerMessage(event) {
                 setStatus("Game ended.", "idle");
             }
             break;
+        case "trace-effect":
+            // Per-effect stream from the worker. Mirror it into a
+            // main-thread buffer so a Stop click mid-game (which
+            // forcibly terminate()s the worker) still has every
+            // effect captured up to that point.
+            if (state.recordingBuffer && message.effect) {
+                state.recordingBuffer.push(message.effect);
+                if (state.recordingMeta) {
+                    setStatus(
+                        `Recording: ${state.recordingBuffer.length} effect(s)… (click Stop to finish)`,
+                        "info"
+                    );
+                }
+            }
+            break;
         case "record-finished":
             if (state.worker) {
                 state.worker.terminate();
                 state.worker = null;
             }
             setRawMode(false);
+            dom.runButton.disabled = false;
+            dom.stopButton.disabled = true;
+            dom.stopButton.hidden = true;
             if (!message.ok) {
                 setStatus("Record failed", "error");
                 appendConsole("stderr", message.error || "unknown error");
@@ -263,6 +281,8 @@ function handleWorkerMessage(event) {
                 });
                 state.recordResolve = null;
             }
+            state.recordingBuffer = null;
+            state.recordingMeta = null;
             break;
         case "replay-finished":
             if (state.worker) {
@@ -391,6 +411,14 @@ async function runSelectedModule(fixedSize) {
 }
 
 function stopRun() {
+    // Mid-recording stop: finalise the trace from the main-thread
+    // mirror buffer before tearing down the worker. Lets the user
+    // play through an interactive program (snake, checkers, …),
+    // click Stop when they're satisfied with the trace, and walk
+    // away with every effect captured up to that moment.
+    const recordingBuffer = state.recordingBuffer;
+    const recordingMeta = state.recordingMeta;
+    const recordResolve = state.recordResolve;
     if (state.worker) {
         state.worker.terminate();
         state.worker = null;
@@ -400,6 +428,32 @@ function stopRun() {
     dom.stopButton.disabled = true;
     dom.stopButton.hidden = true;
     setRawMode(false);
+    if (recordingBuffer && recordResolve) {
+        const recording = {
+            schema_version: 1,
+            request_id: `rec-${Date.now()}`,
+            timestamp: `unix-${Math.floor(Date.now() / 1000)}`,
+            program_file: recordingMeta?.program_file ?? "playground.av",
+            module_root: recordingMeta?.module_root ?? ".",
+            entry_fn: "main",
+            input: null,
+            effects: recordingBuffer,
+            output: { kind: "value", value: null },
+        };
+        state.recordingBuffer = null;
+        state.recordingMeta = null;
+        state.recordResolve = null;
+        recordResolve({
+            ok: true,
+            recording,
+            effect_count: recordingBuffer.length,
+        });
+        setStatus(
+            `Stopped recording at ${recordingBuffer.length} effect(s).`,
+            "success"
+        );
+        return;
+    }
     setStatus("Run stopped.", "idle");
 }
 
@@ -2845,6 +2899,25 @@ async function doRecord(skipDownload = true, entryExpr = null) {
         });
         worker.onmessage = handleWorkerMessage;
         state.worker = worker;
+        // Live-trace mirror in main thread. Recordings used to live
+        // only inside the worker, so a Stop click (which terminates
+        // the worker) lost the in-flight trace. Now every
+        // `trace-effect` message lands here, and `stopRun()` finalises
+        // a recording from this buffer instead of waiting for
+        // record-finished to ship the full trace.
+        state.recordingBuffer = [];
+        state.recordingMeta = {
+            program_file: entry,
+            module_root: ".",
+        };
+        // Surface the same Run-style controls so the user can play
+        // through interactive programs and click Stop to end the
+        // recording on their own terms — same as games + Run.
+        dom.runButton.disabled = true;
+        dom.stopButton.disabled = false;
+        dom.stopButton.hidden = false;
+        dom.terminal.dataset.empty = "false";
+        dom.terminal.focus({ preventScroll: true });
         const result = await new Promise((resolve) => {
             state.recordResolve = resolve;
             // `aver_compile_project` returns a Uint8Array view; the
