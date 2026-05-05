@@ -32,6 +32,8 @@ mod disk;
 mod env;
 #[path = "imports/factories.rs"]
 mod factories;
+#[path = "imports/groups.rs"]
+mod groups;
 #[path = "imports/http.rs"]
 mod http;
 #[path = "imports/lm.rs"]
@@ -75,6 +77,9 @@ pub(super) fn dispatch_aver_import(
         return Ok(true);
     }
     if env::dispatch(name, caller, params, results)? {
+        return Ok(true);
+    }
+    if groups::dispatch(name, caller, params, results)? {
         return Ok(true);
     }
     if numeric::dispatch(name, caller, params, results)? {

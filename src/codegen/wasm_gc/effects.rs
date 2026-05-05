@@ -160,6 +160,20 @@ pub(super) enum EffectName {
     HttpPost,
     HttpPut,
     HttpPatch,
+    // ── Independent-product structural-scope markers. Emitted by the
+    //    wasm-gc body lowering wherever `?!` (or `!`) appears, so the
+    //    recorder annotates each contained effect with its
+    //    `(group_id, branch_path, effect_occurrence)` tuple. Replay
+    //    matches these instead of strict sequence position. Without
+    //    these calls, wasm-gc traces would be flat and cross-backend
+    //    replay against a VM-recorded `?!` trace would break.
+    /// `() -> Unit` — open a fresh independent-product scope.
+    RecordEnterGroup,
+    /// `(branch: Int) -> Unit` — switch the recorder's active branch
+    /// inside the current group.
+    RecordSetBranch,
+    /// `() -> Unit` — close the most recently opened scope.
+    RecordExitGroup,
 }
 
 impl EffectName {
@@ -301,6 +315,12 @@ impl EffectName {
             Self::HttpPost => "Http.post",
             Self::HttpPut => "Http.put",
             Self::HttpPatch => "Http.patch",
+            // Group markers aren't user-facing effects; the dotted
+            // form is internal-only. Used by `effect_idx_lookup`
+            // string keying so the body emit can resolve them.
+            Self::RecordEnterGroup => "__record_enter_group",
+            Self::RecordSetBranch => "__record_set_branch",
+            Self::RecordExitGroup => "__record_exit_group",
         }
     }
 
@@ -367,6 +387,9 @@ impl EffectName {
             Self::HttpPost => ("aver", "http_post"),
             Self::HttpPut => ("aver", "http_put"),
             Self::HttpPatch => ("aver", "http_patch"),
+            Self::RecordEnterGroup => ("aver", "record_enter_group"),
+            Self::RecordSetBranch => ("aver", "record_set_branch"),
+            Self::RecordExitGroup => ("aver", "record_exit_group"),
         }
     }
 
@@ -443,6 +466,8 @@ impl EffectName {
                 any_ref_ty(),
                 map_string_list_string_ref_ty(registry)?,
             ]),
+            Self::RecordEnterGroup | Self::RecordExitGroup => Ok(vec![]),
+            Self::RecordSetBranch => Ok(vec![ValType::I64]),
         }
     }
 
@@ -559,6 +584,7 @@ impl EffectName {
                 registry,
                 "Result<HttpResponse,String>",
             )?]),
+            Self::RecordEnterGroup | Self::RecordSetBranch | Self::RecordExitGroup => Ok(vec![]),
         }
     }
 }

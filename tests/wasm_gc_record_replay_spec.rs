@@ -348,6 +348,192 @@ fn wasm_gc_replay_rejects_recording_with_trailing_effect() {
 }
 
 #[test]
+fn wasm_gc_records_independent_product_with_group_annotations() {
+    // `?!` programs lower with `enter_group` / `set_branch(i)` /
+    // `exit_group` host calls so contained effects pick up
+    // (group_id, branch_path, effect_occurrence). Without the
+    // markers, traces are flat and cross-backend replay against a
+    // VM-recorded trace fails. This test pins the wasm-gc recorder
+    // to emit non-null group_id on every effect inside `?!`, and
+    // verifies cross-backend replay (wasm-gc → VM and VM →
+    // wasm-gc) round-trips cleanly.
+    let work = temp_dir("aver-wasm-gc-rec-groups");
+    let prog = write_program(
+        &work,
+        "main.av",
+        "module CrossGroups\n    intent = \"?! cross-backend smoke\"\n\n\
+         fn loadOk(n: Int) -> Result<Int, String>\n    ! [Console.print, Time.unixMs]\n    \
+         _ = Time.unixMs()\n    Console.print(\"loaded {n}\")\n    Result.Ok(n * 10)\n\n\
+         fn computeAll() -> Result<(Int, Int, Int), String>\n    ! [Console.print, Time.unixMs]\n    \
+         data = (loadOk(1), loadOk(2), loadOk(3))?!\n    Result.Ok(data)\n\n\
+         fn main() -> Unit\n    ! [Console.print, Time.unixMs]\n    \
+         match computeAll()\n        Result.Ok(_) -> Console.print(\"ok\")\n        \
+         Result.Err(e) -> Console.print(\"err: {e}\")\n",
+    );
+    let wgc_dir = temp_dir("aver-wasm-gc-rec-groups-wgc");
+    let vm_dir = temp_dir("aver-wasm-gc-rec-groups-vm");
+
+    // Record under wasm-gc. Trace must hold `group_id` on every
+    // contained effect — this is the new emit pinning.
+    let wgc_path = record_via_cli(&prog, &wgc_dir);
+    let wgc_raw = fs::read_to_string(&wgc_path).expect("read wasm-gc recording");
+    assert!(
+        wgc_raw.contains("\"group_id\": 1"),
+        "wasm-gc trace must annotate `?!` contained effects with group_id; got:\n{wgc_raw}"
+    );
+    assert!(
+        wgc_raw.contains("\"branch_path\""),
+        "wasm-gc trace must annotate branch_path; got:\n{wgc_raw}"
+    );
+
+    // Record under VM for the cross-backend replay leg.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let vm_record = Command::new(aver_bin)
+        .arg("run")
+        .arg("--record")
+        .arg(&vm_dir)
+        .arg(&prog)
+        .output()
+        .expect("spawn vm record");
+    assert!(
+        vm_record.status.success(),
+        "vm record failed:\n{}",
+        format_output(&vm_record)
+    );
+    let vm_entries: Vec<PathBuf> = fs::read_dir(&vm_dir)
+        .expect("read vm rec dir")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
+        .collect();
+    let vm_path = vm_entries.into_iter().next().expect("one vm recording");
+
+    // Cross-backend replay: wasm-gc trace → VM replay, VM trace →
+    // wasm-gc replay. Both must MATCH.
+    let cross_a = Command::new(aver_bin)
+        .arg("replay")
+        .arg(&wgc_path)
+        .output()
+        .expect("spawn cross VM replay");
+    let cross_a_stdout = String::from_utf8_lossy(&cross_a.stdout);
+    assert!(
+        cross_a.status.success() && cross_a_stdout.contains("Output:  MATCH"),
+        "wasm-gc-recorded `?!` trace must replay cleanly via VM, got:\n{}",
+        format_output(&cross_a)
+    );
+
+    let cross_b = replay_via_cli(&vm_path);
+    let cross_b_stdout = String::from_utf8_lossy(&cross_b.stdout);
+    assert!(
+        cross_b.status.success() && cross_b_stdout.contains("Output:  MATCH"),
+        "VM-recorded `?!` trace must replay cleanly via wasm-gc, got:\n{}",
+        format_output(&cross_b)
+    );
+
+    let _ = fs::remove_dir_all(&work);
+    let _ = fs::remove_dir_all(&wgc_dir);
+    let _ = fs::remove_dir_all(&vm_dir);
+}
+
+#[test]
+fn self_host_replay_compares_main_return_value() {
+    // Self-host previously dropped the user `main()` return value
+    // inside `runGuestCliProgram`'s Unit-mapping wrapper, so every
+    // replay claimed `Output: MATCH` regardless of what the
+    // subprocess returned. The Step 3 fix surfaces the live `Val`
+    // up the call stack so the replay scope's `finish_scope_success`
+    // serialises the actual value into `recording.output`. Tampering
+    // a recorded `42` → `999` must now flip replay to a panic-driven
+    // failure with a structured `expected ... got ...` diagnostic.
+    let work = temp_dir("aver-self-host-output");
+    let prog = write_program(
+        &work,
+        "main.av",
+        "module SelfHostOutput\n    intent = \"self-host output value comparison\"\n\n\
+         fn main() -> Int\n    ! [Console.print, Time.unixMs]\n    \
+         _ = Time.unixMs()\n    Console.print(\"self-host out\")\n    42\n",
+    );
+    let rec_dir = temp_dir("aver-self-host-output-rec");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let record = Command::new(aver_bin)
+        .arg("run")
+        .arg("--self-host")
+        .arg("--record")
+        .arg(&rec_dir)
+        .arg(&prog)
+        .output()
+        .expect("spawn self-host record");
+    assert!(
+        record.status.success(),
+        "self-host record failed:\n{}",
+        format_output(&record)
+    );
+    let rec_path: PathBuf = fs::read_dir(&rec_dir)
+        .expect("read rec dir")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .find(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
+        .expect("one self-host recording");
+    let raw = fs::read_to_string(&rec_path).expect("read recording");
+    // The user's `42` reaches `recording.output` as a `Val::ValInt(42)`
+    // ADT — that's how self-host serialises its interpreter's value
+    // type. Pre-Step-3 the field would have been `null`.
+    assert!(
+        raw.contains("\"name\": \"ValInt\"") && raw.contains("42"),
+        "self-host recording must capture the live user main return value, got:\n{raw}"
+    );
+
+    // Clean replay: matches.
+    let clean = Command::new(aver_bin)
+        .arg("replay")
+        .arg("--self-host")
+        .arg(&rec_path)
+        .output()
+        .expect("spawn clean self-host replay");
+    let clean_stdout = String::from_utf8_lossy(&clean.stdout);
+    assert!(
+        clean.status.success() && clean_stdout.contains("Output:  MATCH"),
+        "clean self-host replay must MATCH, got:\n{}",
+        format_output(&clean)
+    );
+
+    // Tamper the recorded ValInt payload `42` → `999`. Replay-mode
+    // self-host runtime compares actual against recording.output,
+    // panics on mismatch, subprocess exits non-zero; the host turns
+    // it into a `ReplayError::Generic`. Use a structurally-anchored
+    // replacement so we only touch the ValInt payload — `42` could
+    // appear in tempdir paths or other parts of the JSON.
+    let tampered = raw.replace(
+        "\"fields\": [\n          42\n        ]",
+        "\"fields\": [\n          999\n        ]",
+    );
+    let tampered_path = work.join("tampered.json");
+    fs::write(&tampered_path, &tampered).expect("write tampered recording");
+    // Run with `--test` so a tampered recording flips `aver replay`
+    // to a non-zero exit (CI gate semantics) on top of surfacing the
+    // self-host runtime's `Replay output mismatch` diagnostic.
+    let strict = Command::new(aver_bin)
+        .arg("replay")
+        .arg("--self-host")
+        .arg("--test")
+        .arg(&tampered_path)
+        .output()
+        .expect("spawn tampered self-host replay");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&strict.stdout),
+        String::from_utf8_lossy(&strict.stderr)
+    );
+    assert!(
+        !strict.status.success() && combined.contains("Replay output mismatch"),
+        "tampered self-host replay must surface a Replay-output-mismatch diagnostic and exit non-zero under --test, got:\n{}",
+        format_output(&strict)
+    );
+
+    let _ = fs::remove_dir_all(&work);
+    let _ = fs::remove_dir_all(&rec_dir);
+}
+
+#[test]
 fn wasm_gc_replays_a_vm_recorded_trace() {
     // Record under VM, replay under wasm-gc. Both backends share the
     // same JSON shape (markers + outcome enum); the wasm-gc replayer

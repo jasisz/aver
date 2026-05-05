@@ -230,13 +230,13 @@ pub fn runGuestProgram(
     )
 }
 
-/// Execute a loaded guest program with CLI-compatible main semantics inside the guest boundary.
+/// Execute a loaded guest program with CLI-compatible main semantics inside the guest boundary. Returns the user main()'s return Val so the replay scope can serialise it as recording.output (and replay-mode output comparison sees the live value), instead of dropping it to Unit before the wrapping aver_replay scope captures the result.
 pub fn runGuestCliProgram(
     prog: &Program,
     moduleFns: &aver_rt::AverList<FnDef>,
     localFns: &aver_rt::AverList<FnDef>,
     guestArgs: &aver_rt::AverList<AverStr>,
-) -> Result<(), AverStr> {
+) -> Result<Val, AverStr> {
     let __replay_input = aver_replay::ReplayValue::to_replay_json(guestArgs);
     aver_replay::with_guest_scope_args_result(
         "runGuestCliProgram",
@@ -722,21 +722,21 @@ pub fn loadProgramFromFile(
     prepareProgramWithModules(source, moduleRoot.clone())
 }
 
-/// Dispatch normalized CLI args: path, module root, then guest args.
+/// Dispatch normalized CLI args: path, module root, then guest args. Carries the user main()'s return Val up so the wrapping replay scope serialises it as recording.output.
 pub fn runFromFileWithRest(
     path: AverStr,
     rest: &aver_rt::AverList<AverStr>,
-) -> Result<(), AverStr> {
+) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     aver_list_match!(rest.clone(), [] => runCliFile(path, AverStr::from("."), &aver_rt::AverList::empty()), [moduleRoot, guestArgs] => runCliFile(path, moduleRoot, &guestArgs))
 }
 
-/// Load a guest file outside scope, then execute the guest program inside the guest boundary.
+/// Load a guest file outside scope, then execute the guest program inside the guest boundary. Propagates the user main()'s return Val unchanged.
 pub fn runCliFile(
     path: AverStr,
     moduleRoot: AverStr,
     guestArgs: &aver_rt::AverList<AverStr>,
-) -> Result<(), AverStr> {
+) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let prepared = loadProgramFromFile(path, moduleRoot)?;
     {
@@ -745,19 +745,19 @@ pub fn runCliFile(
     }
 }
 
-/// Mirror host CLI semantics: ignore successful return values, but surface main() Result.Err as process failure.
+/// Mirror host CLI semantics: surface user main() Result.Err as process failure, but otherwise propagate the live return Val so replay-mode output comparison sees the actual value (recording.output stores the serialised Val, replay re-serialises and compares — dropping to Unit here would force every recording to claim Unit-output, masking real divergence).
 #[inline(always)]
-pub fn finishCliRun(localFns: &aver_rt::AverList<FnDef>, result: &Val) -> Result<(), AverStr> {
+pub fn finishCliRun(localFns: &aver_rt::AverList<FnDef>, result: &Val) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     if hasLocalMain(localFns.clone()) {
         finishCliMainResult(result)
     } else {
-        Ok(())
+        Ok(result.clone())
     }
 }
 
-/// Convert a guest main() return value into CLI success or failure.
-pub fn finishCliMainResult(result: &Val) -> Result<(), AverStr> {
+/// Convert a guest main() return value into CLI success or failure. Successful returns propagate the live Val so the replay scope can serialise it as recording.output.
+pub fn finishCliMainResult(result: &Val) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     match result.clone() {
         Val::ValErr(err) => {
@@ -765,7 +765,7 @@ pub fn finishCliMainResult(result: &Val) -> Result<(), AverStr> {
             Err((AverStr::from("Main returned error: ")
                 + &crate::aver_generated::domain::value::valRepr(&err)))
         }
-        _ => Ok(()),
+        _ => Ok(result.clone()),
     }
 }
 
@@ -925,5 +925,5 @@ pub fn main() -> Result<(), AverStr> {
         crate::cancel_checkpoint();
         aver_replay::invoke_effect("Args.get", vec![], || aver_replay::current_cli_args())
     };
-    aver_list_match!(args, [] => runDemo(), [path, rest] => runFromFileWithRest(path, &rest))
+    aver_list_match!(args, [] => runDemo(), [path, rest] => match runFromFileWithRest(path, &rest) { Ok(_) => { Ok(()) }, Err(e) => { Err(e) } })
 }
