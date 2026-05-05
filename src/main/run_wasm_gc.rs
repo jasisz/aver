@@ -138,7 +138,15 @@ pub(super) fn cmd_run_wasm_gc_with_mode_capturing(
             }
         };
 
-        match run_wasm_gc_with_host(&bytes, &program_args, &mode, file, &module_root) {
+        let main_return_ty = find_main_return_type(&items);
+        match run_wasm_gc_with_host(
+            &bytes,
+            &program_args,
+            &mode,
+            file,
+            &module_root,
+            &main_return_ty,
+        ) {
             Ok(decoded) => {
                 if let Some(slot) = out_json {
                     *slot = Some(decoded);
@@ -163,6 +171,23 @@ struct RunWasmGcHost {
     recorder: Option<aver::replay::EffectReplayState>,
 }
 
+/// Walk the parsed AST for a `fn main(...) -> T` definition and return
+/// `T` as a structured `Type`. Falls back to `Type::Unit` when no
+/// `main` is declared (the program will run via `_start` and produce
+/// no output to compare). Multi-module loading appends dep fns to
+/// `items`, so we filter on name only.
+fn find_main_return_type(items: &[aver::ast::TopLevel]) -> aver::ast::Type {
+    use aver::ast::TopLevel;
+    for item in items {
+        if let TopLevel::FnDef(fn_def) = item
+            && fn_def.name == "main"
+        {
+            return aver::types::parse_type_str(&fn_def.return_type);
+        }
+    }
+    aver::ast::Type::Unit
+}
+
 #[cfg(feature = "wasm")]
 fn run_wasm_gc_with_host(
     wasm_bytes: &[u8],
@@ -170,6 +195,7 @@ fn run_wasm_gc_with_host(
     mode: &EffectMode<'_>,
     source_file: &str,
     module_root: &str,
+    main_return_ty: &aver::ast::Type,
 ) -> Result<aver::replay::JsonValue, String> {
     use wasmtime::*;
 
@@ -276,7 +302,7 @@ fn run_wasm_gc_with_host(
             let mut out: Vec<Val> = (0..n).map(|_| Val::I32(0)).collect();
             main.call(&mut store, &[], &mut out)
                 .map_err(|e| format!("main trap: {e:#}"))?;
-            decode_main_return(&out)
+            decode_main_return_typed(&mut store, &instance, &out, main_return_ty)?
         } else if let Some(start) = instance.get_func(&mut store, "_start") {
             start
                 .call(&mut store, &[], &mut [])
@@ -318,43 +344,259 @@ fn run_wasm_gc_with_host(
 }
 
 /// Decode the `Vec<Val>` returned from a wasm-gc `main` call into the
-/// JSON shape the recorder uses for `output`. Coverage today:
+/// JSON shape the recorder uses for `output`, using the AST-derived
+/// return type to drive the decode. This produces real value equality
+/// for the types the comparison can prove — no opaque markers, no
+/// false MATCH for ref returns.
 ///
-/// - empty (Unit return) → `JsonValue::Null`
-/// - `Val::I32` / `Val::I64` → `JsonValue::Int`
-/// - `Val::F32` / `Val::F64` → `JsonValue::Float`
-/// - `Val::AnyRef(None)` → `JsonValue::Null`
-/// - `Val::AnyRef(Some(_))` → `JsonValue::String("<wasm-gc:ref>")`
+/// Type coverage:
 ///
-/// The opaque `<wasm-gc:ref>` marker is deliberate: without the source
-/// type at this call site we can't know whether the ref is a string,
-/// record, sum variant, or something else. Both record and replay
-/// runs hit the same branch for ref returns, so a recording of a
-/// `main` that returns a ref still round-trips as `MATCH` on a clean
-/// re-run — the comparison just doesn't *prove* deep value equality.
-/// Programs whose `main` returns `Unit` / `Int` / `Float` (the common
-/// cases in tests and examples) get exact comparison.
+/// - `Unit` → `Null` (empty result vec)
+/// - `Int` / `Float` / `Bool` → primitive `Val` decode
+/// - `Str` → call `__rt_string_to_lm` and read LM bytes
+/// - `Result<T, E>` → struct (i32 tag, ok-payload, err-payload); tag=1
+///   marker `$ok` over decoded `T`, tag=0 marker `$err` over decoded `E`
+/// - `Option<T>` → struct (i32 tag, payload); tag=1 marker `$some` over
+///   decoded `T`, tag=0 marker `$none`
+/// - `Tuple<T1, T2, …>` → struct with positional fields; emits the
+///   `$tuple` marker the VM recorder also writes
+///
+/// Anything else (`List`, `Map`, `Vector`, `Named`, function types,
+/// `Var`, `Invalid`) returns a hard error rather than a false MATCH —
+/// the user finds out the decoder can't prove value equality, instead
+/// of a recording that always claims success.
 #[cfg(feature = "wasm")]
-fn decode_main_return(out: &[wasmtime::Val]) -> aver::replay::JsonValue {
+fn decode_main_return_typed(
+    store: &mut wasmtime::Store<RunWasmGcHost>,
+    instance: &wasmtime::Instance,
+    out: &[wasmtime::Val],
+    ty: &aver::ast::Type,
+) -> Result<aver::replay::JsonValue, String> {
+    use aver::ast::Type;
+    use aver::replay::JsonValue;
+    match (ty, out) {
+        (Type::Unit, []) | (Type::Unit, [_]) => Ok(JsonValue::Null),
+        (_, []) => Err(format!("main returns no values but type is {:?}", ty)),
+        (_, [single]) => decode_val_typed(store, instance, single, ty),
+        (Type::Tuple(types), many) if many.len() == types.len() => {
+            // Multi-value return — the wasm-gc lowering surfaces tuple
+            // results directly on the wasm value stack instead of
+            // wrapping them in a struct.
+            let mut arr = Vec::with_capacity(many.len());
+            for (v, t) in many.iter().zip(types.iter()) {
+                arr.push(decode_val_typed(store, instance, v, t)?);
+            }
+            Ok(wrap_marker("$tuple", JsonValue::Array(arr)))
+        }
+        (_, _) => Err(format!(
+            "main return shape {} values does not match type {:?}",
+            out.len(),
+            ty
+        )),
+    }
+}
+
+#[cfg(feature = "wasm")]
+fn wrap_marker(marker: &str, payload: aver::replay::JsonValue) -> aver::replay::JsonValue {
+    let mut obj = std::collections::BTreeMap::new();
+    obj.insert(marker.to_string(), payload);
+    aver::replay::JsonValue::Object(obj)
+}
+
+#[cfg(feature = "wasm")]
+fn decode_val_typed(
+    store: &mut wasmtime::Store<RunWasmGcHost>,
+    instance: &wasmtime::Instance,
+    val: &wasmtime::Val,
+    ty: &aver::ast::Type,
+) -> Result<aver::replay::JsonValue, String> {
+    use aver::ast::Type;
     use aver::replay::JsonValue;
     use wasmtime::Val;
-    match out {
-        [] => JsonValue::Null,
-        [single] => match single {
-            Val::I32(n) => JsonValue::Int(*n as i64),
-            Val::I64(n) => JsonValue::Int(*n),
-            Val::F32(bits) => JsonValue::Float(f32::from_bits(*bits) as f64),
-            Val::F64(bits) => JsonValue::Float(f64::from_bits(*bits)),
-            Val::AnyRef(None) => JsonValue::Null,
-            Val::AnyRef(Some(_)) => JsonValue::String("<wasm-gc:ref>".to_string()),
-            _ => JsonValue::Null,
+    match (ty, val) {
+        (Type::Unit, _) => Ok(JsonValue::Null),
+        (Type::Int, Val::I64(n)) => Ok(JsonValue::Int(*n)),
+        (Type::Int, Val::I32(n)) => Ok(JsonValue::Int(*n as i64)),
+        (Type::Float, Val::F64(b)) => Ok(JsonValue::Float(f64::from_bits(*b))),
+        (Type::Float, Val::F32(b)) => Ok(JsonValue::Float(f32::from_bits(*b) as f64)),
+        (Type::Bool, Val::I32(n)) => Ok(JsonValue::Bool(*n != 0)),
+        (Type::Str, Val::AnyRef(opt)) => match opt {
+            None => Ok(JsonValue::String(String::new())),
+            Some(_) => decode_string_via_export(store, instance, val),
         },
-        many => JsonValue::Array(
-            many.iter()
-                .map(|v| decode_main_return(&[v.clone()]))
-                .collect(),
+        (Type::Result(ok_ty, err_ty), Val::AnyRef(Some(_))) => {
+            decode_result_struct(store, instance, val, ok_ty, err_ty)
+        }
+        (Type::Option(inner), Val::AnyRef(Some(_))) => {
+            decode_option_struct(store, instance, val, inner)
+        }
+        (Type::Tuple(types), Val::AnyRef(Some(_))) => {
+            decode_tuple_struct(store, instance, val, types)
+        }
+        (Type::Tuple(_), Val::AnyRef(None)) => Err(
+            "main returned null tuple ref — wasm-gc tuples are non-nullable structs".to_string(),
         ),
+        // List / Map / Vector / Named / Fn / Var / Invalid: not yet
+        // implemented. Hard error keeps the comparison honest.
+        (other, _) => Err(format!(
+            "wasm-gc replay: main return type {:?} not yet supported by the value decoder",
+            other
+        )),
     }
+}
+
+/// Reuse the existing `__rt_string_to_lm` export to copy a wasm-gc
+/// String AnyRef into host bytes. Mirrors `lm_string_to_host` but
+/// takes a `Store` instead of a `Caller` (we're past the import
+/// dispatch by the time `main` returns).
+#[cfg(feature = "wasm")]
+fn decode_string_via_export(
+    store: &mut wasmtime::Store<RunWasmGcHost>,
+    instance: &wasmtime::Instance,
+    val: &wasmtime::Val,
+) -> Result<aver::replay::JsonValue, String> {
+    use aver::replay::JsonValue;
+    use wasmtime::Val;
+    let to_lm = instance
+        .get_func(&mut *store, "__rt_string_to_lm")
+        .ok_or_else(|| "missing __rt_string_to_lm export".to_string())?;
+    let memory = instance
+        .get_memory(&mut *store, "memory")
+        .ok_or_else(|| "missing memory export".to_string())?;
+    let mut out = [Val::I32(0)];
+    to_lm
+        .call(&mut *store, std::slice::from_ref(val), &mut out)
+        .map_err(|e| format!("__rt_string_to_lm trap: {e:#}"))?;
+    let len = match out[0] {
+        Val::I32(n) => n.max(0) as usize,
+        _ => 0,
+    };
+    let mut buf = vec![0u8; len];
+    if len > 0 {
+        memory
+            .read(&store, 0, &mut buf)
+            .map_err(|e| format!("memory read for string decode: {e:#}"))?;
+    }
+    Ok(JsonValue::String(
+        String::from_utf8_lossy(&buf).into_owned(),
+    ))
+}
+
+/// `Result<T, E>` is a 3-field struct in wasm-gc lowering:
+/// `(i32 tag, anyref ok, anyref err)`, tag=1 → Ok, tag=0 → Err.
+/// Decode the active payload via the matching arm type and wrap in
+/// the same `$ok`/`$err` marker the VM recorder writes, so VM and
+/// wasm-gc traces stay byte-compatible.
+#[cfg(feature = "wasm")]
+fn decode_result_struct(
+    store: &mut wasmtime::Store<RunWasmGcHost>,
+    instance: &wasmtime::Instance,
+    val: &wasmtime::Val,
+    ok_ty: &aver::ast::Type,
+    err_ty: &aver::ast::Type,
+) -> Result<aver::replay::JsonValue, String> {
+    let (tag, fields) = read_struct(store, val)?;
+    if fields.len() < 3 {
+        return Err(format!(
+            "Result struct expected 3 fields, got {}",
+            fields.len()
+        ));
+    }
+    if tag == 1 {
+        let ok = decode_val_typed(store, instance, &fields[1], ok_ty)?;
+        Ok(wrap_marker("$ok", ok))
+    } else {
+        let err = decode_val_typed(store, instance, &fields[2], err_ty)?;
+        Ok(wrap_marker("$err", err))
+    }
+}
+
+/// `Option<T>` is a 2-field struct: `(i32 tag, anyref payload)`,
+/// tag=1 → Some, tag=0 → None. The recorder marker shape is
+/// `{"$some": <inner>}` / `{"$none": true}`, matching the VM trace.
+#[cfg(feature = "wasm")]
+fn decode_option_struct(
+    store: &mut wasmtime::Store<RunWasmGcHost>,
+    instance: &wasmtime::Instance,
+    val: &wasmtime::Val,
+    inner_ty: &aver::ast::Type,
+) -> Result<aver::replay::JsonValue, String> {
+    use aver::replay::JsonValue;
+    let (tag, fields) = read_struct(store, val)?;
+    if fields.len() < 2 {
+        return Err(format!(
+            "Option struct expected 2 fields, got {}",
+            fields.len()
+        ));
+    }
+    if tag == 1 {
+        let inner = decode_val_typed(store, instance, &fields[1], inner_ty)?;
+        Ok(wrap_marker("$some", inner))
+    } else {
+        Ok(wrap_marker("$none", JsonValue::Bool(true)))
+    }
+}
+
+/// Tuple ref: positional struct, one field per element type.
+#[cfg(feature = "wasm")]
+fn decode_tuple_struct(
+    store: &mut wasmtime::Store<RunWasmGcHost>,
+    instance: &wasmtime::Instance,
+    val: &wasmtime::Val,
+    types: &[aver::ast::Type],
+) -> Result<aver::replay::JsonValue, String> {
+    use aver::replay::JsonValue;
+    let (_tag, fields) = read_struct(store, val)?;
+    if fields.len() < types.len() {
+        return Err(format!(
+            "Tuple struct expected {} fields, got {}",
+            types.len(),
+            fields.len()
+        ));
+    }
+    let mut arr = Vec::with_capacity(types.len());
+    for (i, t) in types.iter().enumerate() {
+        arr.push(decode_val_typed(store, instance, &fields[i], t)?);
+    }
+    Ok(wrap_marker("$tuple", JsonValue::Array(arr)))
+}
+
+/// Read all fields of a wasm-gc struct via the wasmtime GC API.
+/// Returns `(tag, fields)` where `tag` is the first field if it's an
+/// i32 (Result/Option/sum-variant tag), else 0. Fields are returned
+/// in source order so callers can index them.
+#[cfg(feature = "wasm")]
+fn read_struct(
+    store: &mut wasmtime::Store<RunWasmGcHost>,
+    val: &wasmtime::Val,
+) -> Result<(i32, Vec<wasmtime::Val>), String> {
+    use wasmtime::Val;
+    let any_ref = match val {
+        Val::AnyRef(Some(r)) => *r,
+        Val::AnyRef(None) => return Err("expected struct ref, got null".to_string()),
+        other => return Err(format!("expected AnyRef, got {:?}", other)),
+    };
+    let struct_ref = any_ref
+        .as_struct(&*store)
+        .map_err(|e| format!("anyref → struct cast: {e:#}"))?
+        .ok_or_else(|| "anyref is not a struct".to_string())?;
+    let ty = struct_ref
+        .ty(&*store)
+        .map_err(|e| format!("struct type lookup: {e:#}"))?;
+    let n = ty.fields().len();
+    let mut fields = Vec::with_capacity(n);
+    for i in 0..n {
+        fields.push(
+            struct_ref
+                .field(&mut *store, i)
+                .map_err(|e| format!("struct field {i}: {e:#}"))?,
+        );
+    }
+    let tag = match fields.first() {
+        Some(Val::I32(n)) => *n,
+        _ => 0,
+    };
+    Ok((tag, fields))
 }
 
 /// Append one entry to the trace iff recording is on. Args + outcome
