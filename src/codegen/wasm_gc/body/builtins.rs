@@ -53,13 +53,14 @@ pub(super) fn emit_dotted_builtin(
     }
 
     // Registered effect import? Same shape — push args, push the
-    // current fn name (as a String literal) so the host can stamp
-    // `caller_fn` on the recorded effect, then call by idx.
+    // current fn name via `global.get` (one immutable global per fn
+    // name, init by `array.new_data` at instantiation) so the host
+    // can stamp `caller_fn` on the recorded effect, then call by idx.
     if let Some(&wasm_idx) = ctx.fn_map.effects.get(&dotted) {
         for arg in args {
             emit_expr(func, arg, slots, ctx)?;
         }
-        super::emit::emit_string_literal_bytes(func, ctx.self_fn_name.as_bytes(), ctx)?;
+        super::emit::emit_caller_fn_global(func, ctx)?;
         func.instruction(&Instruction::Call(wasm_idx));
         return Ok(());
     }
