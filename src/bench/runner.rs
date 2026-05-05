@@ -716,22 +716,6 @@ fn run_rust(manifest: &Manifest) -> Result<BenchReport, RunError> {
         )));
     }
 
-    let run_one = |bin: &std::path::Path, args: &[String]| -> Result<usize, RunError> {
-        let output = Command::new(bin)
-            .args(args)
-            .output()
-            .map_err(|e| RunError::Runtime(format!("spawn {}: {}", bin.display(), e)))?;
-        if !output.status.success() {
-            return Err(RunError::Runtime(format!(
-                "{} exited with {}: {}",
-                bin.display(),
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-        Ok(output.stdout.len())
-    };
-
     // In-process bench loop: one spawn, the generated binary calls
     // `aver_generated::entry::main` N times under `AVER_BENCH_ITER` and
     // emits one `__bench_iter_ms__: <ms>` line per iter on stderr. The

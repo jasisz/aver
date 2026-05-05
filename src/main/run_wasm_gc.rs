@@ -20,16 +20,111 @@ use super::shared::{parse_file, read_file, resolve_module_root_for_entry};
 #[cfg(feature = "wasm")]
 use super::commands::{flatten_multimodule, load_compile_deps};
 
+/// What the recorder/replayer should do for this run.
+///
+/// `Replaying` carries a heap-allocated `SessionRecording` (kilobytes
+/// of effect trace) so the enum stays small enough to pass by value
+/// through the run pipeline without inflating every `Normal` /
+/// `Recording` call to recording size — clippy's `large_enum_variant`
+/// would otherwise flag the size mismatch.
+pub(super) enum EffectMode<'a> {
+    /// Production path — real effects run, no recording, no replay.
+    Normal,
+    /// `aver run --wasm-gc --record <dir>` — real effects run, every
+    /// call appended to the trace, persisted to `<dir>/<request>.json`.
+    Recording(#[allow(dead_code)] &'a str),
+    /// `aver replay <file> --wasm-gc` — effects bypass real I/O, values
+    /// come from the trace via `EffectReplayState::replay_effect`.
+    /// `bool` is `--check-args`: when true the recorded args must match
+    /// the args the program supplies, else only effect type + sequence.
+    #[cfg(feature = "wasm")]
+    #[allow(dead_code)]
+    Replaying(Box<aver::replay::SessionRecording>, bool),
+    #[cfg(not(feature = "wasm"))]
+    #[allow(dead_code)]
+    Replaying((), bool),
+}
+
 pub(super) fn cmd_run_wasm_gc(
     file: &str,
     module_root_override: Option<&str>,
     program_args: Vec<String>,
+    record_dir: Option<&str>,
+    entry_expr: Option<&str>,
 ) {
+    let mode = match record_dir {
+        Some(dir) => EffectMode::Recording(dir),
+        None => EffectMode::Normal,
+    };
+    let entry_info = match entry_expr {
+        Some(src) => match super::shared::parse_call_expression(src) {
+            Ok(info) => Some(info),
+            Err(e) => {
+                eprintln!("{}", format!("--expr: {}", e).red());
+                process::exit(1);
+            }
+        },
+        None => None,
+    };
+    cmd_run_wasm_gc_with_mode(file, module_root_override, program_args, mode, entry_info);
+}
+
+/// CLI wrapper: pretty-prints any failure (parse / typecheck /
+/// codegen / runtime) and exits 1. Internal callers that need to
+/// keep iterating (`aver replay <dir>`) should use
+/// `try_run_wasm_gc` directly and inspect the `Result`.
+pub(super) fn cmd_run_wasm_gc_with_mode(
+    file: &str,
+    module_root_override: Option<&str>,
+    program_args: Vec<String>,
+    mode: EffectMode<'_>,
+    entry_info: Option<(String, Vec<aver::value::Value>)>,
+) {
+    if let Err(e) = try_run_wasm_gc(file, module_root_override, program_args, mode, entry_info) {
+        eprintln!("{}", e.red());
+        process::exit(1);
+    }
+}
+
+/// What one `try_run_wasm_gc` invocation actually produced. Carries
+/// just the fields the replay path consumes — the decoded entry-fn
+/// return value (compared against `recording.output`), how many
+/// effects the program consumed vs how many the recording held, and
+/// the soft-warning count of `replay_effect` calls whose args
+/// diverged from the recording without `--check-args`. The
+/// unconsumed-trailer check is enforced inside `try_run_wasm_gc`
+/// itself by calling `EffectReplayState::ensure_replay_consumed` —
+/// callers see the failure as an `Err(String)`, not as a derived
+/// field here.
+pub(super) struct RunOutcome {
+    #[allow(dead_code)]
+    pub output: aver::replay::JsonValue,
+    #[allow(dead_code)]
+    pub effects_consumed: usize,
+    #[allow(dead_code)]
+    pub effects_total: usize,
+    #[allow(dead_code)]
+    pub args_diff_count: usize,
+}
+
+/// Pure `Result`-returning entry point for the wasm-gc executor.
+/// Compiles, instantiates, runs the entry fn, persists the trace
+/// (record mode) or asserts full trace consumption (replay mode),
+/// and returns progress info — all without `process::exit`. Every
+/// pipeline stage (parse, typecheck, codegen, instantiate, trap,
+/// replay failure) maps onto a single `Err(String)` so batch
+/// callers can keep going on the next file.
+pub(super) fn try_run_wasm_gc(
+    file: &str,
+    module_root_override: Option<&str>,
+    program_args: Vec<String>,
+    mode: EffectMode<'_>,
+    entry_info: Option<(String, Vec<aver::value::Value>)>,
+) -> Result<RunOutcome, String> {
     #[cfg(not(feature = "wasm"))]
     {
-        let _ = (file, module_root_override, program_args);
-        eprintln!("{}", "WASM requires --features wasm".red());
-        process::exit(1);
+        let _ = (file, module_root_override, program_args, mode, entry_info);
+        Err("WASM requires --features wasm".to_string())
     }
 
     #[cfg(feature = "wasm")]
@@ -38,20 +133,8 @@ pub(super) fn cmd_run_wasm_gc(
         use aver::ir::{NeutralAllocPolicy, PipelineConfig, TypecheckMode};
 
         let module_root = resolve_module_root_for_entry(file, module_root_override);
-        let source = match read_file(file) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("{}", e.red());
-                process::exit(1);
-            }
-        };
-        let mut items = match parse_file(&source) {
-            Ok(i) => i,
-            Err(e) => {
-                eprintln!("{}", e.red());
-                process::exit(1);
-            }
-        };
+        let source = read_file(file)?;
+        let mut items = parse_file(&source)?;
         let neutral_policy = NeutralAllocPolicy;
         let result = aver::ir::pipeline::run(
             &mut items,
@@ -68,8 +151,7 @@ pub(super) fn cmd_run_wasm_gc(
         if let Some(tc) = &result.typecheck
             && !tc.errors.is_empty()
         {
-            eprintln!("{}", shared::format_type_errors(&tc.errors).red());
-            process::exit(1);
+            return Err(shared::format_type_errors(&tc.errors));
         }
         let dep_modules = load_compile_deps(&items, &module_root, false, false);
         flatten_multimodule(&mut items, &dep_modules);
@@ -81,28 +163,68 @@ pub(super) fn cmd_run_wasm_gc(
         // validator with a slot-type mismatch.
         aver::ir::pipeline::resolve(&mut items);
 
-        let bytes = match wasm_gc::compile_to_wasm_gc(&items, result.analysis.as_ref()) {
-            Ok(b) => b,
-            Err(e) => {
-                eprintln!("{}", format!("{e}").red());
-                process::exit(1);
-            }
-        };
+        let bytes = wasm_gc::compile_to_wasm_gc(&items, result.analysis.as_ref())
+            .map_err(|e| format!("{e}"))?;
 
-        if let Err(e) = run_wasm_gc_with_host(&bytes, &program_args) {
-            eprintln!("{}", format!("WASM execution error: {}", e).red());
-            process::exit(1);
-        }
+        let entry_fn_name: &str = entry_info
+            .as_ref()
+            .map(|(n, _)| n.as_str())
+            .unwrap_or("main");
+        let return_ty = find_fn_return_type(&items, entry_fn_name);
+        run_wasm_gc_with_host(
+            &bytes,
+            &program_args,
+            &mode,
+            file,
+            &module_root,
+            entry_info.as_ref(),
+            &return_ty,
+        )
+        .map_err(|e| format!("WASM execution error: {}", e))
     }
 }
 
 #[cfg(feature = "wasm")]
-struct RunWasmGcHost {
-    program_args: Vec<String>,
+pub(super) struct RunWasmGcHost {
+    pub(super) program_args: Vec<String>,
+    /// Recording state. `Some` only when the user passed `--record <dir>`;
+    /// every effect call routes through `record_effect` before returning,
+    /// so the resulting trace is identical in shape to the VM recorder's
+    /// output. `None` is the production path — zero overhead beyond the
+    /// `Option::is_some` check per effect call.
+    pub(super) recorder: Option<aver::replay::EffectReplayState>,
+}
+
+/// Walk the parsed AST for a `fn <name>(...) -> T` definition and
+/// return `T` as a structured `Type`. Falls back to `Type::Unit` when
+/// the function isn't declared at module level (e.g. `_start`-only
+/// shapes, or a user-supplied entry that doesn't match anything).
+/// Multi-module loading appends dep fns to `items`, so we filter on
+/// name only.
+#[cfg(feature = "wasm")]
+fn find_fn_return_type(items: &[aver::ast::TopLevel], name: &str) -> aver::ast::Type {
+    use aver::ast::TopLevel;
+    for item in items {
+        if let TopLevel::FnDef(fn_def) = item
+            && fn_def.name == name
+        {
+            return aver::types::parse_type_str(&fn_def.return_type);
+        }
+    }
+    aver::ast::Type::Unit
 }
 
 #[cfg(feature = "wasm")]
-fn run_wasm_gc_with_host(wasm_bytes: &[u8], program_args: &[String]) -> Result<(), String> {
+#[allow(clippy::too_many_arguments)]
+fn run_wasm_gc_with_host(
+    wasm_bytes: &[u8],
+    program_args: &[String],
+    mode: &EffectMode<'_>,
+    source_file: &str,
+    module_root: &str,
+    entry_info: Option<&(String, Vec<aver::value::Value>)>,
+    return_ty: &aver::ast::Type,
+) -> Result<RunOutcome, String> {
     use wasmtime::*;
 
     let mut config = Config::new();
@@ -117,10 +239,24 @@ fn run_wasm_gc_with_host(wasm_bytes: &[u8], program_args: &[String]) -> Result<(
     let engine = Engine::new(&config).map_err(|e| format!("engine: {e:#}"))?;
     let module = Module::new(&engine, wasm_bytes).map_err(|e| format!("module: {e:#}"))?;
 
+    let mut recorder = match mode {
+        EffectMode::Normal => None,
+        EffectMode::Recording(_) => {
+            let mut r = aver::replay::EffectReplayState::default();
+            r.start_recording();
+            Some(r)
+        }
+        EffectMode::Replaying(recording, check_args) => {
+            let mut r = aver::replay::EffectReplayState::default();
+            r.start_replay(recording.effects.clone(), *check_args);
+            Some(r)
+        }
+    };
     let mut store = Store::new(
         &engine,
         RunWasmGcHost {
             program_args: program_args.to_vec(),
+            recorder: recorder.take(),
         },
     );
     let mut linker: Linker<RunWasmGcHost> = Linker::new(&engine);
@@ -152,7 +288,7 @@ fn run_wasm_gc_with_host(wasm_bytes: &[u8], program_args: &[String]) -> Result<(
                       results: &mut [Val]|
                       -> Result<(), wasmtime::Error> {
                     if module_name_for_closure == "aver"
-                        && dispatch_aver_import(
+                        && imports::dispatch_aver_import(
                             &field_name_for_closure,
                             &mut caller,
                             params,
@@ -181,1030 +317,134 @@ fn run_wasm_gc_with_host(wasm_bytes: &[u8], program_args: &[String]) -> Result<(
         .instantiate(&mut store, &module)
         .map_err(|e| format!("instantiate: {e:#}"))?;
 
-    if let Some(start) = instance.get_func(&mut store, "_start") {
-        start
-            .call(&mut store, &[], &mut [])
-            .map_err(|e| format!("_start trap: {e:#}"))?;
+    // Two entry shapes:
+    //
+    // - `entry_info = Some((fn_name, args))` — `aver run --wasm-gc -e
+    //   'add(7, 35)'` or replay of an `--expr` recording. Look the
+    //   named export up directly, convert the literal `Value` args to
+    //   `wasmtime::Val`, decode the return through the typed decoder.
+    // - `entry_info = None` — the default whole-program flow. Prefer
+    //   `main` over `_start` when both are exported. The wasm-gc
+    //   codegen synthesises `_start` as a thin `call $main; drop`
+    //   wrapper (void return), so calling it would discard the user
+    //   `main`'s return value — and that value is what the recorder
+    //   persists as `output` and what the replayer compares against.
+    //   `_start` remains the fallback for WASI / synth-handler shapes
+    //   where there is no Aver-level `main` export.
+    let main_output: aver::replay::JsonValue = if let Some((fn_name, args)) = entry_info {
+        let func = instance.get_func(&mut store, fn_name).ok_or_else(|| {
+            format!(
+                "entry function '{}' not exported by wasm-gc module",
+                fn_name
+            )
+        })?;
+        let arg_vals = decode::encode_entry_args_for_wasm_gc(&mut store, &instance, args)?;
+        let n = func.ty(&store).results().len();
+        let mut out: Vec<Val> = (0..n).map(|_| Val::I32(0)).collect();
+        func.call(&mut store, &arg_vals, &mut out)
+            .map_err(|e| format!("entry '{}' trap: {e:#}", fn_name))?;
+        decode::decode_main_return_typed(&mut store, &instance, &out, return_ty)?
     } else if let Some(main) = instance.get_func(&mut store, "main") {
         let n = main.ty(&store).results().len();
         let mut out: Vec<Val> = (0..n).map(|_| Val::I32(0)).collect();
         main.call(&mut store, &[], &mut out)
             .map_err(|e| format!("main trap: {e:#}"))?;
+        decode::decode_main_return_typed(&mut store, &instance, &out, return_ty)?
+    } else if let Some(start) = instance.get_func(&mut store, "_start") {
+        start
+            .call(&mut store, &[], &mut [])
+            .map_err(|e| format!("_start trap: {e:#}"))?;
+        aver::replay::JsonValue::Null
     } else {
         return Err("module exports neither _start nor main".into());
-    }
-    Ok(())
-}
-
-/// Per-effect-name dispatch — returns true if we provided a real
-/// implementation, false if the caller should fall back to the
-/// typed-zero stub.
-#[cfg(feature = "wasm")]
-fn dispatch_aver_import(
-    name: &str,
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    params: &[wasmtime::Val],
-    results: &mut [wasmtime::Val],
-) -> Result<bool, wasmtime::Error> {
-    use wasmtime::Val;
-    match name {
-        "args_len" => {
-            results[0] = Val::I64(caller.data().program_args.len() as i64);
-            Ok(true)
-        }
-        "args_get" => {
-            let idx = match params[0] {
-                Val::I64(n) => n,
-                _ => 0,
-            };
-            let text = caller
-                .data()
-                .program_args
-                .get(idx.max(0) as usize)
-                .cloned()
-                .unwrap_or_default();
-            let r = lm_string_from_host(caller, &text)?;
-            results[0] = Val::AnyRef(r);
-            Ok(true)
-        }
-        "console_print" => host_print(caller, params, true).map(|()| true),
-        "console_error" | "console_warn" => host_print(caller, params, false).map(|()| true),
-        "console_read_line" => {
-            // Read one line from stdin. EOF / IO error → Result.Err("EOF").
-            // Trailing '\n' / '\r\n' is stripped to match VM semantics.
-            use std::io::BufRead;
-            let mut line = String::new();
-            let read = std::io::stdin().lock().read_line(&mut line);
-            let result_ref = match read {
-                Ok(0) | Err(_) => host_result_err_string(caller, "EOF")?,
-                Ok(_) => {
-                    while line.ends_with('\n') || line.ends_with('\r') {
-                        line.pop();
-                    }
-                    host_result_ok_string(caller, &line)?
-                }
-            };
-            results[0] = Val::AnyRef(result_ref);
-            Ok(true)
-        }
-        "time_now" => {
-            let text = aver_rt::time_now();
-            let r = lm_string_from_host(caller, &text)?;
-            results[0] = Val::AnyRef(r);
-            Ok(true)
-        }
-        "time_unix_ms" => {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            let ms = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(0);
-            results[0] = Val::I64(ms);
-            Ok(true)
-        }
-        "time_sleep" => {
-            if let Some(Val::I64(ms)) = params.first() {
-                std::thread::sleep(std::time::Duration::from_millis(ms.max(&0).unsigned_abs()));
-            }
-            Ok(true)
-        }
-        "random_int" => {
-            let (min, max) = match (params.first(), params.get(1)) {
-                (Some(Val::I64(a)), Some(Val::I64(b))) => (*a, *b),
-                _ => (0, 0),
-            };
-            // aver_rt::random_int returns Result, but the wasm import
-            // contract is a plain i64. The host falls back to `min` on
-            // an inverted range — same surface the VM exposes.
-            let v = aver_rt::random::random_int(min, max).unwrap_or(min);
-            results[0] = Val::I64(v);
-            Ok(true)
-        }
-        "random_float" => {
-            results[0] = Val::F64(aver_rt::random::random_float().to_bits());
-            Ok(true)
-        }
-        "float_sin" => {
-            if let Some(Val::F64(b)) = params.first() {
-                results[0] = Val::F64(f64::from_bits(*b).sin().to_bits());
-            }
-            Ok(true)
-        }
-        "float_cos" => {
-            if let Some(Val::F64(b)) = params.first() {
-                results[0] = Val::F64(f64::from_bits(*b).cos().to_bits());
-            }
-            Ok(true)
-        }
-        "float_atan2" => {
-            if let (Some(Val::F64(y)), Some(Val::F64(x))) = (params.first(), params.get(1)) {
-                results[0] = Val::F64(f64::from_bits(*y).atan2(f64::from_bits(*x)).to_bits());
-            }
-            Ok(true)
-        }
-        "float_pow" => {
-            if let (Some(Val::F64(b)), Some(Val::F64(e))) = (params.first(), params.get(1)) {
-                results[0] = Val::F64(f64::from_bits(*b).powf(f64::from_bits(*e)).to_bits());
-            }
-            Ok(true)
-        }
-        "terminal_enable_raw_mode" => {
-            let _ = aver_rt::terminal_enable_raw_mode();
-            Ok(true)
-        }
-        "terminal_disable_raw_mode" => {
-            let _ = aver_rt::terminal_disable_raw_mode();
-            Ok(true)
-        }
-        "terminal_clear" => {
-            let _ = aver_rt::terminal_clear();
-            Ok(true)
-        }
-        "terminal_move_to" => {
-            let x = params.first().and_then(val_i64).unwrap_or(0);
-            let y = params.get(1).and_then(val_i64).unwrap_or(0);
-            let _ = aver_rt::terminal_move_to(x, y);
-            Ok(true)
-        }
-        "terminal_print" => {
-            // Same shape as console_print (any_ref payload through the
-            // LM bridge), but writes via aver_rt::terminal_print so it
-            // respects raw-mode without injecting a trailing newline.
-            let text = lm_string_to_host(caller, params.first())?;
-            if let Some(t) = text {
-                let _ = aver_rt::terminal_print(&t);
-            }
-            Ok(true)
-        }
-        "terminal_set_color" => {
-            let text = lm_string_to_host(caller, params.first())?;
-            if let Some(t) = text {
-                let _ = aver_rt::terminal_set_color(&t);
-            }
-            Ok(true)
-        }
-        "terminal_reset_color" => {
-            let _ = aver_rt::terminal_reset_color();
-            Ok(true)
-        }
-        "terminal_hide_cursor" => {
-            let _ = aver_rt::terminal_hide_cursor();
-            Ok(true)
-        }
-        "terminal_show_cursor" => {
-            let _ = aver_rt::terminal_show_cursor();
-            Ok(true)
-        }
-        "terminal_flush" => {
-            let _ = aver_rt::terminal_flush();
-            Ok(true)
-        }
-        "terminal_read_key" => {
-            let key = aver_rt::terminal_read_key();
-            let opt_ref = match key {
-                Some(text) => host_option_string_some(caller, &text)?,
-                None => host_option_string_none(caller)?,
-            };
-            results[0] = Val::AnyRef(opt_ref);
-            Ok(true)
-        }
-        "terminal_size" => {
-            let (w, h) = aver_rt::terminal_size().unwrap_or((80, 24));
-            let rec_ref = host_terminal_size_make(caller, w, h)?;
-            results[0] = Val::AnyRef(rec_ref);
-            Ok(true)
-        }
-        "disk_read_text" => {
-            let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-            let result_ref = match aver_rt::read_text(&path) {
-                Ok(text) => host_result_ok_string(caller, &text)?,
-                Err(e) => host_result_err_string(caller, &e)?,
-            };
-            results[0] = Val::AnyRef(result_ref);
-            Ok(true)
-        }
-        "disk_write_text" => {
-            let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-            let content = lm_string_to_host(caller, params.get(1))?.unwrap_or_default();
-            let result_ref = match aver_rt::write_text(&path, &content) {
-                Ok(()) => host_result_ok_unit(caller)?,
-                Err(e) => host_result_err_unit_string(caller, &e)?,
-            };
-            results[0] = Val::AnyRef(result_ref);
-            Ok(true)
-        }
-        "disk_append_text" => {
-            let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-            let content = lm_string_to_host(caller, params.get(1))?.unwrap_or_default();
-            let result_ref = match aver_rt::append_text(&path, &content) {
-                Ok(()) => host_result_ok_unit(caller)?,
-                Err(e) => host_result_err_unit_string(caller, &e)?,
-            };
-            results[0] = Val::AnyRef(result_ref);
-            Ok(true)
-        }
-        "disk_exists" => {
-            let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-            results[0] = Val::I32(if aver_rt::path_exists(&path) { 1 } else { 0 });
-            Ok(true)
-        }
-        "disk_delete" => {
-            let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-            let result_ref = match aver_rt::delete_file(&path) {
-                Ok(()) => host_result_ok_unit(caller)?,
-                Err(e) => host_result_err_unit_string(caller, &e)?,
-            };
-            results[0] = Val::AnyRef(result_ref);
-            Ok(true)
-        }
-        "disk_delete_dir" => {
-            let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-            let result_ref = match aver_rt::delete_dir(&path) {
-                Ok(()) => host_result_ok_unit(caller)?,
-                Err(e) => host_result_err_unit_string(caller, &e)?,
-            };
-            results[0] = Val::AnyRef(result_ref);
-            Ok(true)
-        }
-        "disk_list_dir" => {
-            let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-            let result_ref = match aver_rt::list_dir(&path) {
-                Ok(list) => {
-                    let names: Vec<String> = list.iter().cloned().collect();
-                    host_result_ok_list_string(caller, &names)?
-                }
-                Err(e) => host_result_err_list_string(caller, &e)?,
-            };
-            results[0] = Val::AnyRef(result_ref);
-            Ok(true)
-        }
-        "env_get" => {
-            let name = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-            let value = aver_rt::env_get(&name).unwrap_or_default();
-            let r = lm_string_from_host(caller, &value)?;
-            results[0] = Val::AnyRef(r);
-            Ok(true)
-        }
-        "env_set" => {
-            let name = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-            let value = lm_string_to_host(caller, params.get(1))?.unwrap_or_default();
-            let _ = aver_rt::env_set(&name, &value);
-            Ok(true)
-        }
-        "disk_make_dir" => {
-            let path = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-            let result_ref = match aver_rt::make_dir(&path) {
-                Ok(()) => host_result_ok_unit(caller)?,
-                Err(e) => host_result_err_unit_string(caller, &e)?,
-            };
-            results[0] = Val::AnyRef(result_ref);
-            Ok(true)
-        }
-        "tcp_connect" => {
-            let host = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-            let port = params.get(1).and_then(val_i64).unwrap_or(0);
-            let result_ref = match aver_rt::tcp::connect(&host, port) {
-                Ok(conn) => {
-                    let id_ref = lm_string_from_host(caller, conn.id.as_ref())?;
-                    let host_ref = lm_string_from_host(caller, conn.host.as_ref())?;
-                    let rec_ref = host_tcp_connection_make(caller, id_ref, host_ref, conn.port)?;
-                    host_result_tcp_connection_ok(caller, rec_ref)?
-                }
-                Err(e) => host_result_tcp_connection_err(caller, &e)?,
-            };
-            results[0] = Val::AnyRef(result_ref);
-            Ok(true)
-        }
-        "tcp_write_line" => {
-            let id = host_tcp_connection_id(caller, params.first())?.unwrap_or_default();
-            let line = lm_string_to_host(caller, params.get(1))?.unwrap_or_default();
-            let conn = aver_rt::TcpConnection {
-                id: aver_rt::AverStr::from(id.as_str()),
-                host: aver_rt::AverStr::from(""),
-                port: 0,
-            };
-            let result_ref = match aver_rt::tcp::write_line(&conn, &line) {
-                Ok(()) => host_result_ok_unit(caller)?,
-                Err(e) => host_result_err_unit_string(caller, &e)?,
-            };
-            results[0] = Val::AnyRef(result_ref);
-            Ok(true)
-        }
-        "tcp_read_line" => {
-            let id = host_tcp_connection_id(caller, params.first())?.unwrap_or_default();
-            let conn = aver_rt::TcpConnection {
-                id: aver_rt::AverStr::from(id.as_str()),
-                host: aver_rt::AverStr::from(""),
-                port: 0,
-            };
-            let result_ref = match aver_rt::tcp::read_line(&conn) {
-                Ok(text) => host_result_ok_string(caller, &text)?,
-                Err(e) => host_result_err_string(caller, &e)?,
-            };
-            results[0] = Val::AnyRef(result_ref);
-            Ok(true)
-        }
-        "tcp_close" => {
-            let id = host_tcp_connection_id(caller, params.first())?.unwrap_or_default();
-            let conn = aver_rt::TcpConnection {
-                id: aver_rt::AverStr::from(id.as_str()),
-                host: aver_rt::AverStr::from(""),
-                port: 0,
-            };
-            let result_ref = match aver_rt::tcp::close(&conn) {
-                Ok(()) => host_result_ok_unit(caller)?,
-                Err(e) => host_result_err_unit_string(caller, &e)?,
-            };
-            results[0] = Val::AnyRef(result_ref);
-            Ok(true)
-        }
-        "tcp_send" => {
-            let host = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-            let port = params.get(1).and_then(val_i64).unwrap_or(0);
-            let msg = lm_string_to_host(caller, params.get(2))?.unwrap_or_default();
-            let result_ref = match aver_rt::tcp::send(&host, port, &msg) {
-                Ok(text) => host_result_ok_string(caller, &text)?,
-                Err(e) => host_result_err_string(caller, &e)?,
-            };
-            results[0] = Val::AnyRef(result_ref);
-            Ok(true)
-        }
-        "tcp_ping" => {
-            let host = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-            let port = params.get(1).and_then(val_i64).unwrap_or(0);
-            let result_ref = match aver_rt::tcp::ping(&host, port) {
-                Ok(()) => host_result_ok_unit(caller)?,
-                Err(e) => host_result_err_unit_string(caller, &e)?,
-            };
-            results[0] = Val::AnyRef(result_ref);
-            Ok(true)
-        }
-        "http_get" => http_simple_dispatch(caller, params, results, HttpVerb::Get),
-        "http_head" => http_simple_dispatch(caller, params, results, HttpVerb::Head),
-        "http_delete" => http_simple_dispatch(caller, params, results, HttpVerb::Delete),
-        "http_post" => http_body_dispatch(caller, params, results, HttpVerb::Post),
-        "http_put" => http_body_dispatch(caller, params, results, HttpVerb::Put),
-        "http_patch" => http_body_dispatch(caller, params, results, HttpVerb::Patch),
-        _ => Ok(false),
-    }
-}
-
-#[cfg(feature = "wasm")]
-#[derive(Clone, Copy)]
-enum HttpVerb {
-    Get,
-    Head,
-    Delete,
-    Post,
-    Put,
-    Patch,
-}
-
-#[cfg(feature = "wasm")]
-fn http_simple_dispatch(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    params: &[wasmtime::Val],
-    results: &mut [wasmtime::Val],
-    verb: HttpVerb,
-) -> Result<bool, wasmtime::Error> {
-    use wasmtime::Val;
-    let url = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-    let outcome = match verb {
-        HttpVerb::Get => aver_rt::http::get(&url),
-        HttpVerb::Head => aver_rt::http::head(&url),
-        HttpVerb::Delete => aver_rt::http::delete(&url),
-        _ => unreachable!(),
     };
-    let result_ref = http_outcome_to_result(caller, outcome)?;
-    results[0] = Val::AnyRef(result_ref);
-    Ok(true)
-}
 
-#[cfg(feature = "wasm")]
-fn http_body_dispatch(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    params: &[wasmtime::Val],
-    results: &mut [wasmtime::Val],
-    verb: HttpVerb,
-) -> Result<bool, wasmtime::Error> {
-    use wasmtime::Val;
-    let url = lm_string_to_host(caller, params.first())?.unwrap_or_default();
-    let body = lm_string_to_host(caller, params.get(1))?.unwrap_or_default();
-    let content_type = lm_string_to_host(caller, params.get(2))?.unwrap_or_default();
-    // Headers map (params[3]) is opaque to us today — aver_rt::http::*
-    // takes empty headers; the user's map crosses but the host doesn't
-    // unpack it yet. Verbs whose status / body we report back are still
-    // useful even without forwarding extra request headers, and the
-    // common Authorization-via-URL or body-encoded payload paths work.
-    let _ = params.get(3);
-    let outcome = match verb {
-        HttpVerb::Post => aver_rt::http::post(&url, &body, &content_type, &Default::default()),
-        HttpVerb::Put => aver_rt::http::put(&url, &body, &content_type, &Default::default()),
-        HttpVerb::Patch => aver_rt::http::patch(&url, &body, &content_type, &Default::default()),
-        _ => unreachable!(),
-    };
-    let result_ref = http_outcome_to_result(caller, outcome)?;
-    results[0] = Val::AnyRef(result_ref);
-    Ok(true)
-}
-
-#[cfg(feature = "wasm")]
-fn http_outcome_to_result(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    outcome: Result<aver_rt::HttpResponse, String>,
-) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
-    match outcome {
-        Ok(resp) => {
-            let body_ref = lm_string_from_host(caller, resp.body.as_ref())?;
-            let headers_ref = host_map_string_list_string_empty(caller)?;
-            let rec_ref = host_http_response_make(caller, resp.status, body_ref, headers_ref)?;
-            host_result_http_response_ok(caller, rec_ref)
+    // Snapshot replay/record progress + arg-diff count from the
+    // recorder before any further consumption. We need these for
+    // `RunOutcome` regardless of whether we also persist a trace
+    // below (record path) or surface the values to the replay
+    // caller (replay path).
+    let (effects_consumed, effects_total, args_diff_count) = match store.data().recorder.as_ref() {
+        Some(r) if r.mode() == aver::replay::EffectReplayMode::Replay => {
+            let (consumed, total) = r.replay_progress();
+            (consumed, total, r.args_diff_count())
         }
-        Err(e) => host_result_http_response_err(caller, &e),
-    }
-}
+        Some(r) if r.mode() == aver::replay::EffectReplayMode::Record => {
+            let n = r.recorded_effects().len();
+            (n, n, 0)
+        }
+        _ => (0, 0, 0),
+    };
 
-/// Decode an `i64` param without panicking if it's a different val kind.
-#[cfg(feature = "wasm")]
-fn val_i64(v: &wasmtime::Val) -> Option<i64> {
-    match v {
-        wasmtime::Val::I64(n) => Some(*n),
-        _ => None,
-    }
-}
-
-/// Print one Aver string to stdout/stderr via the LM transport bridge.
-#[cfg(feature = "wasm")]
-fn host_print(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    params: &[wasmtime::Val],
-    to_stdout: bool,
-) -> Result<(), wasmtime::Error> {
-    use wasmtime::Val;
-    let any_ref = match params.first() {
-        Some(Val::AnyRef(r)) => *r,
-        _ => return Ok(()),
-    };
-    let Some(any_ref) = any_ref else {
-        return Ok(());
-    };
-    let to_lm = caller
-        .get_export("__rt_string_to_lm")
-        .and_then(|e| e.into_func());
-    let memory = caller.get_export("memory").and_then(|e| e.into_memory());
-    let (Some(to_lm), Some(memory)) = (to_lm, memory) else {
-        return Ok(());
-    };
-    let mut out = [Val::I32(0)];
-    if to_lm
-        .call(&mut *caller, &[Val::AnyRef(Some(any_ref))], &mut out)
-        .is_ok()
+    // In replay mode, fail if the program didn't consume the whole
+    // trace. A prefix-match with the recorded `output` would
+    // otherwise pass as MATCH even though the original run produced
+    // strictly more effects than this re-run did. Mirrors what the
+    // VM replayer does with `machine.ensure_replay_consumed()`.
+    if matches!(mode, EffectMode::Replaying(_, _))
+        && let Some(r) = store.data().recorder.as_ref()
+        && let Err(e) = r.ensure_replay_consumed()
     {
-        let len = match out[0] {
-            Val::I32(n) => n,
-            _ => 0,
+        return Err(format!("replay incomplete: {:?}", e));
+    }
+
+    // Persist the trace. Same JSON shape the VM recorder writes, so
+    // existing `aver replay <file>` consumers (CLI, tests, agent
+    // tooling) handle wasm-gc traces identically.
+    if let EffectMode::Recording(dir) = mode
+        && let Some(mut rec) = store.data_mut().recorder.take()
+    {
+        let request_id = super::commands::generate_request_id();
+        let timestamp = super::commands::generate_timestamp();
+        let (record_program_file, record_module_root) =
+            super::commands::recording_paths(source_file, module_root);
+        // For `--expr` runs use the readable `add-7-35` style stem;
+        // default `main` runs keep the timestamped request id. Same
+        // shape the VM recorder writes, so existing tooling that
+        // looks up traces by filename works either way.
+        let file_stem = match entry_info {
+            Some((fn_name, args)) => aver::replay::recording_stem(fn_name, args),
+            None => request_id.clone(),
         };
-        if len > 0 {
-            let mut buf = vec![0u8; len as usize];
-            let _ = memory.read(&caller, 0, &mut buf);
-            let text = String::from_utf8_lossy(&buf);
-            if to_stdout {
-                println!("{}", text);
-            } else {
-                eprintln!("{}", text);
-            }
-        } else {
-            // Empty string still emits a newline in VM semantics.
-            if to_stdout {
-                println!();
-            } else {
-                eprintln!();
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Decode an Aver String ref (passed as `any_ref` in the import ABI)
-/// back to a Rust `String` via the LM transport bridge.
-#[cfg(feature = "wasm")]
-fn lm_string_to_host(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    val: Option<&wasmtime::Val>,
-) -> Result<Option<String>, wasmtime::Error> {
-    use wasmtime::Val;
-    let any_ref = match val {
-        Some(Val::AnyRef(r)) => *r,
-        _ => return Ok(None),
-    };
-    let Some(any_ref) = any_ref else {
-        return Ok(None);
-    };
-    let to_lm = caller
-        .get_export("__rt_string_to_lm")
-        .and_then(|e| e.into_func());
-    let memory = caller.get_export("memory").and_then(|e| e.into_memory());
-    let (Some(to_lm), Some(memory)) = (to_lm, memory) else {
-        return Ok(None);
-    };
-    let mut out = [Val::I32(0)];
-    to_lm.call(&mut *caller, &[Val::AnyRef(Some(any_ref))], &mut out)?;
-    let len = match out[0] {
-        Val::I32(n) => n.max(0) as usize,
-        _ => 0,
-    };
-    let mut buf = vec![0u8; len];
-    if len > 0 {
-        memory.read(&caller, 0, &mut buf)?;
-    }
-    Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
-}
-
-/// Build an `Option<String>::Some(text)` ref via the
-/// `__rt_option_string_some` factory.
-#[cfg(feature = "wasm")]
-fn host_option_string_some(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    text: &str,
-) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
-    use wasmtime::Val;
-    let s = match lm_string_from_host(caller, text)? {
-        Some(r) => r,
-        None => return Ok(None),
-    };
-    let factory = caller
-        .get_export("__rt_option_string_some")
-        .and_then(|e| e.into_func());
-    let Some(factory) = factory else {
-        return Ok(None);
-    };
-    let mut out = [Val::AnyRef(None)];
-    factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
-    Ok(match &out[0] {
-        Val::AnyRef(r) => *r,
-        _ => None,
-    })
-}
-
-/// Build an `Option<String>::None` ref via `__rt_option_string_none`.
-#[cfg(feature = "wasm")]
-fn host_option_string_none(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
-    use wasmtime::Val;
-    let factory = caller
-        .get_export("__rt_option_string_none")
-        .and_then(|e| e.into_func());
-    let Some(factory) = factory else {
-        return Ok(None);
-    };
-    let mut out = [Val::AnyRef(None)];
-    factory.call(&mut *caller, &[], &mut out)?;
-    Ok(match &out[0] {
-        Val::AnyRef(r) => *r,
-        _ => None,
-    })
-}
-
-/// Build a `Terminal.Size(width, height)` record via the
-/// `__rt_record_terminal_size_make` factory.
-#[cfg(feature = "wasm")]
-fn host_terminal_size_make(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    width: i64,
-    height: i64,
-) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
-    use wasmtime::Val;
-    let factory = caller
-        .get_export("__rt_record_terminal_size_make")
-        .and_then(|e| e.into_func());
-    let Some(factory) = factory else {
-        return Ok(None);
-    };
-    let mut out = [Val::AnyRef(None)];
-    factory.call(&mut *caller, &[Val::I64(width), Val::I64(height)], &mut out)?;
-    Ok(match &out[0] {
-        Val::AnyRef(r) => *r,
-        _ => None,
-    })
-}
-
-/// Build an `HttpResponse(status, body, headers)` ref via the matching
-/// factory export.
-#[cfg(feature = "wasm")]
-fn host_http_response_make(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    status: i64,
-    body: Option<wasmtime::Rooted<wasmtime::AnyRef>>,
-    headers: Option<wasmtime::Rooted<wasmtime::AnyRef>>,
-) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
-    use wasmtime::Val;
-    let factory = caller
-        .get_export("__rt_record_http_response_make")
-        .and_then(|e| e.into_func());
-    let Some(factory) = factory else {
-        return Ok(None);
-    };
-    let mut out = [Val::AnyRef(None)];
-    factory.call(
-        &mut *caller,
-        &[Val::I64(status), Val::AnyRef(body), Val::AnyRef(headers)],
-        &mut out,
-    )?;
-    Ok(match &out[0] {
-        Val::AnyRef(r) => *r,
-        _ => None,
-    })
-}
-
-#[cfg(feature = "wasm")]
-fn host_result_http_response_ok(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    resp: Option<wasmtime::Rooted<wasmtime::AnyRef>>,
-) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
-    use wasmtime::Val;
-    let factory = caller
-        .get_export("__rt_result_http_response_string_ok")
-        .and_then(|e| e.into_func());
-    let Some(factory) = factory else {
-        return Ok(None);
-    };
-    let mut out = [Val::AnyRef(None)];
-    factory.call(&mut *caller, &[Val::AnyRef(resp)], &mut out)?;
-    Ok(match &out[0] {
-        Val::AnyRef(r) => *r,
-        _ => None,
-    })
-}
-
-#[cfg(feature = "wasm")]
-fn host_result_http_response_err(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    text: &str,
-) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
-    use wasmtime::Val;
-    let s = match lm_string_from_host(caller, text)? {
-        Some(r) => r,
-        None => return Ok(None),
-    };
-    let factory = caller
-        .get_export("__rt_result_http_response_string_err")
-        .and_then(|e| e.into_func());
-    let Some(factory) = factory else {
-        return Ok(None);
-    };
-    let mut out = [Val::AnyRef(None)];
-    factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
-    Ok(match &out[0] {
-        Val::AnyRef(r) => *r,
-        _ => None,
-    })
-}
-
-#[cfg(feature = "wasm")]
-fn host_map_string_list_string_empty(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
-    use wasmtime::Val;
-    let factory = caller
-        .get_export("__rt_map_string_list_string_empty")
-        .and_then(|e| e.into_func());
-    let Some(factory) = factory else {
-        return Ok(None);
-    };
-    let mut out = [Val::AnyRef(None)];
-    factory.call(&mut *caller, &[], &mut out)?;
-    Ok(match &out[0] {
-        Val::AnyRef(r) => *r,
-        _ => None,
-    })
-}
-
-/// Build a `Tcp.Connection` record from host-side primitives via the
-/// `__rt_record_tcp_connection_make(id, host, port)` factory.
-#[cfg(feature = "wasm")]
-fn host_tcp_connection_make(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    id: Option<wasmtime::Rooted<wasmtime::AnyRef>>,
-    host: Option<wasmtime::Rooted<wasmtime::AnyRef>>,
-    port: i64,
-) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
-    use wasmtime::Val;
-    let factory = caller
-        .get_export("__rt_record_tcp_connection_make")
-        .and_then(|e| e.into_func());
-    let Some(factory) = factory else {
-        return Ok(None);
-    };
-    let mut out = [Val::AnyRef(None)];
-    factory.call(
-        &mut *caller,
-        &[Val::AnyRef(id), Val::AnyRef(host), Val::I64(port)],
-        &mut out,
-    )?;
-    Ok(match &out[0] {
-        Val::AnyRef(r) => *r,
-        _ => None,
-    })
-}
-
-/// Read the `id` field of a `Tcp.Connection` record via
-/// `__rt_tcp_connection_id`. Returns `None` when the record ref is
-/// null (shouldn't happen for a successful connect, but bail safely).
-#[cfg(feature = "wasm")]
-fn host_tcp_connection_id(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    val: Option<&wasmtime::Val>,
-) -> Result<Option<String>, wasmtime::Error> {
-    use wasmtime::Val;
-    let any_ref = match val {
-        Some(Val::AnyRef(r)) => *r,
-        _ => return Ok(None),
-    };
-    let Some(_) = any_ref else { return Ok(None) };
-    let getter = caller
-        .get_export("__rt_tcp_connection_id")
-        .and_then(|e| e.into_func());
-    let Some(getter) = getter else {
-        return Ok(None);
-    };
-    let mut out = [Val::AnyRef(None)];
-    getter.call(&mut *caller, &[Val::AnyRef(any_ref)], &mut out)?;
-    lm_string_to_host(caller, Some(&out[0]))
-}
-
-#[cfg(feature = "wasm")]
-fn host_result_tcp_connection_ok(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    conn: Option<wasmtime::Rooted<wasmtime::AnyRef>>,
-) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
-    use wasmtime::Val;
-    let factory = caller
-        .get_export("__rt_result_tcp_connection_string_ok")
-        .and_then(|e| e.into_func());
-    let Some(factory) = factory else {
-        return Ok(None);
-    };
-    let mut out = [Val::AnyRef(None)];
-    factory.call(&mut *caller, &[Val::AnyRef(conn)], &mut out)?;
-    Ok(match &out[0] {
-        Val::AnyRef(r) => *r,
-        _ => None,
-    })
-}
-
-#[cfg(feature = "wasm")]
-fn host_result_tcp_connection_err(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    text: &str,
-) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
-    use wasmtime::Val;
-    let s = match lm_string_from_host(caller, text)? {
-        Some(r) => r,
-        None => return Ok(None),
-    };
-    let factory = caller
-        .get_export("__rt_result_tcp_connection_string_err")
-        .and_then(|e| e.into_func());
-    let Some(factory) = factory else {
-        return Ok(None);
-    };
-    let mut out = [Val::AnyRef(None)];
-    factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
-    Ok(match &out[0] {
-        Val::AnyRef(r) => *r,
-        _ => None,
-    })
-}
-
-/// `Result<Unit, String>::Ok(())` via the matching factory export.
-#[cfg(feature = "wasm")]
-fn host_result_ok_unit(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
-    use wasmtime::Val;
-    let factory = caller
-        .get_export("__rt_result_unit_string_ok")
-        .and_then(|e| e.into_func());
-    let Some(factory) = factory else {
-        return Ok(None);
-    };
-    let mut out = [Val::AnyRef(None)];
-    factory.call(&mut *caller, &[], &mut out)?;
-    Ok(match &out[0] {
-        Val::AnyRef(r) => *r,
-        _ => None,
-    })
-}
-
-#[cfg(feature = "wasm")]
-fn host_result_err_unit_string(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    text: &str,
-) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
-    use wasmtime::Val;
-    let s = match lm_string_from_host(caller, text)? {
-        Some(r) => r,
-        None => return Ok(None),
-    };
-    let factory = caller
-        .get_export("__rt_result_unit_string_err")
-        .and_then(|e| e.into_func());
-    let Some(factory) = factory else {
-        return Ok(None);
-    };
-    let mut out = [Val::AnyRef(None)];
-    factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
-    Ok(match &out[0] {
-        Val::AnyRef(r) => *r,
-        _ => None,
-    })
-}
-
-/// Build a `Result<List<String>, String>::Ok(list)` ref. The list is
-/// constructed bottom-up via repeated `__rt_list_string_cons` calls,
-/// terminated by `__rt_list_string_nil`.
-#[cfg(feature = "wasm")]
-fn host_result_ok_list_string(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    items: &[String],
-) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
-    use wasmtime::Val;
-    let nil = caller
-        .get_export("__rt_list_string_nil")
-        .and_then(|e| e.into_func());
-    let cons = caller
-        .get_export("__rt_list_string_cons")
-        .and_then(|e| e.into_func());
-    let factory = caller
-        .get_export("__rt_result_list_string_string_ok")
-        .and_then(|e| e.into_func());
-    let (Some(nil), Some(cons), Some(factory)) = (nil, cons, factory) else {
-        return Ok(None);
-    };
-    let mut tail_out = [Val::AnyRef(None)];
-    nil.call(&mut *caller, &[], &mut tail_out)?;
-    let mut current = match &tail_out[0] {
-        Val::AnyRef(r) => *r,
-        _ => None,
-    };
-    // Cons in reverse so the resulting list keeps the input order.
-    for text in items.iter().rev() {
-        let head = match lm_string_from_host(caller, text)? {
-            Some(r) => r,
-            None => return Ok(None),
+        let out_path = super::commands::prepare_recording_path(dir, &file_stem)
+            .map_err(|e| format!("prepare recording path: {}", e))?;
+        let entry_fn_label = entry_info
+            .map(|(n, _)| n.clone())
+            .unwrap_or_else(|| "main".to_string());
+        let input = match entry_info {
+            Some((_, args)) => aver::replay::encode_entry_args(args)
+                .map_err(|e| format!("encode entry args: {}", e))?,
+            None => aver::replay::JsonValue::Null,
         };
-        let mut next = [Val::AnyRef(None)];
-        cons.call(
-            &mut *caller,
-            &[Val::AnyRef(Some(head)), Val::AnyRef(current)],
-            &mut next,
-        )?;
-        current = match &next[0] {
-            Val::AnyRef(r) => *r,
-            _ => None,
+        let recording = aver::replay::SessionRecording {
+            schema_version: 1,
+            request_id,
+            timestamp,
+            program_file: record_program_file,
+            module_root: record_module_root,
+            entry_fn: entry_fn_label,
+            input,
+            effects: rec.take_recorded_effects(),
+            output: aver::replay::RecordedOutcome::Value(main_output.clone()),
         };
+        let json = aver::replay::session_recording_to_string_pretty(&recording);
+        std::fs::write(&out_path, json)
+            .map_err(|e| format!("write recording {}: {}", out_path.display(), e))?;
+        eprintln!("Recorded → {}", out_path.display());
     }
-    let mut wrapped = [Val::AnyRef(None)];
-    factory.call(&mut *caller, &[Val::AnyRef(current)], &mut wrapped)?;
-    Ok(match &wrapped[0] {
-        Val::AnyRef(r) => *r,
-        _ => None,
+
+    Ok(RunOutcome {
+        output: main_output,
+        effects_consumed,
+        effects_total,
+        args_diff_count,
     })
 }
 
 #[cfg(feature = "wasm")]
-fn host_result_err_list_string(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    text: &str,
-) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
-    use wasmtime::Val;
-    let s = match lm_string_from_host(caller, text)? {
-        Some(r) => r,
-        None => return Ok(None),
-    };
-    let factory = caller
-        .get_export("__rt_result_list_string_string_err")
-        .and_then(|e| e.into_func());
-    let Some(factory) = factory else {
-        return Ok(None);
-    };
-    let mut out = [Val::AnyRef(None)];
-    factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
-    Ok(match &out[0] {
-        Val::AnyRef(r) => *r,
-        _ => None,
-    })
-}
+#[path = "run_wasm_gc/decode.rs"]
+mod decode;
 
-/// Build a `Result<String,String>::Ok(text)` ref by calling the
-/// module's exported factory `__rt_result_string_string_ok`. Returns
-/// `Ok(None)` if the factory or string bridge isn't exported (the
-/// program declared `Console.readLine` but didn't reach the type
-/// registration that materialises the factory).
 #[cfg(feature = "wasm")]
-fn host_result_ok_string(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    text: &str,
-) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
-    use wasmtime::Val;
-    let s = match lm_string_from_host(caller, text)? {
-        Some(r) => r,
-        None => return Ok(None),
-    };
-    let factory = caller
-        .get_export("__rt_result_string_string_ok")
-        .and_then(|e| e.into_func());
-    let Some(factory) = factory else {
-        return Ok(None);
-    };
-    let mut out = [Val::AnyRef(None)];
-    factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
-    Ok(match &out[0] {
-        Val::AnyRef(r) => *r,
-        _ => None,
-    })
-}
-
-/// Build a `Result<String,String>::Err(text)` ref via the symmetric
-/// `__rt_result_string_string_err` factory.
-#[cfg(feature = "wasm")]
-fn host_result_err_string(
-    caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
-    text: &str,
-) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
-    use wasmtime::Val;
-    let s = match lm_string_from_host(caller, text)? {
-        Some(r) => r,
-        None => return Ok(None),
-    };
-    let factory = caller
-        .get_export("__rt_result_string_string_err")
-        .and_then(|e| e.into_func());
-    let Some(factory) = factory else {
-        return Ok(None);
-    };
-    let mut out = [Val::AnyRef(None)];
-    factory.call(&mut *caller, &[Val::AnyRef(Some(s))], &mut out)?;
-    Ok(match &out[0] {
-        Val::AnyRef(r) => *r,
-        _ => None,
-    })
-}
-
-/// Materialise a host-supplied UTF-8 string as an Aver string ref via
-/// the LM transport bridge: write bytes into linear memory at offset 0,
-/// call `__rt_string_from_lm(len)` to wrap them in an `(array i8)`.
-/// Returns the resulting AnyRef so the caller can hand it back as a
-/// host import result.
-#[cfg(feature = "wasm")]
-fn lm_string_from_host<T: 'static>(
-    caller: &mut wasmtime::Caller<'_, T>,
-    text: &str,
-) -> Result<Option<wasmtime::Rooted<wasmtime::AnyRef>>, wasmtime::Error> {
-    use wasmtime::*;
-    let bytes = text.as_bytes();
-    let from_lm = caller
-        .get_export("__rt_string_from_lm")
-        .and_then(|e| e.into_func());
-    let memory = caller.get_export("memory").and_then(|e| e.into_memory());
-    let grow = caller
-        .get_export("__rt_memory_grow")
-        .and_then(|e| e.into_func());
-    let pages = caller
-        .get_export("__rt_memory_pages")
-        .and_then(|e| e.into_func());
-    let (Some(from_lm), Some(memory), Some(grow), Some(pages)) = (from_lm, memory, grow, pages)
-    else {
-        return Ok(None);
-    };
-    // Grow LM if the string doesn't fit. One page = 64 KiB; small
-    // strings fit by default since the bridge ships with `(memory 1)`.
-    let needed_pages = ((bytes.len() + 65535) >> 16) as i32;
-    let mut current_out = [Val::I32(0)];
-    pages.call(&mut *caller, &[], &mut current_out)?;
-    let current_pages = match current_out[0] {
-        Val::I32(n) => n,
-        _ => 0,
-    };
-    if needed_pages > current_pages {
-        let mut grow_out = [Val::I32(0)];
-        grow.call(
-            &mut *caller,
-            &[Val::I32(needed_pages - current_pages)],
-            &mut grow_out,
-        )?;
-    }
-    memory.write(&mut *caller, 0, bytes)?;
-    let mut from_lm_out = [Val::AnyRef(None)];
-    from_lm.call(
-        &mut *caller,
-        &[Val::I32(bytes.len() as i32)],
-        &mut from_lm_out,
-    )?;
-    let r = match &from_lm_out[0] {
-        Val::AnyRef(r) => *r,
-        _ => None,
-    };
-    Ok(r)
-}
+#[path = "run_wasm_gc/imports.rs"]
+mod imports;

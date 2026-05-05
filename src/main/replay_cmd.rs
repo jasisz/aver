@@ -1,21 +1,22 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{self, Command};
+use std::process;
 
 use colored::Colorize;
 
 use aver::ast::TopLevel;
-use aver::nan_value::{NanValue, NanValueConvert};
-use aver::replay::{
-    JsonValue, RecordedOutcome, SessionRecording, first_diff_path, format_json, json_to_value,
-    parse_session_recording, value_to_json,
-};
-use aver::value::{Value, aver_repr, list_to_vec};
-use aver::vm;
+use aver::replay::{JsonValue, SessionRecording, json_to_value, parse_session_recording};
+use aver::value::{Value, list_to_vec};
 
-use crate::commands::find_self_host_binary;
-use crate::shared::{apply_runtime_policy_to_vm, parse_file, read_file};
+use crate::shared::{parse_file, read_file};
 use aver::tty_render::render_tty;
+
+#[path = "replay_cmd/backends.rs"]
+mod backends;
+
+use backends::{build_replay_result, run_self_host_replay, run_vm_replay};
+#[cfg(feature = "wasm")]
+use backends::{find_fn_line_in_file, run_wasm_gc_replay};
 
 fn collect_recording_files_from_dir(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
     let entries = fs::read_dir(dir)
@@ -74,21 +75,6 @@ pub(super) fn decode_entry_args(input: &JsonValue) -> Result<Vec<Value>, String>
     }
 }
 
-fn decode_self_host_guest_args(input: &JsonValue) -> Result<Vec<String>, String> {
-    decode_entry_args(input)?
-        .into_iter()
-        .enumerate()
-        .map(|(idx, value)| match value {
-            Value::Str(s) => Ok(s),
-            other => Err(format!(
-                "Self-host replay expects guest input as List<String>; item {} was {}",
-                idx,
-                aver_repr(&other)
-            )),
-        })
-        .collect()
-}
-
 fn resolve_replay_module_root(path: &Path, recording: &SessionRecording) -> String {
     let module_root = Path::new(&recording.module_root);
     if module_root.is_absolute() {
@@ -111,7 +97,10 @@ fn resolve_replay_module_root(path: &Path, recording: &SessionRecording) -> Stri
     recording.module_root.clone()
 }
 
-fn resolve_replay_program_file(recording: &SessionRecording, module_root: &str) -> String {
+pub(super) fn resolve_replay_program_file(
+    recording: &SessionRecording,
+    module_root: &str,
+) -> String {
     let program_file = Path::new(&recording.program_file);
     if program_file.is_absolute() {
         return recording.program_file.clone();
@@ -130,7 +119,7 @@ fn resolve_replay_program_file(recording: &SessionRecording, module_root: &str) 
 }
 
 /// Find the line number of a key in raw JSON text (1-based, 0 = not found).
-fn find_json_line(raw: &str, key: &str) -> usize {
+pub(super) fn find_json_line(raw: &str, key: &str) -> usize {
     let pattern = format!("\"{}\"", key);
     for (idx, line) in raw.lines().enumerate() {
         if line.trim_start().starts_with(&pattern) {
@@ -140,7 +129,7 @@ fn find_json_line(raw: &str, key: &str) -> usize {
     0
 }
 
-fn find_fn_line(items: &[TopLevel], name: &str) -> usize {
+pub(super) fn find_fn_line(items: &[TopLevel], name: &str) -> usize {
     for item in items {
         if let TopLevel::FnDef(fd) = item
             && fd.name == name
@@ -151,23 +140,10 @@ fn find_fn_line(items: &[TopLevel], name: &str) -> usize {
     1
 }
 
-fn build_output_diff(
-    expected: &RecordedOutcome,
-    actual: &RecordedOutcome,
-) -> Option<(String, String, Option<String>)> {
-    match (expected, actual) {
-        (RecordedOutcome::Value(exp), RecordedOutcome::Value(got)) => {
-            let diff_path = first_diff_path(exp, got).map(|p| p.to_string());
-            Some((format_json(exp), format_json(got), diff_path))
-        }
-        (RecordedOutcome::RuntimeError(exp), RecordedOutcome::RuntimeError(got)) => Some((
-            format!("runtime_error: {}", exp),
-            format!("runtime_error: {}", got),
-            None,
-        )),
-        (exp, got) => Some((format!("{:?}", exp), format!("{:?}", got), None)),
-    }
-}
+// Per-backend replay drivers + the unified `BackendReplayOutcome`
+// shape they return live in `replay_cmd/backends.rs`. Everything
+// below this line concerns CLI orchestration: file discovery,
+// rendering, the `cmd_replay` entry point.
 
 fn replay_recording_file_vm(
     path: &Path,
@@ -183,111 +159,65 @@ fn replay_recording_file_vm(
     let replay_program_file = resolve_replay_program_file(&recording, &replay_module_root);
     let source = read_file(&replay_program_file)?;
     let mut items = parse_file(&source)?;
-
-    // Full pipeline. Recordings store effect syscalls (`Console.print(...)`
-    // with concrete args) — they don't reference IR shape or bytecode, so
-    // running interp_lower + buffer_build during replay produces the same
-    // effect sequence as the original recording. Earlier pipeline migration
-    // skipped these stages out of misplaced caution; re-enabling them
-    // matches CLI run semantics and lets replay benefit from the same
-    // deforestation the original run had.
-    let pipeline_result = aver::ir::pipeline::run(
-        &mut items,
-        aver::ir::PipelineConfig {
-            typecheck: Some(aver::ir::TypecheckMode::Full {
-                base_dir: Some(&replay_module_root),
-            }),
-            ..Default::default()
-        },
-    );
-    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
-    if !tc_result.errors.is_empty() {
-        return Err(crate::shared::format_type_errors(&tc_result.errors));
-    }
-
-    let mut arena = aver::nan_value::Arena::new();
-    vm::register_service_types(&mut arena);
-    let (code, globals) = vm::compile_program_with_modules(
-        &items,
-        &mut arena,
-        Some(&replay_module_root),
-        &recording.program_file,
-        pipeline_result.analysis.as_ref(),
-    )
-    .map_err(|e| format!("VM compile error: {}", e))?;
-    let mut machine = vm::VM::new(code, globals, arena);
-    apply_runtime_policy_to_vm(&mut machine, &replay_module_root)?;
-    machine.start_replay(recording.effects.clone(), check_args);
-
-    machine.run_top_level().map_err(|e| {
-        let (consumed, total) = machine.replay_progress();
-        format!(
-            "Replay failed: {}\nProgress: consumed {} of {} recorded effects",
-            e, consumed, total
-        )
-    })?;
-
-    let entry_args = decode_entry_args(&recording.input)?;
-    let nv_args: Vec<NanValue> = entry_args
-        .iter()
-        .map(|v| NanValue::from_value(v, &mut machine.arena))
-        .collect();
-
-    let run_out = machine
-        .run_named_function(&recording.entry_fn, &nv_args)
-        .map_err(|e| {
-            let (consumed, total) = machine.replay_progress();
-            format!(
-                "Replay failed: {}\nProgress: consumed {} of {} recorded effects",
-                e, consumed, total
-            )
-        })?;
-
-    let actual_outcome = if run_out.is_err() {
-        let inner = run_out.wrapper_inner(&machine.arena);
-        RecordedOutcome::RuntimeError(format!(
-            "{} returned error: {}",
-            recording.entry_fn,
-            inner.repr(&machine.arena)
-        ))
-    } else {
-        let val = run_out.to_value(&machine.arena);
-        RecordedOutcome::Value(value_to_json(&val)?)
-    };
-
-    machine.ensure_replay_consumed().map_err(|e| {
-        let (consumed, total) = machine.replay_progress();
-        format!(
-            "Replay failed: {}\nProgress: consumed {} of {} recorded effects",
-            e, consumed, total
-        )
-    })?;
-
-    let (consumed, total) = machine.replay_progress();
-    let matched = actual_outcome == recording.output;
-
-    let output_diff = if !matched {
-        build_output_diff(&recording.output, &actual_outcome)
-    } else {
-        None
-    };
-
     let entry_line = find_fn_line(&items, &recording.entry_fn);
-    let recording_output_line = find_json_line(&raw, "output");
-    let args_diffs = machine.args_diff_count();
-    Ok(ReplayResult {
-        recording_path: path.display().to_string(),
-        program_file: replay_program_file,
-        entry_fn: recording.entry_fn.clone(),
+
+    let outcome = run_vm_replay(&recording, &replay_module_root, &mut items, check_args);
+    Ok(build_replay_result(
+        path,
+        &raw,
+        &recording,
+        replay_program_file,
         entry_line,
-        matched,
-        effects_consumed: consumed,
-        effects_total: total,
-        error: None,
-        output_diff,
-        args_diffs,
-        recording_output_line,
-    })
+        outcome,
+    ))
+}
+
+/// Replay a recording through the wasm-gc backend. Phase 4a — wires
+/// the trace into the wasm-gc host's `EffectReplayState::Replay` mode
+/// so each `aver/*` host import pulls its outcome from the trace
+/// instead of running the real effect. All 29 effects route through
+/// `try_replay` → per-type `decode_*` (phase 4b), so a recorded trace
+/// replays without touching disk / network / clock / RNG. The decoded
+/// `main` return value is compared against `recording.output` —
+/// scalar / Unit returns get exact equality, ref returns hit an
+/// opaque `<wasm-gc:ref>` marker on both sides (see
+/// `decode_main_return` for the coverage matrix).
+fn replay_recording_file_wasm_gc(
+    path: &Path,
+    _diff: bool,
+    check_args: bool,
+) -> Result<ReplayResult, String> {
+    let raw = fs::read_to_string(path)
+        .map_err(|e| format!("Cannot read recording '{}': {}", path.display(), e))?;
+    let recording: SessionRecording = parse_session_recording(&raw)
+        .map_err(|e| format!("Invalid recording JSON '{}': {}", path.display(), e))?;
+
+    let replay_module_root = resolve_replay_module_root(path, &recording);
+    let replay_program_file = resolve_replay_program_file(&recording, &replay_module_root);
+
+    #[cfg(feature = "wasm")]
+    {
+        let entry_line = find_fn_line_in_file(&replay_program_file, &recording.entry_fn);
+        let outcome = run_wasm_gc_replay(
+            &recording,
+            &replay_module_root,
+            &replay_program_file,
+            check_args,
+        );
+        Ok(build_replay_result(
+            path,
+            &raw,
+            &recording,
+            replay_program_file,
+            entry_line,
+            outcome,
+        ))
+    }
+    #[cfg(not(feature = "wasm"))]
+    {
+        let _ = (recording, check_args, replay_program_file);
+        Err("--wasm-gc replay requires building aver with --features wasm".to_string())
+    }
 }
 
 fn replay_recording_file_self_host(
@@ -302,65 +232,22 @@ fn replay_recording_file_self_host(
 
     let replay_module_root = resolve_replay_module_root(path, &recording);
     let replay_program_file = resolve_replay_program_file(&recording, &replay_module_root);
-    let binary_path = find_self_host_binary()?;
-    let guest_args = decode_self_host_guest_args(&recording.input)?;
 
-    let mut command = Command::new(&binary_path);
-    command
-        .arg(&replay_program_file)
-        .arg(&replay_module_root)
-        .args(&guest_args)
-        .env("AVER_REPLAY_ENTRY_FN", "main")
-        .env("AVER_REPLAY_REPLAY", path)
-        .env("AVER_REPLAY_MODULE_ROOT", &replay_module_root)
-        .env_remove("AVER_REPLAY_RECORD")
-        .env_remove("AVER_REPLAY_REQUEST_ID")
-        .env_remove("AVER_REPLAY_TIMESTAMP")
-        .env_remove("AVER_REPLAY_PROGRAM_FILE");
-    if check_args {
-        command.env("AVER_REPLAY_CHECK_ARGS", "1");
-    } else {
-        command.env_remove("AVER_REPLAY_CHECK_ARGS");
-    }
-
-    let output = command.output().map_err(|e| {
-        format!(
-            "Failed to run cached self-host replay binary '{}': {}",
-            binary_path.display(),
-            e
-        )
-    })?;
-
-    if !output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let mut msg = "Self-host replay failed".to_string();
-        if !stdout.is_empty() {
-            msg.push_str(&format!("\nstdout:\n{}", stdout));
-        }
-        if !stderr.is_empty() {
-            msg.push_str(&format!("\nstderr:\n{}", stderr));
-        }
-        return Err(msg);
-    }
-
-    let n = recording.effects.len();
-    Ok(ReplayResult {
-        recording_path: path.display().to_string(),
-        program_file: replay_program_file,
-        entry_fn: recording.entry_fn.clone(),
-        entry_line: 0,
-        matched: true,
-        effects_consumed: n,
-        effects_total: n,
-        error: None,
-        output_diff: None,
-        args_diffs: 0,
-        recording_output_line: 0,
-    })
+    let outcome = run_self_host_replay(&recording, &replay_module_root, path, check_args);
+    Ok(build_replay_result(
+        path,
+        &raw,
+        &recording,
+        replay_program_file,
+        // Self-host re-parsing the program just for the entry_fn line
+        // would double the per-file cost; keep the prior 0-line value
+        // until we wire a cheaper lookup.
+        0,
+        outcome,
+    ))
 }
 
-enum ReplayError {
+pub(super) enum ReplayError {
     Generic(String),
 }
 
@@ -519,6 +406,7 @@ pub(super) fn cmd_replay(
     test_mode: bool,
     check_args: bool,
     self_host_mode: bool,
+    wasm_gc_mode: bool,
     json: bool,
 ) {
     let files = match collect_recording_files(recording) {
@@ -537,6 +425,8 @@ pub(super) fn cmd_replay(
     for file in &files {
         let result = if self_host_mode {
             replay_recording_file_self_host(file, diff, check_args)
+        } else if wasm_gc_mode {
+            replay_recording_file_wasm_gc(file, diff, check_args)
         } else {
             replay_recording_file_vm(file, diff, check_args)
         };
@@ -602,7 +492,8 @@ pub(super) fn cmd_replay(
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_recording_files, decode_self_host_guest_args};
+    use super::backends::decode_self_host_guest_args;
+    use super::collect_recording_files;
     use aver::replay::JsonValue;
     use std::fs;
     use std::path::PathBuf;
