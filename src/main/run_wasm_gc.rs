@@ -293,6 +293,51 @@ fn json_err(msg: &str) -> aver::replay::JsonValue {
     aver::replay::JsonValue::Object(obj)
 }
 
+/// Build the recorder-side JSON for an Aver `Option.Some(inner)`.
+#[cfg(feature = "wasm")]
+fn json_some(inner: aver::replay::JsonValue) -> aver::replay::JsonValue {
+    let mut obj = std::collections::BTreeMap::new();
+    obj.insert("$some".to_string(), inner);
+    aver::replay::JsonValue::Object(obj)
+}
+
+/// Build the recorder-side JSON for an Aver `Option.None`.
+#[cfg(feature = "wasm")]
+fn json_none() -> aver::replay::JsonValue {
+    let mut obj = std::collections::BTreeMap::new();
+    obj.insert("$none".to_string(), aver::replay::JsonValue::Bool(true));
+    aver::replay::JsonValue::Object(obj)
+}
+
+/// Build the recorder-side JSON for an Aver record value
+/// (`{"$record": {"type": <name>, "fields": {<k>: <v>, …}}}`).
+/// Used for `HttpResponse`, `Tcp.Connection`, `Terminal.Size`.
+#[cfg(feature = "wasm")]
+fn json_record(
+    type_name: &str,
+    fields: Vec<(&str, aver::replay::JsonValue)>,
+) -> aver::replay::JsonValue {
+    let mut fields_obj = std::collections::BTreeMap::new();
+    for (k, v) in fields {
+        fields_obj.insert(k.to_string(), v);
+    }
+    let mut payload = std::collections::BTreeMap::new();
+    payload.insert(
+        "type".to_string(),
+        aver::replay::JsonValue::String(type_name.to_string()),
+    );
+    payload.insert(
+        "fields".to_string(),
+        aver::replay::JsonValue::Object(fields_obj),
+    );
+    let mut wrapper = std::collections::BTreeMap::new();
+    wrapper.insert(
+        "$record".to_string(),
+        aver::replay::JsonValue::Object(payload),
+    );
+    aver::replay::JsonValue::Object(wrapper)
+}
+
 /// Per-effect-name dispatch — returns true if we provided a real
 /// implementation, false if the caller should fall back to the
 /// typed-zero stub.
@@ -478,68 +523,143 @@ fn dispatch_aver_import(
         }
         "terminal_enable_raw_mode" => {
             let _ = aver_rt::terminal_enable_raw_mode();
+            record_effect_if_recording(
+                caller,
+                "Terminal.enableRawMode",
+                vec![],
+                aver::replay::JsonValue::Null,
+            );
             Ok(true)
         }
         "terminal_disable_raw_mode" => {
             let _ = aver_rt::terminal_disable_raw_mode();
+            record_effect_if_recording(
+                caller,
+                "Terminal.disableRawMode",
+                vec![],
+                aver::replay::JsonValue::Null,
+            );
             Ok(true)
         }
         "terminal_clear" => {
             let _ = aver_rt::terminal_clear();
+            record_effect_if_recording(
+                caller,
+                "Terminal.clear",
+                vec![],
+                aver::replay::JsonValue::Null,
+            );
             Ok(true)
         }
         "terminal_move_to" => {
             let x = params.first().and_then(val_i64).unwrap_or(0);
             let y = params.get(1).and_then(val_i64).unwrap_or(0);
             let _ = aver_rt::terminal_move_to(x, y);
+            record_effect_if_recording(
+                caller,
+                "Terminal.moveTo",
+                vec![
+                    aver::replay::JsonValue::Int(x),
+                    aver::replay::JsonValue::Int(y),
+                ],
+                aver::replay::JsonValue::Null,
+            );
             Ok(true)
         }
         "terminal_print" => {
             // Same shape as console_print (any_ref payload through the
             // LM bridge), but writes via aver_rt::terminal_print so it
             // respects raw-mode without injecting a trailing newline.
-            let text = lm_string_to_host(caller, params.first())?;
-            if let Some(t) = text {
-                let _ = aver_rt::terminal_print(&t);
-            }
+            let text = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            let _ = aver_rt::terminal_print(&text);
+            record_effect_if_recording(
+                caller,
+                "Terminal.print",
+                vec![aver::replay::JsonValue::String(text)],
+                aver::replay::JsonValue::Null,
+            );
             Ok(true)
         }
         "terminal_set_color" => {
-            let text = lm_string_to_host(caller, params.first())?;
-            if let Some(t) = text {
-                let _ = aver_rt::terminal_set_color(&t);
-            }
+            let text = lm_string_to_host(caller, params.first())?.unwrap_or_default();
+            let _ = aver_rt::terminal_set_color(&text);
+            record_effect_if_recording(
+                caller,
+                "Terminal.setColor",
+                vec![aver::replay::JsonValue::String(text)],
+                aver::replay::JsonValue::Null,
+            );
             Ok(true)
         }
         "terminal_reset_color" => {
             let _ = aver_rt::terminal_reset_color();
+            record_effect_if_recording(
+                caller,
+                "Terminal.resetColor",
+                vec![],
+                aver::replay::JsonValue::Null,
+            );
             Ok(true)
         }
         "terminal_hide_cursor" => {
             let _ = aver_rt::terminal_hide_cursor();
+            record_effect_if_recording(
+                caller,
+                "Terminal.hideCursor",
+                vec![],
+                aver::replay::JsonValue::Null,
+            );
             Ok(true)
         }
         "terminal_show_cursor" => {
             let _ = aver_rt::terminal_show_cursor();
+            record_effect_if_recording(
+                caller,
+                "Terminal.showCursor",
+                vec![],
+                aver::replay::JsonValue::Null,
+            );
             Ok(true)
         }
         "terminal_flush" => {
             let _ = aver_rt::terminal_flush();
+            record_effect_if_recording(
+                caller,
+                "Terminal.flush",
+                vec![],
+                aver::replay::JsonValue::Null,
+            );
             Ok(true)
         }
         "terminal_read_key" => {
             let key = aver_rt::terminal_read_key();
-            let opt_ref = match key {
-                Some(text) => host_option_string_some(caller, &text)?,
-                None => host_option_string_none(caller)?,
+            let (opt_ref, outcome) = match &key {
+                Some(text) => (
+                    host_option_string_some(caller, text)?,
+                    json_some(aver::replay::JsonValue::String(text.clone())),
+                ),
+                None => (host_option_string_none(caller)?, json_none()),
             };
             results[0] = Val::AnyRef(opt_ref);
+            record_effect_if_recording(caller, "Terminal.readKey", vec![], outcome);
             Ok(true)
         }
         "terminal_size" => {
             let (w, h) = aver_rt::terminal_size().unwrap_or((80, 24));
             let rec_ref = host_terminal_size_make(caller, w, h)?;
             results[0] = Val::AnyRef(rec_ref);
+            record_effect_if_recording(
+                caller,
+                "Terminal.size",
+                vec![],
+                json_record(
+                    "Terminal.Size",
+                    vec![
+                        ("width", aver::replay::JsonValue::Int(w as i64)),
+                        ("height", aver::replay::JsonValue::Int(h as i64)),
+                    ],
+                ),
+            );
             Ok(true)
         }
         "disk_read_text" => {
@@ -726,16 +846,42 @@ fn dispatch_aver_import(
         "tcp_connect" => {
             let host = lm_string_to_host(caller, params.first())?.unwrap_or_default();
             let port = params.get(1).and_then(val_i64).unwrap_or(0);
-            let result_ref = match aver_rt::tcp::connect(&host, port) {
+            let (result_ref, outcome) = match aver_rt::tcp::connect(&host, port) {
                 Ok(conn) => {
                     let id_ref = lm_string_from_host(caller, conn.id.as_ref())?;
                     let host_ref = lm_string_from_host(caller, conn.host.as_ref())?;
                     let rec_ref = host_tcp_connection_make(caller, id_ref, host_ref, conn.port)?;
-                    host_result_tcp_connection_ok(caller, rec_ref)?
+                    let conn_json = json_record(
+                        "Tcp.Connection",
+                        vec![
+                            (
+                                "id",
+                                aver::replay::JsonValue::String(conn.id.as_ref().to_string()),
+                            ),
+                            (
+                                "host",
+                                aver::replay::JsonValue::String(conn.host.as_ref().to_string()),
+                            ),
+                            ("port", aver::replay::JsonValue::Int(conn.port)),
+                        ],
+                    );
+                    (
+                        host_result_tcp_connection_ok(caller, rec_ref)?,
+                        json_ok(conn_json),
+                    )
                 }
-                Err(e) => host_result_tcp_connection_err(caller, &e)?,
+                Err(e) => (host_result_tcp_connection_err(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
+            record_effect_if_recording(
+                caller,
+                "Tcp.connect",
+                vec![
+                    aver::replay::JsonValue::String(host),
+                    aver::replay::JsonValue::Int(port),
+                ],
+                outcome,
+            );
             Ok(true)
         }
         "tcp_write_line" => {
@@ -746,11 +892,31 @@ fn dispatch_aver_import(
                 host: aver_rt::AverStr::from(""),
                 port: 0,
             };
-            let result_ref = match aver_rt::tcp::write_line(&conn, &line) {
-                Ok(()) => host_result_ok_unit(caller)?,
-                Err(e) => host_result_err_unit_string(caller, &e)?,
+            let (result_ref, outcome) = match aver_rt::tcp::write_line(&conn, &line) {
+                Ok(()) => (
+                    host_result_ok_unit(caller)?,
+                    json_ok(aver::replay::JsonValue::Null),
+                ),
+                Err(e) => (host_result_err_unit_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
+            // Tcp.Connection arg goes in as a record stub keyed by id —
+            // the wasm-gc bridge keeps `host`/`port` zero for write/read/
+            // close, matching what the host actually sees.
+            let conn_arg = json_record(
+                "Tcp.Connection",
+                vec![
+                    ("id", aver::replay::JsonValue::String(id)),
+                    ("host", aver::replay::JsonValue::String(String::new())),
+                    ("port", aver::replay::JsonValue::Int(0)),
+                ],
+            );
+            record_effect_if_recording(
+                caller,
+                "Tcp.writeLine",
+                vec![conn_arg, aver::replay::JsonValue::String(line)],
+                outcome,
+            );
             Ok(true)
         }
         "tcp_read_line" => {
@@ -760,11 +926,23 @@ fn dispatch_aver_import(
                 host: aver_rt::AverStr::from(""),
                 port: 0,
             };
-            let result_ref = match aver_rt::tcp::read_line(&conn) {
-                Ok(text) => host_result_ok_string(caller, &text)?,
-                Err(e) => host_result_err_string(caller, &e)?,
+            let (result_ref, outcome) = match aver_rt::tcp::read_line(&conn) {
+                Ok(text) => (
+                    host_result_ok_string(caller, &text)?,
+                    json_ok(aver::replay::JsonValue::String(text)),
+                ),
+                Err(e) => (host_result_err_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
+            let conn_arg = json_record(
+                "Tcp.Connection",
+                vec![
+                    ("id", aver::replay::JsonValue::String(id)),
+                    ("host", aver::replay::JsonValue::String(String::new())),
+                    ("port", aver::replay::JsonValue::Int(0)),
+                ],
+            );
+            record_effect_if_recording(caller, "Tcp.readLine", vec![conn_arg], outcome);
             Ok(true)
         }
         "tcp_close" => {
@@ -774,32 +952,69 @@ fn dispatch_aver_import(
                 host: aver_rt::AverStr::from(""),
                 port: 0,
             };
-            let result_ref = match aver_rt::tcp::close(&conn) {
-                Ok(()) => host_result_ok_unit(caller)?,
-                Err(e) => host_result_err_unit_string(caller, &e)?,
+            let (result_ref, outcome) = match aver_rt::tcp::close(&conn) {
+                Ok(()) => (
+                    host_result_ok_unit(caller)?,
+                    json_ok(aver::replay::JsonValue::Null),
+                ),
+                Err(e) => (host_result_err_unit_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
+            let conn_arg = json_record(
+                "Tcp.Connection",
+                vec![
+                    ("id", aver::replay::JsonValue::String(id)),
+                    ("host", aver::replay::JsonValue::String(String::new())),
+                    ("port", aver::replay::JsonValue::Int(0)),
+                ],
+            );
+            record_effect_if_recording(caller, "Tcp.close", vec![conn_arg], outcome);
             Ok(true)
         }
         "tcp_send" => {
             let host = lm_string_to_host(caller, params.first())?.unwrap_or_default();
             let port = params.get(1).and_then(val_i64).unwrap_or(0);
             let msg = lm_string_to_host(caller, params.get(2))?.unwrap_or_default();
-            let result_ref = match aver_rt::tcp::send(&host, port, &msg) {
-                Ok(text) => host_result_ok_string(caller, &text)?,
-                Err(e) => host_result_err_string(caller, &e)?,
+            let (result_ref, outcome) = match aver_rt::tcp::send(&host, port, &msg) {
+                Ok(text) => (
+                    host_result_ok_string(caller, &text)?,
+                    json_ok(aver::replay::JsonValue::String(text)),
+                ),
+                Err(e) => (host_result_err_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
+            record_effect_if_recording(
+                caller,
+                "Tcp.send",
+                vec![
+                    aver::replay::JsonValue::String(host),
+                    aver::replay::JsonValue::Int(port),
+                    aver::replay::JsonValue::String(msg),
+                ],
+                outcome,
+            );
             Ok(true)
         }
         "tcp_ping" => {
             let host = lm_string_to_host(caller, params.first())?.unwrap_or_default();
             let port = params.get(1).and_then(val_i64).unwrap_or(0);
-            let result_ref = match aver_rt::tcp::ping(&host, port) {
-                Ok(()) => host_result_ok_unit(caller)?,
-                Err(e) => host_result_err_unit_string(caller, &e)?,
+            let (result_ref, outcome) = match aver_rt::tcp::ping(&host, port) {
+                Ok(()) => (
+                    host_result_ok_unit(caller)?,
+                    json_ok(aver::replay::JsonValue::Null),
+                ),
+                Err(e) => (host_result_err_unit_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
+            record_effect_if_recording(
+                caller,
+                "Tcp.ping",
+                vec![
+                    aver::replay::JsonValue::String(host),
+                    aver::replay::JsonValue::Int(port),
+                ],
+                outcome,
+            );
             Ok(true)
         }
         "http_get" => http_simple_dispatch(caller, params, results, HttpVerb::Get),
@@ -838,8 +1053,21 @@ fn http_simple_dispatch(
         HttpVerb::Delete => aver_rt::http::delete(&url),
         _ => unreachable!(),
     };
+    let trace_outcome = http_outcome_to_json(&outcome);
     let result_ref = http_outcome_to_result(caller, outcome)?;
     results[0] = Val::AnyRef(result_ref);
+    let effect_name = match verb {
+        HttpVerb::Get => "Http.get",
+        HttpVerb::Head => "Http.head",
+        HttpVerb::Delete => "Http.delete",
+        _ => unreachable!(),
+    };
+    record_effect_if_recording(
+        caller,
+        effect_name,
+        vec![aver::replay::JsonValue::String(url)],
+        trace_outcome,
+    );
     Ok(true)
 }
 
@@ -866,8 +1094,30 @@ fn http_body_dispatch(
         HttpVerb::Patch => aver_rt::http::patch(&url, &body, &content_type, &Default::default()),
         _ => unreachable!(),
     };
+    let trace_outcome = http_outcome_to_json(&outcome);
     let result_ref = http_outcome_to_result(caller, outcome)?;
     results[0] = Val::AnyRef(result_ref);
+    let effect_name = match verb {
+        HttpVerb::Post => "Http.post",
+        HttpVerb::Put => "Http.put",
+        HttpVerb::Patch => "Http.patch",
+        _ => unreachable!(),
+    };
+    // Headers map argument is recorded as an empty `Map<String, List<String>>`
+    // — the host doesn't unpack the user's wasm-gc map ref yet, so the
+    // trace shows the same shape the host actually forwards.
+    let empty_headers = aver::replay::JsonValue::Object(std::collections::BTreeMap::new());
+    record_effect_if_recording(
+        caller,
+        effect_name,
+        vec![
+            aver::replay::JsonValue::String(url),
+            aver::replay::JsonValue::String(body),
+            aver::replay::JsonValue::String(content_type),
+            empty_headers,
+        ],
+        trace_outcome,
+    );
     Ok(true)
 }
 
@@ -884,6 +1134,36 @@ fn http_outcome_to_result(
             host_result_http_response_ok(caller, rec_ref)
         }
         Err(e) => host_result_http_response_err(caller, &e),
+    }
+}
+
+/// Mirror an `aver_rt::HttpResponse` outcome into the JSON shape the
+/// VM recorder uses (`{"$ok": {"$record": {"type": "HttpResponse",
+/// "fields": {"status": …, "body": …, "headers": {}}}}}`). Headers
+/// always serialise as an empty `Map<String, List<String>>` for now —
+/// `aver_rt::HttpResponse` carries the fields the host bridge
+/// populates, and the host doesn't expose response headers yet (same
+/// gap the wasm record-construction path has).
+#[cfg(feature = "wasm")]
+fn http_outcome_to_json(
+    outcome: &Result<aver_rt::HttpResponse, String>,
+) -> aver::replay::JsonValue {
+    match outcome {
+        Ok(resp) => json_ok(json_record(
+            "HttpResponse",
+            vec![
+                ("status", aver::replay::JsonValue::Int(resp.status)),
+                (
+                    "body",
+                    aver::replay::JsonValue::String(resp.body.as_ref().to_string()),
+                ),
+                (
+                    "headers",
+                    aver::replay::JsonValue::Object(std::collections::BTreeMap::new()),
+                ),
+            ],
+        )),
+        Err(e) => json_err(e),
     }
 }
 
