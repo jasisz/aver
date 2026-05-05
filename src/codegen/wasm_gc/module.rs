@@ -534,7 +534,9 @@ pub(super) fn emit_module(
     // Wasm-level start fn — auto-runs once at instantiation, ahead of
     // any host-invoked export. Used for caller_fn global init.
     if let Some(idx) = init_globals_fn_idx {
-        module.section(&wasm_encoder::StartSection { function_index: idx });
+        module.section(&wasm_encoder::StartSection {
+            function_index: idx,
+        });
     }
 
     // ── Data count section (must precede code when using passive
