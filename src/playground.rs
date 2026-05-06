@@ -129,8 +129,8 @@ pub fn compile_project_to_wasm_with_entry(
     let root_depends = module_depends(&entry_items);
     let loaded = load_module_tree_from_map(&root_depends, files)?;
 
-    let (target_fn, args) = crate::replay::parse_entry_call(expr)
-        .map_err(|e| format!("--expr parse: {}", e))?;
+    let (target_fn, args) =
+        crate::replay::parse_entry_call(expr).map_err(|e| format!("--expr parse: {}", e))?;
     let (return_type, _effects) = lookup_fn_signature(&entry_items, &loaded, &target_fn)
         .ok_or_else(|| format!("entry fn `{}` not found in project", target_fn))?;
 
@@ -157,8 +157,9 @@ pub fn compile_project_to_wasm_with_entry(
         .collect();
     codegen::wasm_gc::flatten_multimodule(&mut entry_items, &modules);
     crate::ir::pipeline::resolve(&mut entry_items);
-    let bytes = codegen::wasm_gc::compile_to_wasm_gc(&entry_items, pipeline_result.analysis.as_ref())
-        .map_err(|e| format!("{e}"))?;
+    let bytes =
+        codegen::wasm_gc::compile_to_wasm_gc(&entry_items, pipeline_result.analysis.as_ref())
+            .map_err(|e| format!("{e}"))?;
     Ok((bytes, target_fn))
 }
 
@@ -173,16 +174,17 @@ fn lookup_fn_signature(
     loaded: &[LoadedModule],
     target: &str,
 ) -> Option<(String, Vec<crate::ast::Spanned<String>>)> {
-    let scan = |items: &[crate::ast::TopLevel]| -> Option<(String, Vec<crate::ast::Spanned<String>>)> {
-        for item in items {
-            if let crate::ast::TopLevel::FnDef(fd) = item
-                && fd.name == target
-            {
-                return Some((fd.return_type.clone(), fd.effects.clone()));
+    let scan =
+        |items: &[crate::ast::TopLevel]| -> Option<(String, Vec<crate::ast::Spanned<String>>)> {
+            for item in items {
+                if let crate::ast::TopLevel::FnDef(fd) = item
+                    && fd.name == target
+                {
+                    return Some((fd.return_type.clone(), fd.effects.clone()));
+                }
             }
-        }
-        None
-    };
+            None
+        };
     if let Some(s) = scan(entry_items) {
         return Some(s);
     }
@@ -232,7 +234,9 @@ fn build_synth_entry_fn(
 /// Unit. Anything richer (lists, tuples, variants) returns Err so
 /// the caller can fall back to the VM-in-wasm32 path that owns
 /// per-type encoding.
-fn value_to_literal_expr(v: &crate::value::Value) -> Result<crate::ast::Spanned<crate::ast::Expr>, String> {
+fn value_to_literal_expr(
+    v: &crate::value::Value,
+) -> Result<crate::ast::Spanned<crate::ast::Expr>, String> {
     use crate::ast::{Expr, Literal, Spanned};
     let lit = match v {
         crate::value::Value::Int(n) => Literal::Int(*n),
@@ -1077,9 +1081,8 @@ mod bindgen {
     ) -> Result<Vec<u8>, JsError> {
         let files: std::collections::HashMap<String, String> =
             serde_json::from_str(files_json).map_err(|e| JsError::new(&e.to_string()))?;
-        let (bytes, _target_fn) =
-            super::compile_project_to_wasm_with_entry(&files, entry, expr)
-                .map_err(|e| JsError::new(&e))?;
+        let (bytes, _target_fn) = super::compile_project_to_wasm_with_entry(&files, entry, expr)
+            .map_err(|e| JsError::new(&e))?;
         Ok(bytes)
     }
 
