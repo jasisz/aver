@@ -665,8 +665,19 @@ pub(super) fn emit_module(
     map_helpers.emit_helper_bodies(&mut codes, &registry, &compound_eq_hash_lookup)?;
 
     // List / Vector.fromList / String.split-join helper bodies.
+    // Snapshot eq-helper fn idxs so list/vec eq+hash bodies can
+    // dispatch nominal-element `==`/hash through `Call(__eq_<X>)`.
     let string_eq_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::StringEq);
-    list_helpers.emit_helper_bodies(&mut codes, &registry, string_eq_fn_idx)?;
+    let eq_helper_fn_idx_map: HashMap<String, u32> = eq_helpers_registry
+        .iter()
+        .filter_map(|(n, _k)| eq_helpers_registry.lookup_fn_idx(n).map(|i| (n.to_string(), i)))
+        .collect();
+    list_helpers.emit_helper_bodies(
+        &mut codes,
+        &registry,
+        string_eq_fn_idx,
+        &eq_helper_fn_idx_map,
+    )?;
 
     // Per-(record/sum) `__eq_<TypeName>` helper bodies — emit after
     // list helpers so any String fields can call `__wasmgc_string_eq`
@@ -1199,6 +1210,47 @@ fn discover_builtins_in_stmt(
     }
 }
 
+/// Recursively walks `t` and registers every nominal record/sum it
+/// reaches in `eq_helpers`. Needed for `==` on collection types
+/// whose element/key/value type is nominal — `List<Tree>`,
+/// `Map<Color, Tree>`, `Option<Box>`, etc. Without this, the
+/// helper-body emit (`emit_list_eq`, `emit_record_eq_inline`,
+/// `emit_eq_record`) would dispatch by `Call(__eq_<Tree>)` against
+/// an unregistered slot.
+fn register_nominal_in_type(
+    t: &AverType,
+    eq_helpers: &mut EqHelperRegistry,
+    type_registry: &super::types::TypeRegistry,
+) {
+    match t {
+        AverType::Named(name) => {
+            if type_registry.record_fields.contains_key(name) {
+                eq_helpers.register_transitive(name, EqKind::Record, type_registry);
+            } else if type_registry
+                .variants
+                .values()
+                .flat_map(|v| v.iter())
+                .any(|v| &v.parent == name)
+            {
+                eq_helpers.register_transitive(name, EqKind::Sum, type_registry);
+            }
+        }
+        AverType::List(inner) | AverType::Vector(inner) | AverType::Option(inner) => {
+            register_nominal_in_type(inner, eq_helpers, type_registry);
+        }
+        AverType::Map(k, v) | AverType::Result(k, v) => {
+            register_nominal_in_type(k, eq_helpers, type_registry);
+            register_nominal_in_type(v, eq_helpers, type_registry);
+        }
+        AverType::Tuple(items) => {
+            for item in items {
+                register_nominal_in_type(item, eq_helpers, type_registry);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn discover_builtins_in_expr(
     expr: &Expr,
     builtins: &mut BuiltinRegistry,
@@ -1270,6 +1322,16 @@ fn discover_builtins_in_expr(
                 {
                     eq_helpers.register_transitive(name, EqKind::Sum, type_registry);
                 }
+            }
+            // List / Vector / Map / Option / Result / Tuple `==` —
+            // dispatch reaches the per-element/key __eq_<X> through
+            // the helper bodies, so any nominal element type also
+            // needs an __eq slot. Walk the operand type recursively
+            // and register every nominal we hit.
+            if matches!(op, Op::Eq | Op::Neq)
+                && let Some(t) = l.ty()
+            {
+                register_nominal_in_type(t, eq_helpers, type_registry);
             }
             discover_builtins_in_expr(&l.node, builtins, effects, eq_helpers, type_registry);
             discover_builtins_in_expr(&r.node, builtins, effects, eq_helpers, type_registry);

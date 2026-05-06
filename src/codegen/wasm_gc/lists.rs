@@ -569,6 +569,7 @@ impl ListHelperRegistry {
         codes: &mut CodeSection,
         registry: &TypeRegistry,
         string_eq_fn_idx: Option<u32>,
+        eq_helper_fn_idx: &std::collections::HashMap<String, u32>,
     ) -> Result<(), WasmGcError> {
         for canonical in &self.list_order {
             // Order MUST match `assign_slots` and
@@ -589,6 +590,7 @@ impl ListHelperRegistry {
                     registry,
                     kind.clone(),
                     string_eq_fn_idx,
+                    eq_helper_fn_idx,
                 )?);
                 if let (Some(eq_fn), Some(_hash_fn)) = (ops.eq, ops.hash) {
                     codes.function(&emit_list_eq(
@@ -597,6 +599,7 @@ impl ListHelperRegistry {
                         kind.clone(),
                         string_eq_fn_idx,
                         eq_fn,
+                        eq_helper_fn_idx,
                     )?);
                     codes.function(&emit_list_hash(
                         canonical,
@@ -620,6 +623,7 @@ impl ListHelperRegistry {
                     registry,
                     kind.clone(),
                     string_eq_fn_idx,
+                    eq_helper_fn_idx,
                 )?);
                 codes.function(&emit_vec_hash(canonical, registry, kind, string_eq_fn_idx)?);
             }
@@ -697,20 +701,18 @@ fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
         "Bool" => Some(ListEqKind::I32),
         "String" => Some(ListEqKind::StringEq),
         other => {
+            // Record / sum element gets a contains/eq/hash slot
+            // whenever its fields are themselves resolvable: primitives
+            // or nominal types we've already accepted. Recursive refs
+            // (Tree.Node holding Tree) and nominal cross-references
+            // (Item holding Color) both flow through `field_resolvable`
+            // which recurses with a `seen` set so cycles terminate.
+            // The inline emitters (emit_record_eq_inline /
+            // emit_sum_eq_inline) handle these via `eq_helper_fn_idx`
+            // dispatch + `self_fn_idx` for self-recursion since 0.16.3.
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             if registry.record_type_idx(other).is_some() {
-                // Record element only gets a `contains` slot when
-                // every field is comparable inline. Nested records,
-                // lists, vectors, sums in fields would need a
-                // recursive eq dispatch the inline emit doesn't
-                // support — those records still work as Map keys
-                // (where nested record helpers are force-registered
-                // and called by fn idx); they just don't get a
-                // List.contains slot.
-                let fields = registry.record_fields.get(other)?;
-                let all_simple = fields
-                    .iter()
-                    .all(|(_, t)| matches!(t.trim(), "Int" | "Float" | "Bool" | "String"));
-                if all_simple {
+                if record_fields_resolvable(other, registry, &mut seen) {
                     Some(ListEqKind::RecordEq(other.to_string()))
                 } else {
                     None
@@ -721,17 +723,7 @@ fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
                 .flat_map(|v| v.iter())
                 .any(|v| v.parent == other)
             {
-                let all_simple = registry
-                    .variants
-                    .values()
-                    .flat_map(|vs| vs.iter())
-                    .filter(|v| v.parent == other)
-                    .all(|v| {
-                        v.fields
-                            .iter()
-                            .all(|t| matches!(t.trim(), "Int" | "Float" | "Bool" | "String"))
-                    });
-                if all_simple {
+                if sum_fields_resolvable(other, registry, &mut seen) {
                     Some(ListEqKind::SumEq(other.to_string()))
                 } else {
                     None
@@ -741,6 +733,62 @@ fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
             }
         }
     }
+}
+
+/// True when every field of `record` is something the inline eq
+/// emitters can dispatch: primitive, a registered record/sum
+/// (recursively resolvable), or self-recursion. Cycles terminate
+/// via the `seen` set.
+fn record_fields_resolvable(
+    record: &str,
+    registry: &TypeRegistry,
+    seen: &mut std::collections::HashSet<String>,
+) -> bool {
+    if !seen.insert(record.to_string()) {
+        return true; // already visiting — break the cycle
+    }
+    let Some(fields) = registry.record_fields.get(record) else {
+        return false;
+    };
+    fields
+        .iter()
+        .all(|(_, t)| field_type_resolvable(t.trim(), registry, seen))
+}
+
+fn sum_fields_resolvable(
+    parent: &str,
+    registry: &TypeRegistry,
+    seen: &mut std::collections::HashSet<String>,
+) -> bool {
+    if !seen.insert(parent.to_string()) {
+        return true;
+    }
+    registry
+        .variants
+        .values()
+        .flat_map(|vs| vs.iter())
+        .filter(|v| v.parent == parent)
+        .all(|v| {
+            v.fields
+                .iter()
+                .all(|t| field_type_resolvable(t.trim(), registry, seen))
+        })
+}
+
+fn field_type_resolvable(
+    field: &str,
+    registry: &TypeRegistry,
+    seen: &mut std::collections::HashSet<String>,
+) -> bool {
+    matches!(field, "Int" | "Float" | "Bool" | "String")
+        || (registry.record_type_idx(field).is_some()
+            && record_fields_resolvable(field, registry, seen))
+        || (registry
+            .variants
+            .values()
+            .flat_map(|vs| vs.iter())
+            .any(|v| v.parent == field)
+            && sum_fields_resolvable(field, registry, seen))
 }
 
 fn list_idx_of(canonical: &str, registry: &TypeRegistry) -> Result<u32, WasmGcError> {
@@ -1498,6 +1546,7 @@ fn emit_list_contains(
     registry: &TypeRegistry,
     kind: ListEqKind,
     string_eq_fn_idx: Option<u32>,
+    eq_helper_fn_idx: &std::collections::HashMap<String, u32>,
 ) -> Result<Function, WasmGcError> {
     let list_idx = list_idx_of(canonical, registry)?;
     let list_ref = ValType::Ref(RefType {
@@ -1550,7 +1599,7 @@ fn emit_list_contains(
                 3,
                 4,
                 string_eq_fn_idx,
-                &std::collections::HashMap::new(),
+                eq_helper_fn_idx,
                 None,
             )?;
         }
@@ -1572,7 +1621,7 @@ fn emit_list_contains(
                 3,
                 4,
                 string_eq_fn_idx,
-                &std::collections::HashMap::new(),
+                eq_helper_fn_idx,
                 None,
             )?;
         }
@@ -1995,12 +2044,14 @@ fn emit_list_zip(
 /// when both lists end at the same step with all heads equal; 0
 /// otherwise. Same `T` constraint as contains — only emitted when T
 /// has a `list_eq_kind`.
+#[allow(clippy::too_many_arguments)]
 fn emit_list_eq(
     canonical: &str,
     registry: &TypeRegistry,
     kind: ListEqKind,
     string_eq_fn_idx: Option<u32>,
     self_fn_idx: u32,
+    eq_helper_fn_idx: &std::collections::HashMap<String, u32>,
 ) -> Result<Function, WasmGcError> {
     let list_idx = list_idx_of(canonical, registry)?;
     // params: 0 = la, 1 = lb. No locals — short body.
@@ -2032,25 +2083,35 @@ fn emit_list_eq(
         field_index: 0,
     });
     match &kind {
-        ListEqKind::I64 => f.instruction(&Instruction::I64Eq),
-        ListEqKind::F64 => f.instruction(&Instruction::F64Eq),
-        ListEqKind::I32 => f.instruction(&Instruction::I32Eq),
+        ListEqKind::I64 => {
+            f.instruction(&Instruction::I64Eq);
+        }
+        ListEqKind::F64 => {
+            f.instruction(&Instruction::F64Eq);
+        }
+        ListEqKind::I32 => {
+            f.instruction(&Instruction::I32Eq);
+        }
         ListEqKind::StringEq => {
             let eq_fn = string_eq_fn_idx.ok_or(WasmGcError::Validation(
                 "List eq over String needs __wasmgc_string_eq".into(),
             ))?;
-            f.instruction(&Instruction::Call(eq_fn))
+            f.instruction(&Instruction::Call(eq_fn));
         }
-        ListEqKind::RecordEq(_) | ListEqKind::SumEq(_) => {
-            // Same `all_simple` constraint as contains — these
-            // variants don't reach this emit path.
-            panic!(
-                "internal compiler error: emit_list_eq reached RecordEq/SumEq; \
-                 list_eq_kind must return None for record/sum elements. \
-                 Please file at https://github.com/jasisz/aver/issues"
-            )
+        ListEqKind::RecordEq(name) | ListEqKind::SumEq(name) => {
+            // Nominal element — dispatch to the per-type
+            // `__eq_<X>` helper. Its signature is
+            // `(eqref, eqref) -> i32`; both refs on the stack are
+            // subtypes of eqref so the implicit upcast is fine.
+            let idx = eq_helper_fn_idx.get(name).copied().ok_or(
+                WasmGcError::Validation(format!(
+                    "List eq over `{name}`: __eq_{name} helper not registered \
+                     (discovery walker should have transitively flagged it)"
+                )),
+            )?;
+            f.instruction(&Instruction::Call(idx));
         }
-    };
+    }
     // if heads differ → 0
     f.instruction(&Instruction::I32Eqz);
     f.instruction(&Instruction::If(BlockType::Empty));
@@ -2389,6 +2450,7 @@ fn emit_vec_eq(
     registry: &TypeRegistry,
     kind: ListEqKind,
     string_eq_fn_idx: Option<u32>,
+    eq_helper_fn_idx: &std::collections::HashMap<String, u32>,
 ) -> Result<Function, WasmGcError> {
     let (vec_idx, _) = vec_idx_of_pair(canonical, registry)?;
     // params: 0=va, 1=vb. locals: 2=len, 3=i.
@@ -2420,22 +2482,32 @@ fn emit_vec_eq(
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::ArrayGet(vec_idx));
     match &kind {
-        ListEqKind::I64 => f.instruction(&Instruction::I64Eq),
-        ListEqKind::F64 => f.instruction(&Instruction::F64Eq),
-        ListEqKind::I32 => f.instruction(&Instruction::I32Eq),
+        ListEqKind::I64 => {
+            f.instruction(&Instruction::I64Eq);
+        }
+        ListEqKind::F64 => {
+            f.instruction(&Instruction::F64Eq);
+        }
+        ListEqKind::I32 => {
+            f.instruction(&Instruction::I32Eq);
+        }
         ListEqKind::StringEq => {
             let eq_fn = string_eq_fn_idx.ok_or(WasmGcError::Validation(
                 "Vector eq over String needs __wasmgc_string_eq".into(),
             ))?;
-            f.instruction(&Instruction::Call(eq_fn))
+            f.instruction(&Instruction::Call(eq_fn));
         }
-        kind => panic!(
-            "internal compiler error: Vector eq emit reached unsupported \
-             kind {kind:?}; upstream `list_eq_kind` must filter Vector eq \
-             to scalar / String elements. \
-             Please file at https://github.com/jasisz/aver/issues"
-        ),
-    };
+        ListEqKind::RecordEq(name) | ListEqKind::SumEq(name) => {
+            // Nominal element — `Call(__eq_<X>)`. Same eqref upcast
+            // shape as in `emit_list_eq`.
+            let idx = eq_helper_fn_idx.get(name).copied().ok_or(
+                WasmGcError::Validation(format!(
+                    "Vector eq over `{name}`: __eq_{name} helper not registered"
+                )),
+            )?;
+            f.instruction(&Instruction::Call(idx));
+        }
+    }
     f.instruction(&Instruction::I32Eqz);
     f.instruction(&Instruction::If(BlockType::Empty));
     f.instruction(&Instruction::I32Const(0));
