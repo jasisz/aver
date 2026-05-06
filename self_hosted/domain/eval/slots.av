@@ -28,7 +28,7 @@ fn lookupSlot(env: Vector<Val>, slot: Int) -> Result<Val, String>
     ? "Look up a variable by slot index. O(1)."
     match Vector.get(env, slot)
         Option.Some(v) -> Result.Ok(v)
-        Option.None -> Result.Err("slot out of bounds: {Int.toString(slot)}")
+        Option.None -> Result.Err("slot out of bounds: {String.fromInt(slot)}")
 
 verify lookupSlot
     lookupSlot(Vector.fromList([Val.ValInt(10), Val.ValInt(20)]), 0) => Result.Ok(Val.ValInt(10))

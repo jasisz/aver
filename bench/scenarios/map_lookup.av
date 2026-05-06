@@ -7,25 +7,25 @@ fn buildMap(n: Int, m: Map<String, Int>) -> Map<String, Int>
     ? "Tail-recursively insert n entries with stringified Int keys."
     match n
         0 -> m
-        _ -> buildMap(n - 1, Map.set(m, Int.toString(n), n))
+        _ -> buildMap(n - 1, Map.set(m, String.fromInt(n), n))
 
 verify buildMap
-    Map.len(buildMap(0, Map.empty())) => 0
-    Map.len(buildMap(5, Map.empty())) => 5
+    Map.len(buildMap(0, {})) => 0
+    Map.len(buildMap(5, {})) => 5
 
 fn sumLookups(i: Int, m: Map<String, Int>, acc: Int) -> Int
     ? "Tail-recursive sum of Map.get values; missing keys count as 0."
     match i
         0 -> acc
-        _ -> match Map.get(m, Int.toString(i))
+        _ -> match Map.get(m, String.fromInt(i))
             Option.Some(v) -> sumLookups(i - 1, m, acc + v)
             Option.None -> sumLookups(i - 1, m, acc)
 
 verify sumLookups
-    sumLookups(0, Map.empty(), 0) => 0
-    sumLookups(3, Map.set(Map.set(Map.set(Map.empty(), "1", 1), "2", 2), "3", 3), 0) => 6
+    sumLookups(0, {}, 0) => 0
+    sumLookups(3, Map.set(Map.set(Map.set({}, "1", 1), "2", 2), "3", 3), 0) => 6
 
 fn main() -> Int
     ? "Bench entry — return value ignored."
-    m = buildMap(2000, Map.empty())
+    m = buildMap(2000, {})
     sumLookups(20000, m, 0)

@@ -150,7 +150,7 @@ fn typed_binding_parses_annotation() {
 
 #[test]
 fn typed_binding_generic_type() {
-    let items = parse("m: Map<String, Int> = Map.empty()");
+    let items = parse("m: Map<String, Int> = {}");
     if let TopLevel::Stmt(Stmt::Binding(name, type_ann, _)) = &items[0] {
         assert_eq!(name, "m");
         assert_eq!(type_ann.as_deref(), Some("Map<String, Int>"));

@@ -27,7 +27,7 @@ fn prepareProgramWithModules(source: String, moduleRoot: String) -> Result<(Prog
     tokens = Domain.Lexer.lex(source)
     prog = Domain.Parser.parse(tokens)?
     resolved = Domain.Resolver.resolveProgram(prog)
-    r = loadModules(resolved.deps, moduleRoot, [], Map.empty())?
+    r = loadModules(resolved.deps, moduleRoot, [], {})?
     match r
         (moduleFns, _) -> Result.Ok((resolved, moduleFns))
 
@@ -106,7 +106,7 @@ fn qualifyFns(fns: List<FnDef>, prefix: String, acc: List<FnDef>) -> List<FnDef>
 
 verify qualifyFns
     qualifyFns([], "M", []) => []
-    qualifyFns([FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)], "M", []) => [FnDef(name = "M.f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)]
+    qualifyFns([FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false)], "M", []) => [FnDef(name = "M.f", params = [], body = [], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false), FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false)]
 
 fn qualifyFnsOne(f: FnDef, rest: List<FnDef>, prefix: String, acc: List<FnDef>) -> List<FnDef>
     ? "Add both qualified and unqualified versions."
@@ -114,7 +114,7 @@ fn qualifyFnsOne(f: FnDef, rest: List<FnDef>, prefix: String, acc: List<FnDef>) 
     qualifyFns(rest, prefix, List.prepend(f, List.prepend(qualified, acc)))
 
 verify qualifyFnsOne
-    qualifyFnsOne(FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), [], "M", []) => [FnDef(name = "M.f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)]
+    qualifyFnsOne(FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false), [], "M", []) => [FnDef(name = "M.f", params = [], body = [], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false), FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false)]
 
 fn resolveQualifiedModuleFns(prog: Program, dep: String) -> List<FnDef>
     ? "Duplicate module function names first, then resolve locally so direct-call ids are consistent within that module."
@@ -132,21 +132,21 @@ fn shiftFnIdsInFns(fns: List<FnDef>, offset: Int, acc: List<FnDef>) -> List<FnDe
 
 verify shiftFnIdsInFns
     shiftFnIdsInFns([], 5, []) => []
-    List.len(shiftFnIdsInFns([FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)], 5, [])) => 1
+    List.len(shiftFnIdsInFns([FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false)], 5, [])) => 1
 
 fn shiftFnIdsInProgram(prog: Program, offset: Int) -> Program
     ? "Shift entry-program direct-call ids before prepending loaded module functions."
     Program(deps = prog.deps, fns = shiftFnIdsInFns(prog.fns, offset, []), stmts = shiftFnIdsInStmts(prog.stmts, offset, []))
 
 verify shiftFnIdsInProgram
-    shiftFnIdsInProgram(Program(deps = [], fns = [FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprCallDirect(1, []))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastForwardCall(2, []), tailLoop = false)], stmts = [Stmt.StmtExpr(Expr.ExprCallDirect(3, []))]), 4) => Program(deps = [], fns = [FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprCallDirect(5, []))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastForwardCall(6, []), tailLoop = false)], stmts = [Stmt.StmtExpr(Expr.ExprCallDirect(7, []))])
+    shiftFnIdsInProgram(Program(deps = [], fns = [FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprCallDirect(1, []))], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastForwardCall(2, []), tailLoop = false)], stmts = [Stmt.StmtExpr(Expr.ExprCallDirect(3, []))]), 4) => Program(deps = [], fns = [FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprCallDirect(5, []))], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastForwardCall(6, []), tailLoop = false)], stmts = [Stmt.StmtExpr(Expr.ExprCallDirect(7, []))])
 
 fn shiftFnIdsInFn(fd: FnDef, offset: Int) -> FnDef
     ? "Shift all embedded direct-call ids in one function definition."
     FnDef(name = fd.name, params = fd.params, body = shiftFnIdsInStmts(fd.body, offset, []), slotCount = fd.slotCount, slotMap = fd.slotMap, fastPath = shiftFnIdsInFastPath(fd.fastPath, offset), tailLoop = fd.tailLoop)
 
 verify shiftFnIdsInFn
-    shiftFnIdsInFn(FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprCallDirect(2, []))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastForwardCall(1, [0]), tailLoop = false), 5) => FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprCallDirect(7, []))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastForwardCall(6, [0]), tailLoop = false)
+    shiftFnIdsInFn(FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprCallDirect(2, []))], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastForwardCall(1, [0]), tailLoop = false), 5) => FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprCallDirect(7, []))], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastForwardCall(6, [0]), tailLoop = false)
 
 fn shiftFnIdsInFastPath(path: FnFastPath, offset: Int) -> FnFastPath
     ? "Shift fast-path target ids that were resolved against a module-local function list."
@@ -252,7 +252,7 @@ fn shiftFnIdsInArms(arms: List<MatchArm>, offset: Int, acc: List<MatchArm>) -> L
 
 verify shiftFnIdsInArms
     shiftFnIdsInArms([], 1, []) => []
-    shiftFnIdsInArms([MatchArm(pattern = Pattern.PatWild, body = Expr.ExprCallDirect(3, []), bindingSlots = Map.empty())], 2, []) => [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprCallDirect(5, []), bindingSlots = Map.empty())]
+    shiftFnIdsInArms([MatchArm(pattern = Pattern.PatWild, body = Expr.ExprCallDirect(3, []), bindingSlots = {})], 2, []) => [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprCallDirect(5, []), bindingSlots = {})]
 
 fn runRepr(source: String) -> String
     ? "Run source and return result representation or error."
@@ -313,7 +313,7 @@ fn finishCliRun(localFns: List<FnDef>, result: Val) -> Result<Val, String>
 
 verify finishCliRun
     finishCliRun([], Val.ValInt(7)) => Result.Ok(Val.ValInt(7))
-    finishCliRun([FnDef(name = "main", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)], Val.ValErr(Val.ValInt(9))) => Result.Err("Main returned error: 9")
+    finishCliRun([FnDef(name = "main", params = [], body = [], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false)], Val.ValErr(Val.ValInt(9))) => Result.Err("Main returned error: 9")
 
 fn finishCliMainResult(result: Val) -> Result<Val, String>
     ? "Convert a guest main() return value into CLI success or failure. Successful returns propagate the live Val so the replay scope can serialise it as recording.output."
@@ -336,8 +336,8 @@ fn hasLocalMain(fns: List<FnDef>) -> Bool
 
 verify hasLocalMain
     hasLocalMain([]) => false
-    hasLocalMain([FnDef(name = "helper", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)]) => false
-    hasLocalMain([FnDef(name = "helper", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), FnDef(name = "main", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)]) => true
+    hasLocalMain([FnDef(name = "helper", params = [], body = [], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false)]) => false
+    hasLocalMain([FnDef(name = "helper", params = [], body = [], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false), FnDef(name = "main", params = [], body = [], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false)]) => true
 
 fn printIfNotUnit(s: String) -> Unit
     ? "Print unless the result is Unit."

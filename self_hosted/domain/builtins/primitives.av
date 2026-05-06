@@ -7,8 +7,8 @@ module Primitives
 fn callInt(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch Int.* builtins."
     match name
-        "Int.toString" -> builtinIntToString(args)
-        "Int.toFloat" -> builtinIntToFloat(args)
+        "String.fromInt" -> builtinIntToString(args)
+        "Float.fromInt" -> builtinIntToFloat(args)
         "Int.fromString" -> builtinIntFromString(args)
         "Int.abs" -> builtinIntAbs(args)
         "Int.mod" -> builtinIntMod(args)
@@ -18,7 +18,7 @@ fn callInt(name: String, args: List<Val>) -> Result<Val, String>
 
 verify callInt
     callInt("Int.abs", [Val.ValInt(5)]) => Result.Ok(Val.ValInt(5))
-    callInt("Int.toString", [Val.ValInt(42)]) => Result.Ok(Val.ValStr("42"))
+    callInt("String.fromInt", [Val.ValInt(42)]) => Result.Ok(Val.ValStr("42"))
     callInt("Int.bogus", [Val.ValInt(1)]) => Result.Err("unknown int builtin: Int.bogus")
 
 fn builtinIntMax(args: List<Val>) -> Result<Val, String>
@@ -105,20 +105,20 @@ verify callChar
     callChar("Char.bogus", [Val.ValInt(1)]) => Result.Err("unknown char builtin: Char.bogus")
 
 fn builtinIntToFloat(args: List<Val>) -> Result<Val, String>
-    ? "Int.toFloat(n) -> Float value."
+    ? "Float.fromInt(n) -> Float value."
     v = Domain.Builtins.Helpers.oneArg(args)?
     n = Domain.Builtins.Helpers.expectInt(v)?
-    Result.Ok(Val.ValFloat(Int.toFloat(n)))
+    Result.Ok(Val.ValFloat(Float.fromInt(n)))
 
 verify builtinIntToFloat
     builtinIntToFloat([Val.ValInt(3)]) => Result.Ok(Val.ValFloat(3.0))
     builtinIntToFloat([Val.ValStr("x")]) => Result.Err("expected int argument")
 
 fn builtinIntToString(args: List<Val>) -> Result<Val, String>
-    ? "Int.toString(n) -> string representation."
+    ? "String.fromInt(n) -> string representation."
     v = Domain.Builtins.Helpers.oneArg(args)?
     n = Domain.Builtins.Helpers.expectInt(v)?
-    Result.Ok(Val.ValStr(Int.toString(n)))
+    Result.Ok(Val.ValStr(String.fromInt(n)))
 
 verify builtinIntToString
     builtinIntToString([Val.ValInt(42)]) => Result.Ok(Val.ValStr("42"))
@@ -262,10 +262,10 @@ verify builtinStringFromBool
     builtinStringFromBool([Val.ValInt(1)]) => Result.Err("String.fromBool requires Bool")
 
 fn builtinStringFromInt(args: List<Val>) -> Result<Val, String>
-    ? "String.fromInt(n) -> string (alias for Int.toString)."
+    ? "String.fromInt(n) -> string (alias for String.fromInt)."
     v = Domain.Builtins.Helpers.oneArg(args)?
     n = Domain.Builtins.Helpers.expectInt(v)?
-    Result.Ok(Val.ValStr(Int.toString(n)))
+    Result.Ok(Val.ValStr(String.fromInt(n)))
 
 verify builtinStringFromInt
     builtinStringFromInt([Val.ValInt(99)]) => Result.Ok(Val.ValStr("99"))
@@ -275,7 +275,7 @@ fn builtinStringFromFloat(args: List<Val>) -> Result<Val, String>
     ? "String.fromFloat(f) -> string."
     v = Domain.Builtins.Helpers.oneArg(args)?
     match v
-        Val.ValFloat(f) -> Result.Ok(Val.ValStr(Float.toString(f)))
+        Val.ValFloat(f) -> Result.Ok(Val.ValStr(String.fromFloat(f)))
         _ -> Result.Err("String.fromFloat requires Float")
 
 verify builtinStringFromFloat
@@ -396,7 +396,7 @@ verify stringToCharList
 fn callFloat(name: String, args: List<Val>) -> Result<Val, String>
     ? "Dispatch Float.* builtins."
     match name
-        "Float.toString" -> builtinFloatToString(args)
+        "String.fromFloat" -> builtinFloatToString(args)
         "Float.fromInt" -> builtinFloatFromInt(args)
         "Float.round" -> builtinFloatRound(args)
         "Float.fromString" -> builtinFloatFromString(args)
@@ -414,7 +414,7 @@ fn callFloat(name: String, args: List<Val>) -> Result<Val, String>
         _ -> Result.Err("unknown float builtin: {name}")
 
 verify callFloat
-    callFloat("Float.toString", [Val.ValFloat(3.14)]) => Result.Ok(Val.ValStr("3.14"))
+    callFloat("String.fromFloat", [Val.ValFloat(3.14)]) => Result.Ok(Val.ValStr("3.14"))
     callFloat("Float.bogus", [Val.ValFloat(1.0)]) => Result.Err("unknown float builtin: Float.bogus")
 
 fn builtinFloatFromString(args: List<Val>) -> Result<Val, String>
@@ -433,7 +433,7 @@ fn builtinFloatFromInt(args: List<Val>) -> Result<Val, String>
     ? "Float.fromInt(n) -> Float."
     v = Domain.Builtins.Helpers.oneArg(args)?
     n = Domain.Builtins.Helpers.expectInt(v)?
-    Result.Ok(Val.ValFloat(Int.toFloat(n)))
+    Result.Ok(Val.ValFloat(Float.fromInt(n)))
 
 verify builtinFloatFromInt
     builtinFloatFromInt([Val.ValInt(5)]) => Result.Ok(Val.ValFloat(5.0))
@@ -451,15 +451,15 @@ verify builtinFloatRound
     builtinFloatRound([Val.ValInt(1)]) => Result.Err("Float.round requires Float")
 
 fn builtinFloatToString(args: List<Val>) -> Result<Val, String>
-    ? "Float.toString(f) -> string representation."
+    ? "String.fromFloat(f) -> string representation."
     v = Domain.Builtins.Helpers.oneArg(args)?
     match v
-        Val.ValFloat(f) -> Result.Ok(Val.ValStr(Float.toString(f)))
-        _ -> Result.Err("Float.toString requires Float")
+        Val.ValFloat(f) -> Result.Ok(Val.ValStr(String.fromFloat(f)))
+        _ -> Result.Err("String.fromFloat requires Float")
 
 verify builtinFloatToString
     builtinFloatToString([Val.ValFloat(3.14)]) => Result.Ok(Val.ValStr("3.14"))
-    builtinFloatToString([Val.ValInt(1)]) => Result.Err("Float.toString requires Float")
+    builtinFloatToString([Val.ValInt(1)]) => Result.Err("String.fromFloat requires Float")
 
 fn builtinFloatAbs(args: List<Val>) -> Result<Val, String>
     ? "Float.abs(f) -> Float."

@@ -12,7 +12,7 @@ fn call(name: String, args: List<Val>) -> Result<Val, String>
         "Vector.set" -> builtinVectorSet(args)
         "Vector.len" -> builtinVectorLen(args)
         "Vector.fromList" -> builtinVectorFromList(args)
-        "Vector.toList" -> builtinVectorToList(args)
+        "List.fromVector" -> builtinVectorToList(args)
         _ -> Result.Err("unknown vector builtin: {name}")
 
 verify call
@@ -109,12 +109,12 @@ verify builtinVectorFromList
     builtinVectorFromList([Val.ValInt(1)]) => Result.Err("Vector.fromList: expected List")
 
 fn builtinVectorToList(args: List<Val>) -> Result<Val, String>
-    ? "Vector.toList(vec) -> List<T>."
+    ? "List.fromVector(vec) -> List<T>."
     v = Domain.Builtins.Helpers.oneArg(args)?
     match v
-        Val.ValVector(vec) -> Result.Ok(Val.ValList(Vector.toList(vec)))
-        _ -> Result.Err("Vector.toList: expected Vector")
+        Val.ValVector(vec) -> Result.Ok(Val.ValList(List.fromVector(vec)))
+        _ -> Result.Err("List.fromVector: expected Vector")
 
 verify builtinVectorToList
     builtinVectorToList([Val.ValVector(Vector.fromList([Val.ValInt(1), Val.ValInt(2)]))]) => Result.Ok(Val.ValList([Val.ValInt(1), Val.ValInt(2)]))
-    builtinVectorToList([Val.ValStr("x")]) => Result.Err("Vector.toList: expected Vector")
+    builtinVectorToList([Val.ValStr("x")]) => Result.Err("List.fromVector: expected Vector")

@@ -852,7 +852,7 @@ fn vm_parent_thin_allows_heapless_builtin_helpers() {
 
 #[test]
 fn vm_parent_thin_allows_cheap_builtin_lookup_helpers() {
-    let src = "fn lookup(values: Map<String, Int>) -> Option<Int>\n    Map.get(values, \"x\")\n\nfn wrap(values: Map<String, Int>) -> Option<Int>\n    lookup(values)\n\nfn main() -> Option<Int>\n    wrap(Map.set(Map.empty(), \"x\", 9))\n";
+    let src = "fn lookup(values: Map<String, Int>) -> Option<Int>\n    Map.get(values, \"x\")\n\nfn wrap(values: Map<String, Int>) -> Option<Int>\n    lookup(values)\n\nfn main() -> Option<Int>\n    wrap(Map.set({}, \"x\", 9))\n";
     let code = vm_compile(src);
     assert!(code.get(code.find("lookup").unwrap()).parent_thin);
     assert!(code.get(code.find("wrap").unwrap()).parent_thin);
@@ -1146,7 +1146,7 @@ fn lenIsOne(m: Map<String, Int>) -> Bool
     Map.len(m) == 1
 
 fn main() -> (Bool, Bool, Bool, Bool)
-    m = Map.set(Map.empty(), "Board.isColor", 7)
+    m = Map.set({}, "Board.isColor", 7)
     (hasKey(m), hasKey(m), lenIsOne(m), lenIsOne(m))!
 "#;
 
@@ -1187,7 +1187,7 @@ fn hasFnZero(fns: FnStore) -> Bool
 
 fn main() -> (Bool, Bool, Bool, Bool, Bool, Bool)
     store = Domain.Eval.Store.fnsToStore([
-        FnDef(name = "Board.isColor", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)
+        FnDef(name = "Board.isColor", params = [], body = [], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false)
     ])
     (hasBoard(store), hasBoard(store), hasBoardId(store), hasBoardId(store), hasFnZero(store), hasFnZero(store))!
 "#;

@@ -599,7 +599,7 @@ fn parseMatchExpr(tokens: List<Token>, pos: Int) -> Result<(Expr, Int), String>
         (subject, pos2) -> parseMatchAfterSubject(tokens, pos2, subject)
 
 verify parseMatchExpr
-    parseMatchExpr([Token.TkInt(1), Token.TkNewline, Token.TkIndent, Token.TkInt(1), Token.TkArrow, Token.TkTrue, Token.TkNewline, Token.TkDedent, Token.TkEof], 0) => Result.Ok((Expr.ExprMatch(Expr.ExprInt(1), [MatchArm(pattern = Pattern.PatInt(1), body = Expr.ExprBool(true), bindingSlots = Map.empty())]), 8))
+    parseMatchExpr([Token.TkInt(1), Token.TkNewline, Token.TkIndent, Token.TkInt(1), Token.TkArrow, Token.TkTrue, Token.TkNewline, Token.TkDedent, Token.TkEof], 0) => Result.Ok((Expr.ExprMatch(Expr.ExprInt(1), [MatchArm(pattern = Pattern.PatInt(1), body = Expr.ExprBool(true), bindingSlots = {})]), 8))
     parseMatchExpr([Token.TkEof], 0) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseMatchAfterSubject(tokens: List<Token>, pos: Int, subject: Expr) -> Result<(Expr, Int), String>
@@ -610,7 +610,7 @@ fn parseMatchAfterSubject(tokens: List<Token>, pos: Int, subject: Expr) -> Resul
         _ -> parseMatchArmsFlat(tokens, pos2, subject, [])
 
 verify parseMatchAfterSubject
-    parseMatchAfterSubject([Token.TkNewline, Token.TkIndent, Token.TkIdent("_"), Token.TkArrow, Token.TkInt(0), Token.TkNewline, Token.TkDedent, Token.TkEof], 0, Expr.ExprVar("x")) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = Map.empty())]), 7))
+    parseMatchAfterSubject([Token.TkNewline, Token.TkIndent, Token.TkIdent("_"), Token.TkArrow, Token.TkInt(0), Token.TkNewline, Token.TkDedent, Token.TkEof], 0, Expr.ExprVar("x")) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = {})]), 7))
     parseMatchAfterSubject([Token.TkEof], 0, Expr.ExprVar("x")) => Result.Err("Expected at least one match arm")
 
 fn parseMatchArms(tokens: List<Token>, pos: Int, subject: Expr, acc: List<MatchArm>) -> Result<(Expr, Int), String>
@@ -626,7 +626,7 @@ fn parseMatchArms(tokens: List<Token>, pos: Int, subject: Expr, acc: List<MatchA
         _ -> parseOneArm(tokens, pos2, subject, acc)
 
 verify parseMatchArms
-    parseMatchArms([Token.TkIdent("_"), Token.TkArrow, Token.TkInt(0), Token.TkNewline, Token.TkDedent, Token.TkEof], 0, Expr.ExprVar("x"), []) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = Map.empty())]), 5))
+    parseMatchArms([Token.TkIdent("_"), Token.TkArrow, Token.TkInt(0), Token.TkNewline, Token.TkDedent, Token.TkEof], 0, Expr.ExprVar("x"), []) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = {})]), 5))
     parseMatchArms([Token.TkDedent, Token.TkEof], 0, Expr.ExprVar("x"), []) => Result.Err("Expected at least one match arm")
 
 fn parseMatchArmsFlat(tokens: List<Token>, pos: Int, subject: Expr, acc: List<MatchArm>) -> Result<(Expr, Int), String>
@@ -638,7 +638,7 @@ fn parseMatchArmsFlat(tokens: List<Token>, pos: Int, subject: Expr, acc: List<Ma
             _ -> Result.Ok((Expr.ExprMatch(subject, List.reverse(acc)), pos))
 
 verify parseMatchArmsFlat
-    parseMatchArmsFlat([Token.TkIdent("_"), Token.TkArrow, Token.TkInt(0), Token.TkEof], 0, Expr.ExprVar("x"), []) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = Map.empty())]), 3))
+    parseMatchArmsFlat([Token.TkIdent("_"), Token.TkArrow, Token.TkInt(0), Token.TkEof], 0, Expr.ExprVar("x"), []) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = {})]), 3))
     parseMatchArmsFlat([Token.TkEof], 0, Expr.ExprVar("x"), []) => Result.Err("Expected at least one match arm")
 
 fn parseOneArmFlat(tokens: List<Token>, pos: Int, subject: Expr, acc: List<MatchArm>) -> Result<(Expr, Int), String>
@@ -648,7 +648,7 @@ fn parseOneArmFlat(tokens: List<Token>, pos: Int, subject: Expr, acc: List<Match
         (pat, pos2) -> parseOneArmFlatBody(tokens, pos2, subject, acc, pat)
 
 verify parseOneArmFlat
-    parseOneArmFlat([Token.TkIdent("_"), Token.TkArrow, Token.TkInt(0), Token.TkEof], 0, Expr.ExprVar("x"), []) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = Map.empty())]), 3))
+    parseOneArmFlat([Token.TkIdent("_"), Token.TkArrow, Token.TkInt(0), Token.TkEof], 0, Expr.ExprVar("x"), []) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = {})]), 3))
     parseOneArmFlat([Token.TkIdent("_"), Token.TkEof], 0, Expr.ExprVar("x"), []) => Result.Err("Expected tokenRepr(TkArrow), got tokenRepr(TkEof)")
 
 fn parseOneArmFlatBody(tokens: List<Token>, pos: Int, subject: Expr, acc: List<MatchArm>, pat: Pattern) -> Result<(Expr, Int), String>
@@ -656,10 +656,10 @@ fn parseOneArmFlatBody(tokens: List<Token>, pos: Int, subject: Expr, acc: List<M
     pos2 = Domain.ParserMatch.expect(tokens, pos, Token.TkArrow)?
     er = parseExpr(tokens, pos2)?
     match er
-        (body, pos3) -> parseMatchArmsFlat(tokens, Domain.ParserMatch.skipNewlines(tokens, pos3), subject, List.prepend(MatchArm(pattern = pat, body = body, bindingSlots = Map.empty()), acc))
+        (body, pos3) -> parseMatchArmsFlat(tokens, Domain.ParserMatch.skipNewlines(tokens, pos3), subject, List.prepend(MatchArm(pattern = pat, body = body, bindingSlots = {}), acc))
 
 verify parseOneArmFlatBody
-    parseOneArmFlatBody([Token.TkArrow, Token.TkInt(0), Token.TkEof], 0, Expr.ExprVar("x"), [], Pattern.PatWild) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = Map.empty())]), 2))
+    parseOneArmFlatBody([Token.TkArrow, Token.TkInt(0), Token.TkEof], 0, Expr.ExprVar("x"), [], Pattern.PatWild) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = {})]), 2))
     parseOneArmFlatBody([Token.TkEof], 0, Expr.ExprVar("x"), [], Pattern.PatWild) => Result.Err("Expected tokenRepr(TkArrow), got tokenRepr(TkEof)")
 
 fn parseOneArm(tokens: List<Token>, pos: Int, subject: Expr, acc: List<MatchArm>) -> Result<(Expr, Int), String>
@@ -669,7 +669,7 @@ fn parseOneArm(tokens: List<Token>, pos: Int, subject: Expr, acc: List<MatchArm>
         (pat, pos2) -> parseOneArmBody(tokens, pos2, subject, acc, pat)
 
 verify parseOneArm
-    parseOneArm([Token.TkIdent("_"), Token.TkArrow, Token.TkInt(0), Token.TkNewline, Token.TkDedent, Token.TkEof], 0, Expr.ExprVar("x"), []) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = Map.empty())]), 5))
+    parseOneArm([Token.TkIdent("_"), Token.TkArrow, Token.TkInt(0), Token.TkNewline, Token.TkDedent, Token.TkEof], 0, Expr.ExprVar("x"), []) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = {})]), 5))
     parseOneArm([Token.TkIdent("_"), Token.TkEof], 0, Expr.ExprVar("x"), []) => Result.Err("Expected tokenRepr(TkArrow), got tokenRepr(TkEof)")
 
 fn parseOneArmBody(tokens: List<Token>, pos: Int, subject: Expr, acc: List<MatchArm>, pat: Pattern) -> Result<(Expr, Int), String>
@@ -677,8 +677,8 @@ fn parseOneArmBody(tokens: List<Token>, pos: Int, subject: Expr, acc: List<Match
     pos2 = Domain.ParserMatch.expect(tokens, pos, Token.TkArrow)?
     er = parseExpr(tokens, pos2)?
     match er
-        (body, pos3) -> parseMatchArms(tokens, Domain.ParserMatch.skipNewlines(tokens, pos3), subject, List.prepend(MatchArm(pattern = pat, body = body, bindingSlots = Map.empty()), acc))
+        (body, pos3) -> parseMatchArms(tokens, Domain.ParserMatch.skipNewlines(tokens, pos3), subject, List.prepend(MatchArm(pattern = pat, body = body, bindingSlots = {}), acc))
 
 verify parseOneArmBody
-    parseOneArmBody([Token.TkArrow, Token.TkInt(0), Token.TkNewline, Token.TkDedent, Token.TkEof], 0, Expr.ExprVar("x"), [], Pattern.PatWild) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = Map.empty())]), 4))
+    parseOneArmBody([Token.TkArrow, Token.TkInt(0), Token.TkNewline, Token.TkDedent, Token.TkEof], 0, Expr.ExprVar("x"), [], Pattern.PatWild) => Result.Ok((Expr.ExprMatch(Expr.ExprVar("x"), [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = {})]), 4))
     parseOneArmBody([Token.TkEof], 0, Expr.ExprVar("x"), [], Pattern.PatWild) => Result.Err("Expected tokenRepr(TkArrow), got tokenRepr(TkEof)")

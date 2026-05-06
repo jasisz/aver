@@ -121,9 +121,9 @@ fn loop(m: Map<String, Int>, i: Int, n: Int) -> Map<String, Int>
 
 fn main()
     ! [Console.print]
-    m = loop(Map.empty(), 0, 1000)
-    Console.print(Int.toString(List.len(Map.entries(m))))
-    Console.print(Int.toString(Option.withDefault(Map.get(m, "k"), -1)))
+    m = loop({}, 0, 1000)
+    Console.print(String.fromInt(List.len(Map.entries(m))))
+    Console.print(String.fromInt(Option.withDefault(Map.get(m, "k"), -1)))
 "#;
 const OVERWRITE_OUT: &str = "1\n999";
 
@@ -135,18 +135,18 @@ const UNIQUE_KEYS_SRC: &str = r#"module Tmp
 fn build(m: Map<String, Int>, i: Int, n: Int) -> Map<String, Int>
     match i >= n
         true  -> m
-        false -> build(Map.set(m, Int.toString(i), i), i + 1, n)
+        false -> build(Map.set(m, String.fromInt(i), i), i + 1, n)
 
 fn sum(m: Map<String, Int>, i: Int, n: Int, acc: Int) -> Int
     match i >= n
         true  -> acc
-        false -> sum(m, i + 1, n, acc + Option.withDefault(Map.get(m, Int.toString(i)), -1))
+        false -> sum(m, i + 1, n, acc + Option.withDefault(Map.get(m, String.fromInt(i)), -1))
 
 fn main()
     ! [Console.print]
-    m = build(Map.empty(), 0, 5000)
-    Console.print(Int.toString(List.len(Map.entries(m))))
-    Console.print(Int.toString(sum(m, 0, 5000, 0)))
+    m = build({}, 0, 5000)
+    Console.print(String.fromInt(List.len(Map.entries(m))))
+    Console.print(String.fromInt(sum(m, 0, 5000, 0)))
 "#;
 // sum 0..4999 = 4999 * 5000 / 2 = 12 497 500
 const UNIQUE_KEYS_OUT: &str = "5000\n12497500";
@@ -168,7 +168,7 @@ fn sum(v: Vector<Int>, i: Int, n: Int, acc: Int) -> Int
 fn main()
     ! [Console.print]
     v = fill(Vector.new(3000, 0), 0, 3000)
-    Console.print(Int.toString(sum(v, 0, 3000, 0)))
+    Console.print(String.fromInt(sum(v, 0, 3000, 0)))
 "#;
 // sum 1..3000 = 3000 * 3001 / 2 = 4 501 500
 const VECTOR_TCO_OUT: &str = "4501500";
@@ -196,10 +196,10 @@ fn step(a: Acc, i: Int, n: Int) -> Acc
 
 fn main()
     ! [Console.print]
-    a = step(Acc(m = Map.empty(), v = Vector.new(2000, 0)), 0, 2000)
-    Console.print(Int.toString(List.len(Map.entries(a.m))))
-    Console.print(Int.toString(Option.withDefault(Map.get(a.m, 1500), -1)))
-    Console.print(Int.toString(Option.withDefault(Vector.get(a.v, 1500), -1)))
+    a = step(Acc(m = {}, v = Vector.new(2000, 0)), 0, 2000)
+    Console.print(String.fromInt(List.len(Map.entries(a.m))))
+    Console.print(String.fromInt(Option.withDefault(Map.get(a.m, 1500), -1)))
+    Console.print(String.fromInt(Option.withDefault(Vector.get(a.v, 1500), -1)))
 "#;
 const MIXED_OUT: &str = "2000\n3000\n4500";
 
@@ -215,7 +215,7 @@ record Pair
 fn buildList(acc: List<Pair>, i: Int, n: Int) -> List<Pair>
     match i >= n
         true  -> acc
-        false -> buildList(List.prepend(Pair(a = Int.toString(i), b = i), acc), i + 1, n)
+        false -> buildList(List.prepend(Pair(a = String.fromInt(i), b = i), acc), i + 1, n)
 
 fn buildMap(m: Map<Int, List<Pair>>, i: Int, n: Int) -> Map<Int, List<Pair>>
     match i >= n
@@ -224,9 +224,9 @@ fn buildMap(m: Map<Int, List<Pair>>, i: Int, n: Int) -> Map<Int, List<Pair>>
 
 fn main()
     ! [Console.print]
-    m = buildMap(Map.empty(), 0, 500)
-    Console.print(Int.toString(List.len(Map.entries(m))))
-    Console.print(Int.toString(List.len(Option.withDefault(Map.get(m, 250), []))))
+    m = buildMap({}, 0, 500)
+    Console.print(String.fromInt(List.len(Map.entries(m))))
+    Console.print(String.fromInt(List.len(Option.withDefault(Map.get(m, 250), []))))
 "#;
 const NESTED_OUT: &str = "500\n10";
 
@@ -247,9 +247,9 @@ fn check(m: Map<Int, Int>, i: Int, n: Int, acc: Int) -> Int
 
 fn main()
     ! [Console.print]
-    m = fill(Map.empty(), 0, 8000)
-    Console.print(Int.toString(List.len(Map.entries(m))))
-    Console.print(Int.toString(check(m, 0, 8000, 0)))
+    m = fill({}, 0, 8000)
+    Console.print(String.fromInt(List.len(Map.entries(m))))
+    Console.print(String.fromInt(check(m, 0, 8000, 0)))
 "#;
 // sum 0..7999 = 7999 * 8000 / 2 = 31 996 000
 const RESIZE_OUT: &str = "8000\n31996000";

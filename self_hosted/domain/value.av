@@ -46,13 +46,13 @@ verify valListRepr
 fn valRepr(v: Val) -> String
     ? "Display representation of a runtime value."
     match v
-        Val.ValInt(n) -> Int.toString(n)
-        Val.ValFloat(f) -> Float.toString(f)
+        Val.ValInt(n) -> String.fromInt(n)
+        Val.ValFloat(f) -> String.fromFloat(f)
         Val.ValStr(s) -> s
         Val.ValBool(b) -> String.fromBool(b)
         Val.ValFnRef(name) -> "<fn {name}>"
         Val.ValList(items) -> valListRepr(items, "", true)
-        Val.ValVector(vec) -> "Vector" + valListRepr(Vector.toList(vec), "", true)
+        Val.ValVector(vec) -> "Vector" + valListRepr(List.fromVector(vec), "", true)
         Val.ValOk(inner) -> "Result.Ok({valReprInner(inner)})"
         Val.ValErr(inner) -> "Result.Err({valReprInner(inner)})"
         Val.ValTuple(items) -> "({valFieldsRepr(items, "", true)})"
@@ -78,7 +78,7 @@ verify valRepr
     valRepr(Val.ValRecord("User", [("name", Val.ValStr("Alice"))])) => "User(...)"
     valRepr(Val.ValVariant(0, "Token.TkPlus", [])) => "Token.TkPlus"
     valRepr(Val.ValFnRef("foo")) => "<fn foo>"
-    valRepr(Val.ValMap(Map.empty())) => "{{}}"
+    valRepr(Val.ValMap({})) => "{{}}"
     valRepr(Val.ValVector(Vector.fromList([]))) => "Vector[]"
 
 fn valReprInner(v: Val) -> String
@@ -87,7 +87,7 @@ fn valReprInner(v: Val) -> String
         Val.ValStr(s) -> "\"" + s + "\""
         Val.ValFnRef(name) -> "<fn {name}>"
         Val.ValTuple(items) -> "({valFieldsRepr(items, "", true)})"
-        Val.ValVector(vec) -> "Vector" + valListRepr(Vector.toList(vec), "", true)
+        Val.ValVector(vec) -> "Vector" + valListRepr(List.fromVector(vec), "", true)
         Val.ValList(items) -> valListRepr(items, "", true)
         _ -> valRepr(v)
 
@@ -116,8 +116,8 @@ verify valMapRepr
 fn mapKeyRepr(v: Val) -> String
     ? "Stable repr for map keys. Keeps common scalar keys off the general valRepr path."
     match v
-        Val.ValInt(n) -> Int.toString(n)
-        Val.ValFloat(f) -> Float.toString(f)
+        Val.ValInt(n) -> String.fromInt(n)
+        Val.ValFloat(f) -> String.fromFloat(f)
         Val.ValStr(s) -> s
         Val.ValBool(b) -> String.fromBool(b)
         _ -> valRepr(v)

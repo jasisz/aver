@@ -152,7 +152,7 @@ fn parseFnDef(tokens: List<Token>, pos: Int) -> Result<(FnDef, Int), String>
         _ -> Result.Err("Expected function name after 'fn'")
 
 verify parseFnDef
-    parseFnDef([Token.TkIdent("foo"), Token.TkLParen, Token.TkRParen, Token.TkNewline, Token.TkInt(1), Token.TkEof], 0) => Result.Ok((FnDef(name = "foo", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), 5))
+    parseFnDef([Token.TkIdent("foo"), Token.TkLParen, Token.TkRParen, Token.TkNewline, Token.TkInt(1), Token.TkEof], 0) => Result.Ok((FnDef(name = "foo", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false), 5))
     parseFnDef([Token.TkEof], 0) => Result.Err("Expected function name after 'fn'")
 
 fn parseFnDefParams(tokens: List<Token>, pos: Int, name: String) -> Result<(FnDef, Int), String>
@@ -163,7 +163,7 @@ fn parseFnDefParams(tokens: List<Token>, pos: Int, name: String) -> Result<(FnDe
         (params, pos3) -> parseFnDefBody(tokens, pos3, name, params)
 
 verify parseFnDefParams
-    parseFnDefParams([Token.TkLParen, Token.TkRParen, Token.TkNewline, Token.TkInt(1), Token.TkEof], 0, "foo") => Result.Ok((FnDef(name = "foo", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), 4))
+    parseFnDefParams([Token.TkLParen, Token.TkRParen, Token.TkNewline, Token.TkInt(1), Token.TkEof], 0, "foo") => Result.Ok((FnDef(name = "foo", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false), 4))
     parseFnDefParams([Token.TkEof], 0, "foo") => Result.Err("Expected LParen, got Eof")
 
 fn parseFnDefBody(tokens: List<Token>, pos: Int, name: String, params: List<String>) -> Result<(FnDef, Int), String>
@@ -175,7 +175,7 @@ fn parseFnDefBody(tokens: List<Token>, pos: Int, name: String, params: List<Stri
         _ -> parseFnDefBodyFlat(tokens, pos3, name, params)
 
 verify parseFnDefBody
-    parseFnDefBody([Token.TkNewline, Token.TkInt(1), Token.TkEof], 0, "foo", []) => Result.Ok((FnDef(name = "foo", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), 2))
+    parseFnDefBody([Token.TkNewline, Token.TkInt(1), Token.TkEof], 0, "foo", []) => Result.Ok((FnDef(name = "foo", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false), 2))
     parseFnDefBody([Token.TkNewline, Token.TkPlus, Token.TkEof], 0, "foo", []) => Result.Err("Expected expression, got Plus")
 
 fn parseFnDefBodyIndented(tokens: List<Token>, pos: Int, name: String, params: List<String>) -> Result<(FnDef, Int), String>
@@ -183,10 +183,10 @@ fn parseFnDefBodyIndented(tokens: List<Token>, pos: Int, name: String, params: L
     pos2 = Domain.ParserMatch.skipDescAndEffects(tokens, pos)
     sr = parseFnBodyStmtsIndented(tokens, pos2, [])?
     match sr
-        (stmts, pos3) -> Result.Ok((FnDef(name = name, params = params, body = List.reverse(stmts), slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), pos3))
+        (stmts, pos3) -> Result.Ok((FnDef(name = name, params = params, body = List.reverse(stmts), slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false), pos3))
 
 verify parseFnDefBodyIndented
-    parseFnDefBodyIndented([Token.TkInt(1), Token.TkNewline, Token.TkDedent, Token.TkEof], 0, "foo", []) => Result.Ok((FnDef(name = "foo", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), 3))
+    parseFnDefBodyIndented([Token.TkInt(1), Token.TkNewline, Token.TkDedent, Token.TkEof], 0, "foo", []) => Result.Ok((FnDef(name = "foo", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false), 3))
     parseFnDefBodyIndented([Token.TkPlus, Token.TkDedent, Token.TkEof], 0, "foo", []) => Result.Err("Expected expression, got Plus")
 
 fn parseFnDefBodyFlat(tokens: List<Token>, pos: Int, name: String, params: List<String>) -> Result<(FnDef, Int), String>
@@ -194,10 +194,10 @@ fn parseFnDefBodyFlat(tokens: List<Token>, pos: Int, name: String, params: List<
     pos2 = Domain.ParserMatch.skipDescAndEffects(tokens, pos)
     sr = parseFnBodyStmtsFlat(tokens, pos2, [])?
     match sr
-        (stmts, pos3) -> Result.Ok((FnDef(name = name, params = params, body = List.reverse(stmts), slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), pos3))
+        (stmts, pos3) -> Result.Ok((FnDef(name = name, params = params, body = List.reverse(stmts), slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false), pos3))
 
 verify parseFnDefBodyFlat
-    parseFnDefBodyFlat([Token.TkInt(1), Token.TkEof], 0, "foo", []) => Result.Ok((FnDef(name = "foo", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false), 1))
+    parseFnDefBodyFlat([Token.TkInt(1), Token.TkEof], 0, "foo", []) => Result.Ok((FnDef(name = "foo", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false), 1))
     parseFnDefBodyFlat([Token.TkPlus, Token.TkEof], 0, "foo", []) => Result.Err("Expected expression, got Plus")
 
 fn parseFnBodyStmtsIndented(tokens: List<Token>, pos: Int, acc: List<Stmt>) -> Result<(List<Stmt>, Int), String>
@@ -300,7 +300,7 @@ fn parseProgramFn(tokens: List<Token>, pos: Int, deps: List<String>, fns: List<F
         (fd, pos2) -> parseProgram(tokens, Domain.ParserMatch.skipNewlines(tokens, pos2), deps, List.prepend(fd, fns), stmts)
 
 verify parseProgramFn
-    parseProgramFn([Token.TkIdent("f"), Token.TkLParen, Token.TkRParen, Token.TkNewline, Token.TkInt(1), Token.TkEof], 0, [], [], []) => Result.Ok(Program(deps = [], fns = [FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)], stmts = []))
+    parseProgramFn([Token.TkIdent("f"), Token.TkLParen, Token.TkRParen, Token.TkNewline, Token.TkInt(1), Token.TkEof], 0, [], [], []) => Result.Ok(Program(deps = [], fns = [FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false)], stmts = []))
     parseProgramFn([Token.TkEof], 0, [], [], []) => Result.Err("Expected function name after 'fn'")
 
 fn parseProgramStmt(tokens: List<Token>, pos: Int, deps: List<String>, fns: List<FnDef>, stmts: List<Stmt>) -> Result<Program, String>

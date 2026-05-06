@@ -203,12 +203,12 @@ fn wasm_run_handles_large_map_build_without_stack_overflow() {
 fn build(n: Int, acc: Map<String, Int>) -> Map<String, Int>
     match n <= 0
         true -> acc
-        false -> build(n - 1, Map.set(acc, Int.toString(n), n))
+        false -> build(n - 1, Map.set(acc, String.fromInt(n), n))
 
 fn main()
     ! [Console.print]
-    m = build(12000, Map.empty())
-    Console.print("Entries: {Int.toString(List.len(Map.entries(m)))}")
+    m = build(12000, {})
+    Console.print("Entries: {String.fromInt(List.len(Map.entries(m)))}")
 "#,
     );
 
@@ -243,7 +243,7 @@ fn wasm_compile_validates_int_map_keys_successfully() {
 
 fn main()
     ! [Console.print]
-    m = Map.set(Map.empty(), 1, "one")
+    m = Map.set({}, 1, "one")
     Console.print("{Map.len(m)}")
 "#,
     );
@@ -284,7 +284,7 @@ fn wasm_compile_validates_float_map_keys_successfully() {
 
 fn main()
     ! [Console.print]
-    m = Map.set(Map.empty(), 1.5, "one-and-a-half")
+    m = Map.set({}, 1.5, "one-and-a-half")
     Console.print("{Map.len(m)}")
 "#,
     );
@@ -325,7 +325,7 @@ fn wasm_compile_validates_string_map_keys_successfully() {
 
 fn main()
     ! [Console.print]
-    m = Map.set(Map.empty(), "k", 1)
+    m = Map.set({}, "k", 1)
     Console.print("{Map.len(m)}")
 "#,
     );
@@ -470,9 +470,9 @@ fn loop(m: Map<String, Int>, i: Int, n: Int) -> Map<String, Int>
 
 fn main()
     ! [Console.print]
-    m = loop(Map.empty(), 0, 1000)
-    Console.print(Int.toString(List.len(Map.entries(m))))
-    Console.print(Int.toString(Option.withDefault(Map.get(m, "k"), -1)))
+    m = loop({}, 0, 1000)
+    Console.print(String.fromInt(List.len(Map.entries(m))))
+    Console.print(String.fromInt(Option.withDefault(Map.get(m, "k"), -1)))
 "#,
     );
     assert_eq!(stdout, "1\n999", "overwrite stress diverged:\n{}", stdout);
@@ -492,18 +492,18 @@ fn wasm_run_map_twenty_thousand_unique_keys_round_trip() {
 fn build(m: Map<String, Int>, i: Int, n: Int) -> Map<String, Int>
     match i >= n
         true  -> m
-        false -> build(Map.set(m, Int.toString(i), i), i + 1, n)
+        false -> build(Map.set(m, String.fromInt(i), i), i + 1, n)
 
 fn sum(m: Map<String, Int>, i: Int, n: Int, acc: Int) -> Int
     match i >= n
         true  -> acc
-        false -> sum(m, i + 1, n, acc + Option.withDefault(Map.get(m, Int.toString(i)), -1))
+        false -> sum(m, i + 1, n, acc + Option.withDefault(Map.get(m, String.fromInt(i)), -1))
 
 fn main()
     ! [Console.print]
-    m = build(Map.empty(), 0, 20000)
-    Console.print(Int.toString(List.len(Map.entries(m))))
-    Console.print(Int.toString(sum(m, 0, 20000, 0)))
+    m = build({}, 0, 20000)
+    Console.print(String.fromInt(List.len(Map.entries(m))))
+    Console.print(String.fromInt(sum(m, 0, 20000, 0)))
 "#,
     );
     // sum 0..19999 = 19999 * 20000 / 2 = 199990000
@@ -538,7 +538,7 @@ fn sum(v: Vector<Int>, i: Int, n: Int, acc: Int) -> Int
 fn main()
     ! [Console.print]
     v = fill(Vector.new(10000, 0), 0, 10000)
-    Console.print(Int.toString(sum(v, 0, 10000, 0)))
+    Console.print(String.fromInt(sum(v, 0, 10000, 0)))
 "#,
     );
     // sum 1..10000 = 10000 * 10001 / 2 = 50005000
@@ -572,10 +572,10 @@ fn step(a: Acc, i: Int, n: Int) -> Acc
 
 fn main()
     ! [Console.print]
-    a = step(Acc(m = Map.empty(), v = Vector.new(2000, 0)), 0, 2000)
-    Console.print(Int.toString(List.len(Map.entries(a.m))))
-    Console.print(Int.toString(Option.withDefault(Map.get(a.m, 1500), -1)))
-    Console.print(Int.toString(Option.withDefault(Vector.get(a.v, 1500), -1)))
+    a = step(Acc(m = {}, v = Vector.new(2000, 0)), 0, 2000)
+    Console.print(String.fromInt(List.len(Map.entries(a.m))))
+    Console.print(String.fromInt(Option.withDefault(Map.get(a.m, 1500), -1)))
+    Console.print(String.fromInt(Option.withDefault(Vector.get(a.v, 1500), -1)))
 "#,
     );
     assert_eq!(
@@ -598,15 +598,15 @@ fn wasm_run_string_key_map_survives_compaction() {
 fn build(m: Map<String, Int>, i: Int, n: Int) -> Map<String, Int>
     match i >= n
         true  -> m
-        false -> build(Map.set(m, "key-" + Int.toString(i), i), i + 1, n)
+        false -> build(Map.set(m, "key-" + String.fromInt(i), i), i + 1, n)
 
 fn main()
     ! [Console.print]
-    m = build(Map.empty(), 0, 5000)
-    Console.print(Int.toString(Option.withDefault(Map.get(m, "key-0"), -1)))
-    Console.print(Int.toString(Option.withDefault(Map.get(m, "key-2500"), -1)))
-    Console.print(Int.toString(Option.withDefault(Map.get(m, "key-4999"), -1)))
-    Console.print(Int.toString(Option.withDefault(Map.get(m, "missing"), -1)))
+    m = build({}, 0, 5000)
+    Console.print(String.fromInt(Option.withDefault(Map.get(m, "key-0"), -1)))
+    Console.print(String.fromInt(Option.withDefault(Map.get(m, "key-2500"), -1)))
+    Console.print(String.fromInt(Option.withDefault(Map.get(m, "key-4999"), -1)))
+    Console.print(String.fromInt(Option.withDefault(Map.get(m, "missing"), -1)))
 "#,
     );
     assert_eq!(
@@ -664,7 +664,7 @@ record Pair
 fn buildList(acc: List<Pair>, i: Int, n: Int) -> List<Pair>
     match i >= n
         true  -> acc
-        false -> buildList(List.prepend(Pair(a = Int.toString(i), b = i), acc), i + 1, n)
+        false -> buildList(List.prepend(Pair(a = String.fromInt(i), b = i), acc), i + 1, n)
 
 fn buildMap(m: Map<Int, List<Pair>>, i: Int, n: Int) -> Map<Int, List<Pair>>
     match i >= n
@@ -673,9 +673,9 @@ fn buildMap(m: Map<Int, List<Pair>>, i: Int, n: Int) -> Map<Int, List<Pair>>
 
 fn main()
     ! [Console.print]
-    m = buildMap(Map.empty(), 0, 500)
-    Console.print(Int.toString(List.len(Map.entries(m))))
-    Console.print(Int.toString(List.len(Option.withDefault(Map.get(m, 250), []))))
+    m = buildMap({}, 0, 500)
+    Console.print(String.fromInt(List.len(Map.entries(m))))
+    Console.print(String.fromInt(List.len(Option.withDefault(Map.get(m, 250), []))))
 "#,
     );
     assert_eq!(
@@ -707,9 +707,9 @@ fn check(m: Map<Int, Int>, i: Int, n: Int, acc: Int) -> Int
 
 fn main()
     ! [Console.print]
-    m = fill(Map.empty(), 0, 25000)
-    Console.print(Int.toString(List.len(Map.entries(m))))
-    Console.print(Int.toString(check(m, 0, 25000, 0)))
+    m = fill({}, 0, 25000)
+    Console.print(String.fromInt(List.len(Map.entries(m))))
+    Console.print(String.fromInt(check(m, 0, 25000, 0)))
 "#,
     );
     // Sum 0..24999 = 24999*25000/2 = 312487500

@@ -197,7 +197,6 @@ verify ctorNameToTag
 fn builtinNameToId(name: String) -> Option<Int>
     ? "Map builtin function names to integer IDs for fast dispatch."
     match name
-        "Map.empty" -> Option.Some(0)
         "Map.set" -> Option.Some(1)
         "Map.get" -> Option.Some(2)
         "Map.has" -> Option.Some(3)
@@ -209,20 +208,19 @@ fn builtinNameToId(name: String) -> Option<Int>
         "Vector.set" -> Option.Some(9)
         "Vector.len" -> Option.Some(10)
         "Vector.fromList" -> Option.Some(11)
-        "Vector.toList" -> Option.Some(12)
+        "List.fromVector" -> Option.Some(12)
         "Option.None" -> Option.Some(13)
         "Option.Some" -> Option.Some(14)
         "Option.withDefault" -> Option.Some(15)
         "Result.Ok" -> Option.Some(16)
         "Result.Err" -> Option.Some(17)
         "Result.withDefault" -> Option.Some(18)
-        "Int.toString" -> Option.Some(19)
+        "String.fromInt" -> Option.Some(19)
         "List.take" -> Option.Some(20)
         "List.drop" -> Option.Some(21)
         _ -> Option.None
 
 verify builtinNameToId
-    builtinNameToId("Map.empty") => Option.Some(0)
     builtinNameToId("Vector.len") => Option.Some(10)
     builtinNameToId("List.take") => Option.Some(20)
     builtinNameToId("unknown") => Option.None

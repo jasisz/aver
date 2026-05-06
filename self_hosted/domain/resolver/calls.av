@@ -13,8 +13,8 @@ fn buildFnMap(fns: List<FnDef>, acc: Map<String, Int>, idx: Int) -> Map<String, 
         [f, ..rest] -> buildFnMap(rest, Map.set(acc, f.name, idx), idx + 1)
 
 verify buildFnMap
-    buildFnMap([], Map.empty(), 0) => Map.empty()
-    buildFnMap([FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)], Map.empty(), 0) => Map.set(Map.empty(), "f", 0)
+    buildFnMap([], {}, 0) => {}
+    buildFnMap([FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false)], {}, 0) => Map.set({}, "f", 0)
 
 fn resolveCallsInFns(fns: List<FnDef>, fnMap: Map<String, Int>, acc: List<FnDef>) -> List<FnDef>
     ? "Transform ExprCall→ExprCallDirect for known functions in all fn bodies."
@@ -23,8 +23,8 @@ fn resolveCallsInFns(fns: List<FnDef>, fnMap: Map<String, Int>, acc: List<FnDef>
         [f, ..rest] -> resolveCallsInFns(rest, fnMap, List.prepend(resolveCallsInFn(f, fnMap), acc))
 
 verify resolveCallsInFns
-    resolveCallsInFns([], Map.empty(), []) => []
-    List.len(resolveCallsInFns([FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)], Map.empty(), [])) => 1
+    resolveCallsInFns([], {}, []) => []
+    List.len(resolveCallsInFns([FnDef(name = "f", params = [], body = [], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false)], {}, [])) => 1
 
 fn resolveCallsInFn(fd: FnDef, fnMap: Map<String, Int>) -> FnDef
     ? "Transform calls in one function body."
@@ -37,8 +37,8 @@ fn resolveCallsInStmts(stmts: List<Stmt>, fnMap: Map<String, Int>, acc: List<Stm
         [s, ..rest] -> resolveCallsInStmts(rest, fnMap, List.prepend(resolveCallsInStmt(s, fnMap), acc))
 
 verify resolveCallsInStmts
-    resolveCallsInStmts([], Map.empty(), []) => []
-    resolveCallsInStmts([Stmt.StmtExpr(Expr.ExprInt(1))], Map.empty(), []) => [Stmt.StmtExpr(Expr.ExprInt(1))]
+    resolveCallsInStmts([], {}, []) => []
+    resolveCallsInStmts([Stmt.StmtExpr(Expr.ExprInt(1))], {}, []) => [Stmt.StmtExpr(Expr.ExprInt(1))]
 
 fn resolveCallsInStmt(s: Stmt, fnMap: Map<String, Int>) -> Stmt
     ? "Resolve calls in a single statement."
@@ -48,9 +48,9 @@ fn resolveCallsInStmt(s: Stmt, fnMap: Map<String, Int>) -> Stmt
         Stmt.StmtExpr(expr) -> Stmt.StmtExpr(resolveCallsInExpr(expr, fnMap))
 
 verify resolveCallsInStmt
-    resolveCallsInStmt(Stmt.StmtExpr(Expr.ExprInt(1)), Map.empty()) => Stmt.StmtExpr(Expr.ExprInt(1))
-    resolveCallsInStmt(Stmt.StmtBindSlot(0, Expr.ExprInt(2)), Map.empty()) => Stmt.StmtBindSlot(0, Expr.ExprInt(2))
-    resolveCallsInStmt(Stmt.StmtBind("x", Expr.ExprInt(3)), Map.empty()) => Stmt.StmtBind("x", Expr.ExprInt(3))
+    resolveCallsInStmt(Stmt.StmtExpr(Expr.ExprInt(1)), {}) => Stmt.StmtExpr(Expr.ExprInt(1))
+    resolveCallsInStmt(Stmt.StmtBindSlot(0, Expr.ExprInt(2)), {}) => Stmt.StmtBindSlot(0, Expr.ExprInt(2))
+    resolveCallsInStmt(Stmt.StmtBind("x", Expr.ExprInt(3)), {}) => Stmt.StmtBind("x", Expr.ExprInt(3))
 
 fn resolveCallsInExpr(expr: Expr, fnMap: Map<String, Int>) -> Expr
     ? "Replace ExprCall with ExprCallDirect for known user functions."
@@ -99,40 +99,40 @@ fn resolveCallsInExprTail(expr: Expr, fnMap: Map<String, Int>) -> Expr
         _ -> expr
 
 verify resolveCallsInExpr
-    resolveCallsInExpr(Expr.ExprInt(42), Map.empty()) => Expr.ExprInt(42)
-    resolveCallsInExpr(Expr.ExprCall("foo", []), Map.set(Map.empty(), "foo", 0)) => Expr.ExprCallDirect(0, [])
-    resolveCallsInExpr(Expr.ExprStr("hi"), Map.empty()) => Expr.ExprStr("hi")
-    resolveCallsInExpr(Expr.ExprBool(true), Map.empty()) => Expr.ExprBool(true)
-    resolveCallsInExpr(Expr.ExprFloat(1.0), Map.empty()) => Expr.ExprFloat(1.0)
-    resolveCallsInExpr(Expr.ExprSlot(0), Map.empty()) => Expr.ExprSlot(0)
-    resolveCallsInExpr(Expr.ExprVar("x"), Map.empty()) => Expr.ExprVar("x")
-    resolveCallsInExpr(Expr.ExprBinopSlotInt(BinOp.OpAdd, 0, 1), Map.empty()) => Expr.ExprBinopSlotInt(BinOp.OpAdd, 0, 1)
-    resolveCallsInExpr(Expr.ExprBinopSlots(BinOp.OpAdd, 0, 1), Map.empty()) => Expr.ExprBinopSlots(BinOp.OpAdd, 0, 1)
-    resolveCallsInExpr(Expr.ExprCmpSlotInt(CmpOp.CmpEq, 0, 1), Map.empty()) => Expr.ExprCmpSlotInt(CmpOp.CmpEq, 0, 1)
-    resolveCallsInExpr(Expr.ExprCmpSlots(CmpOp.CmpEq, 0, 1), Map.empty()) => Expr.ExprCmpSlots(CmpOp.CmpEq, 0, 1)
-    resolveCallsInExpr(Expr.ExprAdd(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => Expr.ExprAdd(Expr.ExprInt(1), Expr.ExprInt(2))
-    resolveCallsInExpr(Expr.ExprSub(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => Expr.ExprSub(Expr.ExprInt(1), Expr.ExprInt(2))
-    resolveCallsInExpr(Expr.ExprMul(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => Expr.ExprMul(Expr.ExprInt(1), Expr.ExprInt(2))
-    resolveCallsInExpr(Expr.ExprDiv(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => Expr.ExprDiv(Expr.ExprInt(1), Expr.ExprInt(2))
-    resolveCallsInExpr(Expr.ExprEq(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => Expr.ExprEq(Expr.ExprInt(1), Expr.ExprInt(2))
-    resolveCallsInExpr(Expr.ExprNeq(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => Expr.ExprNeq(Expr.ExprInt(1), Expr.ExprInt(2))
-    resolveCallsInExpr(Expr.ExprLt(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => Expr.ExprLt(Expr.ExprInt(1), Expr.ExprInt(2))
-    resolveCallsInExpr(Expr.ExprGt(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => Expr.ExprGt(Expr.ExprInt(1), Expr.ExprInt(2))
-    resolveCallsInExpr(Expr.ExprLte(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => Expr.ExprLte(Expr.ExprInt(1), Expr.ExprInt(2))
-    resolveCallsInExpr(Expr.ExprGte(Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => Expr.ExprGte(Expr.ExprInt(1), Expr.ExprInt(2))
-    resolveCallsInExpr(Expr.ExprCallDirect(0, []), Map.empty()) => Expr.ExprCallDirect(0, [])
-    resolveCallsInExpr(Expr.ExprCallBuiltin("Map.get", []), Map.empty()) => Expr.ExprCallBuiltinId(2, [])
-    resolveCallsInExpr(Expr.ExprCallBuiltinId(0, []), Map.empty()) => Expr.ExprCallBuiltinId(0, [])
-    resolveCallsInExpr(Expr.ExprMatch(Expr.ExprInt(1), []), Map.empty()) => Expr.ExprMatch(Expr.ExprInt(1), [])
-    resolveCallsInExpr(Expr.ExprPropagate(Expr.ExprInt(1)), Map.empty()) => Expr.ExprPropagate(Expr.ExprInt(1))
-    resolveCallsInExpr(Expr.ExprConcat([]), Map.empty()) => Expr.ExprConcat([])
-    resolveCallsInExpr(Expr.ExprTuple([]), Map.empty()) => Expr.ExprTuple([])
-    resolveCallsInExpr(Expr.ExprList([]), Map.empty()) => Expr.ExprList([])
-    resolveCallsInExpr(Expr.ExprRecord("Foo", []), Map.empty()) => Expr.ExprRecord("Foo", [])
-    resolveCallsInExpr(Expr.ExprFieldAccess(Expr.ExprInt(1), "x"), Map.empty()) => Expr.ExprFieldAccess(Expr.ExprInt(1), "x")
-    resolveCallsInExpr(Expr.ExprBoolBranch(Expr.ExprBool(true), Expr.ExprInt(1), Expr.ExprInt(2)), Map.empty()) => Expr.ExprBoolBranch(Expr.ExprBool(true), Expr.ExprInt(1), Expr.ExprInt(2))
-    resolveCallsInExpr(Expr.ExprVectorGetOrInt(Expr.ExprInt(1), Expr.ExprInt(2), 0), Map.empty()) => Expr.ExprVectorGetOrInt(Expr.ExprInt(1), Expr.ExprInt(2), 0)
-    resolveCallsInExpr(Expr.ExprIntModOrInt(Expr.ExprInt(1), Expr.ExprInt(2), 0), Map.empty()) => Expr.ExprIntModOrInt(Expr.ExprInt(1), Expr.ExprInt(2), 0)
+    resolveCallsInExpr(Expr.ExprInt(42), {}) => Expr.ExprInt(42)
+    resolveCallsInExpr(Expr.ExprCall("foo", []), Map.set({}, "foo", 0)) => Expr.ExprCallDirect(0, [])
+    resolveCallsInExpr(Expr.ExprStr("hi"), {}) => Expr.ExprStr("hi")
+    resolveCallsInExpr(Expr.ExprBool(true), {}) => Expr.ExprBool(true)
+    resolveCallsInExpr(Expr.ExprFloat(1.0), {}) => Expr.ExprFloat(1.0)
+    resolveCallsInExpr(Expr.ExprSlot(0), {}) => Expr.ExprSlot(0)
+    resolveCallsInExpr(Expr.ExprVar("x"), {}) => Expr.ExprVar("x")
+    resolveCallsInExpr(Expr.ExprBinopSlotInt(BinOp.OpAdd, 0, 1), {}) => Expr.ExprBinopSlotInt(BinOp.OpAdd, 0, 1)
+    resolveCallsInExpr(Expr.ExprBinopSlots(BinOp.OpAdd, 0, 1), {}) => Expr.ExprBinopSlots(BinOp.OpAdd, 0, 1)
+    resolveCallsInExpr(Expr.ExprCmpSlotInt(CmpOp.CmpEq, 0, 1), {}) => Expr.ExprCmpSlotInt(CmpOp.CmpEq, 0, 1)
+    resolveCallsInExpr(Expr.ExprCmpSlots(CmpOp.CmpEq, 0, 1), {}) => Expr.ExprCmpSlots(CmpOp.CmpEq, 0, 1)
+    resolveCallsInExpr(Expr.ExprAdd(Expr.ExprInt(1), Expr.ExprInt(2)), {}) => Expr.ExprAdd(Expr.ExprInt(1), Expr.ExprInt(2))
+    resolveCallsInExpr(Expr.ExprSub(Expr.ExprInt(1), Expr.ExprInt(2)), {}) => Expr.ExprSub(Expr.ExprInt(1), Expr.ExprInt(2))
+    resolveCallsInExpr(Expr.ExprMul(Expr.ExprInt(1), Expr.ExprInt(2)), {}) => Expr.ExprMul(Expr.ExprInt(1), Expr.ExprInt(2))
+    resolveCallsInExpr(Expr.ExprDiv(Expr.ExprInt(1), Expr.ExprInt(2)), {}) => Expr.ExprDiv(Expr.ExprInt(1), Expr.ExprInt(2))
+    resolveCallsInExpr(Expr.ExprEq(Expr.ExprInt(1), Expr.ExprInt(2)), {}) => Expr.ExprEq(Expr.ExprInt(1), Expr.ExprInt(2))
+    resolveCallsInExpr(Expr.ExprNeq(Expr.ExprInt(1), Expr.ExprInt(2)), {}) => Expr.ExprNeq(Expr.ExprInt(1), Expr.ExprInt(2))
+    resolveCallsInExpr(Expr.ExprLt(Expr.ExprInt(1), Expr.ExprInt(2)), {}) => Expr.ExprLt(Expr.ExprInt(1), Expr.ExprInt(2))
+    resolveCallsInExpr(Expr.ExprGt(Expr.ExprInt(1), Expr.ExprInt(2)), {}) => Expr.ExprGt(Expr.ExprInt(1), Expr.ExprInt(2))
+    resolveCallsInExpr(Expr.ExprLte(Expr.ExprInt(1), Expr.ExprInt(2)), {}) => Expr.ExprLte(Expr.ExprInt(1), Expr.ExprInt(2))
+    resolveCallsInExpr(Expr.ExprGte(Expr.ExprInt(1), Expr.ExprInt(2)), {}) => Expr.ExprGte(Expr.ExprInt(1), Expr.ExprInt(2))
+    resolveCallsInExpr(Expr.ExprCallDirect(0, []), {}) => Expr.ExprCallDirect(0, [])
+    resolveCallsInExpr(Expr.ExprCallBuiltin("Map.get", []), {}) => Expr.ExprCallBuiltinId(2, [])
+    resolveCallsInExpr(Expr.ExprCallBuiltinId(0, []), {}) => Expr.ExprCallBuiltinId(0, [])
+    resolveCallsInExpr(Expr.ExprMatch(Expr.ExprInt(1), []), {}) => Expr.ExprMatch(Expr.ExprInt(1), [])
+    resolveCallsInExpr(Expr.ExprPropagate(Expr.ExprInt(1)), {}) => Expr.ExprPropagate(Expr.ExprInt(1))
+    resolveCallsInExpr(Expr.ExprConcat([]), {}) => Expr.ExprConcat([])
+    resolveCallsInExpr(Expr.ExprTuple([]), {}) => Expr.ExprTuple([])
+    resolveCallsInExpr(Expr.ExprList([]), {}) => Expr.ExprList([])
+    resolveCallsInExpr(Expr.ExprRecord("Foo", []), {}) => Expr.ExprRecord("Foo", [])
+    resolveCallsInExpr(Expr.ExprFieldAccess(Expr.ExprInt(1), "x"), {}) => Expr.ExprFieldAccess(Expr.ExprInt(1), "x")
+    resolveCallsInExpr(Expr.ExprBoolBranch(Expr.ExprBool(true), Expr.ExprInt(1), Expr.ExprInt(2)), {}) => Expr.ExprBoolBranch(Expr.ExprBool(true), Expr.ExprInt(1), Expr.ExprInt(2))
+    resolveCallsInExpr(Expr.ExprVectorGetOrInt(Expr.ExprInt(1), Expr.ExprInt(2), 0), {}) => Expr.ExprVectorGetOrInt(Expr.ExprInt(1), Expr.ExprInt(2), 0)
+    resolveCallsInExpr(Expr.ExprIntModOrInt(Expr.ExprInt(1), Expr.ExprInt(2), 0), {}) => Expr.ExprIntModOrInt(Expr.ExprInt(1), Expr.ExprInt(2), 0)
 
 fn resolveOneCall(name: String, args: List<Expr>, fnMap: Map<String, Int>) -> Expr
     ? "User fn → ExprCallDirect, builtin → ExprCallBuiltin, record update → ExprCall."
@@ -146,8 +146,8 @@ fn resolveOneCall(name: String, args: List<Expr>, fnMap: Map<String, Int>) -> Ex
                 false -> Expr.ExprCall(name, resolvedArgs)
 
 verify resolveOneCall
-    resolveOneCall("foo", [], Map.set(Map.empty(), "foo", 5)) => Expr.ExprCallDirect(5, [])
-    resolveOneCall("Map.get", [Expr.ExprInt(1)], Map.empty()) => Expr.ExprCallBuiltin("Map.get", [Expr.ExprInt(1)])
+    resolveOneCall("foo", [], Map.set({}, "foo", 5)) => Expr.ExprCallDirect(5, [])
+    resolveOneCall("Map.get", [Expr.ExprInt(1)], {}) => Expr.ExprCallBuiltin("Map.get", [Expr.ExprInt(1)])
 
 fn isBuiltinCallName(name: String) -> Bool
     ? "Return whether a call name is one of the exact builtin/service entrypoints."
@@ -188,7 +188,7 @@ fn isBuiltinCallName(name: String) -> Bool
         "Float.round",
         "Float.sin",
         "Float.sqrt",
-        "Float.toString",
+        "String.fromFloat",
         "Http.delete",
         "Http.get",
         "Http.head",
@@ -202,8 +202,8 @@ fn isBuiltinCallName(name: String) -> Bool
         "Int.max",
         "Int.min",
         "Int.mod",
-        "Int.toFloat",
-        "Int.toString",
+        "Float.fromInt",
+        "String.fromInt",
         "List.concat",
         "List.contains",
         "List.drop",
@@ -214,7 +214,6 @@ fn isBuiltinCallName(name: String) -> Bool
         "List.take",
         "List.tail",
         "List.zip",
-        "Map.empty",
         "Map.entries",
         "Map.fromList",
         "Map.get",
@@ -277,7 +276,7 @@ fn isBuiltinCallName(name: String) -> Bool
         "Vector.len",
         "Vector.new",
         "Vector.set",
-        "Vector.toList",
+        "List.fromVector",
     ])
 
 verify isBuiltinCallName
@@ -305,8 +304,8 @@ fn resolveCallsInExprs(exprs: List<Expr>, fnMap: Map<String, Int>, acc: List<Exp
         [e, ..rest] -> resolveCallsInExprs(rest, fnMap, List.prepend(resolveCallsInExpr(e, fnMap), acc))
 
 verify resolveCallsInExprs
-    resolveCallsInExprs([], Map.empty(), []) => []
-    resolveCallsInExprs([Expr.ExprInt(1)], Map.empty(), []) => [Expr.ExprInt(1)]
+    resolveCallsInExprs([], {}, []) => []
+    resolveCallsInExprs([Expr.ExprInt(1)], {}, []) => [Expr.ExprInt(1)]
 
 fn resolveCallsInArms(arms: List<MatchArm>, fnMap: Map<String, Int>, acc: List<MatchArm>) -> List<MatchArm>
     ? "Resolve calls in match arm bodies."
@@ -315,8 +314,8 @@ fn resolveCallsInArms(arms: List<MatchArm>, fnMap: Map<String, Int>, acc: List<M
         [arm, ..rest] -> resolveCallsInArms(rest, fnMap, List.prepend(MatchArm(pattern = arm.pattern, body = resolveCallsInExpr(arm.body, fnMap), bindingSlots = arm.bindingSlots), acc))
 
 verify resolveCallsInArms
-    resolveCallsInArms([], Map.empty(), []) => []
-    resolveCallsInArms([MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = Map.empty())], Map.empty(), []) => [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = Map.empty())]
+    resolveCallsInArms([], {}, []) => []
+    resolveCallsInArms([MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = {})], {}, []) => [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = {})]
 
 fn resolveCallsInFields(fields: List<(String, Expr)>, fnMap: Map<String, Int>, acc: List<(String, Expr)>) -> List<(String, Expr)>
     ? "Resolve calls in record field expressions."
@@ -326,5 +325,5 @@ fn resolveCallsInFields(fields: List<(String, Expr)>, fnMap: Map<String, Int>, a
             (name, expr) -> resolveCallsInFields(rest, fnMap, List.prepend((name, resolveCallsInExpr(expr, fnMap)), acc))
 
 verify resolveCallsInFields
-    resolveCallsInFields([], Map.empty(), []) => []
-    resolveCallsInFields([("x", Expr.ExprInt(1))], Map.empty(), []) => [("x", Expr.ExprInt(1))]
+    resolveCallsInFields([], {}, []) => []
+    resolveCallsInFields([("x", Expr.ExprInt(1))], {}, []) => [("x", Expr.ExprInt(1))]
