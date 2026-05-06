@@ -114,7 +114,30 @@ impl HashHelperRegistry {
                     }
                 }
             }
-            HashKind::OptionHash | HashKind::ResultHash | HashKind::TupleHash => {}
+            // Mirror eq_helpers — recurse so direct top-level
+            // registration of a carrier (seed walker etc.) still
+            // discovers inner types.
+            HashKind::OptionHash => {
+                if let Some(inner) = type_name
+                    .strip_prefix("Option<")
+                    .and_then(|s| s.strip_suffix('>'))
+                {
+                    self.register_field_type(inner.trim(), registry);
+                }
+            }
+            HashKind::ResultHash => {
+                if let Some((ok, err)) = parse_result_kv(type_name) {
+                    self.register_field_type(ok.trim(), registry);
+                    self.register_field_type(err.trim(), registry);
+                }
+            }
+            HashKind::TupleHash => {
+                if let Some(elems) = parse_tuple_elems(type_name) {
+                    for e in elems {
+                        self.register_field_type(e.trim(), registry);
+                    }
+                }
+            }
         }
     }
 
@@ -157,6 +180,21 @@ impl HashHelperRegistry {
                     self.register_field_type(elem.trim(), registry);
                 }
             }
+        } else if let Some(inner) = field_ty
+            .strip_prefix("List<")
+            .and_then(|s| s.strip_suffix('>'))
+        {
+            // Symmetric to eq_helpers — recurse into the element so
+            // `List<Option<X>>` registers `__hash_Option<X>`. The
+            // list_helpers slot itself is owned by the separate
+            // ListHelperRegistry; this walk only covers the carrier
+            // / nominal hash dispatch the inline body needs.
+            self.register_field_type(inner.trim(), registry);
+        } else if let Some(inner) = field_ty
+            .strip_prefix("Vector<")
+            .and_then(|s| s.strip_suffix('>'))
+        {
+            self.register_field_type(inner.trim(), registry);
         }
     }
 
@@ -201,13 +239,20 @@ impl HashHelperRegistry {
         codes: &mut wasm_encoder::CodeSection,
         registry: &TypeRegistry,
         string_eq_fn_idx: Option<u32>,
+        compound_lookup: &HashMap<String, u32>,
     ) -> Result<(), WasmGcError> {
         let _ = string_eq_fn_idx; // String fields hash via array.len, no helper needed.
-        let helper_idx_map: HashMap<String, u32> = self
+        // Same shape as eq_helpers — merge `List<T>` / `Vector<T>`
+        // hash fn idxs from list_helpers so a record field of a
+        // compound type can `Call(__hash_<canonical>)`.
+        let mut helper_idx_map: HashMap<String, u32> = self
             .slots
             .iter()
             .map(|(n, (fn_idx, _))| (n.clone(), *fn_idx))
             .collect();
+        for (canonical, fn_idx) in compound_lookup {
+            helper_idx_map.insert(canonical.clone(), *fn_idx);
+        }
         for name in &self.order {
             let kind = self.kinds[name];
             let self_fn_idx = self.slots.get(name).map(|(f, _)| *f);

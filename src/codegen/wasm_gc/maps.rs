@@ -336,15 +336,17 @@ impl MapHelperRegistry {
             let is_carrier_k = k_aver.starts_with("Option<")
                 || k_aver.starts_with("Result<")
                 || k_aver.starts_with("Tuple<");
+            let is_list_or_vec_k = k_aver.starts_with("List<") || k_aver.starts_with("Vector<");
             if k_aver != "String"
                 && registry.record_type_idx(k_aver).is_none()
                 && !is_primitive_k
                 && !is_sum_k
                 && !is_carrier_k
+                && !is_list_or_vec_k
             {
                 return Err(WasmGcError::Unimplemented(
                     "phase 3c — Map<K, V> with K not String / user-record / sum / \
-                     primitive / generic-carrier (Option/Result/Tuple)",
+                     primitive / generic-carrier (Option/Result/Tuple) / List<T> / Vector<T>",
                 ));
             }
 
@@ -629,13 +631,18 @@ fn emit_hash_for(
     if k_aver.starts_with("Option<")
         || k_aver.starts_with("Result<")
         || k_aver.starts_with("Tuple<")
+        || k_aver.starts_with("List<")
+        || k_aver.starts_with("Vector<")
     {
         // Same shape as carrier eq: proxy to the per-instantiation
-        // `__hash_<X>` helper from `hash_helpers`.
+        // `__hash_<X>` helper. Carriers come from hash_helpers,
+        // List/Vector from list_helpers; both are merged into
+        // `all_key_helpers` via the compound lookup at module
+        // assembly.
         let helpers = all_key_helpers
             .get(k_aver)
             .ok_or(WasmGcError::Validation(format!(
-                "hash_for: carrier `{k_aver}` has no registered hash helper"
+                "hash_for: compound `{k_aver}` has no registered hash helper"
             )))?;
         let mut f = Function::new([]);
         f.instruction(&Instruction::LocalGet(0));
@@ -674,15 +681,16 @@ fn emit_eq_for(
     if k_aver.starts_with("Option<")
         || k_aver.starts_with("Result<")
         || k_aver.starts_with("Tuple<")
+        || k_aver.starts_with("List<")
+        || k_aver.starts_with("Vector<")
     {
-        // Map-key eq for carriers proxies to the per-instantiation
-        // `__eq_<X>` helper registered in `eq_helpers` (looked up
-        // via `all_key_helpers` which includes the carrier eq fn
-        // idx forwarded from the registry).
+        // Map-key eq for compounds proxies to `__eq_<X>` (carriers
+        // from eq_helpers, List/Vector from list_helpers). Both are
+        // merged into `all_key_helpers` at module assembly time.
         let helpers = all_key_helpers
             .get(k_aver)
             .ok_or(WasmGcError::Validation(format!(
-                "eq_for: carrier `{k_aver}` has no registered eq helper"
+                "eq_for: compound `{k_aver}` has no registered eq helper"
             )))?;
         let mut f = Function::new([]);
         f.instruction(&Instruction::LocalGet(0));
@@ -784,6 +792,46 @@ fn emit_unbox_key(f: &mut Function, k_aver: &str, registry: &TypeRegistry) {
 fn emit_box_key(f: &mut Function, k_aver: &str, registry: &TypeRegistry) {
     if let Some(box_idx) = registry.primitive_key_box_idx(k_aver) {
         f.instruction(&Instruction::StructNew(box_idx));
+    }
+}
+
+/// Heap type used by `Map.remove` for `ref.null` in the keys-array
+/// store-back. Concrete idx for K kinds with their own struct type
+/// (primitive K boxes, String, record, carrier, List, Vector); abstract
+/// Eq for sum K (whose wasm rep is eqref since variants share no
+/// concrete struct type).
+fn key_storage_null_heap(k_aver: &str, registry: &TypeRegistry) -> HeapType {
+    if let Some(box_idx) = registry.primitive_key_box_idx(k_aver) {
+        return HeapType::Concrete(box_idx);
+    }
+    if k_aver == "String"
+        && let Some(s) = registry.string_array_type_idx
+    {
+        return HeapType::Concrete(s);
+    }
+    if let Some(r) = registry.record_type_idx(k_aver) {
+        return HeapType::Concrete(r);
+    }
+    if let Some(o) = registry.option_type_idx(k_aver) {
+        return HeapType::Concrete(o);
+    }
+    if let Some(r) = registry.result_type_idx(k_aver) {
+        return HeapType::Concrete(r);
+    }
+    if let Some(t) = registry.tuple_type_idx(k_aver) {
+        return HeapType::Concrete(t);
+    }
+    if let Some(l) = registry.list_type_idx(k_aver) {
+        return HeapType::Concrete(l);
+    }
+    if let Some(v) = registry.vector_type_idx(k_aver) {
+        return HeapType::Concrete(v);
+    }
+    // Sum K — eqref. ref.null of abstract Eq is a subtype of every
+    // concrete variant ref, so the array.set typechecks.
+    HeapType::Abstract {
+        shared: false,
+        ty: wasm_encoder::AbstractHeapType::Eq,
     }
 }
 
@@ -2006,19 +2054,14 @@ fn emit_map_remove(
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
 
-    // keys[i] = null. Heap type matches the keys array element ref:
-    // primitive-key box for primitive K, String slot for K=String,
-    // record slot for K=record.
-    let null_heap_idx = registry
-        .primitive_key_box_idx(k_aver)
-        .or(registry
-            .string_array_type_idx
-            .filter(|_| k_aver == "String"))
-        .or_else(|| registry.record_type_idx(k_aver))
-        .unwrap_or(0);
+    // keys[i] = null. Heap type matches the keys array element ref —
+    // see `key_storage_null_heap` for the per-K-kind table (primitive
+    // box / String / record / carrier / List / Vector concrete idx,
+    // abstract Eq for sum K).
+    let null_heap = key_storage_null_heap(k_aver, registry);
     f.instruction(&Instruction::LocalGet(4));
     f.instruction(&Instruction::LocalGet(7));
-    f.instruction(&Instruction::RefNull(HeapType::Concrete(null_heap_idx)));
+    f.instruction(&Instruction::RefNull(null_heap));
     f.instruction(&Instruction::ArraySet(slots.keys_array));
 
     // map.size = map.size - 1

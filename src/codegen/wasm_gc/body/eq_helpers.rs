@@ -139,13 +139,34 @@ impl EqHelperRegistry {
                     }
                 }
             }
-            // Carrier kinds — inner-type registration is handled by
-            // the surrounding `register_field_type` arm that decides
-            // to register the carrier in the first place. Nothing
-            // extra to walk here (the helper body inspects the
-            // canonical at emit time via `option_element_type` /
-            // `parse_result_kv` / `parse_tuple_elems`).
-            EqKind::OptionEq | EqKind::ResultEq | EqKind::TupleEq => {}
+            // Carrier kinds — recurse into inner types so a direct
+            // top-level register (e.g. discovery seed walker hitting
+            // `Option<PieceKind>` from a `List<Option<PieceKind>>`)
+            // still registers PieceKind. When the carrier is reached
+            // via `register_field_type` the recursion happens there
+            // too; this duplicate is idempotent (slots dedup by
+            // canonical).
+            EqKind::OptionEq => {
+                if let Some(inner) = type_name
+                    .strip_prefix("Option<")
+                    .and_then(|s| s.strip_suffix('>'))
+                {
+                    self.register_field_type(inner.trim(), registry);
+                }
+            }
+            EqKind::ResultEq => {
+                if let Some((ok, err)) = parse_result_kv(type_name) {
+                    self.register_field_type(ok.trim(), registry);
+                    self.register_field_type(err.trim(), registry);
+                }
+            }
+            EqKind::TupleEq => {
+                if let Some(elems) = parse_tuple_elems(type_name) {
+                    for e in elems {
+                        self.register_field_type(e.trim(), registry);
+                    }
+                }
+            }
         }
     }
 
@@ -192,13 +213,25 @@ impl EqHelperRegistry {
                     self.register_field_type(elem.trim(), registry);
                 }
             }
+        } else if let Some(inner) = field_ty
+            .strip_prefix("List<")
+            .and_then(|s| s.strip_suffix('>'))
+        {
+            // List<X> / Vector<X> — element kind needs its own
+            // helper too. The list_helpers slot itself is owned by
+            // ListHelperRegistry (separate registry); this walk
+            // ensures the per-element `__eq_<inner>` exists in
+            // eq_helpers when inner is a carrier or nominal type.
+            self.register_field_type(inner.trim(), registry);
+        } else if let Some(inner) = field_ty
+            .strip_prefix("Vector<")
+            .and_then(|s| s.strip_suffix('>'))
+        {
+            self.register_field_type(inner.trim(), registry);
         }
-        // List<T>, Vector<T>, Map<K,V> — those have their own
-        // helper machinery (list_helpers/map_helpers fn idxs).
-        // BinOp::Eq dispatch on collections is covered by the
-        // separate body/emit.rs path; field-of-record holding a
-        // collection still falls through here. Followup if real
-        // programs surface it.
+        // Map<K,V> still falls through — record-of-Map field eq is a
+        // separate followup (the map's own equality semantics aren't
+        // canonical: insertion-order vs structural).
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&str, EqKind)> + '_ {
@@ -248,18 +281,26 @@ impl EqHelperRegistry {
         codes: &mut wasm_encoder::CodeSection,
         registry: &TypeRegistry,
         string_eq_fn_idx: Option<u32>,
+        compound_lookup: &HashMap<String, u32>,
     ) -> Result<(), WasmGcError> {
         // Snapshot type_name → fn_idx so the inline emitters can
         // dispatch nested record/sum fields by `Call(idx)` instead
         // of erroring on `Unimplemented`. Self-recursive fields
         // (parent==field) get their own `self_fn_idx` argument so
         // recursive sum/record types (Tree.Node holding Tree, …)
-        // resolve to a recursive call into the same helper.
-        let helper_idx_map: HashMap<String, u32> = self
+        // resolve to a recursive call into the same helper. Compound
+        // lookups (`List<T>`, `Vector<T>`) are merged in so a record
+        // field of type `List<Option<Int>>` can `Call(__eq_List<…>)`
+        // — list_helpers owns those fn idxs and threads them in via
+        // the `compound_lookup` arg.
+        let mut helper_idx_map: HashMap<String, u32> = self
             .slots
             .iter()
             .map(|(n, (fn_idx, _))| (n.clone(), *fn_idx))
             .collect();
+        for (canonical, fn_idx) in compound_lookup {
+            helper_idx_map.insert(canonical.clone(), *fn_idx);
+        }
         for name in &self.order {
             let kind = self.kinds[name];
             let self_fn_idx = self.slots.get(name).map(|(f, _)| *f);

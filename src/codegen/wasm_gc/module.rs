@@ -114,6 +114,20 @@ pub(super) fn emit_module(
         {
             eq_helpers_registry.register_transitive(name, EqKind::Sum, &registry);
             hash_helpers_registry.register_transitive(name, HashKind::Sum, &registry);
+        } else if name.starts_with("Option<") && name.ends_with('>') {
+            // Carrier element of List<Option<X>> / Vector<Option<X>>
+            // / Map<Option<X>, _> — list/vec eq+hash bodies dispatch
+            // each element via `Call(__eq_Option<X>)` which means
+            // eq_helpers must hold the slot. Same logic for the hash
+            // side. Inner type registration happens transitively.
+            eq_helpers_registry.register_transitive(name, EqKind::OptionEq, &registry);
+            hash_helpers_registry.register_transitive(name, HashKind::OptionHash, &registry);
+        } else if name.starts_with("Result<") && name.ends_with('>') {
+            eq_helpers_registry.register_transitive(name, EqKind::ResultEq, &registry);
+            hash_helpers_registry.register_transitive(name, HashKind::ResultHash, &registry);
+        } else if name.starts_with("Tuple<") && name.ends_with('>') {
+            eq_helpers_registry.register_transitive(name, EqKind::TupleEq, &registry);
+            hash_helpers_registry.register_transitive(name, HashKind::TupleHash, &registry);
         }
     }
     // Mirror eq registry's transitive shape — every type registered
@@ -755,8 +769,10 @@ pub(super) fn emit_module(
     // List / Vector.fromList / String.split-join helper bodies.
     // Snapshot eq-helper fn idxs so list/vec eq+hash bodies can
     // dispatch nominal-element `==`/hash through `Call(__eq_<X>)`.
+    // Merge in list_helpers' own list/vec canonicals so `List<List<X>>`
+    // / `List<Vector<X>>` element dispatch finds the inner helper.
     let string_eq_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::StringEq);
-    let eq_helper_fn_idx_map: HashMap<String, u32> = eq_helpers_registry
+    let mut eq_helper_fn_idx_map: HashMap<String, u32> = eq_helpers_registry
         .iter()
         .filter_map(|(n, _k)| {
             eq_helpers_registry
@@ -764,7 +780,7 @@ pub(super) fn emit_module(
                 .map(|i| (n.to_string(), i))
         })
         .collect();
-    let hash_helper_fn_idx_map: HashMap<String, u32> = hash_helpers_registry
+    let mut hash_helper_fn_idx_map: HashMap<String, u32> = hash_helpers_registry
         .iter()
         .filter_map(|(n, _k)| {
             hash_helpers_registry
@@ -772,6 +788,10 @@ pub(super) fn emit_module(
                 .map(|i| (n.to_string(), i))
         })
         .collect();
+    for (canonical, (eq_fn, hash_fn)) in &compound_eq_hash_lookup {
+        eq_helper_fn_idx_map.insert(canonical.clone(), *eq_fn);
+        hash_helper_fn_idx_map.insert(canonical.clone(), *hash_fn);
+    }
     list_helpers.emit_helper_bodies(
         &mut codes,
         &registry,
@@ -782,11 +802,32 @@ pub(super) fn emit_module(
 
     // Per-(record/sum) `__eq_<TypeName>` helper bodies — emit after
     // list helpers so any String fields can call `__wasmgc_string_eq`
-    // by the index recorded above.
-    eq_helpers_registry.emit_helper_bodies(&mut codes, &registry, string_eq_fn_idx)?;
+    // by the index recorded above. The compound eq lookup forwards
+    // `List<T>` / `Vector<T>` fn idxs so a record field of type
+    // `List<Option<Int>>` (etc.) can dispatch via
+    // `Call(__eq_List<…>)`. Same shape on the hash side.
+    let compound_eq_lookup: HashMap<String, u32> = compound_eq_hash_lookup
+        .iter()
+        .map(|(n, (eq, _))| (n.clone(), *eq))
+        .collect();
+    let compound_hash_lookup: HashMap<String, u32> = compound_eq_hash_lookup
+        .iter()
+        .map(|(n, (_, h))| (n.clone(), *h))
+        .collect();
+    eq_helpers_registry.emit_helper_bodies(
+        &mut codes,
+        &registry,
+        string_eq_fn_idx,
+        &compound_eq_lookup,
+    )?;
     // `__hash_<X>` helper bodies — emitted right after eq helpers so
     // every nominal/carrier hash dispatch finds its target fn_idx.
-    hash_helpers_registry.emit_helper_bodies(&mut codes, &registry, string_eq_fn_idx)?;
+    hash_helpers_registry.emit_helper_bodies(
+        &mut codes,
+        &registry,
+        string_eq_fn_idx,
+        &compound_hash_lookup,
+    )?;
 
     if let Some(hw) = &handler_wrapper {
         let user_handler_wasm_idx = import_count + 1 + (hw.user_handler_idx as u32);

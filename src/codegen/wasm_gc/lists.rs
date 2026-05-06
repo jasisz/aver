@@ -683,6 +683,13 @@ enum ListEqKind {
     /// if both head and needle are V_i, compare fields; if only one
     /// is V_i, return false. Carries the parent type name.
     SumEq(String),
+    /// Generic carrier element — `Option<X>`, `Result<X,Y>`, or
+    /// `Tuple<…>`. List eq dispatches per element via
+    /// `Call(__eq_<canonical>)` from `eq_helpers`; signature is
+    /// `(eqref, eqref) -> i32`, same shape as record/sum eq. Carries
+    /// the canonical (whitespace-free) so the body emitter can look
+    /// it up in the helper idx map at emit time.
+    CarrierEq(String),
 }
 
 fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
@@ -691,6 +698,27 @@ fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
     // primitive) gets its underlying primitive's eq instruction.
     if let Some(under) = registry.newtype_underlying(trimmed) {
         return list_eq_kind(under, registry);
+    }
+    // Generic carriers — `Option<X>` / `Result<X,Y>` / `Tuple<…>`
+    // get a per-instantiation `__eq_<canonical>` helper from
+    // eq_helpers. Their list-element dispatch is a thin Call into
+    // that helper, same shape as record/sum dispatch. Same path
+    // covers `List<X>` / `Vector<X>` elements (helpers live in
+    // list_helpers but the calling convention is identical:
+    // `(eqref, eqref) -> i32` after implicit upcast).
+    if (trimmed.starts_with("Option<")
+        || trimmed.starts_with("Result<")
+        || trimmed.starts_with("Tuple<")
+        || trimmed.starts_with("List<")
+        || trimmed.starts_with("Vector<"))
+        && trimmed.ends_with('>')
+    {
+        let canonical: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+        let mut seen = std::collections::HashSet::new();
+        if field_type_resolvable(trimmed, registry, &mut seen) {
+            return Some(ListEqKind::CarrierEq(canonical));
+        }
+        return None;
     }
     match trimmed {
         "Int" => Some(ListEqKind::I64),
@@ -845,6 +873,24 @@ pub(super) fn field_type_resolvable(
             }
         }
         return field_type_resolvable(inner[start..].trim(), registry, seen);
+    }
+    // List<X> / Vector<X> — list/vec helpers slot a per-instantiation
+    // eq+hash fn in `list_helpers` whenever X is itself
+    // `list_eq_kind`-able (recursively: primitive, record, sum, or a
+    // resolvable carrier). Record/sum field dispatch then calls
+    // `__eq_List<X>` / `__eq_Vector<X>` via the compound lookup
+    // map threaded into `emit_record_eq_inline`.
+    if let Some(inner) = field
+        .strip_prefix("List<")
+        .and_then(|s| s.strip_suffix('>'))
+    {
+        return field_type_resolvable(inner.trim(), registry, seen);
+    }
+    if let Some(inner) = field
+        .strip_prefix("Vector<")
+        .and_then(|s| s.strip_suffix('>'))
+    {
+        return field_type_resolvable(inner.trim(), registry, seen);
     }
     false
 }
@@ -1619,7 +1665,8 @@ fn emit_list_contains(
     // params: 0=in, 1=needle. local 2 = cur. RecordEq adds two
     // extra scratch locals (3 = head, 4 = needle copy) since field-
     // by-field eq needs `struct.get` against both refs multiple
-    // times.
+    // times. CarrierEq needs no scratch — the helper takes eqref
+    // params directly so head + needle are forwarded as-is.
     let mut locals: Vec<(u32, ValType)> = vec![(1, list_ref)];
     if matches!(&kind, ListEqKind::RecordEq(_) | ListEqKind::SumEq(_)) {
         // Record / sum eq does multiple struct.get reads against
@@ -1683,6 +1730,24 @@ fn emit_list_contains(
                 None,
             )?;
         }
+        ListEqKind::CarrierEq(canonical) => {
+            // `Call(__eq_<canonical>)` — both head and needle pushed
+            // as eqref args (head from struct.get, needle from
+            // param 1).
+            let eq_fn = eq_helper_fn_idx.get(canonical).copied().ok_or_else(|| {
+                WasmGcError::Validation(format!(
+                    "List.contains over carrier `{canonical}`: \
+                     __eq_{canonical} not registered in eq_helpers"
+                ))
+            })?;
+            f.instruction(&Instruction::LocalGet(2));
+            f.instruction(&Instruction::StructGet {
+                struct_type_index: list_idx,
+                field_index: 0,
+            });
+            f.instruction(&Instruction::LocalGet(1));
+            f.instruction(&Instruction::Call(eq_fn));
+        }
         _ => {
             f.instruction(&Instruction::LocalGet(2));
             f.instruction(&Instruction::StructGet {
@@ -1700,12 +1765,12 @@ fn emit_list_contains(
                     ))?;
                     f.instruction(&Instruction::Call(eq_fn))
                 }
-                ListEqKind::RecordEq(_) | ListEqKind::SumEq(_) => panic!(
-                    "internal compiler error: List.contains emit reached \
-                     RecordEq/SumEq path; should be filtered upstream by \
-                     `list_eq_kind` returning None for record/sum elements. \
-                     Please file at https://github.com/jasisz/aver/issues"
-                ),
+                ListEqKind::RecordEq(_) | ListEqKind::SumEq(_) | ListEqKind::CarrierEq(_) => {
+                    unreachable!(
+                        "filtered by outer match arms — RecordEq/SumEq/CarrierEq \
+                     handled above before this fallthrough"
+                    )
+                }
             };
         }
     }
@@ -2156,8 +2221,8 @@ fn emit_list_eq(
             ))?;
             f.instruction(&Instruction::Call(eq_fn));
         }
-        ListEqKind::RecordEq(name) | ListEqKind::SumEq(name) => {
-            // Nominal element — dispatch to the per-type
+        ListEqKind::RecordEq(name) | ListEqKind::SumEq(name) | ListEqKind::CarrierEq(name) => {
+            // Nominal/carrier element — dispatch to the per-type
             // `__eq_<X>` helper. Its signature is
             // `(eqref, eqref) -> i32`; both refs on the stack are
             // subtypes of eqref so the implicit upcast is fine.
@@ -2328,6 +2393,19 @@ fn emit_list_hash(
                 /* elem_hash_local */ 4,
                 hash_helper_fn_idx,
             )?;
+        }
+        ListEqKind::CarrierEq(canonical) => {
+            // Element on stack is eqref; `Call(__hash_<canonical>)`
+            // returns i32. The carrier's `__hash_<X>` is registered
+            // alongside `__eq_<X>` in hash_helpers.
+            let idx = hash_helper_fn_idx
+                .get(canonical)
+                .copied()
+                .ok_or(WasmGcError::Validation(format!(
+                    "list hash over carrier `{canonical}`: __hash_{canonical} \
+                     not registered in hash_helpers"
+                )))?;
+            f.instruction(&Instruction::Call(idx));
         }
     }
     f.instruction(&Instruction::I32Add);
@@ -2587,9 +2665,9 @@ fn emit_vec_eq(
             ))?;
             f.instruction(&Instruction::Call(eq_fn));
         }
-        ListEqKind::RecordEq(name) | ListEqKind::SumEq(name) => {
-            // Nominal element — `Call(__eq_<X>)`. Same eqref upcast
-            // shape as in `emit_list_eq`.
+        ListEqKind::RecordEq(name) | ListEqKind::SumEq(name) | ListEqKind::CarrierEq(name) => {
+            // Nominal/carrier element — `Call(__eq_<X>)`. Same eqref
+            // upcast shape as in `emit_list_eq`.
             let idx = eq_helper_fn_idx
                 .get(name)
                 .copied()
@@ -2727,6 +2805,19 @@ fn emit_vec_hash(
                 /* elem_hash_local */ 5,
                 hash_helper_fn_idx,
             )?;
+        }
+        ListEqKind::CarrierEq(canonical) => {
+            // Element on stack is eqref; `Call(__hash_<canonical>)`
+            // returns i32. Same shape as `emit_list_hash`'s carrier
+            // arm.
+            let idx = hash_helper_fn_idx
+                .get(canonical)
+                .copied()
+                .ok_or(WasmGcError::Validation(format!(
+                    "vector hash over carrier `{canonical}`: \
+                     __hash_{canonical} not registered in hash_helpers"
+                )))?;
+            f.instruction(&Instruction::Call(idx));
         }
     }
     f.instruction(&Instruction::I32Add);
