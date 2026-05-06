@@ -1628,6 +1628,7 @@ fn emit_list_contains(
 /// surface as Unimplemented (same constraint as `emit_eq_record` in
 /// maps.rs — extending requires nested-record / list / vector eq
 /// dispatch).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_record_eq_inline(
     f: &mut Function,
     record_name: &str,
@@ -1718,6 +1719,7 @@ pub(super) fn emit_record_eq_inline(
 /// and needle have that concrete type. If both: cast + field-by-
 /// field eq, push result. If only one: push 0 (different variants).
 /// Final i32 on stack: 1 = equal, 0 = different.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_sum_eq_inline(
     f: &mut Function,
     parent_name: &str,
@@ -2094,11 +2096,11 @@ fn emit_list_hash(
     let mut locals: Vec<(u32, ValType)> = vec![(1, list_ref), (1, ValType::I32)];
     match &kind {
         ListEqKind::RecordEq(record_name) => {
-            let r_idx = registry.record_type_idx(record_name).ok_or(
-                WasmGcError::Validation(format!(
+            let r_idx = registry
+                .record_type_idx(record_name)
+                .ok_or(WasmGcError::Validation(format!(
                     "list hash for `List<{record_name}>`: record not registered"
-                )),
-            )?;
+                )))?;
             let r_ref = ValType::Ref(RefType {
                 nullable: true,
                 heap_type: HeapType::Concrete(r_idx),
@@ -2174,23 +2176,19 @@ fn emit_list_hash(
             f.instruction(&Instruction::ArrayLen);
         }
         ListEqKind::RecordEq(record_name) => {
-            let r_idx =
-                registry
-                    .record_type_idx(record_name)
-                    .ok_or(WasmGcError::Validation(format!(
-                        "list hash dispatch: record `{record_name}` not registered"
-                    )))?;
-            let fields = registry.record_fields.get(record_name).ok_or(
-                WasmGcError::Validation(format!(
+            let r_idx = registry
+                .record_type_idx(record_name)
+                .ok_or(WasmGcError::Validation(format!(
+                    "list hash dispatch: record `{record_name}` not registered"
+                )))?;
+            let fields = registry
+                .record_fields
+                .get(record_name)
+                .ok_or(WasmGcError::Validation(format!(
                     "list hash dispatch: record `{record_name}` has no field info"
-                )),
-            )?;
+                )))?;
             emit_record_inline_hash(
-                &mut f,
-                r_idx,
-                fields,
-                /* elem_local */ 3,
-                /* elem_hash_local */ 4,
+                &mut f, r_idx, fields, /* elem_local */ 3, /* elem_hash_local */ 4,
             )?;
         }
         ListEqKind::SumEq(parent_name) => {
@@ -2473,11 +2471,11 @@ fn emit_vec_hash(
         vec![(1, ValType::I32), (1, ValType::I32), (1, ValType::I32)];
     match &kind {
         ListEqKind::RecordEq(record_name) => {
-            let r_idx = registry.record_type_idx(record_name).ok_or(
-                WasmGcError::Validation(format!(
+            let r_idx = registry
+                .record_type_idx(record_name)
+                .ok_or(WasmGcError::Validation(format!(
                     "vector hash for `Vector<{record_name}>`: record not registered"
-                )),
-            )?;
+                )))?;
             let r_ref = ValType::Ref(RefType {
                 nullable: true,
                 heap_type: HeapType::Concrete(r_idx),
@@ -2535,22 +2533,19 @@ fn emit_vec_hash(
             f.instruction(&Instruction::ArrayLen);
         }
         ListEqKind::RecordEq(record_name) => {
-            let r_idx = registry.record_type_idx(record_name).ok_or(
-                WasmGcError::Validation(format!(
+            let r_idx = registry
+                .record_type_idx(record_name)
+                .ok_or(WasmGcError::Validation(format!(
                     "vector hash dispatch: record `{record_name}` not registered"
-                )),
-            )?;
-            let fields = registry.record_fields.get(record_name).ok_or(
-                WasmGcError::Validation(format!(
+                )))?;
+            let fields = registry
+                .record_fields
+                .get(record_name)
+                .ok_or(WasmGcError::Validation(format!(
                     "vector hash dispatch: record `{record_name}` has no field info"
-                )),
-            )?;
+                )))?;
             emit_record_inline_hash(
-                &mut f,
-                r_idx,
-                fields,
-                /* elem_local */ 4,
-                /* elem_hash_local */ 5,
+                &mut f, r_idx, fields, /* elem_local */ 4, /* elem_hash_local */ 5,
             )?;
         }
         ListEqKind::SumEq(parent_name) => {
