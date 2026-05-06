@@ -48,7 +48,7 @@ pub(super) struct FnMap {
     pub(super) by_name: std::collections::HashMap<String, FnEntry>,
     /// Dotted builtin name → wasm fn index. Populated by
     /// `module::emit_module` from the `BuiltinRegistry` so call
-    /// sites can `call $builtin_idx` for `Int.toString` etc.
+    /// sites can `call $builtin_idx` for `String.fromInt` etc.
     pub(super) builtins: std::collections::HashMap<String, u32>,
     /// Dotted effect name → wasm fn index (host import). Populated
     /// from `EffectRegistry`. Imports occupy fn idx 0..K so these

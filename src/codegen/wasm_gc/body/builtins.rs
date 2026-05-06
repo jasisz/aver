@@ -18,7 +18,7 @@ use super::{EmitCtx, SlotTable};
 /// to `struct.new $variant_type_idx`. Used by both the Constructor expr
 /// path and the disguised-FnCall path.
 /// Lower a dotted builtin call like `Float.fromInt(n)` or
-/// `Int.toString(n)`. The set is curated — phase 3b ships the
+/// `String.fromInt(n)`. The set is curated — phase 3b ships the
 /// minimum the bench scenarios need; anything else surfaces an
 /// "Unimplemented — phase 3c builtin" error so the missing one is
 /// visible.
@@ -284,12 +284,12 @@ pub(super) fn emit_dotted_builtin(
             func.instruction(&Instruction::I32Eqz);
             Ok(())
         }
-        // String.fromInt / String.fromFloat are different spellings of
-        // Int.toString / Float.toString — Aver source allows both,
-        // backend points each at the same helper.
+        // String.fromInt / String.fromFloat — surface names since 0.17.
+        // Backend dispatches to the per-type digit-conversion helper
+        // registered under the same canonical name.
         "String.fromInt" if args.len() == 1 => {
             let to_string_idx = ctx.fn_map.builtins.get("String.fromInt").copied().ok_or(
-                WasmGcError::Validation("String.fromInt requires Int.toString builtin".into()),
+                WasmGcError::Validation("String.fromInt builtin helper not registered".into()),
             )?;
             emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::Call(to_string_idx));
@@ -297,7 +297,7 @@ pub(super) fn emit_dotted_builtin(
         }
         "String.fromFloat" if args.len() == 1 => {
             let to_string_idx = ctx.fn_map.builtins.get("String.fromFloat").copied().ok_or(
-                WasmGcError::Validation("String.fromFloat requires Float.toString builtin".into()),
+                WasmGcError::Validation("String.fromFloat builtin helper not registered".into()),
             )?;
             emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::Call(to_string_idx));
@@ -1038,7 +1038,7 @@ pub(super) fn emit_vector_set_or_default(
 /// `array.new_fixed (array (ref null $string)) N` + a single call to
 /// the variadic concat helper. Each part is coerced to `String`:
 /// - `String` → identity
-/// - `Int` → `call $Int.toString`
+/// - `Int` → `call $String.fromInt`
 /// - other primitives surface as Unimplemented until their helpers land
 ///
 /// `interp_lower` is skipped for this backend (`run_interp_lower=false`
@@ -1109,7 +1109,7 @@ pub(super) fn emit_interpolated_str(
                         let to_string_idx =
                             ctx.fn_map.builtins.get("String.fromInt").copied().ok_or(
                                 WasmGcError::Validation(
-                                    "interpolation of Int requires Int.toString builtin".into(),
+                                    "interpolation of Int requires String.fromInt builtin".into(),
                                 ),
                             )?;
                         func.instruction(&Instruction::Call(to_string_idx));
@@ -1118,7 +1118,8 @@ pub(super) fn emit_interpolated_str(
                         let to_string_idx =
                             ctx.fn_map.builtins.get("String.fromFloat").copied().ok_or(
                                 WasmGcError::Validation(
-                                    "interpolation of Float requires Float.toString builtin".into(),
+                                    "interpolation of Float requires String.fromFloat builtin"
+                                        .into(),
                                 ),
                             )?;
                         func.instruction(&Instruction::Call(to_string_idx));
@@ -1361,7 +1362,7 @@ pub(super) fn emit_vec_from_list_call(
     Ok(())
 }
 
-/// `Vector.toList(vec)` — dispatch to the `to_list` helper. The
+/// `List.fromVector(vec)` — dispatch to the `to_list` helper. The
 /// canonical is keyed on `List<T>` (`vfl_ops` indexes pairs by list
 /// canonical), so we recover `T` from the vector arg's type and
 /// build the list canonical from it.
@@ -1375,7 +1376,7 @@ pub(super) fn emit_vec_to_list_call(
     let vec_canonical: String = vec_aver.chars().filter(|c| !c.is_whitespace()).collect();
     let elem = super::super::types::TypeRegistry::vector_element_type(&vec_canonical).ok_or(
         WasmGcError::Validation(format!(
-            "Vector.toList: cannot parse element type from `{vec_canonical}`"
+            "List.fromVector: cannot parse element type from `{vec_canonical}`"
         )),
     )?;
     let list_canonical = format!("List<{}>", elem.trim());
@@ -1384,7 +1385,7 @@ pub(super) fn emit_vec_to_list_call(
         .vfl_ops
         .get(&list_canonical)
         .ok_or(WasmGcError::Validation(format!(
-            "Vector.toList: helper for `{list_canonical}` wasn't registered"
+            "List.fromVector: helper for `{list_canonical}` wasn't registered"
         )))?;
     emit_expr(func, vec_arg, slots, ctx)?;
     func.instruction(&Instruction::Call(ops.to_list));

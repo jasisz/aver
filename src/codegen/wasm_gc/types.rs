@@ -680,7 +680,7 @@ impl TypeRegistry {
         }
 
         // Eagerly register `List<T>` and `Option<Vector<T>>` for
-        // every `Vector<T>` — `Vector.toList` returns the list and
+        // every `Vector<T>` — `List.fromVector` returns the list and
         // `Vector.set` (boxed shape) returns the option. Both
         // canonical-types only appear in those builtin returns.
         for canonical in vector_order.iter() {

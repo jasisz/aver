@@ -18,9 +18,10 @@
 //!    from the implicit reverse-during-fromList walk) plus the final
 //!    `Vec<T>`. The direct-fill version skips the whole list intermediate.
 //!
-//! 2. `Map.fromList(<sink>(args, []))` — same pattern with `Map.empty()`
-//!    + `Map.set` chain. Marginal in practice (~6 sites in-tree) but
-//!    treated uniformly with Vector for consistency of advice.
+//! 2. `Map.fromList(<sink>(args, []))` — same pattern with `{}` (empty
+//!    map literal) + `Map.set` chain. Marginal in practice (~6 sites
+//!    in-tree) but treated uniformly with Vector for consistency of
+//!    advice.
 //!
 //! 3. Standalone `List.reverse(<sink>(args, []))` whose result is *not*
 //!    fed straight into `String.join` (when it is, the external-reverse
@@ -123,7 +124,7 @@ fn walk(
                 fd,
                 format!(
                     "Map.fromList over a recursive list builder ({}). \
-                     Consider threading a Map directly via Map.empty() + Map.set in the \
+                     Consider threading a Map directly via {{}} + Map.set in the \
                      accumulator slot — skips the cons-cell intermediate and the fold.",
                     name
                 ),

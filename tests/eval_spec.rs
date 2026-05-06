@@ -364,7 +364,10 @@ fn float_from_int() {
 
 #[test]
 fn float_to_string() {
-    assert_eq!(eval("String.fromFloat(3.14)"), Value::Str("3.14".to_string()));
+    assert_eq!(
+        eval("String.fromFloat(3.14)"),
+        Value::Str("3.14".to_string())
+    );
 }
 
 #[test]

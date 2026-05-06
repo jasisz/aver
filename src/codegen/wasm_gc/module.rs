@@ -1565,7 +1565,7 @@ fn discover_builtins_in_expr(
         // `InterpolatedStr` lowers to `array.new_fixed` + the variadic
         // concat helper. Register it here so the helper's wasm fn
         // index is allocated by the time emission runs. Each Parsed
-        // part may also need `Int.toString` (if its type is Int) —
+        // part may also need `String.fromInt` (if its type is Int) —
         // we conservatively register that too; unused registrations
         // are stripped by `wasm-opt -Oz`.
         Expr::InterpolatedStr(parts) => {

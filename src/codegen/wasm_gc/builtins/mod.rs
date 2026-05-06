@@ -4,8 +4,8 @@
 //!
 //! Aver's builtin namespace splits two ways:
 //!
-//! - **Pure builtins** (`Int.toString`, `List.prepend`, `Map.empty`,
-//!   `Vector.get`, …) — emitted as local helper fns inside the user's
+//! - **Pure builtins** (`String.fromInt`, `List.prepend`, `Vector.get`,
+//!   …) — emitted as local helper fns inside the user's
 //!   wasm module on first use. Same pattern rustc uses for stdlib in
 //!   its wasm output. No external runtime, no host dependency.
 //!   Helpers that aren't reached get DCE'd by `wasm-opt -Oz`.
@@ -53,10 +53,10 @@
 //! ## Status (phase 3c, in progress)
 //!
 //! Architecture and registry are wired. The first concrete helper
-//! body (`Int.toString`) is the next chunk of work — it's a digit-
+//! body (`String.fromInt`) is the next chunk of work — it's a digit-
 //! conversion loop that allocates an `(array i8)` and fills it via
 //! `array.new_default` + `array.set` × N. Roughly 50 lines of raw
-//! wasm encoding. Until it lands, calls to `Int.toString` (and the
+//! wasm encoding. Until it lands, calls to `String.fromInt` (and the
 //! other builtins listed in `BuiltinName`) surface a clear "phase
 //! 3c body not implemented" error pointing here.
 
@@ -392,7 +392,7 @@ fn string_array_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> 
     }))
 }
 
-/// `Int.toString(n: i64) -> (ref null $string)`. Digit-conversion
+/// `String.fromInt(n: i64) -> (ref null $string)`. Digit-conversion
 /// loop that allocates an `(array i8)` and fills it with ASCII bytes.
 ///
 /// Same `wat`-source-of-truth pattern the legacy backend uses for
@@ -436,7 +436,7 @@ fn emit_string_from_int(registry: &TypeRegistry) -> Result<Function, WasmGcError
     let string_idx = registry
         .string_array_type_idx
         .ok_or(WasmGcError::Validation(
-            "Int.toString helper requires String slot to be allocated".into(),
+            "String.fromInt helper requires String slot to be allocated".into(),
         ))?;
     let padding = wat_helper::padding_types(string_idx);
     let wat = format!(
@@ -1561,7 +1561,7 @@ fn emit_float_from_string(registry: &TypeRegistry) -> Result<Function, WasmGcErr
     wat_helper::compile_wat_helper(&wat)
 }
 
-/// `Float.toString(f) -> String`. Shortest-roundtrip f64 → ASCII;
+/// `String.fromFloat(f) -> String`. Shortest-roundtrip f64 → ASCII;
 /// port of the legacy `rt_float_to_str` algorithm but writing into a
 /// 32-byte scratch `(array i8)` instead of linear memory, then
 /// `array.copy` into a result string sized to the actual output.
