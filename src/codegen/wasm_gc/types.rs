@@ -1978,8 +1978,6 @@ fn expr_uses_string(expr: &crate::ast::Expr) -> bool {
                             | "String.replace"
                             | "String.split"
                             | "String.join"
-                            | "String.fromInt"
-                            | "String.fromFloat"
                             | "String.fromBool"
                             | "String.endsWith"
                             | "String.charAt"

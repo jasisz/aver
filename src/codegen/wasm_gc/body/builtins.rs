@@ -155,13 +155,6 @@ pub(super) fn emit_dotted_builtin(
             func.instruction(&Instruction::F64Const(std::f64::consts::PI));
             Ok(())
         }
-        // `Int.toFloat` is the same op as `Float.fromInt` — Aver has
-        // both spellings; map both to the same instruction.
-        "Float.fromInt" if args.len() == 1 => {
-            emit_expr(func, &args[0], slots, ctx)?;
-            func.instruction(&Instruction::F64ConvertI64S);
-            Ok(())
-        }
         "Int.abs" if args.len() == 1 => {
             // Branched: if (x < 0) 0 - x else x. Two evaluations of x;
             // cheap when x is a Resolved local.
@@ -295,14 +288,9 @@ pub(super) fn emit_dotted_builtin(
         // Int.toString / Float.toString — Aver source allows both,
         // backend points each at the same helper.
         "String.fromInt" if args.len() == 1 => {
-            let to_string_idx =
-                ctx.fn_map
-                    .builtins
-                    .get("String.fromInt")
-                    .copied()
-                    .ok_or(WasmGcError::Validation(
-                        "String.fromInt requires Int.toString builtin".into(),
-                    ))?;
+            let to_string_idx = ctx.fn_map.builtins.get("String.fromInt").copied().ok_or(
+                WasmGcError::Validation("String.fromInt requires Int.toString builtin".into()),
+            )?;
             emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::Call(to_string_idx));
             Ok(())

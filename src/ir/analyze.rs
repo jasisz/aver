@@ -86,7 +86,6 @@ impl AllocPolicy for NeutralAllocPolicy {
                 | "Float.pow"
                 | "Float.atan2"
                 | "Float.pi"
-                | "Float.fromInt"
                 | "Char.toCode"
                 | "String.len"
                 | "String.byteLength"

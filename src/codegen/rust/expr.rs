@@ -1086,7 +1086,6 @@ fn expr_is_numeric(expr: &Expr, ectx: &EmitCtx) -> bool {
                         | "Float.cos"
                         | "Float.atan2"
                         | "Float.fromInt"
-                        | "Float.fromInt"
                         | "List.len"
                         | "Vector.len"
                         | "Map.len"

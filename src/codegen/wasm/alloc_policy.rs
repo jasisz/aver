@@ -60,7 +60,6 @@ fn is_pure_non_alloc_builtin(name: &str) -> bool {
             | "Float.pow"
             | "Float.atan2"
             | "Float.pi"
-            | "Float.fromInt"
             // Char ↔ code-point. `Char.fromCode` returns Option<String>
             // (allocates the Some wrapper around a heap String); only the
             // reverse direction is pure.
