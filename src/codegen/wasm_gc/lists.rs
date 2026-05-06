@@ -739,7 +739,7 @@ fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
 /// emitters can dispatch: primitive, a registered record/sum
 /// (recursively resolvable), or self-recursion. Cycles terminate
 /// via the `seen` set.
-fn record_fields_resolvable(
+pub(super) fn record_fields_resolvable(
     record: &str,
     registry: &TypeRegistry,
     seen: &mut std::collections::HashSet<String>,
@@ -755,7 +755,7 @@ fn record_fields_resolvable(
         .all(|(_, t)| field_type_resolvable(t.trim(), registry, seen))
 }
 
-fn sum_fields_resolvable(
+pub(super) fn sum_fields_resolvable(
     parent: &str,
     registry: &TypeRegistry,
     seen: &mut std::collections::HashSet<String>,
@@ -775,11 +775,23 @@ fn sum_fields_resolvable(
         })
 }
 
-fn field_type_resolvable(
+pub(super) fn field_type_resolvable(
     field: &str,
     registry: &TypeRegistry,
     seen: &mut std::collections::HashSet<String>,
 ) -> bool {
+    // Conservative: reject any generic carrier (`Option<…>`,
+    // `Result<…,…>`, `List<…>`, `Vector<…>`, `Map<…,…>`,
+    // `Tuple<…>`) as a field type. The inline eq emitters don't
+    // know how to dispatch eq for these — that's its own ABI
+    // path (Option tag-and-compare, Result variant tags, etc.).
+    // Programs that hold a record with such a field still work,
+    // they just don't get list-eq / map-key / contains-on-list
+    // slots emitted for the outer type. Lifting this is its own
+    // followup.
+    if field.contains('<') {
+        return false;
+    }
     matches!(field, "Int" | "Float" | "Bool" | "String")
         || (registry.record_type_idx(field).is_some()
             && record_fields_resolvable(field, registry, seen))

@@ -75,6 +75,43 @@ pub(super) fn emit_module(
             &registry,
         );
     }
+    // Sweep nominal element types of every registered List / Vector
+    // and key types of every registered Map. The list/vec helper
+    // bodies dispatch nominal element eq/hash via `Call(__eq_<X>)`
+    // (since 0.16.3); without auto-registering those types here, a
+    // program that holds `List<Item>` without ever writing
+    // `list == list` directly would still get a list helper body
+    // that calls into an unregistered `__eq_Item`. Keys of `Map<K,_>`
+    // need the same: maps.rs `emit_eq_for(K)` reaches into
+    // `__eq_<X>` helpers when K is a record/sum field-of-field.
+    let mut nominal_seed: Vec<String> = Vec::new();
+    for canonical in &registry.list_order {
+        if let Some(elem) = super::types::TypeRegistry::list_element_type(canonical) {
+            nominal_seed.push(elem.trim().to_string());
+        }
+    }
+    for canonical in &registry.vector_order {
+        if let Some(elem) = super::types::TypeRegistry::vector_element_type(canonical) {
+            nominal_seed.push(elem.trim().to_string());
+        }
+    }
+    for canonical in &registry.map_order {
+        if let Some((k, _v)) = super::types::parse_map_kv(canonical) {
+            nominal_seed.push(k.trim().to_string());
+        }
+    }
+    for name in &nominal_seed {
+        if registry.record_fields.contains_key(name) {
+            eq_helpers_registry.register_transitive(name, EqKind::Record, &registry);
+        } else if registry
+            .variants
+            .values()
+            .flat_map(|v| v.iter())
+            .any(|v| &v.parent == name)
+        {
+            eq_helpers_registry.register_transitive(name, EqKind::Sum, &registry);
+        }
+    }
     // Eq helpers over records / sums with String fields need
     // `__wasmgc_string_eq` — force-register so the slot is allocated
     // before bodies emit.

@@ -84,6 +84,24 @@ impl EqHelperRegistry {
         if self.kinds.contains_key(type_name) {
             return;
         }
+        // Skip nominal types whose fields contain generic carriers
+        // (Option<…>, List<…>, etc.) the inline eq emitter doesn't
+        // handle yet. Without this guard, `register_field_type`
+        // silently dropped the unsupported field and the helper body
+        // emit later panicked with "no eq dispatch" — same error the
+        // surrounding sweep is trying to prevent.
+        let mut seen = std::collections::HashSet::new();
+        let resolvable = match kind {
+            EqKind::Record => super::super::lists::record_fields_resolvable(
+                type_name, registry, &mut seen,
+            ),
+            EqKind::Sum => {
+                super::super::lists::sum_fields_resolvable(type_name, registry, &mut seen)
+            }
+        };
+        if !resolvable {
+            return;
+        }
         self.register(type_name, kind);
         // Walk fields and recurse on nominal types.
         match kind {
