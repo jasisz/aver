@@ -254,6 +254,32 @@ fn main()
 // sum 0..7999 = 7999 * 8000 / 2 = 31 996 000
 const RESIZE_OUT: &str = "8000\n31996000";
 
+/// Vector → List bridge via `List.fromVector`. Builds a 2 000-cell
+/// Vector under TCO, converts to a List, sums via list TCO. Catches
+/// backends that miscount the vector→list element copy or break the
+/// resulting list's `[]` empty-cons identity.
+const LIST_FROM_VECTOR_SRC: &str = r#"module Tmp
+
+fn fill(v: Vector<Int>, i: Int, n: Int) -> Vector<Int>
+    match i >= n
+        true  -> v
+        false -> fill(Option.withDefault(Vector.set(v, i, i + 1), v), i + 1, n)
+
+fn sumList(xs: List<Int>, acc: Int) -> Int
+    match xs
+        [] -> acc
+        [x, ..rest] -> sumList(rest, acc + x)
+
+fn main()
+    ! [Console.print]
+    v = fill(Vector.new(2000, 0), 0, 2000)
+    xs = List.fromVector(v)
+    Console.print(String.fromInt(List.len(xs)))
+    Console.print(String.fromInt(sumList(xs, 0)))
+"#;
+// len = 2000, sum 1..2000 = 2000 * 2001 / 2 = 2 001 000
+const LIST_FROM_VECTOR_OUT: &str = "2000\n2001000";
+
 // ─── Per-backend cross-checks ──────────────────────────────────────────
 //
 // One #[test] fn per (source × backend). Verbose vs a paste-macro
@@ -411,5 +437,30 @@ fn cross_map_resize_8k_self_host() {
         "self-host",
         &run_self_host("aver-cross-resize8k-sh", RESIZE_SRC),
         RESIZE_OUT,
+    );
+}
+
+#[test]
+fn cross_list_from_vector_2k_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-lfv2k-vm", LIST_FROM_VECTOR_SRC),
+        LIST_FROM_VECTOR_OUT,
+    );
+}
+#[test]
+fn cross_list_from_vector_2k_wasm() {
+    assert_eq_with_label(
+        "WASM",
+        &run_wasm("aver-cross-lfv2k-wasm", LIST_FROM_VECTOR_SRC),
+        LIST_FROM_VECTOR_OUT,
+    );
+}
+#[test]
+fn cross_list_from_vector_2k_self_host() {
+    assert_eq_with_label(
+        "self-host",
+        &run_self_host("aver-cross-lfv2k-sh", LIST_FROM_VECTOR_SRC),
+        LIST_FROM_VECTOR_OUT,
     );
 }
