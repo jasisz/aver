@@ -115,16 +115,6 @@ pub(super) struct TypeRegistry {
     /// $string $segment_idx` with offset=0, size=len.
     pub(super) string_literals: Vec<Vec<u8>>,
     pub(super) string_literal_idx: HashMap<Vec<u8>, u32>,
-    /// Per-fn `(ref null $string)` global, init by `array.new_data`
-    /// from the fn-name passive segment. Codegen emits `global.get`
-    /// at every effect call site instead of allocating a fresh
-    /// `(array i8)` per call — module-instantiation pays the alloc
-    /// once, the runtime hot path costs one global load.
-    pub(super) caller_fn_globals: HashMap<String, u32>,
-    /// Emit order for the caller-fn globals, matched to the
-    /// idx values stored above. The `GlobalSection` walks this
-    /// vector so wasm idx 0..N matches the map values.
-    pub(super) caller_fn_global_order: Vec<String>,
     /// Type names that must NOT be erased to their underlying
     /// primitive by the newtype optimisation. Populated with every
     /// record/variant used as a `Map<K, *>` key — Map's open-
@@ -325,6 +315,23 @@ impl TypeRegistry {
                     &mut result_order,
                     &mut next_idx,
                 );
+                // Walk binding annotations too — `let r: Result<Box, MyErr> = …`
+                // wouldn't be picked up by the builtin-uses scan (which only
+                // looks at known dotted calls like `Disk.readText`). Without this,
+                // user-typed `Result<custom, custom>` values fail to find their
+                // type slot at construction time.
+                use crate::ast::{FnBody, Stmt};
+                let FnBody::Block(stmts) = fd.body.as_ref();
+                for stmt in stmts {
+                    if let Stmt::Binding(_, Some(annot), _) = stmt {
+                        collect_results_from_str(
+                            annot,
+                            &mut result_types,
+                            &mut result_order,
+                            &mut next_idx,
+                        );
+                    }
+                }
             }
         }
         let mut list_types: HashMap<String, u32> = HashMap::new();
@@ -521,6 +528,21 @@ impl TypeRegistry {
                 for (_, ty) in &fd.params {
                     collect_maps_from_str(ty, &mut pending_maps);
                 }
+                // Walk let-binding annotations too — `let m: Map<Person, Int> =
+                // Map.set(…)` won't show up in fn signatures and the discovery
+                // walker would otherwise miss the canonical entirely. Mirrors
+                // what the Result walker added a few commits back.
+                use crate::ast::{FnBody, Stmt};
+                let FnBody::Block(stmts) = fd.body.as_ref();
+                for stmt in stmts {
+                    if let Stmt::Binding(_, Some(annot), _) = stmt {
+                        collect_maps_from_str(annot, &mut pending_maps);
+                    }
+                    let expr = match stmt {
+                        Stmt::Binding(_, _, e) | Stmt::Expr(e) => e,
+                    };
+                    collect_maps_from_expr(expr, &mut pending_maps);
+                }
             }
         }
         // Dedup in encounter order.
@@ -658,7 +680,7 @@ impl TypeRegistry {
         }
 
         // Eagerly register `List<T>` and `Option<Vector<T>>` for
-        // every `Vector<T>` — `Vector.toList` returns the list and
+        // every `Vector<T>` — `List.fromVector` returns the list and
         // `Vector.set` (boxed shape) returns the option. Both
         // canonical-types only appear in those builtin returns.
         for canonical in vector_order.iter() {
@@ -699,33 +721,13 @@ impl TypeRegistry {
                 collect_string_literals_in_fn(fd, &mut string_literals, &mut string_literal_idx);
             }
         }
-        // Pre-register fn names as passive String literals AND
-        // allocate `(ref null $string)` wasm globals — but only for
-        // fns whose body actually emits caller_fn at a call site (a
-        // dotted call `Foo.bar(...)` or an `?!`/`!` independent
-        // product, which lowers to group/branch markers). Pure fns
-        // and plain forwarders that only call other user fns don't
-        // need a slot.
-        let mut caller_fn_globals: HashMap<String, u32> = HashMap::new();
-        let mut caller_fn_global_order: Vec<String> = Vec::new();
-        for item in items {
-            if let TopLevel::FnDef(fd) = item {
-                if !fn_body_emits_effect_call(fd) {
-                    continue;
-                }
-                let bytes = fd.name.as_bytes().to_vec();
-                string_literal_idx.entry(bytes.clone()).or_insert_with(|| {
-                    let idx = string_literals.len() as u32;
-                    string_literals.push(bytes);
-                    idx
-                });
-                caller_fn_globals.entry(fd.name.clone()).or_insert_with(|| {
-                    let idx = caller_fn_global_order.len() as u32;
-                    caller_fn_global_order.push(fd.name.clone());
-                    idx
-                });
-            }
-        }
+        // Note: caller_fn name registration moved out of `TypeRegistry`
+        // — `body::CallerFnCollector` lazy-registers names during
+        // codegen (every site that calls `emit_caller_fn_idx` registers
+        // its self_fn_name on demand), and the post-emit phase appends
+        // the resulting names as fresh passive segments after the
+        // pre-walked literal segments above. Single source of truth,
+        // zero AST-walker false positives.
         // `Int.mod` lowers to a boxed `Result<Int, String>` whose Err
         // arm carries a fixed "Division by zero" message — register
         // its bytes as a passive segment so the emitter has an idx
@@ -789,8 +791,6 @@ impl TypeRegistry {
             string_array_type_idx,
             string_literals,
             string_literal_idx,
-            caller_fn_globals,
-            caller_fn_global_order,
             non_newtypable_keys,
         }
     }
@@ -1854,6 +1854,69 @@ fn collect_maps_from_str(type_str: &str, out: &mut Vec<String>) {
     }
 }
 
+/// Walk every sub-expression and harvest `Map<K,V>` canonicals from
+/// each `Spanned<Expr>::ty()` stamp. Catches map literals (`{a => 3}`
+/// without annotation) and expressions whose type is a Map but the
+/// canonical never shows up in any signature — symmetrical with
+/// `collect_tuples_from_expr`. Recurses into sub-expressions so
+/// nested literals / fn args / match arms all get their stamps
+/// harvested.
+fn collect_maps_from_expr(expr: &crate::ast::Spanned<crate::ast::Expr>, out: &mut Vec<String>) {
+    use crate::ast::Expr;
+    if let Some(ty) = expr.ty() {
+        let display = ty.display();
+        collect_maps_from_str(&display, out);
+    }
+    match &expr.node {
+        Expr::FnCall(callee, args) => {
+            collect_maps_from_expr(callee, out);
+            for a in args {
+                collect_maps_from_expr(a, out);
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for it in items {
+                collect_maps_from_expr(it, out);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                collect_maps_from_expr(k, out);
+                collect_maps_from_expr(v, out);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, v) in fields {
+                collect_maps_from_expr(v, out);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_maps_from_expr(base, out);
+            for (_, v) in updates {
+                collect_maps_from_expr(v, out);
+            }
+        }
+        Expr::Constructor(_, Some(arg)) => collect_maps_from_expr(arg, out),
+        Expr::Match { subject, arms } => {
+            collect_maps_from_expr(subject, out);
+            for arm in arms {
+                collect_maps_from_expr(&arm.body, out);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            collect_maps_from_expr(l, out);
+            collect_maps_from_expr(r, out);
+        }
+        Expr::Attr(e, _) | Expr::ErrorProp(e) => collect_maps_from_expr(e, out),
+        Expr::TailCall(tc) => {
+            for a in &tc.args {
+                collect_maps_from_expr(a, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Split a canonical `Map<K, V>` into its `K` and `V` parts (both
 /// borrowed slices of the input). Returns `None` if the string
 /// doesn't match the expected shape.
@@ -1902,11 +1965,10 @@ fn expr_uses_string(expr: &crate::ast::Expr) -> bool {
                     let dotted = format!("{p}.{member}");
                     if matches!(
                         dotted.as_str(),
-                        "Int.toString"
-                            | "Float.toString"
+                        "String.fromInt"
+                            | "String.fromFloat"
                             | "String.len"
                             | "String.length"
-                            | "String.concat"
                             | "String.startsWith"
                             | "String.contains"
                             | "String.slice"
@@ -1916,8 +1978,6 @@ fn expr_uses_string(expr: &crate::ast::Expr) -> bool {
                             | "String.replace"
                             | "String.split"
                             | "String.join"
-                            | "String.fromInt"
-                            | "String.fromFloat"
                             | "String.fromBool"
                             | "String.endsWith"
                             | "String.charAt"
@@ -2021,45 +2081,6 @@ fn fn_body_calls_int_mod(fd: &crate::ast::FnDef) -> bool {
             Expr::List(xs) | Expr::Tuple(xs) | Expr::IndependentProduct(xs, _) => {
                 xs.iter().any(|x| walk(&x.node))
             }
-            Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| walk(&e.node)),
-            Expr::RecordUpdate { base, updates, .. } => {
-                walk(&base.node) || updates.iter().any(|(_, e)| walk(&e.node))
-            }
-            Expr::Constructor(_, p) => p.as_deref().is_some_and(|x| walk(&x.node)),
-            _ => false,
-        }
-    }
-    let FnBody::Block(stmts) = fd.body.as_ref();
-    stmts.iter().any(|stmt| match stmt {
-        Stmt::Binding(_, _, e) | Stmt::Expr(e) => walk(&e.node),
-    })
-}
-
-/// Returns true when the fn body contains anything that emits a
-/// caller_fn slot at codegen — a dotted call (any `Attr(_, _)`
-/// callee, including nested-module shape `Module.Sub.fn(args)`) or
-/// an independent product (`?!` / `!`, lowers to group/branch
-/// markers). Used to skip allocating a global for fns that never
-/// need one. Conservative on dotted: builtin namespace calls like
-/// `List.length` are also flagged; false positives cost one segment
-/// + one global per fn, false negatives crash wasm validation.
-fn fn_body_emits_effect_call(fd: &crate::ast::FnDef) -> bool {
-    use crate::ast::{Expr, FnBody, Stmt};
-    fn walk(e: &Expr) -> bool {
-        match e {
-            Expr::FnCall(callee, args) => {
-                let dotted = matches!(&callee.node, Expr::Attr(_, _));
-                dotted || walk(&callee.node) || args.iter().any(|a| walk(&a.node))
-            }
-            Expr::IndependentProduct(_, _) => true,
-            Expr::Match { subject, arms } => {
-                walk(&subject.node) || arms.iter().any(|a| walk(&a.body.node))
-            }
-            Expr::BinOp(_, l, r) => walk(&l.node) || walk(&r.node),
-            Expr::Attr(o, _) => walk(&o.node),
-            Expr::ErrorProp(i) => walk(&i.node),
-            Expr::TailCall(b) => b.args.iter().any(|a| walk(&a.node)),
-            Expr::List(xs) | Expr::Tuple(xs) => xs.iter().any(|x| walk(&x.node)),
             Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| walk(&e.node)),
             Expr::RecordUpdate { base, updates, .. } => {
                 walk(&base.node) || updates.iter().any(|(_, e)| walk(&e.node))

@@ -3,7 +3,6 @@
 /// Methods:
 ///   Float.fromString(s)  → Result<Float, String>  — parse string to float
 ///   Float.fromInt(n)     → Float                  — widen int to float
-///   Float.toString(f)    → String                 — format float as string
 ///   Float.abs(f)         → Float                  — absolute value
 ///   Float.floor(f)       → Int                    — floor to int
 ///   Float.ceil(f)        → Int                    — ceil to int
@@ -29,7 +28,6 @@ pub fn register(global: &mut HashMap<String, Value>) {
     for method in &[
         "fromString",
         "fromInt",
-        "toString",
         "abs",
         "floor",
         "ceil",
@@ -66,7 +64,6 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
         "Float.fromString" => Some(from_string(args)),
         "Float.fromInt" => Some(from_int(args)),
-        "Float.toString" => Some(to_string(args)),
         "Float.abs" => Some(abs(args)),
         "Float.floor" => Some(floor(args)),
         "Float.ceil" => Some(ceil(args)),
@@ -109,16 +106,6 @@ fn from_int(args: &[Value]) -> Result<Value, RuntimeError> {
         ));
     };
     Ok(Value::Float(*n as f64))
-}
-
-fn to_string(args: &[Value]) -> Result<Value, RuntimeError> {
-    let [val] = one_arg("Float.toString", args)?;
-    let Value::Float(f) = val else {
-        return Err(RuntimeError::Error(
-            "Float.toString: argument must be a Float".to_string(),
-        ));
-    };
-    Ok(Value::Str(format!("{}", f)))
 }
 
 fn abs(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -271,7 +258,6 @@ pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
     let methods = &[
         "fromString",
         "fromInt",
-        "toString",
         "abs",
         "floor",
         "ceil",
@@ -305,7 +291,6 @@ pub fn call_nv(
     match name {
         "Float.fromString" => Some(from_string_nv(args, arena)),
         "Float.fromInt" => Some(from_int_nv(args, arena)),
-        "Float.toString" => Some(to_string_nv(args, arena)),
         "Float.abs" => Some(abs_nv(args, arena)),
         "Float.floor" => Some(floor_nv(args, arena)),
         "Float.ceil" => Some(ceil_nv(args, arena)),
@@ -373,17 +358,6 @@ fn from_int_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtime
         ));
     }
     Ok(NanValue::new_float(v.as_int(arena) as f64))
-}
-
-fn to_string_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    let v = nv_check1("Float.toString", args)?;
-    if !v.is_float() {
-        return Err(RuntimeError::Error(
-            "Float.toString: argument must be a Float".to_string(),
-        ));
-    }
-    let s = format!("{}", v.as_float());
-    Ok(NanValue::new_string_value(&s, arena))
 }
 
 fn abs_nv(args: &[NanValue], _arena: &mut Arena) -> Result<NanValue, RuntimeError> {

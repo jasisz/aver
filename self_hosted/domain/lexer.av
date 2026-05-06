@@ -52,7 +52,7 @@ verify tokenizeFloat
 
 fn buildFloat(src: String, pos: Int, intPart: Int, decPart: Int, decDigits: Int) -> List<Token>
     ? "Construct float from integer and decimal parts."
-    f = Int.toFloat(intPart) + Int.toFloat(decPart) / pow10(decDigits)
+    f = Float.fromInt(intPart) + Float.fromInt(decPart) / pow10(decDigits)
     List.prepend(Token.TkFloat(f), tokenize(src, pos))
 
 verify buildFloat

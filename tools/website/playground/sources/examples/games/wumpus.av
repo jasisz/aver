@@ -48,7 +48,7 @@ verify validRoom
 
 fn roomListItem(r: Int, rest: List<Int>) -> String
     ? "Format a single room entry and recurse on remainder."
-    rs = Int.toString(r)
+    rs = String.fromInt(r)
     match rest
         [] -> rs
         _ -> "{rs}, {roomList(rest)}"
@@ -246,10 +246,10 @@ fn showRoom(game: Game) -> Unit
     ? "Display current room, tunnels, and hazard warnings."
     ! [Console.print]
     Console.print("")
-    Console.print("You are in room {Int.toString(game.player)}.")
+    Console.print("You are in room {String.fromInt(game.player)}.")
     Console.print("Tunnels lead to: {roomList(neighbors(game.player))}")
     Console.print(warningText(game))
-    Console.print("Arrows: {Int.toString(game.arrows)}")
+    Console.print("Arrows: {String.fromInt(game.arrows)}")
 
 fn gameLoop(game: Game) -> Result<String, String>
     ? "Main game loop — one turn per recursive call."
@@ -311,7 +311,7 @@ fn teleportAndCheck(game: Game) -> Result<String, String>
     ? "Bats carry you to a random room; check hazards there."
     ! [Console.print, Console.readLine, Random.int]
     dest = randRoom()
-    Console.print("Super bats carry you to room {Int.toString(dest)}!")
+    Console.print("Super bats carry you to room {String.fromInt(dest)}!")
     resolveRoomCheck(checkRoom(Game.update(game, player = dest)))
 
 fn retry(game: Game, msg: String) -> Result<String, String>

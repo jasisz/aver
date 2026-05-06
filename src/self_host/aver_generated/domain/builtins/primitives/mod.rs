@@ -11,10 +11,10 @@ pub fn callInt(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, Aver
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = name.clone();
-        if &*__dispatch_subject == "Int.toString" {
+        if &*__dispatch_subject == "String.fromInt" {
             builtinIntToString(args)
         } else {
-            if &*__dispatch_subject == "Int.toFloat" {
+            if &*__dispatch_subject == "Float.fromInt" {
                 builtinIntToFloat(args)
             } else {
                 if &*__dispatch_subject == "Int.fromString" {
@@ -212,15 +212,15 @@ pub fn callChar(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, Ave
     }
 }
 
-/// Int.toFloat(n) -> Float value.
+/// Float.fromInt(n) -> Float value.
 pub fn builtinIntToFloat(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let n = crate::aver_generated::domain::builtins::helpers::expectInt(&v)?;
-    Ok(Val::ValFloat((n as f64)))
+    Ok(Val::ValFloat(n as f64))
 }
 
-/// Int.toString(n) -> string representation.
+/// String.fromInt(n) -> string representation.
 pub fn builtinIntToString(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -390,7 +390,7 @@ pub fn builtinStringFromBool(args: &aver_rt::AverList<Val>) -> Result<Val, AverS
     }
 }
 
-/// String.fromInt(n) -> string (alias for Int.toString).
+/// String.fromInt(n) -> string (alias for String.fromInt).
 pub fn builtinStringFromInt(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
@@ -531,7 +531,7 @@ pub fn callFloat(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, Av
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = name.clone();
-        if &*__dispatch_subject == "Float.toString" {
+        if &*__dispatch_subject == "String.fromFloat" {
             builtinFloatToString(args)
         } else {
             if &*__dispatch_subject == "Float.fromInt" {
@@ -622,7 +622,7 @@ pub fn builtinFloatFromInt(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let n = crate::aver_generated::domain::builtins::helpers::expectInt(&v)?;
-    Ok(Val::ValFloat((n as f64)))
+    Ok(Val::ValFloat(n as f64))
 }
 
 /// Float.round(f) -> Int.
@@ -635,13 +635,13 @@ pub fn builtinFloatRound(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> 
     }
 }
 
-/// Float.toString(f) -> string representation.
+/// String.fromFloat(f) -> string representation.
 pub fn builtinFloatToString(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     match v {
         Val::ValFloat(f) => Ok(Val::ValStr((f.to_string()).into_aver())),
-        _ => Err(AverStr::from("Float.toString requires Float")),
+        _ => Err(AverStr::from("String.fromFloat requires Float")),
     }
 }
 

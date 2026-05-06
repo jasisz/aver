@@ -4,6 +4,20 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
+## 0.17.0 "Purge" (2026-05-06)
+
+> _What was never used is no longer in the way._
+
+### Removed
+- `Map.empty()` — use `{}`. `Int.parse`, `Float.parse`, `Int.rem` — unreachable aliases. `Int.toString`, `Float.toString` — use `String.fromInt` / `String.fromFloat`. `Float.toInt`, `Int.toFloat` — use `Int.fromFloat` / `Float.fromInt`. `String.concat(a, b)` — use `a + b`. Convention: `Target.fromSource` for conversions, literals for literals, operators for composition, interpolation `"{x}"` for rendering.
+
+### Renamed
+- `Vector.toList(v)` → `List.fromVector(v)`.
+
+### Added
+- Structural eq + commutative hash for `Map<K, V>` under wasm-gc. Insertion-order-invariant, matches the VM. Works as map K / V, as record/sum field, and as list/vector element.
+- caller_fn i32-table replaces per-fn String-ref globals; one `global.get` per call, zero alloc on the hot path. Synthetic `__entry__()` carries `--expr` recordings end-to-end with no JS-side argument encoder.
+
 ## 0.16.2 — 2026-05-06
 
 > _Record/replay correctness across all three backends — and a tidier wasm-gc imports tree along the way._

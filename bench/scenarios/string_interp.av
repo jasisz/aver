@@ -7,7 +7,7 @@ fn buildString(n: Int, acc: String) -> String
     ? "Tail-recursively prepend a separator and the stringified counter to acc. The interpolation in the recursive arm fires the buffer pipeline."
     match n
         0 -> acc
-        _ -> buildString(n - 1, "{acc}-{Int.toString(n)}")
+        _ -> buildString(n - 1, "{acc}-{String.fromInt(n)}")
 
 verify buildString
     buildString(0, "x") => "x"

@@ -176,19 +176,19 @@ verify serializeProjectLines
 fn serializeTaskEvent(entry: TaskEventRecord) -> String
     ? "Encodes one task event line with five payload slots."
     match entry.event
-        TaskEvent.TaskCreated(title, priority, tags, deadline, at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "TaskCreated", Infra.Codec.escapeField(title), priorityText(priority), serializeTags(tags), Infra.Codec.encodeOption(deadline), at], "|")
-        TaskEvent.TaskRenamed(title, at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "TaskRenamed", Infra.Codec.escapeField(title), at, "-", "-", "-"], "|")
-        TaskEvent.TaskStarted(at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "TaskStarted", at, "-", "-", "-", "-"], "|")
-        TaskEvent.TaskBlocked(reason, at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "TaskBlocked", Infra.Codec.escapeField(reason), at, "-", "-", "-"], "|")
-        TaskEvent.TaskCompleted(at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "TaskCompleted", at, "-", "-", "-", "-"], "|")
-        TaskEvent.TaskReopened(reason, at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "TaskReopened", Infra.Codec.escapeField(reason), at, "-", "-", "-"], "|")
-        TaskEvent.PriorityChanged(priority, at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "PriorityChanged", priorityText(priority), at, "-", "-", "-"], "|")
-        TaskEvent.TagAdded(tag, at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "TagAdded", tag, at, "-", "-", "-"], "|")
-        TaskEvent.TagRemoved(tag, at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "TagRemoved", tag, at, "-", "-", "-"], "|")
-        TaskEvent.CommentAdded(comment) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "CommentAdded", comment.id, Infra.Codec.escapeField(comment.body), Infra.Codec.escapeField(comment.author), comment.createdAt, "-"], "|")
-        TaskEvent.DeadlineSet(deadline, at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "DeadlineSet", deadline, at, "-", "-", "-"], "|")
-        TaskEvent.DeadlineCleared(at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "DeadlineCleared", at, "-", "-", "-", "-"], "|")
-        TaskEvent.TaskArchived(at) -> String.join([entry.taskId, entry.projectId, Int.toString(entry.seq), "TaskArchived", at, "-", "-", "-", "-"], "|")
+        TaskEvent.TaskCreated(title, priority, tags, deadline, at) -> String.join([entry.taskId, entry.projectId, String.fromInt(entry.seq), "TaskCreated", Infra.Codec.escapeField(title), priorityText(priority), serializeTags(tags), Infra.Codec.encodeOption(deadline), at], "|")
+        TaskEvent.TaskRenamed(title, at) -> String.join([entry.taskId, entry.projectId, String.fromInt(entry.seq), "TaskRenamed", Infra.Codec.escapeField(title), at, "-", "-", "-"], "|")
+        TaskEvent.TaskStarted(at) -> String.join([entry.taskId, entry.projectId, String.fromInt(entry.seq), "TaskStarted", at, "-", "-", "-", "-"], "|")
+        TaskEvent.TaskBlocked(reason, at) -> String.join([entry.taskId, entry.projectId, String.fromInt(entry.seq), "TaskBlocked", Infra.Codec.escapeField(reason), at, "-", "-", "-"], "|")
+        TaskEvent.TaskCompleted(at) -> String.join([entry.taskId, entry.projectId, String.fromInt(entry.seq), "TaskCompleted", at, "-", "-", "-", "-"], "|")
+        TaskEvent.TaskReopened(reason, at) -> String.join([entry.taskId, entry.projectId, String.fromInt(entry.seq), "TaskReopened", Infra.Codec.escapeField(reason), at, "-", "-", "-"], "|")
+        TaskEvent.PriorityChanged(priority, at) -> String.join([entry.taskId, entry.projectId, String.fromInt(entry.seq), "PriorityChanged", priorityText(priority), at, "-", "-", "-"], "|")
+        TaskEvent.TagAdded(tag, at) -> String.join([entry.taskId, entry.projectId, String.fromInt(entry.seq), "TagAdded", tag, at, "-", "-", "-"], "|")
+        TaskEvent.TagRemoved(tag, at) -> String.join([entry.taskId, entry.projectId, String.fromInt(entry.seq), "TagRemoved", tag, at, "-", "-", "-"], "|")
+        TaskEvent.CommentAdded(comment) -> String.join([entry.taskId, entry.projectId, String.fromInt(entry.seq), "CommentAdded", comment.id, Infra.Codec.escapeField(comment.body), Infra.Codec.escapeField(comment.author), comment.createdAt, "-"], "|")
+        TaskEvent.DeadlineSet(deadline, at) -> String.join([entry.taskId, entry.projectId, String.fromInt(entry.seq), "DeadlineSet", deadline, at, "-", "-", "-"], "|")
+        TaskEvent.DeadlineCleared(at) -> String.join([entry.taskId, entry.projectId, String.fromInt(entry.seq), "DeadlineCleared", at, "-", "-", "-", "-"], "|")
+        TaskEvent.TaskArchived(at) -> String.join([entry.taskId, entry.projectId, String.fromInt(entry.seq), "TaskArchived", at, "-", "-", "-", "-"], "|")
 
 verify serializeTaskEvent
     serializeTaskEvent(TaskEventRecord(taskId = "t1", projectId = "alpha", seq = 1, event = Domain.Types.TaskEvent.TaskCreated("Write notes", Domain.Types.Priority.High, ["ops"], Option.Some("2026-03-09T12:00:00Z"), "2026-03-08T12:00:00Z"))) => "t1|alpha|1|TaskCreated|Write notes|high|ops|2026-03-09T12:00:00Z|2026-03-08T12:00:00Z"
@@ -401,7 +401,7 @@ fn requiredPayload(raw: String, label: String, index: Int) -> Result<String, Str
     ? "Reads one required event payload slot."
     match Infra.Codec.decodeOption(raw)
         Option.Some(value) -> Result.Ok(value)
-        Option.None -> Result.Err("Corrupt {label}: missing payload {Int.toString(index)}")
+        Option.None -> Result.Err("Corrupt {label}: missing payload {String.fromInt(index)}")
 
 verify requiredPayload
     requiredPayload("hello", "event", 0) => Result.Ok("hello")

@@ -10,8 +10,6 @@ impl TypeChecker {
         let option_ty = |v: Type| Type::Option(Box::new(v));
         let list_ty = |v: Type| Type::List(Box::new(v));
         let tuple2 = |k: Type, v: Type| Type::Tuple(vec![k, v]);
-        let k_var = || Type::Var("K".to_string());
-        let v_var = || Type::Var("V".to_string());
         let is_hashable_key_type = |ty: &Type| {
             // The Map runtime hashes any heap value through rt_deep_hash,
             // so user-defined types (variants/records/tuples/lists) are
@@ -58,12 +56,6 @@ impl TypeChecker {
         };
 
         match name {
-            "Map.empty" => {
-                if let Err(fallback) = expect_arity(self, 0, map_ty(Type::Invalid, Type::Invalid)) {
-                    return Some(fallback);
-                }
-                Some(map_ty(k_var(), v_var()))
-            }
             "Map.len" => {
                 if let Err(fallback) = expect_arity(self, 1, Type::Int) {
                     return Some(fallback);

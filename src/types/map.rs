@@ -1,7 +1,6 @@
 /// Map namespace — immutable key/value map helpers.
 ///
 /// Methods:
-///   Map.empty()                 → Map<K, V>
 ///   Map.set(map, key, value)    → Map<K, V>
 ///   Map.get(map, key)           → Option<V>
 ///   Map.remove(map, key)        → Map<K, V>
@@ -11,6 +10,9 @@
 ///   Map.entries(map)            → List<(K, V)>
 ///   Map.len(map)                → Int
 ///   Map.fromList(pairs)         → Map<K, V> where each pair is (key, value)
+///
+/// The empty map is the literal `{}` (with type from context); there is
+/// no `Map.empty()` builtin since 0.17 — symmetric with `[]` for List.
 ///
 /// Key constraint: only scalar keys are allowed (Int, Float, String, Bool).
 ///
@@ -25,7 +27,7 @@ use crate::value::{RuntimeError, Value, aver_repr, list_from_vec, list_view};
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
     for method in &[
-        "empty", "set", "get", "remove", "has", "keys", "values", "entries", "len", "fromList",
+        "set", "get", "remove", "has", "keys", "values", "entries", "len", "fromList",
     ] {
         members.insert(
             method.to_string(),
@@ -48,7 +50,6 @@ pub fn effects(_name: &str) -> &'static [&'static str] {
 /// Returns `Some(result)` when `name` is owned by this namespace, `None` otherwise.
 pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
-        "Map.empty" => Some(empty(args)),
         "Map.set" => Some(set(args)),
         "Map.get" => Some(get(args)),
         "Map.remove" => Some(remove(args)),
@@ -60,16 +61,6 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
         "Map.fromList" => Some(from_list(args)),
         _ => None,
     }
-}
-
-fn empty(args: &[Value]) -> Result<Value, RuntimeError> {
-    if !args.is_empty() {
-        return Err(RuntimeError::Error(format!(
-            "Map.empty() takes 0 arguments, got {}",
-            args.len()
-        )));
-    }
-    Ok(Value::Map(HashMap::new()))
 }
 
 fn set(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -294,7 +285,6 @@ pub fn call_nv(
     arena: &mut Arena,
 ) -> Option<Result<NanValue, RuntimeError>> {
     match name {
-        "Map.empty" => Some(empty_nv(args, arena)),
         "Map.set" => Some(set_nv(args, arena)),
         "Map.get" => Some(get_nv(args, arena)),
         "Map.remove" => Some(remove_nv(args, arena)),
@@ -329,17 +319,6 @@ fn ensure_hashable_nv(name: &str, v: NanValue) -> Result<(), RuntimeError> {
 
 fn nv_key_bits(v: NanValue, arena: &Arena) -> u64 {
     v.map_key_hash_deep(arena)
-}
-
-fn empty_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    if !args.is_empty() {
-        return Err(RuntimeError::Error(format!(
-            "Map.empty() takes 0 arguments, got {}",
-            args.len()
-        )));
-    }
-    let _ = arena;
-    Ok(NanValue::EMPTY_MAP)
 }
 
 /// Map.set with sole-owned first argument — takes instead of cloning.

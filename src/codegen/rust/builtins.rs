@@ -12,10 +12,6 @@ fn builtin_needs_str_conversion(name: &str) -> bool {
         name,
         "Console.readLine"
             | "Time.now"
-            | "Int.toString"
-            | "Float.toString"
-            | "Int.parse"
-            | "Float.parse"
             | "Int.fromString"
             | "Float.fromString"
             | "String.slice"
@@ -410,17 +406,9 @@ fn emit_builtin_call_inner(
             let arg = emit_arg(0);
             Some(format!("{}.abs()", arg))
         }
-        "Int.toFloat" => {
+        "Int.fromFloat" => {
             let arg = emit_arg(0);
-            Some(format!("({} as f64)", arg))
-        }
-        "Int.toString" => {
-            let arg = emit_arg(0);
-            Some(format!("{}.to_string()", arg))
-        }
-        "Int.parse" => {
-            let arg = emit_arg(0);
-            Some(format!("{}.parse::<i64>().map_err(|e| e.to_string())", arg))
+            Some(format!("({} as i64)", arg))
         }
         "Int.fromString" => {
             let arg = emit_arg(0);
@@ -435,11 +423,6 @@ fn emit_builtin_call_inner(
             let a = emit_arg(0);
             let b = emit_arg(1);
             Some(format!("{}.max({})", a, b))
-        }
-        "Int.rem" => {
-            let a = emit_arg(0);
-            let b = emit_arg(1);
-            Some(format!("({} % {})", a, b))
         }
         "Int.mod" => {
             let a = emit_arg(0);
@@ -467,18 +450,6 @@ fn emit_builtin_call_inner(
             Some(format!("{}.ceil() as i64", arg))
         }
         "Float.fromString" => {
-            let arg = emit_arg(0);
-            Some(format!("{}.parse::<f64>().map_err(|e| e.to_string())", arg))
-        }
-        "Float.toInt" => {
-            let arg = emit_arg(0);
-            Some(format!("({} as i64)", arg))
-        }
-        "Float.toString" => {
-            let arg = emit_arg(0);
-            Some(format!("{}.to_string()", arg))
-        }
-        "Float.parse" => {
             let arg = emit_arg(0);
             Some(format!("{}.parse::<f64>().map_err(|e| e.to_string())", arg))
         }
@@ -662,7 +633,6 @@ fn emit_builtin_call_inner(
             ))
         }
         // ---- Map ----
-        "Map.empty" => Some("HashMap::new()".to_string()),
         "Map.fromList" => {
             let list = clone_arg(&args[0], ctx, ectx);
             Some(format!(
@@ -799,7 +769,7 @@ fn emit_builtin_call_inner(
             let list = emit_arg(0);
             Some(format!("aver_rt::AverVector::from_vec({}.to_vec())", list))
         }
-        "Vector.toList" => {
+        "List.fromVector" => {
             let vec = emit_arg(0);
             Some(format!("{}.to_list()", vec))
         }

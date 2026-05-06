@@ -4,8 +4,8 @@
 //!
 //! Aver's builtin namespace splits two ways:
 //!
-//! - **Pure builtins** (`Int.toString`, `List.prepend`, `Map.empty`,
-//!   `Vector.get`, …) — emitted as local helper fns inside the user's
+//! - **Pure builtins** (`String.fromInt`, `List.prepend`, `Vector.get`,
+//!   …) — emitted as local helper fns inside the user's
 //!   wasm module on first use. Same pattern rustc uses for stdlib in
 //!   its wasm output. No external runtime, no host dependency.
 //!   Helpers that aren't reached get DCE'd by `wasm-opt -Oz`.
@@ -53,10 +53,10 @@
 //! ## Status (phase 3c, in progress)
 //!
 //! Architecture and registry are wired. The first concrete helper
-//! body (`Int.toString`) is the next chunk of work — it's a digit-
+//! body (`String.fromInt`) is the next chunk of work — it's a digit-
 //! conversion loop that allocates an `(array i8)` and fills it via
 //! `array.new_default` + `array.set` × N. Roughly 50 lines of raw
-//! wasm encoding. Until it lands, calls to `Int.toString` (and the
+//! wasm encoding. Until it lands, calls to `String.fromInt` (and the
 //! other builtins listed in `BuiltinName`) surface a clear "phase
 //! 3c body not implemented" error pointing here.
 
@@ -73,7 +73,7 @@ use super::wat_helper;
 /// `emit_helper_body`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum BuiltinName {
-    IntToString,
+    StringFromInt,
     StringLength,
     /// Variadic-by-array string concatenation: `(array (ref null $string))
     /// -> (ref null $string)`. Sums the per-part lengths once,
@@ -92,7 +92,7 @@ pub(super) enum BuiltinName {
     StringTrim,
     IntFromString,
     FloatFromString,
-    FloatToString,
+    StringFromFloat,
     /// Internal byte-equal compare over two `(ref null $string)`.
     /// Powers `match s { "literal" -> ... }` in user code (compiler
     /// emits one `Call(string_eq)` per non-default arm) and any other
@@ -127,8 +127,8 @@ pub(super) enum BuiltinName {
 impl BuiltinName {
     pub(super) fn from_dotted(s: &str) -> Option<Self> {
         match s {
-            "Int.toString" | "String.fromInt" => Some(Self::IntToString),
-            "String.fromFloat" => Some(Self::FloatToString),
+            "String.fromInt" => Some(Self::StringFromInt),
+            "String.fromFloat" => Some(Self::StringFromFloat),
             "String.len" | "String.length" | "String.byteLength" => Some(Self::StringLength),
             "String.startsWith" => Some(Self::StringStartsWith),
             "String.contains" => Some(Self::StringContains),
@@ -138,7 +138,6 @@ impl BuiltinName {
             "String.trim" => Some(Self::StringTrim),
             "Int.fromString" => Some(Self::IntFromString),
             "Float.fromString" => Some(Self::FloatFromString),
-            "Float.toString" => Some(Self::FloatToString),
             "String.endsWith" => Some(Self::StringEndsWith),
             "String.fromBool" => Some(Self::StringFromBool),
             "String.charAt" => Some(Self::StringCharAt),
@@ -153,7 +152,7 @@ impl BuiltinName {
 
     pub(super) fn canonical(self) -> &'static str {
         match self {
-            Self::IntToString => "Int.toString",
+            Self::StringFromInt => "String.fromInt",
             Self::StringLength => "String.len",
             Self::StringConcatN => "__wasmgc_concat_n",
             Self::StringStartsWith => "String.startsWith",
@@ -164,7 +163,7 @@ impl BuiltinName {
             Self::StringTrim => "String.trim",
             Self::IntFromString => "Int.fromString",
             Self::FloatFromString => "Float.fromString",
-            Self::FloatToString => "Float.toString",
+            Self::StringFromFloat => "String.fromFloat",
             Self::StringEq => "__wasmgc_string_eq",
             Self::StringCompare => "__wasmgc_string_compare",
             Self::StringEndsWith => "String.endsWith",
@@ -180,7 +179,7 @@ impl BuiltinName {
 
     pub(super) fn params(self, registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
         match self {
-            Self::IntToString => Ok(vec![ValType::I64]),
+            Self::StringFromInt => Ok(vec![ValType::I64]),
             Self::StringLength => Ok(vec![string_ref_ty(registry)?]),
             Self::StringConcatN => Ok(vec![string_array_ref_ty(registry)?]),
             Self::StringStartsWith | Self::StringContains => {
@@ -192,7 +191,7 @@ impl BuiltinName {
             }
             Self::IntFromString => Ok(vec![string_ref_ty(registry)?]),
             Self::FloatFromString => Ok(vec![string_ref_ty(registry)?]),
-            Self::FloatToString => Ok(vec![ValType::F64]),
+            Self::StringFromFloat => Ok(vec![ValType::F64]),
             Self::StringEq => Ok(vec![string_ref_ty(registry)?, string_ref_ty(registry)?]),
             Self::StringCompare => Ok(vec![string_ref_ty(registry)?, string_ref_ty(registry)?]),
             Self::StringEndsWith => Ok(vec![string_ref_ty(registry)?, string_ref_ty(registry)?]),
@@ -212,7 +211,7 @@ impl BuiltinName {
 
     pub(super) fn results(self, registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
         match self {
-            Self::IntToString => Ok(vec![string_ref_ty(registry)?]),
+            Self::StringFromInt => Ok(vec![string_ref_ty(registry)?]),
             Self::StringLength => Ok(vec![ValType::I64]),
             Self::StringConcatN => Ok(vec![string_ref_ty(registry)?]),
             Self::StringStartsWith | Self::StringContains => Ok(vec![ValType::I32]),
@@ -220,7 +219,7 @@ impl BuiltinName {
             | Self::StringToUpper
             | Self::StringToLower
             | Self::StringTrim
-            | Self::FloatToString => Ok(vec![string_ref_ty(registry)?]),
+            | Self::StringFromFloat => Ok(vec![string_ref_ty(registry)?]),
             Self::IntFromString => Ok(vec![result_ref_ty(registry, "Result<Int,String>")?]),
             Self::FloatFromString => Ok(vec![result_ref_ty(registry, "Result<Float,String>")?]),
             Self::StringEq => Ok(vec![ValType::I32]),
@@ -242,7 +241,7 @@ impl BuiltinName {
     /// `emit_helper_bodies`.
     pub(super) fn emit_helper_body(self, registry: &TypeRegistry) -> Result<Function, WasmGcError> {
         match self {
-            Self::IntToString => emit_int_to_string(registry),
+            Self::StringFromInt => emit_string_from_int(registry),
             Self::StringLength => emit_string_length(registry),
             Self::StringConcatN => emit_string_concat_n(registry),
             Self::StringStartsWith => emit_string_starts_with(registry),
@@ -253,7 +252,7 @@ impl BuiltinName {
             Self::StringTrim => emit_string_trim(registry),
             Self::IntFromString => emit_int_from_string(registry),
             Self::FloatFromString => emit_float_from_string(registry),
-            Self::FloatToString => emit_float_to_string(registry),
+            Self::StringFromFloat => emit_string_from_float(registry),
             Self::StringEq => emit_string_eq(registry),
             Self::StringCompare => emit_string_compare(registry),
             Self::StringEndsWith => emit_string_ends_with(registry),
@@ -393,7 +392,7 @@ fn string_array_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> 
     }))
 }
 
-/// `Int.toString(n: i64) -> (ref null $string)`. Digit-conversion
+/// `String.fromInt(n: i64) -> (ref null $string)`. Digit-conversion
 /// loop that allocates an `(array i8)` and fills it with ASCII bytes.
 ///
 /// Same `wat`-source-of-truth pattern the legacy backend uses for
@@ -433,11 +432,11 @@ fn string_array_ref_ty(registry: &TypeRegistry) -> Result<ValType, WasmGcError> 
 /// that touch String mostly don't define records before; this
 /// works for those. Multi-type modules with String need the
 /// rewrite step.
-fn emit_int_to_string(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+fn emit_string_from_int(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let string_idx = registry
         .string_array_type_idx
         .ok_or(WasmGcError::Validation(
-            "Int.toString helper requires String slot to be allocated".into(),
+            "String.fromInt helper requires String slot to be allocated".into(),
         ))?;
     let padding = wat_helper::padding_types(string_idx);
     let wat = format!(
@@ -1562,11 +1561,11 @@ fn emit_float_from_string(registry: &TypeRegistry) -> Result<Function, WasmGcErr
     wat_helper::compile_wat_helper(&wat)
 }
 
-/// `Float.toString(f) -> String`. Shortest-roundtrip f64 → ASCII;
+/// `String.fromFloat(f) -> String`. Shortest-roundtrip f64 → ASCII;
 /// port of the legacy `rt_float_to_str` algorithm but writing into a
 /// 32-byte scratch `(array i8)` instead of linear memory, then
 /// `array.copy` into a result string sized to the actual output.
-fn emit_float_to_string(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+fn emit_string_from_float(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let (_, preamble) = string_module_preamble(registry)?;
     let wat = format!(
         r#"

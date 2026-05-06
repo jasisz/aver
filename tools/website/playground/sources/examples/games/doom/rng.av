@@ -38,7 +38,7 @@ verify advanceSeed
 
 fn randomFloat(s: Int) -> Float
     ? "Map seed to [0.0, 1.0)"
-    Int.toFloat(Result.withDefault(Int.mod(Int.abs(s), 10000), 0)) / 10000.0
+    Float.fromInt(Result.withDefault(Int.mod(Int.abs(s), 10000), 0)) / 10000.0
 
 verify randomFloat
     randomFloat(0) => 0.0

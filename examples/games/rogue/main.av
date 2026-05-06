@@ -354,7 +354,7 @@ fn resolveAttack(state: GameState, target: Entity, idx: Int) -> GameState
     hit = Combat.applyDamageToEntity(target, dmg)
     match Combat.isEntityDead(hit)
         true -> killEntity(state, target, idx, dmg)
-        false -> alertNearby(addMessage(GameState.update(state, entities = Combat.replaceEntity(state.entities, idx, hit, 0)), "You hit {target.name} for {Int.toString(dmg)}!"), state.player.pos, 12, 0)
+        false -> alertNearby(addMessage(GameState.update(state, entities = Combat.replaceEntity(state.entities, idx, hit, 0)), "You hit {target.name} for {String.fromInt(dmg)}!"), state.player.pos, 12, 0)
 
 fn killEntity(state: GameState, target: Entity, idx: Int, dmg: Int) -> GameState
     ? "Kill entity — for-loop gets one respawn (off-by-one error)"
@@ -373,7 +373,7 @@ fn loopRespawn(state: GameState, target: Entity, idx: Int) -> GameState
 fn actualKill(state: GameState, target: Entity, idx: Int) -> GameState
     ? "Actually remove entity and gain exp"
     newPlayer = Combat.gainExp(state.player, Combat.expForKill(target.kind))
-    addMessage(GameState.update(state, entities = Combat.removeAt(state.entities, idx, 0), player = newPlayer), "You defeated {target.name}! (+{Int.toString(Combat.expForKill(target.kind))} exp)")
+    addMessage(GameState.update(state, entities = Combat.removeAt(state.entities, idx, 0), player = newPlayer), "You defeated {target.name}! (+{String.fromInt(Combat.expForKill(target.kind))} exp)")
 
 verify actualKill
     List.len(actualKill(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [Types.makeIfElse(1, 1)], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makeIfElse(1, 1), 0).entities) => 0
@@ -400,9 +400,9 @@ verify pickUpItem
 fn applyItem(state: GameState, item: Item, idx: Int) -> GameState
     ? "Apply item effect"
     match item.kind
-        ItemKind.PotionOfPurity -> addMessage(GameState.update(state, player = Combat.healPlayer(state.player, item.value), items = Combat.removeItemAt(state.items, idx, 0)), "You drink {item.name}. Purity restored! (+{Int.toString(item.value)} HP)")
-        ItemKind.ScrollOfPatternMatch -> addMessage(GameState.update(state, player = Player.update(state.player, attack = state.player.attack + item.value), items = Combat.removeItemAt(state.items, idx, 0)), "You read {item.name}. Your pattern matching grows stronger! (+{Int.toString(item.value)} ATK)")
-        ItemKind.ShieldOfImmutability -> addMessage(GameState.update(state, player = Player.update(state.player, defense = state.player.defense + item.value), items = Combat.removeItemAt(state.items, idx, 0)), "You equip {item.name}. Nothing can change you! (+{Int.toString(item.value)} DEF)")
+        ItemKind.PotionOfPurity -> addMessage(GameState.update(state, player = Combat.healPlayer(state.player, item.value), items = Combat.removeItemAt(state.items, idx, 0)), "You drink {item.name}. Purity restored! (+{String.fromInt(item.value)} HP)")
+        ItemKind.ScrollOfPatternMatch -> addMessage(GameState.update(state, player = Player.update(state.player, attack = state.player.attack + item.value), items = Combat.removeItemAt(state.items, idx, 0)), "You read {item.name}. Your pattern matching grows stronger! (+{String.fromInt(item.value)} ATK)")
+        ItemKind.ShieldOfImmutability -> addMessage(GameState.update(state, player = Player.update(state.player, defense = state.player.defense + item.value), items = Combat.removeItemAt(state.items, idx, 0)), "You equip {item.name}. Nothing can change you! (+{String.fromInt(item.value)} DEF)")
 
 verify applyItem
     applyItem(GameState(gameMap = [], player = Player.update(Types.makePlayer(0, 0), hp = 10), entities = [], items = [Types.makePurity(0, 0)], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makePurity(0, 0), 0).player.hp => 18
@@ -533,8 +533,8 @@ fn ifElseAttack(state: GameState, entity: Entity, i: Int) -> GameState
     match Combat.isPlayerDead(newPlayer)
         true -> addMessage(GameState.update(state, player = newPlayer, gameOver = true), "{entity.name} branch-predicts your death!")
         false -> match doubled == 1
-            true -> addMessage(GameState.update(state, player = newPlayer), "{entity.name} takes BOTH branches! {Int.toString(totalDmg)} dmg!")
-            false -> addMessage(GameState.update(state, player = newPlayer), "{entity.name} hits you for {Int.toString(dmg)}.")
+            true -> addMessage(GameState.update(state, player = newPlayer), "{entity.name} takes BOTH branches! {String.fromInt(totalDmg)} dmg!")
+            false -> addMessage(GameState.update(state, player = newPlayer), "{entity.name} hits you for {String.fromInt(dmg)}.")
 
 fn loopAttack(state: GameState, entity: Entity, i: Int) -> GameState
     ? "for-loop: normal attack but respawns once when killed (off-by-one)"
@@ -542,7 +542,7 @@ fn loopAttack(state: GameState, entity: Entity, i: Int) -> GameState
     newPlayer = Combat.applyDamageToPlayer(state.player, dmg)
     match Combat.isPlayerDead(newPlayer)
         true -> addMessage(GameState.update(state, player = newPlayer, gameOver = true), "{entity.name} iterates you to death!")
-        false -> addMessage(GameState.update(state, player = newPlayer), "{entity.name} iterates on you for {Int.toString(dmg)}!")
+        false -> addMessage(GameState.update(state, player = newPlayer), "{entity.name} iterates on you for {String.fromInt(dmg)}!")
 
 verify loopAttack
     loopAttack(GameState(gameMap = [], player = Types.makePlayer(0, 0), entities = [Types.makeLoop(1, 0)], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makeLoop(1, 0), 0).player.hp < 20 => true
@@ -551,7 +551,7 @@ fn nullAttack(state: GameState, entity: Entity, i: Int) -> GameState
     ? "null: steals EXP instead of dealing HP damage (null dereference — wipes memory)"
     stolen = Int.max(1, state.player.exp / 4)
     newPlayer = Player.update(state.player, exp = Int.max(0, state.player.exp - stolen))
-    addMessage(GameState.update(state, player = newPlayer), "{entity.name} dereferences your memory! -{Int.toString(stolen)} EXP!")
+    addMessage(GameState.update(state, player = newPlayer), "{entity.name} dereferences your memory! -{String.fromInt(stolen)} EXP!")
 
 verify nullAttack
     nullAttack(GameState(gameMap = [], player = Player.update(Types.makePlayer(0, 0), exp = 40), entities = [Types.makeNull(1, 0)], items = [], visible = [], visGrid = [], remembered = [], messages = [], seed = 0, gameOver = false), Types.makeNull(1, 0), 0).player.exp => 30
@@ -655,7 +655,7 @@ fn descend(state: GameState) -> GameState
     itms = spawnItems(newSeed, rooms, 0)
     vis = Fov.computeFov(newMap, Types.pt(px, py), 8)
     rem = markRemembered(emptyRemembered(0), vis, 0)
-    addMessage(GameState(gameMap = newMap, player = newPlayer, entities = ents, items = itms, visible = vis, visGrid = buildVisGrid(vis, emptyRemembered(0), 0), remembered = rem, messages = state.messages, seed = Map.nextSeed(newSeed), gameOver = false), "You descend to floor {Int.toString(newFloor)} of Non-Aver!")
+    addMessage(GameState(gameMap = newMap, player = newPlayer, entities = ents, items = itms, visible = vis, visGrid = buildVisGrid(vis, emptyRemembered(0), 0), remembered = rem, messages = state.messages, seed = Map.nextSeed(newSeed), gameOver = false), "You descend to floor {String.fromInt(newFloor)} of Non-Aver!")
 
 verify descend
     descend(initGame(42)).player.floor => 2
@@ -715,7 +715,7 @@ fn gameLoop(state: GameState) -> Result<String, String>
     ]
     renderFrame(state)
     match state.gameOver
-        true -> Result.Ok("Game over on floor {Int.toString(state.player.floor)}. EXP: {Int.toString(state.player.exp)}. The Aver way prevails!")
+        true -> Result.Ok("Game over on floor {String.fromInt(state.player.floor)}. EXP: {String.fromInt(state.player.exp)}. The Aver way prevails!")
         false -> waitAndProcess(state)
 
 fn waitAndProcess(state: GameState) -> Result<String, String>

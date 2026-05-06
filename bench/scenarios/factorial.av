@@ -17,4 +17,4 @@ verify factorial
 fn main() -> Unit
     ? "Print 10! to verify the run completed end-to-end."
     ! [Console.print]
-    Console.print(Int.toString(factorial(10, 1)))
+    Console.print(String.fromInt(factorial(10, 1)))

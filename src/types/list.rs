@@ -22,7 +22,15 @@ use crate::value::{
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
     for method in &[
-        "len", "prepend", "take", "drop", "concat", "reverse", "contains", "zip",
+        "len",
+        "prepend",
+        "take",
+        "drop",
+        "concat",
+        "reverse",
+        "contains",
+        "zip",
+        "fromVector",
     ] {
         members.insert(
             method.to_string(),
@@ -197,7 +205,15 @@ fn zip(args: &[Value]) -> Result<Value, RuntimeError> {
 
 pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
     let methods = &[
-        "len", "prepend", "take", "drop", "concat", "reverse", "contains", "zip",
+        "len",
+        "prepend",
+        "take",
+        "drop",
+        "concat",
+        "reverse",
+        "contains",
+        "zip",
+        "fromVector",
     ];
     let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
     for method in methods {

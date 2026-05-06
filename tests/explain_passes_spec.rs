@@ -137,7 +137,7 @@ module Demo
 fn build(xs: List<Int>, acc: List<String>) -> List<String>
     match xs
         [] -> acc
-        [h, ..t] -> build(t, List.prepend(Int.toString(h), acc))
+        [h, ..t] -> build(t, List.prepend(String.fromInt(h), acc))
 
 fn main() -> String
     String.join(List.reverse(build([1, 2, 3], [])), ",")

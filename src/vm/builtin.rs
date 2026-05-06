@@ -96,16 +96,13 @@ vm_builtins! {
 
     IntFromString => "Int.fromString",
     IntFromFloat => "Int.fromFloat",
-    IntToString => "Int.toString",
     IntAbs => "Int.abs",
     IntMin => "Int.min",
     IntMax => "Int.max",
     IntMod => "Int.mod",
-    IntToFloat => "Int.toFloat",
 
     FloatFromString => "Float.fromString",
     FloatFromInt => "Float.fromInt",
-    FloatToString => "Float.toString",
     FloatAbs => "Float.abs",
     FloatFloor => "Float.floor",
     FloatCeil => "Float.ceil",
@@ -146,7 +143,6 @@ vm_builtins! {
     ListContains => "List.contains",
     ListZip => "List.zip",
 
-    MapEmpty => "Map.empty",
     MapSet => "Map.set",
     MapGet => "Map.get",
     MapRemove => "Map.remove",
@@ -162,7 +158,7 @@ vm_builtins! {
     VectorSet => "Vector.set",
     VectorLen => "Vector.len",
     VectorFromList => "Vector.fromList",
-    VectorToList => "Vector.toList",
+    ListFromVector => "List.fromVector",
 
     OptionWithDefault => "Option.withDefault",
     OptionToResult => "Option.toResult",
@@ -204,7 +200,6 @@ impl VmBuiltin {
             | Self::IntAbs
             | Self::IntMin
             | Self::IntMax
-            | Self::IntToFloat
             | Self::FloatFromInt
             | Self::FloatAbs
             | Self::FloatFloor
@@ -224,7 +219,6 @@ impl VmBuiltin {
             | Self::StringEndsWith
             | Self::StringContains
             | Self::ListContains
-            | Self::MapEmpty
             | Self::MapLen
             | Self::MapHas
             | Self::VectorLen
@@ -422,16 +416,13 @@ impl VmBuiltin {
 
             Self::IntFromString
             | Self::IntFromFloat
-            | Self::IntToString
             | Self::IntAbs
             | Self::IntMin
             | Self::IntMax
-            | Self::IntMod
-            | Self::IntToFloat => int::call_nv(self.name(), args, arena),
+            | Self::IntMod => int::call_nv(self.name(), args, arena),
 
             Self::FloatFromString
             | Self::FloatFromInt
-            | Self::FloatToString
             | Self::FloatAbs
             | Self::FloatFloor
             | Self::FloatCeil
@@ -472,8 +463,7 @@ impl VmBuiltin {
             | Self::ListContains
             | Self::ListZip => list::call_nv(self.name(), args, arena),
 
-            Self::MapEmpty
-            | Self::MapSet
+            Self::MapSet
             | Self::MapGet
             | Self::MapRemove
             | Self::MapHas
@@ -488,7 +478,7 @@ impl VmBuiltin {
             | Self::VectorSet
             | Self::VectorLen
             | Self::VectorFromList
-            | Self::VectorToList => crate::types::vector::call_nv(self.name(), args, arena),
+            | Self::ListFromVector => crate::types::vector::call_nv(self.name(), args, arena),
 
             Self::OptionWithDefault | Self::OptionToResult => {
                 option::call_nv(self.name(), args, arena)

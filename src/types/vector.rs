@@ -6,7 +6,7 @@
 ///   Vector.set(vec, idx, val)     → Option<Vector<T>>
 ///   Vector.len(vec)               → Int
 ///   Vector.fromList(xs)           → Vector<T>
-///   Vector.toList(vec)            → List<T>
+///   List.fromVector(vec)            → List<T>
 ///
 /// No effects required.
 use std::collections::HashMap;
@@ -19,7 +19,7 @@ use crate::value::{RuntimeError, Value, list_from_vec, list_view};
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
-    for method in &["new", "get", "set", "len", "fromList", "toList"] {
+    for method in &["new", "get", "set", "len", "fromList"] {
         members.insert(
             method.to_string(),
             Value::Builtin(format!("Vector.{}", method)),
@@ -45,7 +45,7 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
         "Vector.set" => Some(vec_set(args)),
         "Vector.len" => Some(vec_len(args)),
         "Vector.fromList" => Some(vec_from_list(args)),
-        "Vector.toList" => Some(vec_to_list(args)),
+        "List.fromVector" => Some(vec_to_list(args)),
         _ => None,
     }
 }
@@ -156,13 +156,13 @@ fn vec_from_list(args: &[Value]) -> Result<Value, RuntimeError> {
 fn vec_to_list(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::Error(format!(
-            "Vector.toList() takes 1 argument, got {}",
+            "List.fromVector() takes 1 argument, got {}",
             args.len()
         )));
     }
     let Value::Vector(vec) = &args[0] else {
         return Err(RuntimeError::Error(
-            "Vector.toList: argument must be a Vector".to_string(),
+            "List.fromVector: argument must be a Vector".to_string(),
         ));
     };
     Ok(list_from_vec(vec.to_vec()))
@@ -171,7 +171,7 @@ fn vec_to_list(args: &[Value]) -> Result<Value, RuntimeError> {
 // ─── NanValue-native API ─────────────────────────────────────────────────────
 
 pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
-    let methods = &["new", "get", "set", "len", "fromList", "toList"];
+    let methods = &["new", "get", "set", "len", "fromList"];
     let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
     for method in methods {
         let idx = arena.push_builtin(&format!("Vector.{}", method));
@@ -195,7 +195,7 @@ pub fn call_nv(
         "Vector.set" => Some(vec_set_nv(args, arena)),
         "Vector.len" => Some(vec_len_nv(args, arena)),
         "Vector.fromList" => Some(vec_from_list_nv(args, arena)),
-        "Vector.toList" => Some(vec_to_list_nv(args, arena)),
+        "List.fromVector" => Some(vec_to_list_nv(args, arena)),
         _ => None,
     }
 }
@@ -364,13 +364,13 @@ fn vec_from_list_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Ru
 fn vec_to_list_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::Error(format!(
-            "Vector.toList() takes 1 argument, got {}",
+            "List.fromVector() takes 1 argument, got {}",
             args.len()
         )));
     }
     if !args[0].is_vector() {
         return Err(RuntimeError::Error(
-            "Vector.toList: argument must be a Vector".to_string(),
+            "List.fromVector: argument must be a Vector".to_string(),
         ));
     }
     let items = arena.clone_vector_value(args[0]);

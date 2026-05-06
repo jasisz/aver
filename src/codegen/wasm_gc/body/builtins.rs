@@ -18,7 +18,7 @@ use super::{EmitCtx, SlotTable};
 /// to `struct.new $variant_type_idx`. Used by both the Constructor expr
 /// path and the disguised-FnCall path.
 /// Lower a dotted builtin call like `Float.fromInt(n)` or
-/// `Int.toString(n)`. The set is curated — phase 3b ships the
+/// `String.fromInt(n)`. The set is curated — phase 3b ships the
 /// minimum the bench scenarios need; anything else surfaces an
 /// "Unimplemented — phase 3c builtin" error so the missing one is
 /// visible.
@@ -60,7 +60,7 @@ pub(super) fn emit_dotted_builtin(
         for arg in args {
             emit_expr(func, arg, slots, ctx)?;
         }
-        super::emit::emit_caller_fn_global(func, ctx)?;
+        super::emit::emit_caller_fn_idx(func, ctx)?;
         func.instruction(&Instruction::Call(wasm_idx));
         return Ok(());
     }
@@ -153,13 +153,6 @@ pub(super) fn emit_dotted_builtin(
         }
         "Float.pi" if args.is_empty() => {
             func.instruction(&Instruction::F64Const(std::f64::consts::PI));
-            Ok(())
-        }
-        // `Int.toFloat` is the same op as `Float.fromInt` — Aver has
-        // both spellings; map both to the same instruction.
-        "Int.toFloat" if args.len() == 1 => {
-            emit_expr(func, &args[0], slots, ctx)?;
-            func.instruction(&Instruction::F64ConvertI64S);
             Ok(())
         }
         "Int.abs" if args.len() == 1 => {
@@ -291,25 +284,20 @@ pub(super) fn emit_dotted_builtin(
             func.instruction(&Instruction::I32Eqz);
             Ok(())
         }
-        // String.fromInt / String.fromFloat are different spellings of
-        // Int.toString / Float.toString — Aver source allows both,
-        // backend points each at the same helper.
+        // String.fromInt / String.fromFloat — surface names since 0.17.
+        // Backend dispatches to the per-type digit-conversion helper
+        // registered under the same canonical name.
         "String.fromInt" if args.len() == 1 => {
-            let to_string_idx =
-                ctx.fn_map
-                    .builtins
-                    .get("Int.toString")
-                    .copied()
-                    .ok_or(WasmGcError::Validation(
-                        "String.fromInt requires Int.toString builtin".into(),
-                    ))?;
+            let to_string_idx = ctx.fn_map.builtins.get("String.fromInt").copied().ok_or(
+                WasmGcError::Validation("String.fromInt builtin helper not registered".into()),
+            )?;
             emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::Call(to_string_idx));
             Ok(())
         }
         "String.fromFloat" if args.len() == 1 => {
-            let to_string_idx = ctx.fn_map.builtins.get("Float.toString").copied().ok_or(
-                WasmGcError::Validation("String.fromFloat requires Float.toString builtin".into()),
+            let to_string_idx = ctx.fn_map.builtins.get("String.fromFloat").copied().ok_or(
+                WasmGcError::Validation("String.fromFloat builtin helper not registered".into()),
             )?;
             emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::Call(to_string_idx));
@@ -387,9 +375,9 @@ pub(super) fn emit_dotted_builtin(
             emit_option_to_result(func, &args[0], &args[1], slots, ctx)
         }
         // Map<K, V> — dispatch to the per-instantiation helper. The
-        // canonical comes from inferring the type of the map argument
-        // (or the surrounding context for Map.empty).
-        "Map.empty" => emit_map_empty_call(func, args, slots, ctx),
+        // canonical comes from inferring the type of the map argument.
+        // Empty map literals (`{}`) flow through `emit_map_literal`
+        // — there is no `Map.empty()` builtin.
         "Map.set" | "Map.get" | "Map.len" | "Map.has" | "Map.keys" | "Map.values"
         | "Map.remove" | "Map.entries" => emit_map_kv_call(func, method, args, slots, ctx),
         "Map.fromList" if args.len() == 1 => emit_map_from_list_call(func, &args[0], slots, ctx),
@@ -415,7 +403,7 @@ pub(super) fn emit_dotted_builtin(
         "List.zip" if args.len() == 2 => emit_list_zip_call(func, &args[0], &args[1], slots, ctx),
         // Vector.fromList(list: List<T>) -> Vector<T>
         "Vector.fromList" if args.len() == 1 => emit_vec_from_list_call(func, &args[0], slots, ctx),
-        "Vector.toList" if args.len() == 1 => emit_vec_to_list_call(func, &args[0], slots, ctx),
+        "List.fromVector" if args.len() == 1 => emit_vec_to_list_call(func, &args[0], slots, ctx),
         // String.split / String.join — singleton (T=String).
         "String.split" if args.len() == 2 => {
             let ops = ctx.fn_map.string_split_ops.ok_or(WasmGcError::Validation(
@@ -444,11 +432,6 @@ pub(super) fn emit_dotted_builtin(
     }
 }
 
-/// `Map.empty()` → `call $map_empty_KV`. With a single registered
-/// instantiation the canonical is unambiguous; with several, the type
-/// must be deducible from the surrounding context (which today only
-/// works when one instantiation exists — generalising would mean
-/// threading expected-type through expression emission).
 /// Inline lowering of `Args.get()` (no args, returns `List<String>`).
 /// Host imports are `args_len(): i64` and `args_get(i: i64): String`;
 /// no `args_get_all`. Walks `i = len-1 .. 0` cons-building the list so
@@ -492,7 +475,7 @@ pub(super) fn emit_args_get_inline(
             ))?;
 
     // len = args_len()
-    super::emit::emit_caller_fn_global(func, ctx)?;
+    super::emit::emit_caller_fn_idx(func, ctx)?;
     func.instruction(&Instruction::Call(args_len_idx));
     func.instruction(&Instruction::LocalSet(len_slot));
     // i = len - 1
@@ -515,7 +498,7 @@ pub(super) fn emit_args_get_inline(
     func.instruction(&Instruction::BrIf(1));
     // s = args_get(i)
     func.instruction(&Instruction::LocalGet(i_slot));
-    super::emit::emit_caller_fn_global(func, ctx)?;
+    super::emit::emit_caller_fn_idx(func, ctx)?;
     func.instruction(&Instruction::Call(args_get_idx));
     func.instruction(&Instruction::LocalSet(s_slot));
     // acc = struct.new List<String> { head: s, tail: acc }
@@ -534,44 +517,6 @@ pub(super) fn emit_args_get_inline(
 
     // result on stack: acc
     func.instruction(&Instruction::LocalGet(acc_slot));
-    Ok(())
-}
-
-pub(super) fn emit_map_empty_call(
-    func: &mut Function,
-    args: &[Spanned<Expr>],
-    _slots: &SlotTable,
-    ctx: &EmitCtx<'_>,
-) -> Result<(), WasmGcError> {
-    if !args.is_empty() {
-        return Err(WasmGcError::Validation(format!(
-            "Map.empty expects 0 args, got {}",
-            args.len()
-        )));
-    }
-    let canonical = if ctx.registry.map_order.len() == 1 {
-        ctx.registry.map_order[0].clone()
-    } else {
-        // Multi-Map module — disambiguate by checking the enclosing
-        // fn's return type. Common case: `fn build() -> Map<K, V>`
-        // wraps a `Map.set(Map.empty(), ...)` chain; the empty call
-        // inherits its slot from the declared return type.
-        let ret_canonical = super::super::types::normalize_compound(ctx.return_type);
-        if ctx.registry.map_slots(&ret_canonical).is_some() {
-            ret_canonical
-        } else {
-            return Err(WasmGcError::Unimplemented(
-                "Map.empty across multiple Map<K,V> instantiations needs context-driven type inference",
-            ));
-        }
-    };
-    let helpers = ctx
-        .fn_map
-        .map_helpers_lookup(&canonical)
-        .ok_or(WasmGcError::Validation(format!(
-            "Map.empty: helpers missing for `{canonical}`"
-        )))?;
-    func.instruction(&Instruction::Call(helpers.empty));
     Ok(())
 }
 
@@ -1093,7 +1038,7 @@ pub(super) fn emit_vector_set_or_default(
 /// `array.new_fixed (array (ref null $string)) N` + a single call to
 /// the variadic concat helper. Each part is coerced to `String`:
 /// - `String` → identity
-/// - `Int` → `call $Int.toString`
+/// - `Int` → `call $String.fromInt`
 /// - other primitives surface as Unimplemented until their helpers land
 ///
 /// `interp_lower` is skipped for this backend (`run_interp_lower=false`
@@ -1162,18 +1107,19 @@ pub(super) fn emit_interpolated_str(
                     "String" => { /* identity */ }
                     "Int" => {
                         let to_string_idx =
-                            ctx.fn_map.builtins.get("Int.toString").copied().ok_or(
+                            ctx.fn_map.builtins.get("String.fromInt").copied().ok_or(
                                 WasmGcError::Validation(
-                                    "interpolation of Int requires Int.toString builtin".into(),
+                                    "interpolation of Int requires String.fromInt builtin".into(),
                                 ),
                             )?;
                         func.instruction(&Instruction::Call(to_string_idx));
                     }
                     "Float" => {
                         let to_string_idx =
-                            ctx.fn_map.builtins.get("Float.toString").copied().ok_or(
+                            ctx.fn_map.builtins.get("String.fromFloat").copied().ok_or(
                                 WasmGcError::Validation(
-                                    "interpolation of Float requires Float.toString builtin".into(),
+                                    "interpolation of Float requires String.fromFloat builtin"
+                                        .into(),
                                 ),
                             )?;
                         func.instruction(&Instruction::Call(to_string_idx));
@@ -1416,7 +1362,7 @@ pub(super) fn emit_vec_from_list_call(
     Ok(())
 }
 
-/// `Vector.toList(vec)` — dispatch to the `to_list` helper. The
+/// `List.fromVector(vec)` — dispatch to the `to_list` helper. The
 /// canonical is keyed on `List<T>` (`vfl_ops` indexes pairs by list
 /// canonical), so we recover `T` from the vector arg's type and
 /// build the list canonical from it.
@@ -1430,7 +1376,7 @@ pub(super) fn emit_vec_to_list_call(
     let vec_canonical: String = vec_aver.chars().filter(|c| !c.is_whitespace()).collect();
     let elem = super::super::types::TypeRegistry::vector_element_type(&vec_canonical).ok_or(
         WasmGcError::Validation(format!(
-            "Vector.toList: cannot parse element type from `{vec_canonical}`"
+            "List.fromVector: cannot parse element type from `{vec_canonical}`"
         )),
     )?;
     let list_canonical = format!("List<{}>", elem.trim());
@@ -1439,7 +1385,7 @@ pub(super) fn emit_vec_to_list_call(
         .vfl_ops
         .get(&list_canonical)
         .ok_or(WasmGcError::Validation(format!(
-            "Vector.toList: helper for `{list_canonical}` wasn't registered"
+            "List.fromVector: helper for `{list_canonical}` wasn't registered"
         )))?;
     emit_expr(func, vec_arg, slots, ctx)?;
     func.instruction(&Instruction::Call(ops.to_list));

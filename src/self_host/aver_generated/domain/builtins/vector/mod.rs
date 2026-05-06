@@ -26,7 +26,7 @@ pub fn call(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, AverStr
                         if &*__dispatch_subject == "Vector.fromList" {
                             builtinVectorFromList(args)
                         } else {
-                            if &*__dispatch_subject == "Vector.toList" {
+                            if &*__dispatch_subject == "List.fromVector" {
                                 builtinVectorToList(args)
                             } else {
                                 Err(aver_rt::AverStr::from({
@@ -162,12 +162,12 @@ pub fn builtinVectorFromList(args: &aver_rt::AverList<Val>) -> Result<Val, AverS
     }
 }
 
-/// Vector.toList(vec) -> List<T>.
+/// List.fromVector(vec) -> List<T>.
 pub fn builtinVectorToList(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     match v {
         Val::ValVector(vec) => Ok(Val::ValList(vec.to_list())),
-        _ => Err(AverStr::from("Vector.toList: expected Vector")),
+        _ => Err(AverStr::from("List.fromVector: expected Vector")),
     }
 }

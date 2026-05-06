@@ -14,14 +14,14 @@ fn rewriteInternalFns(fns: List<FnDef>, acc: List<FnDef>) -> List<FnDef>
 
 verify rewriteInternalFns
     rewriteInternalFns([], []) => []
-    List.len(rewriteInternalFns([FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)], [])) => 1
+    List.len(rewriteInternalFns([FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false)], [])) => 1
 
 fn rewriteInternalFn(fd: FnDef) -> FnDef
     ? "Rewrite the body of one resolved function into lighter internal expression shapes."
     FnDef(name = fd.name, params = fd.params, body = rewriteInternalStmts(fd.body, []), slotCount = fd.slotCount, slotMap = fd.slotMap, fastPath = fd.fastPath, tailLoop = fd.tailLoop)
 
 verify rewriteInternalFn
-    rewriteInternalFn(FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = Map.empty(), fastPath = FnFastPath.FastNone, tailLoop = false)).name => "f"
+    rewriteInternalFn(FnDef(name = "f", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false)).name => "f"
 
 fn rewriteInternalStmts(stmts: List<Stmt>, acc: List<Stmt>) -> List<Stmt>
     ? "Rewrite statements recursively into lighter internal expression shapes."
@@ -154,7 +154,7 @@ fn rewriteInternalArms(arms: List<MatchArm>, acc: List<MatchArm>) -> List<MatchA
 
 verify rewriteInternalArms
     rewriteInternalArms([], []) => []
-    rewriteInternalArms([MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = Map.empty())], []) => [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = Map.empty())]
+    rewriteInternalArms([MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = {})], []) => [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = {})]
 
 fn rewritePattern(pat: Pattern) -> Pattern
     ? "Rewrite PatConstructor to PatConstructorId with both tag and full constructor name."
@@ -478,7 +478,7 @@ fn rewriteBoolMatchArms(arms: List<MatchArm>) -> Option<(Expr, Expr)>
 
 verify rewriteBoolMatchArms
     rewriteBoolMatchArms([]) => Option.None
-    rewriteBoolMatchArms([MatchArm(pattern = Pattern.PatBool(true), body = Expr.ExprInt(1), bindingSlots = Map.empty()), MatchArm(pattern = Pattern.PatBool(false), body = Expr.ExprInt(2), bindingSlots = Map.empty())]) => Option.Some((Expr.ExprInt(1), Expr.ExprInt(2)))
+    rewriteBoolMatchArms([MatchArm(pattern = Pattern.PatBool(true), body = Expr.ExprInt(1), bindingSlots = {}), MatchArm(pattern = Pattern.PatBool(false), body = Expr.ExprInt(2), bindingSlots = {})]) => Option.Some((Expr.ExprInt(1), Expr.ExprInt(2)))
 
 fn rewriteBoolMatchArmPair(arm1: MatchArm, arm2: MatchArm) -> Option<(Expr, Expr)>
     ? "Order two complementary bool arms into (trueExpr, falseExpr)."
@@ -487,8 +487,8 @@ fn rewriteBoolMatchArmPair(arm1: MatchArm, arm2: MatchArm) -> Option<(Expr, Expr
         _ -> Option.None
 
 verify rewriteBoolMatchArmPair
-    rewriteBoolMatchArmPair(MatchArm(pattern = Pattern.PatBool(true), body = Expr.ExprInt(1), bindingSlots = Map.empty()), MatchArm(pattern = Pattern.PatBool(false), body = Expr.ExprInt(2), bindingSlots = Map.empty())) => Option.Some((Expr.ExprInt(1), Expr.ExprInt(2)))
-    rewriteBoolMatchArmPair(MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = Map.empty()), MatchArm(pattern = Pattern.PatBool(false), body = Expr.ExprInt(2), bindingSlots = Map.empty())) => Option.None
+    rewriteBoolMatchArmPair(MatchArm(pattern = Pattern.PatBool(true), body = Expr.ExprInt(1), bindingSlots = {}), MatchArm(pattern = Pattern.PatBool(false), body = Expr.ExprInt(2), bindingSlots = {})) => Option.Some((Expr.ExprInt(1), Expr.ExprInt(2)))
+    rewriteBoolMatchArmPair(MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = {}), MatchArm(pattern = Pattern.PatBool(false), body = Expr.ExprInt(2), bindingSlots = {})) => Option.None
 
 fn rewriteBoolMatchArmPairInner(b1: Bool, body1: Expr, p2: Pattern, body2: Expr) -> Option<(Expr, Expr)>
     ? "Finish ordering bool arms once the first pattern bool is known."

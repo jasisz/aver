@@ -26,6 +26,7 @@ use wasm_encoder::{
 
 use super::WasmGcError;
 use super::body::eq_helpers::{EqHelperRegistry, EqKind};
+use super::body::hash_helpers::{HashHelperRegistry, HashKind};
 use super::body::{FnEntry, FnMap, emit_fn_body};
 use super::builtins::{BuiltinName, BuiltinRegistry};
 use super::effects::{EffectName, EffectRegistry};
@@ -41,6 +42,14 @@ pub(super) fn emit_module(
     handler_name: Option<&str>,
 ) -> Result<Vec<u8>, WasmGcError> {
     let registry = TypeRegistry::build_with_handler(items, handler_name.is_some());
+
+    // Lazy caller_fn name registry — populated during user-fn body
+    // emit by `emit_caller_fn_idx` call sites. Threaded into every
+    // `emit_fn_body` call via `EmitCtx::caller_fn_collector`. The
+    // post-emit phase reads `collector.names` to materialise the
+    // exported caller-fn name table (`__caller_fn_count` +
+    // `__caller_fn_name`) and the matching passive data segments.
+    let caller_fn_collector = std::cell::RefCell::new(super::body::CallerFnCollector::default());
 
     let fn_defs: Vec<&FnDef> = items
         .iter()
@@ -58,6 +67,7 @@ pub(super) fn emit_module(
     let mut builtin_registry = BuiltinRegistry::new();
     let mut effect_registry = EffectRegistry::new();
     let mut eq_helpers_registry = EqHelperRegistry::new();
+    let mut hash_helpers_registry = HashHelperRegistry::new();
     for fd in &fn_defs {
         discover_builtins_in_fn(
             fd,
@@ -66,6 +76,78 @@ pub(super) fn emit_module(
             &mut eq_helpers_registry,
             &registry,
         );
+    }
+    // Sweep nominal element types of every registered List / Vector
+    // and key types of every registered Map. The list/vec helper
+    // bodies dispatch nominal element eq/hash via `Call(__eq_<X>)`
+    // (since 0.16.3); without auto-registering those types here, a
+    // program that holds `List<Item>` without ever writing
+    // `list == list` directly would still get a list helper body
+    // that calls into an unregistered `__eq_Item`. Keys of `Map<K,_>`
+    // need the same: maps.rs `emit_eq_for(K)` reaches into
+    // `__eq_<X>` helpers when K is a record/sum field-of-field.
+    let mut nominal_seed: Vec<String> = Vec::new();
+    for canonical in &registry.list_order {
+        if let Some(elem) = super::types::TypeRegistry::list_element_type(canonical) {
+            nominal_seed.push(elem.trim().to_string());
+        }
+    }
+    for canonical in &registry.vector_order {
+        if let Some(elem) = super::types::TypeRegistry::vector_element_type(canonical) {
+            nominal_seed.push(elem.trim().to_string());
+        }
+    }
+    for canonical in &registry.map_order {
+        if let Some((k, _v)) = super::types::parse_map_kv(canonical) {
+            nominal_seed.push(k.trim().to_string());
+        }
+    }
+    for name in &nominal_seed {
+        if registry.record_fields.contains_key(name) {
+            eq_helpers_registry.register_transitive(name, EqKind::Record, &registry);
+            hash_helpers_registry.register_transitive(name, HashKind::Record, &registry);
+        } else if registry
+            .variants
+            .values()
+            .flat_map(|v| v.iter())
+            .any(|v| &v.parent == name)
+        {
+            eq_helpers_registry.register_transitive(name, EqKind::Sum, &registry);
+            hash_helpers_registry.register_transitive(name, HashKind::Sum, &registry);
+        } else if name.starts_with("Option<") && name.ends_with('>') {
+            // Carrier element of List<Option<X>> / Vector<Option<X>>
+            // / Map<Option<X>, _> — list/vec eq+hash bodies dispatch
+            // each element via `Call(__eq_Option<X>)` which means
+            // eq_helpers must hold the slot. Same logic for the hash
+            // side. Inner type registration happens transitively.
+            eq_helpers_registry.register_transitive(name, EqKind::OptionEq, &registry);
+            hash_helpers_registry.register_transitive(name, HashKind::OptionHash, &registry);
+        } else if name.starts_with("Result<") && name.ends_with('>') {
+            eq_helpers_registry.register_transitive(name, EqKind::ResultEq, &registry);
+            hash_helpers_registry.register_transitive(name, HashKind::ResultHash, &registry);
+        } else if name.starts_with("Tuple<") && name.ends_with('>') {
+            eq_helpers_registry.register_transitive(name, EqKind::TupleEq, &registry);
+            hash_helpers_registry.register_transitive(name, HashKind::TupleHash, &registry);
+        }
+    }
+    // Mirror eq registry's transitive shape — every type registered
+    // for eq dispatch also needs a hash helper, since list/vec/map
+    // helpers and per-record/sum hash bodies dispatch through
+    // `Call(__hash_<X>)` for non-primitive fields. Walk the eq
+    // registry post-seed and register matching hash slots.
+    let eq_snapshot: Vec<(String, EqKind)> = eq_helpers_registry
+        .iter()
+        .map(|(n, k)| (n.to_string(), k))
+        .collect();
+    for (name, kind) in &eq_snapshot {
+        let hk = match kind {
+            EqKind::Record => HashKind::Record,
+            EqKind::Sum => HashKind::Sum,
+            EqKind::OptionEq => HashKind::OptionHash,
+            EqKind::ResultEq => HashKind::ResultHash,
+            EqKind::TupleEq => HashKind::TupleHash,
+        };
+        hash_helpers_registry.register_transitive(name, hk, &registry);
     }
     // Eq helpers over records / sums with String fields need
     // `__wasmgc_string_eq` — force-register so the slot is allocated
@@ -207,6 +289,8 @@ pub(super) fn emit_module(
     // `__wasmgc_string_eq` registered above).
     eq_helpers_registry.assign_slots(&mut next_builtin_fn_idx, &mut next_type_idx);
     eq_helpers_registry.emit_helper_types(&mut types);
+    hash_helpers_registry.assign_slots(&mut next_builtin_fn_idx, &mut next_type_idx);
+    hash_helpers_registry.emit_helper_types(&mut types);
 
     // 8a) `aver_http_handle` wrapper — `--handler X` synthesises a
     //     no-arg fn that reads request fields via the `Request.*`
@@ -307,6 +391,37 @@ pub(super) fn emit_module(
         &effect_registry,
     )?;
 
+    // 10) Caller-fn name table exports. `__caller_fn_count() -> i32`
+    //     and `__caller_fn_name(i32) -> ref null $string`. Host walks
+    //     `0..count` once at instantiation, decodes each ref via the
+    //     LM bridge, caches in a `Vec<String>`. Per effect call: `i32`
+    //     idx flows through `params.last()` → vector index lookup,
+    //     no LM round-trip on the hot path.
+    //
+    //     Allocated only when the program has the String slot (i.e.
+    //     any fn def, since `needs_string` forces the slot whenever
+    //     `has_fn_defs`). Programs without fns never emit caller_fn
+    //     anywhere so the exports would be unused.
+    let caller_fn_table_types: Option<(u32, u32)> =
+        if let Some(string_type_idx) = registry.string_array_type_idx {
+            // count: () -> i32
+            types.ty().function([], [ValType::I32]);
+            let count_type_idx = next_type_idx;
+            next_type_idx += 1;
+            // name: (i32) -> (ref null $string)
+            let string_ref_ty = ValType::Ref(wasm_encoder::RefType {
+                nullable: true,
+                heap_type: wasm_encoder::HeapType::Concrete(string_type_idx),
+            });
+            types.ty().function([ValType::I32], [string_ref_ty]);
+            let name_type_idx = next_type_idx;
+            // Last type allocation in this fn — `next_type_idx`
+            // increment dropped to silence `unused_assignments`.
+            Some((count_type_idx, name_type_idx))
+        } else {
+            None
+        };
+
     module.section(&types);
 
     // ── Import section ─────────────────────────────────────────────
@@ -343,6 +458,13 @@ pub(super) fn emit_module(
             .expect("registered eq helper has type idx after assign_slots");
         funcs.function(t_idx);
     }
+    // Hash helpers — same shape (one entry per registered slot).
+    for (name, _kind) in hash_helpers_registry.iter() {
+        let t_idx = hash_helpers_registry
+            .lookup_type_idx(name)
+            .expect("registered hash helper has type idx after assign_slots");
+        funcs.function(t_idx);
+    }
     if let Some(hw) = &handler_wrapper {
         funcs.function(hw.wrapper_type);
         funcs.function(hw.list_cons_type);
@@ -354,20 +476,18 @@ pub(super) fn emit_module(
         funcs.function(b.grow_type);
     }
     factory_exports.emit_function_entries(&mut funcs);
-    // `__init_globals`: wasm-level start fn that lazy-fills the
-    // caller_fn globals via `array.new_data`. Has to be a separate
-    // fn (not part of `_start`) because the host invokes `main`
-    // directly when both are exported, bypassing `_start` —
-    // wasm-level start fns are auto-run at instantiation regardless
-    // of which export the host calls. Allocated last so its idx is
-    // import_count + funcs.len() once the entry is appended.
-    let init_globals_fn_idx: Option<u32> = if !registry.caller_fn_global_order.is_empty() {
-        let idx = import_count + funcs.len();
-        funcs.function(start_type_idx);
-        Some(idx)
-    } else {
-        None
-    };
+    // Caller-fn name table fns — fixed-shape entries (count + name),
+    // their bodies land at the very end of the code section once
+    // `caller_fn_collector` has all names. Idxs are recorded so
+    // `module.section(&exports)` can wire them up without re-deriving
+    // the position.
+    let caller_fn_table_fns: Option<(u32, u32)> = caller_fn_table_types.map(|(c_ty, n_ty)| {
+        let count_fn_idx = import_count + funcs.len();
+        funcs.function(c_ty);
+        let name_fn_idx = import_count + funcs.len();
+        funcs.function(n_ty);
+        (count_fn_idx, name_fn_idx)
+    });
     module.section(&funcs);
 
     // ── Memory section (bridge LM only) ────────────────────────────
@@ -391,40 +511,10 @@ pub(super) fn emit_module(
         module.section(&memories);
     }
 
-    // ── Global section ─────────────────────────────────────────────
-    // One mutable `(ref null $string)` global per fn def, declared as
-    // `ref.null` and lazy-initialised at the top of `_start` via
-    // `array.new_data $string $segment 0 N`. The wasm-gc spec doesn't
-    // permit `array.new_data` in const-expr position, so the init has
-    // to land in a code body — `_start` runs once per instantiation
-    // and dominates every effect call site, which is what we need.
-    // Body emit pushes the caller-fn ref through
-    // `global.get $caller_fn_<idx>` at every effect call site — the
-    // alloc happens once at startup, the hot path costs one global
-    // load.
-    if !registry.caller_fn_global_order.is_empty() {
-        let string_idx = registry
-            .string_array_type_idx
-            .expect("caller_fn globals require the $string slot — TypeRegistry forces it on");
-        let mut globals = wasm_encoder::GlobalSection::new();
-        for _ in &registry.caller_fn_global_order {
-            let init = wasm_encoder::ConstExpr::extended([Instruction::RefNull(
-                wasm_encoder::HeapType::Concrete(string_idx),
-            )]);
-            globals.global(
-                wasm_encoder::GlobalType {
-                    val_type: wasm_encoder::ValType::Ref(wasm_encoder::RefType {
-                        nullable: true,
-                        heap_type: wasm_encoder::HeapType::Concrete(string_idx),
-                    }),
-                    mutable: true,
-                    shared: false,
-                },
-                &init,
-            );
-        }
-        module.section(&globals);
-    }
+    // (caller_fn delivery moved from per-fn globals to an exported
+    // name table; segment append + `__caller_fn_*` exports are
+    // wired in the post-emit phase further down. Globals + their
+    // start-fn init are gone.)
 
     // Build the fn-name → wasm-fn-idx map. With K imports:
     //   imports at idx 0..K
@@ -487,6 +577,16 @@ pub(super) fn emit_module(
             eq_helpers_lookup.insert(name.to_string(), fn_idx);
         }
     }
+    // Map<K,V> structural-eq fn idxs flow through the same lookup so
+    // BinOp::Eq on a Map dispatches via `Call(__eq_Map<K,V>)` (sum_
+    // or_record_eq_fn → ctx.fn_map.eq_helpers). Whitespace-free
+    // canonical matches what the operand's `.ty().display()` produces
+    // at the call site.
+    for canonical in &registry.map_order {
+        if let Some(h) = map_helpers.kv_helpers(canonical) {
+            eq_helpers_lookup.insert(canonical.clone(), h.eq);
+        }
+    }
     let fn_map = FnMap {
         by_name,
         builtins: builtin_idx_lookup,
@@ -534,22 +634,45 @@ pub(super) fn emit_module(
             );
         }
     }
+    if let Some((count_fn_idx, name_fn_idx)) = caller_fn_table_fns {
+        exports.export("__caller_fn_count", ExportKind::Func, count_fn_idx);
+        exports.export("__caller_fn_name", ExportKind::Func, name_fn_idx);
+    }
     module.section(&exports);
 
-    // ── Start section ──────────────────────────────────────────────
-    // Wasm-level start fn — auto-runs once at instantiation, ahead of
-    // any host-invoked export. Used for caller_fn global init.
-    if let Some(idx) = init_globals_fn_idx {
-        module.section(&wasm_encoder::StartSection {
-            function_index: idx,
-        });
+    // (No StartSection — 0.16.2's caller_fn globals init is gone;
+    // host reads the caller_fn name table via `__caller_fn_count`
+    // + `__caller_fn_name(i)` exports at instantiation instead.)
+
+    // Pre-pass over user fn bodies — populates `caller_fn_collector`
+    // with every fn name that emits caller_fn at a call site. Needed
+    // before data count + data section emit because the count of
+    // passive segments is `string_literals + collector.names`, and
+    // data count section must precede the code section. Real body
+    // emit later in the code section calls `register` again with the
+    // same names; the collector is idempotent so the idx assignment
+    // matches what the call sites observed during this probe.
+    for (i, fd) in fn_defs.iter().enumerate() {
+        let self_wasm_idx = import_count + 1 + (i as u32);
+        let mut probe = Function::new([]);
+        let _ = emit_fn_body(
+            &mut probe,
+            fd,
+            &fn_map,
+            self_wasm_idx,
+            &registry,
+            &effect_idx_lookup,
+            &caller_fn_collector,
+        )?;
     }
+    let caller_fn_segment_count = caller_fn_collector.borrow().names.len() as u32;
 
     // ── Data count section (must precede code when using passive
     //     segments via array.new_data / data.drop).
-    if !registry.string_literals.is_empty() {
+    let total_segment_count = registry.string_literals.len() as u32 + caller_fn_segment_count;
+    if total_segment_count > 0 {
         let count = DataCountSection {
-            count: registry.string_literals.len() as u32,
+            count: total_segment_count,
         };
         module.section(&count);
     }
@@ -585,6 +708,7 @@ pub(super) fn emit_module(
             self_wasm_idx,
             &registry,
             &effect_idx_lookup,
+            &caller_fn_collector,
         )?;
 
         let local_groups: Vec<(u32, ValType)> = extra_locals_dry.iter().map(|v| (1, *v)).collect();
@@ -596,6 +720,7 @@ pub(super) fn emit_module(
             self_wasm_idx,
             &registry,
             &effect_idx_lookup,
+            &caller_fn_collector,
         )?;
         codes.function(&func);
     }
@@ -630,16 +755,98 @@ pub(super) fn emit_module(
             compound_eq_hash_lookup.insert(format!("Vector<{}>", elem.trim()), (eq_fn, hash_fn));
         }
     }
-    map_helpers.emit_helper_bodies(&mut codes, &registry, &compound_eq_hash_lookup)?;
+    // Map<K,V> structural eq + commutative hash — per-instantiation
+    // helpers live in MapHelperRegistry::kv. Threading them into the
+    // compound lookup lets record/sum/list/vec field dispatch call
+    // `__eq_Map<K,V>` / `__hash_Map<K,V>` uniformly with carriers.
+    for canonical in &registry.map_order {
+        if let Some(h) = map_helpers.kv_helpers(canonical) {
+            compound_eq_hash_lookup.insert(canonical.clone(), (h.eq, h.hash));
+        }
+    }
+    // Carrier eq+hash lookup — Option/Result/Tuple instantiations
+    // get their helpers from eq_helpers / hash_helpers; map keys
+    // proxy through these. Build the pair map by zipping the two
+    // registries' fn idxs by canonical.
+    let mut carrier_eq_hash_lookup: HashMap<String, (u32, u32)> = HashMap::new();
+    for (name, kind) in eq_helpers_registry.iter() {
+        use super::body::eq_helpers::EqKind as EK;
+        if matches!(kind, EK::OptionEq | EK::ResultEq | EK::TupleEq)
+            && let Some(eq_fn) = eq_helpers_registry.lookup_fn_idx(name)
+            && let Some(hash_fn) = hash_helpers_registry.lookup_fn_idx(name)
+        {
+            carrier_eq_hash_lookup.insert(name.to_string(), (eq_fn, hash_fn));
+        }
+    }
+    map_helpers.emit_helper_bodies(
+        &mut codes,
+        &registry,
+        &compound_eq_hash_lookup,
+        &carrier_eq_hash_lookup,
+    )?;
 
     // List / Vector.fromList / String.split-join helper bodies.
+    // Snapshot eq-helper fn idxs so list/vec eq+hash bodies can
+    // dispatch nominal-element `==`/hash through `Call(__eq_<X>)`.
+    // Merge in list_helpers' own list/vec canonicals so `List<List<X>>`
+    // / `List<Vector<X>>` element dispatch finds the inner helper.
     let string_eq_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::StringEq);
-    list_helpers.emit_helper_bodies(&mut codes, &registry, string_eq_fn_idx)?;
+    let mut eq_helper_fn_idx_map: HashMap<String, u32> = eq_helpers_registry
+        .iter()
+        .filter_map(|(n, _k)| {
+            eq_helpers_registry
+                .lookup_fn_idx(n)
+                .map(|i| (n.to_string(), i))
+        })
+        .collect();
+    let mut hash_helper_fn_idx_map: HashMap<String, u32> = hash_helpers_registry
+        .iter()
+        .filter_map(|(n, _k)| {
+            hash_helpers_registry
+                .lookup_fn_idx(n)
+                .map(|i| (n.to_string(), i))
+        })
+        .collect();
+    for (canonical, (eq_fn, hash_fn)) in &compound_eq_hash_lookup {
+        eq_helper_fn_idx_map.insert(canonical.clone(), *eq_fn);
+        hash_helper_fn_idx_map.insert(canonical.clone(), *hash_fn);
+    }
+    list_helpers.emit_helper_bodies(
+        &mut codes,
+        &registry,
+        string_eq_fn_idx,
+        &eq_helper_fn_idx_map,
+        &hash_helper_fn_idx_map,
+    )?;
 
     // Per-(record/sum) `__eq_<TypeName>` helper bodies — emit after
     // list helpers so any String fields can call `__wasmgc_string_eq`
-    // by the index recorded above.
-    eq_helpers_registry.emit_helper_bodies(&mut codes, &registry, string_eq_fn_idx)?;
+    // by the index recorded above. The compound eq lookup forwards
+    // `List<T>` / `Vector<T>` fn idxs so a record field of type
+    // `List<Option<Int>>` (etc.) can dispatch via
+    // `Call(__eq_List<…>)`. Same shape on the hash side.
+    let compound_eq_lookup: HashMap<String, u32> = compound_eq_hash_lookup
+        .iter()
+        .map(|(n, (eq, _))| (n.clone(), *eq))
+        .collect();
+    let compound_hash_lookup: HashMap<String, u32> = compound_eq_hash_lookup
+        .iter()
+        .map(|(n, (_, h))| (n.clone(), *h))
+        .collect();
+    eq_helpers_registry.emit_helper_bodies(
+        &mut codes,
+        &registry,
+        string_eq_fn_idx,
+        &compound_eq_lookup,
+    )?;
+    // `__hash_<X>` helper bodies — emitted right after eq helpers so
+    // every nominal/carrier hash dispatch finds its target fn_idx.
+    hash_helpers_registry.emit_helper_bodies(
+        &mut codes,
+        &registry,
+        string_eq_fn_idx,
+        &compound_hash_lookup,
+    )?;
 
     if let Some(hw) = &handler_wrapper {
         let user_handler_wasm_idx = import_count + 1 + (hw.user_handler_idx as u32);
@@ -658,31 +865,68 @@ pub(super) fn emit_module(
 
     factory_exports.emit_bodies(&mut codes, &registry)?;
 
-    // `__init_globals` body — one `array.new_data → global.set` per
-    // registered caller_fn name. Walks `caller_fn_global_order` so
-    // global idx i in the section matches the `i`-th name in the
-    // walker output. Runs at instantiation via the StartSection
-    // emitted below.
-    if init_globals_fn_idx.is_some() {
+    // `__caller_fn_count` + `__caller_fn_name` bodies. Emitted after
+    // every helper so their fn idxs land last in the code section,
+    // matching the function section allocation order. The collector
+    // is fully populated at this point — every user-fn body ran
+    // through the pre-pass and the real-emit pass.
+    if let Some((_count_fn_idx, _name_fn_idx)) = caller_fn_table_fns {
+        let names = caller_fn_collector.borrow();
         let string_idx = registry
             .string_array_type_idx
-            .expect("caller_fn globals require the $string slot");
-        let mut init = Function::new([]);
-        for (idx, fn_name) in registry.caller_fn_global_order.iter().enumerate() {
+            .expect("caller_fn name table requires the $string slot");
+        // Caller-fn name segments occupy the data section slot range
+        // [string_literals.len()..string_literals.len()+names.len()];
+        // `array.new_data` in `__caller_fn_name(i)` reads from those
+        // idxs.
+        let segment_base = registry.string_literals.len() as u32;
+
+        // __caller_fn_count: pure constant.
+        let mut count_fn = Function::new([]);
+        count_fn.instruction(&Instruction::I32Const(names.names.len() as i32));
+        count_fn.instruction(&Instruction::End);
+        codes.function(&count_fn);
+
+        // __caller_fn_name(idx) -> ref null $string. Switch on idx
+        // via `br_table`; each arm materialises the matching String
+        // ref via `array.new_data`. A trailing default arm returns
+        // ref.null for out-of-range idxs (host shouldn't pass them,
+        // but the wasm validator wants a fallthrough).
+        let string_ref_ty = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        let mut name_fn = Function::new([]);
+        let block_ty = wasm_encoder::BlockType::Result(string_ref_ty);
+        name_fn.instruction(&Instruction::Block(block_ty));
+        for (i, fn_name) in names.names.iter().enumerate() {
             let bytes = fn_name.as_bytes();
-            let segment_idx = registry
-                .string_literal_segment(bytes)
-                .expect("fn-name passive segment registered alongside the global");
-            init.instruction(&Instruction::I32Const(0));
-            init.instruction(&Instruction::I32Const(bytes.len() as i32));
-            init.instruction(&Instruction::ArrayNewData {
+            // Inner block: if idx == i, this arm emits the ref and
+            // breaks out of the outer block. Otherwise falls through
+            // to the next arm.
+            name_fn.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+            // if local 0 != i { br 0 } — skip to next arm.
+            name_fn.instruction(&Instruction::LocalGet(0));
+            name_fn.instruction(&Instruction::I32Const(i as i32));
+            name_fn.instruction(&Instruction::I32Ne);
+            name_fn.instruction(&Instruction::BrIf(0));
+            // Match: emit ref + break to outer.
+            name_fn.instruction(&Instruction::I32Const(0));
+            name_fn.instruction(&Instruction::I32Const(bytes.len() as i32));
+            name_fn.instruction(&Instruction::ArrayNewData {
                 array_type_index: string_idx,
-                array_data_index: segment_idx,
+                array_data_index: segment_base + i as u32,
             });
-            init.instruction(&Instruction::GlobalSet(idx as u32));
+            name_fn.instruction(&Instruction::Br(1));
+            name_fn.instruction(&Instruction::End);
         }
-        init.instruction(&Instruction::End);
-        codes.function(&init);
+        // Default arm — out-of-range idx returns ref.null.
+        name_fn.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+            string_idx,
+        )));
+        name_fn.instruction(&Instruction::End);
+        name_fn.instruction(&Instruction::End);
+        codes.function(&name_fn);
     }
 
     module.section(&codes);
@@ -690,10 +934,19 @@ pub(super) fn emit_module(
     // ── Data section ───────────────────────────────────────────────
     // Passive segments holding String literal byte sequences. Emitted
     // last; `array.new_data $string $segment_idx` reads from these.
-    if !registry.string_literals.is_empty() {
+    // Order: pre-walked program literals first, caller_fn names
+    // second. `__caller_fn_name`'s body uses
+    // `segment_base = registry.string_literals.len()` so its arms
+    // hit the right slots regardless of how many literals the
+    // program has.
+    if total_segment_count > 0 {
         let mut data = DataSection::new();
         for bytes in &registry.string_literals {
             data.passive(bytes.iter().copied());
+        }
+        let names = caller_fn_collector.borrow();
+        for fn_name in &names.names {
+            data.passive(fn_name.as_bytes().iter().copied());
         }
         module.section(&data);
     }
@@ -1121,6 +1374,58 @@ fn discover_builtins_in_stmt(
     }
 }
 
+/// Recursively walks `t` and registers every nominal record/sum it
+/// reaches in `eq_helpers`. Needed for `==` on collection types
+/// whose element/key/value type is nominal — `List<Tree>`,
+/// `Map<Color, Tree>`, `Option<Box>`, etc. Without this, the
+/// helper-body emit (`emit_list_eq`, `emit_record_eq_inline`,
+/// `emit_eq_record`) would dispatch by `Call(__eq_<Tree>)` against
+/// an unregistered slot.
+fn register_nominal_in_type(
+    t: &AverType,
+    eq_helpers: &mut EqHelperRegistry,
+    type_registry: &super::types::TypeRegistry,
+) {
+    let canonical: String = t.display().chars().filter(|c| !c.is_whitespace()).collect();
+    match t {
+        AverType::Named(name) => {
+            if type_registry.record_fields.contains_key(name) {
+                eq_helpers.register_transitive(name, EqKind::Record, type_registry);
+            } else if type_registry
+                .variants
+                .values()
+                .flat_map(|v| v.iter())
+                .any(|v| &v.parent == name)
+            {
+                eq_helpers.register_transitive(name, EqKind::Sum, type_registry);
+            }
+        }
+        AverType::Option(inner) => {
+            eq_helpers.register_transitive(&canonical, EqKind::OptionEq, type_registry);
+            register_nominal_in_type(inner, eq_helpers, type_registry);
+        }
+        AverType::Result(ok, err) => {
+            eq_helpers.register_transitive(&canonical, EqKind::ResultEq, type_registry);
+            register_nominal_in_type(ok, eq_helpers, type_registry);
+            register_nominal_in_type(err, eq_helpers, type_registry);
+        }
+        AverType::Tuple(items) => {
+            eq_helpers.register_transitive(&canonical, EqKind::TupleEq, type_registry);
+            for item in items {
+                register_nominal_in_type(item, eq_helpers, type_registry);
+            }
+        }
+        AverType::List(inner) | AverType::Vector(inner) => {
+            register_nominal_in_type(inner, eq_helpers, type_registry);
+        }
+        AverType::Map(k, v) => {
+            register_nominal_in_type(k, eq_helpers, type_registry);
+            register_nominal_in_type(v, eq_helpers, type_registry);
+        }
+        _ => {}
+    }
+}
+
 fn discover_builtins_in_expr(
     expr: &Expr,
     builtins: &mut BuiltinRegistry,
@@ -1183,15 +1488,25 @@ fn discover_builtins_in_expr(
                 && let AverType::Named(name) = t
             {
                 if type_registry.record_fields.contains_key(name) {
-                    eq_helpers.register(name, EqKind::Record);
+                    eq_helpers.register_transitive(name, EqKind::Record, type_registry);
                 } else if type_registry
                     .variants
                     .values()
                     .flat_map(|v| v.iter())
                     .any(|v| &v.parent == name)
                 {
-                    eq_helpers.register(name, EqKind::Sum);
+                    eq_helpers.register_transitive(name, EqKind::Sum, type_registry);
                 }
+            }
+            // List / Vector / Map / Option / Result / Tuple `==` —
+            // dispatch reaches the per-element/key __eq_<X> through
+            // the helper bodies, so any nominal element type also
+            // needs an __eq slot. Walk the operand type recursively
+            // and register every nominal we hit.
+            if matches!(op, Op::Eq | Op::Neq)
+                && let Some(t) = l.ty()
+            {
+                register_nominal_in_type(t, eq_helpers, type_registry);
             }
             discover_builtins_in_expr(&l.node, builtins, effects, eq_helpers, type_registry);
             discover_builtins_in_expr(&r.node, builtins, effects, eq_helpers, type_registry);
@@ -1250,7 +1565,7 @@ fn discover_builtins_in_expr(
         // `InterpolatedStr` lowers to `array.new_fixed` + the variadic
         // concat helper. Register it here so the helper's wasm fn
         // index is allocated by the time emission runs. Each Parsed
-        // part may also need `Int.toString` (if its type is Int) —
+        // part may also need `String.fromInt` (if its type is Int) —
         // we conservatively register that too; unused registrations
         // are stripped by `wasm-opt -Oz`.
         Expr::InterpolatedStr(parts) => {
@@ -1260,8 +1575,8 @@ fn discover_builtins_in_expr(
             // by `wasm-opt -Oz`. Cheaper than a per-part type-driven
             // walk.
             builtins.register(BuiltinName::StringConcatN);
-            builtins.register(BuiltinName::IntToString);
-            builtins.register(BuiltinName::FloatToString);
+            builtins.register(BuiltinName::StringFromInt);
+            builtins.register(BuiltinName::StringFromFloat);
             builtins.register(BuiltinName::StringFromBool);
             for p in parts {
                 if let StrPart::Parsed(inner) = p {

@@ -271,7 +271,7 @@ fn map_string_int_get_after_set() {
     depends []
 
 fn build() -> Map<String, Int>
-    Map.set(Map.empty(), "k", 42)
+    Map.set({}, "k", 42)
 
 fn main() -> Int
     Option.withDefault(Map.get(build(), "k"), -1)
@@ -290,7 +290,7 @@ fn map_string_int_overwrite_keeps_last() {
     depends []
 
 fn build() -> Map<String, Int>
-    Map.set(Map.set(Map.empty(), "k", 1), "k", 99)
+    Map.set(Map.set({}, "k", 1), "k", 99)
 
 fn main() -> Int
     Option.withDefault(Map.get(build(), "k"), -1)
@@ -309,7 +309,7 @@ fn map_int_int_roundtrip() {
     depends []
 
 fn build() -> Map<Int, Int>
-    Map.set(Map.set(Map.empty(), 7, 70), 13, 130)
+    Map.set(Map.set({}, 7, 70), 13, 130)
 
 fn main() -> Int
     Option.withDefault(Map.get(build(), 13), -1)
@@ -328,7 +328,7 @@ fn map_has_returns_one_for_present_key() {
     depends []
 
 fn build() -> Map<String, Int>
-    Map.set(Map.empty(), "k", 1)
+    Map.set({}, "k", 1)
 
 fn main() -> Int
     match Map.has(build(), "k")
@@ -349,7 +349,7 @@ fn map_remove_then_get_returns_default() {
     depends []
 
 fn seeded() -> Map<String, Int>
-    Map.set(Map.empty(), "k", 7)
+    Map.set({}, "k", 7)
 
 fn build() -> Map<String, Int>
     Map.remove(seeded(), "k")
@@ -371,7 +371,7 @@ fn map_keys_count() {
     depends []
 
 fn build() -> Map<String, Int>
-    Map.set(Map.set(Map.set(Map.empty(), "a", 1), "b", 2), "c", 3)
+    Map.set(Map.set(Map.set({}, "a", 1), "b", 2), "c", 3)
 
 fn main() -> Int
     List.len(Map.keys(build()))
@@ -393,7 +393,7 @@ fn nums() -> List<Int>
     [10, 20, 30, 40]
 
 fn build() -> Map<String, List<Int>>
-    Map.set(Map.empty(), "k", nums())
+    Map.set({}, "k", nums())
 
 fn fallback() -> List<Int>
     []
@@ -422,7 +422,7 @@ fn key() -> Point
     Point(x = 1, y = 2)
 
 fn build() -> Map<Point, Int>
-    Map.set(Map.empty(), key(), 99)
+    Map.set({}, key(), 99)
 
 fn main() -> Int
     Option.withDefault(Map.get(build(), key()), -1)
@@ -455,7 +455,7 @@ fn blueKey() -> Tag
     Tag.Blue
 
 fn build() -> Map<Tag, Int>
-    m1 = Map.set(Map.empty(), redKey(), 1)
+    m1 = Map.set({}, redKey(), 1)
     m2 = Map.set(m1, greenKey(), 2)
     Map.set(m2, blueKey(), 3)
 
@@ -510,7 +510,7 @@ fn build() -> Vector<Int>
     Vector.fromList([1, 2, 3, 4])
 
 fn main() -> Int
-    List.len(Vector.toList(build()))
+    List.len(List.fromVector(build()))
 "#
         ),
         4

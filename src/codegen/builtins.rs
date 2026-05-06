@@ -17,13 +17,10 @@ pub(crate) enum Builtin {
 
     // --- Int ---
     IntAbs,
-    IntToFloat,
-    IntToString,
+    IntFromFloat,
     IntFromString,
-    IntParse,
     IntMin,
     IntMax,
-    IntRem,
     IntMod,
 
     // --- Float ---
@@ -33,10 +30,8 @@ pub(crate) enum Builtin {
     FloatRound,
     FloatFloor,
     FloatCeil,
-    FloatToInt,
-    FloatToString,
+    FloatFromInt,
     FloatFromString,
-    FloatParse,
     FloatPi,
     FloatMin,
     FloatMax,
@@ -46,7 +41,6 @@ pub(crate) enum Builtin {
 
     // --- String ---
     StringLen,
-    StringConcat,
     StringCharAt,
     StringChars,
     StringSlice,
@@ -99,10 +93,9 @@ pub(crate) enum Builtin {
     VectorSet,
     VectorLen,
     VectorFromList,
-    VectorToList,
+    ListFromVector,
 
     // --- Map ---
-    MapEmpty,
     MapGet,
     MapSet,
     MapHas,
@@ -132,13 +125,10 @@ pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
 
         // Int
         "Int.abs" => Builtin::IntAbs,
-        "Int.toFloat" | "Float.fromInt" => Builtin::IntToFloat,
-        "Int.toString" => Builtin::IntToString,
+        "Int.fromFloat" => Builtin::IntFromFloat,
         "Int.fromString" => Builtin::IntFromString,
-        "Int.parse" => Builtin::IntParse,
         "Int.min" => Builtin::IntMin,
         "Int.max" => Builtin::IntMax,
-        "Int.rem" => Builtin::IntRem,
         "Int.mod" => Builtin::IntMod,
 
         // Float
@@ -148,10 +138,8 @@ pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
         "Float.round" => Builtin::FloatRound,
         "Float.floor" => Builtin::FloatFloor,
         "Float.ceil" => Builtin::FloatCeil,
-        "Float.toInt" => Builtin::FloatToInt,
-        "Float.toString" => Builtin::FloatToString,
+        "Float.fromInt" => Builtin::FloatFromInt,
         "Float.fromString" => Builtin::FloatFromString,
-        "Float.parse" => Builtin::FloatParse,
         "Float.pi" => Builtin::FloatPi,
         "Float.min" => Builtin::FloatMin,
         "Float.max" => Builtin::FloatMax,
@@ -161,7 +149,6 @@ pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
 
         // String
         "String.len" => Builtin::StringLen,
-        "String.concat" => Builtin::StringConcat,
         "String.charAt" => Builtin::StringCharAt,
         "String.chars" => Builtin::StringChars,
         "String.slice" => Builtin::StringSlice,
@@ -214,10 +201,9 @@ pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
         "Vector.set" => Builtin::VectorSet,
         "Vector.len" => Builtin::VectorLen,
         "Vector.fromList" => Builtin::VectorFromList,
-        "Vector.toList" => Builtin::VectorToList,
+        "List.fromVector" => Builtin::ListFromVector,
 
         // Map
-        "Map.empty" => Builtin::MapEmpty,
         "Map.get" => Builtin::MapGet,
         "Map.set" => Builtin::MapSet,
         "Map.has" => Builtin::MapHas,

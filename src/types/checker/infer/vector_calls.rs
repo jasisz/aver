@@ -117,7 +117,7 @@ impl TypeChecker {
                 };
                 Some(vector_ty(elem))
             }
-            "Vector.toList" => {
+            "List.fromVector" => {
                 if let Err(fallback) = expect_arity(self, 1, list_ty(Type::Invalid)) {
                     return Some(fallback);
                 }

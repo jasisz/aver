@@ -3,12 +3,13 @@
 /// Methods:
 ///   Int.fromString(s)   → Result<Int, String>  — parse string to int
 ///   Int.fromFloat(f)    → Int                  — truncate float to int
-///   Int.toString(n)     → String               — format int as string
 ///   Int.abs(n)          → Int                  — absolute value
 ///   Int.min(a, b)       → Int                  — minimum of two ints
 ///   Int.max(a, b)       → Int                  — maximum of two ints
 ///   Int.mod(a, b)       → Result<Int, String>  — modulo (error on b=0)
-///   Int.toFloat(n)      → Float                — widen int to float
+///
+/// Stringification goes through `String.fromInt` (or `"{n}"` interpolation);
+/// widening to Float goes through `Float.fromInt`.
 ///
 /// No effects required.
 use std::collections::HashMap;
@@ -19,16 +20,7 @@ use crate::value::{RuntimeError, Value};
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
-    for method in &[
-        "fromString",
-        "fromFloat",
-        "toString",
-        "abs",
-        "min",
-        "max",
-        "mod",
-        "toFloat",
-    ] {
+    for method in &["fromString", "fromFloat", "abs", "min", "max", "mod"] {
         members.insert(
             method.to_string(),
             Value::Builtin(format!("Int.{}", method)),
@@ -52,12 +44,10 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
         "Int.fromString" => Some(from_string(args)),
         "Int.fromFloat" => Some(from_float(args)),
-        "Int.toString" => Some(to_string(args)),
         "Int.abs" => Some(abs(args)),
         "Int.min" => Some(min(args)),
         "Int.max" => Some(max(args)),
         "Int.mod" => Some(modulo(args)),
-        "Int.toFloat" => Some(to_float(args)),
         _ => None,
     }
 }
@@ -88,16 +78,6 @@ fn from_float(args: &[Value]) -> Result<Value, RuntimeError> {
         ));
     };
     Ok(Value::Int(*f as i64))
-}
-
-fn to_string(args: &[Value]) -> Result<Value, RuntimeError> {
-    let [val] = one_arg("Int.toString", args)?;
-    let Value::Int(n) = val else {
-        return Err(RuntimeError::Error(
-            "Int.toString: argument must be an Int".to_string(),
-        ));
-    };
-    Ok(Value::Str(format!("{}", n)))
 }
 
 fn abs(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -146,16 +126,6 @@ fn modulo(args: &[Value]) -> Result<Value, RuntimeError> {
     }
 }
 
-fn to_float(args: &[Value]) -> Result<Value, RuntimeError> {
-    let [val] = one_arg("Int.toFloat", args)?;
-    let Value::Int(n) = val else {
-        return Err(RuntimeError::Error(
-            "Int.toFloat: argument must be an Int".to_string(),
-        ));
-    };
-    Ok(Value::Float(*n as f64))
-}
-
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 fn one_arg<'a>(name: &str, args: &'a [Value]) -> Result<[&'a Value; 1], RuntimeError> {
@@ -183,16 +153,7 @@ fn two_args<'a>(name: &str, args: &'a [Value]) -> Result<[&'a Value; 2], Runtime
 // ─── NanValue-native API ─────────────────────────────────────────────────────
 
 pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
-    let methods = &[
-        "fromString",
-        "fromFloat",
-        "toString",
-        "abs",
-        "min",
-        "max",
-        "mod",
-        "toFloat",
-    ];
+    let methods = &["fromString", "fromFloat", "abs", "min", "max", "mod"];
     let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
     for method in methods {
         let idx = arena.push_builtin(&format!("Int.{}", method));
@@ -213,12 +174,10 @@ pub fn call_nv(
     match name {
         "Int.fromString" => Some(from_string_nv(args, arena)),
         "Int.fromFloat" => Some(from_float_nv(args, arena)),
-        "Int.toString" => Some(to_string_nv(args, arena)),
         "Int.abs" => Some(abs_nv(args, arena)),
         "Int.min" => Some(min_nv(args, arena)),
         "Int.max" => Some(max_nv(args, arena)),
         "Int.mod" => Some(modulo_nv(args, arena)),
-        "Int.toFloat" => Some(to_float_nv(args, arena)),
         _ => None,
     }
 }
@@ -276,17 +235,6 @@ fn from_float_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runti
     Ok(NanValue::new_int(v.as_float() as i64, arena))
 }
 
-fn to_string_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    let v = nv_check1("Int.toString", args)?;
-    if !v.is_int() {
-        return Err(RuntimeError::Error(
-            "Int.toString: argument must be an Int".to_string(),
-        ));
-    }
-    let s = format!("{}", v.as_int(arena));
-    Ok(NanValue::new_string_value(&s, arena))
-}
-
 fn abs_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
     let v = nv_check1("Int.abs", args)?;
     if !v.is_int() {
@@ -339,14 +287,4 @@ fn modulo_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
         let inner = NanValue::new_int(x % y, arena);
         Ok(NanValue::new_ok_value(inner, arena))
     }
-}
-
-fn to_float_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
-    let v = nv_check1("Int.toFloat", args)?;
-    if !v.is_int() {
-        return Err(RuntimeError::Error(
-            "Int.toFloat: argument must be an Int".to_string(),
-        ));
-    }
-    Ok(NanValue::new_float(v.as_int(arena) as f64))
 }

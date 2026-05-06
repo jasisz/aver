@@ -35,6 +35,7 @@ use crate::ir::CallLowerCtx;
 mod builtins;
 mod emit;
 pub(super) mod eq_helpers;
+pub(super) mod hash_helpers;
 mod infer;
 mod slots;
 
@@ -47,7 +48,7 @@ pub(super) struct FnMap {
     pub(super) by_name: std::collections::HashMap<String, FnEntry>,
     /// Dotted builtin name → wasm fn index. Populated by
     /// `module::emit_module` from the `BuiltinRegistry` so call
-    /// sites can `call $builtin_idx` for `Int.toString` etc.
+    /// sites can `call $builtin_idx` for `String.fromInt` etc.
     pub(super) builtins: std::collections::HashMap<String, u32>,
     /// Dotted effect name → wasm fn index (host import). Populated
     /// from `EffectRegistry`. Imports occupy fn idx 0..K so these
@@ -158,6 +159,7 @@ pub(super) fn emit_fn_body(
     self_wasm_idx: u32,
     registry: &TypeRegistry,
     effect_idx_lookup: &HashMap<String, u32>,
+    caller_fn_collector: &std::cell::RefCell<CallerFnCollector>,
 ) -> Result<Vec<ValType>, WasmGcError> {
     let slots = SlotTable::build_for_fn(fd, registry, fn_map)?;
     let FnBody::Block(stmts) = fd.body.as_ref();
@@ -187,6 +189,7 @@ pub(super) fn emit_fn_body(
         params: &fd.params,
         binding_names: &binding_names,
         effect_idx_lookup,
+        caller_fn_collector,
     };
 
     for (i, stmt) in stmts.iter().enumerate() {
@@ -247,6 +250,35 @@ pub(super) fn emit_fn_body(
     Ok(slots.extra_locals(count_value_params(&fd.params)))
 }
 
+/// Lazy-populated registry of caller_fn names actually emitted by the
+/// codegen. Replaces the AST walker `fn_body_emits_effect_call` from
+/// 0.16.2 — every site that calls `emit_caller_fn_idx` registers the
+/// fn name here on demand, so the wasm output's caller-fn name table
+/// contains exactly the fns whose bodies emit a caller_fn slot. Zero
+/// false positives, zero rozjazdy walker↔codegen.
+#[derive(Default)]
+pub(super) struct CallerFnCollector {
+    /// Aver fn name → idx in the exported caller-fn table (0..N).
+    pub(super) idx_by_name: HashMap<String, u32>,
+    /// Insertion order — the host walks `__caller_fn_name(0..N)` and
+    /// the i-th entry must match `names[i]`.
+    pub(super) names: Vec<String>,
+}
+
+impl CallerFnCollector {
+    /// Get-or-insert a name, returning the i32 idx the codegen emits
+    /// at the call site. New names land at the end of `names`.
+    pub(super) fn register(&mut self, name: &str) -> u32 {
+        if let Some(&i) = self.idx_by_name.get(name) {
+            return i;
+        }
+        let i = self.names.len() as u32;
+        self.names.push(name.to_string());
+        self.idx_by_name.insert(name.to_string(), i);
+        i
+    }
+}
+
 /// Per-fn lowering context — read-only state every emit fn needs.
 pub(super) struct EmitCtx<'a> {
     pub(super) fn_map: &'a FnMap,
@@ -276,6 +308,12 @@ pub(super) struct EmitCtx<'a> {
     /// independent product anywhere — discovery only registers the
     /// three host imports if it sees one.
     pub(super) effect_idx_lookup: &'a HashMap<String, u32>,
+    /// Lazy collector for caller_fn names. `emit_caller_fn_idx`
+    /// registers the current fn name here on each effect call site;
+    /// the eventual `__caller_fn_name(idx)` body and data segments
+    /// are emitted from `names` after every fn body has been
+    /// produced.
+    pub(super) caller_fn_collector: &'a std::cell::RefCell<CallerFnCollector>,
 }
 
 impl<'a> EmitCtx<'a> {

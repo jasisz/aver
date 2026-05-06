@@ -92,10 +92,10 @@ fn evalVar(name: String, env: Map<String, Val>, fns: FnStore) -> Result<Val, Str
             Result.Err(_) -> Domain.Eval.Common.evalVarFallback(name, fns)
 
 verify evalVar
-    evalVar("x", Map.set(Map.empty(), "x", Val.ValInt(5)), Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValInt(5))
-    evalVar("Unit", Map.empty(), Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValUnit)
-    evalVar("Option.None", Map.empty(), Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValNone)
-    evalVar("missing", Map.empty(), Domain.Eval.Store.emptyFnStore()) => Result.Err("undefined variable: missing")
+    evalVar("x", Map.set({}, "x", Val.ValInt(5)), Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValInt(5))
+    evalVar("Unit", {}, Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValUnit)
+    evalVar("Option.None", {}, Domain.Eval.Store.emptyFnStore()) => Result.Ok(Val.ValNone)
+    evalVar("missing", {}, Domain.Eval.Store.emptyFnStore()) => Result.Err("undefined variable: missing")
 
 fn evalBoolBranch(cond: Expr, thenExpr: Expr, elseExpr: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate a direct bool branch in map path."
@@ -355,7 +355,7 @@ fn callResolvedById(fnId: Int, fd: FnDef, args: List<Val>, fns: FnStore) -> Resu
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match fd.slotCount > 0
         true -> evalResolvedSlotFn(fnId, fd, Domain.Eval.Slots.buildSlotEnv(args, fd.slotCount), fns)
-        false -> evalResolvedNamedFn(fd, Domain.Eval.Store.zipArgs(fd.params, args, Map.empty()), fns)
+        false -> evalResolvedNamedFn(fd, Domain.Eval.Store.zipArgs(fd.params, args, {}), fns)
 
 fn evalResolvedSlotFn(fnId: Int, fd: FnDef, calleeEnv: Vector<Val>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate a resolved function body in slot mode, looping self-tail-calls instead of recursing on the host stack."
@@ -575,7 +575,7 @@ fn evalCallDirectMapToSlot(fnId: Int, fd: FnDef, argExprs: List<Expr>, env: Map<
 fn evalCallDirectMapToNamed(fd: FnDef, argExprs: List<Expr>, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Call resolved function by evaluating args directly into the callee named env."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
-    calleeEnv = evalArgsMapToNamedEnv(argExprs, fd.params, env, fns, Map.empty())?
+    calleeEnv = evalArgsMapToNamedEnv(argExprs, fd.params, env, fns, {})?
     evalResolvedNamedFn(fd, calleeEnv, fns)
 
 fn evalCallBuiltin(name: String, argExprs: List<Expr>, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
@@ -720,14 +720,14 @@ fn evalProgram(prog: Program) -> Result<Val, String>
     ? "Evaluate a complete program: run top-level stmts, then call main() if it exists."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     fnsStore = Domain.Eval.Store.fnsToStore(prog.fns)
-    v = evalStmts(prog.stmts, Map.empty(), fnsStore)?
+    v = evalStmts(prog.stmts, {}, fnsStore)?
     maybeCallMain(fnsStore, v)
 
 fn evalProgramWithFns(prog: Program, extraFns: List<FnDef>) -> Result<Val, String>
     ? "Evaluate a program with additional functions from loaded modules."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     allFns = Domain.Eval.Store.fnsToStore(List.concat(extraFns, prog.fns))
-    v = evalStmts(prog.stmts, Map.empty(), allFns)?
+    v = evalStmts(prog.stmts, {}, allFns)?
     maybeCallMain(allFns, v)
 
 fn maybeCallMain(fns: FnStore, fallback: Val) -> Result<Val, String>
@@ -994,7 +994,7 @@ fn evalCallDirectSlotToSlot(fnId: Int, fd: FnDef, argExprs: List<Expr>, env: Vec
 fn evalCallDirectSlotToNamed(fd: FnDef, argExprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
     ? "Call resolved function by evaluating args directly into a named env from slot caller state."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
-    calleeEnv = evalArgsSlotToNamedEnv(argExprs, fd.params, env, slotMap, fns, Map.empty())?
+    calleeEnv = evalArgsSlotToNamedEnv(argExprs, fd.params, env, slotMap, fns, {})?
     evalResolvedNamedFn(fd, calleeEnv, fns)
 
 fn evalCallBuiltinSlot(name: String, argExprs: List<Expr>, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
@@ -1208,8 +1208,8 @@ fn mergeBindingsSlot(bindings: List<(String, Val)>, bindingSlots: Map<String, In
             (name, val) -> mergeOneBindingSlot(name, val, rest, bindingSlots, env)
 
 verify mergeBindingsSlot
-    Vector.get(mergeBindingsSlot([], Map.empty(), Vector.fromList([Val.ValUnit])), 0) => Option.Some(Val.ValUnit)
-    Vector.get(mergeBindingsSlot([("x", Val.ValInt(5))], Map.set(Map.empty(), "x", 0), Vector.fromList([Val.ValUnit, Val.ValUnit])), 0) => Option.Some(Val.ValInt(5))
+    Vector.get(mergeBindingsSlot([], {}, Vector.fromList([Val.ValUnit])), 0) => Option.Some(Val.ValUnit)
+    Vector.get(mergeBindingsSlot([("x", Val.ValInt(5))], Map.set({}, "x", 0), Vector.fromList([Val.ValUnit, Val.ValUnit])), 0) => Option.Some(Val.ValInt(5))
 
 fn mergeOneBindingSlot(name: String, val: Val, rest: List<(String, Val)>, bindingSlots: Map<String, Int>, env: Vector<Val>) -> Vector<Val>
     ? "Merge one pattern binding into slot env."
@@ -1218,8 +1218,8 @@ fn mergeOneBindingSlot(name: String, val: Val, rest: List<(String, Val)>, bindin
         Option.None -> mergeBindingsSlot(rest, bindingSlots, env)
 
 verify mergeOneBindingSlot
-    Vector.get(mergeOneBindingSlot("x", Val.ValInt(7), [], Map.set(Map.empty(), "x", 0), Vector.fromList([Val.ValUnit, Val.ValUnit])), 0) => Option.Some(Val.ValInt(7))
-    Vector.get(mergeOneBindingSlot("y", Val.ValInt(3), [], Map.empty(), Vector.fromList([Val.ValUnit, Val.ValUnit])), 0) => Option.Some(Val.ValUnit)
+    Vector.get(mergeOneBindingSlot("x", Val.ValInt(7), [], Map.set({}, "x", 0), Vector.fromList([Val.ValUnit, Val.ValUnit])), 0) => Option.Some(Val.ValInt(7))
+    Vector.get(mergeOneBindingSlot("y", Val.ValInt(3), [], {}, Vector.fromList([Val.ValUnit, Val.ValUnit])), 0) => Option.Some(Val.ValUnit)
 
 fn evalPropagateSlot(inner: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate ? operator in slot path."

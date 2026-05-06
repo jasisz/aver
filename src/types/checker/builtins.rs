@@ -439,12 +439,10 @@ impl TypeChecker {
         let int_sigs: &[(&str, &[Type], Type, &[&str])] = &[
             ("Int.fromString", &[Type::Str], int_result(), &[]),
             ("Int.fromFloat", &[Type::Float], Type::Int, &[]),
-            ("Int.toString", &[Type::Int], Type::Str, &[]),
             ("Int.abs", &[Type::Int], Type::Int, &[]),
             ("Int.min", &[Type::Int, Type::Int], Type::Int, &[]),
             ("Int.max", &[Type::Int, Type::Int], Type::Int, &[]),
             ("Int.mod", &[Type::Int, Type::Int], int_result(), &[]),
-            ("Int.toFloat", &[Type::Int], Type::Float, &[]),
         ];
         for (name, params, ret, effects) in int_sigs {
             self.insert_sig(name, params, ret.clone(), effects);
@@ -455,7 +453,6 @@ impl TypeChecker {
         let float_sigs: &[(&str, &[Type], Type, &[&str])] = &[
             ("Float.fromString", &[Type::Str], float_result(), &[]),
             ("Float.fromInt", &[Type::Int], Type::Float, &[]),
-            ("Float.toString", &[Type::Float], Type::Str, &[]),
             ("Float.abs", &[Type::Float], Type::Float, &[]),
             ("Float.floor", &[Type::Float], Type::Int, &[]),
             ("Float.ceil", &[Type::Float], Type::Int, &[]),
@@ -555,7 +552,6 @@ impl TypeChecker {
         let v_var = || Type::Var("V".to_string());
         let map_kv = || Type::Map(Box::new(k_var()), Box::new(v_var()));
         let map_sigs: &[(&str, &[Type], Type, &[&str])] = &[
-            ("Map.empty", &[], map_kv(), &[]),
             ("Map.set", &[map_kv(), k_var(), v_var()], map_kv(), &[]),
             (
                 "Map.get",
@@ -614,7 +610,7 @@ impl TypeChecker {
                 &[],
             ),
             (
-                "Vector.toList",
+                "List.fromVector",
                 &[vec_t()],
                 Type::List(Box::new(t_var())),
                 &[],

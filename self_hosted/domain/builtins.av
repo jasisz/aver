@@ -18,7 +18,6 @@ fn callBuiltin(name: String, args: List<Val>) -> Result<Val, String>
 fn callBuiltinFast(name: String, args: List<Val>) -> Option<Result<Val, String>>
     ? "Fast exact-match dispatch for the hottest builtins."
     match name
-        "Map.empty" -> Option.Some(builtinMapEmpty(args))
         "Map.set" -> Option.Some(builtinMapSet(args))
         "Map.get" -> Option.Some(builtinMapGet(args))
         "Map.has" -> Option.Some(builtinMapHas(args))
@@ -30,14 +29,14 @@ fn callBuiltinFast(name: String, args: List<Val>) -> Option<Result<Val, String>>
         "Vector.set" -> Option.Some(Domain.Builtins.Vector.call(name, args))
         "Vector.len" -> Option.Some(Domain.Builtins.Vector.call(name, args))
         "Vector.fromList" -> Option.Some(Domain.Builtins.Vector.call(name, args))
-        "Vector.toList" -> Option.Some(Domain.Builtins.Vector.call(name, args))
+        "List.fromVector" -> Option.Some(Domain.Builtins.Vector.call(name, args))
         "Option.None" -> Option.Some(Result.Ok(Val.ValNone))
         "Option.Some" -> Option.Some(Domain.Builtins.Wrappers.call(name, args))
         "Option.withDefault" -> Option.Some(Domain.Builtins.Wrappers.call(name, args))
         "Result.Ok" -> Option.Some(Domain.Builtins.Wrappers.call(name, args))
         "Result.Err" -> Option.Some(Domain.Builtins.Wrappers.call(name, args))
         "Result.withDefault" -> Option.Some(Domain.Builtins.Wrappers.call(name, args))
-        "Int.toString" -> Option.Some(Domain.Builtins.Primitives.callInt(name, args))
+        "String.fromInt" -> Option.Some(Domain.Builtins.Primitives.callInt(name, args))
         _ -> Option.None
 
 verify callBuiltinFast
@@ -48,7 +47,6 @@ verify callBuiltinFast
 fn callBuiltinByIdValues(id: Int, args: List<Val>) -> Result<Val, String>
     ? "Dispatch pre-evaluated args by integer builtin ID. IDs assigned in Ast.builtinNameToId."
     match id
-        0 -> builtinMapEmpty(args)
         1 -> builtinMapSet(args)
         2 -> builtinMapGet(args)
         3 -> builtinMapHas(args)
@@ -60,20 +58,19 @@ fn callBuiltinByIdValues(id: Int, args: List<Val>) -> Result<Val, String>
         9 -> Domain.Builtins.Vector.call("Vector.set", args)
         10 -> Domain.Builtins.Vector.call("Vector.len", args)
         11 -> Domain.Builtins.Vector.call("Vector.fromList", args)
-        12 -> Domain.Builtins.Vector.call("Vector.toList", args)
+        12 -> Domain.Builtins.Vector.call("List.fromVector", args)
         13 -> Result.Ok(Val.ValNone)
         14 -> Domain.Builtins.Wrappers.call("Option.Some", args)
         15 -> Domain.Builtins.Wrappers.call("Option.withDefault", args)
         16 -> Domain.Builtins.Wrappers.call("Result.Ok", args)
         17 -> Domain.Builtins.Wrappers.call("Result.Err", args)
         18 -> Domain.Builtins.Wrappers.call("Result.withDefault", args)
-        19 -> Domain.Builtins.Primitives.callInt("Int.toString", args)
+        19 -> Domain.Builtins.Primitives.callInt("String.fromInt", args)
         20 -> Domain.Builtins.List.call("List.take", args)
         21 -> Domain.Builtins.List.call("List.drop", args)
-        _ -> Result.Err("Unknown builtin ID: {Int.toString(id)}")
+        _ -> Result.Err("Unknown builtin ID: {String.fromInt(id)}")
 
 verify callBuiltinByIdValues
-    callBuiltinByIdValues(0, []) => Result.Ok(Val.ValMap(Map.empty()))
     callBuiltinByIdValues(13, []) => Result.Ok(Val.ValNone)
     callBuiltinByIdValues(20, [Val.ValList([Val.ValInt(1), Val.ValInt(2)]), Val.ValInt(1)]) => Result.Ok(Val.ValList([Val.ValInt(1)]))
     callBuiltinByIdValues(999, []) => Result.Err("Unknown builtin ID: 999")
@@ -122,7 +119,6 @@ fn callBuiltinOther(name: String, args: List<Val>) -> Result<Val, String>
         "Bool.or" -> builtinBoolOr(args)
         "Bool.and" -> builtinBoolAnd(args)
         "Bool.not" -> builtinBoolNot(args)
-        "Map.empty" -> builtinMapEmpty(args)
         "Map.set" -> builtinMapSet(args)
         "Map.get" -> builtinMapGet(args)
         "Map.has" -> builtinMapHas(args)
@@ -220,7 +216,7 @@ fn builtinMapEntries(args: List<Val>) -> Result<Val, String>
         _ -> Result.Err("Map.entries requires a Map")
 
 verify builtinMapEntries
-    builtinMapEntries([Val.ValMap(Map.empty())]) => Result.Ok(Val.ValList([]))
+    builtinMapEntries([Val.ValMap({})]) => Result.Ok(Val.ValList([]))
     builtinMapEntries([Val.ValInt(1)]) => Result.Err("Map.entries requires a Map")
 
 fn mapEntriesToTuples(entries: List<(String, Val)>, acc: List<Val>) -> List<Val>
@@ -242,7 +238,7 @@ fn builtinMapKeys(args: List<Val>) -> Result<Val, String>
         _ -> Result.Err("Map.keys requires a Map")
 
 verify builtinMapKeys
-    builtinMapKeys([Val.ValMap(Map.empty())]) => Result.Ok(Val.ValList([]))
+    builtinMapKeys([Val.ValMap({})]) => Result.Ok(Val.ValList([]))
     builtinMapKeys([Val.ValInt(1)]) => Result.Err("Map.keys requires a Map")
 
 fn builtinMapValues(args: List<Val>) -> Result<Val, String>
@@ -253,17 +249,17 @@ fn builtinMapValues(args: List<Val>) -> Result<Val, String>
         _ -> Result.Err("Map.values requires a Map")
 
 verify builtinMapValues
-    builtinMapValues([Val.ValMap(Map.empty())]) => Result.Ok(Val.ValList([]))
+    builtinMapValues([Val.ValMap({})]) => Result.Ok(Val.ValList([]))
     builtinMapValues([Val.ValInt(1)]) => Result.Err("Map.values requires a Map")
 
 fn builtinMapFromList(args: List<Val>) -> Result<Val, String>
     ? "Map.fromList(entries) -> Map."
     v = Domain.Builtins.Helpers.oneArg(args)?
     items = Domain.Builtins.Helpers.expectList(v)?
-    Result.Ok(Val.ValMap(tuplesToMap(items, Map.empty())))
+    Result.Ok(Val.ValMap(tuplesToMap(items, {})))
 
 verify builtinMapFromList
-    builtinMapFromList([Val.ValList([])]) => Result.Ok(Val.ValMap(Map.empty()))
+    builtinMapFromList([Val.ValList([])]) => Result.Ok(Val.ValMap({}))
     builtinMapFromList([Val.ValInt(1)]) => Result.Err("expected list argument")
 
 fn tuplesToMap(items: List<Val>, acc: Map<String, Val>) -> Map<String, Val>
@@ -275,8 +271,8 @@ fn tuplesToMap(items: List<Val>, acc: Map<String, Val>) -> Map<String, Val>
             _ -> tuplesToMap(rest, acc)
 
 verify tuplesToMap
-    tuplesToMap([], Map.empty()) => Map.empty()
-    tuplesToMap([Val.ValTuple([Val.ValStr("a"), Val.ValInt(1)])], Map.empty()) => Map.set(Map.empty(), "a", Val.ValInt(1))
+    tuplesToMap([], {}) => {}
+    tuplesToMap([Val.ValTuple([Val.ValStr("a"), Val.ValInt(1)])], {}) => Map.set({}, "a", Val.ValInt(1))
 
 fn tuplesToMapOne(parts: List<Val>, rest: List<Val>, acc: Map<String, Val>) -> Map<String, Val>
     ? "Extract key-value from tuple parts."
@@ -287,8 +283,8 @@ fn tuplesToMapOne(parts: List<Val>, rest: List<Val>, acc: Map<String, Val>) -> M
         [] -> tuplesToMap(rest, acc)
 
 verify tuplesToMapOne
-    tuplesToMapOne([Val.ValStr("k"), Val.ValInt(1)], [], Map.empty()) => Map.set(Map.empty(), "k", Val.ValInt(1))
-    tuplesToMapOne([], [], Map.empty()) => Map.empty()
+    tuplesToMapOne([Val.ValStr("k"), Val.ValInt(1)], [], {}) => Map.set({}, "k", Val.ValInt(1))
+    tuplesToMapOne([], [], {}) => {}
 
 fn builtinMapSize(args: List<Val>) -> Result<Val, String>
     ? "Map.size(map) -> Int."
@@ -298,7 +294,7 @@ fn builtinMapSize(args: List<Val>) -> Result<Val, String>
         _ -> Result.Err("Map.size requires a Map")
 
 verify builtinMapSize
-    builtinMapSize([Val.ValMap(Map.empty())]) => Result.Ok(Val.ValInt(0))
+    builtinMapSize([Val.ValMap({})]) => Result.Ok(Val.ValInt(0))
     builtinMapSize([Val.ValInt(1)]) => Result.Err("Map.size requires a Map")
 
 fn builtinMapRemove(args: List<Val>) -> Result<Val, String>
@@ -308,7 +304,7 @@ fn builtinMapRemove(args: List<Val>) -> Result<Val, String>
         (mapV, keyV) -> builtinMapRemoveInner(mapV, keyV)
 
 verify builtinMapRemove
-    builtinMapRemove([Val.ValMap(Map.empty()), Val.ValStr("x")]) => Result.Ok(Val.ValMap(Map.empty()))
+    builtinMapRemove([Val.ValMap({}), Val.ValStr("x")]) => Result.Ok(Val.ValMap({}))
     builtinMapRemove([Val.ValInt(1), Val.ValStr("x")]) => Result.Err("Map.remove requires a Map")
 
 fn builtinMapRemoveInner(mapV: Val, keyV: Val) -> Result<Val, String>
@@ -318,7 +314,7 @@ fn builtinMapRemoveInner(mapV: Val, keyV: Val) -> Result<Val, String>
         _ -> Result.Err("Map.remove requires a Map")
 
 verify builtinMapRemoveInner
-    builtinMapRemoveInner(Val.ValMap(Map.empty()), Val.ValStr("x")) => Result.Ok(Val.ValMap(Map.empty()))
+    builtinMapRemoveInner(Val.ValMap({}), Val.ValStr("x")) => Result.Ok(Val.ValMap({}))
     builtinMapRemoveInner(Val.ValInt(1), Val.ValStr("x")) => Result.Err("Map.remove requires a Map")
 
 fn callBuiltinServices(name: String, args: List<Val>) -> Result<Val, String>
@@ -701,16 +697,6 @@ verify builtinBoolNot
     builtinBoolNot([Val.ValBool(false)]) => Result.Ok(Val.ValBool(true))
     builtinBoolNot([]) => Result.Err("expected 1 argument")
 
-fn builtinMapEmpty(args: List<Val>) -> Result<Val, String>
-    ? "Map.empty() -> empty map."
-    match args
-        [] -> Result.Ok(Val.ValMap(Map.empty()))
-        _ -> Result.Err("Map.empty takes 0 arguments")
-
-verify builtinMapEmpty
-    builtinMapEmpty([]) => Result.Ok(Val.ValMap(Map.empty()))
-    builtinMapEmpty([Val.ValInt(1)]) => Result.Err("Map.empty takes 0 arguments")
-
 fn builtinMapSet(args: List<Val>) -> Result<Val, String>
     ? "Map.set(map, key, value) -> updated map."
     match args
@@ -722,7 +708,7 @@ fn builtinMapSet(args: List<Val>) -> Result<Val, String>
         _ -> Result.Err("Map.set takes 3 arguments")
 
 verify builtinMapSet
-    builtinMapSet([Val.ValMap(Map.empty()), Val.ValStr("a"), Val.ValInt(1)]) => Result.Ok(Val.ValMap(Map.set(Map.empty(), "a", Val.ValInt(1))))
+    builtinMapSet([Val.ValMap({}), Val.ValStr("a"), Val.ValInt(1)]) => Result.Ok(Val.ValMap(Map.set({}, "a", Val.ValInt(1))))
     builtinMapSet([Val.ValInt(1)]) => Result.Err("Map.set takes 3 arguments")
     builtinMapSet([]) => Result.Err("Map.set takes 3 arguments")
 
@@ -733,7 +719,7 @@ fn builtinMapSetInner(mapV: Val, keyV: Val, valV: Val) -> Result<Val, String>
         _ -> Result.Err("Map.set requires a Map")
 
 verify builtinMapSetInner
-    builtinMapSetInner(Val.ValMap(Map.empty()), Val.ValStr("x"), Val.ValInt(5)) => Result.Ok(Val.ValMap(Map.set(Map.empty(), "x", Val.ValInt(5))))
+    builtinMapSetInner(Val.ValMap({}), Val.ValStr("x"), Val.ValInt(5)) => Result.Ok(Val.ValMap(Map.set({}, "x", Val.ValInt(5))))
     builtinMapSetInner(Val.ValInt(1), Val.ValStr("x"), Val.ValInt(5)) => Result.Err("Map.set requires a Map")
 
 fn builtinMapGet(args: List<Val>) -> Result<Val, String>
@@ -743,8 +729,8 @@ fn builtinMapGet(args: List<Val>) -> Result<Val, String>
         (mapV, keyV) -> builtinMapGetInner(mapV, keyV)
 
 verify builtinMapGet
-    builtinMapGet([Val.ValMap(Map.set(Map.empty(), "a", Val.ValInt(1))), Val.ValStr("a")]) => Result.Ok(Val.ValSome(Val.ValInt(1)))
-    builtinMapGet([Val.ValMap(Map.empty()), Val.ValStr("x")]) => Result.Ok(Val.ValNone)
+    builtinMapGet([Val.ValMap(Map.set({}, "a", Val.ValInt(1))), Val.ValStr("a")]) => Result.Ok(Val.ValSome(Val.ValInt(1)))
+    builtinMapGet([Val.ValMap({}), Val.ValStr("x")]) => Result.Ok(Val.ValNone)
     builtinMapGet([]) => Result.Err("expected 2 arguments")
 
 fn builtinMapGetInner(mapV: Val, keyV: Val) -> Result<Val, String>
@@ -756,8 +742,8 @@ fn builtinMapGetInner(mapV: Val, keyV: Val) -> Result<Val, String>
         _ -> Result.Err("Map.get requires a Map")
 
 verify builtinMapGetInner
-    builtinMapGetInner(Val.ValMap(Map.set(Map.empty(), "k", Val.ValInt(7))), Val.ValStr("k")) => Result.Ok(Val.ValSome(Val.ValInt(7)))
-    builtinMapGetInner(Val.ValMap(Map.empty()), Val.ValStr("k")) => Result.Ok(Val.ValNone)
+    builtinMapGetInner(Val.ValMap(Map.set({}, "k", Val.ValInt(7))), Val.ValStr("k")) => Result.Ok(Val.ValSome(Val.ValInt(7)))
+    builtinMapGetInner(Val.ValMap({}), Val.ValStr("k")) => Result.Ok(Val.ValNone)
     builtinMapGetInner(Val.ValInt(1), Val.ValStr("k")) => Result.Err("Map.get requires a Map")
 
 fn builtinMapHas(args: List<Val>) -> Result<Val, String>
@@ -767,8 +753,8 @@ fn builtinMapHas(args: List<Val>) -> Result<Val, String>
         (mapV, keyV) -> builtinMapHasInner(mapV, keyV)
 
 verify builtinMapHas
-    builtinMapHas([Val.ValMap(Map.set(Map.empty(), "a", Val.ValInt(1))), Val.ValStr("a")]) => Result.Ok(Val.ValBool(true))
-    builtinMapHas([Val.ValMap(Map.empty()), Val.ValStr("a")]) => Result.Ok(Val.ValBool(false))
+    builtinMapHas([Val.ValMap(Map.set({}, "a", Val.ValInt(1))), Val.ValStr("a")]) => Result.Ok(Val.ValBool(true))
+    builtinMapHas([Val.ValMap({}), Val.ValStr("a")]) => Result.Ok(Val.ValBool(false))
     builtinMapHas([]) => Result.Err("expected 2 arguments")
 
 fn builtinMapHasInner(mapV: Val, keyV: Val) -> Result<Val, String>
@@ -778,8 +764,8 @@ fn builtinMapHasInner(mapV: Val, keyV: Val) -> Result<Val, String>
         _ -> Result.Err("Map.has requires a Map")
 
 verify builtinMapHasInner
-    builtinMapHasInner(Val.ValMap(Map.set(Map.empty(), "x", Val.ValInt(1))), Val.ValStr("x")) => Result.Ok(Val.ValBool(true))
-    builtinMapHasInner(Val.ValMap(Map.empty()), Val.ValStr("x")) => Result.Ok(Val.ValBool(false))
+    builtinMapHasInner(Val.ValMap(Map.set({}, "x", Val.ValInt(1))), Val.ValStr("x")) => Result.Ok(Val.ValBool(true))
+    builtinMapHasInner(Val.ValMap({}), Val.ValStr("x")) => Result.Ok(Val.ValBool(false))
     builtinMapHasInner(Val.ValInt(1), Val.ValStr("x")) => Result.Err("Map.has requires a Map")
 
 fn builtinTimeNow(args: List<Val>) -> Result<Val, String>
@@ -829,11 +815,11 @@ fn httpResponseToVal(result: Result<HttpResponse, String>) -> Val
 
 verify httpResponseToVal
     httpResponseToVal(Result.Err("fail")) => Val.ValErr(Val.ValStr("fail"))
-    httpResponseToVal(Result.Ok(HttpResponse(status = 200, body = "ok", headers = {}))) => Val.ValOk(Val.ValRecord("HttpResponse", [("status", Val.ValInt(200)), ("body", Val.ValStr("ok")), ("headers", Val.ValMap(Map.empty()))]))
+    httpResponseToVal(Result.Ok(HttpResponse(status = 200, body = "ok", headers = {}))) => Val.ValOk(Val.ValRecord("HttpResponse", [("status", Val.ValInt(200)), ("body", Val.ValStr("ok")), ("headers", Val.ValMap({}))]))
 
 fn headersToVal(headers: Map<String, List<String>>) -> Val
     ? "Convert host headers Map<String, List<String>> to a Val.ValMap whose values are Val.ValList of Val.ValStr."
-    Val.ValMap(headersToValMap(headers, Map.keys(headers), Map.empty()))
+    Val.ValMap(headersToValMap(headers, Map.keys(headers), {}))
 
 fn headersToValMap(headers: Map<String, List<String>>, names: List<String>, acc: Map<String, Val>) -> Map<String, Val>
     ? "Walk header keys, converting each value list to a Val.ValList."
@@ -854,11 +840,11 @@ verify stringsToValStrs
     stringsToValStrs(["a", "b"], []) => [Val.ValStr("a"), Val.ValStr("b")]
 
 verify headersToValMap
-    headersToValMap(Map.empty(), [], Map.empty()) => Map.empty()
-    headersToValMap({"x" => ["Y"]}, ["x"], Map.empty()) => {"x" => Val.ValList([Val.ValStr("Y")])}
+    headersToValMap({}, [], {}) => {}
+    headersToValMap({"x" => ["Y"]}, ["x"], {}) => {"x" => Val.ValList([Val.ValStr("Y")])}
 
 verify headersToVal
-    headersToVal(Map.empty()) => Val.ValMap(Map.empty())
+    headersToVal({}) => Val.ValMap({})
     headersToVal({"x" => ["Y"]}) => Val.ValMap({"x" => Val.ValList([Val.ValStr("Y")])})
 
 fn builtinTcpSend(args: List<Val>) -> Result<Val, String>

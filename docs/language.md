@@ -35,7 +35,7 @@ Duplicate binding of the same name in the same scope is a type error.
 
 ## Operators
 
-Arithmetic: `+`, `-`, `*`, `/` — operands must match (`Int+Int`, `Float+Float`, `String+String`). No implicit promotion; use `Int.toFloat` / `Float.fromInt` to convert.
+Arithmetic: `+`, `-`, `*`, `/` — operands must match (`Int+Int`, `Float+Float`, `String+String`). No implicit promotion; use `Float.fromInt` / `Int.fromFloat` to convert.
 Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`.
 Error propagation: `expr?` — unwraps `Result.Ok`, propagates `Result.Err` as a `RuntimeError`.
 Independent products: `(a, b)!` — product of independent computations. `(a, b)?!` — same, with Result unwrapping (all must succeed or first error propagates). Elements cannot reference each other; independence is structural. Composes recursively for fan-out parallelism. See [independence.md](independence.md).
@@ -245,7 +245,7 @@ Most application code in Aver stays first-order and explicit. Use function param
 Aver has no dedicated `Set` type. The idiomatic way to express a set is `Map<T, Unit>` — a map whose values carry no information. All `Map.*` operations work on sets:
 
 ```aver
-seen: Map<String, Unit> = Map.empty()
+seen: Map<String, Unit> = {}
 seen2 = Map.set(seen, "alice", Unit)
 Map.has(seen2, "alice")   // true
 Map.len(seen2)            // 1

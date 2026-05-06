@@ -377,20 +377,21 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
 
         // Int
         IntAbs => format!("(if {} >= 0 then {} else -{})", a[0], a[0], a[0]),
-        IntToFloat => format!("({} as real)", a[0]),
-        IntToString | StringFromInt => format!("IntToString({})", a[0]),
-        IntFromString | IntParse => format!("IntFromString({})", a[0]),
+        IntFromFloat => format!("({} as int)", a[0]),
+        StringFromInt => format!("IntToString({})", a[0]),
+        IntFromString => format!("IntFromString({})", a[0]),
         IntMin => format!("(if {} <= {} then {} else {})", a[0], a[1], a[0], a[1]),
         IntMax => format!("(if {} >= {} then {} else {})", a[0], a[1], a[0], a[1]),
-        IntRem | IntMod => format!("Result<int, string>.Ok(({} % {}))", a[0], a[1]),
+        IntMod => format!("Result<int, string>.Ok(({} % {}))", a[0], a[1]),
 
         // Float
         FloatAbs => format!("(if {} >= 0.0 then {} else -{})", a[0], a[0], a[0]),
         FloatSqrt => format!("FloatSqrt({})", a[0]),
         FloatPow => format!("FloatPow({}, {})", a[0], a[1]),
-        FloatRound | FloatFloor | FloatCeil | FloatToInt => format!("FloatToInt({})", a[0]),
-        FloatToString | StringFromFloat => format!("FloatToString({})", a[0]),
-        FloatFromString | FloatParse => format!("FloatFromString({})", a[0]),
+        FloatRound | FloatFloor | FloatCeil => format!("FloatToInt({})", a[0]),
+        FloatFromInt => format!("({} as real)", a[0]),
+        StringFromFloat => format!("FloatToString({})", a[0]),
+        FloatFromString => format!("FloatFromString({})", a[0]),
         FloatPi => "FloatPi()".to_string(),
         FloatMin => format!("(if {} <= {} then {} else {})", a[0], a[1], a[0], a[1]),
         FloatMax => format!("(if {} >= {} then {} else {})", a[0], a[1], a[0], a[1]),
@@ -400,7 +401,6 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
 
         // String
         StringLen => format!("|{}|", a[0]),
-        StringConcat => format!("({} + {})", a[0], a[1]),
         StringCharAt => format!("StringCharAt({}, {})", a[0], a[1]),
         StringChars => format!("StringChars({})", a[0]),
         StringSlice => format!("{}[{}..{}]", a[0], a[1], a[2]),
@@ -465,10 +465,9 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
         ),
         VectorLen => format!("|{}|", a[0]),
         VectorFromList => a[0].clone(),
-        VectorToList => a[0].clone(),
+        ListFromVector => a[0].clone(),
 
         // Map
-        MapEmpty => "map[]".to_string(),
         MapGet => format!("MapGet({}, {})", a[0], a[1]),
         MapSet => format!("{}[{} := {}]", a[0], a[1], a[2]),
         MapHas => format!("({} in {})", a[1], a[0]),

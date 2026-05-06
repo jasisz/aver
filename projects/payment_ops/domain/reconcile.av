@@ -100,9 +100,9 @@ fn compareCapture(provider: String, state: PaymentState, settled: Int) -> List<C
     match compareAmounts(state.capturedAmount, settled)
         AmountComparison.BothMissing -> []
         AmountComparison.Exact -> []
-        AmountComparison.SettledOnly(settledAmount) -> [Domain.Cases.makeCaseDraft(provider, state.paymentId, "settlement_without_capture", "Settlement shows capture {Int.toString(settledAmount)} but realtime captured nothing", "reconcile:settlement-without-capture:{provider}:{state.paymentId}:{Int.toString(settledAmount)}")]
-        AmountComparison.RealtimeOnly(realtimeAmount) -> [Domain.Cases.makeCaseDraft(provider, state.paymentId, "realtime_missing_settlement", "Realtime captured {Int.toString(realtimeAmount)} but no settlement row was imported", "reconcile:missing-settlement:{provider}:{state.paymentId}:{Int.toString(realtimeAmount)}")]
-        AmountComparison.Mismatch(realtimeAmount, settledAmount) -> [Domain.Cases.makeCaseDraft(provider, state.paymentId, "settlement_capture_mismatch", "Realtime captured {Int.toString(realtimeAmount)} but settlement shows {Int.toString(settledAmount)}", "reconcile:capture-mismatch:{provider}:{state.paymentId}:{Int.toString(realtimeAmount)}:{Int.toString(settledAmount)}")]
+        AmountComparison.SettledOnly(settledAmount) -> [Domain.Cases.makeCaseDraft(provider, state.paymentId, "settlement_without_capture", "Settlement shows capture {String.fromInt(settledAmount)} but realtime captured nothing", "reconcile:settlement-without-capture:{provider}:{state.paymentId}:{String.fromInt(settledAmount)}")]
+        AmountComparison.RealtimeOnly(realtimeAmount) -> [Domain.Cases.makeCaseDraft(provider, state.paymentId, "realtime_missing_settlement", "Realtime captured {String.fromInt(realtimeAmount)} but no settlement row was imported", "reconcile:missing-settlement:{provider}:{state.paymentId}:{String.fromInt(realtimeAmount)}")]
+        AmountComparison.Mismatch(realtimeAmount, settledAmount) -> [Domain.Cases.makeCaseDraft(provider, state.paymentId, "settlement_capture_mismatch", "Realtime captured {String.fromInt(realtimeAmount)} but settlement shows {String.fromInt(settledAmount)}", "reconcile:capture-mismatch:{provider}:{state.paymentId}:{String.fromInt(realtimeAmount)}:{String.fromInt(settledAmount)}")]
 
 verify compareCapture
     compareCapture("stripe", sampleState(), 1000) => []
@@ -113,9 +113,9 @@ fn compareRefund(provider: String, state: PaymentState, settled: Int) -> List<Ca
     match compareAmounts(state.refundedAmount, settled)
         AmountComparison.BothMissing -> []
         AmountComparison.Exact -> []
-        AmountComparison.SettledOnly(settledAmount) -> [Domain.Cases.makeCaseDraft(provider, state.paymentId, "settlement_without_refund", "Settlement shows refund {Int.toString(settledAmount)} but realtime refunded nothing", "reconcile:settlement-without-refund:{provider}:{state.paymentId}:{Int.toString(settledAmount)}")]
-        AmountComparison.RealtimeOnly(realtimeAmount) -> [Domain.Cases.makeCaseDraft(provider, state.paymentId, "refund_missing_settlement", "Realtime refunded {Int.toString(realtimeAmount)} but no settlement refund row was imported", "reconcile:refund-missing-settlement:{provider}:{state.paymentId}:{Int.toString(realtimeAmount)}")]
-        AmountComparison.Mismatch(realtimeAmount, settledAmount) -> [Domain.Cases.makeCaseDraft(provider, state.paymentId, "settlement_refund_mismatch", "Realtime refunded {Int.toString(realtimeAmount)} but settlement shows {Int.toString(settledAmount)}", "reconcile:refund-mismatch:{provider}:{state.paymentId}:{Int.toString(realtimeAmount)}:{Int.toString(settledAmount)}")]
+        AmountComparison.SettledOnly(settledAmount) -> [Domain.Cases.makeCaseDraft(provider, state.paymentId, "settlement_without_refund", "Settlement shows refund {String.fromInt(settledAmount)} but realtime refunded nothing", "reconcile:settlement-without-refund:{provider}:{state.paymentId}:{String.fromInt(settledAmount)}")]
+        AmountComparison.RealtimeOnly(realtimeAmount) -> [Domain.Cases.makeCaseDraft(provider, state.paymentId, "refund_missing_settlement", "Realtime refunded {String.fromInt(realtimeAmount)} but no settlement refund row was imported", "reconcile:refund-missing-settlement:{provider}:{state.paymentId}:{String.fromInt(realtimeAmount)}")]
+        AmountComparison.Mismatch(realtimeAmount, settledAmount) -> [Domain.Cases.makeCaseDraft(provider, state.paymentId, "settlement_refund_mismatch", "Realtime refunded {String.fromInt(realtimeAmount)} but settlement shows {String.fromInt(settledAmount)}", "reconcile:refund-mismatch:{provider}:{state.paymentId}:{String.fromInt(realtimeAmount)}:{String.fromInt(settledAmount)}")]
 
 verify compareRefund
     compareRefund("stripe", sampleState(), 0) => []

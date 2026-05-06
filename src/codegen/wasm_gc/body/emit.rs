@@ -556,25 +556,74 @@ pub(super) fn emit_expr(
 /// type mismatch.
 fn sum_or_record_eq_fn(operand: &Spanned<Expr>, ctx: &EmitCtx<'_>) -> Option<u32> {
     let ty = operand.ty()?;
-    let crate::types::Type::Named(name) = ty else {
-        return None;
-    };
-    // Newtypes already lower to their underlying primitive — no helper
-    // needed (the default i64/f64 eq handles them).
-    if ctx.registry.newtype_underlying(name).is_some() {
-        return None;
+    match ty {
+        crate::types::Type::Named(name) => {
+            // Newtypes already lower to their underlying primitive —
+            // no helper needed (the default i64/f64 eq handles them).
+            if ctx.registry.newtype_underlying(name).is_some() {
+                return None;
+            }
+            let is_record = ctx.registry.record_fields.contains_key(name);
+            let is_sum = ctx
+                .registry
+                .variants
+                .values()
+                .flat_map(|v| v.iter())
+                .any(|v| &v.parent == name);
+            if !is_record && !is_sum {
+                return None;
+            }
+            ctx.fn_map.eq_helpers.get(name).copied()
+        }
+        // Generic carriers — `Option<X>`, `Result<X,Y>`, `Tuple<…>`
+        // have per-instantiation `__eq_<canonical>` helpers since
+        // 0.16.3. Lookup by the type's display canonical (whitespace-
+        // free, matching how the discovery walker registered it).
+        crate::types::Type::Option(_)
+        | crate::types::Type::Result(_, _)
+        | crate::types::Type::Tuple(_) => {
+            let canonical: String = ty
+                .display()
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            ctx.fn_map.eq_helpers.get(&canonical).copied()
+        }
+        // List / Vector — list_helpers / vfl_helpers slot the per-T
+        // eq fn at registration time. Dispatch through there. Both
+        // ops carry `eq: Option<u32>` (None when T isn't equality-
+        // resolvable; falls through and the surrounding default i64
+        // arm fails validation, same as before this PR).
+        crate::types::Type::List(_) => {
+            let canonical: String = ty
+                .display()
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            ctx.fn_map.list_ops.get(&canonical).and_then(|ops| ops.eq)
+        }
+        crate::types::Type::Vector(_) => {
+            let canonical: String = ty
+                .display()
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            ctx.fn_map.vfl_ops.get(&canonical).and_then(|ops| ops.eq)
+        }
+        // Map<K,V> structural eq — `__eq_Map<K,V>` slot lives in
+        // MapHelperRegistry but we mirror the fn idx into
+        // `eq_helpers` so the lookup shape stays uniform with
+        // record/sum/carrier/list/vec dispatch.
+        crate::types::Type::Map(_, _) => {
+            let canonical: String = ty
+                .display()
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            ctx.fn_map.eq_helpers.get(&canonical).copied()
+        }
+        _ => None,
     }
-    let is_record = ctx.registry.record_fields.contains_key(name);
-    let is_sum = ctx
-        .registry
-        .variants
-        .values()
-        .flat_map(|v| v.iter())
-        .any(|v| &v.parent == name);
-    if !is_record && !is_sum {
-        return None;
-    }
-    ctx.fn_map.eq_helpers.get(name).copied()
 }
 
 fn nullary_variant_idx(expr: &Spanned<Expr>, ctx: &EmitCtx<'_>) -> Option<u32> {
@@ -1322,7 +1371,7 @@ pub(super) fn emit_independent_product_unwrap(
 /// to match.
 fn emit_group_call(func: &mut Function, ctx: &EmitCtx<'_>, op: &str) {
     if let Some(idx) = ctx.effect_idx_lookup.get(op) {
-        if emit_caller_fn_global(func, ctx).is_err() {
+        if emit_caller_fn_idx(func, ctx).is_err() {
             // Should never trip — every fn def has a global allocated
             // in `TypeRegistry::build`.
             return;
@@ -1339,7 +1388,7 @@ fn emit_group_call(func: &mut Function, ctx: &EmitCtx<'_>, op: &str) {
 fn emit_branch_marker(func: &mut Function, ctx: &EmitCtx<'_>, branch_idx: u32) {
     if let Some(idx) = ctx.effect_idx_lookup.get("__record_set_branch") {
         func.instruction(&Instruction::I64Const(branch_idx as i64));
-        if emit_caller_fn_global(func, ctx).is_err() {
+        if emit_caller_fn_idx(func, ctx).is_err() {
             return;
         }
         func.instruction(&Instruction::Call(*idx));
@@ -2352,27 +2401,22 @@ pub(super) fn emit_string_match(
     Ok(())
 }
 
-/// Push the caller-fn String ref via `global.get`. Each fn def in
-/// the program owns one immutable `(ref null $string)` global,
-/// `array.new_data`-init from the fn-name passive segment at module
-/// instantiation. The hot path is a single `global.get` per effect
-/// call — zero alloc, ~3 bytes per call site.
-pub(super) fn emit_caller_fn_global(
+/// Push the caller-fn idx as an `i32` immediate. Lazy-registers the
+/// current fn name with the collector so the post-emit phase knows
+/// exactly which fn names to put in the exported caller-fn table.
+/// Single source of truth: any code path that wants to label its
+/// effect call site with the originating fn just calls this — no
+/// AST walker, no rozjazdy walker↔codegen. Hot path: 2-3 bytes
+/// (`i32.const <idx>`), zero allocation.
+pub(super) fn emit_caller_fn_idx(
     func: &mut Function,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     let idx = ctx
-        .registry
-        .caller_fn_globals
-        .get(ctx.self_fn_name)
-        .copied()
-        .ok_or_else(|| {
-            WasmGcError::Validation(format!(
-                "no caller_fn global registered for fn `{}`",
-                ctx.self_fn_name
-            ))
-        })?;
-    func.instruction(&Instruction::GlobalGet(idx));
+        .caller_fn_collector
+        .borrow_mut()
+        .register(ctx.self_fn_name);
+    func.instruction(&Instruction::I32Const(idx as i32));
     Ok(())
 }
 

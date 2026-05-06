@@ -7,13 +7,13 @@ fn buildMap(n: Int, m: Map<String, Int>) -> Map<String, Int>
     ? "Tail-recursively insert n entries with stringified Int keys."
     match n
         0 -> m
-        _ -> buildMap(n - 1, Map.set(m, Int.toString(n), n))
+        _ -> buildMap(n - 1, Map.set(m, String.fromInt(n), n))
 
 verify buildMap
-    Map.len(buildMap(0, Map.empty())) => 0
-    Map.len(buildMap(5, Map.empty())) => 5
+    Map.len(buildMap(0, {})) => 0
+    Map.len(buildMap(5, {})) => 5
 
 fn main() -> Int
     ? "Bench entry — return value ignored."
-    m = buildMap(5000, Map.empty())
+    m = buildMap(5000, {})
     Map.len(m)

@@ -145,7 +145,7 @@ fn materializeInto(existing: List<ReviewCase>, drafts: List<CaseDraft>, createdA
             true -> materializeInto(existing, rest, createdAt, nextId, acc)
             false -> match caseKeyExists(acc, draft.key)
                 true -> materializeInto(existing, rest, createdAt, nextId, acc)
-                false -> materializeInto(existing, rest, createdAt, nextId + 1, List.prepend(ReviewCase(id = "case-{Int.toString(nextId)}", key = draft.key, provider = draft.provider, paymentId = draft.paymentId, kind = draft.kind, detail = draft.detail, status = CaseStatus.Open, createdAt = createdAt, resolvedAt = Option.None, resolution = Option.None), acc))
+                false -> materializeInto(existing, rest, createdAt, nextId + 1, List.prepend(ReviewCase(id = "case-{String.fromInt(nextId)}", key = draft.key, provider = draft.provider, paymentId = draft.paymentId, kind = draft.kind, detail = draft.detail, status = CaseStatus.Open, createdAt = createdAt, resolvedAt = Option.None, resolution = Option.None), acc))
 
 verify materializeInto
     materializeInto([], [], "2026-03-10T12:00:00Z", 2, []) => []

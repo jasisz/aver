@@ -739,7 +739,7 @@ pub fn buildFloat(
     decDigits: i64,
 ) -> aver_rt::AverList<Token> {
     crate::cancel_checkpoint();
-    let f = ((intPart as f64) + ((decPart as f64) / pow10(decDigits)));
+    let f = (intPart as f64 + (decPart as f64 / pow10(decDigits)));
     aver_rt::AverList::prepend(Token::TkFloat(f), &tokenize(src, pos))
 }
 

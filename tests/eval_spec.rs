@@ -284,7 +284,7 @@ fn runtime_gate_allows_effectful_entrypoint_with_grant() {
 
 #[test]
 fn int_to_string() {
-    assert_eq!(eval("Int.toString(42)"), Value::Str("42".to_string()));
+    assert_eq!(eval("String.fromInt(42)"), Value::Str("42".to_string()));
 }
 
 #[test]
@@ -345,7 +345,7 @@ fn int_mod_zero() {
 
 #[test]
 fn int_to_float() {
-    assert_eq!(eval("Int.toFloat(5)"), Value::Float(5.0));
+    assert_eq!(eval("Float.fromInt(5)"), Value::Float(5.0));
 }
 
 // ---------------------------------------------------------------------------
@@ -364,7 +364,10 @@ fn float_from_int() {
 
 #[test]
 fn float_to_string() {
-    assert_eq!(eval("Float.toString(3.14)"), Value::Str("3.14".to_string()));
+    assert_eq!(
+        eval("String.fromFloat(3.14)"),
+        Value::Str("3.14".to_string())
+    );
 }
 
 #[test]
@@ -743,17 +746,17 @@ fn tuple_equality_runtime() {
 
 #[test]
 fn map_len_empty() {
-    assert_eq!(eval("Map.len(Map.empty())"), Value::Int(0));
+    assert_eq!(eval("Map.len({})"), Value::Int(0));
 }
 
 #[test]
 fn map_set_get_has() {
     assert_eq!(
-        eval("Map.has(Map.set(Map.empty(), \"a\", 1), \"a\")"),
+        eval("Map.has(Map.set({}, \"a\", 1), \"a\")"),
         Value::Bool(true)
     );
     assert_eq!(
-        eval("Map.get(Map.set(Map.empty(), \"a\", 1), \"a\")"),
+        eval("Map.get(Map.set({}, \"a\", 1), \"a\")"),
         Value::Some(Box::new(Value::Int(1)))
     );
 }
@@ -768,13 +771,13 @@ fn map_literal_runtime() {
 
 #[test]
 fn map_get_missing_returns_none() {
-    assert_eq!(eval("Map.get(Map.empty(), \"missing\")"), Value::None);
+    assert_eq!(eval("Map.get({}, \"missing\")"), Value::None);
 }
 
 #[test]
 fn map_remove_drops_key() {
     assert_eq!(
-        eval("Map.has(Map.remove(Map.set(Map.empty(), \"a\", 1), \"a\"), \"a\")"),
+        eval("Map.has(Map.remove(Map.set({}, \"a\", 1), \"a\"), \"a\")"),
         Value::Bool(false)
     );
 }
@@ -802,7 +805,7 @@ fn map_accepts_list_key_with_structural_hash() {
     // Aver maps now hash by value across every shape, so List<Int>
     // (and any other heap structure) participates as a key.
     assert_eq!(
-        eval("Map.get(Map.set(Map.empty(), [1, 2], 42), [1, 2])"),
+        eval("Map.get(Map.set({}, [1, 2], 42), [1, 2])"),
         Value::Some(Box::new(Value::Int(42)))
     );
 }

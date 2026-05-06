@@ -1081,7 +1081,7 @@ verify parseArrayNext
 
 fn emptyJsonMap() -> Map<String, Json>
     ? "JSON helper: emptyJsonMap."
-    Map.empty()
+    {}
 
 fn parseObject(s: String, pos: Int) -> ParseResult
     ? "JSON helper: parseObject."

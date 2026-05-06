@@ -88,72 +88,74 @@ pub fn callBuiltinFast(
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = name.clone();
-        if &*__dispatch_subject == "Map.empty" {
-            Some(builtinMapEmpty(args))
+        if &*__dispatch_subject == "Map.set" {
+            Some(builtinMapSet(args))
         } else {
-            if &*__dispatch_subject == "Map.set" {
-                Some(builtinMapSet(args))
+            if &*__dispatch_subject == "Map.get" {
+                Some(builtinMapGet(args))
             } else {
-                if &*__dispatch_subject == "Map.get" {
-                    Some(builtinMapGet(args))
+                if &*__dispatch_subject == "Map.has" {
+                    Some(builtinMapHas(args))
                 } else {
-                    if &*__dispatch_subject == "Map.has" {
-                        Some(builtinMapHas(args))
+                    if &*__dispatch_subject == "Map.fromList" {
+                        Some(builtinMapFromList(args))
                     } else {
-                        if &*__dispatch_subject == "Map.fromList" {
-                            Some(builtinMapFromList(args))
+                        if &*__dispatch_subject == "Map.entries" {
+                            Some(builtinMapEntries(args))
                         } else {
-                            if &*__dispatch_subject == "Map.entries" {
-                                Some(builtinMapEntries(args))
+                            if &*__dispatch_subject == "Map.remove" {
+                                Some(builtinMapRemove(args))
                             } else {
-                                if &*__dispatch_subject == "Map.remove" {
-                                    Some(builtinMapRemove(args))
+                                if &*__dispatch_subject == "Vector.new" {
+                                    Some(crate::aver_generated::domain::builtins::vector::call(
+                                        name, args,
+                                    ))
                                 } else {
-                                    if &*__dispatch_subject == "Vector.new" {
+                                    if &*__dispatch_subject == "Vector.get" {
                                         Some(crate::aver_generated::domain::builtins::vector::call(
                                             name, args,
                                         ))
                                     } else {
-                                        if &*__dispatch_subject == "Vector.get" {
+                                        if &*__dispatch_subject == "Vector.set" {
                                             Some(crate::aver_generated::domain::builtins::vector::call(name, args))
                                         } else {
-                                            if &*__dispatch_subject == "Vector.set" {
+                                            if &*__dispatch_subject == "Vector.len" {
                                                 Some(crate::aver_generated::domain::builtins::vector::call(name, args))
                                             } else {
-                                                if &*__dispatch_subject == "Vector.len" {
+                                                if &*__dispatch_subject == "Vector.fromList" {
                                                     Some(crate::aver_generated::domain::builtins::vector::call(name, args))
                                                 } else {
-                                                    if &*__dispatch_subject == "Vector.fromList" {
+                                                    if &*__dispatch_subject == "List.fromVector" {
                                                         Some(crate::aver_generated::domain::builtins::vector::call(name, args))
                                                     } else {
-                                                        if &*__dispatch_subject == "Vector.toList" {
-                                                            Some(crate::aver_generated::domain::builtins::vector::call(name, args))
+                                                        if &*__dispatch_subject == "Option.None" {
+                                                            Some(Ok(Val::ValNone.clone()))
                                                         } else {
-                                                            if &*__dispatch_subject == "Option.None"
+                                                            if &*__dispatch_subject == "Option.Some"
                                                             {
-                                                                Some(Ok(Val::ValNone.clone()))
+                                                                Some(crate::aver_generated::domain::builtins::wrappers::call(name, args))
                                                             } else {
                                                                 if &*__dispatch_subject
-                                                                    == "Option.Some"
+                                                                    == "Option.withDefault"
                                                                 {
                                                                     Some(crate::aver_generated::domain::builtins::wrappers::call(name, args))
                                                                 } else {
                                                                     if &*__dispatch_subject
-                                                                        == "Option.withDefault"
+                                                                        == "Result.Ok"
                                                                     {
                                                                         Some(crate::aver_generated::domain::builtins::wrappers::call(name, args))
                                                                     } else {
                                                                         if &*__dispatch_subject
-                                                                            == "Result.Ok"
+                                                                            == "Result.Err"
                                                                         {
                                                                             Some(crate::aver_generated::domain::builtins::wrappers::call(name, args))
                                                                         } else {
                                                                             if &*__dispatch_subject
-                                                                                == "Result.Err"
+                                                                                == "Result.withDefault"
                                                                             {
                                                                                 Some(crate::aver_generated::domain::builtins::wrappers::call(name, args))
                                                                             } else {
-                                                                                if &*__dispatch_subject == "Result.withDefault" { Some(crate::aver_generated::domain::builtins::wrappers::call(name, args)) } else { if &*__dispatch_subject == "Int.toString" { Some(crate::aver_generated::domain::builtins::primitives::callInt(name, args)) } else { None } }
+                                                                                if &*__dispatch_subject == "String.fromInt" { Some(crate::aver_generated::domain::builtins::primitives::callInt(name, args)) } else { None }
                                                                             }
                                                                         }
                                                                     }
@@ -181,71 +183,74 @@ pub fn callBuiltinByIdValues(id: i64, args: &aver_rt::AverList<Val>) -> Result<V
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = id;
-        if __dispatch_subject == 0i64 {
-            builtinMapEmpty(args)
+        if __dispatch_subject == 1i64 {
+            builtinMapSet(args)
         } else {
-            if __dispatch_subject == 1i64 {
-                builtinMapSet(args)
+            if __dispatch_subject == 2i64 {
+                builtinMapGet(args)
             } else {
-                if __dispatch_subject == 2i64 {
-                    builtinMapGet(args)
+                if __dispatch_subject == 3i64 {
+                    builtinMapHas(args)
                 } else {
-                    if __dispatch_subject == 3i64 {
-                        builtinMapHas(args)
+                    if __dispatch_subject == 4i64 {
+                        builtinMapFromList(args)
                     } else {
-                        if __dispatch_subject == 4i64 {
-                            builtinMapFromList(args)
+                        if __dispatch_subject == 5i64 {
+                            builtinMapEntries(args)
                         } else {
-                            if __dispatch_subject == 5i64 {
-                                builtinMapEntries(args)
+                            if __dispatch_subject == 6i64 {
+                                builtinMapRemove(args)
                             } else {
-                                if __dispatch_subject == 6i64 {
-                                    builtinMapRemove(args)
+                                if __dispatch_subject == 7i64 {
+                                    crate::aver_generated::domain::builtins::vector::call(
+                                        AverStr::from("Vector.new"),
+                                        args,
+                                    )
                                 } else {
-                                    if __dispatch_subject == 7i64 {
+                                    if __dispatch_subject == 8i64 {
                                         crate::aver_generated::domain::builtins::vector::call(
-                                            AverStr::from("Vector.new"),
+                                            AverStr::from("Vector.get"),
                                             args,
                                         )
                                     } else {
-                                        if __dispatch_subject == 8i64 {
+                                        if __dispatch_subject == 9i64 {
                                             crate::aver_generated::domain::builtins::vector::call(
-                                                AverStr::from("Vector.get"),
+                                                AverStr::from("Vector.set"),
                                                 args,
                                             )
                                         } else {
-                                            if __dispatch_subject == 9i64 {
-                                                crate::aver_generated::domain::builtins::vector::call(AverStr::from("Vector.set"), args)
+                                            if __dispatch_subject == 10i64 {
+                                                crate::aver_generated::domain::builtins::vector::call(AverStr::from("Vector.len"), args)
                                             } else {
-                                                if __dispatch_subject == 10i64 {
-                                                    crate::aver_generated::domain::builtins::vector::call(AverStr::from("Vector.len"), args)
+                                                if __dispatch_subject == 11i64 {
+                                                    crate::aver_generated::domain::builtins::vector::call(AverStr::from("Vector.fromList"), args)
                                                 } else {
-                                                    if __dispatch_subject == 11i64 {
-                                                        crate::aver_generated::domain::builtins::vector::call(AverStr::from("Vector.fromList"), args)
+                                                    if __dispatch_subject == 12i64 {
+                                                        crate::aver_generated::domain::builtins::vector::call(AverStr::from("List.fromVector"), args)
                                                     } else {
-                                                        if __dispatch_subject == 12i64 {
-                                                            crate::aver_generated::domain::builtins::vector::call(AverStr::from("Vector.toList"), args)
+                                                        if __dispatch_subject == 13i64 {
+                                                            Ok(Val::ValNone.clone())
                                                         } else {
-                                                            if __dispatch_subject == 13i64 {
-                                                                Ok(Val::ValNone.clone())
+                                                            if __dispatch_subject == 14i64 {
+                                                                crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Option.Some"), args)
                                                             } else {
-                                                                if __dispatch_subject == 14i64 {
-                                                                    crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Option.Some"), args)
+                                                                if __dispatch_subject == 15i64 {
+                                                                    crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Option.withDefault"), args)
                                                                 } else {
-                                                                    if __dispatch_subject == 15i64 {
-                                                                        crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Option.withDefault"), args)
+                                                                    if __dispatch_subject == 16i64 {
+                                                                        crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Result.Ok"), args)
                                                                     } else {
                                                                         if __dispatch_subject
-                                                                            == 16i64
+                                                                            == 17i64
                                                                         {
-                                                                            crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Result.Ok"), args)
+                                                                            crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Result.Err"), args)
                                                                         } else {
                                                                             if __dispatch_subject
-                                                                                == 17i64
+                                                                                == 18i64
                                                                             {
-                                                                                crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Result.Err"), args)
+                                                                                crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Result.withDefault"), args)
                                                                             } else {
-                                                                                if __dispatch_subject == 18i64 { crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Result.withDefault"), args) } else { if __dispatch_subject == 19i64 { crate::aver_generated::domain::builtins::primitives::callInt(AverStr::from("Int.toString"), args) } else { if __dispatch_subject == 20i64 { crate::aver_generated::domain::builtins::list::call(AverStr::from("List.take"), args) } else { if __dispatch_subject == 21i64 { crate::aver_generated::domain::builtins::list::call(AverStr::from("List.drop"), args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((36i64) as usize); __b.push_str(&AverStr::from("Unknown builtin ID: ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&((id.to_string()).into_aver())))); __b })) } } } }
+                                                                                if __dispatch_subject == 19i64 { crate::aver_generated::domain::builtins::primitives::callInt(AverStr::from("String.fromInt"), args) } else { if __dispatch_subject == 20i64 { crate::aver_generated::domain::builtins::list::call(AverStr::from("List.take"), args) } else { if __dispatch_subject == 21i64 { crate::aver_generated::domain::builtins::list::call(AverStr::from("List.drop"), args) } else { Err(aver_rt::AverStr::from({ let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((36i64) as usize); __b.push_str(&AverStr::from("Unknown builtin ID: ")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&((id.to_string()).into_aver())))); __b })) } } }
                                                                             }
                                                                         }
                                                                     }
@@ -358,7 +363,7 @@ pub fn callBuiltinOther(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<
                                                                             {
                                                                                 crate::aver_generated::domain::builtins::wrappers::call(name, args)
                                                                             } else {
-                                                                                if &*__dispatch_subject == "Result.Err" { crate::aver_generated::domain::builtins::wrappers::call(name, args) } else { if &*__dispatch_subject == "Result.withDefault" { crate::aver_generated::domain::builtins::wrappers::call(name, args) } else { if &*__dispatch_subject == "Option.Some" { crate::aver_generated::domain::builtins::wrappers::call(name, args) } else { if &*__dispatch_subject == "Option.None" { Ok(Val::ValNone.clone()) } else { if &*__dispatch_subject == "Option.withDefault" { crate::aver_generated::domain::builtins::wrappers::call(name, args) } else { if &*__dispatch_subject == "Option.toResult" { crate::aver_generated::domain::builtins::wrappers::callOptionToResult(args) } else { if &*__dispatch_subject == "Bool.or" { builtinBoolOr(args) } else { if &*__dispatch_subject == "Bool.and" { builtinBoolAnd(args) } else { if &*__dispatch_subject == "Bool.not" { builtinBoolNot(args) } else { if &*__dispatch_subject == "Map.empty" { builtinMapEmpty(args) } else { if &*__dispatch_subject == "Map.set" { builtinMapSet(args) } else { if &*__dispatch_subject == "Map.get" { builtinMapGet(args) } else { if &*__dispatch_subject == "Map.has" { builtinMapHas(args) } else { if &*__dispatch_subject == "Map.entries" { builtinMapEntries(args) } else { if &*__dispatch_subject == "Map.keys" { builtinMapKeys(args) } else { if &*__dispatch_subject == "Map.values" { builtinMapValues(args) } else { if &*__dispatch_subject == "Map.fromList" { builtinMapFromList(args) } else { if &*__dispatch_subject == "Map.size" { builtinMapSize(args) } else { if &*__dispatch_subject == "Map.len" { builtinMapSize(args) } else { if &*__dispatch_subject == "Map.remove" { builtinMapRemove(args) } else { callBuiltinServices(name, args) } } } } } } } } } } } } } } } } } } } }
+                                                                                if &*__dispatch_subject == "Result.Err" { crate::aver_generated::domain::builtins::wrappers::call(name, args) } else { if &*__dispatch_subject == "Result.withDefault" { crate::aver_generated::domain::builtins::wrappers::call(name, args) } else { if &*__dispatch_subject == "Option.Some" { crate::aver_generated::domain::builtins::wrappers::call(name, args) } else { if &*__dispatch_subject == "Option.None" { Ok(Val::ValNone.clone()) } else { if &*__dispatch_subject == "Option.withDefault" { crate::aver_generated::domain::builtins::wrappers::call(name, args) } else { if &*__dispatch_subject == "Option.toResult" { crate::aver_generated::domain::builtins::wrappers::callOptionToResult(args) } else { if &*__dispatch_subject == "Bool.or" { builtinBoolOr(args) } else { if &*__dispatch_subject == "Bool.and" { builtinBoolAnd(args) } else { if &*__dispatch_subject == "Bool.not" { builtinBoolNot(args) } else { if &*__dispatch_subject == "Map.set" { builtinMapSet(args) } else { if &*__dispatch_subject == "Map.get" { builtinMapGet(args) } else { if &*__dispatch_subject == "Map.has" { builtinMapHas(args) } else { if &*__dispatch_subject == "Map.entries" { builtinMapEntries(args) } else { if &*__dispatch_subject == "Map.keys" { builtinMapKeys(args) } else { if &*__dispatch_subject == "Map.values" { builtinMapValues(args) } else { if &*__dispatch_subject == "Map.fromList" { builtinMapFromList(args) } else { if &*__dispatch_subject == "Map.size" { builtinMapSize(args) } else { if &*__dispatch_subject == "Map.len" { builtinMapSize(args) } else { if &*__dispatch_subject == "Map.remove" { builtinMapRemove(args) } else { callBuiltinServices(name, args) } } } } } } } } } } } } } } } } } } }
                                                                             }
                                                                         }
                                                                     }
@@ -1443,19 +1448,6 @@ pub fn builtinBoolNot(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
             }
         }
         _ => Err(AverStr::from("Bool.not requires Bool argument")),
-    }
-}
-
-/// Map.empty() -> empty map.
-pub fn builtinMapEmpty(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
-    crate::cancel_checkpoint();
-    {
-        let __list_subject = args;
-        if __list_subject.is_empty() {
-            Ok(Val::ValMap(HashMap::new()))
-        } else {
-            Err(AverStr::from("Map.empty takes 0 arguments"))
-        }
     }
 }
 

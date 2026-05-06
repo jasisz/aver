@@ -219,7 +219,7 @@ fn valid_tuple_return() {
 fn valid_map_set_get_infers_types() {
     let src = concat!(
         "fn readAge() -> Option<Int>\n",
-        "    m = Map.set(Map.empty(), \"x\", 0)\n",
+        "    m = Map.set({}, \"x\", 0)\n",
         "    m2 = Map.set(m, \"age\", 42)\n",
         "    Map.get(m2, \"age\")\n",
     );
@@ -1372,7 +1372,7 @@ fn error_tcp_write_line_with_string() {
 
 #[test]
 fn valid_int_to_string() {
-    assert_no_errors("fn f(n: Int) -> String\n    Int.toString(n)\n");
+    assert_no_errors("fn f(n: Int) -> String\n    String.fromInt(n)\n");
 }
 
 #[test]
@@ -1397,7 +1397,7 @@ fn valid_int_mod() {
 
 #[test]
 fn valid_int_to_float() {
-    assert_no_errors("fn f(n: Int) -> Float\n    Int.toFloat(n)\n");
+    assert_no_errors("fn f(n: Int) -> Float\n    Float.fromInt(n)\n");
 }
 
 #[test]
@@ -1419,7 +1419,7 @@ fn valid_float_from_int() {
 
 #[test]
 fn valid_float_to_string() {
-    assert_no_errors("fn f(x: Float) -> String\n    Float.toString(x)\n");
+    assert_no_errors("fn f(x: Float) -> String\n    String.fromFloat(x)\n");
 }
 
 #[test]
@@ -1490,7 +1490,7 @@ fn valid_string_from_bool() {
 #[test]
 fn error_int_to_string_wrong_arg() {
     assert_error_containing(
-        "fn f(s: String) -> String\n    Int.toString(s)\n",
+        "fn f(s: String) -> String\n    String.fromInt(s)\n",
         "expected Int, got String",
     );
 }
@@ -1507,7 +1507,7 @@ fn error_float_abs_wrong_arg() {
 #[test]
 fn valid_no_effects_for_helpers() {
     // Int/Float/String namespace methods don't require effects
-    assert_no_errors("fn f(n: Int) -> String\n    Int.toString(n)\n");
+    assert_no_errors("fn f(n: Int) -> String\n    String.fromInt(n)\n");
     assert_no_errors("fn f(x: Float) -> Int\n    Float.floor(x)\n");
     assert_no_errors("fn f(s: String) -> Int\n    String.len(s)\n");
 }

@@ -117,7 +117,7 @@ The point of `v2` is not only compactness. It is to keep the common Aver shapes 
 - `Bool`, `Unit`, and `None` are pure inline singletons
 - `Some(true)`, `Ok(Unit)`, `Err(None)` stay inline
 - `Some(42)`, `Ok(-7)`, `Err(0)` stay inline as long as the int fits the wrapper-inline range
-- `[]` and `Map.empty()` are real values under their normal collection tags, not exceptions hidden in `Immediate`
+- `[]` and `{}` are real values under their normal collection tags, not exceptions hidden in `Immediate`
 - strings up to 5 UTF-8 bytes stay inline under `TAG_STRING`
 - nullary variants such as `Status.Todo` or `Color.Red` travel as `Symbol` handles instead of arena entries
 

@@ -12,4 +12,4 @@ fn main() -> Unit
     seahorse = Fractal.viewFromQuery("cx=-0.7463&cy=0.1102&w=0.012")
     zoom = Fractal.render(200, 120, 220, seahorse)
     t2 = Time.unixMs()
-    Console.print("full(200x120,100)={Int.toString(t1 - t0)}ms[{Int.toString(String.len(full))}B] zoom(200x120,220)={Int.toString(t2 - t1)}ms[{Int.toString(String.len(zoom))}B] total={Int.toString(t2 - t0)}ms")
+    Console.print("full(200x120,100)={String.fromInt(t1 - t0)}ms[{String.fromInt(String.len(full))}B] zoom(200x120,220)={String.fromInt(t2 - t1)}ms[{String.fromInt(String.len(zoom))}B] total={String.fromInt(t2 - t0)}ms")

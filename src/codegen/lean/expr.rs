@@ -405,14 +405,8 @@ fn extract_bool_arms(arms: &[MatchArm]) -> Option<(&Spanned<Expr>, &Spanned<Expr
 pub fn emit_stmt(stmt: &Stmt, ctx: &CodegenContext) -> String {
     match stmt {
         Stmt::Binding(name, type_ann, expr) => {
-            let mut val = emit_expr(expr, ctx);
-            // Map<T, Unit> binding initialized with Map.empty → set empty
-            if let Some(ann) = type_ann
-                && crate::codegen::common::is_set_annotation(ann)
-                && val == "AverMap.empty"
-            {
-                val = "AverSet.empty".to_string();
-            }
+            let val = emit_expr(expr, ctx);
+            let _ = type_ann;
             format!("let {} := {}", aver_name_to_lean(name), val)
         }
         Stmt::Expr(expr) => emit_expr(expr, ctx),

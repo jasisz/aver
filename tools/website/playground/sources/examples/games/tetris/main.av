@@ -127,11 +127,11 @@ fn renderInfo(state: GameState) -> Unit
     ? "Draw score, level, lines info"
     ! [Terminal.moveTo, Terminal.print]
     Terminal.moveTo(26, 2)
-    Terminal.print("Score: {Int.toString(state.score)}")
+    Terminal.print("Score: {String.fromInt(state.score)}")
     Terminal.moveTo(26, 4)
-    Terminal.print("Level: {Int.toString(state.level)}")
+    Terminal.print("Level: {String.fromInt(state.level)}")
     Terminal.moveTo(26, 6)
-    Terminal.print("Lines: {Int.toString(state.lines)}")
+    Terminal.print("Lines: {String.fromInt(state.lines)}")
     Terminal.moveTo(26, 10)
     Terminal.print("Controls:")
     Terminal.moveTo(26, 11)
@@ -204,7 +204,7 @@ fn tick(state: GameState) -> Result<String, String>
         Time.sleep,
     ]
     match state.gameOver
-        true -> Result.Ok("Game over! Score: {Int.toString(state.score)}  Lines: {Int.toString(state.lines)}")
+        true -> Result.Ok("Game over! Score: {String.fromInt(state.score)}  Lines: {String.fromInt(state.lines)}")
         false -> tickGravity(state)
 
 fn gameLoop(state: GameState) -> Result<String, String>

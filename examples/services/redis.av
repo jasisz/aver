@@ -40,7 +40,7 @@ record RedisConfig
 
 fn respBulkLen(s: String) -> String
     ? "Returns the byte-length of s as a string, used to build RESP bulk-string headers."
-    Int.toString(String.byteLength(s))
+    String.fromInt(String.byteLength(s))
 
 verify respBulkLen
     respBulkLen("PING") => "4"
@@ -77,7 +77,7 @@ fn sendArgs(conn: Tcp.Connection, args: List<String>) -> Result<Tcp.Connection, 
 fn sendCommand(conn: Tcp.Connection, args: List<String>) -> Result<Tcp.Connection, String>
     ? "Sends a full RESP command: writes the '*N' array header then each arg via sendArgs."
     ! [Tcp.writeLine]
-    _ = Tcp.writeLine(conn, "*{Int.toString(List.len(args))}")?
+    _ = Tcp.writeLine(conn, "*{String.fromInt(List.len(args))}")?
     sendArgs(conn, args)
 
 // Public API
