@@ -316,6 +316,37 @@ pub(super) fn emit_module(
         &effect_registry,
     )?;
 
+    // 10) Caller-fn name table exports. `__caller_fn_count() -> i32`
+    //     and `__caller_fn_name(i32) -> ref null $string`. Host walks
+    //     `0..count` once at instantiation, decodes each ref via the
+    //     LM bridge, caches in a `Vec<String>`. Per effect call: `i32`
+    //     idx flows through `params.last()` → vector index lookup,
+    //     no LM round-trip on the hot path.
+    //
+    //     Allocated only when the program has the String slot (i.e.
+    //     any fn def, since `needs_string` forces the slot whenever
+    //     `has_fn_defs`). Programs without fns never emit caller_fn
+    //     anywhere so the exports would be unused.
+    let caller_fn_table_types: Option<(u32, u32)> =
+        if let Some(string_type_idx) = registry.string_array_type_idx {
+            // count: () -> i32
+            types.ty().function([], [ValType::I32]);
+            let count_type_idx = next_type_idx;
+            next_type_idx += 1;
+            // name: (i32) -> (ref null $string)
+            let string_ref_ty = ValType::Ref(wasm_encoder::RefType {
+                nullable: true,
+                heap_type: wasm_encoder::HeapType::Concrete(string_type_idx),
+            });
+            types.ty().function([ValType::I32], [string_ref_ty]);
+            let name_type_idx = next_type_idx;
+            // Last type allocation in this fn — `next_type_idx`
+            // increment dropped to silence `unused_assignments`.
+            Some((count_type_idx, name_type_idx))
+        } else {
+            None
+        };
+
     module.section(&types);
 
     // ── Import section ─────────────────────────────────────────────
@@ -363,6 +394,18 @@ pub(super) fn emit_module(
         funcs.function(b.grow_type);
     }
     factory_exports.emit_function_entries(&mut funcs);
+    // Caller-fn name table fns — fixed-shape entries (count + name),
+    // their bodies land at the very end of the code section once
+    // `caller_fn_collector` has all names. Idxs are recorded so
+    // `module.section(&exports)` can wire them up without re-deriving
+    // the position.
+    let caller_fn_table_fns: Option<(u32, u32)> = caller_fn_table_types.map(|(c_ty, n_ty)| {
+        let count_fn_idx = import_count + funcs.len();
+        funcs.function(c_ty);
+        let name_fn_idx = import_count + funcs.len();
+        funcs.function(n_ty);
+        (count_fn_idx, name_fn_idx)
+    });
     module.section(&funcs);
 
     // ── Memory section (bridge LM only) ────────────────────────────
@@ -499,17 +542,45 @@ pub(super) fn emit_module(
             );
         }
     }
+    if let Some((count_fn_idx, name_fn_idx)) = caller_fn_table_fns {
+        exports.export("__caller_fn_count", ExportKind::Func, count_fn_idx);
+        exports.export("__caller_fn_name", ExportKind::Func, name_fn_idx);
+    }
     module.section(&exports);
 
     // (No StartSection — 0.16.2's caller_fn globals init is gone;
     // host reads the caller_fn name table via `__caller_fn_count`
     // + `__caller_fn_name(i)` exports at instantiation instead.)
 
+    // Pre-pass over user fn bodies — populates `caller_fn_collector`
+    // with every fn name that emits caller_fn at a call site. Needed
+    // before data count + data section emit because the count of
+    // passive segments is `string_literals + collector.names`, and
+    // data count section must precede the code section. Real body
+    // emit later in the code section calls `register` again with the
+    // same names; the collector is idempotent so the idx assignment
+    // matches what the call sites observed during this probe.
+    for (i, fd) in fn_defs.iter().enumerate() {
+        let self_wasm_idx = import_count + 1 + (i as u32);
+        let mut probe = Function::new([]);
+        let _ = emit_fn_body(
+            &mut probe,
+            fd,
+            &fn_map,
+            self_wasm_idx,
+            &registry,
+            &effect_idx_lookup,
+            &caller_fn_collector,
+        )?;
+    }
+    let caller_fn_segment_count = caller_fn_collector.borrow().names.len() as u32;
+
     // ── Data count section (must precede code when using passive
     //     segments via array.new_data / data.drop).
-    if !registry.string_literals.is_empty() {
+    let total_segment_count = registry.string_literals.len() as u32 + caller_fn_segment_count;
+    if total_segment_count > 0 {
         let count = DataCountSection {
-            count: registry.string_literals.len() as u32,
+            count: total_segment_count,
         };
         module.section(&count);
     }
@@ -620,21 +691,88 @@ pub(super) fn emit_module(
 
     factory_exports.emit_bodies(&mut codes, &registry)?;
 
-    // (caller_fn name-table body emit + segment append happen
-    // post-emit once the lazy collector has all names — TODO in
-    // step 2 of the 0.16.3 refactor; currently the wasm binary
-    // is missing `__caller_fn_count` / `__caller_fn_name` exports
-    // and the host falls back to "main" for every caller_fn slot.)
+    // `__caller_fn_count` + `__caller_fn_name` bodies. Emitted after
+    // every helper so their fn idxs land last in the code section,
+    // matching the function section allocation order. The collector
+    // is fully populated at this point — every user-fn body ran
+    // through the pre-pass and the real-emit pass.
+    if let Some((_count_fn_idx, _name_fn_idx)) = caller_fn_table_fns {
+        let names = caller_fn_collector.borrow();
+        let string_idx = registry
+            .string_array_type_idx
+            .expect("caller_fn name table requires the $string slot");
+        // Caller-fn name segments occupy the data section slot range
+        // [string_literals.len()..string_literals.len()+names.len()];
+        // `array.new_data` in `__caller_fn_name(i)` reads from those
+        // idxs.
+        let segment_base = registry.string_literals.len() as u32;
+
+        // __caller_fn_count: pure constant.
+        let mut count_fn = Function::new([]);
+        count_fn.instruction(&Instruction::I32Const(names.names.len() as i32));
+        count_fn.instruction(&Instruction::End);
+        codes.function(&count_fn);
+
+        // __caller_fn_name(idx) -> ref null $string. Switch on idx
+        // via `br_table`; each arm materialises the matching String
+        // ref via `array.new_data`. A trailing default arm returns
+        // ref.null for out-of-range idxs (host shouldn't pass them,
+        // but the wasm validator wants a fallthrough).
+        let string_ref_ty = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        let mut name_fn = Function::new([]);
+        let block_ty = wasm_encoder::BlockType::Result(string_ref_ty);
+        name_fn.instruction(&Instruction::Block(block_ty));
+        for (i, fn_name) in names.names.iter().enumerate() {
+            let bytes = fn_name.as_bytes();
+            // Inner block: if idx == i, this arm emits the ref and
+            // breaks out of the outer block. Otherwise falls through
+            // to the next arm.
+            name_fn.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+            // if local 0 != i { br 0 } — skip to next arm.
+            name_fn.instruction(&Instruction::LocalGet(0));
+            name_fn.instruction(&Instruction::I32Const(i as i32));
+            name_fn.instruction(&Instruction::I32Ne);
+            name_fn.instruction(&Instruction::BrIf(0));
+            // Match: emit ref + break to outer.
+            name_fn.instruction(&Instruction::I32Const(0));
+            name_fn.instruction(&Instruction::I32Const(bytes.len() as i32));
+            name_fn.instruction(&Instruction::ArrayNewData {
+                array_type_index: string_idx,
+                array_data_index: segment_base + i as u32,
+            });
+            name_fn.instruction(&Instruction::Br(1));
+            name_fn.instruction(&Instruction::End);
+        }
+        // Default arm — out-of-range idx returns ref.null.
+        name_fn.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+            string_idx,
+        )));
+        name_fn.instruction(&Instruction::End);
+        name_fn.instruction(&Instruction::End);
+        codes.function(&name_fn);
+    }
 
     module.section(&codes);
 
     // ── Data section ───────────────────────────────────────────────
     // Passive segments holding String literal byte sequences. Emitted
     // last; `array.new_data $string $segment_idx` reads from these.
-    if !registry.string_literals.is_empty() {
+    // Order: pre-walked program literals first, caller_fn names
+    // second. `__caller_fn_name`'s body uses
+    // `segment_base = registry.string_literals.len()` so its arms
+    // hit the right slots regardless of how many literals the
+    // program has.
+    if total_segment_count > 0 {
         let mut data = DataSection::new();
         for bytes in &registry.string_literals {
             data.passive(bytes.iter().copied());
+        }
+        let names = caller_fn_collector.borrow();
+        for fn_name in &names.names {
+            data.passive(fn_name.as_bytes().iter().copied());
         }
         module.section(&data);
     }

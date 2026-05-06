@@ -193,6 +193,84 @@ pub(super) struct RunWasmGcHost {
     /// output. `None` is the production path — zero overhead beyond the
     /// `Option::is_some` check per effect call.
     pub(super) recorder: Option<aver::replay::EffectReplayState>,
+    /// Caller-fn name table, materialised at instantiation by walking
+    /// `__caller_fn_count` + `__caller_fn_name(0..count)`. Per effect
+    /// call, `imports.rs::dispatch_aver_import` looks up
+    /// `caller_fn_table[idx]` to stamp the recorded effect's
+    /// `caller_fn` field. Cleared (kept empty) for modules that don't
+    /// export the table.
+    pub(super) caller_fn_table: Vec<String>,
+}
+
+/// Walk `__caller_fn_count` + `__caller_fn_name(0..count)` once at
+/// instance creation, decode each name via the LM bridge, return the
+/// resulting `Vec<String>` so per-call dispatch can index into it
+/// without per-call LM round-trips. Empty when the module doesn't
+/// export the table (programs without effect-emitting fns).
+#[cfg(feature = "wasm")]
+fn build_caller_fn_table(
+    store: &mut wasmtime::Store<RunWasmGcHost>,
+    instance: &wasmtime::Instance,
+) -> Result<Vec<String>, String> {
+    use wasmtime::Val;
+    let count_fn = match instance.get_func(&mut *store, "__caller_fn_count") {
+        Some(f) => f,
+        None => return Ok(Vec::new()),
+    };
+    let name_fn = match instance.get_func(&mut *store, "__caller_fn_name") {
+        Some(f) => f,
+        None => return Ok(Vec::new()),
+    };
+    let to_lm = match instance.get_func(&mut *store, "__rt_string_to_lm") {
+        Some(f) => f,
+        None => return Ok(Vec::new()),
+    };
+    let memory = match instance.get_memory(&mut *store, "memory") {
+        Some(m) => m,
+        None => return Ok(Vec::new()),
+    };
+
+    let mut count_out = [Val::I32(0)];
+    count_fn
+        .call(&mut *store, &[], &mut count_out)
+        .map_err(|e| format!("__caller_fn_count: {e:#}"))?;
+    let count = match count_out[0] {
+        Val::I32(n) => n.max(0) as usize,
+        _ => 0,
+    };
+
+    let mut out = Vec::with_capacity(count);
+    let mut name_out = [Val::AnyRef(None)];
+    let mut len_out = [Val::I32(0)];
+    for i in 0..count {
+        name_fn
+            .call(&mut *store, &[Val::I32(i as i32)], &mut name_out)
+            .map_err(|e| format!("__caller_fn_name({i}): {e:#}"))?;
+        // Decode via __rt_string_to_lm: writes bytes into LM at
+        // offset 0, returns the byte length on the i32 return.
+        let any_ref = match &name_out[0] {
+            Val::AnyRef(Some(r)) => Val::AnyRef(Some(*r)),
+            _ => {
+                out.push("main".to_string());
+                continue;
+            }
+        };
+        to_lm
+            .call(&mut *store, &[any_ref], &mut len_out)
+            .map_err(|e| format!("__rt_string_to_lm: {e:#}"))?;
+        let len = match len_out[0] {
+            Val::I32(n) => n.max(0) as usize,
+            _ => 0,
+        };
+        let mut buf = vec![0u8; len];
+        if len > 0 {
+            memory
+                .read(&*store, 0, &mut buf)
+                .map_err(|e| format!("read caller_fn name {i}: {e:#}"))?;
+        }
+        out.push(String::from_utf8_lossy(&buf).into_owned());
+    }
+    Ok(out)
 }
 
 /// Walk the parsed AST for a `fn <name>(...) -> T` definition and
@@ -257,6 +335,7 @@ fn run_wasm_gc_with_host(
         RunWasmGcHost {
             program_args: program_args.to_vec(),
             recorder: recorder.take(),
+            caller_fn_table: Vec::new(),
         },
     );
     let mut linker: Linker<RunWasmGcHost> = Linker::new(&engine);
@@ -316,6 +395,17 @@ fn run_wasm_gc_with_host(
     let instance = linker
         .instantiate(&mut store, &module)
         .map_err(|e| format!("instantiate: {e:#}"))?;
+
+    // Materialise the caller-fn name table. The compiler exports
+    // `__caller_fn_count() -> i32` and `__caller_fn_name(i32) -> ref
+    // null $string` whenever any user fn might emit caller_fn (i.e.
+    // the program has fn defs); we walk `0..count` once, decode each
+    // ref via the LM bridge, and cache the strings in
+    // `RunWasmGcHost::caller_fn_table`. Per effect call,
+    // `imports.rs::dispatch_aver_import` reads the trailing `i32`
+    // arg as an idx into this vector — no LM round-trip per call.
+    let caller_fn_table = build_caller_fn_table(&mut store, &instance)?;
+    store.data_mut().caller_fn_table = caller_fn_table;
 
     // Two entry shapes:
     //

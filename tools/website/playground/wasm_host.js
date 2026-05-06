@@ -111,6 +111,35 @@ export class AverBrowserHost {
 
     setInstance(instance) {
         this.instance = instance;
+        this.callerFnTable = this.materialiseCallerFnTable(instance);
+    }
+
+    /// Read the caller-fn name table once at instance creation.
+    /// Compiler exports `__caller_fn_count() -> i32` and
+    /// `__caller_fn_name(i32) -> ref null $string`; we walk
+    /// `0..count`, decode each ref via `averToJs` (which uses the
+    /// existing LM bridge), cache the JS strings in an array.
+    /// Per effect call the trailing `i32` arg indexes into this
+    /// array — no LM round-trip on the hot path.
+    materialiseCallerFnTable(instance) {
+        const exports = instance.exports;
+        if (typeof exports.__caller_fn_count !== "function" ||
+            typeof exports.__caller_fn_name !== "function") {
+            return [];
+        }
+        const count = exports.__caller_fn_count();
+        const out = [];
+        for (let i = 0; i < count; i++) {
+            const ref = exports.__caller_fn_name(i);
+            out.push(ref == null ? "main" : this.averToJs(ref));
+        }
+        return out;
+    }
+
+    callerFnFromIdx(idx) {
+        if (typeof idx !== "number") return "main";
+        const name = this.callerFnTable && this.callerFnTable[idx];
+        return name || "main";
     }
 
     setTerminalSize(cols, rows) {
@@ -273,25 +302,25 @@ export class AverBrowserHost {
     createImports() {
         // Every effect import declares a trailing `caller_fn:
         // any_ref` param now (see `effects.rs::params`). Each
-        // callback below picks it up as `callerRef`, decodes via
+        // callback below picks it up as `callerIdx`, decodes via
         // LM transport, and pipes the resulting JS string through
         // `recordOrDispatch` as the recorder's caller_fn stamp.
         // Pure imports (`float_*`) and the group markers ignore
         // the trailing arg — JS just lets the extra value drop on
         // the floor.
-        const dec = (callerRef) => this.averToJs(callerRef);
+        const dec = (callerIdx) => this.averToJs(callerIdx);
         return {
             aver: {
-                args_len: (callerRef) =>
+                args_len: (callerIdx) =>
                     this.recordOrDispatch(
                         "Args.len",
                         [],
                         () => BigInt(this.programArgs.length),
                         (json) => BigInt(json ?? 0),
                         (v) => Number(v),
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     ),
-                args_get: (index, callerRef) => {
+                args_get: (index, callerIdx) => {
                     const idx = Number(index);
                     return this.recordOrDispatch(
                         "Args.get",
@@ -308,10 +337,10 @@ export class AverBrowserHost {
                             idx >= 0 && idx < this.programArgs.length
                                 ? this.programArgs[idx]
                                 : "",
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     );
                 },
-                console_print: (sref, callerRef) => {
+                console_print: (sref, callerIdx) => {
                     const text = this.averToJs(sref);
                     this.recordOrDispatch(
                         "Console.print",
@@ -319,10 +348,10 @@ export class AverBrowserHost {
                         () => this.postConsole("stdout", text),
                         () => undefined,
                         () => null,
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     );
                 },
-                console_error: (sref, callerRef) => {
+                console_error: (sref, callerIdx) => {
                     const text = this.averToJs(sref);
                     this.recordOrDispatch(
                         "Console.error",
@@ -330,10 +359,10 @@ export class AverBrowserHost {
                         () => this.postConsole("stderr", text),
                         () => undefined,
                         () => null,
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     );
                 },
-                console_warn: (sref, callerRef) => {
+                console_warn: (sref, callerIdx) => {
                     const text = this.averToJs(sref);
                     this.recordOrDispatch(
                         "Console.warn",
@@ -341,10 +370,10 @@ export class AverBrowserHost {
                         () => this.postConsole("stderr", text),
                         () => undefined,
                         () => null,
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     );
                 },
-                console_read_line: (callerRef) => {
+                console_read_line: (callerIdx) => {
                     const exports = this.instance.exports;
                     return this.recordOrDispatch(
                         "Console.readLine",
@@ -370,63 +399,63 @@ export class AverBrowserHost {
                                 : "";
                             return { $ok: peek };
                         },
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     );
                 },
-                random_int: (min, max, callerRef) =>
+                random_int: (min, max, callerIdx) =>
                     this.recordOrDispatch(
                         "Random.int",
                         [Number(min), Number(max)],
                         () => chooseRandomInt(min, max),
                         (json) => BigInt(json ?? 0),
                         (v) => Number(v),
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     ),
-                random_float: (callerRef) =>
+                random_float: (callerIdx) =>
                     this.recordOrDispatch(
                         "Random.float",
                         [],
                         () => Math.random(),
                         (json) => Number(json ?? 0),
                         (v) => Number(v),
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     ),
-                time_unix_ms: (callerRef) =>
+                time_unix_ms: (callerIdx) =>
                     this.recordOrDispatch(
                         "Time.unixMs",
                         [],
                         () => BigInt(Date.now()),
                         (json) => BigInt(json ?? 0),
                         (v) => Number(v),
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     ),
-                time_now: (callerRef) =>
+                time_now: (callerIdx) =>
                     this.recordOrDispatch(
                         "Time.now",
                         [],
                         () => this.jsToAver(new Date().toISOString()),
                         (json) => this.jsToAver(json ?? ""),
                         () => new Date().toISOString(),
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     ),
-                time_sleep: (millis, callerRef) =>
+                time_sleep: (millis, callerIdx) =>
                     this.recordOrDispatch(
                         "Time.sleep",
                         [Number(millis)],
                         () => sleepMillis(millis),
                         () => undefined,
                         () => null,
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     ),
                 // Float math is pure — no recording, no replay. The
                 // wasm-gc imports list these because the engine
                 // doesn't expose `f64.sin` directly. The trailing
-                // `callerRef` arg is ignored.
-                float_sin: (x, _callerRef) => Math.sin(x),
-                float_cos: (x, _callerRef) => Math.cos(x),
-                float_atan2: (y, x, _callerRef) => Math.atan2(y, x),
-                float_pow: (b, e, _callerRef) => Math.pow(b, e),
-                terminal_enable_raw_mode: (callerRef) =>
+                // `callerIdx` arg is ignored.
+                float_sin: (x, _callerIdx) => Math.sin(x),
+                float_cos: (x, _callerIdx) => Math.cos(x),
+                float_atan2: (y, x, _callerIdx) => Math.atan2(y, x),
+                float_pow: (b, e, _callerIdx) => Math.pow(b, e),
+                terminal_enable_raw_mode: (callerIdx) =>
                     this.recordOrDispatch(
                         "Terminal.enableRawMode",
                         [],
@@ -436,9 +465,9 @@ export class AverBrowserHost {
                         },
                         () => undefined,
                         () => null,
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     ),
-                terminal_disable_raw_mode: (callerRef) =>
+                terminal_disable_raw_mode: (callerIdx) =>
                     this.recordOrDispatch(
                         "Terminal.disableRawMode",
                         [],
@@ -448,18 +477,18 @@ export class AverBrowserHost {
                         },
                         () => undefined,
                         () => null,
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     ),
-                terminal_clear: (callerRef) =>
+                terminal_clear: (callerIdx) =>
                     this.recordOrDispatch(
                         "Terminal.clear",
                         [],
                         () => this.terminal.clear(),
                         () => undefined,
                         () => null,
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     ),
-                terminal_move_to: (x, y, callerRef) => {
+                terminal_move_to: (x, y, callerIdx) => {
                     const xi = Number(x);
                     const yi = Number(y);
                     this.recordOrDispatch(
@@ -468,10 +497,10 @@ export class AverBrowserHost {
                         () => this.terminal.moveTo(xi, yi),
                         () => undefined,
                         () => null,
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     );
                 },
-                terminal_print: (sref, callerRef) => {
+                terminal_print: (sref, callerIdx) => {
                     const text = this.averToJs(sref);
                     this.recordOrDispatch(
                         "Terminal.print",
@@ -479,10 +508,10 @@ export class AverBrowserHost {
                         () => this.terminal.print(text),
                         () => undefined,
                         () => null,
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     );
                 },
-                terminal_set_color: (sref, callerRef) => {
+                terminal_set_color: (sref, callerIdx) => {
                     const color = this.averToJs(sref);
                     this.recordOrDispatch(
                         "Terminal.setColor",
@@ -493,19 +522,19 @@ export class AverBrowserHost {
                             ),
                         () => undefined,
                         () => null,
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     );
                 },
-                terminal_reset_color: (callerRef) =>
+                terminal_reset_color: (callerIdx) =>
                     this.recordOrDispatch(
                         "Terminal.resetColor",
                         [],
                         () => this.terminal.resetColor(),
                         () => undefined,
                         () => null,
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     ),
-                terminal_read_key: (callerRef) => {
+                terminal_read_key: (callerIdx) => {
                     const exports = this.instance.exports;
                     return this.recordOrDispatch(
                         "Terminal.readKey",
@@ -529,10 +558,10 @@ export class AverBrowserHost {
                                 ? { $some: head }
                                 : { $none: true };
                         },
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     );
                 },
-                terminal_size: (callerRef) => {
+                terminal_size: (callerIdx) => {
                     const exports = this.instance.exports;
                     const cols = this.terminal.cols;
                     const rows = this.terminal.rows;
@@ -557,47 +586,47 @@ export class AverBrowserHost {
                                 fields: { width: cols, height: rows },
                             },
                         }),
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     );
                 },
-                terminal_hide_cursor: (callerRef) =>
+                terminal_hide_cursor: (callerIdx) =>
                     this.recordOrDispatch(
                         "Terminal.hideCursor",
                         [],
                         () => this.terminal.hideCursor(),
                         () => undefined,
                         () => null,
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     ),
-                terminal_show_cursor: (callerRef) =>
+                terminal_show_cursor: (callerIdx) =>
                     this.recordOrDispatch(
                         "Terminal.showCursor",
                         [],
                         () => this.terminal.showCursor(),
                         () => undefined,
                         () => null,
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     ),
-                terminal_flush: (callerRef) =>
+                terminal_flush: (callerIdx) =>
                     this.recordOrDispatch(
                         "Terminal.flush",
                         [],
                         () => this.postTerminalSnapshot(),
                         () => undefined,
                         () => null,
-                        dec(callerRef),
+                        this.callerFnFromIdx(callerIdx),
                     ),
                 // Independent-product structural-scope markers — same
                 // contract the wasm-gc CLI host enforces. Trailing
-                // `callerRef` ignored (group state lives in the
+                // `callerIdx` ignored (group state lives in the
                 // recorder, not in trace records).
-                record_enter_group: (_callerRef) => {
+                record_enter_group: (_callerIdx) => {
                     this.recorder.enterGroup();
                 },
-                record_set_branch: (i, _callerRef) => {
+                record_set_branch: (i, _callerIdx) => {
                     this.recorder.setBranch(Number(i));
                 },
-                record_exit_group: (_callerRef) => {
+                record_exit_group: (_callerIdx) => {
                     this.recorder.exitGroup();
                 },
             },

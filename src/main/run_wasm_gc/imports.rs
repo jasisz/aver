@@ -60,7 +60,6 @@ pub(super) use factories::{
 pub(super) use lm::lm_string_from_host;
 
 use http::{HttpVerb, http_body_dispatch, http_simple_dispatch};
-use lm::lm_string_to_host;
 
 pub(super) fn dispatch_aver_import(
     name: &str,
@@ -78,8 +77,22 @@ pub(super) fn dispatch_aver_import(
     // dispatch chain. Falls back to "main" when the trailing arg
     // is missing or not decodable — keeps replay of older recorded
     // traces / hand-rolled wasm-gc modules working.
-    let caller_fn = lm_string_to_host(caller, params.last())?
-        .filter(|s| !s.is_empty())
+    // Trailing arg is now an `i32` idx into the caller-fn name table
+    // the host materialised at instantiation (see
+    // `run_wasm_gc::build_caller_fn_table`). Vector index lookup
+    // replaces the per-call LM round-trip from 0.16.2.
+    let caller_fn_idx = params
+        .last()
+        .and_then(|v| match v {
+            wasmtime::Val::I32(n) => Some(*n),
+            _ => None,
+        })
+        .unwrap_or(-1);
+    let caller_fn: String = caller
+        .data()
+        .caller_fn_table
+        .get(caller_fn_idx as usize)
+        .cloned()
         .unwrap_or_else(|| "main".to_string());
     let caller_fn_ref: &str = &caller_fn;
     let real_params: &[wasmtime::Val] = if params.is_empty() {
