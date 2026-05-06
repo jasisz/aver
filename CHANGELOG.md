@@ -8,73 +8,15 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 > _What was never used is no longer in the way._
 
-A stdlib sweep before the language gets harder to break, paired with the wasm-gc Map equality/hash work and the caller_fn i32-table refactor that started this release. One rule wins out: each operation has one obvious spelling. Literals for literals (`{}`, `[]`), operators for primitive composition (`+` on strings, arithmetic), `Target.fromSource` for conversions, interpolation for rendering, named functions only when they add semantics.
+### Removed
+- `Map.empty()` — use `{}`. `Int.parse`, `Float.parse`, `Int.rem` — unreachable aliases. `Int.toString`, `Float.toString` — use `String.fromInt` / `String.fromFloat`. `Float.toInt`, `Int.toFloat` — use `Int.fromFloat` / `Float.fromInt`. `String.concat(a, b)` — use `a + b`. Convention: `Target.fromSource` for conversions, literals for literals, operators for composition, interpolation `"{x}"` for rendering.
 
-### Stdlib sweep — Removed
+### Renamed
+- `Vector.toList(v)` → `List.fromVector(v)`.
 
-- **`Map.empty()`** — redundant against the `{}` literal. Bidirectional inference propagates `Map<K, V>` from binding annotations into `{}`, and the discovery walker introduced in 0.16.3 picks up unannotated literals like `m = {a => 3}` from `expr.ty()`. Symmetric with `[]` for List (which never had a `List.empty` builtin).
-- **`Int.parse`, `Float.parse`, `Int.rem`** — unreachable builtin aliases. Registered in 4 backend dispatch tables but never wired through typecheck or VM. Lean and dafny treated them as outright aliases for `Int.fromString` / `Float.fromString` / `Int.mod`.
-- **`Int.toString`, `Float.toString`** — duplicates of `String.fromInt` / `String.fromFloat`. The convention `Target.fromSource` wins: result type leads (matters for code review and AI-generated code), and it scales (`Int.fromFloat`, `Float.fromInt`, `String.fromBool`, …). Interpolation `"{x}"` remains the primary idiom for rendering values into human-readable strings; `String.fromX` is for explicit data conversion (e.g. `"user:" + String.fromInt(id)`).
-- **`Float.toInt`, `Int.toFloat`** — duplicates of `Int.fromFloat` / `Float.fromInt`. Same convention.
-- **`String.concat(a, b)`** — literally `a + b`. Zero usage in examples (only in docs); not even dispatched in the wasm-gc backend. The `+` operator is the primary idiom for tail-recursive accumulators (`acc + sep + String.fromInt(head)`) and inline string composition; `String.join(parts, sep)` covers list-join (a different operation).
-
-### Stdlib sweep — Renamed
-
-- **`Vector.toList(v)` → `List.fromVector(v)`** — paired with `Vector.fromList(l)` under the same `Target.fromSource` rule.
-
-### Stdlib sweep — Kept (deliberately)
-
-- **`+` on strings** — primary idiom for tail-recursive string accumulators and inline composition. Forcing only interpolation `"{a}{b}"` would be awkward in `acc + " " + String.fromInt(head)` patterns.
-- **`Bool.and` / `Bool.or` / `Bool.not`** — *intentionally not added* as `&&` / `||` / `!` operators. Aver tracks effects deterministically (record/replay/proof export); short-circuit on `a && f!()` would require deciding whether the effect of `f` may or may not fire depending on `a`, which complicates trace recording and Lean export. Strict-FP eager evaluation matches the rest of the language. Pattern-matching `(x > 0, y > 0)` covers most idiomatic AND/OR cases. Not a "later language decision" — a settled non-feature.
-- **`Char.toCode` / `Char.fromCode`, `Byte.toHex` / `Byte.fromHex`, `Option.toResult`, `String.toLower` / `String.toUpper`** — encoding semantics or semantic conversions, not type-to-type. Not duplicates.
-
-### Stdlib sweep — Migration
-
-Programs using removed builtins:
-
-```aver
--- before
-m = Map.empty()                   -- → {}
-s = Int.toString(42)              -- → String.fromInt(42)  or  "{42}"
-n = Float.toInt(3.7)              -- → Int.fromFloat(3.7)
-f = Int.toFloat(5)                -- → Float.fromInt(5)
-xs = Vector.toList(v)             -- → List.fromVector(v)
-greeting = String.concat("hi, ", name)  -- → "hi, " + name
-```
-
-Examples in `examples/` and `tools/website/` migrated; vera-bench solutions checked (zero usage of any removed builtin, no companion PR needed).
-
-### wasm-gc Map equality / hash — full matrix
-
-- **Structural eq for `Map<K, V>`.** `__eq_Map<K,V>(a, b)` does `a.size == b.size && ∀ k ∈ a: get(b, k) == Some(a[k])` — insertion order is intentionally ignored, matching VM's `HashMap` PartialEq and the Python/Java/Rust/Haskell mainstream. Two maps with the same entries inserted in different orders compare equal.
-- **Commutative hash for `Map<K, V>`.** `__hash_Map<K,V>(m)` XOR-folds `(djb2(k) << 5) + djb2(k) + djb2(v)` over occupied entries; XOR is commutative + associative so the hash is invariant under bucket ordering. Pairs with structural eq for the standard hash-eq contract.
-- **Map<K, V> as a record / sum field type, list / vector element, Map V, and Map K.** All dispatch through one `compound_eq_hash_lookup` threading list / vector / map fn idxs alongside carriers (Option / Result / Tuple) into the helper map, so the same lookup shape works whether `==` is at the top level or buried in a record field. Source-side spacing (`Map<Int, String>` from `record_fields`) is normalized at lookup time to match the registry's whitespace-free canonical.
-- **Discovery walker reads `expr.ty()`.** Map literals without a binding annotation (`m = {a => 3}`) used to be invisible to the registry — discovery only scanned fn signatures. New `collect_maps_from_expr` walks every `Spanned<Expr>` in fn bodies and harvests Map canonicals from the typed-AST stamp; recurses through `FnCall` / `MapLiteral` / `RecordCreate` / `Match` / `BinOp` / `TailCall` / etc.
-- **`field_type_resolvable` accepts compound shapes.** Records with `List<Option<X>>` / `Vector<Result<X,Y>>` / `Map<K, V>` field types now resolve through one recursive predicate; `register_field_type` recurses into the inner shapes so transitive helpers exist for the structural fold.
-- **`list_eq_kind::CarrierEq(canonical)`.** One variant covers Option / Result / Tuple / List / Vector / Map elements; element dispatch is a thin `Call(__eq_<canonical>)` from list / vector eq+hash bodies. Plus carrier seed sweep — discovery registers carriers in eq_helpers / hash_helpers when they appear as List / Vector elements or Map K, so list-helper bodies dispatch carrier elements correctly.
-- **MapHelperRegistry whitelists `List<T>` / `Vector<T>` / `Map<K2, V2>` as K** with proxy bodies in `emit_eq_for` / `emit_hash_for`. `Map.remove` picks the null heap type via `key_storage_null_heap` (concrete idx for primitive-box / String / record / carrier / List / Vector / Map; abstract Eq for sum K).
-- **VM has structural eq + commutative hash for `Map<K, V>` already** (Rust `HashMap` PartialEq + DefaultHasher); wasm-gc now matches.
-
-### Backend bug closures
-
-Closing the bug list tracked in `project_wasm_gc_run_status`:
-- **Recursive sum eq** — `Tree.Node` holding `Tree` etc. dispatch through `self_fn_idx`; per-instantiation `__eq_<X>` helpers handle nominal cross-references via `helper_idx_map`.
-- **`IndependentProduct` lowering** — `(a, b)?!` and `(a, b)!` register their tuple canonicals + group / branch markers; cross-backend traces match end-to-end.
-- **Generic `E` / generic-carrier resolvability** — `Type::Var(name)` for named generics + `Type::Invalid` for error recovery; bidirectional propagation drives expected types into generic constructors. (`Type::Unknown` / `Type::Any` removed.)
-- **`ref` / `eqref`** — record eq body uses 2 typed locals + `ref.cast` prologue; sum/option/result/tuple bodies hold the i32 accumulator in a local across if-arms with `BlockType::Empty` (was `Result(I32)` and broke validation).
-- **List<record> hash + sum eq** — list / vector inline hash / eq emit dispatch nominal-element hash through `Call(__hash_<X>)` (and similarly for eq); `needs_list_helpers` primitive-only gate removed.
-- **`Args.get` inline path** — pushes `caller_fn` global before `Call(args_len)` / `Call(args_get)` so the recorded effects keep the per-fn label.
-
-### caller_fn i32-table refactor
-
-- **Per-fn String-ref globals replaced with a single i32 → caller-fn-name table.** The wasm module exports `__caller_fn_count` and `__caller_fn_name(i32) -> String`; the host snapshots the table once at instantiation and looks up names by id during effect recording. Hot path is one `global.get` per call, zero alloc — same shape as before, but without one global per effect-emitting fn.
-- **Synthetic `__entry__` for `--expr` recordings.** The compiler injects `__entry__()` wrapping a literal-arg call (e.g. `add(7, 35)`); `_start` is wired through it and the recording's `entry_fn` reflects the user-facing target. No JS-side argument encoder; no VM-in-wasm32 fallback.
-- **Lazy `CallerFnCollector`.** Fn names are registered on demand during emit (instead of up-front during type registration), so deep dependency trees only register the fns that actually emit effects. Smaller table, smaller binary.
-
-### Notes
-
-- All commits land under the 0.17 release; the early ones on this branch carry `0.16.3:` prefixes from when the work was scoped as a patch — keeping the original messages, the release line is what matters.
-- 621/621 lib tests; 7/7 games compile under wasm-gc; runtime parity VM ↔ wasm-gc on data/map.av and the audited example matrix.
+### Added
+- Structural eq + commutative hash for `Map<K, V>` under wasm-gc. Insertion-order-invariant, matches the VM. Works as map K / V, as record/sum field, and as list/vector element.
+- caller_fn i32-table replaces per-fn String-ref globals; one `global.get` per call, zero alloc on the hot path. Synthetic `__entry__()` carries `--expr` recordings end-to-end with no JS-side argument encoder.
 
 ## 0.16.2 — 2026-05-06
 
