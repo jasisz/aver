@@ -106,6 +106,158 @@ pub fn compile_project_to_wasm(
         .map_err(|e| format!("{e}"))
 }
 
+/// Multi-file project compile that targets a synthetic `__entry__`
+/// fn instead of `main`. `expr` is parsed via `parse_entry_call`
+/// (`add(7, 35)` → `("add", [Int(7), Int(35)])`); we look up the
+/// target's signature from the entry source / loaded deps, then
+/// inject a no-arg `fn __entry__()` whose body is `target(args…)`
+/// with each Aver `Value` re-emitted as the corresponding AST
+/// `Literal`. The compiler's `_start` synthesis prefers `__entry__`
+/// when present, so the host invocation path stays unchanged —
+/// `instance.exports._start()` runs the user expression instead of
+/// `main`. Returns `(wasm_bytes, target_fn_name)` so callers can
+/// label recordings with the user-facing fn name.
+pub fn compile_project_to_wasm_with_entry(
+    files: &HashMap<String, String>,
+    entry: &str,
+    expr: &str,
+) -> Result<(Vec<u8>, String), String> {
+    let entry_source = files
+        .get(entry)
+        .ok_or_else(|| format!("Entry '{}' not present in file map", entry))?;
+    let mut entry_items = parse_source(entry_source)?;
+    let root_depends = module_depends(&entry_items);
+    let loaded = load_module_tree_from_map(&root_depends, files)?;
+
+    let (target_fn, args) = crate::replay::parse_entry_call(expr)
+        .map_err(|e| format!("--expr parse: {}", e))?;
+    let (return_type, _effects) = lookup_fn_signature(&entry_items, &loaded, &target_fn)
+        .ok_or_else(|| format!("entry fn `{}` not found in project", target_fn))?;
+
+    let synth = build_synth_entry_fn(&target_fn, &args, &return_type)?;
+    entry_items.push(synth);
+
+    let pipeline_result = crate::ir::pipeline::run(
+        &mut entry_items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
+            run_interp_lower: false,
+            run_buffer_build: false,
+            ..Default::default()
+        },
+    );
+    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
+    if !tc_result.errors.is_empty() {
+        return Err(format_tc_errors(&tc_result.errors));
+    }
+
+    let modules: Vec<codegen::ModuleInfo> = loaded
+        .into_iter()
+        .map(|m| loaded_to_module_info(m, false))
+        .collect();
+    codegen::wasm_gc::flatten_multimodule(&mut entry_items, &modules);
+    crate::ir::pipeline::resolve(&mut entry_items);
+    let bytes = codegen::wasm_gc::compile_to_wasm_gc(&entry_items, pipeline_result.analysis.as_ref())
+        .map_err(|e| format!("{e}"))?;
+    Ok((bytes, target_fn))
+}
+
+/// Find a fn def by name across the entry source and any loaded
+/// dependency module. Returns `(return_type, effects)` so the
+/// synthetic `__entry__` can mirror the target's signature shape.
+/// Multi-module flatten happens AFTER synth injection, so dep fns
+/// are still siloed under their `LoadedModule.items` here — both
+/// places have to be searched.
+fn lookup_fn_signature(
+    entry_items: &[crate::ast::TopLevel],
+    loaded: &[LoadedModule],
+    target: &str,
+) -> Option<(String, Vec<crate::ast::Spanned<String>>)> {
+    let scan = |items: &[crate::ast::TopLevel]| -> Option<(String, Vec<crate::ast::Spanned<String>>)> {
+        for item in items {
+            if let crate::ast::TopLevel::FnDef(fd) = item
+                && fd.name == target
+            {
+                return Some((fd.return_type.clone(), fd.effects.clone()));
+            }
+        }
+        None
+    };
+    if let Some(s) = scan(entry_items) {
+        return Some(s);
+    }
+    for m in loaded {
+        if let Some(s) = scan(&m.items) {
+            return Some(s);
+        }
+    }
+    None
+}
+
+/// Build `fn __entry__() -> <return_type>: target(args…)` as a
+/// `TopLevel::FnDef`. Each `Value` arg lowers to the matching
+/// `Expr::Literal`. Compound shapes (`List`, `Tuple`, `Variant`,
+/// `Record`) aren't supported yet — `--expr` callers that need
+/// them fall back to the legacy VM-in-wasm32 path. Effects are
+/// declared as `! [target]` so the verify pass sees the user fn
+/// in the surface and module-level `effects [...]` lists.
+fn build_synth_entry_fn(
+    target_fn: &str,
+    args: &[crate::value::Value],
+    return_type: &str,
+) -> Result<crate::ast::TopLevel, String> {
+    use crate::ast::{Expr, FnBody, FnDef, Spanned, Stmt, TopLevel};
+    let arg_exprs: Vec<Spanned<Expr>> = args
+        .iter()
+        .map(value_to_literal_expr)
+        .collect::<Result<_, _>>()?;
+    let callee = Spanned::bare(Expr::Ident(target_fn.to_string()));
+    let call = Spanned::bare(Expr::FnCall(Box::new(callee), arg_exprs));
+    let body = FnBody::Block(vec![Stmt::Expr(call)]);
+    Ok(TopLevel::FnDef(FnDef {
+        name: "__entry__".to_string(),
+        line: 0,
+        params: vec![],
+        return_type: return_type.to_string(),
+        effects: vec![Spanned::bare(target_fn.to_string())],
+        desc: None,
+        body: std::sync::Arc::new(body),
+        resolution: None,
+    }))
+}
+
+/// Convert a `Value` literal back into its AST shape so the
+/// synthetic entry body type-checks under the same path as a
+/// hand-written call site. Supported: Int / Float / Bool / Str /
+/// Unit. Anything richer (lists, tuples, variants) returns Err so
+/// the caller can fall back to the VM-in-wasm32 path that owns
+/// per-type encoding.
+fn value_to_literal_expr(v: &crate::value::Value) -> Result<crate::ast::Spanned<crate::ast::Expr>, String> {
+    use crate::ast::{Expr, Literal, Spanned};
+    let lit = match v {
+        crate::value::Value::Int(n) => Literal::Int(*n),
+        crate::value::Value::Float(f) => Literal::Float(*f),
+        crate::value::Value::Str(s) => Literal::Str(s.clone()),
+        crate::value::Value::Bool(b) => Literal::Bool(*b),
+        crate::value::Value::Unit => Literal::Unit,
+        other => {
+            return Err(format!(
+                "synthetic `__entry__` only supports Int/Float/Bool/String/Unit args today; got {:?}",
+                other
+            ));
+        }
+    };
+    Ok(Spanned::bare(Expr::Literal(lit)))
+}
+
+/// Re-exported for the wasm-bindgen `aver_parse_entry_target` arm.
+/// Gated on the `playground` feature so the symbol mirrors the
+/// `bindgen` module's visibility — non-playground builds drop both.
+#[cfg(feature = "playground")]
+fn crate_parse_entry_call(expr: &str) -> Result<(String, Vec<crate::value::Value>), String> {
+    crate::replay::parse_entry_call(expr)
+}
+
 // ── Proof export & Rust compile entry points ────────────────────────
 //
 // Single-file source → backend project files (path → content map).
@@ -910,6 +1062,34 @@ mod bindgen {
         let files: std::collections::HashMap<String, String> =
             serde_json::from_str(files_json).map_err(|e| JsError::new(&e.to_string()))?;
         super::compile_project_to_wasm(&files, entry).map_err(|e| JsError::new(&e))
+    }
+
+    /// Compile a project that targets `expr` (e.g. `add(7, 35)`)
+    /// instead of `main`. Wraps the call in a synthetic `__entry__`
+    /// fn the codegen wires `_start` through, so the playground
+    /// worker can run user expressions on the native wasm-gc path
+    /// without any JS-side argument encoder.
+    #[wasm_bindgen]
+    pub fn aver_compile_project_with_entry(
+        files_json: &str,
+        entry: &str,
+        expr: &str,
+    ) -> Result<Vec<u8>, JsError> {
+        let files: std::collections::HashMap<String, String> =
+            serde_json::from_str(files_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let (bytes, _target_fn) =
+            super::compile_project_to_wasm_with_entry(&files, entry, expr)
+                .map_err(|e| JsError::new(&e))?;
+        Ok(bytes)
+    }
+
+    /// Resolve the user-facing fn name that `expr` calls. Returns
+    /// just the name half of `parse_entry_call(expr)` so the JS host
+    /// can label recordings without re-parsing the call expression.
+    #[wasm_bindgen]
+    pub fn aver_parse_entry_target(expr: &str) -> Result<String, JsError> {
+        let (name, _args) = super::crate_parse_entry_call(expr).map_err(|e| JsError::new(&e))?;
+        Ok(name)
     }
 
     #[wasm_bindgen]

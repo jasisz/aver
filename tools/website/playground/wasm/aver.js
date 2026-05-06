@@ -180,6 +180,33 @@ export function aver_compile_project(files_json, entry) {
 }
 
 /**
+ * Compile a project that targets `expr` (e.g. `add(7, 35)`)
+ * instead of `main`. Wraps the call in a synthetic `__entry__`
+ * fn the codegen wires `_start` through, so the playground
+ * worker can run user expressions on the native wasm-gc path
+ * without any JS-side argument encoder.
+ * @param {string} files_json
+ * @param {string} entry
+ * @param {string} expr
+ * @returns {Uint8Array}
+ */
+export function aver_compile_project_with_entry(files_json, entry, expr) {
+    const ptr0 = passStringToWasm0(files_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(entry, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(expr, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.aver_compile_project_with_entry(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v4;
+}
+
+/**
  * Aver source → Rust/Cargo project files (JSON `{path: content}`).
  * Maps to `aver compile --target rust` on the CLI.
  * @param {string} source
@@ -345,6 +372,34 @@ export function aver_format(source) {
         return getStringFromWasm0(ret[0], ret[1]);
     } finally {
         wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Resolve the user-facing fn name that `expr` calls. Returns
+ * just the name half of `parse_entry_call(expr)` so the JS host
+ * can label recordings without re-parsing the call expression.
+ * @param {string} expr
+ * @returns {string}
+ */
+export function aver_parse_entry_target(expr) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(expr, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.aver_parse_entry_target(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
 }
 

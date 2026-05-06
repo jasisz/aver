@@ -119,11 +119,17 @@ pub(super) fn emit_module(
             "module has no fn definitions".into(),
         ));
     }
-    // `main` is optional — modules that act as a Worker handler
-    // (e.g. `tools/edge/handler.av`) export `handler` instead and
-    // never run `_start`. When absent, `_start` is emitted as a no-op
-    // so the module shape stays valid.
-    let main_idx: Option<usize> = fn_defs.iter().position(|fd| fd.name == "main");
+    // `_start` calls `__entry__` if present (synthesised by the
+    // playground / `--expr` path to wrap a user fn call with literal
+    // args), otherwise `main`. Both are optional — modules that act
+    // as a Worker handler (e.g. `tools/edge/handler.av`) export
+    // `handler` instead and never run `_start`; when neither is
+    // present, `_start` is emitted as a no-op so the module shape
+    // stays valid.
+    let main_idx: Option<usize> = fn_defs
+        .iter()
+        .position(|fd| fd.name == "__entry__")
+        .or_else(|| fn_defs.iter().position(|fd| fd.name == "main"));
 
     let mut module = Module::new();
 

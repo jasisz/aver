@@ -445,7 +445,7 @@ function stopRun() {
             timestamp: `unix-${Math.floor(Date.now() / 1000)}`,
             program_file: recordingMeta?.program_file ?? "playground.av",
             module_root: recordingMeta?.module_root ?? ".",
-            entry_fn: "main",
+            entry_fn: recordingMeta?.entry_fn ?? "main",
             input: null,
             effects: recordingBuffer,
             output: { kind: "value", value: null },
@@ -2851,51 +2851,37 @@ async function doRecord(skipDownload = true, entryExpr = null) {
         setStatus("Nothing to record.", "error");
         return;
     }
-    // Per-fn entry recording (`-e 'fn(args)'`) under the native
-    // wasm-gc playground path needs the compiler to expose a
-    // `--expr` wasm-bindgen wrapper that returns the entry's
-    // `(fn_name, decoded_args)` shape — not wired yet for the
-    // browser. Falls back to the legacy VM-in-wasm32 path so the
-    // feature stays available in the meantime; `main` recordings
-    // go straight through native wasm-gc.
+    // Per-fn entry recording (`-e 'fn(args)'`) — compile a synthetic
+    // `__entry__()` wrapper that calls the user expression with its
+    // literal args, then drive the same WebWorker record session
+    // `main` recordings use. The wasm-gc `_start` synthesis prefers
+    // `__entry__` when present, so the host invocation path stays
+    // unchanged; only the trace's `entry_fn` label flips to the
+    // user-facing name (`add` instead of `__entry__` / `main`).
     state.lastEntryExpr = entryExpr || null;
-    if (entryExpr) {
-        try {
-            const comp = await loadCompiler();
-            setStatus(`Recording ${entryExpr}…`, "info");
-            const json = comp.aver_run_record_entry(
-                JSON.stringify(filesObj),
-                entry,
-                entryExpr,
-            );
-            const res = JSON.parse(json);
-            if (!res.ok) {
-                setStatus("Record failed", "error");
-                appendConsole("stderr", res.error || "unknown error");
-                return;
-            }
-            const parsed = JSON.parse(res.recording);
-            setRecording(parsed);
-            const note = res.runtime_error ? ` (main threw: ${res.runtime_error})` : "";
-            setStatus(`Recorded ${res.effect_count} effect(s)${note}`, "success");
-        } catch (e) {
-            appendConsole("stderr", e.message || String(e));
-            setStatus("Record failed", "error");
-        }
-        return;
-    }
     try {
         const comp = await loadCompiler();
-        setStatus("Recording…", "info");
-        // Compile the source to wasm-gc bytes via `aver_compile_project`,
-        // then drive a record session on the WebWorker so the program
-        // runs natively under V8 wasm-gc instead of the VM-in-wasm32
-        // bridge. Effect outcomes flow through the worker's
-        // `AverBrowserHost.recordOrDispatch`, which appends to the
-        // trace as the wasm-gc CLI host does.
+        setStatus(entryExpr ? `Recording ${entryExpr}…` : "Recording…", "info");
+        // Compile the source to wasm-gc bytes via `aver_compile_project`
+        // (or the synthetic-`__entry__` variant when the user supplied
+        // `-e 'fn(args)'`), then drive a record session on the
+        // WebWorker so the program runs natively under V8 wasm-gc
+        // instead of the VM-in-wasm32 bridge. Effect outcomes flow
+        // through the worker's `AverBrowserHost.recordOrDispatch`,
+        // which appends to the trace as the wasm-gc CLI host does.
         let wasmBytes;
+        let entryLabel = "main";
         try {
-            wasmBytes = comp.aver_compile_project(JSON.stringify(filesObj), entry);
+            if (entryExpr) {
+                wasmBytes = comp.aver_compile_project_with_entry(
+                    JSON.stringify(filesObj),
+                    entry,
+                    entryExpr,
+                );
+                entryLabel = comp.aver_parse_entry_target(entryExpr);
+            } else {
+                wasmBytes = comp.aver_compile_project(JSON.stringify(filesObj), entry);
+            }
         } catch (e) {
             appendConsole("stderr", e.message || String(e));
             setStatus("Compile failed", "error");
@@ -2912,6 +2898,7 @@ async function doRecord(skipDownload = true, entryExpr = null) {
         state.recordingMeta = {
             program_file: entry,
             module_root: ".",
+            entry_fn: entryLabel,
         };
         // Surface the same Run-style UI affordances: clear the
         // previous output, switch the output pane to terminal vs
@@ -2955,6 +2942,7 @@ async function doRecord(skipDownload = true, entryExpr = null) {
                     programArgs: state.programArgs ?? [],
                     programFile: entry,
                     moduleRoot: ".",
+                    entryLabel,
                 },
                 [wasmBytes.buffer],
             );

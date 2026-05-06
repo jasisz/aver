@@ -37,7 +37,7 @@ async function runModule(wasmBytes) {
 /// bouncing through VM-in-wasm32. Returns the same recording JSON
 /// shape the CLI produces, so a downloaded `.replay.json` from the
 /// playground replays under `aver replay --wasm-gc` (and vice versa).
-async function recordModule(wasmBytes, programArgs, programFile, moduleRoot) {
+async function recordModule(wasmBytes, programArgs, programFile, moduleRoot, entryLabel) {
     try {
         host.recorder.startRecording();
         host.capNotified = false;
@@ -52,7 +52,7 @@ async function recordModule(wasmBytes, programArgs, programFile, moduleRoot) {
             timestamp: `unix-${Math.floor(Date.now() / 1000)}`,
             program_file: programFile ?? "playground.av",
             module_root: moduleRoot ?? ".",
-            entry_fn: "main",
+            entry_fn: entryLabel ?? "main",
             input: null,
             effects,
             // Output value comparison for the playground's native
@@ -143,6 +143,7 @@ self.onmessage = (event) => {
             event.data.programArgs ?? [],
             event.data.programFile,
             event.data.moduleRoot,
+            event.data.entryLabel,
         );
         return;
     }
