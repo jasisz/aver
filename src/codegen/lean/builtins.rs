@@ -46,15 +46,14 @@ pub fn emit_builtin_call(
         IntToString => format!("toString {}", p(&a[0])),
         IntMin => format!("min {} {}", p(&a[0]), p(&a[1])),
         IntMax => format!("max {} {}", p(&a[0]), p(&a[1])),
-        IntRem | IntMod => format!("(Except.ok ({} % {}) : Except String Int)", a[0], a[1]),
+        IntMod => format!("(Except.ok ({} % {}) : Except String Int)", a[0], a[1]),
         IntFromString => format!("Int.fromString {}", p(&a[0])),
-        IntParse => format!("Int.fromString {}", p(&a[0])),
 
         // ---- Float ----
         FloatAbs => format!("Float.abs {}", p(&a[0])),
         FloatSqrt => format!("Float.sqrt {}", p(&a[0])),
         FloatToString => format!("toString {}", p(&a[0])),
-        FloatFromString | FloatParse => format!("Float.fromString {}", p(&a[0])),
+        FloatFromString => format!("Float.fromString {}", p(&a[0])),
         FloatPow => format!("AverFloat.pow {} {}", p(&a[0]), p(&a[1])),
         FloatRound => format!("AverFloat.round {}", p(&a[0])),
         FloatFloor => format!("AverFloat.floor {}", p(&a[0])),

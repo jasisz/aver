@@ -1074,7 +1074,6 @@ fn expr_is_numeric(expr: &Expr, ectx: &EmitCtx) -> bool {
                     "Int.abs"
                         | "Int.min"
                         | "Int.max"
-                        | "Int.rem"
                         | "Float.abs"
                         | "Float.floor"
                         | "Float.ceil"

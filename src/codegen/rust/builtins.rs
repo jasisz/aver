@@ -14,8 +14,6 @@ fn builtin_needs_str_conversion(name: &str) -> bool {
             | "Time.now"
             | "Int.toString"
             | "Float.toString"
-            | "Int.parse"
-            | "Float.parse"
             | "Int.fromString"
             | "Float.fromString"
             | "String.slice"
@@ -418,10 +416,6 @@ fn emit_builtin_call_inner(
             let arg = emit_arg(0);
             Some(format!("{}.to_string()", arg))
         }
-        "Int.parse" => {
-            let arg = emit_arg(0);
-            Some(format!("{}.parse::<i64>().map_err(|e| e.to_string())", arg))
-        }
         "Int.fromString" => {
             let arg = emit_arg(0);
             Some(format!("{}.parse::<i64>().map_err(|e| e.to_string())", arg))
@@ -435,11 +429,6 @@ fn emit_builtin_call_inner(
             let a = emit_arg(0);
             let b = emit_arg(1);
             Some(format!("{}.max({})", a, b))
-        }
-        "Int.rem" => {
-            let a = emit_arg(0);
-            let b = emit_arg(1);
-            Some(format!("({} % {})", a, b))
         }
         "Int.mod" => {
             let a = emit_arg(0);
@@ -477,10 +466,6 @@ fn emit_builtin_call_inner(
         "Float.toString" => {
             let arg = emit_arg(0);
             Some(format!("{}.to_string()", arg))
-        }
-        "Float.parse" => {
-            let arg = emit_arg(0);
-            Some(format!("{}.parse::<f64>().map_err(|e| e.to_string())", arg))
         }
         "Float.sqrt" => {
             let arg = emit_arg(0);

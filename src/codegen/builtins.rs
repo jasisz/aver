@@ -20,10 +20,8 @@ pub(crate) enum Builtin {
     IntToFloat,
     IntToString,
     IntFromString,
-    IntParse,
     IntMin,
     IntMax,
-    IntRem,
     IntMod,
 
     // --- Float ---
@@ -36,7 +34,6 @@ pub(crate) enum Builtin {
     FloatToInt,
     FloatToString,
     FloatFromString,
-    FloatParse,
     FloatPi,
     FloatMin,
     FloatMax,
@@ -134,10 +131,8 @@ pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
         "Int.toFloat" | "Float.fromInt" => Builtin::IntToFloat,
         "Int.toString" => Builtin::IntToString,
         "Int.fromString" => Builtin::IntFromString,
-        "Int.parse" => Builtin::IntParse,
         "Int.min" => Builtin::IntMin,
         "Int.max" => Builtin::IntMax,
-        "Int.rem" => Builtin::IntRem,
         "Int.mod" => Builtin::IntMod,
 
         // Float
@@ -150,7 +145,6 @@ pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
         "Float.toInt" => Builtin::FloatToInt,
         "Float.toString" => Builtin::FloatToString,
         "Float.fromString" => Builtin::FloatFromString,
-        "Float.parse" => Builtin::FloatParse,
         "Float.pi" => Builtin::FloatPi,
         "Float.min" => Builtin::FloatMin,
         "Float.max" => Builtin::FloatMax,
