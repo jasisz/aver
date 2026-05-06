@@ -9,7 +9,7 @@ module Render
 
 fn renderCommandReport(report: CommandReport) -> List<String>
     ? "Renders a command result as CLI lines."
-    List.concat([report.summary, "subject: {report.subjectId}", "events={Int.toString(List.len(report.events))} notifications={Int.toString(List.len(report.notifications))} audits={Int.toString(List.len(report.audits))}"], renderCommandDetails(report))
+    List.concat([report.summary, "subject: {report.subjectId}", "events={String.fromInt(List.len(report.events))} notifications={String.fromInt(List.len(report.notifications))} audits={String.fromInt(List.len(report.audits))}"], renderCommandDetails(report))
 
 verify renderCommandReport
     renderCommandReport(CommandReport(summary = "Created project 'alpha'", subjectId = "project:alpha", events = [], notifications = [], audits = [])) => ["Created project 'alpha'", "subject: project:alpha", "events=0 notifications=0 audits=0", "notifications: 0", "audits: 0"]
@@ -35,7 +35,7 @@ fn renderTaskList(items: List<TaskSummary>) -> List<String>
     ? "Renders list_tasks output."
     match items
         [] -> ["tasks: 0"]
-        _ -> List.prepend("tasks: {Int.toString(List.len(items))}", renderTaskSummaries(items))
+        _ -> List.prepend("tasks: {String.fromInt(List.len(items))}", renderTaskSummaries(items))
 
 verify renderTaskList
     renderTaskList([]) => ["tasks: 0"]
@@ -86,7 +86,7 @@ verify deadlineText
 
 fn renderHistory(events: List<TaskEventRecord>) -> List<String>
     ? "Renders task history lines."
-    List.prepend("history: {Int.toString(List.len(events))}", renderHistoryItems(events))
+    List.prepend("history: {String.fromInt(List.len(events))}", renderHistoryItems(events))
 
 verify renderHistory
     renderHistory([sampleHistoryEvent()]) => ["history: 1", renderHistoryItem(sampleHistoryEvent())]
@@ -102,14 +102,14 @@ verify renderHistoryItems
 
 fn renderHistoryItem(event: TaskEventRecord) -> String
     ? "One history line rendered from the typed domain event."
-    "{Int.toString(event.seq)} {Domain.Events.eventName(event.event)}"
+    "{String.fromInt(event.seq)} {Domain.Events.eventName(event.event)}"
 
 verify renderHistoryItem
     renderHistoryItem(sampleHistoryEvent()) => "2 TaskCompleted"
 
 fn renderNotifications(entries: List<Notification>) -> List<String>
     ? "Renders notification lines."
-    List.prepend("notifications: {Int.toString(List.len(entries))}", renderNotificationItems(entries))
+    List.prepend("notifications: {String.fromInt(List.len(entries))}", renderNotificationItems(entries))
 
 verify renderNotifications
     renderNotifications([sampleNotification()]) => ["notifications: 1", "[deadline_soon] Task 't1' is due within 24 hours"]
@@ -125,7 +125,7 @@ verify renderNotificationItems
 
 fn renderAudits(entries: List<AuditEntry>) -> List<String>
     ? "Renders audit lines."
-    List.prepend("audits: {Int.toString(List.len(entries))}", renderAuditItems(entries))
+    List.prepend("audits: {String.fromInt(List.len(entries))}", renderAuditItems(entries))
 
 verify renderAudits
     renderAudits([sampleAudit()]) => ["audits: 1", "2026-03-08T12:00:00Z task.created Task 't1' created"]

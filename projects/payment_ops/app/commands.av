@@ -54,7 +54,7 @@ fn runIngestWebhooks(provider: String, path: String) -> Result<CommandReport, St
     _cases = Infra.Store.saveCases(List.concat(existingCases, newCases))?
     audits = List.concat(imported.audits, openedCaseAudits(newCases))
     _audit = Infra.Audit.recordEntries(audits)?
-    Result.Ok(CommandReport(summary = "Ingested {Int.toString(List.len(imported.events))} webhook events for {canonicalProvider}", subjectId = "provider:{canonicalProvider}", addedEvents = imported.events, addedSettlements = [], addedCases = newCases, audits = audits))
+    Result.Ok(CommandReport(summary = "Ingested {String.fromInt(List.len(imported.events))} webhook events for {canonicalProvider}", subjectId = "provider:{canonicalProvider}", addedEvents = imported.events, addedSettlements = [], addedCases = newCases, audits = audits))
 
 fn runImportSettlement(provider: String, path: String) -> Result<CommandReport, String>
     ? "Loads one settlement import file and appends deduplicated settlement rows."
@@ -67,7 +67,7 @@ fn runImportSettlement(provider: String, path: String) -> Result<CommandReport, 
     imported = ingestSettlementRows(canonicalProvider, raws, existingRows, SettlementImportResult(rows = [], audits = []), now)?
     _rows = Infra.Store.appendSettlements(imported.rows)?
     _audit = Infra.Audit.recordEntries(imported.audits)?
-    Result.Ok(CommandReport(summary = "Imported {Int.toString(List.len(imported.rows))} settlement rows for {canonicalProvider}", subjectId = "provider:{canonicalProvider}", addedEvents = [], addedSettlements = imported.rows, addedCases = [], audits = imported.audits))
+    Result.Ok(CommandReport(summary = "Imported {String.fromInt(List.len(imported.rows))} settlement rows for {canonicalProvider}", subjectId = "provider:{canonicalProvider}", addedEvents = [], addedSettlements = imported.rows, addedCases = [], audits = imported.audits))
 
 fn runReconcile(provider: String) -> Result<CommandReport, String>
     ? "Compares replayed realtime state with imported settlements and opens review cases."
@@ -83,7 +83,7 @@ fn runReconcile(provider: String) -> Result<CommandReport, String>
     _cases = Infra.Store.saveCases(List.concat(existingCases, newCases))?
     audits = openedCaseAudits(newCases)
     _audit = Infra.Audit.recordEntries(audits)?
-    Result.Ok(CommandReport(summary = "Reconciliation opened {Int.toString(List.len(newCases))} cases for {canonicalProvider}", subjectId = "provider:{canonicalProvider}", addedEvents = [], addedSettlements = [], addedCases = newCases, audits = audits))
+    Result.Ok(CommandReport(summary = "Reconciliation opened {String.fromInt(List.len(newCases))} cases for {canonicalProvider}", subjectId = "provider:{canonicalProvider}", addedEvents = [], addedSettlements = [], addedCases = newCases, audits = audits))
 
 fn runResolveCase(caseId: String, resolution: String) -> Result<CommandReport, String>
     ? "Marks one manual-review case as resolved."

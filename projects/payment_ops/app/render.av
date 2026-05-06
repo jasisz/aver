@@ -32,7 +32,7 @@ fn renderCommandReport(report: CommandReport) -> List<String>
     List.concat([
         report.summary,
         "subject: {report.subjectId}",
-        "events={Int.toString(List.len(report.addedEvents))} settlements={Int.toString(List.len(report.addedSettlements))} cases={Int.toString(List.len(report.addedCases))} audits={Int.toString(List.len(report.audits))}"
+        "events={String.fromInt(List.len(report.addedEvents))} settlements={String.fromInt(List.len(report.addedSettlements))} cases={String.fromInt(List.len(report.addedCases))} audits={String.fromInt(List.len(report.audits))}"
     ], List.concat(renderCases(report.addedCases), renderAudits(report.audits)))
 
 verify renderCommandReport
@@ -58,7 +58,7 @@ fn renderPaymentDetail(details: PaymentDetail) -> List<String>
         "payment: {details.state.paymentId}",
         "provider: {details.state.provider}",
         "status: {Domain.Views.statusText(details.state)}",
-        "amounts: authorized={Int.toString(details.state.authorizedAmount)} captured={Int.toString(details.state.capturedAmount)} refunded={Int.toString(details.state.refundedAmount)} currency={details.state.currency}",
+        "amounts: authorized={String.fromInt(details.state.authorizedAmount)} captured={String.fromInt(details.state.capturedAmount)} refunded={String.fromInt(details.state.refundedAmount)} currency={details.state.currency}",
         "latest: {details.state.latestAt}",
         "anomalies: {Domain.Views.anomalySummary(details.state)}"
     ], List.concat(renderEventHistory(details.events), List.concat(renderSettlements(details.settlements), renderCases(details.openCases))))
@@ -68,7 +68,7 @@ verify renderPaymentDetail
 
 fn renderEventHistory(events: List<PaymentEventRecord>) -> List<String>
     ? "Renders payment event history."
-    List.prepend("events: {Int.toString(List.len(events))}", renderEventItems(events))
+    List.prepend("events: {String.fromInt(List.len(events))}", renderEventItems(events))
 
 verify renderEventHistory
     renderEventHistory([sampleEvent()]) => ["events: 1", renderEventItem(sampleEvent())]
@@ -91,14 +91,14 @@ verify renderEventItemsInto
 
 fn renderEventItem(entry: PaymentEventRecord) -> String
     ? "One event history line."
-    "{Int.toString(entry.seq)} {Domain.Ledger.eventName(entry.event)} source={entry.sourceId} at={Domain.Ledger.eventAt(entry.event)}"
+    "{String.fromInt(entry.seq)} {Domain.Ledger.eventName(entry.event)} source={entry.sourceId} at={Domain.Ledger.eventAt(entry.event)}"
 
 verify renderEventItem
     renderEventItem(sampleEvent()) => "1 Captured source=evt-1 at=2026-03-10T09:05:00Z"
 
 fn renderSettlements(rows: List<SettlementRow>) -> List<String>
     ? "Renders settlement rows for one payment."
-    List.prepend("settlements: {Int.toString(List.len(rows))}", renderSettlementItems(rows))
+    List.prepend("settlements: {String.fromInt(List.len(rows))}", renderSettlementItems(rows))
 
 verify renderSettlements
     renderSettlements([sampleSettlement()]) => ["settlements: 1", renderSettlementItem(sampleSettlement())]
@@ -121,14 +121,14 @@ verify renderSettlementItemsInto
 
 fn renderSettlementItem(row: SettlementRow) -> String
     ? "One settlement line."
-    "{row.rowId} {settlementKindText(row.kind)} amount={Int.toString(row.amount)} currency={row.currency} settled_on={row.settledOn}"
+    "{row.rowId} {settlementKindText(row.kind)} amount={String.fromInt(row.amount)} currency={row.currency} settled_on={row.settledOn}"
 
 verify renderSettlementItem
     renderSettlementItem(sampleSettlement()) => "row-1 capture amount=1000 currency=USD settled_on=2026-03-10"
 
 fn renderCases(cases: List<ReviewCase>) -> List<String>
     ? "Renders cases or command-created case lists."
-    List.prepend("cases: {Int.toString(List.len(cases))}", renderCaseItems(cases))
+    List.prepend("cases: {String.fromInt(List.len(cases))}", renderCaseItems(cases))
 
 verify renderCases
     renderCases([]) => ["cases: 0"]
@@ -161,12 +161,12 @@ fn renderProviderSummary(summary: ProviderSummary) -> List<String>
     ? "Renders provider-level aggregate output."
     [
         "provider: {summary.provider}",
-        "payments: {Int.toString(summary.payments)}",
-        "events: {Int.toString(summary.events)}",
-        "settlements: {Int.toString(summary.settlements)}",
-        "open cases: {Int.toString(summary.openCases)}",
-        "captured amount: {Int.toString(summary.capturedAmount)}",
-        "refunded amount: {Int.toString(summary.refundedAmount)}",
+        "payments: {String.fromInt(summary.payments)}",
+        "events: {String.fromInt(summary.events)}",
+        "settlements: {String.fromInt(summary.settlements)}",
+        "open cases: {String.fromInt(summary.openCases)}",
+        "captured amount: {String.fromInt(summary.capturedAmount)}",
+        "refunded amount: {String.fromInt(summary.refundedAmount)}",
     ]
 
 verify renderProviderSummary
@@ -174,7 +174,7 @@ verify renderProviderSummary
 
 fn renderAudits(entries: List<AuditEntry>) -> List<String>
     ? "Renders audit lines."
-    List.prepend("audits: {Int.toString(List.len(entries))}", renderAuditItems(entries))
+    List.prepend("audits: {String.fromInt(List.len(entries))}", renderAuditItems(entries))
 
 verify renderAudits
     renderAudits([sampleAudit()]) => ["audits: 1", "2026-03-10T12:00:00Z case.opened opened"]

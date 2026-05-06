@@ -47,7 +47,7 @@ Compound:
 Notes:
 - top-level named functions can be passed where `Fn(...)` is expected
 - there are no lambdas and no closures
-- no implicit type promotion; use `Int.toFloat` / `Float.fromInt`
+- no implicit type promotion; use `Float.fromInt(n)` / `Int.fromFloat(f)`
 
 ### User-defined types
 
@@ -79,7 +79,7 @@ Rules:
 
 ```aver
 match value
-    Result.Ok(v) -> Int.toString(v)
+    Result.Ok(v) -> String.fromInt(v)
     Result.Err(e) -> e
 ```
 
@@ -252,19 +252,23 @@ Common pure namespaces:
 Key `String` API:
 - `String.len`, `String.contains`, `String.startsWith`, `String.endsWith`
 - `String.toUpper`, `String.toLower`, `String.trim`
-- `String.concat`, `String.join`, `String.split`, `String.chars`
-- `Int.fromString : String -> Result<Int, String>`, `Int.toString : Int -> String`
-- string interpolation: `"Hello, {name}!"` is the idiomatic concat
+- `String.join`, `String.split`, `String.chars` — concat is the `+` operator
+- `Int.fromString : String -> Result<Int, String>`, `String.fromInt : Int -> String`
+- `Float.fromString`, `String.fromFloat`, `String.fromBool` — convention: `<targetTyp>.from<source>`
+- string interpolation: `"Hello, {name}!"` is the idiomatic way to render values into text; reserve `String.fromInt` etc. for explicit data conversion (e.g. building keys: `"user:" + String.fromInt(id)`)
 
 Key `List` API (small, recursion-first):
-- `List.len`, `List.prepend`, `List.concat`, `List.reverse`, `List.contains`, `List.zip`, `List.take`, `List.drop`
+- `List.len`, `List.prepend`, `List.concat`, `List.reverse`, `List.contains`, `List.zip`, `List.take`, `List.drop`, `List.fromVector`
 - No `List.map`, `List.filter`, `List.fold` — write with recursion
+- empty list literal: `[]`
 
 Key `Vector` API (O(1) indexed access):
 - `Vector.new(n, default)`, `Vector.get(v, i) -> Option<T>`, `Vector.set(v, i, val) -> Option<Vector<T>>`
+- `Vector.fromList(l)` — conversion in the other direction lives on `List`
 
 Key `Map` API:
-- `Map.empty()`, `Map.fromList(pairs)`, `Map.get(m, k) -> Option<V>`, `Map.set(m, k, v)`, `Map.has(m, k)`, `Map.remove(m, k)`, `Map.keys(m)`, `Map.len(m)`
+- empty map literal: `{}` (type from context); non-empty: `{a => 1, b => 2}`. There is no `Map.empty()` builtin.
+- `Map.fromList(pairs)`, `Map.get(m, k) -> Option<V>`, `Map.set(m, k, v)`, `Map.has(m, k)`, `Map.remove(m, k)`, `Map.keys(m)`, `Map.values(m)`, `Map.entries(m)`, `Map.len(m)`
 
 Effectful namespaces:
 - `Console`: print, error, warn, readLine — **`print`/`error`/`warn` take `String`**, not arbitrary values. Stringify at the call site: interpolation `"{x}"` for primitives, a per-type render fn (`fn show(r: Result<T, E>) -> String`) for compound shapes.

@@ -56,7 +56,7 @@ verify parseBool
 
 fn fieldAt(parts: List<String>, index: Int, label: String) -> Result<String, String>
     ? "Reads and unescapes one required field from a split line."
-    raw = Option.toResult(Vector.get(Vector.fromList(parts), index), "Corrupt {label}: missing field {Int.toString(index)}")?
+    raw = Option.toResult(Vector.get(Vector.fromList(parts), index), "Corrupt {label}: missing field {String.fromInt(index)}")?
     Result.Ok(unescapeField(raw))
 
 verify fieldAt

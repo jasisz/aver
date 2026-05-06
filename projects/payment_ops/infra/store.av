@@ -100,9 +100,9 @@ fn saveCases(cases: List<ReviewCase>) -> Result<Unit, String>
 fn serializeEvent(entry: PaymentEventRecord) -> String
     ? "Encodes one canonical payment event line."
     match entry.event
-        PaymentEvent.Authorized(amount, currency, at) -> String.join([entry.provider, entry.sourceId, entry.paymentId, Int.toString(entry.seq), "Authorized", Int.toString(amount), currency, at], "|")
-        PaymentEvent.Captured(amount, currency, at) -> String.join([entry.provider, entry.sourceId, entry.paymentId, Int.toString(entry.seq), "Captured", Int.toString(amount), currency, at], "|")
-        PaymentEvent.Refunded(amount, currency, at) -> String.join([entry.provider, entry.sourceId, entry.paymentId, Int.toString(entry.seq), "Refunded", Int.toString(amount), currency, at], "|")
+        PaymentEvent.Authorized(amount, currency, at) -> String.join([entry.provider, entry.sourceId, entry.paymentId, String.fromInt(entry.seq), "Authorized", String.fromInt(amount), currency, at], "|")
+        PaymentEvent.Captured(amount, currency, at) -> String.join([entry.provider, entry.sourceId, entry.paymentId, String.fromInt(entry.seq), "Captured", String.fromInt(amount), currency, at], "|")
+        PaymentEvent.Refunded(amount, currency, at) -> String.join([entry.provider, entry.sourceId, entry.paymentId, String.fromInt(entry.seq), "Refunded", String.fromInt(amount), currency, at], "|")
 
 verify serializeEvent
     serializeEvent(PaymentEventRecord(provider = "stripe", sourceId = "evt-1", paymentId = "pay-1", seq = 1, event = PaymentEvent.Authorized(1000, "USD", "2026-03-10T09:00:00Z"))) => "stripe|evt-1|pay-1|1|Authorized|1000|USD|2026-03-10T09:00:00Z"
@@ -141,7 +141,7 @@ verify decodeEventKind
 
 fn serializeSettlement(row: SettlementRow) -> String
     ? "Encodes one settlement line."
-    String.join([row.provider, row.rowId, row.paymentId, settlementKindText(row.kind), Int.toString(row.amount), row.currency, row.settledOn], "|")
+    String.join([row.provider, row.rowId, row.paymentId, settlementKindText(row.kind), String.fromInt(row.amount), row.currency, row.settledOn], "|")
 
 verify serializeSettlement
     serializeSettlement(SettlementRow(provider = "stripe", rowId = "row-1", paymentId = "pay-1", kind = SettlementKind.Capture, amount = 1000, currency = "USD", settledOn = "2026-03-10")) => "stripe|row-1|pay-1|capture|1000|USD|2026-03-10"
