@@ -780,27 +780,67 @@ pub(super) fn field_type_resolvable(
     registry: &TypeRegistry,
     seen: &mut std::collections::HashSet<String>,
 ) -> bool {
-    // Conservative: reject any generic carrier (`Option<…>`,
-    // `Result<…,…>`, `List<…>`, `Vector<…>`, `Map<…,…>`,
-    // `Tuple<…>`) as a field type. The inline eq emitters don't
-    // know how to dispatch eq for these — that's its own ABI
-    // path (Option tag-and-compare, Result variant tags, etc.).
-    // Programs that hold a record with such a field still work,
-    // they just don't get list-eq / map-key / contains-on-list
-    // slots emitted for the outer type. Lifting this is its own
-    // followup.
-    if field.contains('<') {
+    if matches!(field, "Int" | "Float" | "Bool" | "String") {
+        return true;
+    }
+    if registry.record_type_idx(field).is_some() {
+        return record_fields_resolvable(field, registry, seen);
+    }
+    if registry
+        .variants
+        .values()
+        .flat_map(|vs| vs.iter())
+        .any(|v| v.parent == field)
+    {
+        return sum_fields_resolvable(field, registry, seen);
+    }
+    // Generic carriers — `Option<X>`, `Result<X,Y>`, `Tuple<…>` get
+    // per-instantiation `__eq_<canonical>` helpers since 0.16.3.
+    // Resolvable iff every inner type is itself resolvable.
+    // List/Vector/Map field types still fall through (their dispatch
+    // from `emit_record_eq_inline` is a separate followup).
+    if let Some(inner) = field.strip_prefix("Option<").and_then(|s| s.strip_suffix('>')) {
+        return field_type_resolvable(inner.trim(), registry, seen);
+    }
+    if let Some(inner) = field.strip_prefix("Result<").and_then(|s| s.strip_suffix('>')) {
+        let bytes = inner.as_bytes();
+        let mut depth: i32 = 0;
+        for (idx, b) in bytes.iter().enumerate() {
+            match b {
+                b'<' | b'(' => depth += 1,
+                b'>' | b')' => depth -= 1,
+                b',' if depth == 0 => {
+                    let ok = inner[..idx].trim();
+                    let err = inner[idx + 1..].trim();
+                    return field_type_resolvable(ok, registry, seen)
+                        && field_type_resolvable(err, registry, seen);
+                }
+                _ => {}
+            }
+        }
         return false;
     }
-    matches!(field, "Int" | "Float" | "Bool" | "String")
-        || (registry.record_type_idx(field).is_some()
-            && record_fields_resolvable(field, registry, seen))
-        || (registry
-            .variants
-            .values()
-            .flat_map(|vs| vs.iter())
-            .any(|v| v.parent == field)
-            && sum_fields_resolvable(field, registry, seen))
+    if let Some(inner) = field.strip_prefix("Tuple<").and_then(|s| s.strip_suffix('>')) {
+        let bytes = inner.as_bytes();
+        let mut depth: i32 = 0;
+        let mut start = 0;
+        for (idx, b) in bytes.iter().enumerate() {
+            match b {
+                b'<' | b'(' => depth += 1,
+                b'>' | b')' => depth -= 1,
+                b',' if depth == 0 => {
+                    let elem = inner[start..idx].trim();
+                    if !field_type_resolvable(elem, registry, seen) {
+                        return false;
+                    }
+                    start = idx + 1;
+                }
+                _ => {}
+            }
+        }
+        return field_type_resolvable(inner[start..].trim(), registry, seen);
+    }
+    false
 }
 
 fn list_idx_of(canonical: &str, registry: &TypeRegistry) -> Result<u32, WasmGcError> {

@@ -315,6 +315,23 @@ impl TypeRegistry {
                     &mut result_order,
                     &mut next_idx,
                 );
+                // Walk binding annotations too — `let r: Result<Box, MyErr> = …`
+                // wouldn't be picked up by the builtin-uses scan (which only
+                // looks at known dotted calls like `Disk.readText`). Without this,
+                // user-typed `Result<custom, custom>` values fail to find their
+                // type slot at construction time.
+                use crate::ast::{FnBody, Stmt};
+                let FnBody::Block(stmts) = fd.body.as_ref();
+                for stmt in stmts {
+                    if let Stmt::Binding(_, Some(annot), _) = stmt {
+                        collect_results_from_str(
+                            annot,
+                            &mut result_types,
+                            &mut result_order,
+                            &mut next_idx,
+                        );
+                    }
+                }
             }
         }
         let mut list_types: HashMap<String, u32> = HashMap::new();

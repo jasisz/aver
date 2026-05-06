@@ -556,25 +556,37 @@ pub(super) fn emit_expr(
 /// type mismatch.
 fn sum_or_record_eq_fn(operand: &Spanned<Expr>, ctx: &EmitCtx<'_>) -> Option<u32> {
     let ty = operand.ty()?;
-    let crate::types::Type::Named(name) = ty else {
-        return None;
-    };
-    // Newtypes already lower to their underlying primitive — no helper
-    // needed (the default i64/f64 eq handles them).
-    if ctx.registry.newtype_underlying(name).is_some() {
-        return None;
+    match ty {
+        crate::types::Type::Named(name) => {
+            // Newtypes already lower to their underlying primitive —
+            // no helper needed (the default i64/f64 eq handles them).
+            if ctx.registry.newtype_underlying(name).is_some() {
+                return None;
+            }
+            let is_record = ctx.registry.record_fields.contains_key(name);
+            let is_sum = ctx
+                .registry
+                .variants
+                .values()
+                .flat_map(|v| v.iter())
+                .any(|v| &v.parent == name);
+            if !is_record && !is_sum {
+                return None;
+            }
+            ctx.fn_map.eq_helpers.get(name).copied()
+        }
+        // Generic carriers — `Option<X>`, `Result<X,Y>`, `Tuple<…>`
+        // have per-instantiation `__eq_<canonical>` helpers since
+        // 0.16.3. Lookup by the type's display canonical (whitespace-
+        // free, matching how the discovery walker registered it).
+        crate::types::Type::Option(_)
+        | crate::types::Type::Result(_, _)
+        | crate::types::Type::Tuple(_) => {
+            let canonical: String = ty.display().chars().filter(|c| !c.is_whitespace()).collect();
+            ctx.fn_map.eq_helpers.get(&canonical).copied()
+        }
+        _ => None,
     }
-    let is_record = ctx.registry.record_fields.contains_key(name);
-    let is_sum = ctx
-        .registry
-        .variants
-        .values()
-        .flat_map(|v| v.iter())
-        .any(|v| &v.parent == name);
-    if !is_record && !is_sum {
-        return None;
-    }
-    ctx.fn_map.eq_helpers.get(name).copied()
 }
 
 fn nullary_variant_idx(expr: &Spanned<Expr>, ctx: &EmitCtx<'_>) -> Option<u32> {

@@ -1259,6 +1259,7 @@ fn register_nominal_in_type(
     eq_helpers: &mut EqHelperRegistry,
     type_registry: &super::types::TypeRegistry,
 ) {
+    let canonical: String = t.display().chars().filter(|c| !c.is_whitespace()).collect();
     match t {
         AverType::Named(name) => {
             if type_registry.record_fields.contains_key(name) {
@@ -1272,17 +1273,27 @@ fn register_nominal_in_type(
                 eq_helpers.register_transitive(name, EqKind::Sum, type_registry);
             }
         }
-        AverType::List(inner) | AverType::Vector(inner) | AverType::Option(inner) => {
+        AverType::Option(inner) => {
+            eq_helpers.register_transitive(&canonical, EqKind::OptionEq, type_registry);
             register_nominal_in_type(inner, eq_helpers, type_registry);
         }
-        AverType::Map(k, v) | AverType::Result(k, v) => {
-            register_nominal_in_type(k, eq_helpers, type_registry);
-            register_nominal_in_type(v, eq_helpers, type_registry);
+        AverType::Result(ok, err) => {
+            eq_helpers.register_transitive(&canonical, EqKind::ResultEq, type_registry);
+            register_nominal_in_type(ok, eq_helpers, type_registry);
+            register_nominal_in_type(err, eq_helpers, type_registry);
         }
         AverType::Tuple(items) => {
+            eq_helpers.register_transitive(&canonical, EqKind::TupleEq, type_registry);
             for item in items {
                 register_nominal_in_type(item, eq_helpers, type_registry);
             }
+        }
+        AverType::List(inner) | AverType::Vector(inner) => {
+            register_nominal_in_type(inner, eq_helpers, type_registry);
+        }
+        AverType::Map(k, v) => {
+            register_nominal_in_type(k, eq_helpers, type_registry);
+            register_nominal_in_type(v, eq_helpers, type_registry);
         }
         _ => {}
     }
