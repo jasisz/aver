@@ -2011,22 +2011,9 @@ async function downloadAs(format) {
             if (!source || !source.trim()) { setStatus("Nothing to compile.", "info"); return; }
             const t0 = performance.now();
             setStatus("Compiling to WASM…", "info");
-            // Mirror Run/Record/Replay's entry shape — if the user
-            // last drove a `--expr` session, the downloaded wasm
-            // should be the synth-`__entry__` build that matches the
-            // recording's `entry_fn`. Otherwise download the regular
-            // `main`-entry binary. Without this, a Record on
-            // `add(7, 35)` followed by Download would hand the user a
-            // wasm that no longer matches the trace they captured.
-            const wasmBytes = state.lastEntryExpr && entry
-                ? comp.aver_compile_project_with_entry(
-                      JSON.stringify(getProjectFiles()),
-                      entry,
-                      state.lastEntryExpr,
-                  )
-                : (state.files.size > 1 && entry
-                    ? comp.aver_compile_project(JSON.stringify(getProjectFiles()), entry)
-                    : comp.aver_compile(source));
+            const wasmBytes = state.files.size > 1 && entry
+                ? comp.aver_compile_project(JSON.stringify(getProjectFiles()), entry)
+                : comp.aver_compile(source);
             const compiledBytes = cacheCompiledWasm(wasmBytes, `${name}.wasm`);
             const ms = (performance.now() - t0).toFixed(0);
             renderCompileMeta(compiledBytes.length, ms);
