@@ -4,7 +4,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
-## 0.16.2 (unreleased)
+## 0.16.2 — 2026-05-06
 
 > _Record/replay correctness across all three backends — and a tidier wasm-gc imports tree along the way._
 
