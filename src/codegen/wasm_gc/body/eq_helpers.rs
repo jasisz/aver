@@ -116,17 +116,42 @@ impl EqHelperRegistry {
         registry: &TypeRegistry,
         string_eq_fn_idx: Option<u32>,
     ) -> Result<(), WasmGcError> {
+        // Snapshot type_name → fn_idx so the inline emitters can
+        // dispatch nested record/sum fields by `Call(idx)` instead
+        // of erroring on `Unimplemented`. Self-recursive fields
+        // (parent==field) get their own `self_fn_idx` argument so
+        // recursive sum/record types (Tree.Node holding Tree, …)
+        // resolve to a recursive call into the same helper.
+        let helper_idx_map: HashMap<String, u32> = self
+            .slots
+            .iter()
+            .map(|(n, (fn_idx, _))| (n.clone(), *fn_idx))
+            .collect();
         for name in &self.order {
             let kind = self.kinds[name];
+            let self_fn_idx = self.slots.get(name).map(|(f, _)| *f);
             let mut f = Function::new(Vec::new());
-            // Local 0 = lhs, local 1 = rhs (function params). Reuse the
-            // inline emitters from `lists.rs` which expect both operands
-            // already stashed in named slots — no extra prologue needed.
             match kind {
-                EqKind::Sum => emit_sum_eq_inline(&mut f, name, registry, 0, 1, string_eq_fn_idx)?,
-                EqKind::Record => {
-                    emit_record_eq_inline(&mut f, name, registry, 0, 1, string_eq_fn_idx)?
-                }
+                EqKind::Sum => emit_sum_eq_inline(
+                    &mut f,
+                    name,
+                    registry,
+                    0,
+                    1,
+                    string_eq_fn_idx,
+                    &helper_idx_map,
+                    self_fn_idx,
+                )?,
+                EqKind::Record => emit_record_eq_inline(
+                    &mut f,
+                    name,
+                    registry,
+                    0,
+                    1,
+                    string_eq_fn_idx,
+                    &helper_idx_map,
+                    self_fn_idx,
+                )?,
             }
             f.instruction(&Instruction::End);
             codes.function(&f);

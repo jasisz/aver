@@ -1543,7 +1543,16 @@ fn emit_list_contains(
             f.instruction(&Instruction::LocalSet(3));
             f.instruction(&Instruction::LocalGet(1));
             f.instruction(&Instruction::LocalSet(4));
-            emit_record_eq_inline(&mut f, record_name, registry, 3, 4, string_eq_fn_idx)?;
+            emit_record_eq_inline(
+                &mut f,
+                record_name,
+                registry,
+                3,
+                4,
+                string_eq_fn_idx,
+                &std::collections::HashMap::new(),
+                None,
+            )?;
         }
         ListEqKind::SumEq(parent_name) => {
             // Same scratch dance as RecordEq — both ref.test and
@@ -1556,7 +1565,16 @@ fn emit_list_contains(
             f.instruction(&Instruction::LocalSet(3));
             f.instruction(&Instruction::LocalGet(1));
             f.instruction(&Instruction::LocalSet(4));
-            emit_sum_eq_inline(&mut f, parent_name, registry, 3, 4, string_eq_fn_idx)?;
+            emit_sum_eq_inline(
+                &mut f,
+                parent_name,
+                registry,
+                3,
+                4,
+                string_eq_fn_idx,
+                &std::collections::HashMap::new(),
+                None,
+            )?;
         }
         _ => {
             f.instruction(&Instruction::LocalGet(2));
@@ -1617,6 +1635,8 @@ pub(super) fn emit_record_eq_inline(
     head_local: u32,
     needle_local: u32,
     string_eq_fn_idx: Option<u32>,
+    eq_helper_fn_idx: &std::collections::HashMap<String, u32>,
+    self_fn_idx: Option<u32>,
 ) -> Result<(), WasmGcError> {
     let record_idx = registry
         .record_type_idx(record_name)
@@ -1649,24 +1669,43 @@ pub(super) fn emit_record_eq_inline(
         });
         // emit per-field eq → i32
         match field_ty.trim() {
-            "Int" => f.instruction(&Instruction::I64Eq),
-            "Bool" => f.instruction(&Instruction::I32Eq),
-            "Float" => f.instruction(&Instruction::F64Eq),
+            "Int" => {
+                f.instruction(&Instruction::I64Eq);
+            }
+            "Bool" => {
+                f.instruction(&Instruction::I32Eq);
+            }
+            "Float" => {
+                f.instruction(&Instruction::F64Eq);
+            }
             "String" => {
                 let eq_fn = string_eq_fn_idx.ok_or(WasmGcError::Validation(
                     "List.contains record field of String type needs \
                      __wasmgc_string_eq registered"
                         .into(),
                 ))?;
-                f.instruction(&Instruction::Call(eq_fn))
+                f.instruction(&Instruction::Call(eq_fn));
             }
-            _ => {
-                return Err(WasmGcError::Unimplemented(
-                    "phase 4 — record field type in List.contains \
-                     not in {Int, Float, Bool, String}",
-                ));
+            other if other == record_name && self_fn_idx.is_some() => {
+                // Recursive ref to the same record — call self.
+                f.instruction(&Instruction::Call(self_fn_idx.unwrap()));
             }
-        };
+            other if eq_helper_fn_idx.contains_key(other) => {
+                // Nested nominal type with its own __eq_<X> helper
+                // — call by fn idx. Field refs are subtypes of
+                // eqref so the implicit upcast at the call site
+                // is fine.
+                let idx = eq_helper_fn_idx[other];
+                f.instruction(&Instruction::Call(idx));
+            }
+            other => {
+                return Err(WasmGcError::Validation(format!(
+                    "record `{record_name}` field type `{other}` has no eq dispatch \
+                     (not in {{Int, Float, Bool, String}}, no `__eq_{other}` helper, \
+                     not self-recursive)"
+                )));
+            }
+        }
         if i > 0 {
             f.instruction(&Instruction::I32And);
         }
@@ -1686,6 +1725,8 @@ pub(super) fn emit_sum_eq_inline(
     head_local: u32,
     needle_local: u32,
     string_eq_fn_idx: Option<u32>,
+    eq_helper_fn_idx: &std::collections::HashMap<String, u32>,
+    self_fn_idx: Option<u32>,
 ) -> Result<(), WasmGcError> {
     // Collect all variants of this sum (use a stable order — names
     // sorted ascending — so two compiler runs produce identical wasm).
@@ -1733,24 +1774,44 @@ pub(super) fn emit_sum_eq_inline(
                     field_index: i as u32,
                 });
                 match field_ty.trim() {
-                    "Int" => f.instruction(&Instruction::I64Eq),
-                    "Bool" => f.instruction(&Instruction::I32Eq),
-                    "Float" => f.instruction(&Instruction::F64Eq),
+                    "Int" => {
+                        f.instruction(&Instruction::I64Eq);
+                    }
+                    "Bool" => {
+                        f.instruction(&Instruction::I32Eq);
+                    }
+                    "Float" => {
+                        f.instruction(&Instruction::F64Eq);
+                    }
                     "String" => {
                         let eq_fn = string_eq_fn_idx.ok_or(WasmGcError::Validation(
                             "List.contains sum field of String type needs \
                              __wasmgc_string_eq registered"
                                 .into(),
                         ))?;
-                        f.instruction(&Instruction::Call(eq_fn))
+                        f.instruction(&Instruction::Call(eq_fn));
                     }
-                    _ => {
-                        return Err(WasmGcError::Unimplemented(
-                            "phase 4 — sum-variant field type in List.contains \
-                             not in {Int, Float, Bool, String}",
-                        ));
+                    other if other == parent_name && self_fn_idx.is_some() => {
+                        // Recursive ref to the same sum (Tree.Node carrying
+                        // Tree fields, ditto Cons-cell shapes) — call self.
+                        f.instruction(&Instruction::Call(self_fn_idx.unwrap()));
                     }
-                };
+                    other if eq_helper_fn_idx.contains_key(other) => {
+                        // Nested record/sum field with its own __eq_<X>
+                        // helper — dispatch by fn idx. Field refs are
+                        // subtypes of eqref, the call's typed args
+                        // accept implicit upcast.
+                        let idx = eq_helper_fn_idx[other];
+                        f.instruction(&Instruction::Call(idx));
+                    }
+                    other => {
+                        return Err(WasmGcError::Validation(format!(
+                            "sum `{parent_name}` variant field type `{other}` has no eq \
+                             dispatch (not primitive, no `__eq_{other}` helper, not \
+                             self-recursive)"
+                        )));
+                    }
+                }
                 if i > 0 {
                     f.instruction(&Instruction::I32And);
                 }
@@ -2023,12 +2084,47 @@ fn emit_list_hash(
     let list_idx = list_idx_of(canonical, registry)?;
     let _ = string_eq_fn_idx;
     let elem = TypeRegistry::list_element_type(canonical).unwrap();
-    // params: 0=l. locals: 1=cur, 2=h.
+    // params: 0=l. locals: 1=cur, 2=h. Plus per-kind extras for
+    // record / sum element hash dispatch (3=elem_ref, 4=elem_hash
+    // accumulator).
     let list_ref = ValType::Ref(RefType {
         nullable: true,
         heap_type: HeapType::Concrete(list_idx),
     });
-    let mut f = Function::new([(1, list_ref), (1, ValType::I32)]);
+    let mut locals: Vec<(u32, ValType)> = vec![(1, list_ref), (1, ValType::I32)];
+    match &kind {
+        ListEqKind::RecordEq(record_name) => {
+            let r_idx = registry.record_type_idx(record_name).ok_or(
+                WasmGcError::Validation(format!(
+                    "list hash for `List<{record_name}>`: record not registered"
+                )),
+            )?;
+            let r_ref = ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(r_idx),
+            });
+            locals.push((1, r_ref)); // 3 = elem_ref
+            locals.push((1, ValType::I32)); // 4 = elem_hash
+        }
+        ListEqKind::SumEq(_) => {
+            // Sum types lower to `(ref null eq)` (per
+            // `types.rs::aver_to_wasm` for sum-parent surface
+            // names). Hold the head ref as eqref; per-variant
+            // `ref.cast` narrows it to the concrete variant idx
+            // before reading its fields.
+            let eq_ref = ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Abstract {
+                    shared: false,
+                    ty: wasm_encoder::AbstractHeapType::Eq,
+                },
+            });
+            locals.push((1, eq_ref)); // 3 = elem_ref (eqref carrier)
+            locals.push((1, ValType::I32)); // 4 = elem_hash
+        }
+        _ => {}
+    }
+    let mut f = Function::new(locals);
     // h = 5381
     f.instruction(&Instruction::I32Const(5381));
     f.instruction(&Instruction::LocalSet(2));
@@ -2051,17 +2147,24 @@ fn emit_list_hash(
         struct_type_index: list_idx,
         field_index: 0,
     });
-    // Element hash → i32
-    match elem.trim() {
-        "Int" => {
+    // Element hash → i32. Dispatch by `kind` rather than the raw
+    // `elem` string — newtype optimisation erases single-field
+    // records to their underlying primitive (`Box(n: Int)` → I64),
+    // so the surface name can be `"Box"` while the actual wasm
+    // representation is `i64`. `list_eq_kind` resolves the newtype
+    // before returning, so `kind` is the source of truth for
+    // representation.
+    let _ = elem;
+    match &kind {
+        ListEqKind::I64 => {
             f.instruction(&Instruction::I32WrapI64);
         }
-        "Bool" => {} // already i32
-        "Float" => {
+        ListEqKind::I32 => {} // bool — already i32
+        ListEqKind::F64 => {
             f.instruction(&Instruction::I64ReinterpretF64);
             f.instruction(&Instruction::I32WrapI64);
         }
-        "String" => {
+        ListEqKind::StringEq => {
             // Inline DJB2 over the (array i8) — short version
             // that reuses the per-fn locals would need extra
             // scratch. Cheap fallback: take array length as the
@@ -2070,14 +2173,36 @@ fn emit_list_hash(
             // for non-cryptographic mix.
             f.instruction(&Instruction::ArrayLen);
         }
-        other => panic!(
-            "internal compiler error: list hash emit reached unsupported \
-             element type `{other}`; upstream `list_eq_kind` must restrict \
-             list-hash emission to {{Int, Bool, Float, String}}. \
-             Please file at https://github.com/jasisz/aver/issues"
-        ),
+        ListEqKind::RecordEq(record_name) => {
+            let r_idx =
+                registry
+                    .record_type_idx(record_name)
+                    .ok_or(WasmGcError::Validation(format!(
+                        "list hash dispatch: record `{record_name}` not registered"
+                    )))?;
+            let fields = registry.record_fields.get(record_name).ok_or(
+                WasmGcError::Validation(format!(
+                    "list hash dispatch: record `{record_name}` has no field info"
+                )),
+            )?;
+            emit_record_inline_hash(
+                &mut f,
+                r_idx,
+                fields,
+                /* elem_local */ 3,
+                /* elem_hash_local */ 4,
+            )?;
+        }
+        ListEqKind::SumEq(parent_name) => {
+            emit_sum_inline_hash(
+                &mut f,
+                parent_name,
+                registry,
+                /* elem_local */ 3,
+                /* elem_hash_local */ 4,
+            )?;
+        }
     }
-    let _ = kind;
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalSet(2));
     // cur = cur.tail
@@ -2093,6 +2218,169 @@ fn emit_list_hash(
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::End);
     Ok(f)
+}
+
+/// Inline DJB2-style hash for a sum element. Stack on entry has the
+/// element eqref; on exit has an `i32` hash. Walks variants in the
+/// same sorted order as `emit_sum_eq_inline` (so two compiler runs
+/// produce identical bytecode + so `eq` and `hash` agree on which
+/// variant to inspect first), and per matched variant mixes its
+/// `type_idx` (as a stable tag) plus DJB2-folds each primitive
+/// field into `elem_hash`. Variants are disjoint subtypes of the
+/// parent, so at most one `ref.test` succeeds per call — non-
+/// matched arms `ref.test` to false and skip silently.
+fn emit_sum_inline_hash(
+    f: &mut Function,
+    parent_name: &str,
+    registry: &TypeRegistry,
+    elem_local: u32,
+    elem_hash_local: u32,
+) -> Result<(), WasmGcError> {
+    // Collect variants of this sum. Same ordering as
+    // `emit_sum_eq_inline` for parity.
+    let mut variants: Vec<(String, super::types::VariantInfo)> = registry
+        .variants
+        .iter()
+        .flat_map(|(n, vs)| vs.iter().map(move |v| (n.clone(), v.clone())))
+        .filter(|(_, v)| v.parent == parent_name)
+        .collect();
+    variants.sort_by(|a, b| a.0.cmp(&b.0));
+    if variants.is_empty() {
+        return Err(WasmGcError::Validation(format!(
+            "list hash dispatch: sum type `{parent_name}` has no variants"
+        )));
+    }
+
+    // Save eqref → elem_local; init elem_hash = 5381.
+    f.instruction(&Instruction::LocalSet(elem_local));
+    f.instruction(&Instruction::I32Const(5381));
+    f.instruction(&Instruction::LocalSet(elem_hash_local));
+
+    for (_v_name, info) in &variants {
+        let v_idx = info.type_idx;
+        let v_heap = wasm_encoder::HeapType::Concrete(v_idx);
+        // if ref.test V elem_ref:
+        f.instruction(&Instruction::LocalGet(elem_local));
+        f.instruction(&Instruction::RefTestNonNull(v_heap));
+        f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+        // Fold variant tag (type_idx as i32) into elem_hash —
+        // ensures empty variants of different shape still get
+        // distinct hashes.
+        f.instruction(&Instruction::LocalGet(elem_hash_local));
+        f.instruction(&Instruction::I32Const(5));
+        f.instruction(&Instruction::I32Shl);
+        f.instruction(&Instruction::LocalGet(elem_hash_local));
+        f.instruction(&Instruction::I32Add);
+        f.instruction(&Instruction::I32Const(v_idx as i32));
+        f.instruction(&Instruction::I32Add);
+        f.instruction(&Instruction::LocalSet(elem_hash_local));
+        // Per field, downcast then fold.
+        for (i, field_ty) in info.fields.iter().enumerate() {
+            f.instruction(&Instruction::LocalGet(elem_hash_local));
+            f.instruction(&Instruction::I32Const(5));
+            f.instruction(&Instruction::I32Shl);
+            f.instruction(&Instruction::LocalGet(elem_hash_local));
+            f.instruction(&Instruction::I32Add);
+
+            f.instruction(&Instruction::LocalGet(elem_local));
+            f.instruction(&Instruction::RefCastNonNull(v_heap));
+            f.instruction(&Instruction::StructGet {
+                struct_type_index: v_idx,
+                field_index: i as u32,
+            });
+            match field_ty.trim() {
+                "Int" => {
+                    f.instruction(&Instruction::I32WrapI64);
+                }
+                "Bool" => {} // already i32
+                "Float" => {
+                    f.instruction(&Instruction::I64ReinterpretF64);
+                    f.instruction(&Instruction::I32WrapI64);
+                }
+                "String" => {
+                    f.instruction(&Instruction::ArrayLen);
+                }
+                other => {
+                    return Err(WasmGcError::Validation(format!(
+                        "sum hash dispatch: variant field type `{other}` \
+                         unsupported (only Int/Bool/Float/String); upstream \
+                         `list_eq_kind` all_simple gate should have rejected this."
+                    )));
+                }
+            }
+            f.instruction(&Instruction::I32Add);
+            f.instruction(&Instruction::LocalSet(elem_hash_local));
+        }
+        f.instruction(&Instruction::End); // end if
+    }
+
+    f.instruction(&Instruction::LocalGet(elem_hash_local));
+    Ok(())
+}
+
+/// Inline DJB2-style hash for a record element. Stack on entry has
+/// the element ref; on exit has an `i32` hash. `elem_local` and
+/// `elem_hash_local` are pre-declared scratch slots in the calling
+/// fn (typed `(ref null $record_idx)` and `i32` respectively).
+///
+/// Per-field hash trick mirrors the primitive arms in
+/// `emit_list_hash`: Int → wrap, Float → reinterpret+wrap, Bool →
+/// already i32, String → array.len. Field shapes are restricted to
+/// {Int, Bool, Float, String} by `list_eq_kind`'s `all_simple` gate;
+/// nested records / lists trip `WasmGcError::Validation` here.
+fn emit_record_inline_hash(
+    f: &mut Function,
+    record_idx: u32,
+    fields: &[(String, String)],
+    elem_local: u32,
+    elem_hash_local: u32,
+) -> Result<(), WasmGcError> {
+    // Save record ref → elem_local for repeated struct.get.
+    f.instruction(&Instruction::LocalSet(elem_local));
+    // elem_hash = 5381 (DJB2 init).
+    f.instruction(&Instruction::I32Const(5381));
+    f.instruction(&Instruction::LocalSet(elem_hash_local));
+    for (i, (_field_name, field_type)) in fields.iter().enumerate() {
+        // elem_hash = elem_hash * 33 + field_hash
+        // (= (elem_hash << 5) + elem_hash + field_hash, DJB2.)
+        f.instruction(&Instruction::LocalGet(elem_hash_local));
+        f.instruction(&Instruction::I32Const(5));
+        f.instruction(&Instruction::I32Shl);
+        f.instruction(&Instruction::LocalGet(elem_hash_local));
+        f.instruction(&Instruction::I32Add);
+        // Push field value, then mix to i32.
+        f.instruction(&Instruction::LocalGet(elem_local));
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: record_idx,
+            field_index: i as u32,
+        });
+        match field_type.trim() {
+            "Int" => {
+                f.instruction(&Instruction::I32WrapI64);
+            }
+            "Bool" => {} // already i32
+            "Float" => {
+                f.instruction(&Instruction::I64ReinterpretF64);
+                f.instruction(&Instruction::I32WrapI64);
+            }
+            "String" => {
+                f.instruction(&Instruction::ArrayLen);
+            }
+            other => {
+                return Err(WasmGcError::Validation(format!(
+                    "record hash dispatch: field type `{other}` unsupported \
+                     (only Int/Bool/Float/String); upstream `list_eq_kind` \
+                     all_simple gate should have rejected this list."
+                )));
+            }
+        }
+        f.instruction(&Instruction::I32Add);
+        f.instruction(&Instruction::LocalSet(elem_hash_local));
+    }
+    // Push final elem_hash so the caller's mix can fold it into the
+    // total list hash.
+    f.instruction(&Instruction::LocalGet(elem_hash_local));
+    Ok(())
 }
 
 /// `eq : (Vector<T>, Vector<T>) -> i32`. Length check + element-
@@ -2175,10 +2463,42 @@ fn emit_vec_hash(
     _string_eq_fn_idx: Option<u32>,
 ) -> Result<Function, WasmGcError> {
     let (vec_idx, _) = vec_idx_of_pair(canonical, registry)?;
-    let _ = kind;
     let elem = TypeRegistry::list_element_type(canonical).unwrap();
-    // params: 0=v. locals: 1=h, 2=len, 3=i.
-    let mut f = Function::new([(1, ValType::I32), (1, ValType::I32), (1, ValType::I32)]);
+    // params: 0=v. locals: 1=h, 2=len, 3=i, plus per-kind extras
+    // (4=elem_ref, 5=elem_hash) for record/sum element dispatch —
+    // newtype optimisation may erase a record name down to its
+    // underlying primitive (kind == I64 even though `elem == "Box"`),
+    // so dispatch by `kind`, not the surface element string.
+    let mut locals: Vec<(u32, ValType)> =
+        vec![(1, ValType::I32), (1, ValType::I32), (1, ValType::I32)];
+    match &kind {
+        ListEqKind::RecordEq(record_name) => {
+            let r_idx = registry.record_type_idx(record_name).ok_or(
+                WasmGcError::Validation(format!(
+                    "vector hash for `Vector<{record_name}>`: record not registered"
+                )),
+            )?;
+            let r_ref = ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Concrete(r_idx),
+            });
+            locals.push((1, r_ref)); // 4 = elem_ref
+            locals.push((1, ValType::I32)); // 5 = elem_hash
+        }
+        ListEqKind::SumEq(_) => {
+            let eq_ref = ValType::Ref(RefType {
+                nullable: true,
+                heap_type: HeapType::Abstract {
+                    shared: false,
+                    ty: wasm_encoder::AbstractHeapType::Eq,
+                },
+            });
+            locals.push((1, eq_ref)); // 4 = elem_ref (eqref)
+            locals.push((1, ValType::I32)); // 5 = elem_hash
+        }
+        _ => {}
+    }
+    let mut f = Function::new(locals);
     f.instruction(&Instruction::I32Const(5381));
     f.instruction(&Instruction::LocalSet(1));
     f.instruction(&Instruction::LocalGet(0));
@@ -2201,24 +2521,47 @@ fn emit_vec_hash(
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::ArrayGet(vec_idx));
-    match elem.trim() {
-        "Int" => {
+    let _ = elem;
+    match &kind {
+        ListEqKind::I64 => {
             f.instruction(&Instruction::I32WrapI64);
         }
-        "Bool" => {}
-        "Float" => {
+        ListEqKind::I32 => {} // bool — already i32
+        ListEqKind::F64 => {
             f.instruction(&Instruction::I64ReinterpretF64);
             f.instruction(&Instruction::I32WrapI64);
         }
-        "String" => {
+        ListEqKind::StringEq => {
             f.instruction(&Instruction::ArrayLen);
         }
-        other => panic!(
-            "internal compiler error: Vector hash emit reached unsupported \
-             element type `{other}`; upstream `list_eq_kind` must restrict \
-             Vector-hash emission to {{Int, Bool, Float, String}}. \
-             Please file at https://github.com/jasisz/aver/issues"
-        ),
+        ListEqKind::RecordEq(record_name) => {
+            let r_idx = registry.record_type_idx(record_name).ok_or(
+                WasmGcError::Validation(format!(
+                    "vector hash dispatch: record `{record_name}` not registered"
+                )),
+            )?;
+            let fields = registry.record_fields.get(record_name).ok_or(
+                WasmGcError::Validation(format!(
+                    "vector hash dispatch: record `{record_name}` has no field info"
+                )),
+            )?;
+            emit_record_inline_hash(
+                &mut f,
+                r_idx,
+                fields,
+                /* elem_local */ 4,
+                /* elem_hash_local */ 5,
+            )?;
+        }
+        ListEqKind::SumEq(parent_name) => {
+            emit_sum_inline_hash(
+                &mut f,
+                parent_name,
+                registry,
+                /* elem_local */ 4,
+                /* elem_hash_local */ 5,
+            )?;
+        }
     }
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalSet(1));
