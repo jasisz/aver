@@ -4,7 +4,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
-## 0.17.0 "Purge" — 2026-05-06
+## 0.17.0 "Purge" (2026-05-06)
 
 > _What was never used is no longer in the way._
 
