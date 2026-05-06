@@ -141,9 +141,9 @@ verify gridHFor
 fn navLink(cx: Float, cy: Float, w: Float, label: String, hint: String) -> String
     ? "One nav anchor — encodes (cx, cy, w) into a /fractal query string. Browsers fire a fresh request per click; the new view is parsed back out by `viewFromQuery` on the server."
     String.join([
-        "<a href=\"?cx=", Float.toString(cx),
-        "&cy=", Float.toString(cy),
-        "&w=", Float.toString(w),
+        "<a href=\"?cx=", String.fromFloat(cx),
+        "&cy=", String.fromFloat(cy),
+        "&w=", String.fromFloat(w),
         "\" title=\"", hint, "\">", label, "</a>"
     ], "")
 
@@ -189,22 +189,22 @@ fn mandelStep(n: Int, x: Float, y: Float, prevZ2: Float, cx: Float, cy: Float, m
     ? "One iteration of z = z² + c. On escape (|z|² > 4) returns a *continuous* escape time using linear interpolation between the previous and current |z|²: nu = (n - 1) + (R² - prevZ²) / (curZ² - prevZ²). This sub-iter precision drives the Bayer-dither palette lookup so iso-bands transition smoothly across pixels instead of stepping at integer iter boundaries."
     curZ2 = x * x + y * y
     match curZ2 > 4.0
-        true  -> Int.toFloat(n - 1) + (4.0 - prevZ2) / (curZ2 - prevZ2)
+        true  -> Float.fromInt(n - 1) + (4.0 - prevZ2) / (curZ2 - prevZ2)
         false -> mandelIter(n + 1, x * x - y * y + cx, 2.0 * x * y + cy, curZ2, cx, cy, maxIter)
 
 verify mandelStep
-    mandelStep(7, 3.0, 0.0, 1.0, 0.0, 0.0, 50) => Int.toFloat(7 - 1) + (4.0 - 1.0) / (9.0 - 1.0)
-    mandelStep(0, 0.0, 0.0, 0.0, 0.0, 0.0, 50) => Int.toFloat(50)
+    mandelStep(7, 3.0, 0.0, 1.0, 0.0, 0.0, 50) => Float.fromInt(7 - 1) + (4.0 - 1.0) / (9.0 - 1.0)
+    mandelStep(0, 0.0, 0.0, 0.0, 0.0, 0.0, 50) => Float.fromInt(50)
 
 fn mandelIter(n: Int, x: Float, y: Float, prevZ2: Float, cx: Float, cy: Float, maxIter: Int) -> Float
-    ? "Iterates z = z² + c until |z|² > 4 or maxIter; returns continuous escape time as Float. In-set points (n hits maxIter) return Int.toFloat(maxIter). TCO-eligible mutual recursion via mandelStep."
+    ? "Iterates z = z² + c until |z|² > 4 or maxIter; returns continuous escape time as Float. In-set points (n hits maxIter) return Float.fromInt(maxIter). TCO-eligible mutual recursion via mandelStep."
     match n >= maxIter
-        true  -> Int.toFloat(maxIter)
+        true  -> Float.fromInt(maxIter)
         false -> mandelStep(n, x, y, prevZ2, cx, cy, maxIter)
 
 verify mandelIter
-    mandelIter(0, 0.0, 0.0, 0.0, 0.0, 0.0, 50) => Int.toFloat(50)
-    mandelIter(50, 0.0, 0.0, 0.0, 0.0, 0.0, 50) => Int.toFloat(50)
+    mandelIter(0, 0.0, 0.0, 0.0, 0.0, 0.0, 50) => Float.fromInt(50)
+    mandelIter(50, 0.0, 0.0, 0.0, 0.0, 0.0, 50) => Float.fromInt(50)
 
 fn insideCardioid(cx: Float, cy: Float) -> Bool
     ? "True if (cx, cy) lies inside the main cardioid (the largest connected component of the set). Roughly 50% of inside-set points fall here; this test costs ~5 ops and avoids running mandelIter to maxIter on every one of them."
@@ -232,21 +232,21 @@ fn escapeIterSlow(cx: Float, cy: Float, maxIter: Int) -> Float
 fn escapeIterBulb(cx: Float, cy: Float, maxIter: Int) -> Float
     ? "Cardioid missed — try the period-2 bulb, else fall through."
     match insideBulb(cx, cy)
-        true  -> Int.toFloat(maxIter)
+        true  -> Float.fromInt(maxIter)
         false -> escapeIterSlow(cx, cy, maxIter)
 
 verify escapeIterBulb
-    escapeIterBulb(0.0 - 1.0, 0.0, 50) => Int.toFloat(50)
+    escapeIterBulb(0.0 - 1.0, 0.0, 50) => Float.fromInt(50)
 
 fn escapeIter(cx: Float, cy: Float, maxIter: Int) -> Float
-    ? "Returns the continuous escape time for (cx, cy) under the given iteration cap. Returns Int.toFloat(maxIter) for inside-set. Uses the cardioid + period-2 bulb pre-tests to short-circuit ~70% of inside-set points before any iteration runs. Sub-iter precision (Float vs Int) drives Bayer-dither palette lookup downstream."
+    ? "Returns the continuous escape time for (cx, cy) under the given iteration cap. Returns Float.fromInt(maxIter) for inside-set. Uses the cardioid + period-2 bulb pre-tests to short-circuit ~70% of inside-set points before any iteration runs. Sub-iter precision (Float vs Int) drives Bayer-dither palette lookup downstream."
     match insideCardioid(cx, cy)
-        true  -> Int.toFloat(maxIter)
+        true  -> Float.fromInt(maxIter)
         false -> escapeIterBulb(cx, cy, maxIter)
 
 verify escapeIter
-    escapeIter(0.0, 0.0, 50)        => Int.toFloat(50)
-    escapeIter(0.0 - 1.0, 0.0, 50)  => Int.toFloat(50)
+    escapeIter(0.0, 0.0, 50)        => Float.fromInt(50)
+    escapeIter(0.0 - 1.0, 0.0, 50)  => Float.fromInt(50)
 
 fn ditherThreshold(col: Int, row: Int) -> Float
     ? "4x4 ordered Bayer dither threshold for pixel (col, row). Standard recursive 4x4 Bayer matrix divided by 16 (centred so frac=0 never upgrades and frac=1 always upgrades). 16 distinct thresholds across a 4x4 block give 16-level fractional palette interpolation — fine enough that the dither pattern is barely visible at normal viewing distance while still smoothly bridging adjacent palette entries."
@@ -279,28 +279,28 @@ verify ditherThreshold
 
 fn paletteIdx(nu: Float, col: Int, row: Int, maxIter: Int) -> Int
     ? "Maps a continuous escape-time `nu` to a palette index 0..15 with 2x2 ordered-Bayer dither. Inside-set (nu >= maxIter) → 0 (deep navy). Escaped pixels: `n = floor(nu)`, `frac = nu - n`. Compare `frac` against the position-dependent dither threshold; if greater, show the next palette entry, else the current one. The result is that fractional `nu` translates into per-cell choice between two adjacent palette entries, breaking up integer iso-band stepping into smooth 2x2 transitions."
-    match nu >= Int.toFloat(maxIter)
+    match nu >= Float.fromInt(maxIter)
         true  -> 0
-        false -> match (nu - Int.toFloat(Float.floor(nu))) > ditherThreshold(col, row)
+        false -> match (nu - Float.fromInt(Float.floor(nu))) > ditherThreshold(col, row)
             true  -> Result.withDefault(Int.mod(Float.floor(nu) + 1, 30), 0) + 1
             false -> Result.withDefault(Int.mod(Float.floor(nu), 30), 0) + 1
 
 verify paletteIdx
-    paletteIdx(Int.toFloat(50), 0, 0, 50) => 0
+    paletteIdx(Float.fromInt(50), 0, 0, 50) => 0
     paletteIdx(0.0, 0, 0, 50)  => 1
     paletteIdx(29.0, 0, 0, 50) => 30
     paletteIdx(30.0, 0, 0, 50) => 1
 
 fn pixelCx(pixCol: Int, pixelsW: Int, view: View) -> Float
     ? "Pixel column → Mandelbrot cx coordinate."
-    Int.toFloat(pixCol) / Int.toFloat(pixelsW) * view.cxRange + view.cxMin
+    Float.fromInt(pixCol) / Float.fromInt(pixelsW) * view.cxRange + view.cxMin
 
 verify pixelCx
     pixelCx(0, 1, fullView()) => 0.0 - 2.0
 
 fn pixelCy(pixRow: Int, pixelsH: Int, view: View) -> Float
     ? "Pixel row → Mandelbrot cy coordinate."
-    Int.toFloat(pixRow) / Int.toFloat(pixelsH) * view.cyRange + view.cyMin
+    Float.fromInt(pixRow) / Float.fromInt(pixelsH) * view.cyRange + view.cyMin
 
 verify pixelCy
     pixelCy(0, 1, fullView()) => 0.0 - 1.5

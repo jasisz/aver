@@ -301,7 +301,7 @@ fn drawOneRow(grid: Vector<Int>, s: Int, w: Int, h: Int, row: Int) -> Unit
 fn drawHud(st: SimState, mode: String) -> Unit
     ? "Draw two-line HUD: status on line 0, controls on line 1."
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    genStr = Int.toString(st.gen)
+    genStr = String.fromInt(st.gen)
     Terminal.setColor("green")
     Terminal.moveTo(0, 0)
     line1 = match mode == "edit"
@@ -310,7 +310,7 @@ fn drawHud(st: SimState, mode: String) -> Unit
             true -> " PAUSED  Gen:{genStr}                                               "
             false -> match st.delay == 0
                 true -> " {st.fps.display}fps  Gen:{genStr}  BENCHMARK                       "
-                false -> " {st.fps.display}fps  Gen:{genStr}  {Int.toString(st.delay)}ms                            "
+                false -> " {st.fps.display}fps  Gen:{genStr}  {String.fromInt(st.delay)}ms                            "
     Terminal.print(line1)
     Terminal.moveTo(0, 1)
     Terminal.setColor("cyan")
@@ -327,7 +327,7 @@ fn formatFps(frames: Int, elapsed: Int) -> String
     tenths = frames * 10000 / elapsed
     whole = tenths / 10
     frac = Result.withDefault(Int.mod(tenths, 10), 0)
-    Int.toString(whole) + "." + Int.toString(frac)
+    String.fromInt(whole) + "." + String.fromInt(frac)
 
 verify formatFps
     formatFps(2, 1000) => "2.0"
@@ -452,7 +452,7 @@ fn simAction(k: String, st: SimState) -> Result<String, String>
         true -> 0
         false -> 1
     match k
-        "q" -> Result.Ok("Stopped at generation {Int.toString(st.gen)}.")
+        "q" -> Result.Ok("Stopped at generation {String.fromInt(st.gen)}.")
         " " -> gameLoop(SimState.update(st, paused = newPaused))
         "e" -> simToEditor(st)
         "+" -> gameLoop(SimState.update(st, delay = Int.max(st.delay - 10, 0)))
@@ -470,7 +470,7 @@ fn simToEditor(st: SimState) -> Result<String, String>
     result = editorLoop(st.grid, st.stride, st.width, st.height, st.width / 2, st.height / 2)
     match result
         Result.Ok(newGrid) -> gameLoop(SimState.update(st, grid = newGrid, gen = 0))
-        Result.Err(_) -> Result.Ok("Stopped at generation {Int.toString(st.gen)}.")
+        Result.Err(_) -> Result.Ok("Stopped at generation {String.fromInt(st.gen)}.")
 
 // ─── Entry ──────────────────────────────────────────────────
 

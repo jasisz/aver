@@ -32,7 +32,7 @@ fn is_pure_non_alloc_builtin(name: &str) -> bool {
         "Int.abs"
             | "Int.min"
             | "Int.max"
-            | "Int.toFloat"
+            | "Float.fromInt"
             | "Float.abs"
             | "Float.floor"
             | "Float.ceil"

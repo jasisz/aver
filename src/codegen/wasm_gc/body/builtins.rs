@@ -157,7 +157,7 @@ pub(super) fn emit_dotted_builtin(
         }
         // `Int.toFloat` is the same op as `Float.fromInt` — Aver has
         // both spellings; map both to the same instruction.
-        "Int.toFloat" if args.len() == 1 => {
+        "Float.fromInt" if args.len() == 1 => {
             emit_expr(func, &args[0], slots, ctx)?;
             func.instruction(&Instruction::F64ConvertI64S);
             Ok(())
@@ -298,7 +298,7 @@ pub(super) fn emit_dotted_builtin(
             let to_string_idx =
                 ctx.fn_map
                     .builtins
-                    .get("Int.toString")
+                    .get("String.fromInt")
                     .copied()
                     .ok_or(WasmGcError::Validation(
                         "String.fromInt requires Int.toString builtin".into(),
@@ -308,7 +308,7 @@ pub(super) fn emit_dotted_builtin(
             Ok(())
         }
         "String.fromFloat" if args.len() == 1 => {
-            let to_string_idx = ctx.fn_map.builtins.get("Float.toString").copied().ok_or(
+            let to_string_idx = ctx.fn_map.builtins.get("String.fromFloat").copied().ok_or(
                 WasmGcError::Validation("String.fromFloat requires Float.toString builtin".into()),
             )?;
             emit_expr(func, &args[0], slots, ctx)?;
@@ -415,7 +415,7 @@ pub(super) fn emit_dotted_builtin(
         "List.zip" if args.len() == 2 => emit_list_zip_call(func, &args[0], &args[1], slots, ctx),
         // Vector.fromList(list: List<T>) -> Vector<T>
         "Vector.fromList" if args.len() == 1 => emit_vec_from_list_call(func, &args[0], slots, ctx),
-        "Vector.toList" if args.len() == 1 => emit_vec_to_list_call(func, &args[0], slots, ctx),
+        "List.fromVector" if args.len() == 1 => emit_vec_to_list_call(func, &args[0], slots, ctx),
         // String.split / String.join — singleton (T=String).
         "String.split" if args.len() == 2 => {
             let ops = ctx.fn_map.string_split_ops.ok_or(WasmGcError::Validation(
@@ -1119,7 +1119,7 @@ pub(super) fn emit_interpolated_str(
                     "String" => { /* identity */ }
                     "Int" => {
                         let to_string_idx =
-                            ctx.fn_map.builtins.get("Int.toString").copied().ok_or(
+                            ctx.fn_map.builtins.get("String.fromInt").copied().ok_or(
                                 WasmGcError::Validation(
                                     "interpolation of Int requires Int.toString builtin".into(),
                                 ),
@@ -1128,7 +1128,7 @@ pub(super) fn emit_interpolated_str(
                     }
                     "Float" => {
                         let to_string_idx =
-                            ctx.fn_map.builtins.get("Float.toString").copied().ok_or(
+                            ctx.fn_map.builtins.get("String.fromFloat").copied().ok_or(
                                 WasmGcError::Validation(
                                     "interpolation of Float requires Float.toString builtin".into(),
                                 ),

@@ -210,11 +210,11 @@ fn renderAiPanel(result: AiResult) -> Unit
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     Terminal.moveTo(22, 1)
     Terminal.setColor("cyan")
-    Terminal.print("AI depth={Int.toString(result.depth)} {Int.toString(result.thinkMs)}ms")
+    Terminal.print("AI depth={String.fromInt(result.depth)} {String.fromInt(result.thinkMs)}ms")
     Terminal.resetColor()
     Terminal.moveTo(22, 2)
     Terminal.setColor("yellow")
-    Terminal.print("root-parallel x{Int.toString(Ai.rootParallelWidth())} | {Int.toString(List.len(result.candidates))} moves")
+    Terminal.print("root-parallel x{String.fromInt(Ai.rootParallelWidth())} | {String.fromInt(List.len(result.candidates))} moves")
     Terminal.resetColor()
     renderCandidates(result.candidates, result.move, 0)
 
@@ -242,7 +242,7 @@ fn renderChosenCandidate(sm: ScoredMove, i: Int) -> Unit
     Terminal.setColor("green")
     Terminal.print("★ ")
     Terminal.print(moveLabel(sm.move))
-    Terminal.print("  {Int.toString(sm.score)}")
+    Terminal.print("  {String.fromInt(sm.score)}")
     Terminal.resetColor()
 
 fn renderOtherCandidate(sm: ScoredMove, i: Int) -> Unit
@@ -250,7 +250,7 @@ fn renderOtherCandidate(sm: ScoredMove, i: Int) -> Unit
     ! [Terminal.print]
     Terminal.print("  ")
     Terminal.print(moveLabel(sm.move))
-    Terminal.print("  {Int.toString(sm.score)}")
+    Terminal.print("  {String.fromInt(sm.score)}")
 
 fn isChosenMove(a: List<Point>, b: List<Point>) -> Bool
     ? "True if two moves are the same (compare first and last points)"
@@ -295,7 +295,7 @@ fn moveLabel(move: List<Point>) -> String
     ? "Human-readable label for a move path"
     match firstPoint(move)
         Option.Some(from) -> match lastPoint(move)
-            Option.Some(to) -> "{colChar(from.x)}{Int.toString(8 - from.y)}→{colChar(to.x)}{Int.toString(8 - to.y)}"
+            Option.Some(to) -> "{colChar(from.x)}{String.fromInt(8 - from.y)}→{colChar(to.x)}{String.fromInt(8 - to.y)}"
             Option.None -> "?"
         Option.None -> "?"
 
@@ -307,7 +307,7 @@ fn renderHelp(state: GameState) -> Unit
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     Terminal.moveTo(0, 14)
     Terminal.setColor("green")
-    Terminal.print(" You (black) vs AI (white) · depth {Int.toString(state.searchDepth)} · +/- to change")
+    Terminal.print(" You (black) vs AI (white) · depth {String.fromInt(state.searchDepth)} · +/- to change")
     Terminal.resetColor()
     Terminal.moveTo(0, 15)
     match state.selected
@@ -415,7 +415,7 @@ fn aiPhase(state: GameState) -> Result<String, String>
     ]
     renderFrame(state)
     Terminal.moveTo(0, 14)
-    Terminal.print("AI thinking (depth {Int.toString(state.searchDepth)}, root-parallel x{Int.toString(Ai.rootParallelWidth())})...")
+    Terminal.print("AI thinking (depth {String.fromInt(state.searchDepth)}, root-parallel x{String.fromInt(Ai.rootParallelWidth())})...")
     Terminal.flush()
     t0 = Time.unixMs()
     aiState = handleAiTurn(state)
@@ -443,7 +443,7 @@ fn gameOverResult(state: GameState) -> Result<String, String>
     Terminal.print("Game over!")
     Terminal.flush()
     Time.sleep(2000)
-    Result.Ok("Game over! Move {Int.toString(state.moveNum)}")
+    Result.Ok("Game over! Move {String.fromInt(state.moveNum)}")
 
 fn gameTurn(state: GameState) -> Result<String, String>
     ? "Dispatch to player or AI"

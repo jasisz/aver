@@ -134,7 +134,7 @@ fn wallHeight(distance: Float) -> Int
     ? "Pixel height of the wall strip for a given corrected distance"
     match distance < 0.1
         true -> pixelH()
-        false -> Math.clampInt(Float.floor(Int.toFloat(pixelH()) / distance), 0, pixelH())
+        false -> Math.clampInt(Float.floor(Float.fromInt(pixelH()) / distance), 0, pixelH())
 
 verify wallHeight
     wallHeight(1.0) => 80
@@ -282,7 +282,7 @@ verify buildZBuffer
 
 fn buildZBufferCol(levelMap: List<String>, wallMap: List<String>, px: Float, py: Float, angle: Float, col: Int, acc: List<RayHit>) -> List<RayHit>
     ? "Cast one ray and append to buffer"
-    rayAngle = angle - fov() / 2.0 + Int.toFloat(col) * fov() / Int.toFloat(screenW())
+    rayAngle = angle - fov() / 2.0 + Float.fromInt(col) * fov() / Float.fromInt(screenW())
     hit = castRay(levelMap, wallMap, px, py, rayAngle)
     corrected = RayHit.update(hit, dist = hit.dist * Float.cos(rayAngle - angle))
     buildZBuffer(levelMap, wallMap, px, py, angle, col + 1, List.concat(acc, [corrected]))
@@ -375,7 +375,7 @@ fn renderEnemySprite(enemies: Vector<Enemy>, zbuf: Vector<RayHit>, px: Float, py
     eDist = Math.dist(px, py, e.x, e.y)
     eAngle = Float.atan2(dy, dx)
     relAngle = Math.normalizeAngle(eAngle - pAngle + Float.pi()) - Float.pi()
-    screenCol = Float.floor(Int.toFloat(screenW()) / 2.0 + relAngle * Int.toFloat(screenW()) / fov())
+    screenCol = Float.floor(Float.fromInt(screenW()) / 2.0 + relAngle * Float.fromInt(screenW()) / fov())
     match isEnemyVisibleVec(screenCol, eDist, zbuf)
         true -> drawEnemyChar(e, screenCol, eDist, enemies, zbuf, px, py, pAngle, i)
         false -> renderEnemiesVec(enemies, zbuf, px, py, pAngle, i + 1)
@@ -409,8 +409,8 @@ verify isEnemyVisibleVec
 fn drawEnemyChar(e: Enemy, screenCol: Int, eDist: Float, enemies: Vector<Enemy>, zbuf: Vector<RayHit>, px: Float, py: Float, pAngle: Float, i: Int) -> Unit
     ? "Draw enemy using solid Unicode block characters"
     ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
-    spriteH = Math.clampInt(Float.floor(2.5 / eDist * Int.toFloat(screenH())), 1, 10)
-    spriteW = Math.clampInt(Float.floor(5.0 / eDist * Int.toFloat(screenW()) / 10.0), 3, 13)
+    spriteH = Math.clampInt(Float.floor(2.5 / eDist * Float.fromInt(screenH())), 1, 10)
+    spriteW = Math.clampInt(Float.floor(5.0 / eDist * Float.fromInt(screenW()) / 10.0), 3, 13)
     topRow = screenH() / 2 - spriteH / 2
     leftCol = screenCol - spriteW / 2
     drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, 0, 0)
@@ -463,9 +463,9 @@ verify fullBlock
 
 fn isInsideShape(kind: EnemyKind, col: Int, row: Int, spriteW: Int, spriteH: Int) -> Bool
     ? "Check if (col, row) is inside the enemy silhouette"
-    halfW = Int.toFloat(spriteW) / 2.0
-    cx = Float.abs(Int.toFloat(col) - halfW + 0.5) / halfW
-    cy = Int.toFloat(row) / Int.toFloat(spriteH)
+    halfW = Float.fromInt(spriteW) / 2.0
+    cx = Float.abs(Float.fromInt(col) - halfW + 0.5) / halfW
+    cy = Float.fromInt(row) / Float.fromInt(spriteH)
     maxW = shapeWidth(kind, cy)
     cx < maxW
 
@@ -557,13 +557,13 @@ fn renderHud(state: GameState) -> Unit
     Terminal.print("BRAILLE DOOM")
     Terminal.setColor("red")
     Terminal.moveTo(hudX, 3)
-    Terminal.print("HP: {Int.toString(state.player.hp)}/100")
+    Terminal.print("HP: {String.fromInt(state.player.hp)}/100")
     Terminal.setColor("white")
     Terminal.moveTo(hudX, 4)
     deg = Float.floor(Math.radToDeg(state.player.angle))
-    Terminal.print("angle: {Int.toString(deg)}")
+    Terminal.print("angle: {String.fromInt(deg)}")
     Terminal.moveTo(hudX, 5)
-    Terminal.print("enemies: {Int.toString(List.len(state.enemies))}")
+    Terminal.print("enemies: {String.fromInt(List.len(state.enemies))}")
     Terminal.setColor("cyan")
     Terminal.moveTo(hudX, 7)
     Terminal.print("W/S  forward/back")

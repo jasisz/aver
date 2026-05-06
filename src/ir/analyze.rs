@@ -73,7 +73,7 @@ impl AllocPolicy for NeutralAllocPolicy {
             "Int.abs"
                 | "Int.min"
                 | "Int.max"
-                | "Int.toFloat"
+                | "Float.fromInt"
                 | "Float.abs"
                 | "Float.floor"
                 | "Float.ceil"

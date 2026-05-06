@@ -33,8 +33,8 @@ verify turnSpeed
 fn spawnInRoom(room: Level.Room, seed: Int) -> Enemy
     ? "Spawn an enemy at the center of a room"
     kind = pickKind(seed)
-    cx = Int.toFloat(room.x + room.w / 2) + 0.5
-    cy = Int.toFloat(room.y + room.h / 2) + 0.5
+    cx = Float.fromInt(room.x + room.w / 2) + 0.5
+    cy = Float.fromInt(room.y + room.h / 2) + 0.5
     Types.mkEnemy(cx, cy, kind, Types.enemyMaxHp(kind))
 
 verify spawnInRoom
@@ -214,7 +214,7 @@ fn updateTurn(state: GameState) -> GameState
     msgs = match isOver
         true -> ["You died!"]
         false -> match damaged.hp < state.player.hp
-            true -> List.concat(state.messages, ["Ouch! HP: {Int.toString(damaged.hp)}"])
+            true -> List.concat(state.messages, ["Ouch! HP: {String.fromInt(damaged.hp)}"])
             false -> state.messages
     trimmedMsgs = trimMessages(msgs)
     GameState.update(state, enemies = newEnemies, player = damaged, turnCount = state.turnCount + 1, gameOver = isOver, messages = trimmedMsgs)

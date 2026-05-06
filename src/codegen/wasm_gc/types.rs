@@ -1965,11 +1965,10 @@ fn expr_uses_string(expr: &crate::ast::Expr) -> bool {
                     let dotted = format!("{p}.{member}");
                     if matches!(
                         dotted.as_str(),
-                        "Int.toString"
-                            | "Float.toString"
+                        "String.fromInt"
+                            | "String.fromFloat"
                             | "String.len"
                             | "String.length"
-                            | "String.concat"
                             | "String.startsWith"
                             | "String.contains"
                             | "String.slice"

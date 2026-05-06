@@ -127,7 +127,7 @@ pub(super) enum BuiltinName {
 impl BuiltinName {
     pub(super) fn from_dotted(s: &str) -> Option<Self> {
         match s {
-            "Int.toString" | "String.fromInt" => Some(Self::IntToString),
+            "String.fromInt" => Some(Self::IntToString),
             "String.fromFloat" => Some(Self::FloatToString),
             "String.len" | "String.length" | "String.byteLength" => Some(Self::StringLength),
             "String.startsWith" => Some(Self::StringStartsWith),
@@ -138,7 +138,6 @@ impl BuiltinName {
             "String.trim" => Some(Self::StringTrim),
             "Int.fromString" => Some(Self::IntFromString),
             "Float.fromString" => Some(Self::FloatFromString),
-            "Float.toString" => Some(Self::FloatToString),
             "String.endsWith" => Some(Self::StringEndsWith),
             "String.fromBool" => Some(Self::StringFromBool),
             "String.charAt" => Some(Self::StringCharAt),
@@ -153,7 +152,7 @@ impl BuiltinName {
 
     pub(super) fn canonical(self) -> &'static str {
         match self {
-            Self::IntToString => "Int.toString",
+            Self::IntToString => "String.fromInt",
             Self::StringLength => "String.len",
             Self::StringConcatN => "__wasmgc_concat_n",
             Self::StringStartsWith => "String.startsWith",
@@ -164,7 +163,7 @@ impl BuiltinName {
             Self::StringTrim => "String.trim",
             Self::IntFromString => "Int.fromString",
             Self::FloatFromString => "Float.fromString",
-            Self::FloatToString => "Float.toString",
+            Self::FloatToString => "String.fromFloat",
             Self::StringEq => "__wasmgc_string_eq",
             Self::StringCompare => "__wasmgc_string_compare",
             Self::StringEndsWith => "String.endsWith",

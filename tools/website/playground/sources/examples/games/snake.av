@@ -274,7 +274,7 @@ fn render(state: GameState) -> Unit
     drawAt(state.food.x, state.food.y, "██")
     Terminal.resetColor()
     Terminal.moveTo(0, state.height)
-    Terminal.print("Score: {Int.toString(state.score)}  |  Q / ESC to quit")
+    Terminal.print("Score: {String.fromInt(state.score)}  |  Q / ESC to quit")
     Terminal.flush()
 
 fn handleKey(state: GameState, k: String) -> GameState
@@ -304,7 +304,7 @@ fn tick(state: GameState) -> Result<String, String>
         Time.sleep,
     ]
     match state.gameOver
-        true -> Result.Ok("Game over! Score: {Int.toString(state.score)}")
+        true -> Result.Ok("Game over! Score: {String.fromInt(state.score)}")
         false -> tickMove(moveSnake(state))
 
 fn tickMove(moved: GameState) -> Result<String, String>
@@ -315,7 +315,7 @@ fn tickMove(moved: GameState) -> Result<String, String>
         Time.sleep,
     ]
     match checkCollision(moved)
-        true -> Result.Ok("Game over! Score: {Int.toString(moved.score)}")
+        true -> Result.Ok("Game over! Score: {String.fromInt(moved.score)}")
         false -> match didEatFood(moved)
             true -> gameLoop(growSnake(randomFood(moved)))
             false -> gameLoop(moved)

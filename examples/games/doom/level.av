@@ -280,7 +280,7 @@ verify roomFromSeed
 
 fn roomCenter(room: Room) -> (Float, Float)
     ? "Center of a room as float coordinates"
-    (Int.toFloat(room.x + room.w / 2) + 0.5, Int.toFloat(room.y + room.h / 2) + 0.5)
+    (Float.fromInt(room.x + room.w / 2) + 0.5, Float.fromInt(room.y + room.h / 2) + 0.5)
 
 verify roomCenter
     roomCenter(Room(x = 4, y = 4, w = 6, h = 6)) => (7.5, 7.5)

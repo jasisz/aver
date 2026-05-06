@@ -44,7 +44,7 @@ Vector is a persistent indexed sequence — use it for grids, buffers, lookup ta
 | `Vector.set` | `(Vector<T>, Int, T) -> Option<Vector<T>>` | O(1) COW update; `None` if out of bounds |
 | `Vector.len` | `Vector<T> -> Int` | |
 | `Vector.fromList` | `List<T> -> Vector<T>` | Convert list to vector |
-| `Vector.toList` | `Vector<T> -> List<T>` | Convert vector to list |
+| `List.fromVector` | `Vector<T> -> List<T>` | Convert vector to list |
 
 ### `Result` namespace
 
@@ -75,8 +75,8 @@ Source: `src/types/int.rs`
 |---|---|
 | `Int.fromString` | `String -> Result<Int, String>` |
 | `Int.fromFloat` | `Float -> Int` |
-| `Int.toString` | `Int -> String` |
-| `Int.toFloat` | `Int -> Float` |
+| `String.fromInt` | `Int -> String` |
+| `Float.fromInt` | `Int -> Float` |
 | `Int.abs` | `Int -> Int` |
 | `Int.min` | `(Int, Int) -> Int` |
 | `Int.max` | `(Int, Int) -> Int` |
@@ -90,7 +90,7 @@ Source: `src/types/float.rs`
 |---|---|
 | `Float.fromString` | `String -> Result<Float, String>` |
 | `Float.fromInt` | `Int -> Float` |
-| `Float.toString` | `Float -> String` |
+| `String.fromFloat` | `Float -> String` |
 | `Float.abs` | `Float -> Float` |
 | `Float.floor` | `Float -> Int` |
 | `Float.ceil` | `Float -> Int` |

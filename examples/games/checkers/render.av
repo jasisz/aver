@@ -240,7 +240,7 @@ fn renderRowLabelsNext(r: Int) -> Unit
 
 fn rowLabel(r: Int) -> String
     ? "Row label: row 0 = 8, row 7 = 1"
-    Int.toString(8 - r)
+    String.fromInt(8 - r)
 
 verify rowLabel
     rowLabel(0) => "8"
@@ -281,7 +281,7 @@ fn renderStatus(currentPlayer: Color, moveNum: Int) -> Unit
     Terminal.setColor(playerColor(currentPlayer))
     Terminal.print("{colorName(currentPlayer)}")
     Terminal.resetColor()
-    Terminal.print(" to move  |  Move #{Int.toString(moveNum)}")
+    Terminal.print(" to move  |  Move #{String.fromInt(moveNum)}")
 
 fn renderAiTrace(move: List<Point>, score: Int, alternatives: Int, depth: Int) -> Unit
     ? "Show AI decision trace"
@@ -290,4 +290,4 @@ fn renderAiTrace(move: List<Point>, score: Int, alternatives: Int, depth: Int) -
     Terminal.setColor("cyan")
     Terminal.print("AI: ")
     Terminal.resetColor()
-    Terminal.print("score={Int.toString(score)} alts={Int.toString(alternatives)} depth={Int.toString(depth)}")
+    Terminal.print("score={String.fromInt(score)} alts={String.fromInt(alternatives)} depth={String.fromInt(depth)}")

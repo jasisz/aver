@@ -17,8 +17,7 @@ pub(crate) enum Builtin {
 
     // --- Int ---
     IntAbs,
-    IntToFloat,
-    IntToString,
+    IntFromFloat,
     IntFromString,
     IntMin,
     IntMax,
@@ -31,8 +30,7 @@ pub(crate) enum Builtin {
     FloatRound,
     FloatFloor,
     FloatCeil,
-    FloatToInt,
-    FloatToString,
+    FloatFromInt,
     FloatFromString,
     FloatPi,
     FloatMin,
@@ -43,7 +41,6 @@ pub(crate) enum Builtin {
 
     // --- String ---
     StringLen,
-    StringConcat,
     StringCharAt,
     StringChars,
     StringSlice,
@@ -96,7 +93,7 @@ pub(crate) enum Builtin {
     VectorSet,
     VectorLen,
     VectorFromList,
-    VectorToList,
+    ListFromVector,
 
     // --- Map ---
     MapGet,
@@ -128,8 +125,7 @@ pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
 
         // Int
         "Int.abs" => Builtin::IntAbs,
-        "Int.toFloat" | "Float.fromInt" => Builtin::IntToFloat,
-        "Int.toString" => Builtin::IntToString,
+        "Int.fromFloat" => Builtin::IntFromFloat,
         "Int.fromString" => Builtin::IntFromString,
         "Int.min" => Builtin::IntMin,
         "Int.max" => Builtin::IntMax,
@@ -142,8 +138,7 @@ pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
         "Float.round" => Builtin::FloatRound,
         "Float.floor" => Builtin::FloatFloor,
         "Float.ceil" => Builtin::FloatCeil,
-        "Float.toInt" => Builtin::FloatToInt,
-        "Float.toString" => Builtin::FloatToString,
+        "Float.fromInt" => Builtin::FloatFromInt,
         "Float.fromString" => Builtin::FloatFromString,
         "Float.pi" => Builtin::FloatPi,
         "Float.min" => Builtin::FloatMin,
@@ -154,7 +149,6 @@ pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
 
         // String
         "String.len" => Builtin::StringLen,
-        "String.concat" => Builtin::StringConcat,
         "String.charAt" => Builtin::StringCharAt,
         "String.chars" => Builtin::StringChars,
         "String.slice" => Builtin::StringSlice,
@@ -207,7 +201,7 @@ pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
         "Vector.set" => Builtin::VectorSet,
         "Vector.len" => Builtin::VectorLen,
         "Vector.fromList" => Builtin::VectorFromList,
-        "Vector.toList" => Builtin::VectorToList,
+        "List.fromVector" => Builtin::ListFromVector,
 
         // Map
         "Map.get" => Builtin::MapGet,

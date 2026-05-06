@@ -42,8 +42,7 @@ pub fn emit_builtin_call(
 
         // ---- Int ----
         IntAbs => format!("{}.natAbs", p(&a[0])),
-        IntToFloat => format!("Float.ofInt {}", p(&a[0])),
-        IntToString => format!("toString {}", p(&a[0])),
+        IntFromFloat => format!("AverFloat.toInt {}", p(&a[0])),
         IntMin => format!("min {} {}", p(&a[0]), p(&a[1])),
         IntMax => format!("max {} {}", p(&a[0]), p(&a[1])),
         IntMod => format!("(Except.ok ({} % {}) : Except String Int)", a[0], a[1]),
@@ -52,13 +51,12 @@ pub fn emit_builtin_call(
         // ---- Float ----
         FloatAbs => format!("Float.abs {}", p(&a[0])),
         FloatSqrt => format!("Float.sqrt {}", p(&a[0])),
-        FloatToString => format!("toString {}", p(&a[0])),
         FloatFromString => format!("Float.fromString {}", p(&a[0])),
+        FloatFromInt => format!("Float.ofInt {}", p(&a[0])),
         FloatPow => format!("AverFloat.pow {} {}", p(&a[0]), p(&a[1])),
         FloatRound => format!("AverFloat.round {}", p(&a[0])),
         FloatFloor => format!("AverFloat.floor {}", p(&a[0])),
         FloatCeil => format!("AverFloat.ceil {}", p(&a[0])),
-        FloatToInt => format!("AverFloat.toInt {}", p(&a[0])),
         FloatPi => "(3.141592653589793 : Float)".to_string(),
         FloatMin => format!("min {} {}", p(&a[0]), p(&a[1])),
         FloatMax => format!("max {} {}", p(&a[0]), p(&a[1])),
@@ -81,7 +79,6 @@ pub fn emit_builtin_call(
 
         // ---- String ----
         StringLen => format!("{}.length", p(&a[0])),
-        StringConcat => format!("({} ++ {})", p(&a[0]), p(&a[1])),
         StringCharAt => format!("String.charAt {} {}", p(&a[0]), p(&a[1])),
         StringChars => format!("String.chars {}", p(&a[0])),
         StringSlice => format!("String.slice {} {} {}", p(&a[0]), p(&a[1]), p(&a[2])),
@@ -131,7 +128,7 @@ pub fn emit_builtin_call(
         ),
         VectorLen => format!("{}.size", p(&a[0])),
         VectorFromList => format!("{}.toArray", p(&a[0])),
-        VectorToList => format!("{}.toList", p(&a[0])),
+        ListFromVector => format!("{}.toList", p(&a[0])),
 
         // ---- Map ----
         MapGet => format!("AverMap.get {} {}", p(&a[0]), p(&a[1])),

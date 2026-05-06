@@ -49,8 +49,8 @@ fn ghostTeleport(enemy: Enemy, seed: Int, levelMap: List<String>) -> Enemy
     ? "Teleport ghost to a random nearby floor tile"
     s1 = Rng.nextSeed(seed)
     s2 = Rng.nextSeed(s1)
-    dx = Int.toFloat(Rng.seedToRange(s1, 0 - 4, 4))
-    dy = Int.toFloat(Rng.seedToRange(s2, 0 - 4, 4))
+    dx = Float.fromInt(Rng.seedToRange(s1, 0 - 4, 4))
+    dy = Float.fromInt(Rng.seedToRange(s2, 0 - 4, 4))
     nx = enemy.x + dx
     ny = enemy.y + dy
     match Level.isWall(levelMap, Float.floor(nx), Float.floor(ny))
@@ -251,7 +251,7 @@ fn applyShotVec(enemies: Vector<Enemy>, idx: Int) -> (List<Enemy>, String)
     ? "Apply 5 damage to enemy at index using indexed vector access"
     match Vector.get(enemies, idx)
         Option.Some(e) -> applyDamageToEnemyVec(enemies, idx, e)
-        Option.None -> (Vector.toList(enemies), "Shot missed!")
+        Option.None -> (List.fromVector(enemies), "Shot missed!")
 
 verify applyShotVec
     applyShotVec(Vector.fromList([]), 0) => ([], "Shot missed!")
@@ -268,7 +268,7 @@ fn applyDamageToEnemyVec(enemies: Vector<Enemy>, idx: Int, e: Enemy) -> (List<En
     newHp = e.hp - 5
     match newHp < 1
         true -> (removeEnemyVec(enemies, idx, 0, []), "Killed {Types.enemyGlyph(e.kind)}!")
-        false -> (replaceEnemyVec(enemies, idx, Enemy.update(e, hp = newHp), 0, []), "Hit {Types.enemyGlyph(e.kind)}! ({Int.toString(newHp)} HP)")
+        false -> (replaceEnemyVec(enemies, idx, Enemy.update(e, hp = newHp), 0, []), "Hit {Types.enemyGlyph(e.kind)}! ({String.fromInt(newHp)} HP)")
 
 verify applyDamageToEnemyVec
     applyDamageToEnemyVec(Vector.fromList([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)]), 0, Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)) => ([], "Killed !!")

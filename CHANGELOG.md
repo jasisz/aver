@@ -4,6 +4,46 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
+## 0.17.0 "Purge" — 2026-05-06
+
+> _What was never used is no longer in the way._
+
+A stdlib sweep before the language gets harder to break. Eight redundant builtins removed, one renamed for symmetry, one rule for what stays: each operation has one obvious spelling. Literals for literals (`{}`, `[]`), operators for primitive composition (`+` on strings, arithmetic), `Target.fromSource` for conversions, interpolation for rendering, named functions only when they add semantics.
+
+### Removed
+
+- **`Map.empty()`** — redundant against the `{}` literal. Bidirectional inference propagates `Map<K, V>` from binding annotations into `{}`, and the discovery walker introduced in 0.16.3 picks up unannotated literals like `m = {a => 3}` from `expr.ty()`. Symmetric with `[]` for List (which never had a `List.empty` builtin).
+- **`Int.parse`, `Float.parse`, `Int.rem`** — unreachable builtin aliases. Registered in 4 backend dispatch tables but never wired through typecheck or VM. Lean and dafny treated them as outright aliases for `Int.fromString` / `Float.fromString` / `Int.mod`.
+- **`Int.toString`, `Float.toString`** — duplicates of `String.fromInt` / `String.fromFloat`. The convention `Target.fromSource` wins: result type leads (matters for code review and AI-generated code), and it scales (`Int.fromFloat`, `Float.fromInt`, `String.fromBool`, …). Interpolation `"{x}"` remains the primary idiom for rendering values into human-readable strings; `String.fromX` is for explicit data conversion (e.g. `"user:" + String.fromInt(id)`).
+- **`Float.toInt`, `Int.toFloat`** — duplicates of `Int.fromFloat` / `Float.fromInt`. Same convention.
+- **`String.concat(a, b)`** — literally `a + b`. Zero usage in examples (only in docs); not even dispatched in the wasm-gc backend. The `+` operator is the primary idiom for tail-recursive accumulators (`acc + sep + String.fromInt(head)`) and inline string composition; `String.join(parts, sep)` covers list-join (a different operation).
+
+### Renamed
+
+- **`Vector.toList(v)` → `List.fromVector(v)`** — paired with `Vector.fromList(l)` under the same `Target.fromSource` rule.
+
+### Kept (deliberately)
+
+- **`+` on strings** — primary idiom for tail-recursive string accumulators and inline composition. Forcing only interpolation `"{a}{b}"` would be awkward in `acc + " " + String.fromInt(head)` patterns.
+- **`Bool.and` / `Bool.or` / `Bool.not`** — *intentionally not added* as `&&` / `||` / `!` operators. Aver tracks effects deterministically (record/replay/proof export); short-circuit on `a && f!()` would require deciding whether the effect of `f` may or may not fire depending on `a`, which complicates trace recording and Lean export. Strict-FP eager evaluation matches the rest of the language. Pattern-matching `(x > 0, y > 0)` covers most idiomatic AND/OR cases. Not a "later language decision" — a settled non-feature.
+- **`Char.toCode` / `Char.fromCode`, `Byte.toHex` / `Byte.fromHex`, `Option.toResult`, `String.toLower` / `String.toUpper`** — encoding semantics or semantic conversions, not type-to-type. Not duplicates.
+
+### Migration
+
+Programs using removed builtins:
+
+```aver
+-- before
+m = Map.empty()                   -- → {}
+s = Int.toString(42)              -- → String.fromInt(42)  or  "{42}"
+n = Float.toInt(3.7)              -- → Int.fromFloat(3.7)
+f = Int.toFloat(5)                -- → Float.fromInt(5)
+xs = Vector.toList(v)             -- → List.fromVector(v)
+greeting = String.concat("hi, ", name)  -- → "hi, " + name
+```
+
+Examples in `examples/` and `tools/website/` migrated; vera-bench solutions checked (zero usage of any removed builtin, no companion PR needed). All 621 lib tests pass. The full sweep landed in four self-contained commits on the 0.17 branch.
+
 ## 0.16.2 — 2026-05-06
 
 > _Record/replay correctness across all three backends — and a tidier wasm-gc imports tree along the way._

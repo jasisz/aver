@@ -116,14 +116,14 @@ impl<'a> ExprEmitter<'a> {
             "Float.fromInt" if args.len() == 1 => {
                 self.instructions.push(Instruction::F64ConvertI64S);
             }
-            "Int.toFloat" if args.len() == 1 => {
+            "Float.fromInt" if args.len() == 1 => {
                 self.instructions.push(Instruction::F64ConvertI64S);
             }
-            "Int.toString" if args.len() == 1 => {
+            "String.fromInt" if args.len() == 1 => {
                 self.instructions
                     .push(Instruction::Call(self.rt.i64_to_str_obj));
             }
-            "Float.toString" if args.len() == 1 => {
+            "String.fromFloat" if args.len() == 1 => {
                 self.instructions
                     .push(Instruction::Call(self.rt.f64_to_str_obj));
             }
@@ -344,7 +344,7 @@ impl<'a> ExprEmitter<'a> {
                 ));
                 self.instructions.push(Instruction::Call(self.rt.vec_new));
             }
-            "Vector.toList" if args.len() == 1 => {
+            "List.fromVector" if args.len() == 1 => {
                 self.instructions
                     .push(Instruction::Call(self.rt.vec_to_list));
             }
@@ -626,7 +626,7 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions
                     .push(Instruction::F64Const(std::f64::consts::PI));
             }
-            "Float.toInt" if args.len() == 1 => {
+            "Int.fromFloat" if args.len() == 1 => {
                 self.instructions.push(Instruction::I64TruncF64S);
             }
             "Float.fromString" if args.len() == 1 => {

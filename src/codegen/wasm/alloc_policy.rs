@@ -46,7 +46,7 @@ fn is_pure_non_alloc_builtin(name: &str) -> bool {
         "Int.abs"
             | "Int.min"
             | "Int.max"
-            | "Int.toFloat"
+            | "Float.fromInt"
             // Float arithmetic, transcendentals, constants, predicates.
             | "Float.abs"
             | "Float.floor"
@@ -96,7 +96,7 @@ mod tests {
         assert!(!p.builtin_allocates("Float.sin"));
         assert!(!p.builtin_allocates("Float.sqrt"));
         assert!(!p.builtin_allocates("Int.abs"));
-        assert!(!p.builtin_allocates("Int.toFloat"));
+        assert!(!p.builtin_allocates("Float.fromInt"));
     }
 
     #[test]

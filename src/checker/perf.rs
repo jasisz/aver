@@ -99,7 +99,7 @@ fn expr_to_short_str(expr: &Expr) -> String {
 }
 
 /// Check whether an expression mentions only identifiers from `allowed` and literals.
-/// Namespace prefixes (e.g. `Int` in `Int.toFloat(...)`) are treated as constants,
+/// Namespace prefixes (e.g. `Int` in `Float.fromInt(...)`) are treated as constants,
 /// not as variable references that need to be in `allowed`.
 fn expr_uses_only(expr: &Expr, allowed: &HashSet<String>) -> bool {
     match expr {
@@ -110,7 +110,7 @@ fn expr_uses_only(expr: &Expr, allowed: &HashSet<String>) -> bool {
         }
         Expr::FnCall(callee, args) => {
             let callee_ok = match &callee.node {
-                // Namespace call like `Int.toFloat(...)` — the namespace is a constant
+                // Namespace call like `Float.fromInt(...)` — the namespace is a constant
                 Expr::Attr(obj, _) => {
                     if let Expr::Ident(ns) = &obj.node {
                         // Check if this is a known pure namespace prefix
@@ -905,15 +905,15 @@ mod tests {
     #[test]
     fn b4_loop_invariant_warns() {
         // fn draw(x: Int, y: Int, width: Int) -> Int
-        //   w = Int.toFloat(width)
+        //   w = Float.fromInt(width)
         //   ...
         //   TailCall("draw", [x + 1, y, width])
         //
-        // `width` is forwarded unchanged → `Int.toFloat(width)` is loop-invariant
+        // `width` is forwarded unchanged → `Float.fromInt(width)` is loop-invariant
         let int_to_float_call = Expr::FnCall(
             Box::new(spanned(Expr::Attr(
-                Box::new(spanned(ident("Int"))),
-                "toFloat".to_string(),
+                Box::new(spanned(ident("Float"))),
+                "fromInt".to_string(),
             ))),
             vec![spanned(ident("width"))],
         );
@@ -939,7 +939,7 @@ mod tests {
         assert!(
             warnings
                 .iter()
-                .any(|w| w.message.contains("Int.toFloat(width)")
+                .any(|w| w.message.contains("Float.fromInt(width)")
                     && w.message.contains("doesn't change")),
             "expected loop-invariant warning, got {:?}",
             warnings
@@ -949,12 +949,12 @@ mod tests {
     #[test]
     fn b4_changed_param_no_warning() {
         // fn draw(x: Int, width: Int) -> Int
-        //   w = Int.toFloat(width)
+        //   w = Float.fromInt(width)
         //   TailCall("draw", [x + 1, width - 1])  ← width is NOT forwarded unchanged
         let int_to_float_call = Expr::FnCall(
             Box::new(spanned(Expr::Attr(
-                Box::new(spanned(ident("Int"))),
-                "toFloat".to_string(),
+                Box::new(spanned(ident("Float"))),
+                "fromInt".to_string(),
             ))),
             vec![spanned(ident("width"))],
         );
@@ -977,7 +977,7 @@ mod tests {
         let items = vec![TopLevel::FnDef(fd)];
         let warnings = collect_perf_warnings(&items);
         assert!(
-            !warnings.iter().any(|w| w.message.contains("Int.toFloat")),
+            !warnings.iter().any(|w| w.message.contains("Float.fromInt")),
             "expected no warning when width changes, got {:?}",
             warnings
         );
@@ -1048,12 +1048,12 @@ mod tests {
     #[test]
     fn b4_no_tailcall_no_warning() {
         // fn f(x: Int, y: Int) -> Int
-        //   w = Int.toFloat(y)
+        //   w = Float.fromInt(y)
         //   w  (no TailCall → not a recursive fn in TCO sense)
         let int_to_float_call = Expr::FnCall(
             Box::new(spanned(Expr::Attr(
-                Box::new(spanned(ident("Int"))),
-                "toFloat".to_string(),
+                Box::new(spanned(ident("Float"))),
+                "fromInt".to_string(),
             ))),
             vec![spanned(ident("y"))],
         );

@@ -44,8 +44,8 @@ verify parse
 fn padTwo(n: Int) -> String
     ? "Pad a single-digit number with a leading zero."
     match n < 10
-        true -> "0{Int.toString(n)}"
-        false -> Int.toString(n)
+        true -> "0{String.fromInt(n)}"
+        false -> String.fromInt(n)
 
 verify padTwo
     padTwo(0) => "00"
@@ -54,7 +54,7 @@ verify padTwo
 
 fn format(d: Date) -> String
     ? "Format a Date as YYYY-MM-DD HH:MM:SS."
-    y = Int.toString(d.year)
+    y = String.fromInt(d.year)
     m = padTwo(d.month)
     da = padTwo(d.day)
     h = padTwo(d.hour)
@@ -82,6 +82,6 @@ fn main()
     d = parse(now)
     Console.print("Raw:    {now}")
     Console.print("Parsed: {format(d)}")
-    Console.print("Year:   {Int.toString(d.year)}")
-    Console.print("Month:  {Int.toString(d.month)}")
-    Console.print("Day:    {Int.toString(d.day)}")
+    Console.print("Year:   {String.fromInt(d.year)}")
+    Console.print("Month:  {String.fromInt(d.month)}")
+    Console.print("Day:    {String.fromInt(d.day)}")

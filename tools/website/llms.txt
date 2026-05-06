@@ -104,7 +104,7 @@ Compound:
 Notes:
 - top-level named functions can be passed where `Fn(...)` is expected
 - there are no lambdas and no closures
-- no implicit type promotion; use `Int.toFloat` / `Float.fromInt`
+- no implicit type promotion; use `Float.fromInt` / `Float.fromInt`
 
 ### User-defined types
 
@@ -136,7 +136,7 @@ Rules:
 
 ```aver
 match value
-    Result.Ok(v) -> Int.toString(v)
+    Result.Ok(v) -> String.fromInt(v)
     Result.Err(e) -> e
 ```
 
@@ -309,8 +309,8 @@ Common pure namespaces:
 Key `String` API:
 - `String.len`, `String.contains`, `String.startsWith`, `String.endsWith`
 - `String.toUpper`, `String.toLower`, `String.trim`
-- `String.concat`, `String.join`, `String.split`, `String.chars`
-- `Int.fromString : String -> Result<Int, String>`, `Int.toString : Int -> String`
+- `String.join`, `String.split`, `String.chars` — concat is the `+` operator
+- `Int.fromString : String -> Result<Int, String>`, `String.fromInt : Int -> String`
 - string interpolation: `"Hello, {name}!"` is the idiomatic concat
 
 Key `List` API (small, recursion-first):

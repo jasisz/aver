@@ -316,7 +316,7 @@ mod tests {
 
     impl AllocPolicy for TestPolicy {
         fn builtin_allocates(&self, name: &str) -> bool {
-            name.starts_with("Map.") || name == "Int.toString"
+            name.starts_with("Map.") || name == "String.fromInt"
         }
         fn constructor_allocates(&self, _name: &str, _has_payload: bool) -> bool {
             false
@@ -363,11 +363,11 @@ mod tests {
 
     #[test]
     fn allocating_builtin_call_allocates() {
-        // Int.toString(42)
+        // String.fromInt(42)
         let call = Expr::FnCall(
             Box::new(sp(Expr::Attr(
-                Box::new(sp(Expr::Ident("Int".into()))),
-                "toString".into(),
+                Box::new(sp(Expr::Ident("String".into()))),
+                "fromInt".into(),
             ))),
             vec![lit_int(42)],
         );
