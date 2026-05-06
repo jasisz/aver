@@ -180,6 +180,33 @@ export function aver_compile_project(files_json, entry) {
 }
 
 /**
+ * Compile a project that targets `expr` (e.g. `add(7, 35)`)
+ * instead of `main`. Wraps the call in a synthetic `__entry__`
+ * fn the codegen wires `_start` through, so the playground
+ * worker can run user expressions on the native wasm-gc path
+ * without any JS-side argument encoder.
+ * @param {string} files_json
+ * @param {string} entry
+ * @param {string} expr
+ * @returns {Uint8Array}
+ */
+export function aver_compile_project_with_entry(files_json, entry, expr) {
+    const ptr0 = passStringToWasm0(files_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(entry, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(expr, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.aver_compile_project_with_entry(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v4;
+}
+
+/**
  * Aver source → Rust/Cargo project files (JSON `{path: content}`).
  * Maps to `aver compile --target rust` on the CLI.
  * @param {string} source
@@ -349,6 +376,34 @@ export function aver_format(source) {
 }
 
 /**
+ * Resolve the user-facing fn name that `expr` calls. Returns
+ * just the name half of `parse_entry_call(expr)` so the JS host
+ * can label recordings without re-parsing the call expression.
+ * @param {string} expr
+ * @returns {string}
+ */
+export function aver_parse_entry_target(expr) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(expr, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.aver_parse_entry_target(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Aver source → Dafny project files (JSON `{path: content}`).
  * Maps to `aver proof --backend dafny` on the CLI.
  * @param {string} source
@@ -459,117 +514,6 @@ export function aver_proof_lean_project(files_json, entry) {
     } finally {
         wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
     }
-}
-
-/**
- * @param {string} files_json
- * @param {string} entry
- * @param {string} recording_json
- * @returns {string}
- */
-export function aver_replay_run(files_json, entry, recording_json) {
-    let deferred5_0;
-    let deferred5_1;
-    try {
-        const ptr0 = passStringToWasm0(files_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(entry, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passStringToWasm0(recording_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len2 = WASM_VECTOR_LEN;
-        const ret = wasm.aver_replay_run(ptr0, len0, ptr1, len1, ptr2, len2);
-        var ptr4 = ret[0];
-        var len4 = ret[1];
-        if (ret[3]) {
-            ptr4 = 0; len4 = 0;
-            throw takeFromExternrefTable0(ret[2]);
-        }
-        deferred5_0 = ptr4;
-        deferred5_1 = len4;
-        return getStringFromWasm0(ptr4, len4);
-    } finally {
-        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
-    }
-}
-
-/**
- * @param {string} files_json
- * @param {string} entry
- * @returns {string}
- */
-export function aver_run_record(files_json, entry) {
-    let deferred4_0;
-    let deferred4_1;
-    try {
-        const ptr0 = passStringToWasm0(files_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(entry, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.aver_run_record(ptr0, len0, ptr1, len1);
-        var ptr3 = ret[0];
-        var len3 = ret[1];
-        if (ret[3]) {
-            ptr3 = 0; len3 = 0;
-            throw takeFromExternrefTable0(ret[2]);
-        }
-        deferred4_0 = ptr3;
-        deferred4_1 = len3;
-        return getStringFromWasm0(ptr3, len3);
-    } finally {
-        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
-    }
-}
-
-/**
- * Record a run starting from an arbitrary call expression instead of
- * `main`. `entry_expr` must be a function call with literal arguments
- * (String / Int / Float / Bool / Unit) — same constraints as `aver run
- * --expr` on the CLI. The resulting recording has `entry_fn` and
- * `input` populated accordingly and can be replayed unchanged.
- * @param {string} files_json
- * @param {string} entry
- * @param {string} entry_expr
- * @returns {string}
- */
-export function aver_run_record_entry(files_json, entry, entry_expr) {
-    let deferred5_0;
-    let deferred5_1;
-    try {
-        const ptr0 = passStringToWasm0(files_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(entry, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passStringToWasm0(entry_expr, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len2 = WASM_VECTOR_LEN;
-        const ret = wasm.aver_run_record_entry(ptr0, len0, ptr1, len1, ptr2, len2);
-        var ptr4 = ret[0];
-        var len4 = ret[1];
-        if (ret[3]) {
-            ptr4 = 0; len4 = 0;
-            throw takeFromExternrefTable0(ret[2]);
-        }
-        deferred5_0 = ptr4;
-        deferred5_1 = len4;
-        return getStringFromWasm0(ptr4, len4);
-    } finally {
-        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
-    }
-}
-
-/**
- * Bytes of the standalone aver_runtime wasm module. Worker-side
- * instantiates this once and feeds its exports as the
- * `aver_runtime` import of every compiled user.wasm.
- * @returns {Uint8Array}
- */
-export function aver_runtime_wasm() {
-    const ret = wasm.aver_runtime_wasm();
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
-    }
-    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-    return v1;
 }
 
 /**
@@ -731,7 +675,7 @@ function __wbg_get_imports() {
         __wbg___wbindgen_throw_6ddd609b62940d55: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
-        __wbg_error_d6e4671dea5cd845: function(arg0, arg1) {
+        __wbg_error_d8ad12e60840c9e8: function(arg0, arg1) {
             console.error(getStringFromWasm0(arg0, arg1));
         },
         __wbg_getRandomValues_3f44b700395062e5: function() { return handleError(function (arg0, arg1) {

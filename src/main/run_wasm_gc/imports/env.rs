@@ -11,6 +11,7 @@ pub(super) fn dispatch(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     params: &[wasmtime::Val],
     results: &mut [wasmtime::Val],
+    caller_fn: &str,
 ) -> Result<bool, wasmtime::Error> {
     use wasmtime::Val;
     match name {
@@ -30,6 +31,7 @@ pub(super) fn dispatch(
                 "Env.get",
                 args,
                 aver::replay::JsonValue::String(value),
+                caller_fn,
             );
             Ok(true)
         }
@@ -44,7 +46,13 @@ pub(super) fn dispatch(
                 return Ok(true);
             }
             let _ = aver_rt::env_set(&name, &value);
-            record_effect_if_recording(caller, "Env.set", args, aver::replay::JsonValue::Null);
+            record_effect_if_recording(
+                caller,
+                "Env.set",
+                args,
+                aver::replay::JsonValue::Null,
+                caller_fn,
+            );
             Ok(true)
         }
         _ => Ok(false),

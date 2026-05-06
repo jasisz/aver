@@ -12,6 +12,7 @@ pub(super) fn dispatch(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     params: &[wasmtime::Val],
     results: &mut [wasmtime::Val],
+    caller_fn: &str,
 ) -> Result<bool, wasmtime::Error> {
     use wasmtime::Val;
     match name {
@@ -38,6 +39,7 @@ pub(super) fn dispatch(
                 "Console.print",
                 vec![aver::replay::JsonValue::String(text)],
                 aver::replay::JsonValue::Null,
+                caller_fn,
             );
             Ok(true)
         }
@@ -58,6 +60,7 @@ pub(super) fn dispatch(
                 "Console.error",
                 vec![aver::replay::JsonValue::String(text)],
                 aver::replay::JsonValue::Null,
+                caller_fn,
             );
             Ok(true)
         }
@@ -78,6 +81,7 @@ pub(super) fn dispatch(
                 "Console.warn",
                 vec![aver::replay::JsonValue::String(text)],
                 aver::replay::JsonValue::Null,
+                caller_fn,
             );
             Ok(true)
         }
@@ -105,7 +109,7 @@ pub(super) fn dispatch(
                 }
             };
             results[0] = Val::AnyRef(result_ref);
-            record_effect_if_recording(caller, "Console.readLine", vec![], outcome);
+            record_effect_if_recording(caller, "Console.readLine", vec![], outcome, caller_fn);
             Ok(true)
         }
         _ => Ok(false),

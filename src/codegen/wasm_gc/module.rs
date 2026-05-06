@@ -119,11 +119,17 @@ pub(super) fn emit_module(
             "module has no fn definitions".into(),
         ));
     }
-    // `main` is optional — modules that act as a Worker handler
-    // (e.g. `tools/edge/handler.av`) export `handler` instead and
-    // never run `_start`. When absent, `_start` is emitted as a no-op
-    // so the module shape stays valid.
-    let main_idx: Option<usize> = fn_defs.iter().position(|fd| fd.name == "main");
+    // `_start` calls `__entry__` if present (synthesised by the
+    // playground / `--expr` path to wrap a user fn call with literal
+    // args), otherwise `main`. Both are optional — modules that act
+    // as a Worker handler (e.g. `tools/edge/handler.av`) export
+    // `handler` instead and never run `_start`; when neither is
+    // present, `_start` is emitted as a no-op so the module shape
+    // stays valid.
+    let main_idx: Option<usize> = fn_defs
+        .iter()
+        .position(|fd| fd.name == "__entry__")
+        .or_else(|| fn_defs.iter().position(|fd| fd.name == "main"));
 
     let mut module = Module::new();
 
@@ -348,6 +354,20 @@ pub(super) fn emit_module(
         funcs.function(b.grow_type);
     }
     factory_exports.emit_function_entries(&mut funcs);
+    // `__init_globals`: wasm-level start fn that lazy-fills the
+    // caller_fn globals via `array.new_data`. Has to be a separate
+    // fn (not part of `_start`) because the host invokes `main`
+    // directly when both are exported, bypassing `_start` —
+    // wasm-level start fns are auto-run at instantiation regardless
+    // of which export the host calls. Allocated last so its idx is
+    // import_count + funcs.len() once the entry is appended.
+    let init_globals_fn_idx: Option<u32> = if !registry.caller_fn_global_order.is_empty() {
+        let idx = import_count + funcs.len();
+        funcs.function(start_type_idx);
+        Some(idx)
+    } else {
+        None
+    };
     module.section(&funcs);
 
     // ── Memory section (bridge LM only) ────────────────────────────
@@ -369,6 +389,41 @@ pub(super) fn emit_module(
             page_size_log2: None,
         });
         module.section(&memories);
+    }
+
+    // ── Global section ─────────────────────────────────────────────
+    // One mutable `(ref null $string)` global per fn def, declared as
+    // `ref.null` and lazy-initialised at the top of `_start` via
+    // `array.new_data $string $segment 0 N`. The wasm-gc spec doesn't
+    // permit `array.new_data` in const-expr position, so the init has
+    // to land in a code body — `_start` runs once per instantiation
+    // and dominates every effect call site, which is what we need.
+    // Body emit pushes the caller-fn ref through
+    // `global.get $caller_fn_<idx>` at every effect call site — the
+    // alloc happens once at startup, the hot path costs one global
+    // load.
+    if !registry.caller_fn_global_order.is_empty() {
+        let string_idx = registry
+            .string_array_type_idx
+            .expect("caller_fn globals require the $string slot — TypeRegistry forces it on");
+        let mut globals = wasm_encoder::GlobalSection::new();
+        for _ in &registry.caller_fn_global_order {
+            let init = wasm_encoder::ConstExpr::extended([Instruction::RefNull(
+                wasm_encoder::HeapType::Concrete(string_idx),
+            )]);
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: wasm_encoder::ValType::Ref(wasm_encoder::RefType {
+                        nullable: true,
+                        heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+                    }),
+                    mutable: true,
+                    shared: false,
+                },
+                &init,
+            );
+        }
+        module.section(&globals);
     }
 
     // Build the fn-name → wasm-fn-idx map. With K imports:
@@ -481,6 +536,15 @@ pub(super) fn emit_module(
     }
     module.section(&exports);
 
+    // ── Start section ──────────────────────────────────────────────
+    // Wasm-level start fn — auto-runs once at instantiation, ahead of
+    // any host-invoked export. Used for caller_fn global init.
+    if let Some(idx) = init_globals_fn_idx {
+        module.section(&wasm_encoder::StartSection {
+            function_index: idx,
+        });
+    }
+
     // ── Data count section (must precede code when using passive
     //     segments via array.new_data / data.drop).
     if !registry.string_literals.is_empty() {
@@ -493,9 +557,10 @@ pub(super) fn emit_module(
     // ── Code section ───────────────────────────────────────────────
     let mut codes = CodeSection::new();
 
-    // _start: call main if present, drop its result on the way out;
-    // otherwise emit a no-op body. Worker-shaped modules without a
-    // top-level `main` rely on the host calling a different export.
+    // _start: call main if present, drop its return value. Caller_fn
+    // globals are NOT init here — the wasm-level `(start
+    // __init_globals)` section handles that on instantiation, before
+    // any export gets called.
     let mut start = Function::new([]);
     if let Some(idx) = main_idx {
         let main_idx_wasm = import_count + 1 + (idx as u32);
@@ -592,6 +657,33 @@ pub(super) fn emit_module(
     }
 
     factory_exports.emit_bodies(&mut codes, &registry)?;
+
+    // `__init_globals` body — one `array.new_data → global.set` per
+    // registered caller_fn name. Walks `caller_fn_global_order` so
+    // global idx i in the section matches the `i`-th name in the
+    // walker output. Runs at instantiation via the StartSection
+    // emitted below.
+    if init_globals_fn_idx.is_some() {
+        let string_idx = registry
+            .string_array_type_idx
+            .expect("caller_fn globals require the $string slot");
+        let mut init = Function::new([]);
+        for (idx, fn_name) in registry.caller_fn_global_order.iter().enumerate() {
+            let bytes = fn_name.as_bytes();
+            let segment_idx = registry
+                .string_literal_segment(bytes)
+                .expect("fn-name passive segment registered alongside the global");
+            init.instruction(&Instruction::I32Const(0));
+            init.instruction(&Instruction::I32Const(bytes.len() as i32));
+            init.instruction(&Instruction::ArrayNewData {
+                array_type_index: string_idx,
+                array_data_index: segment_idx,
+            });
+            init.instruction(&Instruction::GlobalSet(idx as u32));
+        }
+        init.instruction(&Instruction::End);
+        codes.function(&init);
+    }
 
     module.section(&codes);
 

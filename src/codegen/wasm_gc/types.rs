@@ -115,6 +115,16 @@ pub(super) struct TypeRegistry {
     /// $string $segment_idx` with offset=0, size=len.
     pub(super) string_literals: Vec<Vec<u8>>,
     pub(super) string_literal_idx: HashMap<Vec<u8>, u32>,
+    /// Per-fn `(ref null $string)` global, init by `array.new_data`
+    /// from the fn-name passive segment. Codegen emits `global.get`
+    /// at every effect call site instead of allocating a fresh
+    /// `(array i8)` per call — module-instantiation pays the alloc
+    /// once, the runtime hot path costs one global load.
+    pub(super) caller_fn_globals: HashMap<String, u32>,
+    /// Emit order for the caller-fn globals, matched to the
+    /// idx values stored above. The `GlobalSection` walks this
+    /// vector so wasm idx 0..N matches the map values.
+    pub(super) caller_fn_global_order: Vec<String>,
     /// Type names that must NOT be erased to their underlying
     /// primitive by the newtype optimisation. Populated with every
     /// record/variant used as a `Map<K, *>` key — Map's open-
@@ -217,14 +227,23 @@ impl TypeRegistry {
         // so any `Vector<String>` registered below sits at a higher
         // index than `$string` and can reference it without crossing
         // the rec-group boundary.
-        let needs_string = items.iter().any(|item| match item {
-            TopLevel::FnDef(fd) => {
-                fd.return_type.contains("String")
-                    || fd.params.iter().any(|(_, t)| t.contains("String"))
-                    || fn_body_produces_string(fd)
-            }
-            _ => false,
-        });
+        // Force the String type slot whenever the program has any
+        // fn defs at all — `body/builtins.rs` now pushes the
+        // current fn name as a String literal before every effect
+        // import call (the `caller_fn` trailing arg). Without the
+        // slot, `emit_string_literal_bytes` can't materialise the
+        // ref and validation fails for trivially-Stringless programs
+        // like `fn main() -> Int { _ = Time.unixMs(); 42 }`.
+        let has_fn_defs = items.iter().any(|item| matches!(item, TopLevel::FnDef(_)));
+        let needs_string = has_fn_defs
+            || items.iter().any(|item| match item {
+                TopLevel::FnDef(fd) => {
+                    fd.return_type.contains("String")
+                        || fd.params.iter().any(|(_, t)| t.contains("String"))
+                        || fn_body_produces_string(fd)
+                }
+                _ => false,
+            });
         let string_array_type_idx = if needs_string {
             let idx = next_idx;
             next_idx += 1;
@@ -680,6 +699,33 @@ impl TypeRegistry {
                 collect_string_literals_in_fn(fd, &mut string_literals, &mut string_literal_idx);
             }
         }
+        // Pre-register fn names as passive String literals AND
+        // allocate `(ref null $string)` wasm globals — but only for
+        // fns whose body actually emits caller_fn at a call site (a
+        // dotted call `Foo.bar(...)` or an `?!`/`!` independent
+        // product, which lowers to group/branch markers). Pure fns
+        // and plain forwarders that only call other user fns don't
+        // need a slot.
+        let mut caller_fn_globals: HashMap<String, u32> = HashMap::new();
+        let mut caller_fn_global_order: Vec<String> = Vec::new();
+        for item in items {
+            if let TopLevel::FnDef(fd) = item {
+                if !fn_body_emits_effect_call(fd) {
+                    continue;
+                }
+                let bytes = fd.name.as_bytes().to_vec();
+                string_literal_idx.entry(bytes.clone()).or_insert_with(|| {
+                    let idx = string_literals.len() as u32;
+                    string_literals.push(bytes);
+                    idx
+                });
+                caller_fn_globals.entry(fd.name.clone()).or_insert_with(|| {
+                    let idx = caller_fn_global_order.len() as u32;
+                    caller_fn_global_order.push(fd.name.clone());
+                    idx
+                });
+            }
+        }
         // `Int.mod` lowers to a boxed `Result<Int, String>` whose Err
         // arm carries a fixed "Division by zero" message — register
         // its bytes as a passive segment so the emitter has an idx
@@ -743,6 +789,8 @@ impl TypeRegistry {
             string_array_type_idx,
             string_literals,
             string_literal_idx,
+            caller_fn_globals,
+            caller_fn_global_order,
             non_newtypable_keys,
         }
     }
@@ -1973,6 +2021,45 @@ fn fn_body_calls_int_mod(fd: &crate::ast::FnDef) -> bool {
             Expr::List(xs) | Expr::Tuple(xs) | Expr::IndependentProduct(xs, _) => {
                 xs.iter().any(|x| walk(&x.node))
             }
+            Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| walk(&e.node)),
+            Expr::RecordUpdate { base, updates, .. } => {
+                walk(&base.node) || updates.iter().any(|(_, e)| walk(&e.node))
+            }
+            Expr::Constructor(_, p) => p.as_deref().is_some_and(|x| walk(&x.node)),
+            _ => false,
+        }
+    }
+    let FnBody::Block(stmts) = fd.body.as_ref();
+    stmts.iter().any(|stmt| match stmt {
+        Stmt::Binding(_, _, e) | Stmt::Expr(e) => walk(&e.node),
+    })
+}
+
+/// Returns true when the fn body contains anything that emits a
+/// caller_fn slot at codegen — a dotted call (any `Attr(_, _)`
+/// callee, including nested-module shape `Module.Sub.fn(args)`) or
+/// an independent product (`?!` / `!`, lowers to group/branch
+/// markers). Used to skip allocating a global for fns that never
+/// need one. Conservative on dotted: builtin namespace calls like
+/// `List.length` are also flagged; false positives cost one segment
+/// + one global per fn, false negatives crash wasm validation.
+fn fn_body_emits_effect_call(fd: &crate::ast::FnDef) -> bool {
+    use crate::ast::{Expr, FnBody, Stmt};
+    fn walk(e: &Expr) -> bool {
+        match e {
+            Expr::FnCall(callee, args) => {
+                let dotted = matches!(&callee.node, Expr::Attr(_, _));
+                dotted || walk(&callee.node) || args.iter().any(|a| walk(&a.node))
+            }
+            Expr::IndependentProduct(_, _) => true,
+            Expr::Match { subject, arms } => {
+                walk(&subject.node) || arms.iter().any(|a| walk(&a.body.node))
+            }
+            Expr::BinOp(_, l, r) => walk(&l.node) || walk(&r.node),
+            Expr::Attr(o, _) => walk(&o.node),
+            Expr::ErrorProp(i) => walk(&i.node),
+            Expr::TailCall(b) => b.args.iter().any(|a| walk(&a.node)),
+            Expr::List(xs) | Expr::Tuple(xs) => xs.iter().any(|x| walk(&x.node)),
             Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| walk(&e.node)),
             Expr::RecordUpdate { base, updates, .. } => {
                 walk(&base.node) || updates.iter().any(|(_, e)| walk(&e.node))

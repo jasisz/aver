@@ -7,24 +7,13 @@ use crate::codegen;
 use crate::diagnostics::{AnalyzeOptions, analyze_source};
 use crate::ir::{PipelineConfig, TypecheckMode};
 use crate::source::{LoadedModule, load_module_tree_from_map, parse_source};
-#[cfg(feature = "runtime")]
-use crate::{nan_value::Arena, vm};
-
-/// Build the standalone aver_runtime wasm module bytes. Browser-side
-/// hosts instantiate this once, then point every user.wasm's
-/// `aver_runtime` import to its exports.
-pub fn build_aver_runtime_wasm() -> Result<Vec<u8>, String> {
-    codegen::wasm::build_runtime_wasm()
-}
 
 /// Compile Aver source text to WASM bytes via the wasm-gc backend.
-///
-/// Playground migrated from `--target edge-wasm` to `--target wasm-gc`
-/// in 0.16; the browser host (`tools/website/playground/wasm_host.js`)
-/// expects wasm-gc binaries with engine GC + tail calls + per-type
-/// factory exports for structured effect returns. The legacy
-/// `codegen::wasm::emit_wasm` path is no longer reachable from this
-/// entry point.
+/// Playground exclusively targets wasm-gc since 0.16 (engine GC +
+/// tail calls + factory exports for structured effect returns); the
+/// legacy NaN-boxed emitter and its standalone `aver_runtime.wasm`
+/// sidecar aren't reachable from any browser entry point and aren't
+/// included in the `playground` feature build.
 pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
     let mut items = parse_source(source)?;
 
@@ -104,6 +93,161 @@ pub fn compile_project_to_wasm(
     crate::ir::pipeline::resolve(&mut entry_items);
     codegen::wasm_gc::compile_to_wasm_gc(&entry_items, pipeline_result.analysis.as_ref())
         .map_err(|e| format!("{e}"))
+}
+
+/// Multi-file project compile that targets a synthetic `__entry__`
+/// fn instead of `main`. `expr` is parsed via `parse_entry_call`
+/// (`add(7, 35)` → `("add", [Int(7), Int(35)])`); we look up the
+/// target's signature from the entry source / loaded deps, then
+/// inject a no-arg `fn __entry__()` whose body is `target(args…)`
+/// with each Aver `Value` re-emitted as the corresponding AST
+/// `Literal`. The compiler's `_start` synthesis prefers `__entry__`
+/// when present, so the host invocation path stays unchanged —
+/// `instance.exports._start()` runs the user expression instead of
+/// `main`. Returns `(wasm_bytes, target_fn_name)` so callers can
+/// label recordings with the user-facing fn name.
+pub fn compile_project_to_wasm_with_entry(
+    files: &HashMap<String, String>,
+    entry: &str,
+    expr: &str,
+) -> Result<(Vec<u8>, String), String> {
+    let entry_source = files
+        .get(entry)
+        .ok_or_else(|| format!("Entry '{}' not present in file map", entry))?;
+    let mut entry_items = parse_source(entry_source)?;
+    let root_depends = module_depends(&entry_items);
+    let loaded = load_module_tree_from_map(&root_depends, files)?;
+
+    let (target_fn, args) =
+        crate::replay::parse_entry_call(expr).map_err(|e| format!("--expr parse: {}", e))?;
+    let (return_type, _effects) = lookup_fn_signature(&entry_items, &loaded, &target_fn)
+        .ok_or_else(|| format!("entry fn `{}` not found in project", target_fn))?;
+
+    let synth = build_synth_entry_fn(&target_fn, &args, &return_type)?;
+    entry_items.push(synth);
+
+    let pipeline_result = crate::ir::pipeline::run(
+        &mut entry_items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
+            run_interp_lower: false,
+            run_buffer_build: false,
+            ..Default::default()
+        },
+    );
+    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
+    if !tc_result.errors.is_empty() {
+        return Err(format_tc_errors(&tc_result.errors));
+    }
+
+    let modules: Vec<codegen::ModuleInfo> = loaded
+        .into_iter()
+        .map(|m| loaded_to_module_info(m, false))
+        .collect();
+    codegen::wasm_gc::flatten_multimodule(&mut entry_items, &modules);
+    crate::ir::pipeline::resolve(&mut entry_items);
+    let bytes =
+        codegen::wasm_gc::compile_to_wasm_gc(&entry_items, pipeline_result.analysis.as_ref())
+            .map_err(|e| format!("{e}"))?;
+    Ok((bytes, target_fn))
+}
+
+/// Find a fn def by name across the entry source and any loaded
+/// dependency module. Returns `(return_type, effects)` so the
+/// synthetic `__entry__` can mirror the target's signature shape.
+/// Multi-module flatten happens AFTER synth injection, so dep fns
+/// are still siloed under their `LoadedModule.items` here — both
+/// places have to be searched.
+fn lookup_fn_signature(
+    entry_items: &[crate::ast::TopLevel],
+    loaded: &[LoadedModule],
+    target: &str,
+) -> Option<(String, Vec<crate::ast::Spanned<String>>)> {
+    let scan =
+        |items: &[crate::ast::TopLevel]| -> Option<(String, Vec<crate::ast::Spanned<String>>)> {
+            for item in items {
+                if let crate::ast::TopLevel::FnDef(fd) = item
+                    && fd.name == target
+                {
+                    return Some((fd.return_type.clone(), fd.effects.clone()));
+                }
+            }
+            None
+        };
+    if let Some(s) = scan(entry_items) {
+        return Some(s);
+    }
+    for m in loaded {
+        if let Some(s) = scan(&m.items) {
+            return Some(s);
+        }
+    }
+    None
+}
+
+/// Build `fn __entry__() -> <return_type>: target(args…)` as a
+/// `TopLevel::FnDef`. Each `Value` arg lowers to the matching
+/// `Expr::Literal`. Compound shapes (`List`, `Tuple`, `Variant`,
+/// `Record`) raise an error — extending `value_to_literal_expr`
+/// to cover them is a follow-up. Effects are declared as
+/// `! [target]` so the verify pass sees the user fn in the
+/// surface and module-level `effects [...]` lists.
+fn build_synth_entry_fn(
+    target_fn: &str,
+    args: &[crate::value::Value],
+    return_type: &str,
+) -> Result<crate::ast::TopLevel, String> {
+    use crate::ast::{Expr, FnBody, FnDef, Spanned, Stmt, TopLevel};
+    let arg_exprs: Vec<Spanned<Expr>> = args
+        .iter()
+        .map(value_to_literal_expr)
+        .collect::<Result<_, _>>()?;
+    let callee = Spanned::bare(Expr::Ident(target_fn.to_string()));
+    let call = Spanned::bare(Expr::FnCall(Box::new(callee), arg_exprs));
+    let body = FnBody::Block(vec![Stmt::Expr(call)]);
+    Ok(TopLevel::FnDef(FnDef {
+        name: "__entry__".to_string(),
+        line: 0,
+        params: vec![],
+        return_type: return_type.to_string(),
+        effects: vec![Spanned::bare(target_fn.to_string())],
+        desc: None,
+        body: std::sync::Arc::new(body),
+        resolution: None,
+    }))
+}
+
+/// Convert a `Value` literal back into its AST shape so the
+/// synthetic entry body type-checks under the same path as a
+/// hand-written call site. Supported: Int / Float / Bool / Str /
+/// Unit. Compound shapes (lists, tuples, variants, records) raise
+/// an error — extending the mapper to cover them is a follow-up.
+fn value_to_literal_expr(
+    v: &crate::value::Value,
+) -> Result<crate::ast::Spanned<crate::ast::Expr>, String> {
+    use crate::ast::{Expr, Literal, Spanned};
+    let lit = match v {
+        crate::value::Value::Int(n) => Literal::Int(*n),
+        crate::value::Value::Float(f) => Literal::Float(*f),
+        crate::value::Value::Str(s) => Literal::Str(s.clone()),
+        crate::value::Value::Bool(b) => Literal::Bool(*b),
+        crate::value::Value::Unit => Literal::Unit,
+        other => {
+            return Err(format!(
+                "synthetic `__entry__` only supports Int/Float/Bool/String/Unit args today; got {:?}",
+                other
+            ));
+        }
+    };
+    Ok(Spanned::bare(Expr::Literal(lit)))
+}
+
+/// Re-exported for the wasm-bindgen `aver_parse_entry_target` arm.
+/// Gated on the `playground` feature so the symbol mirrors the
+/// `bindgen` module's visibility — non-playground builds drop both.
+#[cfg(feature = "playground")]
+fn crate_parse_entry_call(expr: &str) -> Result<(String, Vec<crate::value::Value>), String> {
+    crate::replay::parse_entry_call(expr)
 }
 
 // ── Proof export & Rust compile entry points ────────────────────────
@@ -569,301 +713,6 @@ pub fn format_source(source: &str) -> String {
         .unwrap_or_else(|_| source.to_string())
 }
 
-// ── Record / replay ────────────────────────────────────────────────
-// Runs `fn main` through the in-browser VM, captures every effect
-// call as a SessionRecording, and returns the recording as JSON.
-// Replay loads such a recording back and checks that the program
-// reproduces the same effect trace — byte-for-byte parity with the
-// CLI's `aver run --record` / `aver replay`.
-
-#[cfg(feature = "runtime")]
-#[derive(serde::Serialize)]
-struct RunRecordResult {
-    ok: bool,
-    recording: Option<String>,
-    error: Option<String>,
-    effect_count: u32,
-    runtime_error: Option<String>,
-}
-
-#[cfg(feature = "runtime")]
-pub fn run_record_project(files: &HashMap<String, String>, entry: &str) -> String {
-    run_record_project_with_entry(files, entry, None)
-}
-
-#[cfg(feature = "runtime")]
-pub fn run_record_project_with_entry(
-    files: &HashMap<String, String>,
-    entry: &str,
-    entry_expr: Option<&str>,
-) -> String {
-    let Some(entry_source) = files.get(entry).cloned() else {
-        return err_json(format!("Entry '{}' not in virtual fs", entry));
-    };
-    match run_record_inner(&entry_source, files, entry, entry_expr) {
-        Ok(res) => serde_json::to_string(&res).unwrap_or_else(|_| "{}".to_string()),
-        Err(e) => err_json(e),
-    }
-}
-
-#[cfg(feature = "runtime")]
-fn run_record_inner(
-    entry_source: &str,
-    files: &HashMap<String, String>,
-    entry: &str,
-    entry_expr: Option<&str>,
-) -> Result<RunRecordResult, String> {
-    use crate::replay::json::JsonValue;
-    use crate::replay::session::{RecordedOutcome, SessionRecording};
-    use crate::replay::{
-        encode_entry_args, parse_entry_call, session_recording_to_string_pretty,
-        value_to_json_lossy,
-    };
-
-    let (mut items, loaded) = parse_and_load(entry_source, files, entry)?;
-
-    // Full pipeline. Recordings store effects, not IR shape — running
-    // interp_lower + buffer_build during record produces the same
-    // effect sequence as the un-lowered run (matches replay_cmd.rs fix).
-    let pipeline_result = crate::ir::pipeline::run(
-        &mut items,
-        PipelineConfig {
-            typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
-            ..Default::default()
-        },
-    );
-    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
-    if !tc_result.errors.is_empty() {
-        return Err(format_tc_errors(&tc_result.errors));
-    }
-
-    let mut arena = Arena::new();
-    vm::register_service_types(&mut arena);
-    let (code, globals) = vm::compile_program_with_loaded_modules(
-        &items,
-        &mut arena,
-        loaded,
-        "",
-        pipeline_result.analysis.as_ref(),
-    )
-    .map_err(|e| format!("Compile error: {}", e.msg))?;
-
-    let mut machine = vm::VM::new(code, globals, arena);
-    machine.set_silent_console(true);
-    // Safety net — a game with no quit path (Terminal.readKey always
-    // returning None under the stubs) would otherwise loop forever on
-    // the wasm main thread. 10k effects is way above any sensible
-    // real program and short-circuits to a clear error fast.
-    machine.set_record_cap(Some(10_000));
-    machine.start_recording();
-
-    // Resolve the entry: either a user-supplied call expression or `main`.
-    let entry_info: Option<(String, Vec<crate::value::Value>)> = match entry_expr {
-        Some(src) => Some(parse_entry_call(src)?),
-        None => None,
-    };
-
-    let mut runtime_error: Option<String> = None;
-    let run_result = if let Some((fn_name, args)) = &entry_info {
-        machine.run_top_level().and_then(|_| {
-            use crate::nan_value::{NanValue, NanValueConvert};
-            let nv_args: Vec<NanValue> = args
-                .iter()
-                .map(|v| NanValue::from_value(v, &mut machine.arena))
-                .collect();
-            machine.run_named_function(fn_name, &nv_args)
-        })
-    } else {
-        machine.run()
-    };
-
-    let output = match run_result {
-        Ok(val) => {
-            // Recorded outcome is only used by replay-validation; the
-            // browser usually drives Unit out of main, so a lossy
-            // representation is fine. If a program returns a rich
-            // value we'll fall back to its `aver_repr`.
-            use crate::nan_value::NanValueConvert;
-            let value = val.to_value(&machine.arena);
-            RecordedOutcome::Value(value_to_json_lossy(&value))
-        }
-        Err(e) => {
-            let msg = e.to_string();
-            runtime_error = Some(msg.clone());
-            RecordedOutcome::RuntimeError(msg)
-        }
-    };
-
-    let (entry_fn, input_json) = match &entry_info {
-        Some((name, args)) => (
-            name.clone(),
-            encode_entry_args(args).unwrap_or(JsonValue::Null),
-        ),
-        None => ("main".to_string(), JsonValue::Null),
-    };
-
-    let recording = SessionRecording {
-        schema_version: 1,
-        request_id: "playground".to_string(),
-        timestamp: String::new(),
-        program_file: entry.to_string(),
-        module_root: "<virtual-fs>".to_string(),
-        entry_fn,
-        input: input_json,
-        effects: machine.recorded_effects().to_vec(),
-        output,
-    };
-
-    Ok(RunRecordResult {
-        ok: true,
-        effect_count: recording.effects.len() as u32,
-        recording: Some(session_recording_to_string_pretty(&recording)),
-        error: None,
-        runtime_error,
-    })
-}
-
-#[cfg(feature = "runtime")]
-#[derive(serde::Serialize)]
-struct ReplayResult {
-    ok: bool,
-    matched: bool,
-    replayed: u32,
-    total: u32,
-    error: Option<String>,
-}
-
-#[cfg(feature = "runtime")]
-pub fn replay_run_project(
-    files: &HashMap<String, String>,
-    entry: &str,
-    recording_json: &str,
-) -> String {
-    match replay_run_inner(files, entry, recording_json) {
-        Ok(r) => serde_json::to_string(&r).unwrap_or_else(|_| "{}".to_string()),
-        Err(e) => serde_json::to_string(&ReplayResult {
-            ok: false,
-            matched: false,
-            replayed: 0,
-            total: 0,
-            error: Some(e),
-        })
-        .unwrap_or_else(|_| "{}".to_string()),
-    }
-}
-
-#[cfg(feature = "runtime")]
-fn replay_run_inner(
-    files: &HashMap<String, String>,
-    entry: &str,
-    recording_json: &str,
-) -> Result<ReplayResult, String> {
-    use crate::nan_value::{NanValue, NanValueConvert};
-    use crate::replay::json::JsonValue;
-    use crate::replay::json_to_value;
-    use crate::replay::session::parse_session_recording;
-    use crate::value::{Value, list_to_vec};
-
-    let Some(entry_source) = files.get(entry).cloned() else {
-        return Err(format!("Entry '{}' not in virtual fs", entry));
-    };
-    let recording = parse_session_recording(recording_json)?;
-    let total = recording.effects.len() as u32;
-
-    let (mut items, loaded) = parse_and_load(&entry_source, files, entry)?;
-
-    // Full pipeline — recordings store effects, not IR shape (mirrors
-    // replay_cmd.rs and the playground record path).
-    let pipeline_result = crate::ir::pipeline::run(
-        &mut items,
-        PipelineConfig {
-            typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
-            ..Default::default()
-        },
-    );
-    let tc_result = pipeline_result.typecheck.expect("typecheck was requested");
-    if !tc_result.errors.is_empty() {
-        return Err(format_tc_errors(&tc_result.errors));
-    }
-
-    let mut arena = Arena::new();
-    vm::register_service_types(&mut arena);
-    let (code, globals) = vm::compile_program_with_loaded_modules(
-        &items,
-        &mut arena,
-        loaded,
-        "",
-        pipeline_result.analysis.as_ref(),
-    )
-    .map_err(|e| format!("Compile error: {}", e.msg))?;
-
-    let mut machine = vm::VM::new(code, globals, arena);
-    machine.set_silent_console(true);
-    machine.start_replay(recording.effects, true);
-
-    // Replay respects the recording's own entry_fn and input, not just main —
-    // otherwise playground replay would miscompare recordings made with a
-    // custom entry point.
-    let run_err = if recording.entry_fn == "main" && matches!(recording.input, JsonValue::Null) {
-        machine.run().err().map(|e| e.to_string())
-    } else {
-        let top_err = machine.run_top_level().err().map(|e| e.to_string());
-        if let Some(err) = top_err {
-            Some(err)
-        } else {
-            let args: Vec<Value> = match json_to_value(&recording.input) {
-                Ok(Value::Unit) => vec![],
-                Ok(v) => list_to_vec(&v).unwrap_or_else(|| vec![v]),
-                Err(e) => return Err(e),
-            };
-            let nv_args: Vec<NanValue> = args
-                .iter()
-                .map(|v| NanValue::from_value(v, &mut machine.arena))
-                .collect();
-            machine
-                .run_named_function(&recording.entry_fn, &nv_args)
-                .err()
-                .map(|e| e.to_string())
-        }
-    };
-    let consumed = machine.ensure_replay_consumed();
-    let (replayed, _remaining) = machine.replay_progress();
-
-    let error = run_err.or_else(|| consumed.err().map(|e| e.to_string()));
-
-    Ok(ReplayResult {
-        ok: true,
-        matched: error.is_none() && replayed as u32 == total,
-        replayed: replayed as u32,
-        total,
-        error,
-    })
-}
-
-#[cfg(feature = "runtime")]
-fn parse_and_load(
-    entry_source: &str,
-    files: &HashMap<String, String>,
-    _entry: &str,
-) -> Result<(Vec<TopLevel>, Vec<LoadedModule>), String> {
-    let items = parse_source(entry_source)?;
-    let depends = module_depends(&items);
-    let loaded = load_module_tree_from_map(&depends, files)?;
-    Ok((items, loaded))
-}
-
-#[cfg(feature = "runtime")]
-fn err_json(msg: String) -> String {
-    serde_json::to_string(&RunRecordResult {
-        ok: false,
-        recording: None,
-        error: Some(msg),
-        effect_count: 0,
-        runtime_error: None,
-    })
-    .unwrap_or_else(|_| "{}".to_string())
-}
-
 #[cfg(feature = "playground")]
 mod bindgen {
     use wasm_bindgen::prelude::*;
@@ -894,14 +743,6 @@ mod bindgen {
         super::compile_to_wasm(source).map_err(|e| JsError::new(&e))
     }
 
-    /// Bytes of the standalone aver_runtime wasm module. Worker-side
-    /// instantiates this once and feeds its exports as the
-    /// `aver_runtime` import of every compiled user.wasm.
-    #[wasm_bindgen]
-    pub fn aver_runtime_wasm() -> Result<Vec<u8>, JsError> {
-        super::build_aver_runtime_wasm().map_err(|e| JsError::new(&e))
-    }
-
     /// Compile a multi-file project. `files_json` is a JSON object
     /// mapping path -> source (e.g. `{"types.av": "...", "main.av":
     /// "..."}`). `entry` is the key of the entry file.
@@ -910,6 +751,33 @@ mod bindgen {
         let files: std::collections::HashMap<String, String> =
             serde_json::from_str(files_json).map_err(|e| JsError::new(&e.to_string()))?;
         super::compile_project_to_wasm(&files, entry).map_err(|e| JsError::new(&e))
+    }
+
+    /// Compile a project that targets `expr` (e.g. `add(7, 35)`)
+    /// instead of `main`. Wraps the call in a synthetic `__entry__`
+    /// fn the codegen wires `_start` through, so the playground
+    /// worker can run user expressions on the native wasm-gc path
+    /// without any JS-side argument encoder.
+    #[wasm_bindgen]
+    pub fn aver_compile_project_with_entry(
+        files_json: &str,
+        entry: &str,
+        expr: &str,
+    ) -> Result<Vec<u8>, JsError> {
+        let files: std::collections::HashMap<String, String> =
+            serde_json::from_str(files_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let (bytes, _target_fn) = super::compile_project_to_wasm_with_entry(&files, entry, expr)
+            .map_err(|e| JsError::new(&e))?;
+        Ok(bytes)
+    }
+
+    /// Resolve the user-facing fn name that `expr` calls. Returns
+    /// just the name half of `parse_entry_call(expr)` so the JS host
+    /// can label recordings without re-parsing the call expression.
+    #[wasm_bindgen]
+    pub fn aver_parse_entry_target(expr: &str) -> Result<String, JsError> {
+        let (name, _args) = super::crate_parse_entry_call(expr).map_err(|e| JsError::new(&e))?;
+        Ok(name)
     }
 
     #[wasm_bindgen]
@@ -1071,44 +939,8 @@ mod bindgen {
         Ok(super::audit_project_hostile(&files, entry))
     }
 
-    // ── Record / replay bindings ───────────────────────────────────
-    // Project-shaped on purpose: single-file callers pass
-    // `{"playground.av": source}` with entry "playground.av".
-
-    #[wasm_bindgen]
-    pub fn aver_run_record(files_json: &str, entry: &str) -> Result<String, JsError> {
-        let files = parse_files(files_json)?;
-        Ok(super::run_record_project(&files, entry))
-    }
-
-    /// Record a run starting from an arbitrary call expression instead of
-    /// `main`. `entry_expr` must be a function call with literal arguments
-    /// (String / Int / Float / Bool / Unit) — same constraints as `aver run
-    /// --expr` on the CLI. The resulting recording has `entry_fn` and
-    /// `input` populated accordingly and can be replayed unchanged.
-    #[wasm_bindgen]
-    pub fn aver_run_record_entry(
-        files_json: &str,
-        entry: &str,
-        entry_expr: &str,
-    ) -> Result<String, JsError> {
-        let files = parse_files(files_json)?;
-        Ok(super::run_record_project_with_entry(
-            &files,
-            entry,
-            Some(entry_expr),
-        ))
-    }
-
-    #[wasm_bindgen]
-    pub fn aver_replay_run(
-        files_json: &str,
-        entry: &str,
-        recording_json: &str,
-    ) -> Result<String, JsError> {
-        let files = parse_files(files_json)?;
-        Ok(super::replay_run_project(&files, entry, recording_json))
-    }
+    // Record / replay run on the JS side via `aver_compile_project*`
+    // + WebWorker wasm-gc, no Rust-hosted bindings needed.
 }
 
 #[cfg(test)]
@@ -1271,92 +1103,6 @@ fn main() -> Int
             "playground project compile should use wasm-gc, got:\n{}",
             wat
         );
-    }
-
-    // Only meaningful when `terminal` feature is off — otherwise the
-    // real crossterm impl drives the effects and can fail outside a
-    // TTY (common in CI). The playground (wasm32-unknown-unknown)
-    // always ships without `terminal`, which is exactly this path.
-    #[cfg(not(feature = "terminal"))]
-    #[test]
-    fn records_terminal_effects_in_playground_build() {
-        // Snake uses Terminal.* extensively. In the playground build
-        // (no `terminal` feature → crossterm unavailable) the stubs in
-        // vm/builtin.rs should let the VM record each call with a Unit
-        // outcome instead of surfacing "not available in this build".
-        let mut files = HashMap::new();
-        files.insert(
-            "playground.av".to_string(),
-            [
-                "module Main",
-                "    intent = \"terminal smoke\"",
-                "",
-                "fn main() -> Unit",
-                "    ! [Terminal.enableRawMode, Terminal.clear, Terminal.disableRawMode]",
-                "    Terminal.enableRawMode()",
-                "    Terminal.clear()",
-                "    Terminal.disableRawMode()",
-                "",
-            ]
-            .join("\n"),
-        );
-        let record: serde_json::Value =
-            serde_json::from_str(&run_record_project(&files, "playground.av")).unwrap();
-        assert_eq!(
-            record["ok"], true,
-            "should record terminal stubs: {}",
-            record
-        );
-        assert_eq!(record["effect_count"], 3, "three terminal calls");
-        assert!(
-            record["runtime_error"].is_null(),
-            "terminal stubs shouldn't raise: {}",
-            record["runtime_error"]
-        );
-
-        let replay: serde_json::Value = serde_json::from_str(&replay_run_project(
-            &files,
-            "playground.av",
-            record["recording"].as_str().unwrap(),
-        ))
-        .unwrap();
-        assert_eq!(replay["matched"], true, "replay should match: {}", replay);
-    }
-
-    #[test]
-    fn run_record_captures_effects_then_replays_clean() {
-        let mut files = HashMap::new();
-        files.insert(
-            "playground.av".to_string(),
-            [
-                "module Main",
-                "    intent = \"record/replay smoke\"",
-                "",
-                "fn main() -> Unit",
-                "    ! [Console.print]",
-                "    Console.print(\"hello\")",
-                "    Console.print(\"world\")",
-                "",
-            ]
-            .join("\n"),
-        );
-
-        let record_json = run_record_project(&files, "playground.av");
-        let record: serde_json::Value = serde_json::from_str(&record_json).unwrap();
-        assert_eq!(record["ok"], true, "record should succeed: {}", record_json);
-        assert_eq!(record["effect_count"], 2, "two Console.print calls");
-        let recording_str = record["recording"].as_str().expect("recording string");
-
-        let replay_json = replay_run_project(&files, "playground.av", recording_str);
-        let replay: serde_json::Value = serde_json::from_str(&replay_json).unwrap();
-        assert_eq!(replay["ok"], true);
-        assert_eq!(
-            replay["matched"], true,
-            "replay should match captured effects: {}",
-            replay_json
-        );
-        assert_eq!(replay["replayed"], 2);
-        assert_eq!(replay["total"], 2);
     }
 
     #[test]

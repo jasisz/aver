@@ -30,6 +30,7 @@ pub(crate) fn http_simple_dispatch(
     params: &[wasmtime::Val],
     results: &mut [wasmtime::Val],
     verb: HttpVerb,
+    caller_fn: &str,
 ) -> Result<bool, wasmtime::Error> {
     use wasmtime::Val;
     let url = lm_string_to_host(caller, params.first())?.unwrap_or_default();
@@ -54,7 +55,7 @@ pub(crate) fn http_simple_dispatch(
     let trace_outcome = http_outcome_to_json(&outcome);
     let result_ref = http_outcome_to_result(caller, outcome)?;
     results[0] = Val::AnyRef(result_ref);
-    record_effect_if_recording(caller, effect_name, args, trace_outcome);
+    record_effect_if_recording(caller, effect_name, args, trace_outcome, caller_fn);
     Ok(true)
 }
 
@@ -63,6 +64,7 @@ pub(crate) fn http_body_dispatch(
     params: &[wasmtime::Val],
     results: &mut [wasmtime::Val],
     verb: HttpVerb,
+    caller_fn: &str,
 ) -> Result<bool, wasmtime::Error> {
     use wasmtime::Val;
     let url = lm_string_to_host(caller, params.first())?.unwrap_or_default();
@@ -104,7 +106,7 @@ pub(crate) fn http_body_dispatch(
     let trace_outcome = http_outcome_to_json(&outcome);
     let result_ref = http_outcome_to_result(caller, outcome)?;
     results[0] = Val::AnyRef(result_ref);
-    record_effect_if_recording(caller, effect_name, args, trace_outcome);
+    record_effect_if_recording(caller, effect_name, args, trace_outcome, caller_fn);
     Ok(true)
 }
 

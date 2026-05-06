@@ -1316,19 +1316,32 @@ pub(super) fn emit_independent_product_unwrap(
 /// Emit `call $aver/<group_op>` if the program registered the
 /// structural-scope marker imports (i.e. discovery saw any `?!` /
 /// `!`). No-op otherwise — programs that never use independent
-/// products don't pay the import slot.
+/// products don't pay the import slot. Trailing String arg is the
+/// `caller_fn` stamp every effect import now carries; the host
+/// ignores it for group markers but the wasm signature still has
+/// to match.
 fn emit_group_call(func: &mut Function, ctx: &EmitCtx<'_>, op: &str) {
     if let Some(idx) = ctx.effect_idx_lookup.get(op) {
+        if emit_caller_fn_global(func, ctx).is_err() {
+            // Should never trip — every fn def has a global allocated
+            // in `TypeRegistry::build`.
+            return;
+        }
         func.instruction(&Instruction::Call(*idx));
     }
 }
 
-/// Emit `i64.const i; call $aver/__record_set_branch` if the markers
-/// are registered. Used inside `?!` / `!` lowering to switch the
-/// recorder's active branch before evaluating each element.
+/// Emit `i64.const i; <caller_fn>; call $aver/__record_set_branch`
+/// if the markers are registered. Used inside `?!` / `!` lowering
+/// to switch the recorder's active branch before evaluating each
+/// element. Trailing caller_fn ignored host-side but its slot is
+/// part of the import signature.
 fn emit_branch_marker(func: &mut Function, ctx: &EmitCtx<'_>, branch_idx: u32) {
     if let Some(idx) = ctx.effect_idx_lookup.get("__record_set_branch") {
         func.instruction(&Instruction::I64Const(branch_idx as i64));
+        if emit_caller_fn_global(func, ctx).is_err() {
+            return;
+        }
         func.instruction(&Instruction::Call(*idx));
     }
 }
@@ -2336,6 +2349,30 @@ pub(super) fn emit_string_match(
     for _ in 0..ends_to_close {
         func.instruction(&Instruction::End);
     }
+    Ok(())
+}
+
+/// Push the caller-fn String ref via `global.get`. Each fn def in
+/// the program owns one immutable `(ref null $string)` global,
+/// `array.new_data`-init from the fn-name passive segment at module
+/// instantiation. The hot path is a single `global.get` per effect
+/// call — zero alloc, ~3 bytes per call site.
+pub(super) fn emit_caller_fn_global(
+    func: &mut Function,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let idx = ctx
+        .registry
+        .caller_fn_globals
+        .get(ctx.self_fn_name)
+        .copied()
+        .ok_or_else(|| {
+            WasmGcError::Validation(format!(
+                "no caller_fn global registered for fn `{}`",
+                ctx.self_fn_name
+            ))
+        })?;
+    func.instruction(&Instruction::GlobalGet(idx));
     Ok(())
 }
 

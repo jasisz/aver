@@ -20,6 +20,7 @@ pub(super) fn dispatch(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     params: &[wasmtime::Val],
     results: &mut [wasmtime::Val],
+    caller_fn: &str,
 ) -> Result<bool, wasmtime::Error> {
     use wasmtime::Val;
     match name {
@@ -62,7 +63,7 @@ pub(super) fn dispatch(
                 Err(e) => (host_result_tcp_connection_err(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
-            record_effect_if_recording(caller, "Tcp.connect", args, outcome);
+            record_effect_if_recording(caller, "Tcp.connect", args, outcome, caller_fn);
             Ok(true)
         }
         "tcp_write_line" => {
@@ -98,7 +99,7 @@ pub(super) fn dispatch(
                 Err(e) => (host_result_err_unit_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
-            record_effect_if_recording(caller, "Tcp.writeLine", args, outcome);
+            record_effect_if_recording(caller, "Tcp.writeLine", args, outcome, caller_fn);
             Ok(true)
         }
         "tcp_read_line" => {
@@ -130,7 +131,7 @@ pub(super) fn dispatch(
                 Err(e) => (host_result_err_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
-            record_effect_if_recording(caller, "Tcp.readLine", args, outcome);
+            record_effect_if_recording(caller, "Tcp.readLine", args, outcome, caller_fn);
             Ok(true)
         }
         "tcp_close" => {
@@ -162,7 +163,7 @@ pub(super) fn dispatch(
                 Err(e) => (host_result_err_unit_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
-            record_effect_if_recording(caller, "Tcp.close", args, outcome);
+            record_effect_if_recording(caller, "Tcp.close", args, outcome, caller_fn);
             Ok(true)
         }
         "tcp_send" => {
@@ -187,7 +188,7 @@ pub(super) fn dispatch(
                 Err(e) => (host_result_err_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
-            record_effect_if_recording(caller, "Tcp.send", args, outcome);
+            record_effect_if_recording(caller, "Tcp.send", args, outcome, caller_fn);
             Ok(true)
         }
         "tcp_ping" => {
@@ -210,7 +211,7 @@ pub(super) fn dispatch(
                 Err(e) => (host_result_err_unit_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
-            record_effect_if_recording(caller, "Tcp.ping", args, outcome);
+            record_effect_if_recording(caller, "Tcp.ping", args, outcome, caller_fn);
             Ok(true)
         }
         _ => Ok(false),

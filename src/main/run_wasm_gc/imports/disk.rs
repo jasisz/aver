@@ -15,6 +15,7 @@ pub(super) fn dispatch(
     caller: &mut wasmtime::Caller<'_, RunWasmGcHost>,
     params: &[wasmtime::Val],
     results: &mut [wasmtime::Val],
+    caller_fn: &str,
 ) -> Result<bool, wasmtime::Error> {
     use wasmtime::Val;
     match name {
@@ -34,7 +35,7 @@ pub(super) fn dispatch(
                 Err(e) => (host_result_err_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
-            record_effect_if_recording(caller, "Disk.readText", args, outcome);
+            record_effect_if_recording(caller, "Disk.readText", args, outcome, caller_fn);
             Ok(true)
         }
         "disk_write_text" => {
@@ -57,7 +58,7 @@ pub(super) fn dispatch(
                 Err(e) => (host_result_err_unit_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
-            record_effect_if_recording(caller, "Disk.writeText", args, outcome);
+            record_effect_if_recording(caller, "Disk.writeText", args, outcome, caller_fn);
             Ok(true)
         }
         "disk_append_text" => {
@@ -80,7 +81,7 @@ pub(super) fn dispatch(
                 Err(e) => (host_result_err_unit_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
-            record_effect_if_recording(caller, "Disk.appendText", args, outcome);
+            record_effect_if_recording(caller, "Disk.appendText", args, outcome, caller_fn);
             Ok(true)
         }
         "disk_exists" => {
@@ -100,6 +101,7 @@ pub(super) fn dispatch(
                 "Disk.exists",
                 args,
                 aver::replay::JsonValue::Bool(exists),
+                caller_fn,
             );
             Ok(true)
         }
@@ -119,7 +121,7 @@ pub(super) fn dispatch(
                 Err(e) => (host_result_err_unit_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
-            record_effect_if_recording(caller, "Disk.delete", args, outcome);
+            record_effect_if_recording(caller, "Disk.delete", args, outcome, caller_fn);
             Ok(true)
         }
         "disk_delete_dir" => {
@@ -138,7 +140,7 @@ pub(super) fn dispatch(
                 Err(e) => (host_result_err_unit_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
-            record_effect_if_recording(caller, "Disk.deleteDir", args, outcome);
+            record_effect_if_recording(caller, "Disk.deleteDir", args, outcome, caller_fn);
             Ok(true)
         }
         "disk_list_dir" => {
@@ -164,7 +166,7 @@ pub(super) fn dispatch(
                 Err(e) => (host_result_err_list_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
-            record_effect_if_recording(caller, "Disk.listDir", args, outcome);
+            record_effect_if_recording(caller, "Disk.listDir", args, outcome, caller_fn);
             Ok(true)
         }
         "disk_make_dir" => {
@@ -183,7 +185,7 @@ pub(super) fn dispatch(
                 Err(e) => (host_result_err_unit_string(caller, &e)?, json_err(&e)),
             };
             results[0] = Val::AnyRef(result_ref);
-            record_effect_if_recording(caller, "Disk.makeDir", args, outcome);
+            record_effect_if_recording(caller, "Disk.makeDir", args, outcome, caller_fn);
             Ok(true)
         }
         _ => Ok(false),

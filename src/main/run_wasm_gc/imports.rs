@@ -60,6 +60,7 @@ pub(super) use factories::{
 pub(super) use lm::lm_string_from_host;
 
 use http::{HttpVerb, http_body_dispatch, http_simple_dispatch};
+use lm::lm_string_to_host;
 
 pub(super) fn dispatch_aver_import(
     name: &str,
@@ -67,40 +68,63 @@ pub(super) fn dispatch_aver_import(
     params: &[wasmtime::Val],
     results: &mut [wasmtime::Val],
 ) -> Result<bool, wasmtime::Error> {
-    if args::dispatch(name, caller, params, results)? {
+    // Every effect import now carries a trailing `caller_fn:
+    // any_ref` param emitted by the codegen — see
+    // `effects.rs::params` and `body/builtins.rs::FnCall`. Decode
+    // it once, stash on the host so per-namespace dispatch arms
+    // can hand it to `record_effect_if_recording` without each arm
+    // re-running the LM transport, then forward `real_params`
+    // (params without the trailing slot) into the per-namespace
+    // dispatch chain. Falls back to "main" when the trailing arg
+    // is missing or not decodable — keeps replay of older recorded
+    // traces / hand-rolled wasm-gc modules working.
+    let caller_fn = lm_string_to_host(caller, params.last())?
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "main".to_string());
+    let caller_fn_ref: &str = &caller_fn;
+    let real_params: &[wasmtime::Val] = if params.is_empty() {
+        params
+    } else {
+        &params[..params.len() - 1]
+    };
+    let params = real_params;
+
+    if args::dispatch(name, caller, params, results, caller_fn_ref)? {
         return Ok(true);
     }
-    if console::dispatch(name, caller, params, results)? {
+    if console::dispatch(name, caller, params, results, caller_fn_ref)? {
         return Ok(true);
     }
-    if disk::dispatch(name, caller, params, results)? {
+    if disk::dispatch(name, caller, params, results, caller_fn_ref)? {
         return Ok(true);
     }
-    if env::dispatch(name, caller, params, results)? {
+    if env::dispatch(name, caller, params, results, caller_fn_ref)? {
         return Ok(true);
     }
     if groups::dispatch(name, caller, params, results)? {
         return Ok(true);
     }
-    if numeric::dispatch(name, caller, params, results)? {
+    if numeric::dispatch(name, caller, params, results, caller_fn_ref)? {
         return Ok(true);
     }
-    if tcp::dispatch(name, caller, params, results)? {
+    if tcp::dispatch(name, caller, params, results, caller_fn_ref)? {
         return Ok(true);
     }
-    if terminal::dispatch(name, caller, params, results)? {
+    if terminal::dispatch(name, caller, params, results, caller_fn_ref)? {
         return Ok(true);
     }
-    if time::dispatch(name, caller, params, results)? {
+    if time::dispatch(name, caller, params, results, caller_fn_ref)? {
         return Ok(true);
     }
     match name {
-        "http_get" => http_simple_dispatch(caller, params, results, HttpVerb::Get),
-        "http_head" => http_simple_dispatch(caller, params, results, HttpVerb::Head),
-        "http_delete" => http_simple_dispatch(caller, params, results, HttpVerb::Delete),
-        "http_post" => http_body_dispatch(caller, params, results, HttpVerb::Post),
-        "http_put" => http_body_dispatch(caller, params, results, HttpVerb::Put),
-        "http_patch" => http_body_dispatch(caller, params, results, HttpVerb::Patch),
+        "http_get" => http_simple_dispatch(caller, params, results, HttpVerb::Get, caller_fn_ref),
+        "http_head" => http_simple_dispatch(caller, params, results, HttpVerb::Head, caller_fn_ref),
+        "http_delete" => {
+            http_simple_dispatch(caller, params, results, HttpVerb::Delete, caller_fn_ref)
+        }
+        "http_post" => http_body_dispatch(caller, params, results, HttpVerb::Post, caller_fn_ref),
+        "http_put" => http_body_dispatch(caller, params, results, HttpVerb::Put, caller_fn_ref),
+        "http_patch" => http_body_dispatch(caller, params, results, HttpVerb::Patch, caller_fn_ref),
         _ => Ok(false),
     }
 }
