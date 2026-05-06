@@ -492,6 +492,7 @@ pub(super) fn emit_args_get_inline(
             ))?;
 
     // len = args_len()
+    super::emit::emit_caller_fn_global(func, ctx)?;
     func.instruction(&Instruction::Call(args_len_idx));
     func.instruction(&Instruction::LocalSet(len_slot));
     // i = len - 1
@@ -514,6 +515,7 @@ pub(super) fn emit_args_get_inline(
     func.instruction(&Instruction::BrIf(1));
     // s = args_get(i)
     func.instruction(&Instruction::LocalGet(i_slot));
+    super::emit::emit_caller_fn_global(func, ctx)?;
     func.instruction(&Instruction::Call(args_get_idx));
     func.instruction(&Instruction::LocalSet(s_slot));
     // acc = struct.new List<String> { head: s, tail: acc }

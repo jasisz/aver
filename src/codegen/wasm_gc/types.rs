@@ -700,14 +700,12 @@ impl TypeRegistry {
             }
         }
         // Pre-register fn names as passive String literals AND
-        // allocate `(ref null $string)` wasm globals — but ONLY for
-        // fns that actually emit caller_fn at a call site (a dotted
-        // effect call `Foo.bar(...)` or an `?!` / `!` independent
+        // allocate `(ref null $string)` wasm globals — but only for
+        // fns whose body actually emits caller_fn at a call site (a
+        // dotted call `Foo.bar(...)` or an `?!`/`!` independent
         // product, which lowers to group/branch markers). Pure fns
-        // and fns whose body only calls other user fns don't need a
-        // slot — the cost is one passive segment + one mutable
-        // global + one `array.new_data` in `_start` per fn name we
-        // skip avoiding here.
+        // and plain forwarders that only call other user fns don't
+        // need a slot.
         let mut caller_fn_globals: HashMap<String, u32> = HashMap::new();
         let mut caller_fn_global_order: Vec<String> = Vec::new();
         for item in items {
@@ -2037,24 +2035,22 @@ fn fn_body_calls_int_mod(fd: &crate::ast::FnDef) -> bool {
     })
 }
 
+
 /// Returns true when the fn body contains anything that emits a
-/// caller_fn slot at codegen — a dotted call (`Foo.bar(args)`,
-/// covers every effect import + any namespace-method shape) or an
-/// independent product (`?!` / `!`, lowers to `record_*` group
-/// markers that also push caller_fn). Used to skip allocating a
-/// String segment + global for fns that never need one.
-///
-/// Conservative on the dotted side: builtin namespace calls like
-/// `List.length` are also flagged. False positives cost one passive
-/// segment + one global per fn — false negatives would cause wasm
-/// validation failures, so the overcount is the safe direction.
+/// caller_fn slot at codegen — a dotted call (any `Attr(_, _)`
+/// callee, including nested-module shape `Module.Sub.fn(args)`) or
+/// an independent product (`?!` / `!`, lowers to group/branch
+/// markers). Used to skip allocating a global for fns that never
+/// need one. Conservative on dotted: builtin namespace calls like
+/// `List.length` are also flagged. False positives cost one segment
+/// + one global per fn — false negatives would crash wasm
+/// validation, so the overcount is the safe direction.
 fn fn_body_emits_effect_call(fd: &crate::ast::FnDef) -> bool {
     use crate::ast::{Expr, FnBody, Stmt};
     fn walk(e: &Expr) -> bool {
         match e {
             Expr::FnCall(callee, args) => {
-                let dotted = matches!(&callee.node, Expr::Attr(parent, _)
-                    if matches!(&parent.node, Expr::Ident(_)));
+                let dotted = matches!(&callee.node, Expr::Attr(_, _));
                 dotted || walk(&callee.node) || args.iter().any(|a| walk(&a.node))
             }
             Expr::IndependentProduct(_, _) => true,
