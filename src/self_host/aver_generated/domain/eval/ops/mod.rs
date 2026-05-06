@@ -71,8 +71,8 @@ pub fn evalBinopVals(va: &Val, vb: &Val, op: &BinOp) -> Result<Val, AverStr> {
     match (va.clone(), vb.clone()) {
         (Val::ValInt(x), Val::ValInt(y)) => applyBinop(x, y, op),
         (Val::ValFloat(x), Val::ValFloat(y)) => applyBinopFloat(x, y, op),
-        (Val::ValInt(x), Val::ValFloat(y)) => applyBinopFloat((x as f64), y, op),
-        (Val::ValFloat(x), Val::ValInt(y)) => applyBinopFloat(x, (y as f64), op),
+        (Val::ValInt(x), Val::ValFloat(y)) => applyBinopFloat(x as f64, y, op),
+        (Val::ValFloat(x), Val::ValInt(y)) => applyBinopFloat(x, y as f64, op),
         (Val::ValStr(x), Val::ValStr(y)) => match op {
             BinOp::OpAdd => Ok(Val::ValStr((x + &y))),
             _ => Err(AverStr::from("strings only support +")),
@@ -87,8 +87,8 @@ pub fn evalCmpVals(va: &Val, vb: &Val, op: &CmpOp) -> Result<Val, AverStr> {
     match (va.clone(), vb.clone()) {
         (Val::ValInt(x), Val::ValInt(y)) => Ok(applyCmp(x, y, op)),
         (Val::ValFloat(x), Val::ValFloat(y)) => Ok(applyCmpFloat(x, y, op)),
-        (Val::ValInt(x), Val::ValFloat(y)) => Ok(applyCmpFloat((x as f64), y, op)),
-        (Val::ValFloat(x), Val::ValInt(y)) => Ok(applyCmpFloat(x, (y as f64), op)),
+        (Val::ValInt(x), Val::ValFloat(y)) => Ok(applyCmpFloat(x as f64, y, op)),
+        (Val::ValFloat(x), Val::ValInt(y)) => Ok(applyCmpFloat(x, y as f64, op)),
         (Val::ValStr(x), Val::ValStr(y)) => Ok(applyStrCmp(x, y, op)),
         (Val::ValBool(x), Val::ValBool(y)) => applyBoolCmp(x, y, op),
         (a, b) => evalCmpRepr(&a, &b, op),

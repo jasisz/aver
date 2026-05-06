@@ -413,13 +413,7 @@ fn __mutual_tco_trampoline_3(mut __state: __MutualTco3) -> Result<Val, AverStr> 
                     Expr::ExprVectorGetOrInt(vecExpr, idxExpr, defaultValue) => {
                         let vecExpr = (*vecExpr).clone();
                         let idxExpr = (*idxExpr).clone();
-                        return evalVectorGetOrIntExpr(
-                            &vecExpr,
-                            &idxExpr,
-                            defaultValue,
-                            &env,
-                            &fns,
-                        );
+                        return evalVectorGetOrIntExpr(&vecExpr, &idxExpr, defaultValue, &env, &fns);
                     }
                     Expr::ExprIntModOrInt(a, b, defaultValue) => {
                         let a = (*a).clone();

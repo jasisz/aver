@@ -2972,70 +2972,70 @@ pub fn builtinNameToId(name: AverStr) -> Option<i64> {
     crate::cancel_checkpoint();
     {
         let __dispatch_subject = name;
-        if &*__dispatch_subject == "Map.empty" {
-            Some(0i64)
+        if &*__dispatch_subject == "Map.set" {
+            Some(1i64)
         } else {
-            if &*__dispatch_subject == "Map.set" {
-                Some(1i64)
+            if &*__dispatch_subject == "Map.get" {
+                Some(2i64)
             } else {
-                if &*__dispatch_subject == "Map.get" {
-                    Some(2i64)
+                if &*__dispatch_subject == "Map.has" {
+                    Some(3i64)
                 } else {
-                    if &*__dispatch_subject == "Map.has" {
-                        Some(3i64)
+                    if &*__dispatch_subject == "Map.fromList" {
+                        Some(4i64)
                     } else {
-                        if &*__dispatch_subject == "Map.fromList" {
-                            Some(4i64)
+                        if &*__dispatch_subject == "Map.entries" {
+                            Some(5i64)
                         } else {
-                            if &*__dispatch_subject == "Map.entries" {
-                                Some(5i64)
+                            if &*__dispatch_subject == "Map.remove" {
+                                Some(6i64)
                             } else {
-                                if &*__dispatch_subject == "Map.remove" {
-                                    Some(6i64)
+                                if &*__dispatch_subject == "Vector.new" {
+                                    Some(7i64)
                                 } else {
-                                    if &*__dispatch_subject == "Vector.new" {
-                                        Some(7i64)
+                                    if &*__dispatch_subject == "Vector.get" {
+                                        Some(8i64)
                                     } else {
-                                        if &*__dispatch_subject == "Vector.get" {
-                                            Some(8i64)
+                                        if &*__dispatch_subject == "Vector.set" {
+                                            Some(9i64)
                                         } else {
-                                            if &*__dispatch_subject == "Vector.set" {
-                                                Some(9i64)
+                                            if &*__dispatch_subject == "Vector.len" {
+                                                Some(10i64)
                                             } else {
-                                                if &*__dispatch_subject == "Vector.len" {
-                                                    Some(10i64)
+                                                if &*__dispatch_subject == "Vector.fromList" {
+                                                    Some(11i64)
                                                 } else {
-                                                    if &*__dispatch_subject == "Vector.fromList" {
-                                                        Some(11i64)
+                                                    if &*__dispatch_subject == "List.fromVector" {
+                                                        Some(12i64)
                                                     } else {
-                                                        if &*__dispatch_subject == "Vector.toList" {
-                                                            Some(12i64)
+                                                        if &*__dispatch_subject == "Option.None" {
+                                                            Some(13i64)
                                                         } else {
-                                                            if &*__dispatch_subject == "Option.None"
+                                                            if &*__dispatch_subject == "Option.Some"
                                                             {
-                                                                Some(13i64)
+                                                                Some(14i64)
                                                             } else {
                                                                 if &*__dispatch_subject
-                                                                    == "Option.Some"
+                                                                    == "Option.withDefault"
                                                                 {
-                                                                    Some(14i64)
+                                                                    Some(15i64)
                                                                 } else {
                                                                     if &*__dispatch_subject
-                                                                        == "Option.withDefault"
+                                                                        == "Result.Ok"
                                                                     {
-                                                                        Some(15i64)
+                                                                        Some(16i64)
                                                                     } else {
                                                                         if &*__dispatch_subject
-                                                                            == "Result.Ok"
+                                                                            == "Result.Err"
                                                                         {
-                                                                            Some(16i64)
+                                                                            Some(17i64)
                                                                         } else {
                                                                             if &*__dispatch_subject
-                                                                                == "Result.Err"
+                                                                                == "Result.withDefault"
                                                                             {
-                                                                                Some(17i64)
+                                                                                Some(18i64)
                                                                             } else {
-                                                                                if &*__dispatch_subject == "Result.withDefault" { Some(18i64) } else { if &*__dispatch_subject == "Int.toString" { Some(19i64) } else { if &*__dispatch_subject == "List.take" { Some(20i64) } else { if &*__dispatch_subject == "List.drop" { Some(21i64) } else { None } } } }
+                                                                                if &*__dispatch_subject == "String.fromInt" { Some(19i64) } else { if &*__dispatch_subject == "List.take" { Some(20i64) } else { if &*__dispatch_subject == "List.drop" { Some(21i64) } else { None } } }
                                                                             }
                                                                         }
                                                                     }
