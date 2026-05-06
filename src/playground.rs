@@ -10,21 +10,12 @@ use crate::source::{LoadedModule, load_module_tree_from_map, parse_source};
 #[cfg(feature = "runtime")]
 use crate::{nan_value::Arena, vm};
 
-/// Build the standalone aver_runtime wasm module bytes. Browser-side
-/// hosts instantiate this once, then point every user.wasm's
-/// `aver_runtime` import to its exports.
-pub fn build_aver_runtime_wasm() -> Result<Vec<u8>, String> {
-    codegen::wasm::build_runtime_wasm()
-}
-
 /// Compile Aver source text to WASM bytes via the wasm-gc backend.
-///
-/// Playground migrated from `--target edge-wasm` to `--target wasm-gc`
-/// in 0.16; the browser host (`tools/website/playground/wasm_host.js`)
-/// expects wasm-gc binaries with engine GC + tail calls + per-type
-/// factory exports for structured effect returns. The legacy
-/// `codegen::wasm::emit_wasm` path is no longer reachable from this
-/// entry point.
+/// Playground exclusively targets wasm-gc since 0.16 (engine GC +
+/// tail calls + factory exports for structured effect returns); the
+/// legacy NaN-boxed emitter and its standalone `aver_runtime.wasm`
+/// sidecar aren't reachable from any browser entry point and aren't
+/// included in the `playground` feature build.
 pub fn compile_to_wasm(source: &str) -> Result<Vec<u8>, String> {
     let mut items = parse_source(source)?;
 
@@ -199,10 +190,10 @@ fn lookup_fn_signature(
 /// Build `fn __entry__() -> <return_type>: target(args…)` as a
 /// `TopLevel::FnDef`. Each `Value` arg lowers to the matching
 /// `Expr::Literal`. Compound shapes (`List`, `Tuple`, `Variant`,
-/// `Record`) aren't supported yet — `--expr` callers that need
-/// them fall back to the legacy VM-in-wasm32 path. Effects are
-/// declared as `! [target]` so the verify pass sees the user fn
-/// in the surface and module-level `effects [...]` lists.
+/// `Record`) raise an error — extending `value_to_literal_expr`
+/// to cover them is a follow-up. Effects are declared as
+/// `! [target]` so the verify pass sees the user fn in the
+/// surface and module-level `effects [...]` lists.
 fn build_synth_entry_fn(
     target_fn: &str,
     args: &[crate::value::Value],
@@ -231,9 +222,8 @@ fn build_synth_entry_fn(
 /// Convert a `Value` literal back into its AST shape so the
 /// synthetic entry body type-checks under the same path as a
 /// hand-written call site. Supported: Int / Float / Bool / Str /
-/// Unit. Anything richer (lists, tuples, variants) returns Err so
-/// the caller can fall back to the VM-in-wasm32 path that owns
-/// per-type encoding.
+/// Unit. Compound shapes (lists, tuples, variants, records) raise
+/// an error — extending the mapper to cover them is a follow-up.
 fn value_to_literal_expr(
     v: &crate::value::Value,
 ) -> Result<crate::ast::Spanned<crate::ast::Expr>, String> {
@@ -1048,14 +1038,6 @@ mod bindgen {
     #[wasm_bindgen]
     pub fn aver_compile(source: &str) -> Result<Vec<u8>, JsError> {
         super::compile_to_wasm(source).map_err(|e| JsError::new(&e))
-    }
-
-    /// Bytes of the standalone aver_runtime wasm module. Worker-side
-    /// instantiates this once and feeds its exports as the
-    /// `aver_runtime` import of every compiled user.wasm.
-    #[wasm_bindgen]
-    pub fn aver_runtime_wasm() -> Result<Vec<u8>, JsError> {
-        super::build_aver_runtime_wasm().map_err(|e| JsError::new(&e))
     }
 
     /// Compile a multi-file project. `files_json` is a JSON object
