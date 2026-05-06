@@ -411,7 +411,13 @@ impl EffectName {
     /// their interpreter stack frames, wasm-gc has to be told.
     pub(super) fn params(self, registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
         let mut p = self.params_without_caller(registry)?;
-        p.push(any_ref_ty());
+        // Trailing caller_fn arg is now an `i32` index into the
+        // exported caller-fn name table (built by the host at
+        // instantiation via `__caller_fn_count` + `__caller_fn_name`).
+        // 0.16.2 used `(ref null $string)` per-call — replaced to
+        // drop N globals + N start-fn allocs and to give the host
+        // a vector-index lookup instead of a per-call LM round-trip.
+        p.push(ValType::I32);
         Ok(p)
     }
 

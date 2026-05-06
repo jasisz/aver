@@ -1322,7 +1322,7 @@ pub(super) fn emit_independent_product_unwrap(
 /// to match.
 fn emit_group_call(func: &mut Function, ctx: &EmitCtx<'_>, op: &str) {
     if let Some(idx) = ctx.effect_idx_lookup.get(op) {
-        if emit_caller_fn_global(func, ctx).is_err() {
+        if emit_caller_fn_idx(func, ctx).is_err() {
             // Should never trip — every fn def has a global allocated
             // in `TypeRegistry::build`.
             return;
@@ -1339,7 +1339,7 @@ fn emit_group_call(func: &mut Function, ctx: &EmitCtx<'_>, op: &str) {
 fn emit_branch_marker(func: &mut Function, ctx: &EmitCtx<'_>, branch_idx: u32) {
     if let Some(idx) = ctx.effect_idx_lookup.get("__record_set_branch") {
         func.instruction(&Instruction::I64Const(branch_idx as i64));
-        if emit_caller_fn_global(func, ctx).is_err() {
+        if emit_caller_fn_idx(func, ctx).is_err() {
             return;
         }
         func.instruction(&Instruction::Call(*idx));
@@ -2352,27 +2352,22 @@ pub(super) fn emit_string_match(
     Ok(())
 }
 
-/// Push the caller-fn String ref via `global.get`. Each fn def in
-/// the program owns one immutable `(ref null $string)` global,
-/// `array.new_data`-init from the fn-name passive segment at module
-/// instantiation. The hot path is a single `global.get` per effect
-/// call — zero alloc, ~3 bytes per call site.
-pub(super) fn emit_caller_fn_global(
+/// Push the caller-fn idx as an `i32` immediate. Lazy-registers the
+/// current fn name with the collector so the post-emit phase knows
+/// exactly which fn names to put in the exported caller-fn table.
+/// Single source of truth: any code path that wants to label its
+/// effect call site with the originating fn just calls this — no
+/// AST walker, no rozjazdy walker↔codegen. Hot path: 2-3 bytes
+/// (`i32.const <idx>`), zero allocation.
+pub(super) fn emit_caller_fn_idx(
     func: &mut Function,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     let idx = ctx
-        .registry
-        .caller_fn_globals
-        .get(ctx.self_fn_name)
-        .copied()
-        .ok_or_else(|| {
-            WasmGcError::Validation(format!(
-                "no caller_fn global registered for fn `{}`",
-                ctx.self_fn_name
-            ))
-        })?;
-    func.instruction(&Instruction::GlobalGet(idx));
+        .caller_fn_collector
+        .borrow_mut()
+        .register(ctx.self_fn_name);
+    func.instruction(&Instruction::I32Const(idx as i32));
     Ok(())
 }
 
