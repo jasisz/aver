@@ -2035,16 +2035,14 @@ fn fn_body_calls_int_mod(fd: &crate::ast::FnDef) -> bool {
     })
 }
 
-
 /// Returns true when the fn body contains anything that emits a
 /// caller_fn slot at codegen — a dotted call (any `Attr(_, _)`
 /// callee, including nested-module shape `Module.Sub.fn(args)`) or
 /// an independent product (`?!` / `!`, lowers to group/branch
 /// markers). Used to skip allocating a global for fns that never
 /// need one. Conservative on dotted: builtin namespace calls like
-/// `List.length` are also flagged. False positives cost one segment
-/// + one global per fn — false negatives would crash wasm
-/// validation, so the overcount is the safe direction.
+/// `List.length` are also flagged; false positives cost one segment
+/// + one global per fn, false negatives crash wasm validation.
 fn fn_body_emits_effect_call(fd: &crate::ast::FnDef) -> bool {
     use crate::ast::{Expr, FnBody, Stmt};
     fn walk(e: &Expr) -> bool {

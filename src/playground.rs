@@ -713,7 +713,6 @@ pub fn format_source(source: &str) -> String {
         .unwrap_or_else(|_| source.to_string())
 }
 
-
 #[cfg(feature = "playground")]
 mod bindgen {
     use wasm_bindgen::prelude::*;
