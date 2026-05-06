@@ -635,6 +635,20 @@ impl MapHelperRegistry {
                 },
             );
         }
+        // Each per-instantiation `Map<K,V>` carries its own structural
+        // eq + hash helpers (in `MapKVHelpers`). Surface them under the
+        // canonical name so a sum variant whose field is `Map<K,V>`
+        // can dispatch through the same `all_key_helpers` table the
+        // rest of the compound-field logic uses.
+        for (map_canonical, kv) in &self.kv {
+            all_key_helpers.insert(
+                map_canonical.clone(),
+                KeyHelpers {
+                    hash: kv.hash,
+                    eq: kv.eq,
+                },
+            );
+        }
         for k_aver in &self.key_order {
             codes.function(&emit_hash_for(
                 k_aver,
@@ -739,7 +753,7 @@ fn emit_hash_for(
         .flat_map(|v| v.iter())
         .any(|v| v.parent == k_aver)
     {
-        return emit_hash_sum(k_aver, registry, string_key_helpers);
+        return emit_hash_sum(k_aver, registry, string_key_helpers, all_key_helpers);
     }
     if k_aver.starts_with("Option<")
         || k_aver.starts_with("Result<")
@@ -790,7 +804,7 @@ fn emit_eq_for(
         .flat_map(|v| v.iter())
         .any(|v| v.parent == k_aver)
     {
-        return emit_eq_sum(k_aver, registry, string_key_helpers);
+        return emit_eq_sum(k_aver, registry, string_key_helpers, all_key_helpers);
     }
     if k_aver.starts_with("Option<")
         || k_aver.starts_with("Result<")
@@ -2737,6 +2751,7 @@ fn emit_hash_sum(
     parent_name: &str,
     registry: &TypeRegistry,
     string_key_helpers: Option<KeyHelpers>,
+    all_key_helpers: &HashMap<String, KeyHelpers>,
 ) -> Result<Function, WasmGcError> {
     let mut variants: Vec<(String, super::types::VariantInfo)> = registry
         .variants
@@ -2776,7 +2791,8 @@ fn emit_hash_sum(
                 struct_type_index: v_idx,
                 field_index: i as u32,
             });
-            match field_ty.trim() {
+            let field_ty_trim = field_ty.trim();
+            match field_ty_trim {
                 "Int" => {
                     f.instruction(&Instruction::I32WrapI64);
                 }
@@ -2792,9 +2808,23 @@ fn emit_hash_sum(
                     f.instruction(&Instruction::Call(helpers.hash));
                 }
                 _ => {
-                    return Err(WasmGcError::Unimplemented(
-                        "phase 3c — sum-variant field type not in {Int, Float, Bool, String}",
-                    ));
+                    // Compound field — proxy via Call to the per-type
+                    // hash helper assembled in `all_key_helpers`
+                    // (records / sums / Option / Result / Tuple /
+                    // List<T> / Vector<T> / Map<K,V>). Compound names
+                    // get whitespace stripped so the lookup matches
+                    // the canonical form used to register helpers.
+                    let lookup_key = super::types::normalize_compound(field_ty_trim);
+                    let helpers = all_key_helpers
+                        .get(&lookup_key)
+                        .or_else(|| all_key_helpers.get(field_ty_trim))
+                        .ok_or_else(|| {
+                            WasmGcError::Validation(format!(
+                                "hash_sum: no helper registered for sum-variant field \
+                                 type `{field_ty_trim}` of `{parent_name}`"
+                            ))
+                        })?;
+                    f.instruction(&Instruction::Call(helpers.hash));
                 }
             }
             f.instruction(&Instruction::I32Add);
@@ -2818,6 +2848,7 @@ fn emit_eq_sum(
     parent_name: &str,
     registry: &TypeRegistry,
     string_key_helpers: Option<KeyHelpers>,
+    all_key_helpers: &HashMap<String, KeyHelpers>,
 ) -> Result<Function, WasmGcError> {
     let mut variants: Vec<(String, super::types::VariantInfo)> = registry
         .variants
@@ -2861,7 +2892,8 @@ fn emit_eq_sum(
                     struct_type_index: v_idx,
                     field_index: i as u32,
                 });
-                match field_ty.trim() {
+                let field_ty_trim = field_ty.trim();
+                match field_ty_trim {
                     "Int" => f.instruction(&Instruction::I64Eq),
                     "Bool" => f.instruction(&Instruction::I32Eq),
                     "Float" => f.instruction(&Instruction::F64Eq),
@@ -2872,9 +2904,18 @@ fn emit_eq_sum(
                         f.instruction(&Instruction::Call(helpers.eq))
                     }
                     _ => {
-                        return Err(WasmGcError::Unimplemented(
-                            "phase 3c — sum-variant field type not in {Int, Float, Bool, String}",
-                        ));
+                        // Compound field — proxy to per-type eq helper.
+                        let lookup_key = super::types::normalize_compound(field_ty_trim);
+                        let helpers = all_key_helpers
+                            .get(&lookup_key)
+                            .or_else(|| all_key_helpers.get(field_ty_trim))
+                            .ok_or_else(|| {
+                                WasmGcError::Validation(format!(
+                                    "eq_sum: no helper registered for sum-variant field \
+                                     type `{field_ty_trim}` of `{parent_name}`"
+                                ))
+                            })?;
+                        f.instruction(&Instruction::Call(helpers.eq))
                     }
                 };
                 if i > 0 {

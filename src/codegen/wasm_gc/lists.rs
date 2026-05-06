@@ -2002,20 +2002,27 @@ pub(super) fn emit_sum_eq_inline(
                         // Tree fields, ditto Cons-cell shapes) — call self.
                         f.instruction(&Instruction::Call(self_fn_idx.unwrap()));
                     }
-                    other if eq_helper_fn_idx.contains_key(other) => {
-                        // Nested record/sum field with its own __eq_<X>
-                        // helper — dispatch by fn idx. Field refs are
-                        // subtypes of eqref, the call's typed args
-                        // accept implicit upcast.
-                        let idx = eq_helper_fn_idx[other];
-                        f.instruction(&Instruction::Call(idx));
-                    }
                     other => {
-                        return Err(WasmGcError::Validation(format!(
-                            "sum `{parent_name}` variant field type `{other}` has no eq \
-                             dispatch (not primitive, no `__eq_{other}` helper, not \
-                             self-recursive)"
-                        )));
+                        // Nested record/sum/compound field — dispatch by
+                        // fn idx. Compound names (List<…>, Map<…,…>,
+                        // Option<…>, …) get whitespace stripped so the
+                        // lookup matches the canonical key the registry
+                        // recorded. Field refs are subtypes of eqref so
+                        // the call's typed args accept implicit upcast.
+                        let normalized = super::types::normalize_compound(other);
+                        let key = if eq_helper_fn_idx.contains_key(other) {
+                            other
+                        } else if eq_helper_fn_idx.contains_key(normalized.as_str()) {
+                            normalized.as_str()
+                        } else {
+                            return Err(WasmGcError::Validation(format!(
+                                "sum `{parent_name}` variant field type `{other}` has no eq \
+                                 dispatch (not primitive, no `__eq_{other}` helper, not \
+                                 self-recursive)"
+                            )));
+                        };
+                        let idx = eq_helper_fn_idx[key];
+                        f.instruction(&Instruction::Call(idx));
                     }
                 }
                 if i > 0 {
