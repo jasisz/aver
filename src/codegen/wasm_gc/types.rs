@@ -528,6 +528,17 @@ impl TypeRegistry {
                 for (_, ty) in &fd.params {
                     collect_maps_from_str(ty, &mut pending_maps);
                 }
+                // Walk let-binding annotations too — `let m: Map<Person, Int> =
+                // Map.set(…)` won't show up in fn signatures and the discovery
+                // walker would otherwise miss the canonical entirely. Mirrors
+                // what the Result walker added a few commits back.
+                use crate::ast::{FnBody, Stmt};
+                let FnBody::Block(stmts) = fd.body.as_ref();
+                for stmt in stmts {
+                    if let Stmt::Binding(_, Some(annot), _) = stmt {
+                        collect_maps_from_str(annot, &mut pending_maps);
+                    }
+                }
             }
         }
         // Dedup in encounter order.

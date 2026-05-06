@@ -204,11 +204,23 @@ impl MapHelperRegistry {
                     .values()
                     .flat_map(|v| v.iter())
                     .any(|v| v.parent == ft);
-                if (is_record || is_sum) && k_seen.insert(ft.clone()) {
+                let is_carrier = ft.starts_with("Option<")
+                    || ft.starts_with("Result<")
+                    || ft.starts_with("Tuple<");
+                if (is_record || is_sum || is_carrier) && k_seen.insert(ft.clone()) {
                     k_names.push(ft.clone());
-                    to_visit.push(ft.clone());
+                    if !is_carrier {
+                        // Records / sums recurse into their own
+                        // fields. Carriers don't (their helper bodies
+                        // delegate via Call to eq_helpers/hash_
+                        // helpers, which handle inner types
+                        // themselves).
+                        to_visit.push(ft.clone());
+                    }
                     // String inside the nested type's fields →
-                    // force-register String.
+                    // force-register String. Carriers' name
+                    // contains "String" only when an inner type is
+                    // literally `String`; cheap heuristic.
                     let mut nested_needs_string = false;
                     if let Some(fs) = registry.record_fields.get(&ft) {
                         nested_needs_string |= fs.iter().any(|(_, t)| t.trim() == "String");
@@ -220,6 +232,9 @@ impl MapHelperRegistry {
                             .flat_map(|vs| vs.iter())
                             .filter(|v| v.parent == ft)
                             .any(|v| v.fields.iter().any(|t| t.trim() == "String"));
+                    }
+                    if is_carrier {
+                        nested_needs_string |= ft.contains("String");
                     }
                     if nested_needs_string && k_seen.insert("String".into()) {
                         k_names.push("String".into());
@@ -318,13 +333,18 @@ impl MapHelperRegistry {
                 .values()
                 .flat_map(|v| v.iter())
                 .any(|v| v.parent == k_aver);
+            let is_carrier_k = k_aver.starts_with("Option<")
+                || k_aver.starts_with("Result<")
+                || k_aver.starts_with("Tuple<");
             if k_aver != "String"
                 && registry.record_type_idx(k_aver).is_none()
                 && !is_primitive_k
                 && !is_sum_k
+                && !is_carrier_k
             {
                 return Err(WasmGcError::Unimplemented(
-                    "phase 3c — Map<K, V> with K not String / user-record / sum / primitive",
+                    "phase 3c — Map<K, V> with K not String / user-record / sum / \
+                     primitive / generic-carrier (Option/Result/Tuple)",
                 ));
             }
 
@@ -508,15 +528,26 @@ impl MapHelperRegistry {
         codes: &mut CodeSection,
         registry: &TypeRegistry,
         list_eq_hash: &HashMap<String, (u32, u32)>,
+        carrier_eq_hash: &HashMap<String, (u32, u32)>,
     ) -> Result<(), WasmGcError> {
         let string_key_helpers = self.key.get("String").copied();
         // Snapshot every K's helpers — record hash/eq dispatch
         // needs to call helpers for nested record fields. Plus
         // virtual entries for `List<T>` field types so hash/eq
         // dispatch can call into list_helpers without a
-        // separate cross-module lookup.
+        // separate cross-module lookup. Carriers (Option / Result
+        // / Tuple) come in through `carrier_eq_hash` from the
+        // `__eq_<X>` / `__hash_<X>` registries (eq_helpers /
+        // hash_helpers); their map-key body is a thin proxy that
+        // Calls into those.
         let mut all_key_helpers: HashMap<String, KeyHelpers> =
             self.key.iter().map(|(k, h)| (k.clone(), *h)).collect();
+        for (carrier, &(eq_fn, hash_fn)) in carrier_eq_hash {
+            all_key_helpers.insert(
+                carrier.clone(),
+                KeyHelpers { hash: hash_fn, eq: eq_fn },
+            );
+        }
         for (list_canonical, &(eq_fn, hash_fn)) in list_eq_hash {
             all_key_helpers.insert(
                 list_canonical.clone(),
@@ -592,6 +623,21 @@ fn emit_hash_for(
     {
         return emit_hash_sum(k_aver, registry, string_key_helpers);
     }
+    if k_aver.starts_with("Option<")
+        || k_aver.starts_with("Result<")
+        || k_aver.starts_with("Tuple<")
+    {
+        // Same shape as carrier eq: proxy to the per-instantiation
+        // `__hash_<X>` helper from `hash_helpers`.
+        let helpers = all_key_helpers.get(k_aver).ok_or(WasmGcError::Validation(
+            format!("hash_for: carrier `{k_aver}` has no registered hash helper"),
+        ))?;
+        let mut f = Function::new([]);
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::Call(helpers.hash));
+        f.instruction(&Instruction::End);
+        return Ok(f);
+    }
     Err(WasmGcError::Unimplemented(
         "phase 3c — hash for unsupported K kind",
     ))
@@ -619,6 +665,24 @@ fn emit_eq_for(
         .any(|v| v.parent == k_aver)
     {
         return emit_eq_sum(k_aver, registry, string_key_helpers);
+    }
+    if k_aver.starts_with("Option<")
+        || k_aver.starts_with("Result<")
+        || k_aver.starts_with("Tuple<")
+    {
+        // Map-key eq for carriers proxies to the per-instantiation
+        // `__eq_<X>` helper registered in `eq_helpers` (looked up
+        // via `all_key_helpers` which includes the carrier eq fn
+        // idx forwarded from the registry).
+        let helpers = all_key_helpers.get(k_aver).ok_or(WasmGcError::Validation(
+            format!("eq_for: carrier `{k_aver}` has no registered eq helper"),
+        ))?;
+        let mut f = Function::new([]);
+        f.instruction(&Instruction::LocalGet(0));
+        f.instruction(&Instruction::LocalGet(1));
+        f.instruction(&Instruction::Call(helpers.eq));
+        f.instruction(&Instruction::End);
+        return Ok(f);
     }
     Err(WasmGcError::Unimplemented(
         "phase 3c — eq for unsupported K kind",
@@ -1438,30 +1502,41 @@ fn emit_hash_record(
                 // Nested record / List<T> field. Both dispatch via
                 // `all_key_helpers` — records were force-registered
                 // as pseudo-K in `assign_slots`; list canonicals were
-                // injected by `emit_helper_bodies` from list_helpers.
+                // injected by `emit_helper_bodies` from list_helpers;
+                // carriers (Option/Result/Tuple) come from
+                // `carrier_eq_hash`.
                 let lookup_key = if other.starts_with("List<") || other.starts_with("Vector<") {
                     super::types::normalize_compound(other).to_string()
                 } else {
                     other.to_string()
                 };
                 let is_compound = other.starts_with("List<") || other.starts_with("Vector<");
+                let is_carrier = other.starts_with("Option<")
+                    || other.starts_with("Result<")
+                    || other.starts_with("Tuple<");
                 let is_sum = registry
                     .variants
                     .values()
                     .flat_map(|v| v.iter())
                     .any(|v| v.parent == other);
-                if registry.record_type_idx(other).is_some() || is_compound || is_sum {
+                if registry.record_type_idx(other).is_some()
+                    || is_compound
+                    || is_sum
+                    || is_carrier
+                {
                     let inner = all_key_helpers
                         .get(&lookup_key)
                         .ok_or(WasmGcError::Validation(format!(
                             "hash_record: field `{other}` has no key helpers \
-                             (record / list / vector / sum T may need force-registration)"
+                             (record / list / vector / sum / Option / Result / Tuple T \
+                              may need force-registration)"
                         )))?;
                     f.instruction(&Instruction::Call(inner.hash));
                 } else {
                     return Err(WasmGcError::Unimplemented(
                         "phase 3c — record-key field type not in \
-                         {Int, Float, Bool, String, nested record, List<T>, Vector<T>, sum}",
+                         {Int, Float, Bool, String, nested record, List<T>, Vector<T>, sum, \
+                          Option/Result/Tuple}",
                     ));
                 }
             }
@@ -1523,12 +1598,19 @@ fn emit_eq_record(
                     other.to_string()
                 };
                 let is_compound = other.starts_with("List<") || other.starts_with("Vector<");
+                let is_carrier = other.starts_with("Option<")
+                    || other.starts_with("Result<")
+                    || other.starts_with("Tuple<");
                 let is_sum = registry
                     .variants
                     .values()
                     .flat_map(|v| v.iter())
                     .any(|v| v.parent == other);
-                if registry.record_type_idx(other).is_some() || is_compound || is_sum {
+                if registry.record_type_idx(other).is_some()
+                    || is_compound
+                    || is_sum
+                    || is_carrier
+                {
                     let inner = all_key_helpers
                         .get(&lookup_key)
                         .ok_or(WasmGcError::Validation(format!(
@@ -1538,7 +1620,8 @@ fn emit_eq_record(
                 } else {
                     return Err(WasmGcError::Unimplemented(
                         "phase 3c — record-key field type not in \
-                         {Int, Float, Bool, String, nested record, List<T>, Vector<T>, sum}",
+                         {Int, Float, Bool, String, nested record, List<T>, Vector<T>, sum, \
+                          Option/Result/Tuple}",
                     ));
                 }
             }

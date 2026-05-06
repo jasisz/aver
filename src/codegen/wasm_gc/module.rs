@@ -563,12 +563,6 @@ pub(super) fn emit_module(
             eq_helpers_lookup.insert(name.to_string(), fn_idx);
         }
     }
-    let mut hash_helpers_lookup: HashMap<String, u32> = HashMap::new();
-    for (name, _kind) in hash_helpers_registry.iter() {
-        if let Some(fn_idx) = hash_helpers_registry.lookup_fn_idx(name) {
-            hash_helpers_lookup.insert(name.to_string(), fn_idx);
-        }
-    }
     let fn_map = FnMap {
         by_name,
         builtins: builtin_idx_lookup,
@@ -579,7 +573,6 @@ pub(super) fn emit_module(
         zip_ops: zip_ops_lookup,
         string_split_ops,
         eq_helpers: eq_helpers_lookup,
-        hash_helpers: hash_helpers_lookup,
     };
 
     // ── Export section ─────────────────────────────────────────────
@@ -738,7 +731,26 @@ pub(super) fn emit_module(
             compound_eq_hash_lookup.insert(format!("Vector<{}>", elem.trim()), (eq_fn, hash_fn));
         }
     }
-    map_helpers.emit_helper_bodies(&mut codes, &registry, &compound_eq_hash_lookup)?;
+    // Carrier eq+hash lookup — Option/Result/Tuple instantiations
+    // get their helpers from eq_helpers / hash_helpers; map keys
+    // proxy through these. Build the pair map by zipping the two
+    // registries' fn idxs by canonical.
+    let mut carrier_eq_hash_lookup: HashMap<String, (u32, u32)> = HashMap::new();
+    for (name, kind) in eq_helpers_registry.iter() {
+        use super::body::eq_helpers::EqKind as EK;
+        if matches!(kind, EK::OptionEq | EK::ResultEq | EK::TupleEq)
+            && let Some(eq_fn) = eq_helpers_registry.lookup_fn_idx(name)
+            && let Some(hash_fn) = hash_helpers_registry.lookup_fn_idx(name)
+        {
+            carrier_eq_hash_lookup.insert(name.to_string(), (eq_fn, hash_fn));
+        }
+    }
+    map_helpers.emit_helper_bodies(
+        &mut codes,
+        &registry,
+        &compound_eq_hash_lookup,
+        &carrier_eq_hash_lookup,
+    )?;
 
     // List / Vector.fromList / String.split-join helper bodies.
     // Snapshot eq-helper fn idxs so list/vec eq+hash bodies can

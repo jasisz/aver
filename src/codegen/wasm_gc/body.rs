@@ -74,11 +74,6 @@ pub(super) struct FnMap {
     /// Per-(record/sum) `__eq_<TypeName>` helpers used by `BinOp::Eq`
     /// / `BinOp::Neq` over nominal types. Key = bare type name.
     pub(super) eq_helpers: std::collections::HashMap<String, u32>,
-    /// Per-type `__hash_<X>` helpers used by record/sum/carrier
-    /// hash bodies for non-primitive field hashing. Symmetric to
-    /// `eq_helpers`. Key = canonical (bare for record/sum,
-    /// whitespace-free instantiation for carriers).
-    pub(super) hash_helpers: std::collections::HashMap<String, u32>,
 }
 
 impl FnMap {
