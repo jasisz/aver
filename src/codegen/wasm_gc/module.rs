@@ -1261,14 +1261,14 @@ fn discover_builtins_in_expr(
                 && let AverType::Named(name) = t
             {
                 if type_registry.record_fields.contains_key(name) {
-                    eq_helpers.register(name, EqKind::Record);
+                    eq_helpers.register_transitive(name, EqKind::Record, type_registry);
                 } else if type_registry
                     .variants
                     .values()
                     .flat_map(|v| v.iter())
                     .any(|v| &v.parent == name)
                 {
-                    eq_helpers.register(name, EqKind::Sum);
+                    eq_helpers.register_transitive(name, EqKind::Sum, type_registry);
                 }
             }
             discover_builtins_in_expr(&l.node, builtins, effects, eq_helpers, type_registry);

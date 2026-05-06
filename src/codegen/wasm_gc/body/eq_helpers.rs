@@ -68,6 +68,70 @@ impl EqHelperRegistry {
         }
     }
 
+    /// Register `type_name` and recursively register every nominal
+    /// field type it transitively reaches. Needed because the
+    /// emitted `__eq_<X>` body dispatches nested record/sum fields
+    /// by `Call(__eq_<FieldType>)` — those helper slots have to
+    /// exist even if the user never wrote `field == field` directly.
+    /// `register` is idempotent on cycle (Tree → Tree.Node → Tree)
+    /// so the recursion terminates.
+    pub(crate) fn register_transitive(
+        &mut self,
+        type_name: &str,
+        kind: EqKind,
+        registry: &TypeRegistry,
+    ) {
+        if self.kinds.contains_key(type_name) {
+            return;
+        }
+        self.register(type_name, kind);
+        // Walk fields and recurse on nominal types.
+        match kind {
+            EqKind::Record => {
+                if let Some(fields) = registry.record_fields.get(type_name) {
+                    for (_, field_ty) in fields {
+                        self.register_field_type(field_ty.trim(), registry);
+                    }
+                }
+            }
+            EqKind::Sum => {
+                let variants: Vec<_> = registry
+                    .variants
+                    .values()
+                    .flat_map(|vs| vs.iter())
+                    .filter(|v| v.parent == type_name)
+                    .cloned()
+                    .collect();
+                for v in &variants {
+                    for field_ty in &v.fields {
+                        self.register_field_type(field_ty.trim(), registry);
+                    }
+                }
+            }
+        }
+    }
+
+    fn register_field_type(&mut self, field_ty: &str, registry: &TypeRegistry) {
+        // Skip primitives and compound carriers (List/Map/Vector/
+        // Option/Result handle their own dispatch).
+        if matches!(field_ty, "Int" | "Float" | "Bool" | "String" | "Unit" | "Byte" | "Char") {
+            return;
+        }
+        if registry.record_fields.contains_key(field_ty) {
+            self.register_transitive(field_ty, EqKind::Record, registry);
+        } else if registry
+            .variants
+            .values()
+            .flat_map(|v| v.iter())
+            .any(|v| v.parent == field_ty)
+        {
+            self.register_transitive(field_ty, EqKind::Sum, registry);
+        }
+        // Other shapes (List<T>, Map<K, V>, generics) — out of
+        // scope for nominal eq dispatch today; leave them to fail
+        // loudly in the inline emitter so we know to extend.
+    }
+
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&str, EqKind)> + '_ {
         self.order.iter().map(|n| (n.as_str(), self.kinds[n]))
     }
@@ -130,31 +194,64 @@ impl EqHelperRegistry {
         for name in &self.order {
             let kind = self.kinds[name];
             let self_fn_idx = self.slots.get(name).map(|(f, _)| *f);
-            let mut f = Function::new(Vec::new());
             match kind {
-                EqKind::Sum => emit_sum_eq_inline(
-                    &mut f,
-                    name,
-                    registry,
-                    0,
-                    1,
-                    string_eq_fn_idx,
-                    &helper_idx_map,
-                    self_fn_idx,
-                )?,
-                EqKind::Record => emit_record_eq_inline(
-                    &mut f,
-                    name,
-                    registry,
-                    0,
-                    1,
-                    string_eq_fn_idx,
-                    &helper_idx_map,
-                    self_fn_idx,
-                )?,
+                EqKind::Sum => {
+                    // Sum's emit_sum_eq_inline does its own
+                    // ref.test/ref.cast cascade per variant — the
+                    // raw eqref params are fine to feed in directly.
+                    let mut f = Function::new(Vec::new());
+                    emit_sum_eq_inline(
+                        &mut f,
+                        name,
+                        registry,
+                        0,
+                        1,
+                        string_eq_fn_idx,
+                        &helper_idx_map,
+                        self_fn_idx,
+                    )?;
+                    f.instruction(&Instruction::End);
+                    codes.function(&f);
+                }
+                EqKind::Record => {
+                    // Record's emit_record_eq_inline reads fields via
+                    // `struct.get $record_idx <i>` straight off the
+                    // local — that needs a typed `(ref null $record)`,
+                    // not the eqref the helper signature carries. So
+                    // declare two typed locals (idxs 2, 3), `ref.cast`
+                    // each param into its slot, then drive the inline
+                    // emitter against the typed locals.
+                    let r_idx = registry.record_type_idx(name).ok_or(
+                        WasmGcError::Validation(format!(
+                            "eq helper for record `{name}`: record not registered"
+                        )),
+                    )?;
+                    let r_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
+                        nullable: true,
+                        heap_type: wasm_encoder::HeapType::Concrete(r_idx),
+                    });
+                    let mut f = Function::new(vec![(2, r_ref)]);
+                    let r_heap = wasm_encoder::HeapType::Concrete(r_idx);
+                    f.instruction(&Instruction::LocalGet(0));
+                    f.instruction(&Instruction::RefCastNonNull(r_heap));
+                    f.instruction(&Instruction::LocalSet(2));
+                    f.instruction(&Instruction::LocalGet(1));
+                    f.instruction(&Instruction::RefCastNonNull(r_heap));
+                    f.instruction(&Instruction::LocalSet(3));
+                    emit_record_eq_inline(
+                        &mut f,
+                        name,
+                        registry,
+                        2,
+                        3,
+                        string_eq_fn_idx,
+                        &helper_idx_map,
+                        self_fn_idx,
+                    )?;
+                    f.instruction(&Instruction::End);
+                    codes.function(&f);
+                }
             }
-            f.instruction(&Instruction::End);
-            codes.function(&f);
         }
         Ok(())
     }
