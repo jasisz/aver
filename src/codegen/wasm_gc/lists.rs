@@ -796,10 +796,16 @@ pub(super) fn field_type_resolvable(
     // Resolvable iff every inner type is itself resolvable.
     // List/Vector/Map field types still fall through (their dispatch
     // from `emit_record_eq_inline` is a separate followup).
-    if let Some(inner) = field.strip_prefix("Option<").and_then(|s| s.strip_suffix('>')) {
+    if let Some(inner) = field
+        .strip_prefix("Option<")
+        .and_then(|s| s.strip_suffix('>'))
+    {
         return field_type_resolvable(inner.trim(), registry, seen);
     }
-    if let Some(inner) = field.strip_prefix("Result<").and_then(|s| s.strip_suffix('>')) {
+    if let Some(inner) = field
+        .strip_prefix("Result<")
+        .and_then(|s| s.strip_suffix('>'))
+    {
         let bytes = inner.as_bytes();
         let mut depth: i32 = 0;
         for (idx, b) in bytes.iter().enumerate() {
@@ -817,7 +823,10 @@ pub(super) fn field_type_resolvable(
         }
         return false;
     }
-    if let Some(inner) = field.strip_prefix("Tuple<").and_then(|s| s.strip_suffix('>')) {
+    if let Some(inner) = field
+        .strip_prefix("Tuple<")
+        .and_then(|s| s.strip_suffix('>'))
+    {
         let bytes = inner.as_bytes();
         let mut depth: i32 = 0;
         let mut start = 0;
@@ -2152,12 +2161,13 @@ fn emit_list_eq(
             // `__eq_<X>` helper. Its signature is
             // `(eqref, eqref) -> i32`; both refs on the stack are
             // subtypes of eqref so the implicit upcast is fine.
-            let idx = eq_helper_fn_idx.get(name).copied().ok_or(
-                WasmGcError::Validation(format!(
+            let idx = eq_helper_fn_idx
+                .get(name)
+                .copied()
+                .ok_or(WasmGcError::Validation(format!(
                     "List eq over `{name}`: __eq_{name} helper not registered \
                      (discovery walker should have transitively flagged it)"
-                )),
-            )?;
+                )))?;
             f.instruction(&Instruction::Call(idx));
         }
     }
@@ -2300,8 +2310,13 @@ fn emit_list_hash(
                     "list hash dispatch: record `{record_name}` has no field info"
                 )))?;
             emit_record_inline_hash(
-                &mut f, r_idx, fields, /* elem_local */ 3, /* elem_hash_local */ 4,
-                registry, hash_helper_fn_idx,
+                &mut f,
+                r_idx,
+                fields,
+                /* elem_local */ 3,
+                /* elem_hash_local */ 4,
+                registry,
+                hash_helper_fn_idx,
             )?;
         }
         ListEqKind::SumEq(parent_name) => {
@@ -2402,12 +2417,12 @@ fn emit_sum_inline_hash(
                 struct_type_index: v_idx,
                 field_index: i as u32,
             });
-            let resolved: String =
-                if let Some(under) = registry.newtype_underlying(field_ty.trim()) {
-                    under.to_string()
-                } else {
-                    field_ty.trim().to_string()
-                };
+            let resolved: String = if let Some(under) = registry.newtype_underlying(field_ty.trim())
+            {
+                under.to_string()
+            } else {
+                field_ty.trim().to_string()
+            };
             match resolved.as_str() {
                 "Int" => {
                     f.instruction(&Instruction::I32WrapI64);
@@ -2575,11 +2590,12 @@ fn emit_vec_eq(
         ListEqKind::RecordEq(name) | ListEqKind::SumEq(name) => {
             // Nominal element — `Call(__eq_<X>)`. Same eqref upcast
             // shape as in `emit_list_eq`.
-            let idx = eq_helper_fn_idx.get(name).copied().ok_or(
-                WasmGcError::Validation(format!(
+            let idx = eq_helper_fn_idx
+                .get(name)
+                .copied()
+                .ok_or(WasmGcError::Validation(format!(
                     "Vector eq over `{name}`: __eq_{name} helper not registered"
-                )),
-            )?;
+                )))?;
             f.instruction(&Instruction::Call(idx));
         }
     }
@@ -2693,8 +2709,13 @@ fn emit_vec_hash(
                     "vector hash dispatch: record `{record_name}` has no field info"
                 )))?;
             emit_record_inline_hash(
-                &mut f, r_idx, fields, /* elem_local */ 4, /* elem_hash_local */ 5,
-                registry, hash_helper_fn_idx,
+                &mut f,
+                r_idx,
+                fields,
+                /* elem_local */ 4,
+                /* elem_hash_local */ 5,
+                registry,
+                hash_helper_fn_idx,
             )?;
         }
         ListEqKind::SumEq(parent_name) => {

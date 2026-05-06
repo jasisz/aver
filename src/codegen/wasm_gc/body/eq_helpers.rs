@@ -101,9 +101,9 @@ impl EqHelperRegistry {
         // dispatch".
         let mut seen = std::collections::HashSet::new();
         let resolvable = match kind {
-            EqKind::Record => super::super::lists::record_fields_resolvable(
-                type_name, registry, &mut seen,
-            ),
+            EqKind::Record => {
+                super::super::lists::record_fields_resolvable(type_name, registry, &mut seen)
+            }
             EqKind::Sum => {
                 super::super::lists::sum_fields_resolvable(type_name, registry, &mut seen)
             }
@@ -150,7 +150,10 @@ impl EqHelperRegistry {
     }
 
     fn register_field_type(&mut self, field_ty: &str, registry: &TypeRegistry) {
-        if matches!(field_ty, "Int" | "Float" | "Bool" | "String" | "Unit" | "Byte" | "Char") {
+        if matches!(
+            field_ty,
+            "Int" | "Float" | "Bool" | "String" | "Unit" | "Byte" | "Char"
+        ) {
             return;
         }
         if registry.record_fields.contains_key(field_ty) {
@@ -170,7 +173,10 @@ impl EqHelperRegistry {
         // Each instantiation gets its own helper slot keyed by the
         // canonical string. Inner types are walked too so any
         // nominal piece (`Option<Color>` → register Color).
-        if let Some(inner) = field_ty.strip_prefix("Option<").and_then(|s| s.strip_suffix('>')) {
+        if let Some(inner) = field_ty
+            .strip_prefix("Option<")
+            .and_then(|s| s.strip_suffix('>'))
+        {
             self.register_transitive(field_ty, EqKind::OptionEq, registry);
             self.register_field_type(inner.trim(), registry);
         } else if field_ty.starts_with("Result<") && field_ty.ends_with('>') {
@@ -284,11 +290,11 @@ impl EqHelperRegistry {
                     // declare two typed locals (idxs 2, 3), `ref.cast`
                     // each param into its slot, then drive the inline
                     // emitter against the typed locals.
-                    let r_idx = registry.record_type_idx(name).ok_or(
-                        WasmGcError::Validation(format!(
+                    let r_idx = registry
+                        .record_type_idx(name)
+                        .ok_or(WasmGcError::Validation(format!(
                             "eq helper for record `{name}`: record not registered"
-                        )),
-                    )?;
+                        )))?;
                     let r_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
                         nullable: true,
                         heap_type: wasm_encoder::HeapType::Concrete(r_idx),
@@ -315,30 +321,15 @@ impl EqHelperRegistry {
                     codes.function(&f);
                 }
                 EqKind::OptionEq => {
-                    let f = emit_option_eq_body(
-                        name,
-                        registry,
-                        string_eq_fn_idx,
-                        &helper_idx_map,
-                    )?;
+                    let f = emit_option_eq_body(name, registry, string_eq_fn_idx, &helper_idx_map)?;
                     codes.function(&f);
                 }
                 EqKind::ResultEq => {
-                    let f = emit_result_eq_body(
-                        name,
-                        registry,
-                        string_eq_fn_idx,
-                        &helper_idx_map,
-                    )?;
+                    let f = emit_result_eq_body(name, registry, string_eq_fn_idx, &helper_idx_map)?;
                     codes.function(&f);
                 }
                 EqKind::TupleEq => {
-                    let f = emit_tuple_eq_body(
-                        name,
-                        registry,
-                        string_eq_fn_idx,
-                        &helper_idx_map,
-                    )?;
+                    let f = emit_tuple_eq_body(name, registry, string_eq_fn_idx, &helper_idx_map)?;
                     codes.function(&f);
                 }
             }
@@ -363,7 +354,10 @@ impl EqHelperRegistry {
 /// `Result<Ok, Err>` → `Some(("Ok", "Err"))`. Tracks angle/paren
 /// depth so `Result<Map<K,V>, MyError>` splits at the right comma.
 fn parse_result_kv(canonical: &str) -> Option<(&str, &str)> {
-    let inner = canonical.trim().strip_prefix("Result<")?.strip_suffix('>')?;
+    let inner = canonical
+        .trim()
+        .strip_prefix("Result<")?
+        .strip_suffix('>')?;
     let bytes = inner.as_bytes();
     let mut depth: i32 = 0;
     for (idx, b) in bytes.iter().enumerate() {
@@ -412,12 +406,14 @@ fn emit_option_eq_body(
     string_eq_fn_idx: Option<u32>,
     helper_idx_map: &HashMap<String, u32>,
 ) -> Result<Function, WasmGcError> {
-    let opt_idx = registry.option_type_idx(canonical).ok_or(
-        WasmGcError::Validation(format!("eq helper for `{canonical}`: option not registered")),
-    )?;
-    let inner = TypeRegistry::option_element_type(canonical).ok_or(
-        WasmGcError::Validation(format!("eq helper for `{canonical}`: can't parse inner")),
-    )?;
+    let opt_idx = registry
+        .option_type_idx(canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "eq helper for `{canonical}`: option not registered"
+        )))?;
+    let inner = TypeRegistry::option_element_type(canonical).ok_or(WasmGcError::Validation(
+        format!("eq helper for `{canonical}`: can't parse inner"),
+    ))?;
     let opt_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(opt_idx),
@@ -433,9 +429,15 @@ fn emit_option_eq_body(
     f.instruction(&Instruction::LocalSet(3));
     // if tag(lhs) != tag(rhs) → return 0
     f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::StructGet { struct_type_index: opt_idx, field_index: 0 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: opt_idx,
+        field_index: 0,
+    });
     f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::StructGet { struct_type_index: opt_idx, field_index: 0 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: opt_idx,
+        field_index: 0,
+    });
     f.instruction(&Instruction::I32Ne);
     f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
     f.instruction(&Instruction::I32Const(0));
@@ -443,7 +445,10 @@ fn emit_option_eq_body(
     f.instruction(&Instruction::End);
     // tags equal — if 0 (None), return 1
     f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::StructGet { struct_type_index: opt_idx, field_index: 0 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: opt_idx,
+        field_index: 0,
+    });
     f.instruction(&Instruction::I32Eqz);
     f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
     f.instruction(&Instruction::I32Const(1));
@@ -451,10 +456,22 @@ fn emit_option_eq_body(
     f.instruction(&Instruction::End);
     // Both Some — compare inner via per-type dispatch.
     f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::StructGet { struct_type_index: opt_idx, field_index: 1 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: opt_idx,
+        field_index: 1,
+    });
     f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::StructGet { struct_type_index: opt_idx, field_index: 1 });
-    emit_inner_eq_dispatch(&mut f, inner.trim(), registry, string_eq_fn_idx, helper_idx_map)?;
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: opt_idx,
+        field_index: 1,
+    });
+    emit_inner_eq_dispatch(
+        &mut f,
+        inner.trim(),
+        registry,
+        string_eq_fn_idx,
+        helper_idx_map,
+    )?;
     f.instruction(&Instruction::End);
     Ok(f)
 }
@@ -469,12 +486,14 @@ fn emit_result_eq_body(
     string_eq_fn_idx: Option<u32>,
     helper_idx_map: &HashMap<String, u32>,
 ) -> Result<Function, WasmGcError> {
-    let res_idx = registry.result_type_idx(canonical).ok_or(
-        WasmGcError::Validation(format!("eq helper for `{canonical}`: result not registered")),
-    )?;
-    let (ok_inner, err_inner) = parse_result_kv(canonical).ok_or(
-        WasmGcError::Validation(format!("eq helper for `{canonical}`: can't parse inner")),
-    )?;
+    let res_idx = registry
+        .result_type_idx(canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "eq helper for `{canonical}`: result not registered"
+        )))?;
+    let (ok_inner, err_inner) = parse_result_kv(canonical).ok_or(WasmGcError::Validation(
+        format!("eq helper for `{canonical}`: can't parse inner"),
+    ))?;
     let res_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(res_idx),
@@ -489,9 +508,15 @@ fn emit_result_eq_body(
     f.instruction(&Instruction::LocalSet(3));
     // if tag(lhs) != tag(rhs) → 0
     f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::StructGet { struct_type_index: res_idx, field_index: 0 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: res_idx,
+        field_index: 0,
+    });
     f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::StructGet { struct_type_index: res_idx, field_index: 0 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: res_idx,
+        field_index: 0,
+    });
     f.instruction(&Instruction::I32Ne);
     f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
     f.instruction(&Instruction::I32Const(0));
@@ -500,21 +525,50 @@ fn emit_result_eq_body(
     // tags equal — branch on tag value: tag=1 (Ok) → field 1 eq;
     // tag=0 (Err) → field 2 eq.
     f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::StructGet { struct_type_index: res_idx, field_index: 0 });
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: res_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Result(
+        wasm_encoder::ValType::I32,
+    )));
     // Ok arm
     f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::StructGet { struct_type_index: res_idx, field_index: 1 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: res_idx,
+        field_index: 1,
+    });
     f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::StructGet { struct_type_index: res_idx, field_index: 1 });
-    emit_inner_eq_dispatch(&mut f, ok_inner.trim(), registry, string_eq_fn_idx, helper_idx_map)?;
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: res_idx,
+        field_index: 1,
+    });
+    emit_inner_eq_dispatch(
+        &mut f,
+        ok_inner.trim(),
+        registry,
+        string_eq_fn_idx,
+        helper_idx_map,
+    )?;
     f.instruction(&Instruction::Else);
     // Err arm
     f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::StructGet { struct_type_index: res_idx, field_index: 2 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: res_idx,
+        field_index: 2,
+    });
     f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::StructGet { struct_type_index: res_idx, field_index: 2 });
-    emit_inner_eq_dispatch(&mut f, err_inner.trim(), registry, string_eq_fn_idx, helper_idx_map)?;
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: res_idx,
+        field_index: 2,
+    });
+    emit_inner_eq_dispatch(
+        &mut f,
+        err_inner.trim(),
+        registry,
+        string_eq_fn_idx,
+        helper_idx_map,
+    )?;
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     Ok(f)
@@ -528,12 +582,14 @@ fn emit_tuple_eq_body(
     string_eq_fn_idx: Option<u32>,
     helper_idx_map: &HashMap<String, u32>,
 ) -> Result<Function, WasmGcError> {
-    let tup_idx = registry.tuple_type_idx(canonical).ok_or(
-        WasmGcError::Validation(format!("eq helper for `{canonical}`: tuple not registered")),
-    )?;
-    let elems = parse_tuple_elems(canonical).ok_or(
-        WasmGcError::Validation(format!("eq helper for `{canonical}`: can't parse elements")),
-    )?;
+    let tup_idx = registry
+        .tuple_type_idx(canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "eq helper for `{canonical}`: tuple not registered"
+        )))?;
+    let elems = parse_tuple_elems(canonical).ok_or(WasmGcError::Validation(format!(
+        "eq helper for `{canonical}`: can't parse elements"
+    )))?;
     let tup_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(tup_idx),
@@ -557,7 +613,13 @@ fn emit_tuple_eq_body(
             struct_type_index: tup_idx,
             field_index: i as u32,
         });
-        emit_inner_eq_dispatch(&mut f, elem.trim(), registry, string_eq_fn_idx, helper_idx_map)?;
+        emit_inner_eq_dispatch(
+            &mut f,
+            elem.trim(),
+            registry,
+            string_eq_fn_idx,
+            helper_idx_map,
+        )?;
         if i > 0 {
             f.instruction(&Instruction::I32And);
         }

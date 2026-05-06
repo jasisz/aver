@@ -80,9 +80,9 @@ impl HashHelperRegistry {
         }
         let mut seen = std::collections::HashSet::new();
         let resolvable = match kind {
-            HashKind::Record => super::super::lists::record_fields_resolvable(
-                type_name, registry, &mut seen,
-            ),
+            HashKind::Record => {
+                super::super::lists::record_fields_resolvable(type_name, registry, &mut seen)
+            }
             HashKind::Sum => {
                 super::super::lists::sum_fields_resolvable(type_name, registry, &mut seen)
             }
@@ -119,7 +119,10 @@ impl HashHelperRegistry {
     }
 
     fn register_field_type(&mut self, field_ty: &str, registry: &TypeRegistry) {
-        if matches!(field_ty, "Int" | "Float" | "Bool" | "String" | "Unit" | "Byte" | "Char") {
+        if matches!(
+            field_ty,
+            "Int" | "Float" | "Bool" | "String" | "Unit" | "Byte" | "Char"
+        ) {
             return;
         }
         if registry.record_fields.contains_key(field_ty) {
@@ -135,7 +138,10 @@ impl HashHelperRegistry {
             self.register_transitive(field_ty, HashKind::Sum, registry);
             return;
         }
-        if let Some(inner) = field_ty.strip_prefix("Option<").and_then(|s| s.strip_suffix('>')) {
+        if let Some(inner) = field_ty
+            .strip_prefix("Option<")
+            .and_then(|s| s.strip_suffix('>'))
+        {
             self.register_transitive(field_ty, HashKind::OptionHash, registry);
             self.register_field_type(inner.trim(), registry);
         } else if field_ty.starts_with("Result<") && field_ty.ends_with('>') {
@@ -186,9 +192,7 @@ impl HashHelperRegistry {
             },
         });
         for _ in &self.order {
-            types
-                .ty()
-                .function([eq_ref], [wasm_encoder::ValType::I32]);
+            types.ty().function([eq_ref], [wasm_encoder::ValType::I32]);
         }
     }
 
@@ -247,9 +251,12 @@ fn emit_record_hash_body(
         .ok_or(WasmGcError::Validation(format!(
             "hash helper for record `{name}`: not registered"
         )))?;
-    let fields = registry.record_fields.get(name).ok_or(
-        WasmGcError::Validation(format!("hash helper for record `{name}`: no fields")),
-    )?;
+    let fields = registry
+        .record_fields
+        .get(name)
+        .ok_or(WasmGcError::Validation(format!(
+            "hash helper for record `{name}`: no fields"
+        )))?;
     let r_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(r_idx),
@@ -368,12 +375,14 @@ fn emit_option_hash_body(
     registry: &TypeRegistry,
     helper_idx_map: &HashMap<String, u32>,
 ) -> Result<Function, WasmGcError> {
-    let opt_idx = registry.option_type_idx(canonical).ok_or(
-        WasmGcError::Validation(format!("hash helper for `{canonical}`: option not registered")),
-    )?;
-    let inner = TypeRegistry::option_element_type(canonical).ok_or(
-        WasmGcError::Validation(format!("hash helper for `{canonical}`: can't parse inner")),
-    )?;
+    let opt_idx = registry
+        .option_type_idx(canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "hash helper for `{canonical}`: option not registered"
+        )))?;
+    let inner = TypeRegistry::option_element_type(canonical).ok_or(WasmGcError::Validation(
+        format!("hash helper for `{canonical}`: can't parse inner"),
+    ))?;
     let opt_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(opt_idx),
@@ -393,12 +402,18 @@ fn emit_option_hash_body(
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::StructGet { struct_type_index: opt_idx, field_index: 0 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: opt_idx,
+        field_index: 0,
+    });
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalSet(2));
     // if Some (tag != 0), mix inner hash into h.
     f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::StructGet { struct_type_index: opt_idx, field_index: 0 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: opt_idx,
+        field_index: 0,
+    });
     f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I32Const(5));
@@ -406,7 +421,10 @@ fn emit_option_hash_body(
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::StructGet { struct_type_index: opt_idx, field_index: 1 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: opt_idx,
+        field_index: 1,
+    });
     emit_inner_hash_dispatch(&mut f, inner.trim(), registry, helper_idx_map, None)?;
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalSet(2));
@@ -422,12 +440,14 @@ fn emit_result_hash_body(
     registry: &TypeRegistry,
     helper_idx_map: &HashMap<String, u32>,
 ) -> Result<Function, WasmGcError> {
-    let res_idx = registry.result_type_idx(canonical).ok_or(
-        WasmGcError::Validation(format!("hash helper for `{canonical}`: result not registered")),
-    )?;
-    let (ok_inner, err_inner) = parse_result_kv(canonical).ok_or(
-        WasmGcError::Validation(format!("hash helper for `{canonical}`: can't parse inner")),
-    )?;
+    let res_idx = registry
+        .result_type_idx(canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "hash helper for `{canonical}`: result not registered"
+        )))?;
+    let (ok_inner, err_inner) = parse_result_kv(canonical).ok_or(WasmGcError::Validation(
+        format!("hash helper for `{canonical}`: can't parse inner"),
+    ))?;
     let res_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(res_idx),
@@ -446,12 +466,18 @@ fn emit_result_hash_body(
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::StructGet { struct_type_index: res_idx, field_index: 0 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: res_idx,
+        field_index: 0,
+    });
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalSet(2));
     // Branch on tag.
     f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::StructGet { struct_type_index: res_idx, field_index: 0 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: res_idx,
+        field_index: 0,
+    });
     f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
     // Ok arm: mix field 1 (ok) into h.
     f.instruction(&Instruction::LocalGet(2));
@@ -460,7 +486,10 @@ fn emit_result_hash_body(
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::StructGet { struct_type_index: res_idx, field_index: 1 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: res_idx,
+        field_index: 1,
+    });
     emit_inner_hash_dispatch(&mut f, ok_inner.trim(), registry, helper_idx_map, None)?;
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalSet(2));
@@ -472,7 +501,10 @@ fn emit_result_hash_body(
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::StructGet { struct_type_index: res_idx, field_index: 2 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: res_idx,
+        field_index: 2,
+    });
     emit_inner_hash_dispatch(&mut f, err_inner.trim(), registry, helper_idx_map, None)?;
     f.instruction(&Instruction::I32Add);
     f.instruction(&Instruction::LocalSet(2));
@@ -488,12 +520,14 @@ fn emit_tuple_hash_body(
     registry: &TypeRegistry,
     helper_idx_map: &HashMap<String, u32>,
 ) -> Result<Function, WasmGcError> {
-    let tup_idx = registry.tuple_type_idx(canonical).ok_or(
-        WasmGcError::Validation(format!("hash helper for `{canonical}`: tuple not registered")),
-    )?;
-    let elems = parse_tuple_elems(canonical).ok_or(
-        WasmGcError::Validation(format!("hash helper for `{canonical}`: can't parse elements")),
-    )?;
+    let tup_idx = registry
+        .tuple_type_idx(canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "hash helper for `{canonical}`: tuple not registered"
+        )))?;
+    let elems = parse_tuple_elems(canonical).ok_or(WasmGcError::Validation(format!(
+        "hash helper for `{canonical}`: can't parse elements"
+    )))?;
     let tup_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(tup_idx),
@@ -576,7 +610,10 @@ fn emit_inner_hash_dispatch(
 /// `Result<Ok, Err>` → `Some(("Ok", "Err"))`. Tracks angle/paren
 /// depth so `Result<Map<K,V>, MyError>` splits at the right comma.
 fn parse_result_kv(canonical: &str) -> Option<(&str, &str)> {
-    let inner = canonical.trim().strip_prefix("Result<")?.strip_suffix('>')?;
+    let inner = canonical
+        .trim()
+        .strip_prefix("Result<")?
+        .strip_suffix('>')?;
     let bytes = inner.as_bytes();
     let mut depth: i32 = 0;
     for (idx, b) in bytes.iter().enumerate() {

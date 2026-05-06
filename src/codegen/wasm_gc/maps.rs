@@ -545,7 +545,10 @@ impl MapHelperRegistry {
         for (carrier, &(eq_fn, hash_fn)) in carrier_eq_hash {
             all_key_helpers.insert(
                 carrier.clone(),
-                KeyHelpers { hash: hash_fn, eq: eq_fn },
+                KeyHelpers {
+                    hash: hash_fn,
+                    eq: eq_fn,
+                },
             );
         }
         for (list_canonical, &(eq_fn, hash_fn)) in list_eq_hash {
@@ -629,9 +632,11 @@ fn emit_hash_for(
     {
         // Same shape as carrier eq: proxy to the per-instantiation
         // `__hash_<X>` helper from `hash_helpers`.
-        let helpers = all_key_helpers.get(k_aver).ok_or(WasmGcError::Validation(
-            format!("hash_for: carrier `{k_aver}` has no registered hash helper"),
-        ))?;
+        let helpers = all_key_helpers
+            .get(k_aver)
+            .ok_or(WasmGcError::Validation(format!(
+                "hash_for: carrier `{k_aver}` has no registered hash helper"
+            )))?;
         let mut f = Function::new([]);
         f.instruction(&Instruction::LocalGet(0));
         f.instruction(&Instruction::Call(helpers.hash));
@@ -674,9 +679,11 @@ fn emit_eq_for(
         // `__eq_<X>` helper registered in `eq_helpers` (looked up
         // via `all_key_helpers` which includes the carrier eq fn
         // idx forwarded from the registry).
-        let helpers = all_key_helpers.get(k_aver).ok_or(WasmGcError::Validation(
-            format!("eq_for: carrier `{k_aver}` has no registered eq helper"),
-        ))?;
+        let helpers = all_key_helpers
+            .get(k_aver)
+            .ok_or(WasmGcError::Validation(format!(
+                "eq_for: carrier `{k_aver}` has no registered eq helper"
+            )))?;
         let mut f = Function::new([]);
         f.instruction(&Instruction::LocalGet(0));
         f.instruction(&Instruction::LocalGet(1));
@@ -1519,10 +1526,7 @@ fn emit_hash_record(
                     .values()
                     .flat_map(|v| v.iter())
                     .any(|v| v.parent == other);
-                if registry.record_type_idx(other).is_some()
-                    || is_compound
-                    || is_sum
-                    || is_carrier
+                if registry.record_type_idx(other).is_some() || is_compound || is_sum || is_carrier
                 {
                     let inner = all_key_helpers
                         .get(&lookup_key)
@@ -1606,10 +1610,7 @@ fn emit_eq_record(
                     .values()
                     .flat_map(|v| v.iter())
                     .any(|v| v.parent == other);
-                if registry.record_type_idx(other).is_some()
-                    || is_compound
-                    || is_sum
-                    || is_carrier
+                if registry.record_type_idx(other).is_some() || is_compound || is_sum || is_carrier
                 {
                     let inner = all_key_helpers
                         .get(&lookup_key)

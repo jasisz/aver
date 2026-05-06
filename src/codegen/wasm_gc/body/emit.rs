@@ -582,7 +582,11 @@ fn sum_or_record_eq_fn(operand: &Spanned<Expr>, ctx: &EmitCtx<'_>) -> Option<u32
         crate::types::Type::Option(_)
         | crate::types::Type::Result(_, _)
         | crate::types::Type::Tuple(_) => {
-            let canonical: String = ty.display().chars().filter(|c| !c.is_whitespace()).collect();
+            let canonical: String = ty
+                .display()
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
             ctx.fn_map.eq_helpers.get(&canonical).copied()
         }
         // List / Vector — list_helpers / vfl_helpers slot the per-T
@@ -591,11 +595,19 @@ fn sum_or_record_eq_fn(operand: &Spanned<Expr>, ctx: &EmitCtx<'_>) -> Option<u32
         // resolvable; falls through and the surrounding default i64
         // arm fails validation, same as before this PR).
         crate::types::Type::List(_) => {
-            let canonical: String = ty.display().chars().filter(|c| !c.is_whitespace()).collect();
+            let canonical: String = ty
+                .display()
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
             ctx.fn_map.list_ops.get(&canonical).and_then(|ops| ops.eq)
         }
         crate::types::Type::Vector(_) => {
-            let canonical: String = ty.display().chars().filter(|c| !c.is_whitespace()).collect();
+            let canonical: String = ty
+                .display()
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
             ctx.fn_map.vfl_ops.get(&canonical).and_then(|ops| ops.eq)
         }
         _ => None,

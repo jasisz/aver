@@ -758,11 +758,19 @@ pub(super) fn emit_module(
     let string_eq_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::StringEq);
     let eq_helper_fn_idx_map: HashMap<String, u32> = eq_helpers_registry
         .iter()
-        .filter_map(|(n, _k)| eq_helpers_registry.lookup_fn_idx(n).map(|i| (n.to_string(), i)))
+        .filter_map(|(n, _k)| {
+            eq_helpers_registry
+                .lookup_fn_idx(n)
+                .map(|i| (n.to_string(), i))
+        })
         .collect();
     let hash_helper_fn_idx_map: HashMap<String, u32> = hash_helpers_registry
         .iter()
-        .filter_map(|(n, _k)| hash_helpers_registry.lookup_fn_idx(n).map(|i| (n.to_string(), i)))
+        .filter_map(|(n, _k)| {
+            hash_helpers_registry
+                .lookup_fn_idx(n)
+                .map(|i| (n.to_string(), i))
+        })
         .collect();
     list_helpers.emit_helper_bodies(
         &mut codes,
