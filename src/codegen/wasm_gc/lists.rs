@@ -162,16 +162,14 @@ impl ListHelperRegistry {
             } else {
                 None
             };
-            // List eq + hash use a stricter rule than contains —
-            // their bodies expect stack-shape per-element eq.
-            // SumEq / RecordEq need scratch locals + cascade emit;
-            // the bodies don't support those today. The record-key
-            // field-dispatch path that drives these helpers only
-            // ever calls them with primitive / String elements.
-            let needs_list_helpers = matches!(
-                contains_eq,
-                Some(ListEqKind::I64 | ListEqKind::F64 | ListEqKind::I32 | ListEqKind::StringEq)
-            );
+            // List eq + hash slots track the same kinds contains
+            // does — primitives, String, and (since 0.16.3) record
+            // / sum nominal elements that resolve through the
+            // per-type `__eq_<X>` helper map. The body emitters
+            // (`emit_list_eq` / `emit_list_hash`) dispatch nominal
+            // elements through `Call(__eq_<name>)` / inline record
+            // /sum hash now.
+            let needs_list_helpers = contains_eq.is_some();
             let list_eq_type = if needs_list_helpers {
                 let t = *next_type_idx;
                 *next_type_idx += 1;
@@ -272,13 +270,10 @@ impl ListHelperRegistry {
             *next_wasm_fn_idx += 1;
             let to_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
-            // Vector<T> eq + hash conditionally — same primitive /
-            // String constraint as list eq+hash (SumEq / RecordEq
-            // not supported in the stack-eq body).
-            let eq_kind_ok = matches!(
-                list_eq_kind(elem.trim(), registry),
-                Some(ListEqKind::I64 | ListEqKind::F64 | ListEqKind::I32 | ListEqKind::StringEq)
-            );
+            // Vector<T> eq + hash slots match the list cap — same
+            // resolvable kinds (primitive / String / nominal record-
+            // sum since 0.16.3).
+            let eq_kind_ok = list_eq_kind(elem.trim(), registry).is_some();
             let (vec_eq_ty, vec_hash_ty, vec_eq_fn, vec_hash_fn) = if eq_kind_ok {
                 let eq_ty = *next_type_idx;
                 *next_type_idx += 1;
@@ -414,10 +409,7 @@ impl ListHelperRegistry {
             if kind.is_some() {
                 types.ty().function([list_ref, elem_val], [ValType::I32]);
             }
-            if matches!(
-                kind,
-                Some(ListEqKind::I64 | ListEqKind::F64 | ListEqKind::I32 | ListEqKind::StringEq)
-            ) {
+            if kind.is_some() {
                 // eq : (List<T>, List<T>) -> i32
                 types.ty().function([list_ref, list_ref], [ValType::I32]);
                 // hash : (List<T>) -> i32
@@ -451,10 +443,7 @@ impl ListHelperRegistry {
             // to_list : (Vector<T>) -> List<T>
             types.ty().function([vec_ref], [list_ref]);
             let elem = TypeRegistry::list_element_type(canonical).unwrap();
-            if matches!(
-                list_eq_kind(elem.trim(), registry),
-                Some(ListEqKind::I64 | ListEqKind::F64 | ListEqKind::I32 | ListEqKind::StringEq)
-            ) {
+            if list_eq_kind(elem.trim(), registry).is_some() {
                 // eq : (Vector<T>, Vector<T>) -> i32
                 types.ty().function([vec_ref, vec_ref], [ValType::I32]);
                 // hash : (Vector<T>) -> i32
@@ -570,6 +559,7 @@ impl ListHelperRegistry {
         registry: &TypeRegistry,
         string_eq_fn_idx: Option<u32>,
         eq_helper_fn_idx: &std::collections::HashMap<String, u32>,
+        hash_helper_fn_idx: &std::collections::HashMap<String, u32>,
     ) -> Result<(), WasmGcError> {
         for canonical in &self.list_order {
             // Order MUST match `assign_slots` and
@@ -607,6 +597,7 @@ impl ListHelperRegistry {
                         kind,
                         string_eq_fn_idx,
                         ops.hash.unwrap(),
+                        hash_helper_fn_idx,
                     )?);
                 }
             }
@@ -625,7 +616,13 @@ impl ListHelperRegistry {
                     string_eq_fn_idx,
                     eq_helper_fn_idx,
                 )?);
-                codes.function(&emit_vec_hash(canonical, registry, kind, string_eq_fn_idx)?);
+                codes.function(&emit_vec_hash(
+                    canonical,
+                    registry,
+                    kind,
+                    string_eq_fn_idx,
+                    hash_helper_fn_idx,
+                )?);
             }
         }
         for tup_canonical in &self.zip_order {
@@ -2189,12 +2186,14 @@ fn emit_list_eq(
 /// `hash : (l) -> i32`. DJB2-style fold: `h = 5381; for elem: h = h
 /// * 33 + element_hash`. Element hash dispatched per `kind`. Same
 /// `T` constraint as eq.
+#[allow(clippy::too_many_arguments)]
 fn emit_list_hash(
     canonical: &str,
     registry: &TypeRegistry,
     kind: ListEqKind,
     string_eq_fn_idx: Option<u32>,
     _self_fn_idx: u32,
+    hash_helper_fn_idx: &std::collections::HashMap<String, u32>,
 ) -> Result<Function, WasmGcError> {
     let list_idx = list_idx_of(canonical, registry)?;
     let _ = string_eq_fn_idx;
@@ -2302,6 +2301,7 @@ fn emit_list_hash(
                 )))?;
             emit_record_inline_hash(
                 &mut f, r_idx, fields, /* elem_local */ 3, /* elem_hash_local */ 4,
+                registry, hash_helper_fn_idx,
             )?;
         }
         ListEqKind::SumEq(parent_name) => {
@@ -2311,6 +2311,7 @@ fn emit_list_hash(
                 registry,
                 /* elem_local */ 3,
                 /* elem_hash_local */ 4,
+                hash_helper_fn_idx,
             )?;
         }
     }
@@ -2340,12 +2341,14 @@ fn emit_list_hash(
 /// field into `elem_hash`. Variants are disjoint subtypes of the
 /// parent, so at most one `ref.test` succeeds per call — non-
 /// matched arms `ref.test` to false and skip silently.
+#[allow(clippy::too_many_arguments)]
 fn emit_sum_inline_hash(
     f: &mut Function,
     parent_name: &str,
     registry: &TypeRegistry,
     elem_local: u32,
     elem_hash_local: u32,
+    hash_helper_fn_idx: &std::collections::HashMap<String, u32>,
 ) -> Result<(), WasmGcError> {
     // Collect variants of this sum. Same ordering as
     // `emit_sum_eq_inline` for parity.
@@ -2399,7 +2402,13 @@ fn emit_sum_inline_hash(
                 struct_type_index: v_idx,
                 field_index: i as u32,
             });
-            match field_ty.trim() {
+            let resolved: String =
+                if let Some(under) = registry.newtype_underlying(field_ty.trim()) {
+                    under.to_string()
+                } else {
+                    field_ty.trim().to_string()
+                };
+            match resolved.as_str() {
                 "Int" => {
                     f.instruction(&Instruction::I32WrapI64);
                 }
@@ -2411,12 +2420,14 @@ fn emit_sum_inline_hash(
                 "String" => {
                     f.instruction(&Instruction::ArrayLen);
                 }
-                other => {
-                    return Err(WasmGcError::Validation(format!(
-                        "sum hash dispatch: variant field type `{other}` \
-                         unsupported (only Int/Bool/Float/String); upstream \
-                         `list_eq_kind` all_simple gate should have rejected this."
-                    )));
+                other if hash_helper_fn_idx.contains_key(other) => {
+                    f.instruction(&Instruction::Call(hash_helper_fn_idx[other]));
+                }
+                _ => {
+                    // Last-resort fallback — no helper for this
+                    // shape. Drop, contribute 0 (eq disambiguates).
+                    f.instruction(&Instruction::Drop);
+                    f.instruction(&Instruction::I32Const(0));
                 }
             }
             f.instruction(&Instruction::I32Add);
@@ -2439,12 +2450,15 @@ fn emit_sum_inline_hash(
 /// already i32, String → array.len. Field shapes are restricted to
 /// {Int, Bool, Float, String} by `list_eq_kind`'s `all_simple` gate;
 /// nested records / lists trip `WasmGcError::Validation` here.
+#[allow(clippy::too_many_arguments)]
 fn emit_record_inline_hash(
     f: &mut Function,
     record_idx: u32,
     fields: &[(String, String)],
     elem_local: u32,
     elem_hash_local: u32,
+    registry: &TypeRegistry,
+    hash_helper_fn_idx: &std::collections::HashMap<String, u32>,
 ) -> Result<(), WasmGcError> {
     // Save record ref → elem_local for repeated struct.get.
     f.instruction(&Instruction::LocalSet(elem_local));
@@ -2465,7 +2479,12 @@ fn emit_record_inline_hash(
             struct_type_index: record_idx,
             field_index: i as u32,
         });
-        match field_type.trim() {
+        let resolved: String = if let Some(under) = registry.newtype_underlying(field_type.trim()) {
+            under.to_string()
+        } else {
+            field_type.trim().to_string()
+        };
+        match resolved.as_str() {
             "Int" => {
                 f.instruction(&Instruction::I32WrapI64);
             }
@@ -2477,12 +2496,16 @@ fn emit_record_inline_hash(
             "String" => {
                 f.instruction(&Instruction::ArrayLen);
             }
-            other => {
-                return Err(WasmGcError::Validation(format!(
-                    "record hash dispatch: field type `{other}` unsupported \
-                     (only Int/Bool/Float/String); upstream `list_eq_kind` \
-                     all_simple gate should have rejected this list."
-                )));
+            other if hash_helper_fn_idx.contains_key(other) => {
+                f.instruction(&Instruction::Call(hash_helper_fn_idx[other]));
+            }
+            _ => {
+                // No helper available — drop + 0. Collision OK; eq
+                // disambiguates the bucket. Hits when the field type
+                // is a generic carrier we haven't covered yet (e.g.
+                // `List<X>` field in a record).
+                f.instruction(&Instruction::Drop);
+                f.instruction(&Instruction::I32Const(0));
             }
         }
         f.instruction(&Instruction::I32Add);
@@ -2583,6 +2606,7 @@ fn emit_vec_hash(
     registry: &TypeRegistry,
     kind: ListEqKind,
     _string_eq_fn_idx: Option<u32>,
+    hash_helper_fn_idx: &std::collections::HashMap<String, u32>,
 ) -> Result<Function, WasmGcError> {
     let (vec_idx, _) = vec_idx_of_pair(canonical, registry)?;
     let elem = TypeRegistry::list_element_type(canonical).unwrap();
@@ -2670,6 +2694,7 @@ fn emit_vec_hash(
                 )))?;
             emit_record_inline_hash(
                 &mut f, r_idx, fields, /* elem_local */ 4, /* elem_hash_local */ 5,
+                registry, hash_helper_fn_idx,
             )?;
         }
         ListEqKind::SumEq(parent_name) => {
@@ -2679,6 +2704,7 @@ fn emit_vec_hash(
                 registry,
                 /* elem_local */ 4,
                 /* elem_hash_local */ 5,
+                hash_helper_fn_idx,
             )?;
         }
     }

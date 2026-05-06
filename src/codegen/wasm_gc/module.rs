@@ -26,6 +26,7 @@ use wasm_encoder::{
 
 use super::WasmGcError;
 use super::body::eq_helpers::{EqHelperRegistry, EqKind};
+use super::body::hash_helpers::{HashHelperRegistry, HashKind};
 use super::body::{FnEntry, FnMap, emit_fn_body};
 use super::builtins::{BuiltinName, BuiltinRegistry};
 use super::effects::{EffectName, EffectRegistry};
@@ -66,6 +67,7 @@ pub(super) fn emit_module(
     let mut builtin_registry = BuiltinRegistry::new();
     let mut effect_registry = EffectRegistry::new();
     let mut eq_helpers_registry = EqHelperRegistry::new();
+    let mut hash_helpers_registry = HashHelperRegistry::new();
     for fd in &fn_defs {
         discover_builtins_in_fn(
             fd,
@@ -103,6 +105,7 @@ pub(super) fn emit_module(
     for name in &nominal_seed {
         if registry.record_fields.contains_key(name) {
             eq_helpers_registry.register_transitive(name, EqKind::Record, &registry);
+            hash_helpers_registry.register_transitive(name, HashKind::Record, &registry);
         } else if registry
             .variants
             .values()
@@ -110,7 +113,27 @@ pub(super) fn emit_module(
             .any(|v| &v.parent == name)
         {
             eq_helpers_registry.register_transitive(name, EqKind::Sum, &registry);
+            hash_helpers_registry.register_transitive(name, HashKind::Sum, &registry);
         }
+    }
+    // Mirror eq registry's transitive shape — every type registered
+    // for eq dispatch also needs a hash helper, since list/vec/map
+    // helpers and per-record/sum hash bodies dispatch through
+    // `Call(__hash_<X>)` for non-primitive fields. Walk the eq
+    // registry post-seed and register matching hash slots.
+    let eq_snapshot: Vec<(String, EqKind)> = eq_helpers_registry
+        .iter()
+        .map(|(n, k)| (n.to_string(), k))
+        .collect();
+    for (name, kind) in &eq_snapshot {
+        let hk = match kind {
+            EqKind::Record => HashKind::Record,
+            EqKind::Sum => HashKind::Sum,
+            EqKind::OptionEq => HashKind::OptionHash,
+            EqKind::ResultEq => HashKind::ResultHash,
+            EqKind::TupleEq => HashKind::TupleHash,
+        };
+        hash_helpers_registry.register_transitive(name, hk, &registry);
     }
     // Eq helpers over records / sums with String fields need
     // `__wasmgc_string_eq` — force-register so the slot is allocated
@@ -252,6 +275,8 @@ pub(super) fn emit_module(
     // `__wasmgc_string_eq` registered above).
     eq_helpers_registry.assign_slots(&mut next_builtin_fn_idx, &mut next_type_idx);
     eq_helpers_registry.emit_helper_types(&mut types);
+    hash_helpers_registry.assign_slots(&mut next_builtin_fn_idx, &mut next_type_idx);
+    hash_helpers_registry.emit_helper_types(&mut types);
 
     // 8a) `aver_http_handle` wrapper — `--handler X` synthesises a
     //     no-arg fn that reads request fields via the `Request.*`
@@ -419,6 +444,13 @@ pub(super) fn emit_module(
             .expect("registered eq helper has type idx after assign_slots");
         funcs.function(t_idx);
     }
+    // Hash helpers — same shape (one entry per registered slot).
+    for (name, _kind) in hash_helpers_registry.iter() {
+        let t_idx = hash_helpers_registry
+            .lookup_type_idx(name)
+            .expect("registered hash helper has type idx after assign_slots");
+        funcs.function(t_idx);
+    }
     if let Some(hw) = &handler_wrapper {
         funcs.function(hw.wrapper_type);
         funcs.function(hw.list_cons_type);
@@ -531,6 +563,12 @@ pub(super) fn emit_module(
             eq_helpers_lookup.insert(name.to_string(), fn_idx);
         }
     }
+    let mut hash_helpers_lookup: HashMap<String, u32> = HashMap::new();
+    for (name, _kind) in hash_helpers_registry.iter() {
+        if let Some(fn_idx) = hash_helpers_registry.lookup_fn_idx(name) {
+            hash_helpers_lookup.insert(name.to_string(), fn_idx);
+        }
+    }
     let fn_map = FnMap {
         by_name,
         builtins: builtin_idx_lookup,
@@ -541,6 +579,7 @@ pub(super) fn emit_module(
         zip_ops: zip_ops_lookup,
         string_split_ops,
         eq_helpers: eq_helpers_lookup,
+        hash_helpers: hash_helpers_lookup,
     };
 
     // ── Export section ─────────────────────────────────────────────
@@ -709,17 +748,25 @@ pub(super) fn emit_module(
         .iter()
         .filter_map(|(n, _k)| eq_helpers_registry.lookup_fn_idx(n).map(|i| (n.to_string(), i)))
         .collect();
+    let hash_helper_fn_idx_map: HashMap<String, u32> = hash_helpers_registry
+        .iter()
+        .filter_map(|(n, _k)| hash_helpers_registry.lookup_fn_idx(n).map(|i| (n.to_string(), i)))
+        .collect();
     list_helpers.emit_helper_bodies(
         &mut codes,
         &registry,
         string_eq_fn_idx,
         &eq_helper_fn_idx_map,
+        &hash_helper_fn_idx_map,
     )?;
 
     // Per-(record/sum) `__eq_<TypeName>` helper bodies — emit after
     // list helpers so any String fields can call `__wasmgc_string_eq`
     // by the index recorded above.
     eq_helpers_registry.emit_helper_bodies(&mut codes, &registry, string_eq_fn_idx)?;
+    // `__hash_<X>` helper bodies — emitted right after eq helpers so
+    // every nominal/carrier hash dispatch finds its target fn_idx.
+    hash_helpers_registry.emit_helper_bodies(&mut codes, &registry, string_eq_fn_idx)?;
 
     if let Some(hw) = &handler_wrapper {
         let user_handler_wasm_idx = import_count + 1 + (hw.user_handler_idx as u32);
