@@ -195,6 +195,29 @@ impl HashHelperRegistry {
             .and_then(|s| s.strip_suffix('>'))
         {
             self.register_field_type(inner.trim(), registry);
+        } else if let Some(inner) = field_ty
+            .strip_prefix("Map<")
+            .and_then(|s| s.strip_suffix('>'))
+        {
+            // Mirror eq_helpers — Map<K,V> hash slot lives in
+            // MapHelperRegistry; recurse so K and V's hash helpers
+            // exist for the structural fold.
+            let bytes = inner.as_bytes();
+            let mut depth: i32 = 0;
+            for (idx, b) in bytes.iter().enumerate() {
+                match b {
+                    b'<' | b'(' => depth += 1,
+                    b'>' | b')' => depth -= 1,
+                    b',' if depth == 0 => {
+                        let k = inner[..idx].trim();
+                        let v = inner[idx + 1..].trim();
+                        self.register_field_type(k, registry);
+                        self.register_field_type(v, registry);
+                        return;
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 

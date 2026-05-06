@@ -577,6 +577,16 @@ pub(super) fn emit_module(
             eq_helpers_lookup.insert(name.to_string(), fn_idx);
         }
     }
+    // Map<K,V> structural-eq fn idxs flow through the same lookup so
+    // BinOp::Eq on a Map dispatches via `Call(__eq_Map<K,V>)` (sum_
+    // or_record_eq_fn → ctx.fn_map.eq_helpers). Whitespace-free
+    // canonical matches what the operand's `.ty().display()` produces
+    // at the call site.
+    for canonical in &registry.map_order {
+        if let Some(h) = map_helpers.kv_helpers(canonical) {
+            eq_helpers_lookup.insert(canonical.clone(), h.eq);
+        }
+    }
     let fn_map = FnMap {
         by_name,
         builtins: builtin_idx_lookup,
@@ -743,6 +753,15 @@ pub(super) fn emit_module(
             && let (Some(eq_fn), Some(hash_fn)) = (o.eq, o.hash)
         {
             compound_eq_hash_lookup.insert(format!("Vector<{}>", elem.trim()), (eq_fn, hash_fn));
+        }
+    }
+    // Map<K,V> structural eq + commutative hash — per-instantiation
+    // helpers live in MapHelperRegistry::kv. Threading them into the
+    // compound lookup lets record/sum/list/vec field dispatch call
+    // `__eq_Map<K,V>` / `__hash_Map<K,V>` uniformly with carriers.
+    for canonical in &registry.map_order {
+        if let Some(h) = map_helpers.kv_helpers(canonical) {
+            compound_eq_hash_lookup.insert(canonical.clone(), (h.eq, h.hash));
         }
     }
     // Carrier eq+hash lookup — Option/Result/Tuple instantiations

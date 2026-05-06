@@ -710,7 +710,8 @@ fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
         || trimmed.starts_with("Result<")
         || trimmed.starts_with("Tuple<")
         || trimmed.starts_with("List<")
-        || trimmed.starts_with("Vector<"))
+        || trimmed.starts_with("Vector<")
+        || trimmed.starts_with("Map<"))
         && trimmed.ends_with('>')
     {
         let canonical: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
@@ -891,6 +892,27 @@ pub(super) fn field_type_resolvable(
         .and_then(|s| s.strip_suffix('>'))
     {
         return field_type_resolvable(inner.trim(), registry, seen);
+    }
+    // Map<K, V> — `__eq_Map<K,V>` / `__hash_Map<K,V>` live in
+    // MapHelperRegistry::kv. Resolvable iff both K and V are
+    // themselves resolvable.
+    if let Some(inner) = field.strip_prefix("Map<").and_then(|s| s.strip_suffix('>')) {
+        let bytes = inner.as_bytes();
+        let mut depth: i32 = 0;
+        for (idx, b) in bytes.iter().enumerate() {
+            match b {
+                b'<' | b'(' => depth += 1,
+                b'>' | b')' => depth -= 1,
+                b',' if depth == 0 => {
+                    let k = inner[..idx].trim();
+                    let v = inner[idx + 1..].trim();
+                    return field_type_resolvable(k, registry, seen)
+                        && field_type_resolvable(v, registry, seen);
+                }
+                _ => {}
+            }
+        }
+        return false;
     }
     false
 }
@@ -1863,20 +1885,30 @@ pub(super) fn emit_record_eq_inline(
                 // Recursive ref to the same record — call self.
                 f.instruction(&Instruction::Call(self_fn_idx.unwrap()));
             }
-            other if eq_helper_fn_idx.contains_key(other) => {
-                // Nested nominal type with its own __eq_<X> helper
-                // — call by fn idx. Field refs are subtypes of
-                // eqref so the implicit upcast at the call site
-                // is fine.
-                let idx = eq_helper_fn_idx[other];
-                f.instruction(&Instruction::Call(idx));
-            }
             other => {
-                return Err(WasmGcError::Validation(format!(
-                    "record `{record_name}` field type `{other}` has no eq dispatch \
-                     (not in {{Int, Float, Bool, String}}, no `__eq_{other}` helper, \
-                     not self-recursive)"
-                )));
+                // Look up `__eq_<X>` — for compound types (List/
+                // Vector/Map/Option/Result/Tuple) the registry keys
+                // are whitespace-stripped, but a field type from
+                // `record_fields` can carry source-side spacing.
+                // Try both forms before erroring.
+                let normalized = super::types::normalize_compound(other);
+                let key = if eq_helper_fn_idx.contains_key(other) {
+                    Some(other.to_string())
+                } else if eq_helper_fn_idx.contains_key(normalized.as_str()) {
+                    Some(normalized.clone())
+                } else {
+                    None
+                };
+                if let Some(k) = key {
+                    let idx = eq_helper_fn_idx[k.as_str()];
+                    f.instruction(&Instruction::Call(idx));
+                } else {
+                    return Err(WasmGcError::Validation(format!(
+                        "record `{record_name}` field type `{other}` has no eq dispatch \
+                         (not in {{Int, Float, Bool, String}}, no `__eq_{other}` helper, \
+                         not self-recursive)"
+                    )));
+                }
             }
         }
         if i > 0 {

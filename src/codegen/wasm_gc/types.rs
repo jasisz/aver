@@ -538,6 +538,10 @@ impl TypeRegistry {
                     if let Stmt::Binding(_, Some(annot), _) = stmt {
                         collect_maps_from_str(annot, &mut pending_maps);
                     }
+                    let expr = match stmt {
+                        Stmt::Binding(_, _, e) | Stmt::Expr(e) => e,
+                    };
+                    collect_maps_from_expr(expr, &mut pending_maps);
                 }
             }
         }
@@ -1847,6 +1851,69 @@ fn collect_maps_from_str(type_str: &str, out: &mut Vec<String>) {
             }
         }
         i += 1;
+    }
+}
+
+/// Walk every sub-expression and harvest `Map<K,V>` canonicals from
+/// each `Spanned<Expr>::ty()` stamp. Catches map literals (`{a => 3}`
+/// without annotation) and expressions whose type is a Map but the
+/// canonical never shows up in any signature — symmetrical with
+/// `collect_tuples_from_expr`. Recurses into sub-expressions so
+/// nested literals / fn args / match arms all get their stamps
+/// harvested.
+fn collect_maps_from_expr(expr: &crate::ast::Spanned<crate::ast::Expr>, out: &mut Vec<String>) {
+    use crate::ast::Expr;
+    if let Some(ty) = expr.ty() {
+        let display = ty.display();
+        collect_maps_from_str(&display, out);
+    }
+    match &expr.node {
+        Expr::FnCall(callee, args) => {
+            collect_maps_from_expr(callee, out);
+            for a in args {
+                collect_maps_from_expr(a, out);
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for it in items {
+                collect_maps_from_expr(it, out);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                collect_maps_from_expr(k, out);
+                collect_maps_from_expr(v, out);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, v) in fields {
+                collect_maps_from_expr(v, out);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_maps_from_expr(base, out);
+            for (_, v) in updates {
+                collect_maps_from_expr(v, out);
+            }
+        }
+        Expr::Constructor(_, Some(arg)) => collect_maps_from_expr(arg, out),
+        Expr::Match { subject, arms } => {
+            collect_maps_from_expr(subject, out);
+            for arm in arms {
+                collect_maps_from_expr(&arm.body, out);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            collect_maps_from_expr(l, out);
+            collect_maps_from_expr(r, out);
+        }
+        Expr::Attr(e, _) | Expr::ErrorProp(e) => collect_maps_from_expr(e, out),
+        Expr::TailCall(tc) => {
+            for a in &tc.args {
+                collect_maps_from_expr(a, out);
+            }
+        }
+        _ => {}
     }
 }
 

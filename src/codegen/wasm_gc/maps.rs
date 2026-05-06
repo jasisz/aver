@@ -86,6 +86,16 @@ pub(super) struct MapKVHelpers {
     /// `from_list(l) -> Map<K, V>`. Walks `l`, struct.get's the
     /// (K, V) from each tuple, calls the per-(K, V) `set` helper.
     pub(super) from_list: u32,
+    /// `__eq_Map<K,V>(a, b) -> i32`. Structural eq — `a.size ==
+    /// b.size && ∀ k ∈ a: get(b, k) == Some(a[k])`. Insertion order
+    /// is intentionally ignored (matches VM's `HashMap` PartialEq +
+    /// the Python/Java/Rust/Haskell mainstream).
+    pub(super) eq: u32,
+    /// `__hash_Map<K,V>(m) -> i32`. Order-independent commutative
+    /// fold — `h = 0; for (k, v) in m: h ^= djb2(k) * 33 + djb2(v)`.
+    /// XOR is commutative + associative so the result is invariant
+    /// to bucket ordering.
+    pub(super) hash: u32,
 }
 
 #[derive(Default)]
@@ -105,7 +115,24 @@ pub(super) struct MapHelperRegistry {
     /// matches `assign_slots` / `emit_function_section` /
     /// `emit_helper_bodies` exactly.
     #[allow(clippy::type_complexity)]
-    kv_type_indices: HashMap<String, (u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32)>,
+    kv_type_indices: HashMap<
+        String,
+        (
+            u32,
+            u32,
+            u32,
+            u32,
+            u32,
+            u32,
+            u32,
+            u32,
+            u32,
+            u32,
+            u32,
+            u32,
+            u32,
+        ),
+    >,
 }
 
 impl MapHelperRegistry {
@@ -129,7 +156,7 @@ impl MapHelperRegistry {
         let mut k_names: Vec<String> = Vec::new();
         let mut k_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         for canonical in map_canonicals {
-            let (k_aver, _) =
+            let (k_aver, v_aver) =
                 super::types::parse_map_kv(canonical).ok_or(WasmGcError::Validation(format!(
                     "MapHelperRegistry: cannot parse K, V from `{canonical}`"
                 )))?;
@@ -152,11 +179,25 @@ impl MapHelperRegistry {
                     .filter(|v| v.parent == k_aver)
                     .any(|v| v.fields.iter().any(|t| t.trim() == "String"));
             }
+            // Map<K,V>'s structural eq + hash dispatches V via the
+            // same `__hash_<V>` / `__eq_<V>` helper map K uses, so V
+            // is force-registered as pseudo-K too. Skips primitive V
+            // (the body emitter falls back to inline cmp for those).
+            let v_aver_trim = v_aver.trim();
+            if v_aver_trim == "String" {
+                needs_string = true;
+            }
             if needs_string && k_seen.insert("String".into()) {
                 k_names.push("String".into());
             }
             if k_seen.insert(k_aver.to_string()) {
                 k_names.push(k_aver.to_string());
+            }
+            if !super::types::TypeRegistry::is_primitive_map_key(v_aver_trim)
+                && v_aver_trim != "String"
+                && k_seen.insert(v_aver_trim.to_string())
+            {
+                k_names.push(v_aver_trim.to_string());
             }
         }
 
@@ -297,6 +338,10 @@ impl MapHelperRegistry {
             *next_type_idx += 1;
             let from_list_type_idx = *next_type_idx;
             *next_type_idx += 1;
+            let eq_type_idx = *next_type_idx;
+            *next_type_idx += 1;
+            let hash_type_idx = *next_type_idx;
+            *next_type_idx += 1;
             let empty_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
             let set_fn = *next_wasm_fn_idx;
@@ -319,6 +364,10 @@ impl MapHelperRegistry {
             *next_wasm_fn_idx += 1;
             let from_list_fn = *next_wasm_fn_idx;
             *next_wasm_fn_idx += 1;
+            let eq_fn = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
+            let hash_fn = *next_wasm_fn_idx;
+            *next_wasm_fn_idx += 1;
 
             // K can be String, a user-defined record (field-by-field
             // hash + eq), or a primitive (Int / Float / Bool). Primitive
@@ -337,16 +386,19 @@ impl MapHelperRegistry {
                 || k_aver.starts_with("Result<")
                 || k_aver.starts_with("Tuple<");
             let is_list_or_vec_k = k_aver.starts_with("List<") || k_aver.starts_with("Vector<");
+            let is_map_k = k_aver.starts_with("Map<");
             if k_aver != "String"
                 && registry.record_type_idx(k_aver).is_none()
                 && !is_primitive_k
                 && !is_sum_k
                 && !is_carrier_k
                 && !is_list_or_vec_k
+                && !is_map_k
             {
                 return Err(WasmGcError::Unimplemented(
                     "phase 3c — Map<K, V> with K not String / user-record / sum / \
-                     primitive / generic-carrier (Option/Result/Tuple) / List<T> / Vector<T>",
+                     primitive / generic-carrier (Option/Result/Tuple) / List<T> / \
+                     Vector<T> / Map<K2,V2>",
                 ));
             }
 
@@ -364,6 +416,8 @@ impl MapHelperRegistry {
                     remove: remove_fn,
                     entries: entries_fn,
                     from_list: from_list_fn,
+                    eq: eq_fn,
+                    hash: hash_fn,
                 },
             );
             self.kv_type_indices.insert(
@@ -380,6 +434,8 @@ impl MapHelperRegistry {
                     remove_type_idx,
                     entries_type_idx,
                     from_list_type_idx,
+                    eq_type_idx,
+                    hash_type_idx,
                 ),
             );
             self.kv_order.push(canonical.clone());
@@ -493,6 +549,20 @@ impl MapHelperRegistry {
             types.ty().function([map_ref], [lt_ref]);
             // from_list : (List<Tuple<K, V>>) -> Map
             types.ty().function([lt_ref], [map_ref]);
+            // __eq_Map<K,V> : (eqref, eqref) -> i32. Eqref params so
+            // record/sum/list/vec field dispatch can call uniformly
+            // (the body ref.casts both args to the typed map ref).
+            let eq_ref = ValType::Ref(RefType {
+                nullable: true,
+                heap_type: wasm_encoder::HeapType::Abstract {
+                    shared: false,
+                    ty: wasm_encoder::AbstractHeapType::Eq,
+                },
+            });
+            types.ty().function([eq_ref, eq_ref], [ValType::I32]);
+            // __hash_Map<K,V> : (eqref) -> i32. Same eqref-shape
+            // calling convention as the carrier hash helpers.
+            types.ty().function([eq_ref], [ValType::I32]);
             let _ = opt_ref;
             let _ = tup_idx;
         }
@@ -508,7 +578,8 @@ impl MapHelperRegistry {
             funcs.function(e);
         }
         for canonical in &self.kv_order {
-            let (em, st, gt, ln, god, pair, ks, vs, rm, en, fl) = self.kv_type_indices[canonical];
+            let (em, st, gt, ln, god, pair, ks, vs, rm, en, fl, eq, hs) =
+                self.kv_type_indices[canonical];
             funcs.function(em);
             funcs.function(st);
             funcs.function(gt);
@@ -520,6 +591,8 @@ impl MapHelperRegistry {
             funcs.function(rm);
             funcs.function(en);
             funcs.function(fl);
+            funcs.function(eq);
+            funcs.function(hs);
         }
     }
 
@@ -597,9 +670,49 @@ impl MapHelperRegistry {
             let helpers = self.kv[canonical];
             codes.function(&emit_map_entries(canonical, registry)?);
             codes.function(&emit_map_from_list(canonical, registry, helpers.set)?);
+            // Structural eq + commutative hash for `Map<K, V>`. V's
+            // hash + eq fn idxs come from `all_key_helpers` (same
+            // table that drives K dispatch — V is just another
+            // shape that needs the same family of helpers when V is
+            // not a primitive).
+            let v_helpers = v_helper_for(canonical, &all_key_helpers, registry)?;
+            codes.function(&emit_map_eq(
+                canonical,
+                registry,
+                key_h,
+                v_helpers,
+                helpers.get,
+            )?);
+            codes.function(&emit_map_hash(canonical, registry, key_h, v_helpers)?);
         }
         Ok(())
     }
+}
+
+/// Resolve hash + eq fn idx for V — looks the same shape up as K. V
+/// can be a primitive (hash/eq are inline instructions, not fn calls
+/// — return None and let the body emitter pick the inline path), or
+/// a ref-shaped K kind we already registered (records / sums /
+/// carriers / List / Vector / Map). Returns the proxy fn idxs.
+fn v_helper_for(
+    canonical: &str,
+    all_key_helpers: &HashMap<String, KeyHelpers>,
+    _registry: &TypeRegistry,
+) -> Result<Option<KeyHelpers>, WasmGcError> {
+    let (_, v_aver) = super::types::parse_map_kv(canonical).ok_or(WasmGcError::Validation(
+        format!("v_helper_for: bad canonical `{canonical}`"),
+    ))?;
+    let v_aver = v_aver.trim();
+    if super::types::TypeRegistry::is_primitive_map_key(v_aver) {
+        // Primitive V (Int / Float / Bool) — body emitter inlines
+        // the comparison + hash, no helper dispatch.
+        return Ok(None);
+    }
+    // String + every other ref V flows through `all_key_helpers`,
+    // which assign_slots force-registered as pseudo-K (so the
+    // helpers exist regardless of whether the program actually
+    // holds `Map<V, _>`).
+    Ok(all_key_helpers.get(v_aver).copied())
 }
 
 /// `hash : (K) -> i32`. K can be `String` (DJB2 over the bytes) or
@@ -633,10 +746,11 @@ fn emit_hash_for(
         || k_aver.starts_with("Tuple<")
         || k_aver.starts_with("List<")
         || k_aver.starts_with("Vector<")
+        || k_aver.starts_with("Map<")
     {
         // Same shape as carrier eq: proxy to the per-instantiation
         // `__hash_<X>` helper. Carriers come from hash_helpers,
-        // List/Vector from list_helpers; both are merged into
+        // List/Vector/Map from their own registries; all merged into
         // `all_key_helpers` via the compound lookup at module
         // assembly.
         let helpers = all_key_helpers
@@ -683,10 +797,12 @@ fn emit_eq_for(
         || k_aver.starts_with("Tuple<")
         || k_aver.starts_with("List<")
         || k_aver.starts_with("Vector<")
+        || k_aver.starts_with("Map<")
     {
         // Map-key eq for compounds proxies to `__eq_<X>` (carriers
-        // from eq_helpers, List/Vector from list_helpers). Both are
-        // merged into `all_key_helpers` at module assembly time.
+        // from eq_helpers, List/Vector from list_helpers, Map from
+        // MapHelperRegistry::kv). All merged into `all_key_helpers`
+        // at module assembly time.
         let helpers = all_key_helpers
             .get(k_aver)
             .ok_or(WasmGcError::Validation(format!(
@@ -826,6 +942,9 @@ fn key_storage_null_heap(k_aver: &str, registry: &TypeRegistry) -> HeapType {
     }
     if let Some(v) = registry.vector_type_idx(k_aver) {
         return HeapType::Concrete(v);
+    }
+    if let Some(slots) = registry.map_slots(k_aver) {
+        return HeapType::Concrete(slots.map);
     }
     // Sum K — eqref. ref.null of abstract Eq is a subtype of every
     // concrete variant ref, so the array.set typechecks.
@@ -1866,6 +1985,334 @@ fn emit_map_walk_values_to_list(
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// `__eq_Map<K,V>(a: eqref, b: eqref) -> i32`. Structural eq —
+/// `a.size == b.size && ∀ k ∈ a: get(b, k) == Some(a[k])`. Order-
+/// independent (matches VM's Rust HashMap PartialEq).
+fn emit_map_eq(
+    canonical: &str,
+    registry: &TypeRegistry,
+    keyh: KeyHelpers,
+    v_helpers: Option<KeyHelpers>,
+    get_fn_idx: u32,
+) -> Result<Function, WasmGcError> {
+    let slots = slots_for(canonical, registry)?;
+    let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
+    let _ = keyh;
+    let map_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(slots.map),
+    });
+    let keys_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(slots.keys_array),
+    });
+    let values_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(slots.values_array),
+    });
+    let v_val =
+        super::types::aver_to_wasm(v_aver, Some(registry))?.ok_or(WasmGcError::Validation(
+            format!("Map<{k_aver},{v_aver}>.eq: V `{v_aver}` has no wasm rep"),
+        ))?;
+    let opt_idx = registry
+        .option_type_idx(&format!("Option<{v_aver}>"))
+        .ok_or(WasmGcError::Validation(format!(
+            "Map.eq: `Option<{v_aver}>` not registered"
+        )))?;
+    let opt_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(opt_idx),
+    });
+    // Locals: 2=typed map_a, 3=typed map_b, 4=cap, 5=i, 6=keys_a,
+    // 7=values_a, 8=cur_key (boxed), 9=opt result, 10=v_a, 11=v_b
+    let mut f = Function::new(vec![
+        (1, map_ref),
+        (1, map_ref),
+        (1, ValType::I32),
+        (1, ValType::I32),
+        (1, keys_ref),
+        (1, values_ref),
+        (1, key_storage_val_type(k_aver, registry)?),
+        (1, opt_ref),
+        (1, v_val),
+        (1, v_val),
+    ]);
+    let map_heap = HeapType::Concrete(slots.map);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefCastNonNull(map_heap));
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::RefCastNonNull(map_heap));
+    f.instruction(&Instruction::LocalSet(3));
+    // if a.size != b.size return 0
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    // cap = a.cap; keys_a = a.keys; values_a = a.values; i = 0
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 2,
+    });
+    f.instruction(&Instruction::LocalSet(6));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 3,
+    });
+    f.instruction(&Instruction::LocalSet(7));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(5));
+    // for i in 0..cap
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::I32GeS);
+    f.instruction(&Instruction::BrIf(1));
+    // cur_key = keys_a[i]
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::ArrayGet(slots.keys_array));
+    f.instruction(&Instruction::LocalSet(8));
+    // if cur_key != null: probe b
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    // opt = get_fn(b, unbox(cur_key))
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(8));
+    emit_unbox_key(&mut f, k_aver, registry);
+    f.instruction(&Instruction::Call(get_fn_idx));
+    f.instruction(&Instruction::LocalSet(9));
+    // if opt.tag == 0 → return 0
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: opt_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    // v_a = values_a[i]; v_b = opt.value
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::ArrayGet(slots.values_array));
+    f.instruction(&Instruction::LocalSet(10));
+    f.instruction(&Instruction::LocalGet(9));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: opt_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(11));
+    // if v_a != v_b → return 0
+    f.instruction(&Instruction::LocalGet(10));
+    f.instruction(&Instruction::LocalGet(11));
+    emit_v_eq(&mut f, v_aver, v_helpers)?;
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    // i++
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::End);
+    Ok(f)
+}
+
+/// Stack: `[v_a, v_b]` of Aver type `v_aver`. Push i32 (1=eq, 0=ne).
+/// Primitive V → inline cmp; ref V → `Call(v_helpers.eq)`.
+fn emit_v_eq(
+    f: &mut Function,
+    v_aver: &str,
+    v_helpers: Option<KeyHelpers>,
+) -> Result<(), WasmGcError> {
+    match v_aver.trim() {
+        "Int" => {
+            f.instruction(&Instruction::I64Eq);
+        }
+        "Bool" => {
+            f.instruction(&Instruction::I32Eq);
+        }
+        "Float" => {
+            f.instruction(&Instruction::F64Eq);
+        }
+        _ => {
+            let h = v_helpers.ok_or(WasmGcError::Validation(format!(
+                "emit_v_eq: V `{v_aver}` needs ref helpers (record/sum/carrier/list/vec/map)"
+            )))?;
+            f.instruction(&Instruction::Call(h.eq));
+        }
+    }
+    Ok(())
+}
+
+/// Stack: `[v]` of Aver type `v_aver`. Push i32 hash. Primitive V →
+/// inline DJB2-style mix; ref V → `Call(v_helpers.hash)`.
+fn emit_v_hash(
+    f: &mut Function,
+    v_aver: &str,
+    v_helpers: Option<KeyHelpers>,
+) -> Result<(), WasmGcError> {
+    match v_aver.trim() {
+        "Int" => {
+            f.instruction(&Instruction::I32WrapI64);
+        }
+        "Bool" => {} // already i32
+        "Float" => {
+            f.instruction(&Instruction::I64ReinterpretF64);
+            f.instruction(&Instruction::I32WrapI64);
+        }
+        _ => {
+            let h = v_helpers.ok_or(WasmGcError::Validation(format!(
+                "emit_v_hash: V `{v_aver}` needs ref helpers"
+            )))?;
+            f.instruction(&Instruction::Call(h.hash));
+        }
+    }
+    Ok(())
+}
+
+/// `__hash_Map<K,V>(m: eqref) -> i32`. XOR-fold per occupied entry of
+/// `djb2(k) * 33 + djb2(v)`. XOR is commutative + associative → the
+/// result is invariant to bucket / insertion order.
+fn emit_map_hash(
+    canonical: &str,
+    registry: &TypeRegistry,
+    keyh: KeyHelpers,
+    v_helpers: Option<KeyHelpers>,
+) -> Result<Function, WasmGcError> {
+    let slots = slots_for(canonical, registry)?;
+    let (k_aver, v_aver) = super::types::parse_map_kv(canonical).unwrap();
+    let map_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(slots.map),
+    });
+    let keys_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(slots.keys_array),
+    });
+    let values_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(slots.values_array),
+    });
+    // Locals: 1=typed map, 2=cap, 3=i, 4=keys, 5=values, 6=cur_key
+    // (boxed), 7=h (i32 accumulator), 8=entry_h (i32 per-entry mix).
+    let mut f = Function::new(vec![
+        (1, map_ref),
+        (1, ValType::I32),
+        (1, ValType::I32),
+        (1, keys_ref),
+        (1, values_ref),
+        (1, key_storage_val_type(k_aver, registry)?),
+        (1, ValType::I32),
+        (1, ValType::I32),
+    ]);
+    let map_heap = HeapType::Concrete(slots.map);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::RefCastNonNull(map_heap));
+    f.instruction(&Instruction::LocalSet(1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(7));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(2));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 2,
+    });
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: slots.map,
+        field_index: 3,
+    });
+    f.instruction(&Instruction::LocalSet(5));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32GeS);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::ArrayGet(slots.keys_array));
+    f.instruction(&Instruction::LocalSet(6));
+    f.instruction(&Instruction::LocalGet(6));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    // entry_h = hash_K(unbox(cur_key)) * 33 + hash_V(values[i])
+    f.instruction(&Instruction::LocalGet(6));
+    emit_unbox_key(&mut f, k_aver, registry);
+    f.instruction(&Instruction::Call(keyh.hash));
+    f.instruction(&Instruction::I32Const(5));
+    f.instruction(&Instruction::I32Shl);
+    // h_k * 32 (will add h_k below to become *33; OR more accurate:
+    // shift-add for *33). Cheaper: do `(kh<<5) + kh + vh`.
+    f.instruction(&Instruction::LocalGet(6));
+    emit_unbox_key(&mut f, k_aver, registry);
+    f.instruction(&Instruction::Call(keyh.hash));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::ArrayGet(slots.values_array));
+    emit_v_hash(&mut f, v_aver, v_helpers)?;
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(8));
+    // h ^= entry_h
+    f.instruction(&Instruction::LocalGet(7));
+    f.instruction(&Instruction::LocalGet(8));
+    f.instruction(&Instruction::I32Xor);
+    f.instruction(&Instruction::LocalSet(7));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(3));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(3));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(7));
     f.instruction(&Instruction::End);
     Ok(f)
 }

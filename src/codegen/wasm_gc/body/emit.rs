@@ -610,6 +610,18 @@ fn sum_or_record_eq_fn(operand: &Spanned<Expr>, ctx: &EmitCtx<'_>) -> Option<u32
                 .collect();
             ctx.fn_map.vfl_ops.get(&canonical).and_then(|ops| ops.eq)
         }
+        // Map<K,V> structural eq — `__eq_Map<K,V>` slot lives in
+        // MapHelperRegistry but we mirror the fn idx into
+        // `eq_helpers` so the lookup shape stays uniform with
+        // record/sum/carrier/list/vec dispatch.
+        crate::types::Type::Map(_, _) => {
+            let canonical: String = ty
+                .display()
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            ctx.fn_map.eq_helpers.get(&canonical).copied()
+        }
         _ => None,
     }
 }
