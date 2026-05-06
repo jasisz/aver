@@ -1575,8 +1575,8 @@ fn discover_builtins_in_expr(
             // by `wasm-opt -Oz`. Cheaper than a per-part type-driven
             // walk.
             builtins.register(BuiltinName::StringConcatN);
-            builtins.register(BuiltinName::IntToString);
-            builtins.register(BuiltinName::FloatToString);
+            builtins.register(BuiltinName::StringFromInt);
+            builtins.register(BuiltinName::StringFromFloat);
             builtins.register(BuiltinName::StringFromBool);
             for p in parts {
                 if let StrPart::Parsed(inner) = p {
