@@ -2003,7 +2003,6 @@ fn fn_body_calls_int_mod(fd: &crate::ast::FnDef) -> bool {
     })
 }
 
-
 fn collect_string_literals_in_fn(
     fd: &crate::ast::FnDef,
     out: &mut Vec<Vec<u8>>,

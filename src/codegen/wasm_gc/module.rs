@@ -48,8 +48,7 @@ pub(super) fn emit_module(
     // post-emit phase reads `collector.names` to materialise the
     // exported caller-fn name table (`__caller_fn_count` +
     // `__caller_fn_name`) and the matching passive data segments.
-    let caller_fn_collector =
-        std::cell::RefCell::new(super::body::CallerFnCollector::default());
+    let caller_fn_collector = std::cell::RefCell::new(super::body::CallerFnCollector::default());
 
     let fn_defs: Vec<&FnDef> = items
         .iter()
