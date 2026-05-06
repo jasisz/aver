@@ -135,7 +135,6 @@ pub fn emit_builtin_call(
         VectorToList => format!("{}.toList", p(&a[0])),
 
         // ---- Map ----
-        MapEmpty => "AverMap.empty".to_string(),
         MapGet => format!("AverMap.get {} {}", p(&a[0]), p(&a[1])),
         MapSet => format!("AverMap.set {} {} {}", p(&a[0]), p(&a[1]), p(&a[2])),
         MapHas => format!("AverMap.has {} {}", p(&a[0]), p(&a[1])),

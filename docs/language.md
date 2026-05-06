@@ -245,7 +245,7 @@ Most application code in Aver stays first-order and explicit. Use function param
 Aver has no dedicated `Set` type. The idiomatic way to express a set is `Map<T, Unit>` — a map whose values carry no information. All `Map.*` operations work on sets:
 
 ```aver
-seen: Map<String, Unit> = Map.empty()
+seen: Map<String, Unit> = {}
 seen2 = Map.set(seen, "alice", Unit)
 Map.has(seen2, "alice")   // true
 Map.len(seen2)            // 1

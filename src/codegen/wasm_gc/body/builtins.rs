@@ -387,9 +387,9 @@ pub(super) fn emit_dotted_builtin(
             emit_option_to_result(func, &args[0], &args[1], slots, ctx)
         }
         // Map<K, V> — dispatch to the per-instantiation helper. The
-        // canonical comes from inferring the type of the map argument
-        // (or the surrounding context for Map.empty).
-        "Map.empty" => emit_map_empty_call(func, args, slots, ctx),
+        // canonical comes from inferring the type of the map argument.
+        // Empty map literals (`{}`) flow through `emit_map_literal`
+        // — there is no `Map.empty()` builtin.
         "Map.set" | "Map.get" | "Map.len" | "Map.has" | "Map.keys" | "Map.values"
         | "Map.remove" | "Map.entries" => emit_map_kv_call(func, method, args, slots, ctx),
         "Map.fromList" if args.len() == 1 => emit_map_from_list_call(func, &args[0], slots, ctx),
@@ -444,11 +444,6 @@ pub(super) fn emit_dotted_builtin(
     }
 }
 
-/// `Map.empty()` → `call $map_empty_KV`. With a single registered
-/// instantiation the canonical is unambiguous; with several, the type
-/// must be deducible from the surrounding context (which today only
-/// works when one instantiation exists — generalising would mean
-/// threading expected-type through expression emission).
 /// Inline lowering of `Args.get()` (no args, returns `List<String>`).
 /// Host imports are `args_len(): i64` and `args_get(i: i64): String`;
 /// no `args_get_all`. Walks `i = len-1 .. 0` cons-building the list so
@@ -534,44 +529,6 @@ pub(super) fn emit_args_get_inline(
 
     // result on stack: acc
     func.instruction(&Instruction::LocalGet(acc_slot));
-    Ok(())
-}
-
-pub(super) fn emit_map_empty_call(
-    func: &mut Function,
-    args: &[Spanned<Expr>],
-    _slots: &SlotTable,
-    ctx: &EmitCtx<'_>,
-) -> Result<(), WasmGcError> {
-    if !args.is_empty() {
-        return Err(WasmGcError::Validation(format!(
-            "Map.empty expects 0 args, got {}",
-            args.len()
-        )));
-    }
-    let canonical = if ctx.registry.map_order.len() == 1 {
-        ctx.registry.map_order[0].clone()
-    } else {
-        // Multi-Map module — disambiguate by checking the enclosing
-        // fn's return type. Common case: `fn build() -> Map<K, V>`
-        // wraps a `Map.set(Map.empty(), ...)` chain; the empty call
-        // inherits its slot from the declared return type.
-        let ret_canonical = super::super::types::normalize_compound(ctx.return_type);
-        if ctx.registry.map_slots(&ret_canonical).is_some() {
-            ret_canonical
-        } else {
-            return Err(WasmGcError::Unimplemented(
-                "Map.empty across multiple Map<K,V> instantiations needs context-driven type inference",
-            ));
-        }
-    };
-    let helpers = ctx
-        .fn_map
-        .map_helpers_lookup(&canonical)
-        .ok_or(WasmGcError::Validation(format!(
-            "Map.empty: helpers missing for `{canonical}`"
-        )))?;
-    func.instruction(&Instruction::Call(helpers.empty));
     Ok(())
 }
 

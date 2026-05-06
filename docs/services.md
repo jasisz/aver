@@ -134,7 +134,7 @@ Source: `src/types/map.rs`
 
 | Function | Signature | Notes |
 |---|---|---|
-| `Map.empty` | `() -> Map<K, V>` | |
+| `{}` (literal) | — | The empty map; type from context (annotation or expected type). No `Map.empty()` builtin since 0.17 — symmetric with `[]` for List. |
 | `Map.fromList` | `List<(K, V)> -> Map<K, V>` | Keys must be hashable (Int, Float, String, Bool) |
 | `Map.set` | `(Map<K, V>, K, V) -> Map<K, V>` | Returns new map with key set |
 | `Map.get` | `(Map<K, V>, K) -> Option<V>` | |

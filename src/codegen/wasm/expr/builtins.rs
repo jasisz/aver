@@ -127,10 +127,6 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions
                     .push(Instruction::Call(self.rt.f64_to_str_obj));
             }
-            "Map.empty" if args.is_empty() => {
-                // Empty map = empty association list = null ptr
-                self.instructions.push(Instruction::I32Const(0));
-            }
             "Map.get" if args.len() == 2 => {
                 // args on stack: [map(i32), key(?)]
                 // ABI: rt_map_get(map: i32, key: i64, kind: i32) -> i32

@@ -555,7 +555,6 @@ impl TypeChecker {
         let v_var = || Type::Var("V".to_string());
         let map_kv = || Type::Map(Box::new(k_var()), Box::new(v_var()));
         let map_sigs: &[(&str, &[Type], Type, &[&str])] = &[
-            ("Map.empty", &[], map_kv(), &[]),
             ("Map.set", &[map_kv(), k_var(), v_var()], map_kv(), &[]),
             (
                 "Map.get",

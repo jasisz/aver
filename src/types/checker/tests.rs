@@ -309,7 +309,7 @@ record AppCtx
     config: String
 
 fn handler(ctx: AppCtx, req: HttpRequest) -> HttpResponse
-    HttpResponse(status = 200, body = "ok", headers = Map.empty())
+    HttpResponse(status = 200, body = "ok", headers = {})
 
 fn main() -> Unit
     ! [HttpServer.listenWith]
@@ -333,7 +333,7 @@ record AppCtx
     config: String
 
 fn handler(ctx: AppCtx, req: HttpRequest) -> HttpResponse
-    HttpResponse(status = 200, body = ctx.config, headers = Map.empty())
+    HttpResponse(status = 200, body = ctx.config, headers = {})
 
 fn main(ctx: AppCtx) -> Unit
     ! [HttpServer.listenWith]

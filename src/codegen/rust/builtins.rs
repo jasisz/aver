@@ -662,7 +662,6 @@ fn emit_builtin_call_inner(
             ))
         }
         // ---- Map ----
-        "Map.empty" => Some("HashMap::new()".to_string()),
         "Map.fromList" => {
             let list = clone_arg(&args[0], ctx, ectx);
             Some(format!(

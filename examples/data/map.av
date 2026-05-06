@@ -6,7 +6,7 @@ module MapExample
 
 fn emptyCounts() -> Map<String, Int>
     ? "Creates an empty word-count map."
-    Map.empty()
+    {}
 
 fn incCount(counts: Map<String, Int>, word: String) -> Map<String, Int>
     ? "Increments the counter for one word."
@@ -16,16 +16,16 @@ fn incCount(counts: Map<String, Int>, word: String) -> Map<String, Int>
         Option.None    -> Map.set(counts, word, 1)
 
 verify incCount
-    incCount(Map.empty(), "a") => {"a" => 1}
+    incCount({}, "a") => {"a" => 1}
     incCount({"a" => 1}, "a") => {"a" => 2}
 
 verify incCount law keyPresent
-    given counts: Map<String, Int> = [Map.empty(), {"a" => 1}, {"x" => 2, "y" => 4}]
+    given counts: Map<String, Int> = [{}, {"a" => 1}, {"x" => 2, "y" => 4}]
     given word: String = ["a", "z", "new"]
     Map.has(incCount(counts, word), word) => true
 
 verify incCount law trackedCountStepsByOne
-    given counts: Map<String, Int> = [Map.empty(), {"a" => 1}, {"a" => 5, "x" => 2}]
+    given counts: Map<String, Int> = [{}, {"a" => 1}, {"a" => 5, "x" => 2}]
     given word: String = ["a", "new"]
     Option.withDefault(Map.get(incCount(counts, word), word), 0) => Option.withDefault(Map.get(counts, word), 0) + 1
 
@@ -36,7 +36,7 @@ fn countWords(words: List<String>) -> Map<String, Int>
         [word, ..rest] -> incCount(countWords(rest), word)
 
 verify countWords
-    countWords([])                => Map.empty()
+    countWords([])                => {}
     countWords(["a", "b", "a"])  => {"a" => 2, "b" => 1}
 
 verify countWords law presenceMatchesContains

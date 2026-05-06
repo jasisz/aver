@@ -146,7 +146,6 @@ vm_builtins! {
     ListContains => "List.contains",
     ListZip => "List.zip",
 
-    MapEmpty => "Map.empty",
     MapSet => "Map.set",
     MapGet => "Map.get",
     MapRemove => "Map.remove",
@@ -224,7 +223,6 @@ impl VmBuiltin {
             | Self::StringEndsWith
             | Self::StringContains
             | Self::ListContains
-            | Self::MapEmpty
             | Self::MapLen
             | Self::MapHas
             | Self::VectorLen
@@ -472,8 +470,7 @@ impl VmBuiltin {
             | Self::ListContains
             | Self::ListZip => list::call_nv(self.name(), args, arena),
 
-            Self::MapEmpty
-            | Self::MapSet
+            Self::MapSet
             | Self::MapGet
             | Self::MapRemove
             | Self::MapHas

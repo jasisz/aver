@@ -201,9 +201,6 @@ impl TypeChecker {
             Expr::FnCall(callee, args) => {
                 let key = Self::callee_key(&callee.node)?;
                 match (key.as_str(), args.len(), expected) {
-                    // Map.empty() — no args, expected must be Map<K, V>.
-                    ("Map.empty", 0, Type::Map(_, _)) => Some(expected.clone()),
-
                     // Map.fromList(xs) — expected Map<K, V> gives xs the
                     // concrete List<(K, V)> element type.
                     ("Map.fromList", 1, Type::Map(k, v)) => {

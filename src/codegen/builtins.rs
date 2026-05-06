@@ -102,7 +102,6 @@ pub(crate) enum Builtin {
     VectorToList,
 
     // --- Map ---
-    MapEmpty,
     MapGet,
     MapSet,
     MapHas,
@@ -217,7 +216,6 @@ pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
         "Vector.toList" => Builtin::VectorToList,
 
         // Map
-        "Map.empty" => Builtin::MapEmpty,
         "Map.get" => Builtin::MapGet,
         "Map.set" => Builtin::MapSet,
         "Map.has" => Builtin::MapHas,

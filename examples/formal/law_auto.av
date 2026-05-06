@@ -84,7 +84,7 @@ fn incCount(counts: Map<String, Int>, word: String) -> Map<String, Int>
         Option.None -> Map.set(counts, word, 1)
 
 verify incCount law keyPresent
-    given counts: Map<String, Int> = [Map.empty(), {"a" => 1}, {"x" => 2, "y" => 4}]
+    given counts: Map<String, Int> = [{}, {"a" => 1}, {"x" => 2, "y" => 4}]
     given word: String = ["a", "z", "new"]
     Map.has(incCount(counts, word), word) => true
 

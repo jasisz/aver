@@ -468,7 +468,6 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
         VectorToList => a[0].clone(),
 
         // Map
-        MapEmpty => "map[]".to_string(),
         MapGet => format!("MapGet({}, {})", a[0], a[1]),
         MapSet => format!("{}[{} := {}]", a[0], a[1], a[2]),
         MapHas => format!("({} in {})", a[1], a[0]),
