@@ -346,7 +346,16 @@ impl Lexer {
                 });
             }
             if *self.indent_stack.last().unwrap() != indent {
-                return Err(self.error(format!("Invalid indentation level: {}", indent)));
+                return Err(self.error(format!(
+                    "Invalid indentation level: {indent}. Aver uses \
+                     significant indentation with one consistent step per \
+                     block — every line in the same block dedents back to \
+                     a previously-opened indent level. Common cause: a \
+                     wrapped `fn` signature or a multi-line argument list \
+                     (Aver doesn't support either — keep each declaration \
+                     on a single line, or split the body into a named \
+                     helper function)."
+                )));
             }
         }
 
