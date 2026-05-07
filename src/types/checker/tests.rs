@@ -134,7 +134,7 @@ fn tuple_union_patterns_can_be_exhaustive_without_single_total_arm() {
     let f = FnDef {
         name: "f".to_string(),
         line: 1,
-        params: vec![("t".to_string(), "(Bool, Bool)".to_string())],
+        params: vec![("t".to_string(), "Tuple<Bool, Bool>".to_string())],
         return_type: "Int".to_string(),
         effects: vec![],
         desc: None,
@@ -179,7 +179,7 @@ fn nested_tuple_union_still_reports_missing_case() {
     let f = FnDef {
         name: "f".to_string(),
         line: 1,
-        params: vec![("t".to_string(), "(Bool, Bool)".to_string())],
+        params: vec![("t".to_string(), "Tuple<Bool, Bool>".to_string())],
         return_type: "Int".to_string(),
         effects: vec![],
         desc: None,

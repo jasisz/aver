@@ -7,7 +7,7 @@
 ///   Map.has(map, key)           → Bool
 ///   Map.keys(map)               → List<K>
 ///   Map.values(map)             → List<V>
-///   Map.entries(map)            → List<(K, V)>
+///   Map.entries(map)            → List<Tuple<K, V>>
 ///   Map.len(map)                → Int
 ///   Map.fromList(pairs)         → Map<K, V> where each pair is (key, value)
 ///

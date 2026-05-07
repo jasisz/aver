@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn warns_on_map_fromlist_of_builder() {
-        let body = "fn build(n: Int, acc: List<(String, Int)>) -> List<(String, Int)>\n    match n <= 0\n        true  -> List.reverse(acc)\n        false -> build(n - 1, List.prepend((\"k\", n), acc))\n\nfn main() -> Map<String, Int>\n    Map.fromList(build(10, []))\n";
+        let body = "fn build(n: Int, acc: List<Tuple<String, Int>>) -> List<Tuple<String, Int>>\n    match n <= 0\n        true  -> List.reverse(acc)\n        false -> build(n - 1, List.prepend((\"k\", n), acc))\n\nfn main() -> Map<String, Int>\n    Map.fromList(build(10, []))\n";
         let src = format!("{PURE_HEADER}{body}");
         let items = parse_and_lower(&src);
         let warnings = collect_traversal_warnings_in(&items, None);

@@ -740,7 +740,7 @@ mod tests {
         let src = "module M\n\
              \x20   intent = \"t\"\n\
              \n\
-             fn pair() -> (Int, Int)\n\
+             fn pair() -> Tuple<Int, Int>\n\
              \x20   ! [Random.int]\n\
              \x20   (Random.int(1, 6), Random.int(1, 6))!\n\
              verify pair\n\

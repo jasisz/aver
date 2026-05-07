@@ -406,9 +406,12 @@ mod tests {
             Type::Map(Box::new(Type::Str), Box::new(Type::Int))
         );
         assert_eq!(
-            parse_type_str("(Int, String)"),
+            parse_type_str("Tuple<Int, String>"),
             Type::Tuple(vec![Type::Int, Type::Str])
         );
+        // Paren-tuple types are no longer valid — `Type::Invalid` is
+        // the lenient parser's recovery shape for unknown forms.
+        assert_eq!(parse_type_str("(Int, String)"), Type::Invalid);
     }
 
     #[test]
@@ -510,9 +513,11 @@ mod tests {
             Type::Map(Box::new(Type::Str), Box::new(Type::Int))
         );
         assert_eq!(
-            parse_type_str_strict("(Int, String)").unwrap(),
+            parse_type_str_strict("Tuple<Int, String>").unwrap(),
             Type::Tuple(vec![Type::Int, Type::Str])
         );
+        // Paren-tuple types are an error in the strict parser.
+        assert!(parse_type_str_strict("(Int, String)").is_err());
     }
 
     #[test]

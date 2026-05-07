@@ -1310,7 +1310,7 @@ fn left() -> Result<Int, Int>
 fn right() -> Result<Int, Int>
     Result.Ok(2)
 
-fn main() -> Result<(Int, Int), Int>
+fn main() -> Result<Tuple<Int, Int>, Int>
     data = (left(), right())?!
     Result.Ok(data)
 "#,
@@ -1339,7 +1339,7 @@ fn left() -> Result<Int, String>
 fn right() -> Result<Int, String>
     Result.Ok(2)
 
-fn main() -> Result<(Int, Int), String>
+fn main() -> Result<Tuple<Int, Int>, String>
     data = (left(), right())?!
     Result.Ok(data)
 "#,
@@ -1419,7 +1419,7 @@ fn left() -> Result<Int, String>
 fn right() -> Result<Int, String>
     Result.Ok(2)
 
-fn main() -> Result<(Int, Int), String>
+fn main() -> Result<Tuple<Int, Int>, String>
     data = (left(), right())?!
     Result.Ok(data)
 "#,

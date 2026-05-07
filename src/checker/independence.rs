@@ -386,7 +386,7 @@ fn right() -> Unit
     ! [Console.error]
     Console.error("b")
 
-fn demo() -> (Unit, Unit)
+fn demo() -> Tuple<Unit, Unit>
     ! [Console.print, Console.error]
     (left(), right())!
 "#,
@@ -425,7 +425,7 @@ fn right() -> Option<String>
     ! [Env.get]
     Env.get("USER")
 
-fn demo() -> (Bool, Option<String>)
+fn demo() -> Tuple<Bool, Option<String>>
     ! [Disk.exists, Env.get]
     (left(), right())!
 "#,
@@ -459,7 +459,7 @@ fn right() -> Unit
     ! [Console.warn]
     Console.warn("b")
 
-fn demo() -> (Unit, Unit)
+fn demo() -> Tuple<Unit, Unit>
     ! [Console]
     (left(), right())!
 "#,
@@ -491,7 +491,7 @@ fn right() -> Unit
     ! [Terminal.flush]
     Terminal.flush()
 
-fn demo() -> (Unit, Unit)
+fn demo() -> Tuple<Unit, Unit>
     ! [Console.print, Terminal.flush]
     (left(), right())!
 "#,
