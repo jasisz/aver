@@ -255,7 +255,7 @@ def regenerate_playground(dry_run: bool) -> None:
 def verify(dry_run: bool) -> None:
     print("Running verification...")
     if dry_run:
-        print("  [dry-run] would run: cargo fmt --check, clippy, test, bench scenarios")
+        print("  [dry-run] would run: cargo fmt --check, clippy, test, bench scenarios, edge compile")
         return
 
     run(["cargo", "fmt"])
@@ -270,9 +270,39 @@ def verify(dry_run: bool) -> None:
     # bytecode dispatch). The release script doesn't gate on numbers (the
     # CI gate is 0.15.2 work) but the run must succeed; any scenario that
     # errors out blocks the release.
-    run(["cargo", "build", "--release", "--bin", "aver"])
-    run([str(REPO_ROOT / "target" / "release" / "aver"), "bench",
-         str(REPO_ROOT / "bench" / "scenarios"), "--json"])
+    run(["cargo", "build", "--release", "--bin", "aver", "--features", "wasm"])
+    aver_bin = REPO_ROOT / "target" / "release" / "aver"
+    run([str(aver_bin), "bench", str(REPO_ROOT / "bench" / "scenarios"), "--json"])
+
+    # `--target wasm-gc --handler X` (and `--preset cloudflare`) smoke.
+    # The 0.17.2 release surfaced three compounding wasm-gc handler-mode
+    # bugs that lived from 0.16 onward because the path was never gated
+    # on a release. Compiling `tools/edge/app.av` with `--preset
+    # cloudflare` exercises every codepath the live edge demo touches —
+    # handler synthesis, builtin record dedup, data-count snapshot,
+    # caller_fn collector — and `wasm-tools validate` proves the bytes
+    # pass an external validator (not just our internal one).
+    print("  edge: aver compile tools/edge/app.av --preset cloudflare …")
+    edge_out = REPO_ROOT / "target" / "release-edge-smoke"
+    if edge_out.exists():
+        shutil.rmtree(edge_out)
+    edge_out.mkdir(parents=True, exist_ok=True)
+    run([
+        str(aver_bin), "compile",
+        str(REPO_ROOT / "tools" / "edge" / "app.av"),
+        "--preset", "cloudflare",
+        "--handler", "handler",
+        "--module-root", str(REPO_ROOT / "tools" / "edge"),
+        "-o", str(edge_out),
+    ])
+    # External validation — wasmtime's wasm-tools is the same validator
+    # the workerd / wasmtime CLI use; if this passes the bytes will
+    # instantiate cleanly anywhere wasm-gc + tail-calls are supported.
+    if shutil.which("wasm-tools") is not None:
+        run(["wasm-tools", "validate", "--features", "all", str(edge_out / "app.wasm")])
+    else:
+        print("  edge: wasm-tools not on PATH — skipping external validation")
+    shutil.rmtree(edge_out)
 
 
 def publish(new_versions: dict[str, str], old_versions: dict[str, str], dry_run: bool) -> None:
