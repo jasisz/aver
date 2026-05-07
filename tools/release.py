@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import os
 import re
 import shutil
 import subprocess
@@ -255,7 +256,7 @@ def regenerate_playground(dry_run: bool) -> None:
 def verify(dry_run: bool) -> None:
     print("Running verification...")
     if dry_run:
-        print("  [dry-run] would run: cargo fmt --check, clippy, test, bench scenarios")
+        print("  [dry-run] would run: cargo fmt --check, clippy, test, bench scenarios, edge compile")
         return
 
     run(["cargo", "fmt"])
@@ -270,9 +271,39 @@ def verify(dry_run: bool) -> None:
     # bytecode dispatch). The release script doesn't gate on numbers (the
     # CI gate is 0.15.2 work) but the run must succeed; any scenario that
     # errors out blocks the release.
-    run(["cargo", "build", "--release", "--bin", "aver"])
-    run([str(REPO_ROOT / "target" / "release" / "aver"), "bench",
-         str(REPO_ROOT / "bench" / "scenarios"), "--json"])
+    run(["cargo", "build", "--release", "--bin", "aver", "--features", "wasm"])
+    aver_bin = REPO_ROOT / "target" / "release" / "aver"
+    run([str(aver_bin), "bench", str(REPO_ROOT / "bench" / "scenarios"), "--json"])
+
+    # `--target wasm-gc --handler X` (and `--preset cloudflare`) smoke.
+    # The 0.17.2 release surfaced three compounding wasm-gc handler-mode
+    # bugs that lived from 0.16 onward because the path was never gated
+    # on a release. Compiling `tools/edge/app.av` with `--preset
+    # cloudflare` exercises every codepath the live edge demo touches —
+    # handler synthesis, builtin record dedup, data-count snapshot,
+    # caller_fn collector — and `wasm-tools validate` proves the bytes
+    # pass an external validator (not just our internal one).
+    print("  edge: aver compile tools/edge/app.av --preset cloudflare …")
+    edge_out = REPO_ROOT / "target" / "release-edge-smoke"
+    if edge_out.exists():
+        shutil.rmtree(edge_out)
+    edge_out.mkdir(parents=True, exist_ok=True)
+    run([
+        str(aver_bin), "compile",
+        str(REPO_ROOT / "tools" / "edge" / "app.av"),
+        "--preset", "cloudflare",
+        "--handler", "handler",
+        "--module-root", str(REPO_ROOT / "tools" / "edge"),
+        "-o", str(edge_out),
+    ])
+    # External validation — wasmtime's wasm-tools is the same validator
+    # the workerd / wasmtime CLI use; if this passes the bytes will
+    # instantiate cleanly anywhere wasm-gc + tail-calls are supported.
+    if shutil.which("wasm-tools") is not None:
+        run(["wasm-tools", "validate", "--features", "all", str(edge_out / "app.wasm")])
+    else:
+        print("  edge: wasm-tools not on PATH — skipping external validation")
+    shutil.rmtree(edge_out)
 
 
 def publish(new_versions: dict[str, str], old_versions: dict[str, str], dry_run: bool) -> None:
@@ -365,6 +396,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-publish", action="store_true", help="Skip crates.io publish")
     parser.add_argument("--skip-playground", action="store_true", help="Skip playground WASM rebuild")
     parser.add_argument("--skip-self-host", action="store_true", help="Skip self-host regeneration")
+    parser.add_argument(
+        "--deploy-edge",
+        action="store_true",
+        help="After publish, rebuild tools/edge/dist with --preset cloudflare, "
+        "wrangler deploy, and curl-smoke /, /api, /fractal. Requires "
+        "wrangler on PATH (or npx + node>=22) and an authenticated "
+        "Cloudflare account.",
+    )
     return parser.parse_args()
 
 
@@ -440,8 +479,72 @@ def main() -> int:
     git_commit_tag_push(new_version, dry_run)
     print()
 
+    # 8. Optional: rebuild + deploy `tools/edge` (Cloudflare Workers
+    #    Mandelbrot demo). Live deploy of a public endpoint, so opt-in.
+    if args.deploy_edge:
+        deploy_edge(dry_run)
+        print()
+
     print(f"{'[dry-run] ' if dry_run else ''}Done! Released {new_version}")
     return 0
+
+
+def deploy_edge(dry_run: bool) -> None:
+    """Rebuild `tools/edge/dist/` from `tools/edge/app.av` with
+    `--preset cloudflare`, `wrangler deploy`, then smoke-test the
+    landing / `/api` / `/fractal` endpoints. Mismatched ABI between
+    the wasm-gc emit and the worker.js stubs would silently break a
+    deploy on prior releases — this step turns that into a
+    fail-fast gate."""
+    import urllib.request
+
+    print("Deploying tools/edge to Cloudflare...")
+    if dry_run:
+        print("  [dry-run] would run: aver compile --preset cloudflare, wrangler deploy, curl smoke")
+        return
+
+    aver_bin = REPO_ROOT / "target" / "release" / "aver"
+    edge_dir = REPO_ROOT / "tools" / "edge"
+    dist_dir = edge_dir / "dist"
+
+    print("  rebuild dist/ from app.av...")
+    run([
+        str(aver_bin), "compile",
+        str(edge_dir / "app.av"),
+        "--preset", "cloudflare",
+        "--handler", "handler",
+        "--module-root", str(edge_dir),
+        "-o", str(dist_dir),
+    ])
+
+    print("  wrangler deploy...")
+    # wrangler 4.x needs Node >=22; if the default node is too old, prefer
+    # `~/.nvm/versions/node/v22.*/bin` if present. Fall back to PATH `wrangler`.
+    env_path = os.environ.get("PATH", "")
+    nvm_dir = Path.home() / ".nvm" / "versions" / "node"
+    if nvm_dir.exists():
+        v22 = sorted([p for p in nvm_dir.iterdir() if p.name.startswith("v22.")])
+        if v22:
+            env_path = f"{v22[-1] / 'bin'}:{env_path}"
+    deploy_env = {**os.environ, "PATH": env_path}
+    subprocess.run(
+        ["npx", "wrangler@latest", "deploy"],
+        cwd=dist_dir, env=deploy_env, check=True,
+    )
+
+    # Smoke. Endpoint URL comes from wrangler's deploy output, but for the
+    # canonical demo it's the production hostname workers.dev assigns.
+    # Hard-coded here matches what the worker.js / wrangler.toml shipped
+    # in `tools/edge/dist/` declare.
+    base = "https://aver-edge-gc-demo.jasisz.workers.dev"
+    for path in ("/", "/api", "/fractal"):
+        url = base + path
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            if resp.status != 200:
+                raise SystemExit(
+                    f"edge smoke: {url} returned HTTP {resp.status} (expected 200)"
+                )
+            print(f"  {url} HTTP {resp.status} ({resp.headers.get('content-length', '?')} bytes)")
 
 
 if __name__ == "__main__":

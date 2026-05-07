@@ -155,8 +155,11 @@ impl VM {
                     profile.record_builtin_call(builtin.name());
                 }
                 if builtin.is_http_server() {
-                    self.runtime
-                        .ensure_builtin_effects_allowed(&self.code.symbols, builtin)?;
+                    self.runtime.ensure_builtin_effects_allowed(
+                        &self.code.symbols,
+                        builtin,
+                        symbol_id,
+                    )?;
                     return self.dispatch_http_server(builtin, args);
                 }
                 // Oracle v1: sync caller fn_id so the trace-collector's
@@ -176,6 +179,7 @@ impl VM {
                 return self.runtime.invoke_builtin(
                     &self.code.symbols,
                     builtin,
+                    symbol_id,
                     args,
                     &mut self.arena,
                 );

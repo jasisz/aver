@@ -644,6 +644,19 @@ pub(super) fn emit_module(
     // host reads the caller_fn name table via `__caller_fn_count`
     // + `__caller_fn_name(i)` exports at instantiation instead.)
 
+    // Pre-register the synthesised `aver_http_handle` wrapper as a
+    // caller_fn entry — `emit_handler_wrapper` (much later in the
+    // code section) pushes this idx as the trailing `caller_fn_idx`
+    // arg for every Request.* / Response.* effect call. Has to land
+    // BEFORE the pre-pass snapshot below, otherwise data section ends
+    // up with one more passive segment than the data count section
+    // declared, and the validator rejects the module.
+    let wrapper_caller_fn_idx: Option<u32> = handler_wrapper.as_ref().map(|_| {
+        caller_fn_collector
+            .borrow_mut()
+            .register("aver_http_handle")
+    });
+
     // Pre-pass over user fn bodies — populates `caller_fn_collector`
     // with every fn name that emits caller_fn at a call site. Needed
     // before data count + data section emit because the count of
@@ -850,10 +863,19 @@ pub(super) fn emit_module(
 
     if let Some(hw) = &handler_wrapper {
         let user_handler_wasm_idx = import_count + 1 + (hw.user_handler_idx as u32);
+        // Reserve a caller_fn idx for the synthesised wrapper itself.
+        // `emit_handler_wrapper` pushes this constant before every
+        // host-effect `Call` to satisfy the ABI's trailing
+        // `caller_fn_idx: i32` param (added in 0.16). The idx was
+        // pre-registered above the pre-pass so the data count section
+        // already accounts for the segment.
+        let wrapper_caller_fn_idx = wrapper_caller_fn_idx
+            .expect("handler_wrapper present implies wrapper_caller_fn_idx pre-registered");
         codes.function(&emit_handler_wrapper(
             &registry,
             &fn_map,
             user_handler_wasm_idx,
+            wrapper_caller_fn_idx,
         )?);
         codes.function(&emit_list_string_cons(&registry)?);
         let _ = hw.list_cons_type; // type idx already consumed by emit_function_section
@@ -1312,8 +1334,27 @@ fn emit_user_types(
 
     // Built-in records (HttpRequest / HttpResponse / Tcp.Connection /
     // Terminal.Size) — registered with their own deferred idx.
+    //
+    // Skip names the user already redeclared with `record <Name>` —
+    // the items pass above pushed their entry with the same registry
+    // idx, so a second push from the builtin pass would duplicate the
+    // struct in the rec group and slide every subsequent type index
+    // up by one. Validator then complains "type index N is not a
+    // function type" because effect imports / fn types end up
+    // referring to the duplicated user-record slots instead of the
+    // function-type slots they reserved.
+    let user_record_names: std::collections::HashSet<&str> = items
+        .iter()
+        .filter_map(|item| match item {
+            TopLevel::TypeDef(TypeDef::Product { name, .. }) => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
     for record in crate::codegen::builtin_records::BUILTIN_RECORDS {
         if !registry.records.contains_key(record.aver_name) {
+            continue;
+        }
+        if user_record_names.contains(record.aver_name) {
             continue;
         }
         let fields = registry
@@ -2749,6 +2790,7 @@ fn emit_handler_wrapper(
     registry: &TypeRegistry,
     fn_map: &super::body::FnMap,
     user_handler_wasm_idx: u32,
+    caller_fn_idx: u32,
 ) -> Result<wasm_encoder::Function, WasmGcError> {
     use wasm_encoder::{BlockType, Function, HeapType, Instruction, RefType};
 
@@ -2889,19 +2931,30 @@ fn emit_handler_wrapper(
         (1, list_ref),
     ]);
 
-    // Build HttpRequest from host effects.
+    // Build HttpRequest from host effects. Each effect import has a
+    // trailing `caller_fn_idx: i32` per the wasm-gc ABI (every host
+    // import gained this in 0.16 for record/replay attribution); push
+    // the wrapper's reserved idx as that arg.
+    let push_caller = |f: &mut Function| {
+        f.instruction(&Instruction::I32Const(caller_fn_idx as i32));
+    };
+    push_caller(&mut f);
     f.instruction(&Instruction::Call(request_method_fn));
     f.instruction(&Instruction::RefCastNullable(HeapType::Concrete(s_idx)));
     f.instruction(&Instruction::LocalSet(0));
+    push_caller(&mut f);
     f.instruction(&Instruction::Call(request_url_fn));
     f.instruction(&Instruction::RefCastNullable(HeapType::Concrete(s_idx)));
     f.instruction(&Instruction::LocalSet(1));
+    push_caller(&mut f);
     f.instruction(&Instruction::Call(request_query_fn));
     f.instruction(&Instruction::RefCastNullable(HeapType::Concrete(s_idx)));
     f.instruction(&Instruction::LocalSet(2));
+    push_caller(&mut f);
     f.instruction(&Instruction::Call(request_body_fn));
     f.instruction(&Instruction::RefCastNullable(HeapType::Concrete(s_idx)));
     f.instruction(&Instruction::LocalSet(3));
+    push_caller(&mut f);
     f.instruction(&Instruction::Call(request_headers_load_fn));
     f.instruction(&Instruction::LocalSet(4));
 
@@ -2995,13 +3048,14 @@ fn emit_handler_wrapper(
     f.instruction(&Instruction::LocalGet(15));
     f.instruction(&Instruction::RefIsNull);
     f.instruction(&Instruction::BrIf(1));
-    // response_set_header(key, list.head)
+    // response_set_header(key, list.head, caller_fn_idx)
     f.instruction(&Instruction::LocalGet(14));
     f.instruction(&Instruction::LocalGet(15));
     f.instruction(&Instruction::StructGet {
         struct_type_index: list_idx,
         field_index: 0,
     });
+    push_caller(&mut f);
     f.instruction(&Instruction::Call(response_set_header_fn));
     // cur = cur.tail
     f.instruction(&Instruction::LocalGet(15));
@@ -3024,9 +3078,10 @@ fn emit_handler_wrapper(
     f.instruction(&Instruction::End); // outer loop
     f.instruction(&Instruction::End); // outer block
 
-    // response_text(status, body)
+    // response_text(status, body, caller_fn_idx)
     f.instruction(&Instruction::LocalGet(7));
     f.instruction(&Instruction::LocalGet(8));
+    push_caller(&mut f);
     f.instruction(&Instruction::Call(response_text_fn));
 
     f.instruction(&Instruction::End);

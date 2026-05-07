@@ -939,6 +939,10 @@ impl<'a> FnCompiler<'a> {
         self.code.extend_from_slice(&val.to_be_bytes());
     }
 
+    fn emit_i64(&mut self, val: i64) {
+        self.code.extend_from_slice(&val.to_be_bytes());
+    }
+
     fn add_constant(&mut self, val: NanValue) -> u16 {
         for (i, c) in self.constants.iter().enumerate() {
             if c.bits() == val.bits() {

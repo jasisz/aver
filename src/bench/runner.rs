@@ -2,10 +2,15 @@
 //! iterations timing each. Three targets:
 //!
 //! - `vm` — in-process `vm::compile_program_with_modules` + `VM::run`.
-//! - `wasm-local` — `aver compile --target wasm` produces a wasi-bundled
-//!   `.wasm`; wasmtime Engine + Module are built once, each iteration
-//!   creates a fresh Store + Instance and invokes `_start`. Mirrors
-//!   the `cargo bench` shape so VM/WASM numbers are directly comparable.
+//! - `wasm-local` — legacy `aver compile --target wasm` (NaN-boxed
+//!   wasm32 + wasip1 bridge); wasmtime Engine + Module built once,
+//!   each iteration creates a fresh Store + Instance and invokes
+//!   `_start`. Mirrors the `cargo bench` shape so VM/WASM numbers
+//!   are directly comparable.
+//! - `wasm-gc` — `aver compile --target wasm-gc` (engine GC + tail
+//!   calls, no NaN-boxing); same in-process wasmtime harness with
+//!   `wasm_gc` / `wasm_tail_call` / `wasm_function_references`
+//!   enabled. Console / Time imports get bench-mode no-op stubs.
 //! - `rust` — `aver compile --target rust` + `cargo build --release`
 //!   produces a native binary; each iteration spawns it once. Includes
 //!   process spawn overhead (~1-2 ms on macOS) — for programs that
@@ -533,16 +538,17 @@ fn run_wasm_gc(manifest: &Manifest) -> Result<BenchReport, RunError> {
         // the String ref. Real hosts (browser, workerd, wasmtime+wasi)
         // wire these to actual stdout / stderr.
         let mut linker = wasmtime::Linker::new(engine);
-        // Match the wasm import shape from our codegen: console_print
-        // takes a `(ref null $string)` (= `(ref null (array i8))`).
-        // The most permissive wasmtime type is `(ref null any)` —
-        // accepts any GC ref including our array. Bench-mode no-op.
+        // Match the wasm-gc import shape from our codegen: each
+        // Console method takes `(ref null $string, i32 caller_fn_idx)`
+        // — the i32 was added in 0.16 for per-fn replay attribution.
+        // The most permissive wasmtime type for the string ref is
+        // `(ref null any)`. Bench-mode stubs drop both args.
         let console_print_ty = wasmtime::FuncType::new(
             engine,
-            std::iter::once(wasmtime::ValType::Ref(wasmtime::RefType::new(
-                true,
-                wasmtime::HeapType::Any,
-            ))),
+            [
+                wasmtime::ValType::Ref(wasmtime::RefType::new(true, wasmtime::HeapType::Any)),
+                wasmtime::ValType::I32,
+            ],
             std::iter::empty(),
         );
         linker
@@ -566,9 +572,11 @@ fn run_wasm_gc(manifest: &Manifest) -> Result<BenchReport, RunError> {
         // Time.unixMs — bench mode uses a fixed value to keep runs
         // deterministic; the production host wires this to the real
         // `Date.now()` / `clock_gettime` equivalent.
+        // `time_unix_ms(caller_fn_idx: i32) -> i64` — same per-fn idx
+        // tagging as `console_print`. Drop the arg, return 0.
         let time_unix_ms_ty = wasmtime::FuncType::new(
             engine,
-            std::iter::empty(),
+            std::iter::once(wasmtime::ValType::I32),
             std::iter::once(wasmtime::ValType::I64),
         );
         linker

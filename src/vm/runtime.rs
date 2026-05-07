@@ -366,6 +366,7 @@ impl VmRuntime {
         &mut self,
         symbols: &VmSymbolTable,
         builtin: VmBuiltin,
+        symbol_id: u32,
         args: &[NanValue],
         arena: &mut Arena,
         owned_mask: u8,
@@ -386,13 +387,14 @@ impl VmRuntime {
                 });
             }
         }
-        self.invoke_builtin(symbols, builtin, args, arena)
+        self.invoke_builtin(symbols, builtin, symbol_id, args, arena)
     }
 
     pub(super) fn invoke_builtin(
         &mut self,
         symbols: &VmSymbolTable,
         builtin: VmBuiltin,
+        symbol_id: u32,
         args: &[NanValue],
         arena: &mut Arena,
     ) -> Result<NanValue, VmError> {
@@ -400,13 +402,18 @@ impl VmRuntime {
             !builtin.is_http_server(),
             "HttpServer builtins require VM callback handling outside VmRuntime"
         );
-        self.ensure_builtin_effects_allowed(symbols, builtin)?;
+        self.ensure_builtin_effects_allowed(symbols, builtin, symbol_id)?;
         self.check_runtime_policy(builtin.name(), args, arena)?;
 
         let builtin_name = builtin.name();
+        // Direct `get(symbol_id)` instead of `find(name)` — the
+        // bytecode already encodes `symbol_id`, so the hash lookup
+        // by name is pure overhead. Profile shows the hashing path
+        // (`Hasher::write` + `BuildHasher::hash_one`) accounts for
+        // ~2.4% self-time on fractal_seahorse, all from the two
+        // `find` callsites in this fn + `ensure_builtin_effects_allowed`.
         let required_effects = symbols
-            .find(builtin_name)
-            .and_then(|symbol_id| symbols.get(symbol_id))
+            .get(symbol_id)
             .map(|info| info.required_effects.as_slice())
             .unwrap_or(&[]);
         let is_effectful = !required_effects.is_empty();
@@ -581,11 +588,11 @@ impl VmRuntime {
         &self,
         symbols: &VmSymbolTable,
         builtin: VmBuiltin,
+        symbol_id: u32,
     ) -> Result<(), VmError> {
         let builtin_name = builtin.name();
         let required_effects = symbols
-            .find(builtin_name)
-            .and_then(|symbol_id| symbols.get(symbol_id))
+            .get(symbol_id)
             .map(|info| info.required_effects.as_slice())
             .unwrap_or(&[]);
         self.ensure_effects_allowed(symbols, builtin_name, required_effects)

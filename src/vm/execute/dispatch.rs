@@ -44,6 +44,26 @@ macro_rules! read_u32 {
     }};
 }
 
+macro_rules! read_i64 {
+    ($code:expr, $ip:expr) => {{
+        let bytes: [u8; 8] = [
+            $code[$ip],
+            $code[$ip + 1],
+            $code[$ip + 2],
+            $code[$ip + 3],
+            $code[$ip + 4],
+            $code[$ip + 5],
+            $code[$ip + 6],
+            $code[$ip + 7],
+        ];
+        #[allow(unused_assignments)]
+        {
+            $ip += 8;
+        }
+        i64::from_be_bytes(bytes)
+    }};
+}
+
 impl VM {
     pub(super) fn execute_until(&mut self, caller_depth: usize) -> Result<NanValue, VmError> {
         let mut fn_id = self.frames.last().unwrap().fn_id;
@@ -53,13 +73,46 @@ impl VM {
         // Leaf call state: saved caller context for frameless calls.
         let mut leaf_return: Option<(u32, usize, usize)> = None; // (fn_id, ip, bp)
 
+        // Hoisted bytecode pointer for the current fn. Refreshed only at
+        // fn-changing opcodes (CALL_*, TAIL_CALL_*, RETURN, leaf call /
+        // leaf return) — not on every dispatch tick. The loop below
+        // rebuilds a `&[u8]` slice from `(code_ptr, code_len)` once per
+        // iter so existing `code[ip]` / `read_u16!(code, ip)` etc. reads
+        // unchanged.
+        //
+        // Safety: `self.code.functions[fn_id].code` is a `Vec<u8>` whose
+        // backing buffer never moves during `execute_until` — bytecode is
+        // built once at compile time and read-only at runtime. The raw
+        // pointer is reseated in lockstep with `fn_id` updates.
+        let (mut code_ptr, mut code_len) = {
+            let c = &self.code.functions[fn_id as usize].code;
+            (c.as_ptr(), c.len())
+        };
+
+        // Profile state is stable across one `execute_until` invocation —
+        // `start_profiling` flips it to `Some` before the call; nothing
+        // inside the loop turns it on or off. Cache the bool so the hot
+        // per-instruction path is one branch instead of an `Option::as_mut`
+        // null check + indirect store every tick.
+        let profile_active = self.profile.is_some();
+
+        // Local macro: refresh `(code_ptr, code_len)` from current `fn_id`.
+        // Used by every arm that mutates `fn_id`.
+        macro_rules! refresh_code {
+            () => {{
+                let c = &self.code.functions[fn_id as usize].code;
+                code_ptr = c.as_ptr();
+                code_len = c.len();
+            }};
+        }
+
         loop {
             // Cooperative cancellation: check every 256 opcodes to amortise cost.
             if ip & 0xFF == 0 && self.is_cancelled() {
                 return Err(VmError::runtime("cancelled by sibling branch"));
             }
 
-            let code = &self.code.functions[fn_id as usize].code;
+            let code: &[u8] = unsafe { std::slice::from_raw_parts(code_ptr, code_len) };
 
             // Save position for error reporting (cold-path lookup in line_table).
             self.error_fn_id = fn_id;
@@ -67,7 +120,7 @@ impl VM {
 
             let op = code[ip];
             ip += 1;
-            if let Some(profile) = self.profile.as_mut() {
+            if profile_active && let Some(profile) = self.profile.as_mut() {
                 profile.record_opcode(op);
             }
 
@@ -159,6 +212,48 @@ impl VM {
                     let r = self.arith_add(a, b)?;
                     self.stack.push(r);
                 }
+                ADD_INT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let r = a.as_int(&self.arena).wrapping_add(b.as_int(&self.arena));
+                    self.stack.push(NanValue::new_int(r, &mut self.arena));
+                }
+                SUB_INT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let r = a.as_int(&self.arena).wrapping_sub(b.as_int(&self.arena));
+                    self.stack.push(NanValue::new_int(r, &mut self.arena));
+                }
+                MUL_INT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let r = a.as_int(&self.arena).wrapping_mul(b.as_int(&self.arena));
+                    self.stack.push(NanValue::new_int(r, &mut self.arena));
+                }
+                ADD_FLOAT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    self.stack
+                        .push(NanValue::new_float(a.as_float() + b.as_float()));
+                }
+                SUB_FLOAT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    self.stack
+                        .push(NanValue::new_float(a.as_float() - b.as_float()));
+                }
+                MUL_FLOAT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    self.stack
+                        .push(NanValue::new_float(a.as_float() * b.as_float()));
+                }
+                DIV_FLOAT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    self.stack
+                        .push(NanValue::new_float(a.as_float() / b.as_float()));
+                }
                 SUB => {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
@@ -204,15 +299,87 @@ impl VM {
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     self.stack.push(NanValue::new_bool(a.eq_in(b, &self.arena)));
                 }
+                MATCH_INT_LITERAL => {
+                    // Fused `match n { LIT -> ...; _ -> ... }` arm
+                    // test. Subject sits on top of stack (left there
+                    // by `compile_match`); we peek, compare to the
+                    // inline immediate, and either fall through to
+                    // the arm body or skip it via `fail_offset` —
+                    // matching the semantics of the four-opcode
+                    // sequence (DUP/LOAD_CONST/EQ/JUMP_IF_FALSE) it
+                    // replaces.
+                    let imm = read_i64!(code, ip);
+                    let offset = read_i16!(code, ip);
+                    let subject = *self.stack.last().ok_or(VmError::StackUnderflow)?;
+                    let value = match subject.inline_int_value() {
+                        Some(v) => v,
+                        None => subject.as_int(&self.arena),
+                    };
+                    if value != imm {
+                        ip = (ip as isize + offset as isize) as usize;
+                    }
+                }
+                EQ_INT => {
+                    // Typed `==` for two `Int` operands. Two-tier fast
+                    // path:
+                    // 1. Bit-equal — both `NanValue`s have identical
+                    //    raw `u64` bits → equal (covers the common
+                    //    inline-Int = inline-Int case in one
+                    //    instruction).
+                    // 2. Both inline (no `INT_BIG_BIT` payload, both
+                    //    `tag == TAG_INT`) and bits differ → not equal,
+                    //    no arena touch.
+                    // 3. Otherwise (boxed Int via arena slot, or
+                    //    cross-rep boxed-vs-inline) fall back to
+                    //    `as_int` which materialises the `i64` and
+                    //    compares.
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let eq = if a.bits() == b.bits() {
+                        true
+                    } else {
+                        match (a.inline_int_value(), b.inline_int_value()) {
+                            (Some(x), Some(y)) => x == y,
+                            _ => a.as_int(&self.arena) == b.as_int(&self.arena),
+                        }
+                    };
+                    self.stack.push(NanValue::new_bool(eq));
+                }
                 LT => {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     self.stack.push(NanValue::new_bool(self.compare_lt(a, b)?));
                 }
+                LT_INT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    self.stack.push(NanValue::new_bool(
+                        a.as_int(&self.arena) < b.as_int(&self.arena),
+                    ));
+                }
+                LT_FLOAT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    self.stack
+                        .push(NanValue::new_bool(a.as_float() < b.as_float()));
+                }
                 GT => {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     self.stack.push(NanValue::new_bool(self.compare_lt(b, a)?));
+                }
+                GT_INT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    self.stack.push(NanValue::new_bool(
+                        a.as_int(&self.arena) > b.as_int(&self.arena),
+                    ));
+                }
+                GT_FLOAT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    self.stack
+                        .push(NanValue::new_bool(a.as_float() > b.as_float()));
                 }
 
                 CONCAT => {
@@ -288,6 +455,7 @@ impl VM {
                     }
 
                     fn_id = target_fn_id;
+                    refresh_code!();
                     ip = 0;
                     bp = new_bp;
                 }
@@ -301,6 +469,7 @@ impl VM {
 
                     let new_bp = self.stack.len() - _argc as usize;
                     fn_id = target_fn_id;
+                    refresh_code!();
                     ip = 0;
                     bp = new_bp;
                 }
@@ -322,8 +491,11 @@ impl VM {
                             self.stack.truncate(args_start);
 
                             if builtin.is_http_server() {
-                                self.runtime
-                                    .ensure_builtin_effects_allowed(&self.code.symbols, builtin)?;
+                                self.runtime.ensure_builtin_effects_allowed(
+                                    &self.code.symbols,
+                                    builtin,
+                                    symbol_id,
+                                )?;
                                 self.frames.last_mut().unwrap().ip = ip as u32;
                                 let result = self.dispatch_http_server(builtin, &args)?;
                                 self.stack.push(result);
@@ -331,6 +503,7 @@ impl VM {
                                 fn_id = f.fn_id;
                                 ip = f.ip as usize;
                                 bp = f.bp as usize;
+                                refresh_code!();
                                 continue;
                             }
 
@@ -342,6 +515,7 @@ impl VM {
                                 self.runtime.invoke_builtin(
                                     &self.code.symbols,
                                     builtin,
+                                    symbol_id,
                                     &args,
                                     arena,
                                 )
@@ -456,6 +630,7 @@ impl VM {
                     }
 
                     fn_id = target_fn_id;
+                    refresh_code!();
                     ip = 0;
                     bp = new_bp;
                 }
@@ -491,8 +666,11 @@ impl VM {
                     self.stack.truncate(args_start);
 
                     if builtin.is_http_server() {
-                        self.runtime
-                            .ensure_builtin_effects_allowed(&self.code.symbols, builtin)?;
+                        self.runtime.ensure_builtin_effects_allowed(
+                            &self.code.symbols,
+                            builtin,
+                            symbol_id,
+                        )?;
                         self.frames.last_mut().unwrap().ip = ip as u32;
                         let result = self.dispatch_http_server(builtin, &args)?;
                         self.stack.push(result);
@@ -500,6 +678,7 @@ impl VM {
                         fn_id = f.fn_id;
                         ip = f.ip as usize;
                         bp = f.bp as usize;
+                        refresh_code!();
                         continue;
                     }
 
@@ -524,6 +703,7 @@ impl VM {
                         self.runtime.invoke_builtin_with_owned(
                             &self.code.symbols,
                             builtin,
+                            symbol_id,
                             &args,
                             arena,
                             owned_mask,
@@ -664,6 +844,7 @@ impl VM {
                         profile.record_function_entry(target, target_fn_id);
                     }
                     fn_id = target_fn_id;
+                    refresh_code!();
                     ip = 0;
                 }
 
@@ -676,6 +857,7 @@ impl VM {
                         fn_id = saved_fn_id;
                         ip = saved_ip;
                         bp = saved_bp;
+                        refresh_code!();
                         continue;
                     }
 
@@ -702,6 +884,7 @@ impl VM {
                         fn_id = caller_fn_id;
                         ip = caller_ip;
                         bp = caller_bp;
+                        refresh_code!();
                         continue;
                     }
 
@@ -723,6 +906,7 @@ impl VM {
                             fn_id = next_fn_id;
                             ip = next_ip;
                             bp = next_bp;
+                            refresh_code!();
                         }
                     }
                 }
@@ -1069,6 +1253,7 @@ impl VM {
                                     fn_id = next_fn_id;
                                     ip = next_ip;
                                     bp = next_bp;
+                                    refresh_code!();
                                     continue;
                                 }
                             }
@@ -1109,6 +1294,7 @@ impl VM {
                                 fn_id = next_fn_id;
                                 ip = next_ip;
                                 bp = next_bp;
+                                refresh_code!();
                                 continue;
                             }
                         }

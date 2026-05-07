@@ -368,12 +368,46 @@ impl<'a> FnCompiler<'a> {
             invert,
         } = classify_bool_subject_plan(&subject.node)
         {
+            // Pick a typed compare opcode when both operands resolve
+            // to the same primitive — bypasses `eq_in` / `compare_lt`
+            // tag dispatch on the hot `match X > Y { … }` shape that
+            // dominates numeric loops (Mandelbrot inner step etc.).
+            let both_int = matches!(
+                (lhs.ty(), rhs.ty()),
+                (Some(crate::ast::Type::Int), Some(crate::ast::Type::Int))
+            );
+            let both_float = matches!(
+                (lhs.ty(), rhs.ty()),
+                (Some(crate::ast::Type::Float), Some(crate::ast::Type::Float))
+            );
             self.compile_expr(lhs)?;
             self.compile_expr(rhs)?;
             self.emit_op(match op {
-                BoolCompareOp::Eq => EQ,
-                BoolCompareOp::Lt => LT,
-                BoolCompareOp::Gt => GT,
+                BoolCompareOp::Eq => {
+                    if both_int {
+                        EQ_INT
+                    } else {
+                        EQ
+                    }
+                }
+                BoolCompareOp::Lt => {
+                    if both_int {
+                        LT_INT
+                    } else if both_float {
+                        LT_FLOAT
+                    } else {
+                        LT
+                    }
+                }
+                BoolCompareOp::Gt => {
+                    if both_int {
+                        GT_INT
+                    } else if both_float {
+                        GT_FLOAT
+                    } else {
+                        GT
+                    }
+                }
             });
 
             if invert {
@@ -594,6 +628,20 @@ impl<'a> FnCompiler<'a> {
                 Ok(Vec::new())
             }
             Pattern::Literal(lit) => {
+                if let crate::ast::Literal::Int(v) = lit {
+                    // Fused: peek + i64-compare + branch in one
+                    // dispatch. Replaces DUP + LOAD_CONST + EQ +
+                    // JUMP_IF_FALSE — typecheck guarantees the subject
+                    // is `Int` (a `Pattern::Literal(Int)` arm only
+                    // type-checks against an `Int` subject), so the
+                    // peek-and-compare is sound. Big win on
+                    // `match n { 0 -> …; _ -> … }` recursion shape.
+                    self.emit_op(MATCH_INT_LITERAL);
+                    self.emit_i64(*v);
+                    let patch = self.code.len();
+                    self.emit_i16(0);
+                    return Ok(vec![patch]);
+                }
                 self.emit_op(DUP);
                 self.compile_literal(lit)?;
                 self.emit_op(EQ);
