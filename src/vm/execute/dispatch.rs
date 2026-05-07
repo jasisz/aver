@@ -454,8 +454,11 @@ impl VM {
                             self.stack.truncate(args_start);
 
                             if builtin.is_http_server() {
-                                self.runtime
-                                    .ensure_builtin_effects_allowed(&self.code.symbols, builtin)?;
+                                self.runtime.ensure_builtin_effects_allowed(
+                                    &self.code.symbols,
+                                    builtin,
+                                    symbol_id,
+                                )?;
                                 self.frames.last_mut().unwrap().ip = ip as u32;
                                 let result = self.dispatch_http_server(builtin, &args)?;
                                 self.stack.push(result);
@@ -474,6 +477,7 @@ impl VM {
                                 self.runtime.invoke_builtin(
                                     &self.code.symbols,
                                     builtin,
+                                    symbol_id,
                                     &args,
                                     arena,
                                 )
@@ -623,8 +627,11 @@ impl VM {
                     self.stack.truncate(args_start);
 
                     if builtin.is_http_server() {
-                        self.runtime
-                            .ensure_builtin_effects_allowed(&self.code.symbols, builtin)?;
+                        self.runtime.ensure_builtin_effects_allowed(
+                            &self.code.symbols,
+                            builtin,
+                            symbol_id,
+                        )?;
                         self.frames.last_mut().unwrap().ip = ip as u32;
                         let result = self.dispatch_http_server(builtin, &args)?;
                         self.stack.push(result);
@@ -656,6 +663,7 @@ impl VM {
                         self.runtime.invoke_builtin_with_owned(
                             &self.code.symbols,
                             builtin,
+                            symbol_id,
                             &args,
                             arena,
                             owned_mask,
