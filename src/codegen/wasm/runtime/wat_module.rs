@@ -200,11 +200,11 @@ mod tests {
         // Helper: allocate an OBJ_STRING with the given bytes. Header
         // = (0 << 56) | len at offset 0, payload at offset 8. Aligns
         // total size to 8 for compatibility with the bump allocator.
-        let mut alloc_str = |store: &mut Store<()>, bytes: &[u8]| -> i32 {
+        let alloc_str = |store: &mut Store<()>, bytes: &[u8]| -> i32 {
             let len = bytes.len() as i32;
             let aligned = (len + 7) & !7;
             let ptr = alloc.call(&mut *store, 8 + aligned).expect("alloc");
-            let header = (len as u64) | (0u64 << 56);
+            let header = len as u64;
             memory
                 .write(&mut *store, ptr as usize, &header.to_le_bytes())
                 .expect("write header");

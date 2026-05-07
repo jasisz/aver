@@ -42,7 +42,7 @@ fn temp_dir(prefix: &str) -> PathBuf {
     dir
 }
 
-fn write_program(dir: &PathBuf, name: &str, source: &str) -> PathBuf {
+fn write_program(dir: &std::path::Path, name: &str, source: &str) -> PathBuf {
     let path = dir.join(name);
     fs::write(&path, source).expect("write temp program");
     path

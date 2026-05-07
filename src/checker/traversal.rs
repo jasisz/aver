@@ -334,7 +334,6 @@ fn make_finding(
 mod tests {
     use super::*;
     use crate::source::parse_source;
-    use crate::tco;
 
     fn parse_and_lower(src: &str) -> Vec<TopLevel> {
         let mut items = parse_source(src)

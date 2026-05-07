@@ -595,7 +595,7 @@ mod tests {
     use super::*;
     use crate::codegen::build_context;
     use crate::source::parse_source;
-    use crate::tco;
+
     use std::collections::HashSet;
 
     fn ctx_from_source(src: &str, project_name: &str) -> CodegenContext {

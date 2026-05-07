@@ -595,7 +595,7 @@ mod tests {
     use super::{render_generated_module, synthesize_rust_module_cascade, transpile};
     use crate::codegen::build_context;
     use crate::source::parse_source;
-    use crate::tco;
+
     use std::collections::HashSet;
 
     fn ctx_from_source(source: &str, project_name: &str) -> crate::codegen::CodegenContext {

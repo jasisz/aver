@@ -2,7 +2,7 @@ use super::VM;
 use crate::nan_value::{Arena, ArenaEntry, ArenaList, ArenaSymbol, NanValue, NanValueConvert};
 use crate::vm::opcode::{LOAD_CONST, RETURN};
 use crate::vm::types::{CallFrame, CodeStore, FnChunk};
-use crate::{lexer::Lexer, parser::Parser, resolver, tco, vm};
+use crate::{lexer::Lexer, parser::Parser, vm};
 
 fn compile_vm(src: &str) -> VM {
     let mut lexer = Lexer::new(src);

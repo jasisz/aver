@@ -57,10 +57,10 @@ fn annotate_fn(fd: &mut FnDef) {
 
     // (1) Vector / Map params get flagged unconditionally.
     for (i, (_, ty)) in fd.params.iter().enumerate() {
-        if param_type_is_alias_prone(ty) {
-            if let Some(slot) = aliased.get_mut(i) {
-                *slot = true;
-            }
+        if param_type_is_alias_prone(ty)
+            && let Some(slot) = aliased.get_mut(i)
+        {
+            *slot = true;
         }
     }
 
@@ -75,10 +75,10 @@ fn annotate_fn(fd: &mut FnDef) {
                 let Some(&slot) = res.local_slots.get(name) else {
                     continue;
                 };
-                if expr_is_alias_source(&expr.node, &aliased) {
-                    if let Some(s) = aliased.get_mut(slot as usize) {
-                        *s = true;
-                    }
+                if expr_is_alias_source(&expr.node, &aliased)
+                    && let Some(s) = aliased.get_mut(slot as usize)
+                {
+                    *s = true;
                 }
             }
         }
@@ -115,7 +115,7 @@ fn contains_alias_source_call(expr: &Expr) -> bool {
             if let Expr::Attr(parent, member) = &callee.node
                 && let Expr::Ident(p) = &parent.node
             {
-                if (p == "Vector" && member == "get") || (p == "Map" && member == "get") {
+                if (p == "Vector" || p == "Map") && member == "get" {
                     return true;
                 }
                 if p == "Vector"
@@ -183,4 +183,3 @@ fn type_is_compound(ty: &str) -> bool {
             .is_some_and(|c| c.is_ascii_uppercase())
             && !matches!(trimmed, "Int" | "Float" | "Bool" | "String" | "Unit"))
 }
-

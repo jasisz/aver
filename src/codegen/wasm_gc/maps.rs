@@ -1305,10 +1305,10 @@ fn emit_map_set(
 
 /// `set_in_place(map, k, v) -> map`. Same probe-and-write loop as
 /// `emit_map_set` but without the entry-time `array.copy` of
-/// `keys` / `values` — the caller has proven (via `ir::alias` +
+/// `keys` / `values` — the caller has proven (via `ir::alias` and
 /// `last_use`) that `map`'s engine arrays are uniquely owned, so
 /// rewriting them in place is sound and saves two `array.new_default`
-/// + two `array.copy` per call. The returned struct still re-wraps
+/// plus two `array.copy` per call. The returned struct still re-wraps
 /// the same arrays with the updated size; callers expect a fresh
 /// map handle either way.
 fn emit_map_set_in_place(

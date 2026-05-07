@@ -781,6 +781,7 @@ fn map_set_get_has() {
 }
 
 #[test]
+#[allow(clippy::mutable_key_type)]
 fn map_literal_runtime() {
     let mut expected = std::collections::HashMap::new();
     expected.insert(Value::Str("a".to_string()), Value::Int(1));
@@ -980,8 +981,7 @@ fn match_list_cons_binds_head_and_tail() {
 
 #[test]
 fn match_tuple_pattern_binds_values() {
-    let src =
-        "fn sum_pair(p: Tuple<Int, Int>) -> Int\n    match p\n        (a, b) -> a + b\n        _ -> 0\n";
+    let src = "fn sum_pair(p: Tuple<Int, Int>) -> Int\n    match p\n        (a, b) -> a + b\n        _ -> 0\n";
     assert_eq!(
         call_fn(
             src,
@@ -994,7 +994,8 @@ fn match_tuple_pattern_binds_values() {
 
 #[test]
 fn match_tuple_pattern_with_wildcard() {
-    let src = "fn first(p: Tuple<Int, Int>) -> Int\n    match p\n        (x, _) -> x\n        _ -> 0\n";
+    let src =
+        "fn first(p: Tuple<Int, Int>) -> Int\n    match p\n        (x, _) -> x\n        _ -> 0\n";
     assert_eq!(
         call_fn(
             src,
