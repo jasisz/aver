@@ -59,7 +59,7 @@ impl<'a> FnCompiler<'a> {
             Expr::BinOp(op, left, right) => {
                 self.compile_expr(left)?;
                 self.compile_expr(right)?;
-                self.emit_binop(*op);
+                self.emit_binop_typed(*op, left.ty(), right.ty());
                 Ok(())
             }
             Expr::FnCall(fn_expr, args) => self.compile_call(fn_expr, args),
@@ -148,17 +148,30 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    fn emit_binop(&mut self, op: BinOp) {
+    /// Emit the bytecode for a binary operator, picking a typed-
+    /// specialised opcode when the operand types let us bypass the
+    /// runtime tag dispatch. Falls back to the generic opcode when
+    /// types aren't known or aren't a typed-opcode-eligible pair.
+    fn emit_binop_typed(
+        &mut self,
+        op: BinOp,
+        lhs_ty: Option<&crate::ast::Type>,
+        rhs_ty: Option<&crate::ast::Type>,
+    ) {
+        let both_int = matches!(
+            (lhs_ty, rhs_ty),
+            (Some(crate::ast::Type::Int), Some(crate::ast::Type::Int))
+        );
         match op {
             BinOp::Add => self.emit_op(ADD),
             BinOp::Sub => self.emit_op(SUB),
             BinOp::Mul => self.emit_op(MUL),
             BinOp::Div => self.emit_op(DIV),
-            BinOp::Eq => self.emit_op(EQ),
+            BinOp::Eq => self.emit_op(if both_int { EQ_INT } else { EQ }),
             BinOp::Lt => self.emit_op(LT),
             BinOp::Gt => self.emit_op(GT),
             BinOp::Neq => {
-                self.emit_op(EQ);
+                self.emit_op(if both_int { EQ_INT } else { EQ });
                 self.emit_op(NOT);
             }
             BinOp::Lte => {

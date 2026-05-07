@@ -44,6 +44,26 @@ macro_rules! read_u32 {
     }};
 }
 
+macro_rules! read_i64 {
+    ($code:expr, $ip:expr) => {{
+        let bytes: [u8; 8] = [
+            $code[$ip],
+            $code[$ip + 1],
+            $code[$ip + 2],
+            $code[$ip + 3],
+            $code[$ip + 4],
+            $code[$ip + 5],
+            $code[$ip + 6],
+            $code[$ip + 7],
+        ];
+        #[allow(unused_assignments)]
+        {
+            $ip += 8;
+        }
+        i64::from_be_bytes(bytes)
+    }};
+}
+
 impl VM {
     pub(super) fn execute_until(&mut self, caller_depth: usize) -> Result<NanValue, VmError> {
         let mut fn_id = self.frames.last().unwrap().fn_id;
@@ -203,6 +223,52 @@ impl VM {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     self.stack.push(NanValue::new_bool(a.eq_in(b, &self.arena)));
+                }
+                MATCH_INT_LITERAL => {
+                    // Fused `match n { LIT -> ...; _ -> ... }` arm
+                    // test. Subject sits on top of stack (left there
+                    // by `compile_match`); we peek, compare to the
+                    // inline immediate, and either fall through to
+                    // the arm body or skip it via `fail_offset` —
+                    // matching the semantics of the four-opcode
+                    // sequence (DUP/LOAD_CONST/EQ/JUMP_IF_FALSE) it
+                    // replaces.
+                    let imm = read_i64!(code, ip);
+                    let offset = read_i16!(code, ip);
+                    let subject = *self.stack.last().ok_or(VmError::StackUnderflow)?;
+                    let value = match subject.inline_int_value() {
+                        Some(v) => v,
+                        None => subject.as_int(&self.arena),
+                    };
+                    if value != imm {
+                        ip = (ip as isize + offset as isize) as usize;
+                    }
+                }
+                EQ_INT => {
+                    // Typed `==` for two `Int` operands. Two-tier fast
+                    // path:
+                    // 1. Bit-equal — both `NanValue`s have identical
+                    //    raw `u64` bits → equal (covers the common
+                    //    inline-Int = inline-Int case in one
+                    //    instruction).
+                    // 2. Both inline (no `INT_BIG_BIT` payload, both
+                    //    `tag == TAG_INT`) and bits differ → not equal,
+                    //    no arena touch.
+                    // 3. Otherwise (boxed Int via arena slot, or
+                    //    cross-rep boxed-vs-inline) fall back to
+                    //    `as_int` which materialises the `i64` and
+                    //    compares.
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let eq = if a.bits() == b.bits() {
+                        true
+                    } else {
+                        match (a.inline_int_value(), b.inline_int_value()) {
+                            (Some(x), Some(y)) => x == y,
+                            _ => a.as_int(&self.arena) == b.as_int(&self.arena),
+                        }
+                    };
+                    self.stack.push(NanValue::new_bool(eq));
                 }
                 LT => {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;

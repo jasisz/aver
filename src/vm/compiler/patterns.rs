@@ -594,6 +594,20 @@ impl<'a> FnCompiler<'a> {
                 Ok(Vec::new())
             }
             Pattern::Literal(lit) => {
+                if let crate::ast::Literal::Int(v) = lit {
+                    // Fused: peek + i64-compare + branch in one
+                    // dispatch. Replaces DUP + LOAD_CONST + EQ +
+                    // JUMP_IF_FALSE — typecheck guarantees the subject
+                    // is `Int` (a `Pattern::Literal(Int)` arm only
+                    // type-checks against an `Int` subject), so the
+                    // peek-and-compare is sound. Big win on
+                    // `match n { 0 -> …; _ -> … }` recursion shape.
+                    self.emit_op(MATCH_INT_LITERAL);
+                    self.emit_i64(*v);
+                    let patch = self.code.len();
+                    self.emit_i16(0);
+                    return Ok(vec![patch]);
+                }
                 self.emit_op(DUP);
                 self.compile_literal(lit)?;
                 self.emit_op(EQ);

@@ -77,6 +77,25 @@ pub const LT: u8 = 0x21;
 /// Pop b, pop a, push a > b.
 pub const GT: u8 = 0x22;
 
+/// Typed `==` for two `Int` operands. Skips `NanValue::eq_in`'s tag
+/// dispatch — `as_int_unboxed()` on both sides, raw i64 compare, push
+/// bool. Emitted by the VM compiler when both `left.ty()` and
+/// `right.ty()` resolve to `Type::Int`. Hot path in pattern-match-on-
+/// Int (`match n { 0 -> …; _ -> … }`) and arithmetic guards; profile
+/// shows `eq_in` at 10–12% self-time in newtype/match scenarios.
+pub const EQ_INT: u8 = 0x23;
+
+/// Fused `match n { LIT -> ...; _ -> ... }` arm test: peek the top of
+/// stack (subject left in place by the surrounding `compile_match`),
+/// if its `Int` value equals the inline `imm` literal — fall through
+/// to the arm body; otherwise skip via `fail_offset`. Replaces the
+/// `DUP + LOAD_CONST + EQ + JUMP_IF_FALSE` sequence the generic
+/// `compile_pattern` emits — one dispatch instead of four in the hot
+/// path of every `match n { 0 -> ... }` shape.
+///
+/// Encoding: `MATCH_INT_LITERAL imm:i64 fail_offset:i16`.
+pub const MATCH_INT_LITERAL: u8 = 0x7F;
+
 // -- String ------------------------------------------------------------------
 
 /// Pop b, pop a, push str(a) ++ str(b).
@@ -336,6 +355,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         NEG => "NEG",
         NOT => "NOT",
         EQ => "EQ",
+        EQ_INT => "EQ_INT",
         LT => "LT",
         GT => "GT",
         CONCAT => "CONCAT",
@@ -366,6 +386,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         MATCH_TAG => "MATCH_TAG",
         MATCH_VARIANT => "MATCH_VARIANT",
         MATCH_UNWRAP => "MATCH_UNWRAP",
+        MATCH_INT_LITERAL => "MATCH_INT_LITERAL",
         MATCH_NIL => "MATCH_NIL",
         MATCH_CONS => "MATCH_CONS",
         LIST_HEAD_TAIL => "LIST_HEAD_TAIL",
@@ -413,6 +434,7 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | NEG
         | NOT
         | EQ
+        | EQ_INT
         | LT
         | GT
         | RETURN
@@ -457,6 +479,9 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
 
         // 6-byte
         CALL_BUILTIN_OWNED => 6, // symbol_id:u32 + argc:u8 + owned:u8
+
+        // 10-byte
+        MATCH_INT_LITERAL => 10, // imm:i64 + fail_offset:i16
 
         // Variable-length
         MATCH_DISPATCH | MATCH_DISPATCH_CONST if ip < code.len() => {
