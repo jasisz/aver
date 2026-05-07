@@ -548,7 +548,7 @@ fn tuple_destructure_sum() {
     intent = "tuple destructure"
     depends []
 
-fn pair() -> (Int, Int)
+fn pair() -> Tuple<Int, Int>
     (3, 4)
 
 fn main() -> Int

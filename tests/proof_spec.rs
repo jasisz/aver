@@ -410,12 +410,12 @@ fn aver_verify_runs_effectful_bang_group_law() {
          \x20   ? \"return counter so each branch's call is distinguishable\"\n\
          \x20   n\n\
          \n\
-         fn pickPair() -> (Int, Int)\n\
+         fn pickPair() -> Tuple<Int, Int>\n\
          \x20   ? \"two parallel draws\"\n\
          \x20   ! [Random.int]\n\
          \x20   (Random.int(1, 6), Random.int(1, 6))!\n\
          \n\
-         fn pickPairSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Int) -> (Int, Int)\n\
+         fn pickPairSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Int) -> Tuple<Int, Int>\n\
          \x20   ? \"two draws, each at its own branch\"\n\
          \x20   (rnd(BranchPath.child(path, 0), 0, 1, 6), rnd(BranchPath.child(path, 1), 0, 1, 6))\n\
          \n\
