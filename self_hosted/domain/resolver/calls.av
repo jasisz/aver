@@ -317,7 +317,7 @@ verify resolveCallsInArms
     resolveCallsInArms([], {}, []) => []
     resolveCallsInArms([MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = {})], {}, []) => [MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = {})]
 
-fn resolveCallsInFields(fields: List<(String, Expr)>, fnMap: Map<String, Int>, acc: List<(String, Expr)>) -> List<(String, Expr)>
+fn resolveCallsInFields(fields: List<Tuple<String, Expr>>, fnMap: Map<String, Int>, acc: List<Tuple<String, Expr>>) -> List<Tuple<String, Expr>>
     ? "Resolve calls in record field expressions."
     match fields
         [] -> List.reverse(acc)

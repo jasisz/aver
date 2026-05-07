@@ -620,10 +620,10 @@ fn expr_error_propagation() {
 
 #[test]
 fn fn_with_tuple_type_annotation() {
-    let src = "fn pair() -> (Int, String)\n    (1, \"x\")\n";
+    let src = "fn pair() -> Tuple<Int, String>\n    (1, \"x\")\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
-        assert_eq!(fd.return_type, "(Int, String)");
+        assert_eq!(fd.return_type, "Tuple<Int, String>");
         assert!(matches!(single_expr_body(fd), Expr::Tuple(_)));
     } else {
         panic!("expected FnDef");
@@ -742,7 +742,7 @@ fn match_list_cons_pattern_with_underscore() {
 
 #[test]
 fn match_tuple_pattern_binds_items() {
-    let src = "fn f(p: (Int, Int)) -> Int\n    match p\n        (a, b) -> a\n        _ -> 0\n";
+    let src = "fn f(p: Tuple<Int, Int>) -> Int\n    match p\n        (a, b) -> a\n        _ -> 0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         if let Expr::Match { arms, .. } = single_expr_body(fd) {
@@ -765,7 +765,7 @@ fn match_tuple_pattern_binds_items() {
 
 #[test]
 fn match_nested_tuple_pattern_parses() {
-    let src = "fn f(p: ((Int, Int), Int)) -> Int\n    match p\n        ((x, y), z) -> x\n        _ -> 0\n";
+    let src = "fn f(p: Tuple<Tuple<Int, Int>, Int>) -> Int\n    match p\n        ((x, y), z) -> x\n        _ -> 0\n";
     let items = parse(src);
     if let TopLevel::FnDef(fd) = &items[0] {
         if let Expr::Match { arms, .. } = single_expr_body(fd) {

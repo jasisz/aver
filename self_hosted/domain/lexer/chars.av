@@ -100,7 +100,7 @@ verify digitVal
     digitVal("5") => 5
     digitVal("9") => 9
 
-fn readNumberLoop(src: String, pos: Int, acc: Int) -> (Int, Int)
+fn readNumberLoop(src: String, pos: Int, acc: Int) -> Tuple<Int, Int>
     ? "Read consecutive digits from pos, return (number, newPos)."
     match pos < String.len(src)
         true -> match String.charAt(src, pos)
@@ -114,7 +114,7 @@ verify readNumberLoop
     readNumberLoop("123abc", 0, 0) => (123, 3)
     readNumberLoop("abc", 0, 0) => (0, 0)
 
-fn readNumber(src: String, pos: Int, acc: Int) -> (Int, Int)
+fn readNumber(src: String, pos: Int, acc: Int) -> Tuple<Int, Int>
     ? "Read consecutive digits from pos, return (number, newPos)."
     readNumberLoop(src, pos, acc)
 
@@ -133,7 +133,7 @@ fn isIdentCharPlain(c: String) -> Bool
     ? "Check if character can continue a plain identifier (alphanumeric, underscore only)."
     isAlphaNum(c)
 
-fn readIdentLoopDotted(src: String, pos: Int, acc: String) -> (String, Int)
+fn readIdentLoopDotted(src: String, pos: Int, acc: String) -> Tuple<String, Int>
     ? "Read identifier including dots (for qualified names like List.prepend)."
     match pos < String.len(src)
         true -> match String.charAt(src, pos)
@@ -146,7 +146,7 @@ fn readIdentLoopDotted(src: String, pos: Int, acc: String) -> (String, Int)
 verify readIdentLoopDotted
     readIdentLoopDotted("List.len x", 0, "") => ("List.len", 8)
 
-fn readIdentLoopPlain(src: String, pos: Int, acc: String) -> (String, Int)
+fn readIdentLoopPlain(src: String, pos: Int, acc: String) -> Tuple<String, Int>
     ? "Read identifier without dots (for local variables)."
     match pos < String.len(src)
         true -> match String.charAt(src, pos)
@@ -159,7 +159,7 @@ fn readIdentLoopPlain(src: String, pos: Int, acc: String) -> (String, Int)
 verify readIdentLoopPlain
     readIdentLoopPlain("foo x", 0, "") => ("foo", 3)
 
-fn readIdent(src: String, pos: Int, acc: String, dotted: Bool) -> (String, Int)
+fn readIdent(src: String, pos: Int, acc: String, dotted: Bool) -> Tuple<String, Int>
     ? "Read identifier, dotted if starts with uppercase."
     match dotted
         true -> readIdentLoopDotted(src, pos, acc)

@@ -219,7 +219,7 @@ verify builtinMapEntries
     builtinMapEntries([Val.ValMap({})]) => Result.Ok(Val.ValList([]))
     builtinMapEntries([Val.ValInt(1)]) => Result.Err("Map.entries requires a Map")
 
-fn mapEntriesToTuples(entries: List<(String, Val)>, acc: List<Val>) -> List<Val>
+fn mapEntriesToTuples(entries: List<Tuple<String, Val>>, acc: List<Val>) -> List<Val>
     ? "Convert entries to list of (key, value) tuples."
     match entries
         [] -> List.reverse(acc)
@@ -608,7 +608,7 @@ verify tryVariantConstructor
     tryVariantConstructor("Shape.Circle", [Val.ValInt(5)]) => Result.Ok(Val.ValVariant(Domain.Ast.ctorNameToTag("Shape.Circle"), "Shape.Circle", [Val.ValInt(5)]))
     tryVariantConstructor("noDot", []) => Result.Err("undefined function: noDot")
 
-fn splitDotted(name: String) -> Option<(String, String)>
+fn splitDotted(name: String) -> Option<Tuple<String, String>>
     ? "Split 'Type.Ctor' into (Type, Ctor). Returns None if no dot."
     splitDottedLoop(name, 0, String.len(name))
 
@@ -616,7 +616,7 @@ verify splitDotted
     splitDotted("List.len") => Option.Some(("List", "len"))
     splitDotted("hello") => Option.None
 
-fn splitDottedLoop(name: String, pos: Int, total: Int) -> Option<(String, String)>
+fn splitDottedLoop(name: String, pos: Int, total: Int) -> Option<Tuple<String, String>>
     ? "Find first dot and split."
     match pos >= total
         true -> Option.None
@@ -914,7 +914,7 @@ verify valToTcpConn
     valToTcpConn(Val.ValRecord("Tcp.Connection", [("id", Val.ValStr("tcp-1")), ("host", Val.ValStr("localhost")), ("port", Val.ValInt(8080))])) => Result.Ok(Tcp.Connection(id = "tcp-1", host = "localhost", port = 8080))
     valToTcpConn(Val.ValInt(1)) => Result.Err("expected Tcp.Connection record")
 
-fn valToTcpConnFields(fields: List<(String, Val)>) -> Result<Tcp.Connection, String>
+fn valToTcpConnFields(fields: List<Tuple<String, Val>>) -> Result<Tcp.Connection, String>
     ? "Build Tcp.Connection from field list."
     idVal = lookupFieldVal(fields, "id")
     hostVal = lookupFieldVal(fields, "host")
@@ -931,7 +931,7 @@ verify valToTcpConnFields
     valToTcpConnFields([("id", Val.ValStr("tcp-1")), ("host", Val.ValStr("localhost")), ("port", Val.ValInt(8080))]) => Result.Ok(Tcp.Connection(id = "tcp-1", host = "localhost", port = 8080))
     valToTcpConnFields([("id", Val.ValInt(0)), ("host", Val.ValStr("localhost")), ("port", Val.ValInt(8080))]) => Result.Err("bad Tcp.Connection id")
 
-fn lookupFieldVal(fields: List<(String, Val)>, name: String) -> Val
+fn lookupFieldVal(fields: List<Tuple<String, Val>>, name: String) -> Val
     ? "Find field value by name, return ValUnit if missing."
     match fields
         [] -> Val.ValUnit

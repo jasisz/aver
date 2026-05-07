@@ -75,7 +75,7 @@ verify doRecordUpdateInner
     doRecordUpdateInner(Val.ValRecord("R", []), [Val.ValInt(1)]) => Result.Err("record update requires named fields")
     doRecordUpdateInner(Val.ValRecord("R", []), []) => Result.Err("record update requires named fields")
 
-fn applyRecordUpdate(baseVal: Val, namedFields: List<(String, Val)>) -> Result<Val, String>
+fn applyRecordUpdate(baseVal: Val, namedFields: List<Tuple<String, Val>>) -> Result<Val, String>
     ? "Override fields in a record value."
     match baseVal
         Val.ValRecord(typeName, existingFields) -> Result.Ok(Val.ValRecord(typeName, mergeRecordFields(existingFields, namedFields)))
@@ -85,11 +85,11 @@ verify applyRecordUpdate
     applyRecordUpdate(Val.ValRecord("R", [("x", Val.ValInt(1))]), [("x", Val.ValInt(2))]) => Result.Ok(Val.ValRecord("R", [("x", Val.ValInt(2))]))
     applyRecordUpdate(Val.ValInt(1), []) => Result.Err("update requires a record value")
 
-fn mergeRecordFields(existing: List<(String, Val)>, overrides: List<(String, Val)>) -> List<(String, Val)>
+fn mergeRecordFields(existing: List<Tuple<String, Val>>, overrides: List<Tuple<String, Val>>) -> List<Tuple<String, Val>>
     ? "For each field in existing: use override if present, otherwise keep."
     mergeRecordFieldsAcc(existing, overrides, [])
 
-fn mergeRecordFieldsAcc(existing: List<(String, Val)>, overrides: List<(String, Val)>, acc: List<(String, Val)>) -> List<(String, Val)>
+fn mergeRecordFieldsAcc(existing: List<Tuple<String, Val>>, overrides: List<Tuple<String, Val>>, acc: List<Tuple<String, Val>>) -> List<Tuple<String, Val>>
     ? "Accumulate merged fields."
     match existing
         [] -> List.concat(List.reverse(acc), overrides)
@@ -104,7 +104,7 @@ verify mergeRecordFields
     mergeRecordFields([], [("a", Val.ValInt(1))]) => [("a", Val.ValInt(1))]
     mergeRecordFields([("x", Val.ValInt(1))], [("x", Val.ValInt(9))]) => [("x", Val.ValInt(9))]
 
-fn mergeOneField(k: String, v: Val, rest: List<(String, Val)>, overrides: List<(String, Val)>, acc: List<(String, Val)>) -> List<(String, Val)>
+fn mergeOneField(k: String, v: Val, rest: List<Tuple<String, Val>>, overrides: List<Tuple<String, Val>>, acc: List<Tuple<String, Val>>) -> List<Tuple<String, Val>>
     ? "Check if field k has an override."
     match findOverride(k, overrides)
         Option.Some(newV) -> mergeRecordFieldsAcc(rest, removeOverride(k, overrides), List.prepend((k, newV), acc))
@@ -114,7 +114,7 @@ verify mergeOneField
     mergeOneField("x", Val.ValInt(1), [], [("x", Val.ValInt(9))], []) => [("x", Val.ValInt(9))]
     mergeOneField("x", Val.ValInt(1), [], [], []) => [("x", Val.ValInt(1))]
 
-fn findOverride(k: String, overrides: List<(String, Val)>) -> Option<Val>
+fn findOverride(k: String, overrides: List<Tuple<String, Val>>) -> Option<Val>
     ? "Find a field value in the overrides list."
     match overrides
         [] -> Option.None
@@ -128,11 +128,11 @@ verify findOverride
     findOverride("y", [("x", Val.ValInt(1))]) => Option.None
     findOverride("x", []) => Option.None
 
-fn removeOverride(k: String, overrides: List<(String, Val)>) -> List<(String, Val)>
+fn removeOverride(k: String, overrides: List<Tuple<String, Val>>) -> List<Tuple<String, Val>>
     ? "Remove a field from overrides list."
     removeOverrideAcc(k, overrides, [])
 
-fn removeOverrideAcc(k: String, overrides: List<(String, Val)>, acc: List<(String, Val)>) -> List<(String, Val)>
+fn removeOverrideAcc(k: String, overrides: List<Tuple<String, Val>>, acc: List<Tuple<String, Val>>) -> List<Tuple<String, Val>>
     ? "Accumulate non-matching fields, then concat remainder when match found."
     reversed = List.reverse(acc)
     match overrides

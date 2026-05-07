@@ -743,6 +743,7 @@ mod tests {
                 local_count: (1 + extra_slots.len()) as u16,
                 local_slots: Arc::new(slots),
                 local_slot_types: Arc::new(vec![crate::ast::Type::Invalid; 1 + extra_slots.len()]),
+                aliased_slots: Arc::new(vec![false; 1 + extra_slots.len()]),
             }),
         }
     }
@@ -762,6 +763,7 @@ mod tests {
                 local_count: 0,
                 local_slots: Arc::new(HashMap::new()),
                 local_slot_types: Arc::new(vec![]),
+                aliased_slots: Arc::new(vec![]),
             }),
         }
     }

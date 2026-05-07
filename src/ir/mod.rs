@@ -1,3 +1,4 @@
+pub mod alias;
 mod alloc_info;
 mod analyze;
 mod body;

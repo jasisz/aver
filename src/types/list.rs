@@ -8,7 +8,7 @@
 ///   List.concat(a, b)        → List<T>                — concatenate two lists
 ///   List.reverse(list)       → List<T>                — reverse elements
 ///   List.contains(list, val) → Bool                   — membership by `==`
-///   List.zip(a, b)           → List<(A, B)>           — pair elements from two lists
+///   List.zip(a, b)           → List<Tuple<A, B>>           — pair elements from two lists
 ///
 /// No effects required.
 use std::collections::HashMap;

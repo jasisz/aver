@@ -1222,12 +1222,11 @@ mod tests {
     fn rejects_when_true_arm_isnt_reverse() {
         let mut fd = canonical_builder("build");
         // Replace true arm body with a different expression.
-        if let FnBody::Block(stmts) = Arc::make_mut(&mut fd.body) {
-            if let Stmt::Expr(spanned) = &mut stmts[0] {
-                if let Expr::Match { arms, .. } = &mut spanned.node {
-                    arms[0].body = Box::new(ident("acc"));
-                }
-            }
+        if let FnBody::Block(stmts) = Arc::make_mut(&mut fd.body)
+            && let Stmt::Expr(spanned) = &mut stmts[0]
+            && let Expr::Match { arms, .. } = &mut spanned.node
+        {
+            *arms[0].body = ident("acc");
         }
         let info = compute_buffer_build_sinks(&[&fd]);
         assert!(
@@ -1240,18 +1239,16 @@ mod tests {
     fn rejects_when_false_arm_uses_append_not_prepend() {
         let mut fd = canonical_builder("build");
         // Swap List.prepend → List.append in the false arm tail call.
-        if let FnBody::Block(stmts) = Arc::make_mut(&mut fd.body) {
-            if let Stmt::Expr(spanned) = &mut stmts[0] {
-                if let Expr::Match { arms, .. } = &mut spanned.node {
-                    let false_body = arms[1].body.as_mut();
-                    if let Expr::TailCall(data) = &mut false_body.node {
-                        if let Expr::FnCall(callee, _) = &mut data.args[1].node {
-                            if let Expr::Attr(_, attr) = &mut callee.node {
-                                *attr = "append".to_string();
-                            }
-                        }
-                    }
-                }
+        if let FnBody::Block(stmts) = Arc::make_mut(&mut fd.body)
+            && let Stmt::Expr(spanned) = &mut stmts[0]
+            && let Expr::Match { arms, .. } = &mut spanned.node
+        {
+            let false_body = arms[1].body.as_mut();
+            if let Expr::TailCall(data) = &mut false_body.node
+                && let Expr::FnCall(callee, _) = &mut data.args[1].node
+                && let Expr::Attr(_, attr) = &mut callee.node
+            {
+                *attr = "append".to_string();
             }
         }
         let info = compute_buffer_build_sinks(&[&fd]);
@@ -1264,14 +1261,13 @@ mod tests {
     #[test]
     fn rejects_tail_call_to_different_fn() {
         let mut fd = canonical_builder("build");
-        if let FnBody::Block(stmts) = Arc::make_mut(&mut fd.body) {
-            if let Stmt::Expr(spanned) = &mut stmts[0] {
-                if let Expr::Match { arms, .. } = &mut spanned.node {
-                    let false_body = arms[1].body.as_mut();
-                    if let Expr::TailCall(data) = &mut false_body.node {
-                        data.target = "someone_else".to_string();
-                    }
-                }
+        if let FnBody::Block(stmts) = Arc::make_mut(&mut fd.body)
+            && let Stmt::Expr(spanned) = &mut stmts[0]
+            && let Expr::Match { arms, .. } = &mut spanned.node
+        {
+            let false_body = arms[1].body.as_mut();
+            if let Expr::TailCall(data) = &mut false_body.node {
+                data.target = "someone_else".to_string();
             }
         }
         let info = compute_buffer_build_sinks(&[&fd]);
@@ -1284,12 +1280,11 @@ mod tests {
     #[test]
     fn rejects_match_with_non_bool_arms() {
         let mut fd = canonical_builder("build");
-        if let FnBody::Block(stmts) = Arc::make_mut(&mut fd.body) {
-            if let Stmt::Expr(spanned) = &mut stmts[0] {
-                if let Expr::Match { arms, .. } = &mut spanned.node {
-                    arms[0].pattern = Pattern::Literal(Literal::Int(0));
-                }
-            }
+        if let FnBody::Block(stmts) = Arc::make_mut(&mut fd.body)
+            && let Stmt::Expr(spanned) = &mut stmts[0]
+            && let Expr::Match { arms, .. } = &mut spanned.node
+        {
+            arms[0].pattern = Pattern::Literal(Literal::Int(0));
         }
         let info = compute_buffer_build_sinks(&[&fd]);
         assert!(
@@ -1632,7 +1627,7 @@ fn build(n: Int, acc: List<Int>) -> List<Int>
         }
         let info = compute_buffer_build_sinks(&[&fd]);
         assert!(
-            info.get("build").is_none(),
+            !info.contains_key("build"),
             "loose-prepend (prepend not at acc-position) must not be detected"
         );
     }

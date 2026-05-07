@@ -289,7 +289,7 @@ impl<'a> FnCompiler<'a> {
     ) -> Result<(), CompileError> {
         // Compute owned mask before compiling args (we need the AST).
         let arg_refs: Vec<&Spanned<Expr>> = args.iter().collect();
-        let owned_mask = Self::compute_builtin_owned_mask(&arg_refs);
+        let owned_mask = self.compute_builtin_owned_mask(&arg_refs);
         for arg in args {
             self.compile_expr(arg)?;
         }
@@ -422,7 +422,7 @@ impl<'a> FnCompiler<'a> {
                 Ok(())
             }
             LeafOp::MapSet { map, key, value } => {
-                let owned_mask = Self::compute_builtin_owned_mask(&[map, key, value]);
+                let owned_mask = self.compute_builtin_owned_mask(&[map, key, value]);
                 self.compile_expr(map)?;
                 self.compile_expr(key)?;
                 self.compile_expr(value)?;
@@ -453,15 +453,29 @@ impl<'a> FnCompiler<'a> {
                 index,
                 value,
             } => {
-                // In the fused VECTOR_SET_OR_KEEP opcode, the default is
-                // implicitly the same vector — it's not loaded separately.
-                // So we can always take ownership: the vector appears twice
-                // in the AST (set arg + default) but only once on the stack.
+                // In the fused VECTOR_SET_OR_KEEP opcode the default is
+                // implicitly the same vector — it's not loaded separately,
+                // so the vec appears once on the stack. In-place mutation
+                // (vec_owned=1) is unsafe when the slot is alias-prone:
+                // the arena entry might be shared with another live
+                // binding and rewriting it would mutate that one too.
+                // `ir::alias` flags such slots on `FnResolution.aliased_slots`;
+                // the slow-path (clone backing items, push fresh arena
+                // entry) keeps shared entries intact.
+                let owned = match &vector.node {
+                    Expr::Resolved { slot, last_use, .. } => {
+                        last_use.0 && !self.is_aliased_slot(*slot)
+                    }
+                    // Non-`Resolved` vectors land here as a transient stack
+                    // value — there's no other slot to alias with, so the
+                    // owned fast path is sound.
+                    _ => true,
+                };
                 self.compile_expr(vector)?;
                 self.compile_expr(index)?;
                 self.compile_expr(value)?;
                 self.emit_op(VECTOR_SET_OR_KEEP);
-                self.emit_u8(1); // always owned — fused op consumes the only ref
+                self.emit_u8(if owned { 1 } else { 0 });
                 Ok(())
             }
             LeafOp::ListIndexGet { list, index } => {
@@ -570,12 +584,17 @@ impl<'a> FnCompiler<'a> {
     }
 
     /// Compute owned bitmask for builtin args by checking if any arg
-    /// is a last-use local reference (annotated by ir::last_use pass).
-    fn compute_builtin_owned_mask(arg_exprs: &[&Spanned<Expr>]) -> u8 {
+    /// is a last-use local reference (annotated by `ir::last_use`)
+    /// AND the slot is not flagged alias-prone (annotated by
+    /// `ir::alias`). Both annotations live on `FnResolution` —
+    /// `last_use.0` on the `Resolved` node, `aliased_slots` on the
+    /// resolution itself.
+    fn compute_builtin_owned_mask(&self, arg_exprs: &[&Spanned<Expr>]) -> u8 {
         let mut mask = 0u8;
         for (i, arg) in arg_exprs.iter().enumerate().take(8) {
-            if let Expr::Resolved { last_use, .. } = &arg.node
+            if let Expr::Resolved { slot, last_use, .. } = &arg.node
                 && last_use.0
+                && !self.is_aliased_slot(*slot)
             {
                 mask |= 1 << i;
             }

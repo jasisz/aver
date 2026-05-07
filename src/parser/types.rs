@@ -112,23 +112,11 @@ impl Parser {
 
     pub(super) fn parse_type(&mut self) -> Result<String, ParseError> {
         if self.check_exact(&TokenKind::LParen) {
-            self.advance(); // (
-            let mut elems = Vec::new();
-            while !self.check_exact(&TokenKind::RParen) && !self.is_eof() {
-                if self.check_exact(&TokenKind::Comma) {
-                    self.advance();
-                    continue;
-                }
-                elems.push(self.parse_type()?);
-                if self.check_exact(&TokenKind::Comma) {
-                    self.advance();
-                }
-            }
-            self.expect_exact(&TokenKind::RParen)?;
-            if elems.len() < 2 {
-                return Err(self.error("Tuple type must have at least 2 elements".to_string()));
-            }
-            return Ok(format!("({})", elems.join(", ")));
+            return Err(self.error(
+                "paren-tuple types removed — use `Tuple<A, B>` instead. \
+                 Paren `(a, b)` stays as the tuple value literal."
+                    .to_string(),
+            ));
         }
 
         // Function type annotation: Fn(A, B) -> C ! [Effect]

@@ -211,7 +211,7 @@ fn invalid_list_take_requires_int_count() {
 
 #[test]
 fn valid_tuple_return() {
-    let src = "fn pair() -> (Int, String)\n    (1, \"x\")\n";
+    let src = "fn pair() -> Tuple<Int, String>\n    (1, \"x\")\n";
     assert_no_errors(src);
 }
 
@@ -620,7 +620,7 @@ fn error_map_from_list_requires_tuple_pairs() {
     );
     assert_error_containing(
         src,
-        "List element 1: expected (String, Int), got List<String>",
+        "List element 1: expected Tuple<String, Int>, got List<String>",
     );
 }
 
@@ -1769,7 +1769,7 @@ fn exhaustive_with_ident_catch_all() {
 #[test]
 fn exhaustive_tuple_with_binding_wildcards() {
     let src = concat!(
-        "fn f(p: (Int, Int)) -> Int\n",
+        "fn f(p: Tuple<Int, Int>) -> Int\n",
         "  match p\n",
         "    (_, x) -> x\n",
     );
@@ -1779,7 +1779,7 @@ fn exhaustive_tuple_with_binding_wildcards() {
 #[test]
 fn error_non_exhaustive_tuple_with_literal_only() {
     let src = concat!(
-        "fn f(p: (Int, Int)) -> Int\n",
+        "fn f(p: Tuple<Int, Int>) -> Int\n",
         "  match p\n",
         "    (0, x) -> x\n",
     );

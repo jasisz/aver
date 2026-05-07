@@ -67,7 +67,7 @@ fn skipNewlinesAndDedents(tokens: List<Token>, pos: Int) -> Int
 verify skipNewlinesAndDedents
     skipNewlinesAndDedents([Token.TkNewline, Token.TkDedent, Token.TkInt(1), Token.TkEof], 0) => 2
 
-fn parsePattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
+fn parsePattern(tokens: List<Token>, pos: Int) -> Result<Tuple<Pattern, Int>, String>
     ? "Parse a match pattern: INT literal, _ (wildcard), or variable."
     nextPos = pos + 1
     t = tokenAt(tokens, pos)
@@ -89,7 +89,7 @@ verify parsePattern
     parsePattern([Token.TkLBracket, Token.TkRBracket, Token.TkEof], 0) => Result.Ok((Pattern.PatEmpty, 2))
     parsePattern([Token.TkEof], 0) => Result.Err("Expected pattern, got tokenRepr(TkEof)")
 
-fn parseIdentPattern(tokens: List<Token>, pos: Int, name: String) -> Result<(Pattern, Int), String>
+fn parseIdentPattern(tokens: List<Token>, pos: Int, name: String) -> Result<Tuple<Pattern, Int>, String>
     ? "Parse ident pattern: wildcard _, variable, or constructor Foo.Bar(bindings)."
     match name == "_"
         true -> Result.Ok((Pattern.PatWild, pos))
@@ -100,7 +100,7 @@ verify parseIdentPattern
     parseIdentPattern([Token.TkEof], 0, "x") => Result.Ok((Pattern.PatVar("x"), 0))
     parseIdentPattern([Token.TkDot, Token.TkEof], 0, "Foo") => Result.Err("Expected identifier after '.' in pattern")
 
-fn parseIdentPatternMaybeConstructor(tokens: List<Token>, pos: Int, name: String) -> Result<(Pattern, Int), String>
+fn parseIdentPatternMaybeConstructor(tokens: List<Token>, pos: Int, name: String) -> Result<Tuple<Pattern, Int>, String>
     ? "Check for dot-qualified name, constructor pattern, or plain variable."
     nextPos = pos + 1
     match tokenAt(tokens, pos)
@@ -116,7 +116,7 @@ verify parseIdentPatternMaybeConstructor
     parseIdentPatternMaybeConstructor([Token.TkEof], 0, "Token.TkEof") => Result.Ok((Pattern.PatConstructor("Token.TkEof", []), 0))
     parseIdentPatternMaybeConstructor([Token.TkDot, Token.TkEof], 0, "Foo") => Result.Err("Expected identifier after '.' in pattern")
 
-fn parseIdentPatternDotted(tokens: List<Token>, pos: Int, prefix: String) -> Result<(Pattern, Int), String>
+fn parseIdentPatternDotted(tokens: List<Token>, pos: Int, prefix: String) -> Result<Tuple<Pattern, Int>, String>
     ? "After dot: read next ident and check for ( or another dot."
     match tokenAt(tokens, pos)
         Token.TkIdent(s) -> parseIdentPatternMaybeConstructor(tokens, pos + 1, prefix + "." + s)
@@ -126,7 +126,7 @@ verify parseIdentPatternDotted
     parseIdentPatternDotted([Token.TkIdent("Ok"), Token.TkLParen, Token.TkIdent("x"), Token.TkRParen, Token.TkEof], 0, "Result") => Result.Ok((Pattern.PatConstructor("Result.Ok", ["x"]), 4))
     parseIdentPatternDotted([Token.TkEof], 0, "Foo") => Result.Err("Expected identifier after '.' in pattern")
 
-fn parseConstructorPatternBindings(tokens: List<Token>, pos: Int, name: String, acc: List<String>) -> Result<(Pattern, Int), String>
+fn parseConstructorPatternBindings(tokens: List<Token>, pos: Int, name: String, acc: List<String>) -> Result<Tuple<Pattern, Int>, String>
     ? "Parse bindings inside constructor pattern: Ctor(a, b) or Ctor()."
     match tokenAt(tokens, pos)
         Token.TkRParen -> Result.Ok((Pattern.PatConstructor(name, List.reverse(acc)), pos + 1))
@@ -137,7 +137,7 @@ verify parseConstructorPatternBindings
     parseConstructorPatternBindings([Token.TkRParen, Token.TkEof], 0, "Foo", []) => Result.Ok((Pattern.PatConstructor("Foo", []), 1))
     parseConstructorPatternBindings([Token.TkEof], 0, "Foo", []) => Result.Err("Expected binding or ')' in constructor pattern")
 
-fn parseConstructorPatternTail(tokens: List<Token>, pos: Int, name: String, acc: List<String>) -> Result<(Pattern, Int), String>
+fn parseConstructorPatternTail(tokens: List<Token>, pos: Int, name: String, acc: List<String>) -> Result<Tuple<Pattern, Int>, String>
     ? "After binding: ',' for more or ')' to end."
     match tokenAt(tokens, pos)
         Token.TkComma -> parseConstructorPatternBindings(tokens, pos + 1, name, acc)
@@ -148,7 +148,7 @@ verify parseConstructorPatternTail
     parseConstructorPatternTail([Token.TkRParen, Token.TkEof], 0, "Foo", ["x"]) => Result.Ok((Pattern.PatConstructor("Foo", ["x"]), 1))
     parseConstructorPatternTail([Token.TkEof], 0, "Foo", ["x"]) => Result.Err("Expected ',' or ')' in constructor pattern")
 
-fn parseTuplePattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
+fn parseTuplePattern(tokens: List<Token>, pos: Int) -> Result<Tuple<Pattern, Int>, String>
     ? "Parse tuple pattern: (pat, pat, ...)."
     parseTuplePatternElements(tokens, pos, [])
 
@@ -156,7 +156,7 @@ verify parseTuplePattern
     parseTuplePattern([Token.TkRParen, Token.TkEof], 0) => Result.Ok((Pattern.PatTuple([]), 1))
     parseTuplePattern([Token.TkEof], 0) => Result.Err("Expected pattern, got tokenRepr(TkEof)")
 
-fn parseTuplePatternElements(tokens: List<Token>, pos: Int, acc: List<Pattern>) -> Result<(Pattern, Int), String>
+fn parseTuplePatternElements(tokens: List<Token>, pos: Int, acc: List<Pattern>) -> Result<Tuple<Pattern, Int>, String>
     ? "Parse elements of a tuple pattern."
     match tokenAt(tokens, pos)
         Token.TkRParen -> Result.Ok((Pattern.PatTuple(List.reverse(acc)), pos + 1))
@@ -166,7 +166,7 @@ verify parseTuplePatternElements
     parseTuplePatternElements([Token.TkRParen, Token.TkEof], 0, []) => Result.Ok((Pattern.PatTuple([]), 1))
     parseTuplePatternElements([Token.TkEof], 0, []) => Result.Err("Expected pattern, got tokenRepr(TkEof)")
 
-fn parseTuplePatternElement(tokens: List<Token>, pos: Int, acc: List<Pattern>) -> Result<(Pattern, Int), String>
+fn parseTuplePatternElement(tokens: List<Token>, pos: Int, acc: List<Pattern>) -> Result<Tuple<Pattern, Int>, String>
     ? "Parse one pattern element and continue."
     pr = parsePattern(tokens, pos)?
     match pr
@@ -176,7 +176,7 @@ verify parseTuplePatternElement
     parseTuplePatternElement([Token.TkInt(1), Token.TkRParen, Token.TkEof], 0, []) => Result.Ok((Pattern.PatTuple([Pattern.PatInt(1)]), 2))
     parseTuplePatternElement([Token.TkEof], 0, []) => Result.Err("Expected pattern, got tokenRepr(TkEof)")
 
-fn parseTuplePatternElementTail(tokens: List<Token>, pos: Int, acc: List<Pattern>) -> Result<(Pattern, Int), String>
+fn parseTuplePatternElementTail(tokens: List<Token>, pos: Int, acc: List<Pattern>) -> Result<Tuple<Pattern, Int>, String>
     ? "After element: ',' for more or ')' to end."
     match tokenAt(tokens, pos)
         Token.TkComma -> parseTuplePatternElements(tokens, pos + 1, acc)
@@ -187,7 +187,7 @@ verify parseTuplePatternElementTail
     parseTuplePatternElementTail([Token.TkRParen, Token.TkEof], 0, [Pattern.PatInt(1)]) => Result.Ok((Pattern.PatTuple([Pattern.PatInt(1)]), 1))
     parseTuplePatternElementTail([Token.TkEof], 0, []) => Result.Err("Expected ',' or ')' in tuple pattern")
 
-fn parseListPattern(tokens: List<Token>, pos: Int) -> Result<(Pattern, Int), String>
+fn parseListPattern(tokens: List<Token>, pos: Int) -> Result<Tuple<Pattern, Int>, String>
     ? "Parse [] or [h, ..t] list pattern."
     match tokenAt(tokens, pos)
         Token.TkRBracket -> Result.Ok((Pattern.PatEmpty, pos + 1))
@@ -198,7 +198,7 @@ verify parseListPattern
     parseListPattern([Token.TkRBracket, Token.TkEof], 0) => Result.Ok((Pattern.PatEmpty, 1))
     parseListPattern([Token.TkEof], 0) => Result.Err("Expected identifier or ']' in list pattern")
 
-fn parseConsPattern(tokens: List<Token>, pos: Int, head: String) -> Result<(Pattern, Int), String>
+fn parseConsPattern(tokens: List<Token>, pos: Int, head: String) -> Result<Tuple<Pattern, Int>, String>
     ? "Parse [h, ..t] after reading head ident."
     pos2 = expect(tokens, pos, Token.TkComma)?
     pos3 = expect(tokens, pos2, Token.TkDotDot)?
@@ -379,7 +379,7 @@ fn skipBlockFlatAfterNewline(tokens: List<Token>, pos: Int) -> Int
 verify skipBlockFlatAfterNewline
     skipBlockFlatAfterNewline([Token.TkEof], 0) => 0
 
-fn parseModuleHeader(tokens: List<Token>, pos: Int) -> (List<String>, Int)
+fn parseModuleHeader(tokens: List<Token>, pos: Int) -> Tuple<List<String>, Int>
     ? "Parse module header: find depends list, skip everything else. Returns (deps, endPos)."
     endPos = skipBlock(tokens, pos)
     depList = findDependsInRange(tokens, pos, endPos)
@@ -424,7 +424,7 @@ fn collectDependsNames(tokens: List<Token>, pos: Int, endPos: Int, acc: List<Str
 verify collectDependsNames
     collectDependsNames([Token.TkIdent("Foo"), Token.TkComma, Token.TkIdent("Bar"), Token.TkRBracket, Token.TkEof], 0, 5, []) => ["Foo", "Bar"]
 
-fn parseParamList(tokens: List<Token>, pos: Int, acc: List<String>) -> Result<(List<String>, Int), String>
+fn parseParamList(tokens: List<Token>, pos: Int, acc: List<String>) -> Result<Tuple<List<String>, Int>, String>
     ? "Parse comma-separated parameter names until ')'."
     match tokenAt(tokens, pos)
         Token.TkRParen -> Result.Ok((List.reverse(acc), pos + 1))
@@ -435,7 +435,7 @@ verify parseParamList
     parseParamList([Token.TkRParen, Token.TkEof], 0, []) => Result.Ok(([], 1))
     parseParamList([Token.TkEof], 0, []) => Result.Err("Expected parameter name or ')'")
 
-fn parseParamListTail(tokens: List<Token>, pos: Int, acc: List<String>) -> Result<(List<String>, Int), String>
+fn parseParamListTail(tokens: List<Token>, pos: Int, acc: List<String>) -> Result<Tuple<List<String>, Int>, String>
     ? "After a param name: ',' for more or ')' to end."
     match tokenAt(tokens, pos)
         Token.TkRParen -> Result.Ok((List.reverse(acc), pos + 1))

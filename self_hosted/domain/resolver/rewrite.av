@@ -135,7 +135,7 @@ verify rewriteInternalExprs
     rewriteInternalExprs([], []) => []
     rewriteInternalExprs([Expr.ExprInt(1)], []) => [Expr.ExprInt(1)]
 
-fn rewriteInternalFields(fields: List<(String, Expr)>, acc: List<(String, Expr)>) -> List<(String, Expr)>
+fn rewriteInternalFields(fields: List<Tuple<String, Expr>>, acc: List<Tuple<String, Expr>>) -> List<Tuple<String, Expr>>
     ? "Rewrite record field expressions recursively."
     match fields
         [] -> List.reverse(acc)
@@ -466,7 +466,7 @@ fn rewriteInternalMatch(scrutinee: Expr, arms: List<MatchArm>) -> Expr
 verify rewriteInternalMatch
     rewriteInternalMatch(Expr.ExprInt(1), []) => Expr.ExprMatch(Expr.ExprInt(1), [])
 
-fn rewriteBoolMatchArms(arms: List<MatchArm>) -> Option<(Expr, Expr)>
+fn rewriteBoolMatchArms(arms: List<MatchArm>) -> Option<Tuple<Expr, Expr>>
     ? "Extract (thenExpr, elseExpr) from a two-arm bool match regardless of arm order."
     match arms
         [arm1, ..rest] -> match rest
@@ -480,7 +480,7 @@ verify rewriteBoolMatchArms
     rewriteBoolMatchArms([]) => Option.None
     rewriteBoolMatchArms([MatchArm(pattern = Pattern.PatBool(true), body = Expr.ExprInt(1), bindingSlots = {}), MatchArm(pattern = Pattern.PatBool(false), body = Expr.ExprInt(2), bindingSlots = {})]) => Option.Some((Expr.ExprInt(1), Expr.ExprInt(2)))
 
-fn rewriteBoolMatchArmPair(arm1: MatchArm, arm2: MatchArm) -> Option<(Expr, Expr)>
+fn rewriteBoolMatchArmPair(arm1: MatchArm, arm2: MatchArm) -> Option<Tuple<Expr, Expr>>
     ? "Order two complementary bool arms into (trueExpr, falseExpr)."
     match arm1.pattern
         Pattern.PatBool(b1) -> rewriteBoolMatchArmPairInner(b1, arm1.body, arm2.pattern, arm2.body)
@@ -490,7 +490,7 @@ verify rewriteBoolMatchArmPair
     rewriteBoolMatchArmPair(MatchArm(pattern = Pattern.PatBool(true), body = Expr.ExprInt(1), bindingSlots = {}), MatchArm(pattern = Pattern.PatBool(false), body = Expr.ExprInt(2), bindingSlots = {})) => Option.Some((Expr.ExprInt(1), Expr.ExprInt(2)))
     rewriteBoolMatchArmPair(MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = {}), MatchArm(pattern = Pattern.PatBool(false), body = Expr.ExprInt(2), bindingSlots = {})) => Option.None
 
-fn rewriteBoolMatchArmPairInner(b1: Bool, body1: Expr, p2: Pattern, body2: Expr) -> Option<(Expr, Expr)>
+fn rewriteBoolMatchArmPairInner(b1: Bool, body1: Expr, p2: Pattern, body2: Expr) -> Option<Tuple<Expr, Expr>>
     ? "Finish ordering bool arms once the first pattern bool is known."
     match p2
         Pattern.PatBool(b2) -> rewriteBoolMatchArmPairBools(b1, body1, b2, body2)
@@ -500,7 +500,7 @@ verify rewriteBoolMatchArmPairInner
     rewriteBoolMatchArmPairInner(true, Expr.ExprInt(1), Pattern.PatBool(false), Expr.ExprInt(2)) => Option.Some((Expr.ExprInt(1), Expr.ExprInt(2)))
     rewriteBoolMatchArmPairInner(true, Expr.ExprInt(1), Pattern.PatWild, Expr.ExprInt(2)) => Option.None
 
-fn rewriteBoolMatchArmPairBools(b1: Bool, body1: Expr, b2: Bool, body2: Expr) -> Option<(Expr, Expr)>
+fn rewriteBoolMatchArmPairBools(b1: Bool, body1: Expr, b2: Bool, body2: Expr) -> Option<Tuple<Expr, Expr>>
     ? "Return ordered bool branch bodies when the pair is exactly true/false or false/true."
     match (b1, b2)
         (true, false) -> Option.Some((body1, body2))

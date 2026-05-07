@@ -198,7 +198,7 @@ mod tests {
         // Multi-byte
         assert!(
             bs.iter()
-                .any(|l| matches!(l, Literal::Str(s) if s.bytes().count() > s.chars().count()))
+                .any(|l| matches!(l, Literal::Str(s) if s.len() > s.chars().count()))
         );
     }
 

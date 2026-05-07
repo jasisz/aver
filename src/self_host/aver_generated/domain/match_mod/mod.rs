@@ -28,7 +28,7 @@ fn __mutual_tco_trampoline_1(
         __state = match __state {
             __MutualTco1::MatchPatTupleItemsAcc(mut pats, mut items, mut acc) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(pats, [] => { return Ok(acc) }, [pat, restPats] => { aver_list_match!(items, [] => { return Err(AverStr::from("no match")) }, [item, restItems] => __MutualTco1::MatchPatTupleOne(pat, item, restPats, restItems, acc)) })
+                aver_list_match!(pats, [] => return Ok(acc), [pat, restPats] => aver_list_match!(items, [] => return Err(AverStr::from("no match")), [item, restItems] => __MutualTco1::MatchPatTupleOne(pat, item, restPats, restItems, acc)))
             }
             __MutualTco1::MatchPatTupleOne(
                 mut pat,

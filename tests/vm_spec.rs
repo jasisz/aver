@@ -564,7 +564,7 @@ fn vm_binding_in_expression() {
 
 #[test]
 fn vm_tuple_literal() {
-    let (result, arena) = vm_run_with_arena("fn main() -> (Int, String)\n    (1, \"x\")\n");
+    let (result, arena) = vm_run_with_arena("fn main() -> Tuple<Int, String>\n    (1, \"x\")\n");
     let value = result.to_value(&arena);
     assert_eq!(
         value,
@@ -577,7 +577,7 @@ fn vm_tuple_literal() {
 
 #[test]
 fn vm_match_tuple_pattern_binds_values() {
-    let src = "fn sum_pair(p: (Int, Int)) -> Int\n    match p\n        (a, b) -> a + b\n        _ -> 0\n\nfn main() -> Int\n    sum_pair((2, 5))\n";
+    let src = "fn sum_pair(p: Tuple<Int, Int>) -> Int\n    match p\n        (a, b) -> a + b\n        _ -> 0\n\nfn main() -> Int\n    sum_pair((2, 5))\n";
     let result = vm_run(src);
     assert!(result.is_int());
     let arena = Arena::new();
@@ -586,7 +586,7 @@ fn vm_match_tuple_pattern_binds_values() {
 
 #[test]
 fn vm_match_nested_tuple_pattern() {
-    let src = "fn flatten(p: ((Int, Int), Int)) -> Int\n    match p\n        ((a, b), c) -> a + b + c\n        _ -> 0\n\nfn main() -> Int\n    flatten(((1, 2), 3))\n";
+    let src = "fn flatten(p: Tuple<Tuple<Int, Int>, Int>) -> Int\n    match p\n        ((a, b), c) -> a + b + c\n        _ -> 0\n\nfn main() -> Int\n    flatten(((1, 2), 3))\n";
     let result = vm_run(src);
     assert!(result.is_int());
     let arena = Arena::new();
@@ -595,7 +595,7 @@ fn vm_match_nested_tuple_pattern() {
 
 #[test]
 fn vm_tuple_pattern_arity_mismatch_falls_through() {
-    let src = "fn test(p: (Int, Int)) -> Int\n    match p\n        (a, b, c) -> a + b + c\n        _ -> 42\n\nfn main() -> Int\n    test((1, 2))\n";
+    let src = "fn test(p: Tuple<Int, Int>) -> Int\n    match p\n        (a, b, c) -> a + b + c\n        _ -> 42\n\nfn main() -> Int\n    test((1, 2))\n";
     let result = vm_run(src);
     assert!(result.is_int());
     let arena = Arena::new();
@@ -1044,7 +1044,7 @@ fn vm_wrapper_constructor_value() {
 fn vm_independent_product_allows_builtin_branches() {
     let mut machine = vm_machine(
         r#"
-fn main() -> (List<String>, Int)
+fn main() -> Tuple<List<String>, Int>
     ! [Args.get]
     (Args.get(), String.len("abcd"))!
 "#,
@@ -1067,7 +1067,7 @@ fn main() -> (List<String>, Int)
 fn vm_independent_product_allows_wrapper_branches() {
     let (result, arena) = vm_run_with_arena(
         r#"
-fn main() -> (Result<Int, String>, Result<Int, String>)
+fn main() -> Tuple<Result<Int, String>, Result<Int, String>>
     (Result.Ok(1), Result.Err("x"))!
 "#,
     );
@@ -1090,7 +1090,7 @@ fn fromGlobal() -> Int
         [first, .._] -> String.len(first)
         _ -> 0
 
-fn main() -> (Int, Int)
+fn main() -> Tuple<Int, Int>
     f = String.len
     (f("abcd"), fromGlobal())!
 "#;
@@ -1114,7 +1114,7 @@ fn vm_independent_product_allows_module_local_function_branches() {
 fn score(x: Int) -> Int
     x + 1
 
-fn pair(x: Int) -> (Int, Int)
+fn pair(x: Int) -> Tuple<Int, Int>
     (score(x), score(x + 1))!
 "#,
     )
@@ -1125,7 +1125,7 @@ fn pair(x: Int) -> (Int, Int)
     intent =
         "Runs module-local parallel scoring through VM."
 
-fn main() -> (Int, Int)
+fn main() -> Tuple<Int, Int>
     Ai.pair(1)
 "#;
 
@@ -1145,7 +1145,7 @@ fn hasKey(m: Map<String, Int>) -> Bool
 fn lenIsOne(m: Map<String, Int>) -> Bool
     Map.len(m) == 1
 
-fn main() -> (Bool, Bool, Bool, Bool)
+fn main() -> Tuple<Bool, Bool, Bool, Bool>
     m = Map.set({}, "Board.isColor", 7)
     (hasKey(m), hasKey(m), lenIsOne(m), lenIsOne(m))!
 "#;
@@ -1185,7 +1185,7 @@ fn hasFnZero(fns: FnStore) -> Bool
         Result.Ok(fd) -> fd.name == "Board.isColor"
         Result.Err(_) -> false
 
-fn main() -> (Bool, Bool, Bool, Bool, Bool, Bool)
+fn main() -> Tuple<Bool, Bool, Bool, Bool, Bool, Bool>
     store = Domain.Eval.Store.fnsToStore([
         FnDef(name = "Board.isColor", params = [], body = [], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false)
     ])

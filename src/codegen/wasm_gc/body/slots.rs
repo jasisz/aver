@@ -6,14 +6,16 @@
 //! (`expr_needs_scratch` etc.) survive because they classify pattern
 //! shape, not type.
 
+use std::collections::{HashMap, HashSet};
+
 use wasm_encoder::ValType;
 
-use crate::ast::{Expr, FnBody, FnDef, Literal, Pattern, Stmt};
+use crate::ast::{Expr, FnBody, FnDef, Literal, Pattern, Spanned, Stmt};
 
 use super::super::WasmGcError;
 use super::super::types::{TypeRegistry, aver_to_wasm};
 use super::FnMap;
-use super::infer::{arm_is_option_pattern, arm_is_result_pattern};
+use super::infer::{arm_is_option_pattern, arm_is_result_pattern, aver_type_str_of};
 
 /// Per-fn slot table — one entry per local (param or binding) in
 /// resolver-allocation order. Slot N maps to `wasm local N`.
@@ -34,6 +36,16 @@ pub(super) struct SlotTable {
     /// reaches `Args.get()` with no args. `i, len` are i64; `acc` is
     /// `(ref null $List_String)`; `s` is `(ref null $string)`.
     pub(super) args_get_scratch: Option<[u32; 4]>,
+    /// Per-`Vector<T>` scratch local for the clone-on-write `Vector.set`
+    /// emit. Maps the whitespace-stripped canonical (`Vector<Int>`,
+    /// `Vector<Vector<Int>>`, …) to a local of type
+    /// `(ref null $vec_T)`. Pre-allocated here because wasm-gc lays
+    /// out function locals in one shot before body emit, so each
+    /// `Vector.set` site needs a slot reserved up front. The clone-
+    /// on-write shape is unsound without it: `Vector.new(n, inner)`
+    /// produces N elements aliasing the same `inner` ref, and the
+    /// previous `array.set` in place silently rewrote every alias.
+    pub(super) vector_set_scratch: HashMap<String, u32>,
 }
 
 impl SlotTable {
@@ -154,10 +166,34 @@ impl SlotTable {
         } else {
             None
         };
+        // Allocate one scratch local per unique `Vector<T>` instantiation
+        // that appears as the first argument of any `Vector.set` call in
+        // this fn body. The clone-on-write emit (`emit_vector_set_*`)
+        // builds the new vector via `array.new_default` + `array.copy`
+        // and conditionally writes the changed cell on the copy — that
+        // requires a typed local to hold the copy ref between
+        // `array.copy` and the subsequent `array.set`.
+        let mut vector_set_canonicals: HashSet<String> = HashSet::new();
+        collect_vector_set_canonicals(fd, &mut vector_set_canonicals);
+        let mut vector_set_scratch: HashMap<String, u32> = HashMap::new();
+        let mut sorted: Vec<String> = vector_set_canonicals.into_iter().collect();
+        sorted.sort(); // deterministic local order
+        for canonical in sorted {
+            if let Some(vec_idx) = registry.vector_type_idx(&canonical) {
+                let ty = ValType::Ref(wasm_encoder::RefType {
+                    nullable: true,
+                    heap_type: wasm_encoder::HeapType::Concrete(vec_idx),
+                });
+                let local_idx = by_slot.len() as u32;
+                by_slot.push(ty);
+                vector_set_scratch.insert(canonical, local_idx);
+            }
+        }
         Ok(Self {
             by_slot,
             subject_scratch,
             args_get_scratch,
+            vector_set_scratch,
         })
     }
 
@@ -374,4 +410,94 @@ pub(super) fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
 
 pub(super) fn count_value_params(params: &[(String, String)]) -> usize {
     params.iter().filter(|(_, ty)| ty.trim() != "Unit").count()
+}
+
+/// Walks the fn body collecting whitespace-stripped `Vector<T>`
+/// canonicals — one per call to `Vector.set` whose first argument
+/// has a `Vector<T>` type stamp. Drives the per-fn allocation of
+/// scratch locals consumed by the clone-on-write emit in
+/// `emit_vector_set_or_default` / `emit_vector_set_boxed`.
+fn collect_vector_set_canonicals(fd: &FnDef, out: &mut HashSet<String>) {
+    let FnBody::Block(stmts) = fd.body.as_ref();
+    for stmt in stmts {
+        match stmt {
+            Stmt::Binding(_, _, e) | Stmt::Expr(e) => walk_expr_for_vector_set(e, out),
+        }
+    }
+}
+
+fn walk_expr_for_vector_set(expr: &Spanned<Expr>, out: &mut HashSet<String>) {
+    match &expr.node {
+        Expr::FnCall(callee, args) => {
+            // Direct `Vector.set(v, i, x)`.
+            if let Expr::Attr(parent, member) = &callee.node
+                && let Expr::Ident(p) = &parent.node
+                && p == "Vector"
+                && member == "set"
+                && args.len() == 3
+            {
+                let vec_aver = aver_type_str_of(&args[0]);
+                let canonical: String = vec_aver.chars().filter(|c| !c.is_whitespace()).collect();
+                if canonical.starts_with("Vector<") {
+                    out.insert(canonical);
+                }
+            }
+            walk_expr_for_vector_set(callee, out);
+            for a in args {
+                walk_expr_for_vector_set(a, out);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            walk_expr_for_vector_set(l, out);
+            walk_expr_for_vector_set(r, out);
+        }
+        Expr::Match { subject, arms } => {
+            walk_expr_for_vector_set(subject, out);
+            for arm in arms {
+                walk_expr_for_vector_set(&arm.body, out);
+            }
+        }
+        Expr::TailCall(boxed) => {
+            for a in &boxed.args {
+                walk_expr_for_vector_set(a, out);
+            }
+        }
+        Expr::Attr(obj, _) => walk_expr_for_vector_set(obj, out),
+        Expr::ErrorProp(inner) => walk_expr_for_vector_set(inner, out),
+        Expr::Constructor(_, payload) => {
+            if let Some(p) = payload.as_deref() {
+                walk_expr_for_vector_set(p, out);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, e) in fields {
+                walk_expr_for_vector_set(e, out);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            walk_expr_for_vector_set(base, out);
+            for (_, e) in updates {
+                walk_expr_for_vector_set(e, out);
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for e in items {
+                walk_expr_for_vector_set(e, out);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                walk_expr_for_vector_set(k, out);
+                walk_expr_for_vector_set(v, out);
+            }
+        }
+        Expr::InterpolatedStr(parts) => {
+            for p in parts {
+                if let crate::ast::StrPart::Parsed(inner) = p {
+                    walk_expr_for_vector_set(inner, out);
+                }
+            }
+        }
+        _ => {}
+    }
 }

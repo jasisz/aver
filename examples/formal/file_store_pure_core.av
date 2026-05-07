@@ -7,14 +7,14 @@ module FileStorePureCore
     exposes [write, read]
     effects [Console]
 
-fn write(s: List<(String, String)>, path: String, body: String) -> List<(String, String)>
+fn write(s: List<Tuple<String, String>>, path: String, body: String) -> List<Tuple<String, String>>
     ? "Append a (path, body) entry. Most-recent-wins lookup is in `read`."
     List.prepend((path, body), s)
 
 verify write
     write([], "a.txt", "hi") => [("a.txt", "hi")]
 
-fn read(s: List<(String, String)>, path: String) -> Option<String>
+fn read(s: List<Tuple<String, String>>, path: String) -> Option<String>
     ? "Most-recent-wins lookup over the FileStore."
     match s
         [] -> Option.None

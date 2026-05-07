@@ -2,7 +2,18 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## Unreleased
+## 0.17.1 (2026-05-07)
+
+### Removed (breaking)
+- **Paren-tuple types `(A, B)` no longer valid.** Type position uses `Tuple<A, B>` only; value literals (`(1, 2)`) and patterns (`(a, b) -> …`) unchanged. Old form errors with `paren-tuple types removed — use 'Tuple<A, B>'`. Migrated ~30 files across `examples/`, `self_hosted/`, `docs/`.
+
+### Fixed
+- **Vector / Map aliasing — `Vector.set` / `Map.set` no longer rewrite shared rows.** New `ir::alias` pass flags every slot reachable from `Vector.get` / `Map.get` / `Vector.new(_, compound)` (or `Vector<…>` / `Map<…>` param) on `FnResolution.aliased_slots`. VM skips the `last_use` `mem::take` path on flagged slots; wasm-gc skips clone-on-write when the slot is non-aliased + last-use, falls back to `array.copy` + `array.set` on a fresh array otherwise. Plus wasm-gc now registers nested `Vector<Vector<T>>` from `Vector.new` call sites. Legacy `--target wasm`, `--self-host`, Rust codegen unaffected.
+- **`Int.mod` Euclidean across every backend.** Result in `[0, |b|)` regardless of signs — `Int.mod(-7, 3) = 2`. Rust codegen already had it; VM + wasm-gc (per-instantiation `__int_mod_euclid` helper) + legacy wasm (inline `rem_euclid` sequence) now match. Legacy `--target wasm` still traps on `b == 0` (pre-existing); VM / wasm-gc / Rust return `Result.Err("division by zero")`. Fused `Result.withDefault(Int.mod(a, b), default)` sidesteps the trap on every backend.
+
+### Diagnostics
+- **`Invalid indentation level` includes a hint** about the most common cause (wrapped fn signatures, multi-line argument lists — both unsupported) and points at the fix (one-line declaration or named helper).
+- **Skill / `llms.txt` clarified** for three high-bias-from-other-languages mistakes: `()` is not a Unit literal (write `Unit`), `?` is Result-only (use `Option.withDefault` for Option), `Int.mod` is Euclidean and returns `Result<Int, String>`. Plus `Tuple<A, B>` is the type spelling, paren stays for value/pattern. Skill is the source of truth for `tools/website/llms.txt` (regenerated via `tools/website/build_llms.sh`).
 
 ## 0.17.0 "Purge" (2026-05-06)
 

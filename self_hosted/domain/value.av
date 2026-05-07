@@ -25,7 +25,7 @@ type Val
     ValSome(Val)
     ValNone
     ValTuple(List<Val>)
-    ValRecord(String, List<(String, Val)>)
+    ValRecord(String, List<Tuple<String, Val>>)
     ValVariant(Int, String, List<Val>)
     ValMap(Map<String, Val>)
     ValUnit
@@ -100,7 +100,7 @@ verify valReprInner
     valReprInner(Val.ValList([Val.ValInt(1)])) => "[1]"
     valReprInner(Val.ValVector(Vector.fromList([]))) => "Vector[]"
 
-fn valMapRepr(entries: List<(String, Val)>, acc: String, first: Bool) -> String
+fn valMapRepr(entries: List<Tuple<String, Val>>, acc: String, first: Bool) -> String
     ? "Build a stable map repr close to the host interpreter output."
     match entries
         [] -> "{{{acc}}}"

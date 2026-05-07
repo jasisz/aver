@@ -1454,6 +1454,17 @@ fn discover_builtins_in_expr(
                     effects.register(EffectName::ArgsLen);
                     effects.register(EffectName::ArgsGet);
                 }
+                // `Int.mod` lowers to a per-site `i64.rem_s` plus a
+                // proxied `__int_mod_euclid` Call to fold the negative
+                // result back into `[0, |b|)`. The helper isn't a
+                // surface builtin (no `from_dotted` mapping); register
+                // explicitly here whenever discovery hits an `Int.mod`
+                // call. Both the unfused Result-wrap shape and the
+                // fused `Result.withDefault(Int.mod(...), default)`
+                // shape need it.
+                if dotted == "Int.mod" {
+                    builtins.register(BuiltinName::IntModEuclid);
+                }
             }
             discover_builtins_in_expr(&callee.node, builtins, effects, eq_helpers, type_registry);
             for arg in args {

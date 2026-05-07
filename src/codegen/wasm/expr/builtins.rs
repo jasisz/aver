@@ -496,11 +496,43 @@ impl<'a> ExprEmitter<'a> {
             }
             "Int.mod" if args.len() == 2 => {
                 // args: [a(i64), b(i64)] -> Result<Int, String>
-                // Simplified: just return a % b wrapped in Ok
+                // Euclidean modulo: result is always in [0, |b|).
+                // Algorithm mirrors Rust's `i64::rem_euclid`:
+                //     q = a rem_s b
+                //     r = if q < 0 { q + (if b < 0 { -b } else { b }) } else { q }
+                // NOTE: b == 0 still wasm-traps (pre-existing limitation
+                // of the legacy backend — the unfused Result-Err shape
+                // would need string-literal interning in the runtime,
+                // tracked separately). The fused `Result.withDefault`
+                // shape sidesteps this.
                 let b_local = self.alloc_local(WasmType::I64);
+                let q_local = self.alloc_local(WasmType::I64);
                 self.instructions.push(Instruction::LocalSet(b_local));
+                // q = a rem_s b
                 self.instructions.push(Instruction::LocalGet(b_local));
                 self.instructions.push(Instruction::I64RemS);
+                self.instructions.push(Instruction::LocalTee(q_local));
+                // if q < 0
+                self.instructions.push(Instruction::I64Const(0));
+                self.instructions.push(Instruction::I64LtS);
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I64));
+                // q + (if b < 0 then -b else b)
+                self.instructions.push(Instruction::LocalGet(q_local));
+                self.instructions.push(Instruction::LocalGet(b_local));
+                self.instructions.push(Instruction::I64Const(0));
+                self.instructions.push(Instruction::I64LtS);
+                self.emit_if(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I64));
+                // b < 0: -b
+                self.instructions.push(Instruction::I64Const(0));
+                self.instructions.push(Instruction::LocalGet(b_local));
+                self.instructions.push(Instruction::I64Sub);
+                self.emit_else();
+                self.instructions.push(Instruction::LocalGet(b_local));
+                self.emit_end();
+                self.instructions.push(Instruction::I64Add);
+                self.emit_else();
+                self.instructions.push(Instruction::LocalGet(q_local));
+                self.emit_end();
                 // Wrap in Result.Ok
                 let result = self.alloc_local(WasmType::I64);
                 self.instructions.push(Instruction::LocalSet(result));

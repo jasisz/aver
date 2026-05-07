@@ -325,6 +325,36 @@ impl<'a> EmitCtx<'a> {
             .and_then(|r| r.local_slots.get(name).copied())
             .map(|s| s as u32)
     }
+
+    /// Whether `slot` is flagged as alias-prone by `ir::alias`. Backends
+    /// that want to skip clone-on-write must check this first; default
+    /// `false` for slots outside the table (resolution missing,
+    /// scratch slots) is the safe-but-fast answer (no aliasing
+    /// suspicion → in-place is sound). The IR pass always runs in real
+    /// builds, so an absent table only happens in test paths that
+    /// pre-resolve manually.
+    pub(super) fn is_aliased_slot(&self, slot: u16) -> bool {
+        self.resolution
+            .and_then(|r| r.aliased_slots.get(slot as usize).copied())
+            .unwrap_or(false)
+    }
+
+    /// True when `arg` is a `Resolved` slot whose binding is dead
+    /// after this expression (`last_use=true`) AND not flagged
+    /// alias-prone — the underlying engine array / struct is
+    /// uniquely owned, so the alias-aware fast path is sound.
+    /// Used by `Vector.set` (skips `array.copy` of the backing array)
+    /// and `Map.set` (picks the `set_in_place` helper). Anonymous
+    /// expressions land here as a transient stack value with no
+    /// binding to alias against, which counts as uniquely owned.
+    pub(super) fn arg_uniquely_owned(&self, arg: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
+        match &arg.node {
+            crate::ast::Expr::Resolved { slot, last_use, .. } => {
+                last_use.0 && !self.is_aliased_slot(*slot)
+            }
+            _ => true,
+        }
+    }
 }
 
 /// `CallLowerCtx` impl so the shared IR-level shape recognition

@@ -2,7 +2,7 @@ use super::VM;
 use crate::nan_value::{Arena, ArenaEntry, ArenaList, ArenaSymbol, NanValue, NanValueConvert};
 use crate::vm::opcode::{LOAD_CONST, RETURN};
 use crate::vm::types::{CallFrame, CodeStore, FnChunk};
-use crate::{lexer::Lexer, parser::Parser, resolver, tco, vm};
+use crate::{lexer::Lexer, parser::Parser, vm};
 
 fn compile_vm(src: &str) -> VM {
     let mut lexer = Lexer::new(src);
@@ -291,7 +291,7 @@ fn profiling_tracks_opcodes_and_fast_returns() {
 #[test]
 fn parallel_base_context_rebases_string_constants_to_stable() {
     let vm = compile_vm(
-        "fn wave(slot: Int) -> String\n    match slot\n        0 -> \"[>.....]\"\n        1 -> \"[=>....]\"\n        2 -> \"[==>...]\"\n        3 -> \"[.==>..]\"\n        4 -> \"[..==>.]\"\n        _ -> \"[...==>]\"\n\nfn lane(frame: Int) -> String\n    wave(frame)\n\nfn other() -> Int\n    7\n\nfn main() -> (String, Int)\n    (lane(3), other())!\n",
+        "fn wave(slot: Int) -> String\n    match slot\n        0 -> \"[>.....]\"\n        1 -> \"[=>....]\"\n        2 -> \"[==>...]\"\n        3 -> \"[.==>..]\"\n        4 -> \"[..==>.]\"\n        _ -> \"[...==>]\"\n\nfn lane(frame: Int) -> String\n    wave(frame)\n\nfn other() -> Int\n    7\n\nfn main() -> Tuple<String, Int>\n    (lane(3), other())!\n",
     );
 
     let (code, globals, arena) = vm.build_parallel_base_context();
@@ -323,7 +323,7 @@ fn parallel_base_context_rebases_string_constants_to_stable() {
 #[test]
 fn call_par_keeps_string_constants_valid_in_child_vm() {
     let mut vm = compile_vm(
-        "fn wave(slot: Int) -> String\n    match slot\n        0 -> \"[>.....]\"\n        1 -> \"[=>....]\"\n        2 -> \"[==>...]\"\n        3 -> \"[.==>..]\"\n        4 -> \"[..==>.]\"\n        _ -> \"[...==>]\"\n\nfn lane(frame: Int, ms: Int) -> String\n    \"{wave(frame)}  ~{String.fromInt(ms)}ms\"\n\nfn other() -> Int\n    7\n\nfn main() -> (String, Int)\n    (lane(3, 1200), other())!\n",
+        "fn wave(slot: Int) -> String\n    match slot\n        0 -> \"[>.....]\"\n        1 -> \"[=>....]\"\n        2 -> \"[==>...]\"\n        3 -> \"[.==>..]\"\n        4 -> \"[..==>.]\"\n        _ -> \"[...==>]\"\n\nfn lane(frame: Int, ms: Int) -> String\n    \"{wave(frame)}  ~{String.fromInt(ms)}ms\"\n\nfn other() -> Int\n    7\n\nfn main() -> Tuple<String, Int>\n    (lane(3, 1200), other())!\n",
     );
 
     let result = vm.run().expect("parallel string render should not crash");

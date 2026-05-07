@@ -24,7 +24,7 @@ verify failing
 
 // ── Flat ?! — all succeed ──────────────────────────────────────────────────
 
-fn flatOk() -> Result<(Int, Int, Int), String>
+fn flatOk() -> Result<Tuple<Int, Int, Int>, String>
     ? "Three independent computations, all succeed."
     data = (slow(1), slow(2), slow(3))?!
     Result.Ok(data)
@@ -34,7 +34,7 @@ verify flatOk
 
 // ── Flat ?! — one fails ────────────────────────────────────────────────────
 
-fn flatFail() -> (Result<Int, String>, Result<Int, String>, Result<Int, String>)
+fn flatFail() -> Tuple<Result<Int, String>, Result<Int, String>, Result<Int, String>>
     ? "Three independent computations as bare product — middle one fails."
     (slow(1), failing(0 - 5), slow(3))!
 
@@ -43,7 +43,7 @@ verify flatFail
 
 // ── Bare ! — partial success ───────────────────────────────────────────────
 
-fn bareProduct() -> (Result<Int, String>, Result<Int, String>)
+fn bareProduct() -> Tuple<Result<Int, String>, Result<Int, String>>
     ? "Two independent computations, bare product preserves both Results."
     (slow(7), failing(0 - 1))!
 

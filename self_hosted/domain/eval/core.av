@@ -156,7 +156,7 @@ fn evalIndependentItems(exprs: List<Expr>, env: Map<String, Val>, fns: FnStore) 
                     (leftExprs, rightExprs) -> match (evalIndependentItems(leftExprs, env, fns), evalIndependentItems(rightExprs, env, fns))?!
                         (leftVals, rightVals) -> Result.Ok(interleaveIndependentVals(leftVals, rightVals, true, []))
 
-fn splitIndependentExprs(exprs: List<Expr>, leftAcc: List<Expr>, rightAcc: List<Expr>, sendLeft: Bool) -> (List<Expr>, List<Expr>)
+fn splitIndependentExprs(exprs: List<Expr>, leftAcc: List<Expr>, rightAcc: List<Expr>, sendLeft: Bool) -> Tuple<List<Expr>, List<Expr>>
     ? "Split a product into alternating branches so recursive ?! can cover all items."
     match exprs
         [] -> (List.reverse(leftAcc), List.reverse(rightAcc))
@@ -265,13 +265,13 @@ fn evalTupleExpr(exprs: List<Expr>, env: Map<String, Val>, fns: FnStore) -> Resu
     items = evalListItems(exprs, env, fns)?
     Result.Ok(Val.ValTuple(items))
 
-fn evalRecordExpr(name: String, fieldExprs: List<(String, Expr)>, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
+fn evalRecordExpr(name: String, fieldExprs: List<Tuple<String, Expr>>, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
     ? "Evaluate record constructor."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     fields = evalRecordFields(fieldExprs, env, fns)?
     Result.Ok(Val.ValRecord(name, fields))
 
-fn evalRecordFields(fieldExprs: List<(String, Expr)>, env: Map<String, Val>, fns: FnStore) -> Result<List<(String, Val)>, String>
+fn evalRecordFields(fieldExprs: List<Tuple<String, Expr>>, env: Map<String, Val>, fns: FnStore) -> Result<List<Tuple<String, Val>>, String>
     ? "Evaluate record field expressions."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match fieldExprs
@@ -279,7 +279,7 @@ fn evalRecordFields(fieldExprs: List<(String, Expr)>, env: Map<String, Val>, fns
         [pair, ..rest] -> match pair
             (fname, expr) -> evalRecordFieldOne(fname, expr, rest, env, fns)
 
-fn evalRecordFieldOne(fname: String, expr: Expr, rest: List<(String, Expr)>, env: Map<String, Val>, fns: FnStore) -> Result<List<(String, Val)>, String>
+fn evalRecordFieldOne(fname: String, expr: Expr, rest: List<Tuple<String, Expr>>, env: Map<String, Val>, fns: FnStore) -> Result<List<Tuple<String, Val>>, String>
     ? "Evaluate one record field and continue."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     v = evalExpr(expr, env, fns)?
@@ -682,21 +682,21 @@ fn evalMatch(v: Val, arms: List<MatchArm>, env: Map<String, Val>, fns: FnStore) 
             Result.Ok(bindings) -> evalExpr(arm.body, Domain.Eval.Store.mergeBindings(bindings, env), fns)
             Result.Err(_) -> evalMatch(v, rest, env, fns)
 
-fn evalStmtExpr(e: Expr, env: Map<String, Val>, fns: FnStore) -> Result<(Val, Map<String, Val>), String>
+fn evalStmtExpr(e: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Tuple<Val, Map<String, Val>>, String>
     ? "Evaluate a statement expression."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match evalExpr(e, env, fns)
         Result.Ok(v) -> Result.Ok((v, env))
         Result.Err(e) -> Result.Err(e)
 
-fn evalStmtBind(name: String, e: Expr, env: Map<String, Val>, fns: FnStore) -> Result<(Val, Map<String, Val>), String>
+fn evalStmtBind(name: String, e: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Tuple<Val, Map<String, Val>>, String>
     ? "Evaluate a binding statement."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match evalExpr(e, env, fns)
         Result.Ok(v) -> Result.Ok((v, Map.set(env, name, v)))
         Result.Err(e) -> Result.Err(e)
 
-fn evalStmt(stmt: Stmt, env: Map<String, Val>, fns: FnStore) -> Result<(Val, Map<String, Val>), String>
+fn evalStmt(stmt: Stmt, env: Map<String, Val>, fns: FnStore) -> Result<Tuple<Val, Map<String, Val>>, String>
     ? "Evaluate a statement, returning the result and updated environment."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match stmt
@@ -942,13 +942,13 @@ fn evalListItemsSlotRev(exprs: List<Expr>, env: Vector<Val>, slotMap: Map<String
             Result.Err(err) -> Result.Err(err)
             Result.Ok(v) -> evalListItemsSlotRev(rest, env, slotMap, fns, List.prepend(v, acc))
 
-fn evalRecordSlot(name: String, fieldExprs: List<(String, Expr)>, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
+fn evalRecordSlot(name: String, fieldExprs: List<Tuple<String, Expr>>, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
     ? "Record constructor in slot path."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     fields = evalRecordFieldsSlot(fieldExprs, env, slotMap, fns)?
     Result.Ok(Val.ValRecord(name, fields))
 
-fn evalRecordFieldsSlot(fieldExprs: List<(String, Expr)>, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<List<(String, Val)>, String>
+fn evalRecordFieldsSlot(fieldExprs: List<Tuple<String, Expr>>, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<List<Tuple<String, Val>>, String>
     ? "Evaluate record fields in slot path."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     match fieldExprs
@@ -956,7 +956,7 @@ fn evalRecordFieldsSlot(fieldExprs: List<(String, Expr)>, env: Vector<Val>, slot
         [pair, ..rest] -> match pair
             (fname, expr) -> evalRecordFieldOneSlot(fname, expr, rest, env, slotMap, fns)
 
-fn evalRecordFieldOneSlot(fname: String, expr: Expr, rest: List<(String, Expr)>, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<List<(String, Val)>, String>
+fn evalRecordFieldOneSlot(fname: String, expr: Expr, rest: List<Tuple<String, Expr>>, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<List<Tuple<String, Val>>, String>
     ? "Evaluate one record field in slot path."
     ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
     v = evalExprSlot(expr, env, slotMap, fns)?
@@ -1200,7 +1200,7 @@ fn evalMatchSlot(v: Val, arms: List<MatchArm>, env: Vector<Val>, slotMap: Map<St
             Result.Ok(bindings) -> evalExprSlot(arm.body, mergeBindingsSlot(bindings, arm.bindingSlots, env), slotMap, fns)
             Result.Err(_) -> evalMatchSlot(v, rest, env, slotMap, fns)
 
-fn mergeBindingsSlot(bindings: List<(String, Val)>, bindingSlots: Map<String, Int>, env: Vector<Val>) -> Vector<Val>
+fn mergeBindingsSlot(bindings: List<Tuple<String, Val>>, bindingSlots: Map<String, Int>, env: Vector<Val>) -> Vector<Val>
     ? "Merge pattern bindings into slot env using the slots assigned for this specific arm."
     match bindings
         [] -> env
@@ -1211,7 +1211,7 @@ verify mergeBindingsSlot
     Vector.get(mergeBindingsSlot([], {}, Vector.fromList([Val.ValUnit])), 0) => Option.Some(Val.ValUnit)
     Vector.get(mergeBindingsSlot([("x", Val.ValInt(5))], Map.set({}, "x", 0), Vector.fromList([Val.ValUnit, Val.ValUnit])), 0) => Option.Some(Val.ValInt(5))
 
-fn mergeOneBindingSlot(name: String, val: Val, rest: List<(String, Val)>, bindingSlots: Map<String, Int>, env: Vector<Val>) -> Vector<Val>
+fn mergeOneBindingSlot(name: String, val: Val, rest: List<Tuple<String, Val>>, bindingSlots: Map<String, Int>, env: Vector<Val>) -> Vector<Val>
     ? "Merge one pattern binding into slot env."
     match Map.get(bindingSlots, name)
         Option.Some(slot) -> mergeBindingsSlot(rest, bindingSlots, Domain.Eval.Slots.setSlot(env, slot, val))

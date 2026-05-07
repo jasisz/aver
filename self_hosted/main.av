@@ -21,7 +21,7 @@ fn runWithModules(source: String, moduleRoot: String) -> Result<Val, String>
     match prepared
         (prog, moduleFns) -> runGuestProgram(prog, moduleFns, [])
 
-fn prepareProgramWithModules(source: String, moduleRoot: String) -> Result<(Program, List<FnDef>), String>
+fn prepareProgramWithModules(source: String, moduleRoot: String) -> Result<Tuple<Program, List<FnDef>>, String>
     ? "Lex, parse, resolve, load modules, and return a guest program ready for execution."
     ! [Disk.exists, Disk.readText]
     tokens = Domain.Lexer.lex(source)
@@ -43,7 +43,7 @@ fn runGuestCliProgram(prog: Program, moduleFns: List<FnDef>, localFns: List<FnDe
         Result.Ok(result) -> finishCliRun(localFns, result)
         Result.Err(e) -> Result.Err("Runtime error: " + e)
 
-fn loadModules(deps: List<String>, moduleRoot: String, acc: List<FnDef>, loaded: Map<String, Bool>) -> Result<(List<FnDef>, Map<String, Bool>), String>
+fn loadModules(deps: List<String>, moduleRoot: String, acc: List<FnDef>, loaded: Map<String, Bool>) -> Result<Tuple<List<FnDef>, Map<String, Bool>>, String>
     ? "Load all module dependencies, skipping already-loaded modules."
     ! [Disk.exists, Disk.readText]
     match deps
@@ -52,7 +52,7 @@ fn loadModules(deps: List<String>, moduleRoot: String, acc: List<FnDef>, loaded:
             true -> loadModules(rest, moduleRoot, acc, loaded)
             false -> loadOneModule(dep, rest, moduleRoot, acc, loaded)
 
-fn loadOneModule(dep: String, rest: List<String>, moduleRoot: String, acc: List<FnDef>, loaded: Map<String, Bool>) -> Result<(List<FnDef>, Map<String, Bool>), String>
+fn loadOneModule(dep: String, rest: List<String>, moduleRoot: String, acc: List<FnDef>, loaded: Map<String, Bool>) -> Result<Tuple<List<FnDef>, Map<String, Bool>>, String>
     ? "Load one module. Tries moduleRoot, then parent dirs up to 3 levels."
     ! [Disk.exists, Disk.readText]
     path = findModulePath(dep, moduleRoot, 0)
@@ -233,7 +233,7 @@ verify shiftFnIdsInExprs
     shiftFnIdsInExprs([], 2, []) => []
     shiftFnIdsInExprs([Expr.ExprCallDirect(1, []), Expr.ExprInt(9)], 3, []) => [Expr.ExprCallDirect(4, []), Expr.ExprInt(9)]
 
-fn shiftFnIdsInFields(fields: List<(String, Expr)>, offset: Int, acc: List<(String, Expr)>) -> List<(String, Expr)>
+fn shiftFnIdsInFields(fields: List<Tuple<String, Expr>>, offset: Int, acc: List<Tuple<String, Expr>>) -> List<Tuple<String, Expr>>
     ? "Shift direct-call ids in record field expressions."
     match fields
         [] -> List.reverse(acc)
@@ -276,7 +276,7 @@ fn runFileLoaded(prog: Program, moduleFns: List<FnDef>) -> Result<String, String
         Result.Ok(val) -> Result.Ok(Domain.Value.valRepr(val))
         Result.Err(e) -> Result.Err(e)
 
-fn loadProgramFromFile(path: String, moduleRoot: String) -> Result<(Program, List<FnDef>), String>
+fn loadProgramFromFile(path: String, moduleRoot: String) -> Result<Tuple<Program, List<FnDef>>, String>
     ? "Read a file and prepare the guest program plus loaded modules."
     ! [Disk.exists, Disk.readText]
     source = Disk.readText(path)?

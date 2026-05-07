@@ -1429,7 +1429,7 @@ mod tests {
         // Sequential Random.int calls should lift to oracle calls with
         // counter 0, 1, 2.
         let fd = parse_fn(
-            "fn pickThree() -> (Int, Int, Int)\n\
+            "fn pickThree() -> Tuple<Int, Int, Int>\n\
              \x20   ! [Random.int]\n\
              \x20   (Random.int(1, 100), Random.int(1, 100), Random.int(1, 100))\n",
         );
@@ -1466,7 +1466,7 @@ mod tests {
         // tuple in `Result.Ok`. Each branch keeps its own
         // `BranchPath.child(path, i)` + fresh counter.
         let fd = parse_fn(
-            "fn fetchBoth(urlA: String, urlB: String) -> Result<(String, String), String>\n\
+            "fn fetchBoth(urlA: String, urlB: String) -> Result<Tuple<String, String>, String>\n\
              \x20   ! [Http.get]\n\
              \x20   (Http.get(urlA), Http.get(urlB))?!\n",
         );

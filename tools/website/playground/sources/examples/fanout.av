@@ -12,7 +12,7 @@ fn fetchOne(tag: String) -> Result<Int, String>
     Console.print("fetch {tag}")
     Result.Ok(String.len(tag))
 
-fn fetchPair() -> Result<(Int, Int), String>
+fn fetchPair() -> Result<Tuple<Int, Int>, String>
     ? "inner pair — independent fetch of two"
     ! [Console.print]
     xy = (fetchOne("inner-A"), fetchOne("inner-B"))?!

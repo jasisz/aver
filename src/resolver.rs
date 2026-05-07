@@ -124,6 +124,7 @@ fn resolve_fn(fd: &mut FnDef, type_info: &TypeInfo) {
         local_count: next_slot,
         local_slots: Rc::new(last_alloc),
         local_slot_types: Rc::new(slot_types),
+        aliased_slots: Rc::new(vec![false; next_slot as usize]),
     });
 }
 

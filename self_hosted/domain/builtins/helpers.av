@@ -16,7 +16,7 @@ verify oneArg
     oneArg([Val.ValInt(1)]) => Result.Ok(Val.ValInt(1))
     oneArg([]) => Result.Err("expected 1 argument")
 
-fn twoArgs(args: List<Val>) -> Result<(Val, Val), String>
+fn twoArgs(args: List<Val>) -> Result<Tuple<Val, Val>, String>
     ? "Extract two arguments from args list."
     match args
         [a, ..rest] -> match rest

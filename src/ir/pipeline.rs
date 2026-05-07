@@ -387,6 +387,12 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         let post = pass_diag::collect(items);
         result.pass_diagnostics.push(diag_for_last_use(&post));
         fire(&mut cfg, PipelineStage::LastUse, items);
+        // Alias-slot annotation rides on the same gate — backends only
+        // ever consume `aliased_slots` together with `last_use` (the
+        // VM's owned-mask uses both, the wasm-gc clone-on-write skip
+        // uses both). No public stage flag yet; the data is opt-in by
+        // backends via `FnResolution.aliased_slots`.
+        crate::ir::alias::annotate_program_alias_slots(items);
     }
 
     result

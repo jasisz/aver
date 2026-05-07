@@ -178,7 +178,7 @@ fn applyDamageOneVec(enemies: Vector<Enemy>, player: Player, i: Int, e: Enemy) -
 verify applyDamageOneVec
     applyDamageOneVec(Vector.fromList([]), Types.mkPlayer(1.0, 1.0), 0, Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)).hp => 19
 
-fn shootRay(enemies: List<Enemy>, px: Float, py: Float, angle: Float, levelMap: List<String>) -> (List<Enemy>, String)
+fn shootRay(enemies: List<Enemy>, px: Float, py: Float, angle: Float, levelMap: List<String>) -> Tuple<List<Enemy>, String>
     ? "Cast a ray from player, hit first enemy in path. Returns updated enemies and message."
     dx = Float.cos(angle)
     dy = Float.sin(angle)
@@ -187,7 +187,7 @@ fn shootRay(enemies: List<Enemy>, px: Float, py: Float, angle: Float, levelMap: 
 verify shootRay
     shootRay([], 1.0, 1.0, 0.0, Level.buildMap(4, "####", [])) => ([], "Shot hit wall")
 
-fn shootMarch(enemies: List<Enemy>, px: Float, py: Float, dx: Float, dy: Float, dist: Float, levelMap: List<String>) -> (List<Enemy>, String)
+fn shootMarch(enemies: List<Enemy>, px: Float, py: Float, dx: Float, dy: Float, dist: Float, levelMap: List<String>) -> Tuple<List<Enemy>, String>
     ? "March along shot ray checking for enemy hits"
     match dist > 12.0
         true -> (enemies, "Shot missed!")
@@ -196,7 +196,7 @@ fn shootMarch(enemies: List<Enemy>, px: Float, py: Float, dx: Float, dy: Float, 
 verify shootMarch
     shootMarch([], 1.0, 1.0, 1.0, 0.0, 12.1, Level.buildMap(4, "....", [])) => ([], "Shot missed!")
 
-fn shootCheck(enemies: List<Enemy>, px: Float, py: Float, dx: Float, dy: Float, dist: Float, levelMap: List<String>) -> (List<Enemy>, String)
+fn shootCheck(enemies: List<Enemy>, px: Float, py: Float, dx: Float, dy: Float, dist: Float, levelMap: List<String>) -> Tuple<List<Enemy>, String>
     ? "Compute ray position and check for wall or enemy hit"
     cx = px + dx * dist
     cy = py + dy * dist
@@ -209,7 +209,7 @@ fn shootCheck(enemies: List<Enemy>, px: Float, py: Float, dx: Float, dy: Float, 
 verify shootCheck
     shootCheck([], 1.0, 1.0, 1.0, 0.0, 0.0, Level.buildMap(4, "####", [])) => ([], "Shot hit wall")
 
-fn shootCheckEnemies(cx: Float, cy: Float, enemies: List<Enemy>, px: Float, py: Float, dx: Float, dy: Float, dist: Float, levelMap: List<String>) -> (List<Enemy>, String)
+fn shootCheckEnemies(cx: Float, cy: Float, enemies: List<Enemy>, px: Float, py: Float, dx: Float, dy: Float, dist: Float, levelMap: List<String>) -> Tuple<List<Enemy>, String>
     ? "Check if any enemy is at the ray position"
     match findEnemyAt(enemies, cx, cy, 0)
         Option.Some(idx) -> applyShot(enemies, idx)
@@ -240,14 +240,14 @@ verify findEnemyAtVec
     findEnemyAtVec(Vector.fromList([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)]), 1.0, 1.0, 0) => Option.Some(0)
     findEnemyAtVec(Vector.fromList([]), 1.0, 1.0, 0) => Option.None
 
-fn applyShot(enemies: List<Enemy>, idx: Int) -> (List<Enemy>, String)
+fn applyShot(enemies: List<Enemy>, idx: Int) -> Tuple<List<Enemy>, String>
     ? "Apply 5 damage to enemy at index, remove if dead"
     applyShotVec(Vector.fromList(enemies), idx)
 
 verify applyShot
     applyShot([], 0) => ([], "Shot missed!")
 
-fn applyShotVec(enemies: Vector<Enemy>, idx: Int) -> (List<Enemy>, String)
+fn applyShotVec(enemies: Vector<Enemy>, idx: Int) -> Tuple<List<Enemy>, String>
     ? "Apply 5 damage to enemy at index using indexed vector access"
     match Vector.get(enemies, idx)
         Option.Some(e) -> applyDamageToEnemyVec(enemies, idx, e)
@@ -256,14 +256,14 @@ fn applyShotVec(enemies: Vector<Enemy>, idx: Int) -> (List<Enemy>, String)
 verify applyShotVec
     applyShotVec(Vector.fromList([]), 0) => ([], "Shot missed!")
 
-fn applyDamageToEnemy(enemies: List<Enemy>, idx: Int, e: Enemy) -> (List<Enemy>, String)
+fn applyDamageToEnemy(enemies: List<Enemy>, idx: Int, e: Enemy) -> Tuple<List<Enemy>, String>
     ? "Reduce enemy HP, remove if dead"
     applyDamageToEnemyVec(Vector.fromList(enemies), idx, e)
 
 verify applyDamageToEnemy
     applyDamageToEnemy([Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)], 0, Types.mkEnemy(1.0, 1.0, EnemyKind.Imp, 3)) => ([], "Killed !!")
 
-fn applyDamageToEnemyVec(enemies: Vector<Enemy>, idx: Int, e: Enemy) -> (List<Enemy>, String)
+fn applyDamageToEnemyVec(enemies: Vector<Enemy>, idx: Int, e: Enemy) -> Tuple<List<Enemy>, String>
     ? "Reduce enemy HP, remove if dead using shared enemy vector"
     newHp = e.hp - 5
     match newHp < 1

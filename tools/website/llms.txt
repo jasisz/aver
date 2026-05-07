@@ -98,13 +98,13 @@ Primitives: `Int`, `Float`, `String`, `Bool`, `Unit`
 
 Compound:
 - `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>`
-- tuples: `(A, B, ...)`
+- tuples: type is `Tuple<A, B, ...>` (2+ elements). Value literal and pattern are both paren: `(a, b)`. The type spelling and the value spelling are deliberately different.
 - function types: `Fn(A) -> B`, `Fn(A) -> B ! [Console.print]`
 
 Notes:
 - top-level named functions can be passed where `Fn(...)` is expected
 - there are no lambdas and no closures
-- no implicit type promotion; use `Float.fromInt` / `Int.fromFloat`
+- no implicit type promotion; use `Float.fromInt(n)` / `Int.fromFloat(f)`
 
 ### User-defined types
 
@@ -276,13 +276,13 @@ Rules:
 
 - Arithmetic: `+`, `-`, `*`, `/` (operands must match types)
 - Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
-- Error propagation: `expr?` (unwraps Result.Ok, propagates Err)
+- Error propagation: `expr?` (unwraps `Result.Ok`, propagates `Result.Err`). **Result-only** — does not work on `Option`. For `Option`, use `Option.withDefault(opt, fallback)` or pattern-match.
 - Independence: `(a, b)!` (parallel), `(a, b)?!` (parallel + Result unwrap)
 - String interpolation: `"Hello, {name}!"`
 
 **These operators do NOT exist** — do not use them:
 
-- no `%` (modulo) — use `Int.mod(a, b)` which returns `Result<Int, String>`
+- no `%` (modulo) — use `Int.mod(a, b)` which returns `Result<Int, String>`. Euclidean modulo: result is always in `[0, |b|)`. `Int.mod(-7, 3) = Result.Ok(2)`, not `-1`. `b == 0` returns `Result.Err("division by zero")`
 - no `&&`, `||` (boolean and/or) — use `Bool.and(a, b)`, `Bool.or(a, b)`, or nested `match`
 - no `!` (boolean not) as prefix — use `Bool.not(x)`
 - no `+=`, `-=`, `++`, `--` (mutation operators)
@@ -311,17 +311,21 @@ Key `String` API:
 - `String.toUpper`, `String.toLower`, `String.trim`
 - `String.join`, `String.split`, `String.chars` — concat is the `+` operator
 - `Int.fromString : String -> Result<Int, String>`, `String.fromInt : Int -> String`
-- string interpolation: `"Hello, {name}!"` is the idiomatic concat
+- `Float.fromString`, `String.fromFloat`, `String.fromBool` — convention: `<targetTyp>.from<source>`
+- string interpolation: `"Hello, {name}!"` is the idiomatic way to render values into text; reserve `String.fromInt` etc. for explicit data conversion (e.g. building keys: `"user:" + String.fromInt(id)`)
 
 Key `List` API (small, recursion-first):
-- `List.len`, `List.prepend`, `List.concat`, `List.reverse`, `List.contains`, `List.zip`, `List.take`, `List.drop`
+- `List.len`, `List.prepend`, `List.concat`, `List.reverse`, `List.contains`, `List.zip`, `List.take`, `List.drop`, `List.fromVector`
 - No `List.map`, `List.filter`, `List.fold` — write with recursion
+- empty list literal: `[]`
 
 Key `Vector` API (O(1) indexed access):
 - `Vector.new(n, default)`, `Vector.get(v, i) -> Option<T>`, `Vector.set(v, i, val) -> Option<Vector<T>>`
+- `Vector.fromList(l)` — conversion in the other direction lives on `List`
 
 Key `Map` API:
-- `{}`, `Map.fromList(pairs)`, `Map.get(m, k) -> Option<V>`, `Map.set(m, k, v)`, `Map.has(m, k)`, `Map.remove(m, k)`, `Map.keys(m)`, `Map.len(m)`
+- empty map literal: `{}` (type from context); non-empty: `{a => 1, b => 2}`. There is no `Map.empty()` builtin.
+- `Map.fromList(pairs)`, `Map.get(m, k) -> Option<V>`, `Map.set(m, k, v)`, `Map.has(m, k)`, `Map.remove(m, k)`, `Map.keys(m)`, `Map.values(m)`, `Map.entries(m)`, `Map.len(m)`
 
 Effectful namespaces:
 - `Console`: print, error, warn, readLine — **`print`/`error`/`warn` take `String`**, not arbitrary values. Stringify at the call site: interpolation `"{x}"` for primitives, a per-type render fn (`fn show(r: Result<T, E>) -> String`) for compound shapes.
@@ -381,6 +385,9 @@ match Map.get(ages, "alice")
 16. `BranchPath.Root()` / `BranchPath.root()` — it's a nullary value constructor, no parens: just `BranchPath.Root`
 17. Two `given` for the same effect — rejected. Use a multi-value domain `given rnd: Random.int = [stubA, stubB]` for varied samples
 18. Plain `verify fn` on a fn with generative effects — you get a lint warning, use `verify fn law …` with `given` stubs or `verify fn trace` instead
+19. `()` as a Unit value literal — there is no `()` literal. Write `Unit`. Diagnostics render the value as `()`, but in source the only spelling is `Unit` (matches `Map<T, Unit>` set semantics, `Unit` field annotations, etc.). `Console.print(...)` returning Unit is implicit — you almost never write the literal directly
+20. `expr?` on an `Option<T>` — `?` is Result-only. For `Option`, use `Option.withDefault(opt, fallback)`, or `match opt { Option.Some(v) -> … ; Option.None -> … }`. `Vector.get` and `Map.get` return `Option`, so neither composes with `?` directly — wrap the value first
+21. `(A, B)` as a tuple type — type position uses `Tuple<A, B>` exclusively. Tuple **value** literals stay paren: `(1, 2)`, `[(1, 2), (3, 4)]`, `Result.Ok((a, b))`. Tuple **patterns** stay paren: `match p { (a, b) -> … }`. The type and the value spelling are deliberately different so grep-for-type and grep-for-value don't collide
 
 ### Style
 

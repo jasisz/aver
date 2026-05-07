@@ -42,7 +42,7 @@ fn temp_dir(prefix: &str) -> PathBuf {
     dir
 }
 
-fn write_program(dir: &PathBuf, name: &str, source: &str) -> PathBuf {
+fn write_program(dir: &std::path::Path, name: &str, source: &str) -> PathBuf {
     let path = dir.join(name);
     fs::write(&path, source).expect("write temp program");
     path
@@ -364,7 +364,7 @@ fn wasm_gc_records_independent_product_with_group_annotations() {
         "module CrossGroups\n    intent = \"?! cross-backend smoke\"\n\n\
          fn loadOk(n: Int) -> Result<Int, String>\n    ! [Console.print, Time.unixMs]\n    \
          _ = Time.unixMs()\n    Console.print(\"loaded {n}\")\n    Result.Ok(n * 10)\n\n\
-         fn computeAll() -> Result<(Int, Int, Int), String>\n    ! [Console.print, Time.unixMs]\n    \
+         fn computeAll() -> Result<Tuple<Int, Int, Int>, String>\n    ! [Console.print, Time.unixMs]\n    \
          data = (loadOk(1), loadOk(2), loadOk(3))?!\n    Result.Ok(data)\n\n\
          fn main() -> Unit\n    ! [Console.print, Time.unixMs]\n    \
          match computeAll()\n        Result.Ok(_) -> Console.print(\"ok\")\n        \

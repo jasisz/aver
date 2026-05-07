@@ -1480,7 +1480,7 @@ mod tests {
     }
     use crate::codegen::{CodegenContext, build_context};
     use crate::source::parse_source;
-    use crate::tco;
+
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc as Rc;
 
@@ -4033,7 +4033,7 @@ fn connPort(conn: Tcp.Connection) -> Int
 
     #[test]
     fn fibonacci_example_matches_general_linear_recurrence_shapes() {
-        let mut ctx = ctx_from_source(
+        let ctx = ctx_from_source(
             include_str!("../../../examples/data/fibonacci.av"),
             "fibonacci",
         );

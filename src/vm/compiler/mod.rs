@@ -631,6 +631,9 @@ impl ProgramCompiler {
         );
         fc.source_file = self.source_file.clone();
         fc.note_line(fndef.line);
+        if let Some(res) = resolution {
+            fc.set_aliased_slots(res.aliased_slots.clone());
+        }
 
         match fndef.body.as_ref() {
             FnBody::Block(stmts) => fc.compile_body(stmts)?,
@@ -783,6 +786,15 @@ struct FnCompiler<'a> {
     line_table: Vec<(u16, u16)>,
     /// Last emitted line (for RLE dedup).
     last_noted_line: u16,
+    /// Snapshot of `FnResolution.aliased_slots` for the current fn.
+    /// Stamped per slot by the IR `alias` pass; backends consume it
+    /// rather than re-deriving the same shape per fn. Empty when the
+    /// fn was compiled outside the standard pipeline (REPL with no
+    /// last-use phase, partial integrations) — the safe-but-slow
+    /// reading is "every slot might be aliased" but the VM defaults
+    /// to the legacy "everyone owned" behaviour for backwards
+    /// compatibility; the alias pass always runs in real builds.
+    aliased_slots: std::sync::Arc<Vec<bool>>,
 }
 
 impl<'a> FnCompiler<'a> {
@@ -816,7 +828,19 @@ impl<'a> FnCompiler<'a> {
             source_file: String::new(),
             line_table: Vec::new(),
             last_noted_line: 0,
+            aliased_slots: std::sync::Arc::new(Vec::new()),
         }
+    }
+
+    fn set_aliased_slots(&mut self, aliased: std::sync::Arc<Vec<bool>>) {
+        self.aliased_slots = aliased;
+    }
+
+    pub(super) fn is_aliased_slot(&self, slot: u16) -> bool {
+        self.aliased_slots
+            .get(slot as usize)
+            .copied()
+            .unwrap_or(false)
     }
 
     fn finish(self) -> FnChunk {

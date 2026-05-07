@@ -192,7 +192,7 @@ impl TypeChecker {
                         Type::Invalid => (Type::Invalid, Type::Invalid),
                         other => {
                             self.error(format!(
-                                "Argument 1 of '{}': expected List<(K, V)>, got List<{}>",
+                                "Argument 1 of '{}': expected List<Tuple<K, V>>, got List<{}>",
                                 name,
                                 other.display()
                             ));
@@ -202,7 +202,7 @@ impl TypeChecker {
                     Type::Invalid => (Type::Invalid, Type::Invalid),
                     other => {
                         self.error(format!(
-                            "Argument 1 of '{}': expected List<(K, V)>, got {}",
+                            "Argument 1 of '{}': expected List<Tuple<K, V>>, got {}",
                             name,
                             other.display()
                         ));
