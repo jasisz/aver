@@ -73,13 +73,39 @@ impl VM {
         // Leaf call state: saved caller context for frameless calls.
         let mut leaf_return: Option<(u32, usize, usize)> = None; // (fn_id, ip, bp)
 
+        // Hoisted bytecode pointer for the current fn. Refreshed only at
+        // fn-changing opcodes (CALL_*, TAIL_CALL_*, RETURN, leaf call /
+        // leaf return) — not on every dispatch tick. The loop below
+        // rebuilds a `&[u8]` slice from `(code_ptr, code_len)` once per
+        // iter so existing `code[ip]` / `read_u16!(code, ip)` etc. reads
+        // unchanged.
+        //
+        // Safety: `self.code.functions[fn_id].code` is a `Vec<u8>` whose
+        // backing buffer never moves during `execute_until` — bytecode is
+        // built once at compile time and read-only at runtime. The raw
+        // pointer is reseated in lockstep with `fn_id` updates.
+        let (mut code_ptr, mut code_len) = {
+            let c = &self.code.functions[fn_id as usize].code;
+            (c.as_ptr(), c.len())
+        };
+
+        // Local macro: refresh `(code_ptr, code_len)` from current `fn_id`.
+        // Used by every arm that mutates `fn_id`.
+        macro_rules! refresh_code {
+            () => {{
+                let c = &self.code.functions[fn_id as usize].code;
+                code_ptr = c.as_ptr();
+                code_len = c.len();
+            }};
+        }
+
         loop {
             // Cooperative cancellation: check every 256 opcodes to amortise cost.
             if ip & 0xFF == 0 && self.is_cancelled() {
                 return Err(VmError::runtime("cancelled by sibling branch"));
             }
 
-            let code = &self.code.functions[fn_id as usize].code;
+            let code: &[u8] = unsafe { std::slice::from_raw_parts(code_ptr, code_len) };
 
             // Save position for error reporting (cold-path lookup in line_table).
             self.error_fn_id = fn_id;
@@ -420,6 +446,7 @@ impl VM {
                     }
 
                     fn_id = target_fn_id;
+                    refresh_code!();
                     ip = 0;
                     bp = new_bp;
                 }
@@ -433,6 +460,7 @@ impl VM {
 
                     let new_bp = self.stack.len() - _argc as usize;
                     fn_id = target_fn_id;
+                    refresh_code!();
                     ip = 0;
                     bp = new_bp;
                 }
@@ -466,6 +494,7 @@ impl VM {
                                 fn_id = f.fn_id;
                                 ip = f.ip as usize;
                                 bp = f.bp as usize;
+                                refresh_code!();
                                 continue;
                             }
 
@@ -592,6 +621,7 @@ impl VM {
                     }
 
                     fn_id = target_fn_id;
+                    refresh_code!();
                     ip = 0;
                     bp = new_bp;
                 }
@@ -639,6 +669,7 @@ impl VM {
                         fn_id = f.fn_id;
                         ip = f.ip as usize;
                         bp = f.bp as usize;
+                        refresh_code!();
                         continue;
                     }
 
@@ -804,6 +835,7 @@ impl VM {
                         profile.record_function_entry(target, target_fn_id);
                     }
                     fn_id = target_fn_id;
+                    refresh_code!();
                     ip = 0;
                 }
 
@@ -816,6 +848,7 @@ impl VM {
                         fn_id = saved_fn_id;
                         ip = saved_ip;
                         bp = saved_bp;
+                        refresh_code!();
                         continue;
                     }
 
@@ -842,6 +875,7 @@ impl VM {
                         fn_id = caller_fn_id;
                         ip = caller_ip;
                         bp = caller_bp;
+                        refresh_code!();
                         continue;
                     }
 
@@ -863,6 +897,7 @@ impl VM {
                             fn_id = next_fn_id;
                             ip = next_ip;
                             bp = next_bp;
+                            refresh_code!();
                         }
                     }
                 }
@@ -1209,6 +1244,7 @@ impl VM {
                                     fn_id = next_fn_id;
                                     ip = next_ip;
                                     bp = next_bp;
+                                    refresh_code!();
                                     continue;
                                 }
                             }
@@ -1249,6 +1285,7 @@ impl VM {
                                 fn_id = next_fn_id;
                                 ip = next_ip;
                                 bp = next_bp;
+                                refresh_code!();
                                 continue;
                             }
                         }
