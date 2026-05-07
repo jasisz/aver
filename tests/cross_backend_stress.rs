@@ -83,6 +83,27 @@ fn run_wasm(prefix: &str, source: &str) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+fn run_wasm_gc(prefix: &str, source: &str) -> String {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let path = temp_module(prefix, source);
+    let out = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("run")
+        .arg(&path)
+        .arg("--wasm-gc")
+        .output()
+        .expect("expected `aver run --wasm-gc` to execute");
+    cleanup(&path);
+    assert!(
+        out.status.success(),
+        "{} wasm-gc run failed:\n{}",
+        prefix,
+        format_output(&out)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
 fn run_self_host(prefix: &str, source: &str) -> String {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let aver_bin = env!("CARGO_BIN_EXE_aver");
@@ -280,6 +301,34 @@ fn main()
 // len = 2000, sum 1..2000 = 2000 * 2001 / 2 = 2 001 000
 const LIST_FROM_VECTOR_OUT: &str = "2000\n2001000";
 
+/// Pin the alias-corruption invariant: `outer = Vector.new(3, inner)`
+/// must NOT make the inner storage of `outer[0]` share an arena cell
+/// with `inner` such that mutating one bleeds into the other. The fused
+/// `Option.withDefault(Vector.set(row0, 1, 9), row0)` only touches a
+/// fresh local; both `row0` (read out of `outer`) and `inner` must
+/// remain `0 0 0`. A backend that takes the in-place fast path on
+/// `row0` without proving uniqueness produces `0 9 0` on either or
+/// both rows. See conversation 2026-05-07: three rounds of consultation
+/// landed on conservative aliasing as the right 0.17.x posture.
+const VECTOR_ALIASING_SRC: &str = r#"module Tmp
+
+fn cellStr(v: Vector<Int>, i: Int) -> String
+    String.fromInt(Option.withDefault(Vector.get(v, i), -1))
+
+fn show(v: Vector<Int>) -> String
+    cellStr(v, 0) + cellStr(v, 1) + cellStr(v, 2)
+
+fn main()
+    ! [Console.print]
+    inner = Vector.new(3, 0)
+    outer = Vector.new(3, inner)
+    row0 = Option.withDefault(Vector.get(outer, 0), Vector.new(0, 0))
+    _ = Option.withDefault(Vector.set(row0, 1, 9), row0)
+    Console.print(show(row0))
+    Console.print(show(inner))
+"#;
+const VECTOR_ALIASING_OUT: &str = "000\n000";
+
 // ─── Per-backend cross-checks ──────────────────────────────────────────
 //
 // One #[test] fn per (source × backend). Verbose vs a paste-macro
@@ -462,5 +511,38 @@ fn cross_list_from_vector_2k_self_host() {
         "self-host",
         &run_self_host("aver-cross-lfv2k-sh", LIST_FROM_VECTOR_SRC),
         LIST_FROM_VECTOR_OUT,
+    );
+}
+
+#[test]
+fn cross_vector_aliasing_pin_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-alias-vm", VECTOR_ALIASING_SRC),
+        VECTOR_ALIASING_OUT,
+    );
+}
+#[test]
+fn cross_vector_aliasing_pin_wasm() {
+    assert_eq_with_label(
+        "WASM",
+        &run_wasm("aver-cross-alias-wasm", VECTOR_ALIASING_SRC),
+        VECTOR_ALIASING_OUT,
+    );
+}
+#[test]
+fn cross_vector_aliasing_pin_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-alias-wasmgc", VECTOR_ALIASING_SRC),
+        VECTOR_ALIASING_OUT,
+    );
+}
+#[test]
+fn cross_vector_aliasing_pin_self_host() {
+    assert_eq_with_label(
+        "self-host",
+        &run_self_host("aver-cross-alias-sh", VECTOR_ALIASING_SRC),
+        VECTOR_ALIASING_OUT,
     );
 }
