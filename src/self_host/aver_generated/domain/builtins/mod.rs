@@ -30,7 +30,7 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverMap<Aver
         __state = match __state {
             __MutualTco1::TuplesToMap(mut items, mut acc) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(items, [] => return acc, [item, rest] => match item {
+                aver_list_match!(items, [] => { return acc }, [item, rest] => match item {
                 Val::ValTuple(parts) => __MutualTco1::TuplesToMapOne(parts, rest, acc),
                 _ => __MutualTco1::TuplesToMap(rest, acc)
                 })

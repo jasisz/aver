@@ -396,7 +396,7 @@ pub fn valListRepr(
 ) -> AverStr {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(items, [] => aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((18i64) as usize); __b.push_str(&AverStr::from("[")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(acc)))); __b }; __b.push_str(&AverStr::from("]")); __b }), [v, rest] => { if first { {
+        return aver_list_match!(items, [] => { aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((18i64) as usize); __b.push_str(&AverStr::from("[")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(acc)))); __b }; __b.push_str(&AverStr::from("]")); __b }) }, [v, rest] => { if first { {
             items = rest;
             acc = valReprInner(&v);
             first = false;
@@ -579,7 +579,7 @@ pub fn valMapRepr(
 ) -> AverStr {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(entries, [] => aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((18i64) as usize); __b.push_str(&AverStr::from("{")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(acc)))); __b }; __b.push_str(&AverStr::from("}")); __b }), [pair, rest] => { match pair {
+        return aver_list_match!(entries, [] => { aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((18i64) as usize); __b.push_str(&AverStr::from("{")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(acc)))); __b }; __b.push_str(&AverStr::from("}")); __b }) }, [pair, rest] => { match pair {
             (k, v) => if first { {
             entries = rest;
             acc = ((quoteString(k) + &AverStr::from(": ")) + &valReprInner(&v));

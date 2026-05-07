@@ -177,7 +177,7 @@ fn __mutual_tco_trampoline_2(
         __state = match __state {
             __MutualTco2::ResolveArms(mut arms, mut slots, mut acc) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(arms, [] => return (acc.reverse(), slots), [arm, rest] => __MutualTco2::ResolveOneArm(arm, rest, slots, acc))
+                aver_list_match!(arms, [] => { return (acc.reverse(), slots) }, [arm, rest] => __MutualTco2::ResolveOneArm(arm, rest, slots, acc))
             }
             __MutualTco2::ResolveOneArm(mut arm, mut rest, mut slots, mut acc) => {
                 crate::cancel_checkpoint();
@@ -268,7 +268,7 @@ fn __mutual_tco_trampoline_3(
         __state = match __state {
             __MutualTco3::ResolveStmts(mut stmts, mut slots, mut next, mut acc) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(stmts, [] => return (acc.reverse(), next, slots), [s, rest] => __MutualTco3::ResolveOneStmt(s, rest, slots, next, acc))
+                aver_list_match!(stmts, [] => { return (acc.reverse(), next, slots) }, [s, rest] => __MutualTco3::ResolveOneStmt(s, rest, slots, next, acc))
             }
             __MutualTco3::ResolveOneStmt(mut s, mut rest, mut slots, mut next, mut acc) => {
                 crate::cancel_checkpoint();

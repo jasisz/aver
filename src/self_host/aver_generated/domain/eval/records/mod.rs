@@ -24,7 +24,7 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverList<(Av
         __state = match __state {
             __MutualTco1::MergeRecordFieldsAcc(mut existing, mut overrides, mut acc) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(existing, [] => return aver_rt::AverList::concat(&acc.reverse(), &overrides), [pair, rest] => match pair {
+                aver_list_match!(existing, [] => { return aver_rt::AverList::concat(&acc.reverse(), &overrides) }, [pair, rest] => match pair {
                 (k, v) => __MutualTco1::MergeOneField(k, v, rest, overrides, acc)
                 })
             }
