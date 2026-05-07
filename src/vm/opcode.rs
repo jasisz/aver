@@ -66,6 +66,30 @@ pub const NEG: u8 = 0x15;
 /// Pop a, push !a (boolean not).
 pub const NOT: u8 = 0x16;
 
+/// Typed `+` for two `Int` operands. `as_int` decode + `wrapping_add`,
+/// boxing back through `NanValue::new_int`. Skips the tag-dispatch
+/// chain in `arith_add`. Emitted when both operand types resolve to
+/// `Type::Int`.
+pub const ADD_INT: u8 = 0x17;
+/// Typed `-` for two `Int` operands; same shape as `ADD_INT`.
+pub const SUB_INT: u8 = 0x18;
+/// Typed `*` for two `Int` operands; same shape as `ADD_INT`.
+pub const MUL_INT: u8 = 0x19;
+
+/// Typed `+` for two `Float` operands. `as_float` decode (raw
+/// `f64::from_bits`), IEEE 754 add, push as `NanValue::new_float`.
+/// Skips `arith_add` tag-dispatch + cross-type promotion. Hot in
+/// numeric loops (Mandelbrot inner step is 3 muls + 1 add per iter).
+pub const ADD_FLOAT: u8 = 0x1A;
+/// Typed `-` for two `Float` operands; same shape as `ADD_FLOAT`.
+pub const SUB_FLOAT: u8 = 0x1B;
+/// Typed `*` for two `Float` operands; same shape as `ADD_FLOAT`.
+pub const MUL_FLOAT: u8 = 0x1C;
+/// Typed `/` for two `Float` operands; same shape as `ADD_FLOAT`.
+/// IEEE 754 division — `b == 0.0` produces `inf`/`-inf`/`NaN` per
+/// the spec, no runtime check.
+pub const DIV_FLOAT: u8 = 0x1D;
+
 // -- Comparison --------------------------------------------------------------
 
 /// Pop b, pop a, push a == b.
@@ -84,6 +108,25 @@ pub const GT: u8 = 0x22;
 /// Int (`match n { 0 -> …; _ -> … }`) and arithmetic guards; profile
 /// shows `eq_in` at 10–12% self-time in newtype/match scenarios.
 pub const EQ_INT: u8 = 0x23;
+
+/// Typed `<` for two `Int` operands. `as_int` decode on both sides
+/// (folds the inline path inline), raw i64 compare, push bool. Skips
+/// `compare_lt`'s tag-dispatch (`is_int`/`is_float`/`is_string` chain
+/// + cross-type promotion). Emitted when both operands' `Spanned::ty()`
+/// resolve to `Type::Int`.
+pub const LT_INT: u8 = 0x24;
+
+/// Typed `>` for two `Int` operands; same shape as `LT_INT`.
+pub const GT_INT: u8 = 0x25;
+
+/// Typed `<` for two `Float` operands. `as_float` (raw `f64::from_bits`)
+/// on both sides, IEEE 754 compare, push bool. Hot in numeric loops
+/// (Mandelbrot inner step `match curZ2 > 4.0 { … }` etc.); profile
+/// shows `compare_lt` at 2.6% self-time on fractal_seahorse.
+pub const LT_FLOAT: u8 = 0x26;
+
+/// Typed `>` for two `Float` operands; same shape as `LT_FLOAT`.
+pub const GT_FLOAT: u8 = 0x27;
 
 /// Fused `match n { LIT -> ...; _ -> ... }` arm test: peek the top of
 /// stack (subject left in place by the surrounding `compile_match`),
@@ -348,6 +391,13 @@ pub fn opcode_name(op: u8) -> &'static str {
         LOAD_TRUE => "LOAD_TRUE",
         LOAD_FALSE => "LOAD_FALSE",
         ADD => "ADD",
+        ADD_INT => "ADD_INT",
+        SUB_INT => "SUB_INT",
+        MUL_INT => "MUL_INT",
+        ADD_FLOAT => "ADD_FLOAT",
+        SUB_FLOAT => "SUB_FLOAT",
+        MUL_FLOAT => "MUL_FLOAT",
+        DIV_FLOAT => "DIV_FLOAT",
         SUB => "SUB",
         MUL => "MUL",
         DIV => "DIV",
@@ -356,6 +406,10 @@ pub fn opcode_name(op: u8) -> &'static str {
         NOT => "NOT",
         EQ => "EQ",
         EQ_INT => "EQ_INT",
+        LT_INT => "LT_INT",
+        GT_INT => "GT_INT",
+        LT_FLOAT => "LT_FLOAT",
+        GT_FLOAT => "GT_FLOAT",
         LT => "LT",
         GT => "GT",
         CONCAT => "CONCAT",
@@ -427,6 +481,13 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | LOAD_TRUE
         | LOAD_FALSE
         | ADD
+        | ADD_INT
+        | SUB_INT
+        | MUL_INT
+        | ADD_FLOAT
+        | SUB_FLOAT
+        | MUL_FLOAT
+        | DIV_FLOAT
         | SUB
         | MUL
         | DIV
@@ -436,7 +497,11 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | EQ
         | EQ_INT
         | LT
+        | LT_INT
+        | LT_FLOAT
         | GT
+        | GT_INT
+        | GT_FLOAT
         | RETURN
         | PROPAGATE_ERR
         | LIST_HEAD_TAIL

@@ -179,6 +179,48 @@ impl VM {
                     let r = self.arith_add(a, b)?;
                     self.stack.push(r);
                 }
+                ADD_INT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let r = a.as_int(&self.arena).wrapping_add(b.as_int(&self.arena));
+                    self.stack.push(NanValue::new_int(r, &mut self.arena));
+                }
+                SUB_INT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let r = a.as_int(&self.arena).wrapping_sub(b.as_int(&self.arena));
+                    self.stack.push(NanValue::new_int(r, &mut self.arena));
+                }
+                MUL_INT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let r = a.as_int(&self.arena).wrapping_mul(b.as_int(&self.arena));
+                    self.stack.push(NanValue::new_int(r, &mut self.arena));
+                }
+                ADD_FLOAT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    self.stack
+                        .push(NanValue::new_float(a.as_float() + b.as_float()));
+                }
+                SUB_FLOAT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    self.stack
+                        .push(NanValue::new_float(a.as_float() - b.as_float()));
+                }
+                MUL_FLOAT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    self.stack
+                        .push(NanValue::new_float(a.as_float() * b.as_float()));
+                }
+                DIV_FLOAT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    self.stack
+                        .push(NanValue::new_float(a.as_float() / b.as_float()));
+                }
                 SUB => {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
@@ -275,10 +317,34 @@ impl VM {
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     self.stack.push(NanValue::new_bool(self.compare_lt(a, b)?));
                 }
+                LT_INT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    self.stack.push(NanValue::new_bool(
+                        a.as_int(&self.arena) < b.as_int(&self.arena),
+                    ));
+                }
+                LT_FLOAT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    self.stack.push(NanValue::new_bool(a.as_float() < b.as_float()));
+                }
                 GT => {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     self.stack.push(NanValue::new_bool(self.compare_lt(b, a)?));
+                }
+                GT_INT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    self.stack.push(NanValue::new_bool(
+                        a.as_int(&self.arena) > b.as_int(&self.arena),
+                    ));
+                }
+                GT_FLOAT => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    self.stack.push(NanValue::new_bool(a.as_float() > b.as_float()));
                 }
 
                 CONCAT => {

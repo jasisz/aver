@@ -368,12 +368,52 @@ impl<'a> FnCompiler<'a> {
             invert,
         } = classify_bool_subject_plan(&subject.node)
         {
+            // Pick a typed compare opcode when both operands resolve
+            // to the same primitive — bypasses `eq_in` / `compare_lt`
+            // tag dispatch on the hot `match X > Y { … }` shape that
+            // dominates numeric loops (Mandelbrot inner step etc.).
+            let both_int = matches!(
+                (lhs.ty(), rhs.ty()),
+                (
+                    Some(crate::ast::Type::Int),
+                    Some(crate::ast::Type::Int)
+                )
+            );
+            let both_float = matches!(
+                (lhs.ty(), rhs.ty()),
+                (
+                    Some(crate::ast::Type::Float),
+                    Some(crate::ast::Type::Float)
+                )
+            );
             self.compile_expr(lhs)?;
             self.compile_expr(rhs)?;
             self.emit_op(match op {
-                BoolCompareOp::Eq => EQ,
-                BoolCompareOp::Lt => LT,
-                BoolCompareOp::Gt => GT,
+                BoolCompareOp::Eq => {
+                    if both_int {
+                        EQ_INT
+                    } else {
+                        EQ
+                    }
+                }
+                BoolCompareOp::Lt => {
+                    if both_int {
+                        LT_INT
+                    } else if both_float {
+                        LT_FLOAT
+                    } else {
+                        LT
+                    }
+                }
+                BoolCompareOp::Gt => {
+                    if both_int {
+                        GT_INT
+                    } else if both_float {
+                        GT_FLOAT
+                    } else {
+                        GT
+                    }
+                }
             });
 
             if invert {

@@ -162,24 +162,69 @@ impl<'a> FnCompiler<'a> {
             (lhs_ty, rhs_ty),
             (Some(crate::ast::Type::Int), Some(crate::ast::Type::Int))
         );
+        let both_float = matches!(
+            (lhs_ty, rhs_ty),
+            (Some(crate::ast::Type::Float), Some(crate::ast::Type::Float))
+        );
+        let lt_op = if both_int {
+            LT_INT
+        } else if both_float {
+            LT_FLOAT
+        } else {
+            LT
+        };
+        let gt_op = if both_int {
+            GT_INT
+        } else if both_float {
+            GT_FLOAT
+        } else {
+            GT
+        };
+        let add_op = if both_int {
+            ADD_INT
+        } else if both_float {
+            ADD_FLOAT
+        } else {
+            ADD
+        };
+        let sub_op = if both_int {
+            SUB_INT
+        } else if both_float {
+            SUB_FLOAT
+        } else {
+            SUB
+        };
+        let mul_op = if both_int {
+            MUL_INT
+        } else if both_float {
+            MUL_FLOAT
+        } else {
+            MUL
+        };
+        // No `DIV_INT`: integer division traps on `b == 0` and the
+        // generic `arith_div` already does that branch + propagates a
+        // typed runtime error. Float division has well-defined IEEE
+        // 754 semantics for `b == 0.0` (inf/-inf/NaN), so we can skip
+        // the runtime check entirely with `DIV_FLOAT`.
+        let div_op = if both_float { DIV_FLOAT } else { DIV };
         match op {
-            BinOp::Add => self.emit_op(ADD),
-            BinOp::Sub => self.emit_op(SUB),
-            BinOp::Mul => self.emit_op(MUL),
-            BinOp::Div => self.emit_op(DIV),
+            BinOp::Add => self.emit_op(add_op),
+            BinOp::Sub => self.emit_op(sub_op),
+            BinOp::Mul => self.emit_op(mul_op),
+            BinOp::Div => self.emit_op(div_op),
             BinOp::Eq => self.emit_op(if both_int { EQ_INT } else { EQ }),
-            BinOp::Lt => self.emit_op(LT),
-            BinOp::Gt => self.emit_op(GT),
+            BinOp::Lt => self.emit_op(lt_op),
+            BinOp::Gt => self.emit_op(gt_op),
             BinOp::Neq => {
                 self.emit_op(if both_int { EQ_INT } else { EQ });
                 self.emit_op(NOT);
             }
             BinOp::Lte => {
-                self.emit_op(GT);
+                self.emit_op(gt_op);
                 self.emit_op(NOT);
             }
             BinOp::Gte => {
-                self.emit_op(LT);
+                self.emit_op(lt_op);
                 self.emit_op(NOT);
             }
         }
