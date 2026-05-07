@@ -112,8 +112,8 @@ pub const EQ_INT: u8 = 0x23;
 /// Typed `<` for two `Int` operands. `as_int` decode on both sides
 /// (folds the inline path inline), raw i64 compare, push bool. Skips
 /// `compare_lt`'s tag-dispatch (`is_int`/`is_float`/`is_string` chain
-/// + cross-type promotion). Emitted when both operands' `Spanned::ty()`
-/// resolve to `Type::Int`.
+/// plus cross-type promotion). Emitted when both operands'
+/// `Spanned::ty()` resolve to `Type::Int`.
 pub const LT_INT: u8 = 0x24;
 
 /// Typed `>` for two `Int` operands; same shape as `LT_INT`.

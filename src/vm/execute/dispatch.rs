@@ -120,9 +120,7 @@ impl VM {
 
             let op = code[ip];
             ip += 1;
-            if profile_active
-                && let Some(profile) = self.profile.as_mut()
-            {
+            if profile_active && let Some(profile) = self.profile.as_mut() {
                 profile.record_opcode(op);
             }
 
@@ -362,7 +360,8 @@ impl VM {
                 LT_FLOAT => {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    self.stack.push(NanValue::new_bool(a.as_float() < b.as_float()));
+                    self.stack
+                        .push(NanValue::new_bool(a.as_float() < b.as_float()));
                 }
                 GT => {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
@@ -379,7 +378,8 @@ impl VM {
                 GT_FLOAT => {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    self.stack.push(NanValue::new_bool(a.as_float() > b.as_float()));
+                    self.stack
+                        .push(NanValue::new_bool(a.as_float() > b.as_float()));
                 }
 
                 CONCAT => {

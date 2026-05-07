@@ -374,17 +374,11 @@ impl<'a> FnCompiler<'a> {
             // dominates numeric loops (Mandelbrot inner step etc.).
             let both_int = matches!(
                 (lhs.ty(), rhs.ty()),
-                (
-                    Some(crate::ast::Type::Int),
-                    Some(crate::ast::Type::Int)
-                )
+                (Some(crate::ast::Type::Int), Some(crate::ast::Type::Int))
             );
             let both_float = matches!(
                 (lhs.ty(), rhs.ty()),
-                (
-                    Some(crate::ast::Type::Float),
-                    Some(crate::ast::Type::Float)
-                )
+                (Some(crate::ast::Type::Float), Some(crate::ast::Type::Float))
             );
             self.compile_expr(lhs)?;
             self.compile_expr(rhs)?;

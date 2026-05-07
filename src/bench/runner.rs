@@ -546,10 +546,7 @@ fn run_wasm_gc(manifest: &Manifest) -> Result<BenchReport, RunError> {
         let console_print_ty = wasmtime::FuncType::new(
             engine,
             [
-                wasmtime::ValType::Ref(wasmtime::RefType::new(
-                    true,
-                    wasmtime::HeapType::Any,
-                )),
+                wasmtime::ValType::Ref(wasmtime::RefType::new(true, wasmtime::HeapType::Any)),
                 wasmtime::ValType::I32,
             ],
             std::iter::empty(),
